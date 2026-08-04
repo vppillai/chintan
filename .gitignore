@@ -1,0 +1,46 @@
+# Build output. Artifacts are reproducible from git — the same commit built twice
+# produces the same bytes (scripts/build-lambda.sh) — so a committed artifact is
+# pure duplication with a drift surface.
+/build/
+/frontend/dist/
+*.zip
+
+# Go
+/backend/bootstrap
+
+# Frontend
+/frontend/node_modules/
+
+# Deliberately NOT ignored: backend/go.sum and frontend/bun.lock. Lockfiles are
+# committed so that `go mod download` runs in checksum-verified readonly mode and
+# the dependency scan (§0.5A) has something fixed to scan.
+
+# spikes/ is disposable and excluded from build, lint, and coverage (§0.2 rule 4).
+# Its *findings* are committed under docs/findings/; the code is not. "Never
+# promote spike code into production. It has no tests, no error handling, and no
+# invariant compliance — the prototype-becomes-implementation path is how untested
+# code reaches production wearing a disguise."
+/spikes/*
+!/spikes/README.md
+
+# No VERSION file, ever (G-037). Version is derived from git describe at build
+# time. Passbook carried one, it had to be hand-synced, it drifted — still reading
+# v2.6.0 at the v2.7.0 release — and it was removed. Listed here so that the
+# absence is visibly deliberate rather than an oversight.
+/VERSION
+
+# Local environment
+.env
+.env.local
+*.local
+
+# Editor and OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Agent scratch directories that happen to live in the worktree.
+/.omc/
+/docs/.omc/

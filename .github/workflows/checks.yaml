@@ -1,0 +1,144 @@
+# The §0.5A check inventory. Every gate that will ever govern this build.
+#
+# This workflow is the first thing built in this project, before any application
+# code (§0.5A). Three consequences follow from that ordering that cannot be
+# recovered later:
+#
+#   1. A check added after the code it governs gets written to pass. Wired first,
+#      it describes intended behaviour; wired last, it describes whatever the code
+#      already does.
+#   2. Local-only verification does not exist. Every job below runs inside the
+#      pinned toolchain image, so "it passes on my machine" and "it passes in CI"
+#      are the same statement.
+#   3. Tests need no AWS credentials. Everything here runs against the fake-AWS
+#      harness (§11.5). Only the deploy job assumes the OIDC role, which keeps the
+#      blast radius of a malicious dependency to a job that does not run on pull
+#      requests from forks.
+#
+# **The inventory below is complete; nothing is added to it later.** Checks whose
+# subject arrives in a later phase are present and pass trivially until then — and
+# each one tests for its subject rather than being hardcoded to succeed, so the day
+# the subject appears the check is already running. The `Active` column matches the
+# §0.5A table so a reviewer can compare them line by line, which §Phase 0
+# acceptance requires: "Every check in the §0.5A inventory is present in the
+# workflow, including those with nothing yet to inspect."
+
+name: Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+  packages: read
+
+# Cancel superseded runs on a branch, but never on main: a main run may be the one
+# a release is waiting on, and cancelling it mid-flight leaves the release job
+# without the green pipeline it requires (I16).
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  toolchain:
+    uses: ./.github/workflows/toolchain.yaml
+    permissions:
+      contents: read
+      packages: write
+
+  # One job per §0.5A inventory row, run as a matrix so each appears by name in
+  # the checks list. That naming is what makes the row-by-row comparison in
+  # §Phase 0 acceptance possible, and what lets branch protection require each
+  # gate individually from Phase 2 (§9.6).
+  check:
+    needs: toolchain
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.toolchain.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      # fail-fast off: a run should report every failing gate, not the first one.
+      # Fixing three failures found together is one cycle; finding them one per
+      # push is three.
+      fail-fast: false
+      matrix:
+        include:
+          # --- Active from Phase 0 ---
+          - { name: "lint",                target: check-lint,                active: 0 }
+          - { name: "format",              target: check-format,              active: 0 }
+          - { name: "typecheck",           target: check-typecheck,           active: 0 }
+          - { name: "unit tests",          target: test-backend,              active: 0 }
+          - { name: "config schema",       target: check-config,              active: 0 }
+          - { name: "tenant-key helper",   target: check-tenant-keys,         active: 0 }
+          - { name: "log retention",       target: check-log-retention,       active: 0 }
+          - { name: "no Lambda in VPC",    target: check-no-vpc,              active: 0 }
+          - { name: "no alarms or SNS",    target: check-no-alarms,           active: 0 }
+          - { name: "resource prefix",     target: check-resource-prefix,     active: 0 }
+          - { name: "guardrails",          target: check-guardrails,          active: 0 }
+          - { name: "dependency scan",     target: check-deps,                active: 0 }
+          - { name: "brand strings",       target: check-brand-strings,       active: 0 }
+          - { name: "admin scripts",       target: check-admin-scripts,       active: 0 }
+          # --- Active from Phase 1 ---
+          - { name: "accessibility",       target: check-a11y,                active: 1 }
+          - { name: "responsive",          target: check-responsive,          active: 1 }
+          # --- Active from Phase 2 ---
+          - { name: "corpus integrity",    target: check-verify-corpus,       active: 2 }
+          - { name: "golden WER",          target: check-wer,                 active: 2 }
+          # --- Active from Phase 3 ---
+          - { name: "extraction fixtures", target: check-extraction-fixtures, active: 3 }
+          - { name: "prompt integrity",    target: check-prompt-integrity,    active: 3 }
+          # --- Active from Phase 8 ---
+          - { name: "trigger additivity",  target: check-trigger-additivity,  active: 8 }
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # Full history: version resolution needs tags (§0.6), and the
+          # trigger-additivity check needs a merge base to diff against (§5.2).
+          fetch-depth: 0
+
+      - name: Cache Go build and module cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            /go/pkg/mod
+            /go/cache
+          key: go-${{ needs.toolchain.outputs.image }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: go-${{ needs.toolchain.outputs.image }}-
+
+      - name: ${{ matrix.name }}
+        env:
+          # The job already runs inside the image, so make must not try to
+          # re-enter it. This is the one place setting this is correct.
+          CHINTAN_IN_CONTAINER: "1"
+          # Gives the trigger-additivity check a base to diff against.
+          CHINTAN_DIFF_BASE: ${{ github.event.pull_request.base.sha }}
+        run: make ${{ matrix.target }}
+
+  # A single required-status target, so branch protection needs one entry rather
+  # than twenty-one that must be re-listed whenever the matrix changes. From
+  # Phase 2 this is what a merge blocks on (§9.6).
+  checks-passed:
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert every gate passed
+        run: |
+          # `needs.check.result` is 'success' only when every matrix leg
+          # succeeded. Checking it explicitly matters because a skipped or
+          # cancelled leg is not a failure to GitHub, and a required check that
+          # passes on a skipped gate is not a gate.
+          result='${{ needs.check.result }}'
+          echo "aggregate result: $result"
+          if [ "$result" != "success" ]; then
+            echo "::error::One or more §0.5A checks did not pass (result: $result)."
+            echo "A red pipeline blocks new work: a failing main is fixed before"
+            echo "anything else is started, never accumulated (§0.5A)."
+            exit 1
+          fi

@@ -1,0 +1,115 @@
+# Build the toolchain image and publish it to GHCR.
+#
+# Called by every other workflow. The tag is a hash of containers/toolchain/, so:
+#
+#   - an unchanged toolchain is built once, ever, and pulled thereafter
+#   - a toolchain change produces a new tag and every downstream job runs against
+#     the new tools in the same run that changed them
+#   - the image a CI job runs in is byte-identical to the one a developer's `make`
+#     runs in, because both resolve the same content-addressed tag
+#
+# That last property is the point (§0.5A): "Local-only verification does not
+# exist. If a check is not in CI it is not a check — it is a habit, and habits
+# decay. 'It passes on my machine' is not a claim this project accepts, from a
+# human or an agent." A shared environment is what makes the claim checkable
+# rather than merely forbidden.
+#
+# No AWS credentials are used here, or in any job below the deploy job (§0.5A).
+# That keeps the blast radius of a malicious dependency to a job that does not run
+# on pull requests from forks.
+
+name: Toolchain
+
+on:
+  workflow_call:
+    outputs:
+      image:
+        description: Fully-qualified image reference every downstream job runs in
+        value: ${{ jobs.build.outputs.image }}
+
+permissions:
+  contents: read
+  # Needed to push the image. GITHUB_TOKEN suffices, so no additional secret
+  # exists to leak — which matters because §9.6 withholds `secrets` from the agent
+  # entirely.
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      # Actions are pinned to a commit SHA, not a tag. A tag is mutable, and an
+      # action is code running in a job that can reach deployment credentials —
+      # the same reasoning as G-048 applied to third-party code.
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - id: resolve
+        name: Resolve the content-addressed image tag
+        run: |
+          # Identical computation to scripts/dev.sh's toolchain_tag(). Asserted
+          # equal below rather than trusted, because a divergence would mean CI
+          # and dev silently running different images — the one failure this
+          # whole design exists to prevent.
+          TAG="$(./scripts/dev.sh --tag)"
+          REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          echo "tag=$TAG"                                  >> "$GITHUB_OUTPUT"
+          echo "registry=$REGISTRY"                        >> "$GITHUB_OUTPUT"
+          echo "image=${REGISTRY}/chintan-toolchain:${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Toolchain tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: exists
+        name: Is this toolchain already published?
+        run: |
+          if docker manifest inspect "${{ steps.resolve.outputs.image }}" > /dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Image already published; skipping build."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        if: steps.exists.outputs.found == 'false'
+
+      - name: Build and push
+        if: steps.exists.outputs.found == 'false'
+        run: |
+          # Build args come from versions.env so the Dockerfile carries no
+          # version literal — the same path scripts/dev.sh uses locally.
+          ARGS=()
+          while IFS='=' read -r key value; do
+            case "$key" in ''|\#*) continue ;; esac
+            ARGS+=(--build-arg "${key}=${value}")
+          done < containers/toolchain/versions.env
+
+          # linux/amd64 only: GitHub's hosted runners are amd64, and the base
+          # image is pinned by its multi-arch index digest so an arm64
+          # workstation resolves the same source. Building both here would
+          # double the build for a platform CI never runs on.
+          docker buildx build \
+            --platform linux/amd64 \
+            --file containers/toolchain/Dockerfile \
+            --tag "${{ steps.resolve.outputs.image }}" \
+            "${ARGS[@]}" \
+            --cache-from "type=registry,ref=${{ steps.resolve.outputs.registry }}/chintan-toolchain:cache" \
+            --cache-to "type=registry,ref=${{ steps.resolve.outputs.registry }}/chintan-toolchain:cache,mode=max" \
+            --push \
+            containers/toolchain
+
+      - name: Verify the published image runs the tools it claims to
+        run: |
+          # A published image that cannot run its own tools would fail every
+          # downstream job with a confusing error. Check here, once, where the
+          # failure is attributable to the image rather than to a check.
+          docker run --rm "${{ steps.resolve.outputs.image }}" bash -c '
+            set -e
+            go version && aws --version && yq --version
+            shellcheck --version > /dev/null && shfmt --version && bun --version
+          '

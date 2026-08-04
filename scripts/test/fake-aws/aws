@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+# Fake AWS CLI for the script test harness (§11.5).
+#
+# Placed earlier on PATH than the real CLI so that a script under test cannot
+# reach a real account even if its arguments are wrong. That containment is what
+# makes it safe to run mutating-script tests in CI, and why §11.5 requires the
+# harness rather than "careful" tests against a scratch account.
+#
+# Behaviour: responds to the read calls the scripts make, and records every
+# mutating call to $FAKE_AWS_LOG so a test can assert that --apply performed
+# exactly what --dry-run described. That assertion is the point of the harness —
+# a dry-run that lies is worse than no dry-run.
+set -euo pipefail
+
+LOG="${FAKE_AWS_LOG:-/dev/null}"
+STATE="${FAKE_AWS_STATE:-}"
+
+# Strip the global flags the scripts pass so the service/operation parse below
+# does not have to account for them.
+ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --region|--profile|--output) shift 2 ;;
+        --no-cli-pager) shift ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]:-}"
+
+SERVICE="${1:-}"
+OPERATION="${2:-}"
+
+# Any call that is not an explicit read is logged as a mutation. Defaulting to
+# "this changed something" is the safe direction: an unrecognised call being
+# treated as read-only would let a real mutation pass a test silently.
+case "$OPERATION" in
+    get-*|describe-*|list-*|head-*) : ;;
+    *) printf '%s %s %s\n' "$SERVICE" "$OPERATION" "$*" >> "$LOG" ;;
+esac
+
+case "$SERVICE:$OPERATION" in
+    sts:get-caller-identity)
+        # Deliberately NOT root: the harness models the agent principal the
+        # guardrails assume, so a test cannot accidentally assert against a root
+        # identity that §9.4 forbids.
+        echo '{"UserId":"AIDAFAKE","Account":"000000000000","Arn":"arn:aws:iam::000000000000:role/voicenotes-agent"}'
+        ;;
+    iam:get-role)
+        echo '{"Role":{"RoleName":"voicenotes-agent","PermissionsBoundary":{"PermissionsBoundaryArn":"arn:aws:iam::000000000000:policy/voicenotes-agent-boundary"}}}'
+        ;;
+    iam:list-roles) echo '{"Roles":[]}' ;;
+    iam:get-open-id-connect-provider) exit 255 ;;
+    cloudtrail:list-trails) echo '{"Trails":[{"Name":"voicenotes-trail"}]}' ;;
+    ssm:get-parameter)
+        # Returns metadata only, never a value: the agent must not read a
+        # secret's value, only confirm the parameter exists (§9.4).
+        echo '{"Parameter":{"Name":"fake","Type":"SecureString"}}'
+        ;;
+    ce:list-cost-allocation-tags)
+        echo '{"CostAllocationTags":[{"TagKey":"Project","Status":"Active"}]}'
+        ;;
+    dynamodb:*|s3:*|s3api:*|cloudformation:*|lambda:*|logs:*|cognito-idp:*)
+        [ -n "$STATE" ] && [ -f "$STATE" ] && cat "$STATE" || echo '{}'
+        ;;
+    *) echo '{}' ;;
+esac

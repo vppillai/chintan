@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk 'prev ~ /^\\\\|/ && $0 ~ /^\\\\|/ && $0 !~ /^\\\\|[ :-]*-[ :|-]*\\\\|?$/ && prevprev !~ /^\\\\|/ {print NR-1\": \"prev} *)",
+      "Bash(sort -t- -k2 -n)",
+      "Bash(sed -i 's/^### 4A\\\\.7 Out of scope$/### 4A.8 Out of scope/'      spec.md)",
+      "Bash(sed -i 's/^### 4A\\\\.6 Quality floor$/### 4A.7 Quality floor/'    spec.md)",
+      "Bash(sed -i 's/^### 4A\\\\.5A Responsive layout$/### 4A.6 Responsive layout/' spec.md)",
+      "Bash(sed -i 's/hover-only \\(§4A\\\\.6\\)/hover-only \\(§4A.7\\)/'              spec.md)",
+      "Bash(sed -i 's/§4A\\\\.5A/§4A.6/g'                                      spec.md)"
+    ]
+  }
+}

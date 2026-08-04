@@ -1,0 +1,310 @@
+# Chintan — prod instance configuration (§7.4)
+#
+# One file per instance. The CI matrix discovers instances from this directory,
+# and the filename is the instance name: prod.yaml deploys the stack
+# `voicenotes-prod`. A file whose `instance` key disagrees with its filename is
+# rejected by the validator, because the stack name derives from the filename
+# while the code reads the key.
+#
+# Every key below is REQUIRED. There are no optional thresholds with implied
+# defaults: §Phase 0 requires that a missing value fails the deploy rather than
+# silently falling back, so the validator has no default to supply. If a value
+# here looks arbitrary, its rationale is in the struct comments in
+# backend/internal/config/config.go and in the spec section cited beside it —
+# read that before tuning it. Several of these numbers look like round guesses
+# and are load-bearing (the 28s window and the 400ms pre-roll especially).
+#
+# Secrets are SSM Parameter Store paths, never values (§9.4). {env} is
+# substituted with the instance name at load time.
+
+version: 1
+
+instance: prod
+region: ca-central-1
+
+# CORS (§10.6). Never a wildcard, never hardcoded in code. This is the GitHub
+# Pages origin for the repository owner; it is deliberately an origin (scheme +
+# host) with no path, because that is what a browser sends and the comparison is
+# exact. If the assetlinks decision (§0.8 item 3) lands on a custom domain, this
+# becomes that domain and nothing else changes.
+allowed_origin: https://vppillai.github.io
+
+# --- Brand (§7.3) — configurable, unlike the frozen system_id `voicenotes` ----
+#
+# The name is a functional decision, not a marketing one: voice launch resolves
+# by fuzzy name match, and anything containing "notes", "voice", "memo", or
+# "recorder" loses to Google Keep or the stock recorder (G-005). "Chintan" is two
+# syllables with an affricate onset that carries through road noise and collides
+# with no common command word. Changing it after install re-mints the WebAPK and
+# breaks trained muscle memory (G-055) — treat a rename as a migration.
+branding:
+  name: Chintan
+  short_name: Chintan
+  description: Speak your thinking; find it later.
+  tagline: null
+  theme_color: "#1F4E5F"      # `chrome` (§4A.2)
+  background_color: "#FAF7F2" # `paper` (§4A.2)
+  icon_source: assets/icon.svg
+
+providers:
+  # --- Speech to text (§7.1) ---------------------------------------------
+  # Providers are NOT interchangeable. Each entry declares the capabilities the
+  # pipeline branches on, because a swap that "works" while silently dropping
+  # prompt biasing is the failure mode here (G-042).
+  stt:
+    active: groq_whisper_turbo
+    # Shadow mode doubles STT spend while set. Run it for a bounded evaluation
+    # window against real audio, not continuously (§7.2).
+    shadow: null
+    catalog:
+      groq_whisper_turbo:
+        adapter: openai_compatible_audio
+        base_url: https://api.groq.com/openai/v1
+        model: whisper-large-v3-turbo
+        secret_ref: /voicenotes/{env}/groq_api_key
+        # Must match the account tier actually in use: 25MB on free, 100MB on
+        # paid. The Phase 0 entry gate confirms which one this account is on.
+        max_file_mb: 100
+        # Groq bills a 10-second minimum per request, so a 2-second clip costs
+        # the same as a 10-second one. This is half the reason segments
+        # accumulate rather than being emitted per utterance (G-013).
+        min_billed_seconds: 10
+        cost_per_hour_usd: 0.04
+        capabilities:
+          prompt_biasing: true
+          # Whisper's decoder context is 448 tokens, roughly half reserved for
+          # output — about 60–90 terms listed tersely. No retrieval scheme
+          # raises this; it only decides which terms occupy it (G-010).
+          prompt_token_budget: 224
+          timestamps: [segment, word]
+          max_sync_seconds: null
+          async_batch_api: false
+          code_mixing: false
+        params:
+          response_format: verbose_json
+          timestamp_granularities: [segment]
+          temperature: 0.0
+          # `en` is not the same as `en-IN`; where a provider distinguishes
+          # them, use the regional variant (§1.2). Groq's Whisper takes only
+          # the base language code.
+          language: en
+
+      # Catalogued alternative, not a Phase 0 dependency. Its key is needed only
+      # if it becomes active or shadow, which is why doctor.sh checks a catalog
+      # entry's secret only when some `active` or `shadow` names it (§7.1).
+      #
+      # Note what changes if this becomes active: it has NO prompt-biasing
+      # parameter at all, so Phase 4's entire STT-layer correction architecture
+      # does not apply and corrections must route to the LLM cleanup layer
+      # (G-042). It also caps synchronous REST at ~30s of audio, which the 28s
+      # segment target fits and device imports do not (G-043).
+      sarvam_saaras_v3:
+        adapter: sarvam_stt
+        base_url: https://api.sarvam.ai
+        model: saaras:v3
+        secret_ref: /voicenotes/{env}/sarvam_api_key
+        max_file_mb: 100
+        min_billed_seconds: 0
+        # Roughly 9× to 27× Groq depending on API and tier — verify against
+        # current pricing before relying on it (G-044).
+        cost_per_hour_usd: 1.08
+        capabilities:
+          prompt_biasing: false
+          prompt_token_budget: 0
+          timestamps: [word]
+          max_sync_seconds: 30
+          async_batch_api: true
+          # Explicit code-mixing support, which matters for a speaker who
+          # thinks aloud in English with occasional Malayalam or Hindi (§1.2).
+          code_mixing: true
+        params:
+          mode: transcribe
+          language_code: en-IN
+
+  # --- Chat models (§7.4, §10.5.4) ---------------------------------------
+  llm:
+    catalog:
+      minimax_m3:
+        adapter: openai_compatible_chat
+        base_url: https://api.minimax.io/v1
+        model: MiniMax-M3
+        secret_ref: /voicenotes/{env}/minimax_api_key
+        max_context: 1000000
+    # With one model catalogued, every task necessarily points at it. This is
+    # the only valid configuration today and NOT the end state: §10.5.4 calls
+    # routing a flagship model a misconfiguration, and cataloguing a second,
+    # cheaper model then repointing `routing` and `summary` at it is a Phase 3
+    # exit condition. The keys exist now so that is a config edit.
+    tasks:
+      cleanup: minimax_m3
+      routing: minimax_m3
+      summary: minimax_m3
+      search: minimax_m3
+
+  # --- Embeddings ---------------------------------------------------------
+  embeddings:
+    active: minimax_embed
+    catalog:
+      minimax_embed:
+        adapter: openai_compatible_embeddings
+        base_url: https://api.minimax.io/v1
+        model: embo-01
+        # Load-bearing for Phase 5: the packed matrix is rows × dimensions × 4
+        # bytes, so 50,000 blocks at 1536 dims is ~307MB — past a 256MB
+        # function allocation and past the 512MB default /tmp (G-061). Halving
+        # dimensions halves that floor.
+        dimensions: 1536
+        secret_ref: /voicenotes/{env}/minimax_api_key
+
+# --- Capture (§Phase 1, §Phase 2) -----------------------------------------
+capture:
+  vad:
+    enabled: true
+    model: silero_v5
+    frame_samples: 512
+    # VAD PATH ONLY. Silero requires 16kHz and produces silently wrong
+    # boundaries at any other rate. This is NOT an encoder setting: the browser
+    # does not honour a sample-rate constraint on MediaRecorder and exposes no
+    # rate option, and it does not matter because Whisper downsamples anyway
+    # (G-059). Do not add an encoder sample_rate key.
+    sample_rate: 16000
+    # Separate onset and offset thresholds give hysteresis. Equal or inverted
+    # values turn the detector into a chattering switch at the boundary, which
+    # fragments segments rather than holding them.
+    onset_threshold: 0.50
+    offset_threshold: 0.35
+    # Not optional. A VAD that clips word onsets degrades WER worse than no VAD
+    # at all — it is the specific failure that makes cheap recorders' built-in
+    # voice activation useless (G-014).
+    preroll_ms: 400
+    hangover_ms: 800
+    # ~28s because Whisper is trained on 30s windows and short isolated clips
+    # transcribe measurably worse: the decoder loses the surrounding context it
+    # uses to disambiguate (G-012). It also keeps every request above the
+    # 10-second minimum billing floor (G-013). Assumption A6 measures this;
+    # do not tune it down for latency before that finding exists.
+    target_segment_ms: 28000
+    max_segment_ms: 45000
+  audio:
+    codec: opus
+    bitrate: 24000
+    channels: 1
+
+# --- Ingestion (§5A) ------------------------------------------------------
+ingest:
+  # An imported file may contain several unrelated thought streams separated by
+  # long silences. Split into sessions before segmentation: one file does not
+  # imply one capture (§5A.3.3).
+  session_split_silence_ms: 90000
+  # Bot API getFile ceiling. Checked BEFORE starting a download, so an oversized
+  # voice message gets a clear reply rather than a generic failure (G-029).
+  telegram_max_mb: 20
+  accepted_mime: [audio/mpeg, audio/wav, audio/ogg, audio/mp4, audio/flac]
+
+# --- Cleanup: the I4 patch validation gate (§Phase 3) ---------------------
+# "Do not add information" is unenforceable by prompting alone, so it is a
+# structural guarantee: the model emits a patch, and these thresholds reject it
+# before it touches storage. Rejection fails closed — L2 keeps its previous
+# content and the event is recorded.
+cleanup:
+  max_change_ratio: 0.25
+  # Rejects substitutions that do not plausibly *sound like* the original. This
+  # is the check that separates an STT correction from authored content, and it
+  # is what stops the rule store being poisoned by genuine edits (§Phase 4).
+  max_phonetic_distance: 0.35
+  reject_on_length_delta: 0.15
+  # Need-gating: above this average logprob, cleanup is skipped entirely. A
+  # large fraction of segments need nothing (§10.5.2). Negative by nature.
+  min_avg_logprob: -0.55
+  # Nightly batch instead of inline (§10.5.6). Evaluate in Phase 3; do not make
+  # it the default without confirming the latency is acceptable.
+  defer_batch: false
+
+# --- Extraction (§3A.5) ---------------------------------------------------
+extraction:
+  # At or above → filed automatically with a visible, one-tap-reversible
+  # decision. Below → the inbox, for a single fast batch review.
+  auto_file_confidence: 0.80
+  # `prompt` is held to a strictly higher bar than anything else, and the
+  # validator enforces that ordering. A prompt misclassified as an idea gets
+  # summarised, and summarising it destroys the artifact — the content exists
+  # to be pasted into a coding agent months later, so its value IS the full
+  # text (§3A.3, A4).
+  prompt_kind_confidence: 0.90
+
+# --- Thread routing (§Phase 3) --------------------------------------------
+routing:
+  candidate_k: 8
+  min_similarity: 0.72
+  # Must be true. Silent misfiling is the most damaging failure mode in this
+  # system: the user does not discover it until they go looking for a thought
+  # that is not where they expect (§Phase 3, §4A.5).
+  always_show_decision: true
+
+# --- Correction rule store (§Phase 4) -------------------------------------
+rules:
+  # A phonetic match alone is insufficient, because phonetic keys carry no
+  # semantics: a rule mapping "ken" → "Keraunos" is correct in a work capture
+  # and destructive when the user is talking about a person named Ken. Topic
+  # conditioning is what resolves collisions and suppresses stale rules without
+  # deleting them (G-039).
+  topic_similarity_min: 0.65
+  # Precision comes from the re-edit rate — when a rule fires and the user edits
+  # that span back, the rule was wrong. That is the only ground truth available
+  # without labelling effort. Demote first, retire second; the validator
+  # enforces that retire is the lower bar.
+  demote_below_precision: 0.85
+  retire_below_precision: 0.60
+  # Split of the ~224-token ceiling between always-on high-frequency terms and
+  # topically retrieved ones (§Phase 4.1).
+  prompt_always_on_ratio: 0.40
+
+# --- Search (§Phase 5) ----------------------------------------------------
+search:
+  top_k: 12
+
+# --- Limits ---------------------------------------------------------------
+limits:
+  # Per-tenant daily circuit breaker (§10.5.9). This is what converts an
+  # unbounded worst case into a known number: concurrency caps and API throttles
+  # bound AWS abuse but cap no third-party API spend. Fails closed.
+  #
+  # Set against the §10.7 target of ~$1/month all-in. The documented worst case
+  # under this breaker plus the concurrency cap and API throttle must stay below
+  # $20/month (§Phase 0 acceptance).
+  daily_spend_usd: 2.00
+  # 15 minutes is the maximum permitted by §9.
+  presign_ttl_seconds: 900
+
+# --- Retention ------------------------------------------------------------
+retention:
+  audit_days: 2555   # ~7 years (§6.3)
+  usage_months: 25   # annual reconciliation plus a year
+  # Mandatory and explicit. Unset CloudWatch retention is INFINITE, and
+  # ingestion is $0.50/GB — this single key is one of the five choices holding
+  # the monthly bill near $1 (§10.1, §10.7).
+  log_group_days: 14
+  # Backstop only. The continuous safety copy is deleted as soon as every
+  # segment of its session transcribes successfully; this window exists for the
+  # case where the worker died silently (§10.5.8).
+  continuous_audio_days: 7
+
+# --- Schedules (§7.4) -----------------------------------------------------
+# The only sanctioned use of EventBridge. S3 event notifications stay direct,
+# because routing them through EventBridge adds cost and indirection for no
+# benefit at this scale (§10.2). Three rules, fixed count, free at this volume.
+schedules:
+  metrics: "cron(0 6 ? * MON *)"        # weekly metric computation (§11A.9)
+  verify: "cron(0 7 ? * SUN *)"         # corpus integrity sweep (§11.6)
+  deferred_cleanup: "cron(0 3 * * ? *)" # only honoured when cleanup.defer_batch
+
+# --- Triggers (§5) --------------------------------------------------------
+triggers:
+  # Phase 8 appends: nfc, ble_hid, ble_gatt. `auto` and `telegram` are
+  # provenance-only and must never appear here — they have no adapter, and a
+  # registry containing one is a defect (§5.2 rule 6). The validator rejects
+  # them.
+  enabled: [ui, voice_launch]
+  # NFC tags and BLE buttons both bounce, so toggle must be idempotent-safe
+  # against double-fire (§5.2 rule 4).
+  debounce_ms: 750

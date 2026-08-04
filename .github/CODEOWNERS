@@ -1,0 +1,31 @@
+# Paths where agent autonomy is genuinely dangerous (§9.6).
+#
+# The workflow directory matters most: CI has access to deployment credentials, so
+# an agent able to modify workflows unreviewed can exfiltrate them (G-048). The
+# agent may still *propose* changes to any path here — it simply cannot merge them
+# alone.
+#
+# §9.6 is explicit that "the agent never approves a PR that touches a CODEOWNERS
+# path, including its own." Enable "require review from Code Owners" in branch
+# protection so this is enforced by the platform rather than by the agent's
+# restraint — a rule the constrained party can choose to follow is not a control.
+#
+# Everything not listed here: the agent may merge its own PR once CI,
+# guardrails-check.sh, and the §3 invariant checks pass. The owner may tighten
+# this to review-everything at any time; the point is that the setting is
+# deliberate and written down, not discovered on the first blocked merge.
+
+/.github/workflows/    @vppillai
+/infrastructure/       @vppillai
+/scripts/bootstrap*    @vppillai
+/docs/security/        @vppillai
+
+# Not in §9.6's list, added for the same reason the workflow directory is there:
+# this image is what every job runs inside, so a change to it changes what every
+# check executes. An unreviewed toolchain change can neutralise every gate at
+# once while the pipeline still reports green.
+/containers/           @vppillai
+
+# CODEOWNERS protecting itself. Without this line, the first thing an
+# unconstrained change could do is remove the constraints above.
+/.github/CODEOWNERS    @vppillai
