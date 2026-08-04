@@ -57,7 +57,20 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
 - **Operational script foundations** — `doctor.sh`, `guardrails-check.sh`,
   `verify.sh`, `build-lambda.sh`, and the fake-AWS test harness. `--dry-run` default,
   `--json` output, `--tenant` required on data operations.
-- **Registers seeded.** `docs/gotchas.md` with 58 entries (57 from §13 with IDs
+- **CloudFormation templates.** `bootstrap.yaml` (artifact bucket, OIDC deployment
+  role behind a `CreateOIDCProvider` condition for G-016, tag-based Resource Group
+  for provable teardown) and `template.yaml` (single table with a sparse GSI1, S3
+  with direct Lambda notification, two arm64 functions with reserved concurrency,
+  HTTP API v2 with a 5rps throttle, Cognito admin-create-only). No VPC, no alarms,
+  no SNS, explicit log retention, full tag set on every resource.
+
+  The CI deployment role deliberately holds **no item-level DynamoDB actions and no
+  `s3:GetObject` on the data bucket**: it provisions storage but cannot read the
+  corpus, so a compromised workflow cannot exfiltrate it. The worker's
+  `s3:DeleteObject` is scoped to the continuous safety copies alone, which makes
+  I1's "application code has no delete path for L0" structural rather than a
+  convention the code is trusted to follow.
+- **Registers seeded.** `docs/gotchas.md` with 59 entries (57 from §13 with IDs
   preserved verbatim, plus G-062 found while building the pipeline), five ADRs, and
   the first finding.
 
@@ -71,8 +84,20 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
   are the account root user. §9.4 non-negotiable #1 forbids the agent holding root,
   and no permissions boundary can constrain root, so those credentials cannot be the
   ones this project deploys with. `guardrails-check.sh` fails if run under them.
-- Two checks were found to be wrong only by watching them go red — one reported a
-  broken scanner as a security finding, the other produced 21 false positives.
-  Recorded in [F-0001](docs/findings/F-0001-checks-demonstrated-red.md), which is
-  the §0.5A argument in miniature: the risk is not an absent check, it is a believed
-  one.
+- **Four checks were found to be wrong only by watching them go red**, two of them
+  serious enough to be worth naming here:
+  - The **I11 tenant-key check** — the one §Phase 0 acceptance names explicitly —
+    was **vacuous**. It selected files with a bare `git ls-files`, which lists
+    committed files only, so a *new* file building a key by hand was invisible to
+    it. It reported green on exactly the change it exists to reject, and CI would
+    have caught what local did not (G-063).
+  - The **guardrails self-test** reported pass while never exercising its premise:
+    its attempt to point the check at a doctored tree was silently ignored, and an
+    unrelated bug made every run fail, so "it failed, therefore it detects the
+    removal" held for the wrong reason (G-062).
+
+  Both are fixed and re-demonstrated. Eleven of 21 checks have now been demonstrated
+  red; the outstanding ten are listed in
+  [F-0001](docs/findings/F-0001-checks-demonstrated-red.md) against the phase that
+  gives each a subject. This is the §0.5A argument in miniature: the risk is not an
+  absent check, it is a believed one.

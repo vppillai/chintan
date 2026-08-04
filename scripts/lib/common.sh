@@ -150,13 +150,26 @@ no_subject_yet() {
 # File selection
 # ---------------------------------------------------------------------------
 
-# tracked_files lists files git knows about, so generated artifacts, vendored
-# code, and node_modules never reach a check. Falls back to find when git is
-# unavailable (a source tarball, or a container without the repo's .git).
+# tracked_files lists every file in the worktree that git does not ignore, so
+# generated artifacts, vendored code, and node_modules never reach a check. Falls
+# back to find when git is unavailable (a source tarball, or a container without
+# the repo's .git).
+#
+# --cached --others --exclude-standard, NOT a bare `ls-files`. A bare `ls-files`
+# lists only COMMITTED files, which quietly made these checks unable to see the
+# change being checked: a new file violating I11 was invisible to
+# check-tenant-keys.sh until after it was committed, so `make check` reported green
+# on exactly the change that check exists to reject. The most important check in
+# Phase 0 was vacuous, for precisely the reason §0.5A requires every check to be
+# demonstrated red.
+#
+#   --cached            tracked files
+#   --others            untracked files
+#   --exclude-standard  minus anything .gitignore excludes
 tracked_files() {
     local out=""
     if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-        out="$(git -C "$REPO_ROOT" ls-files "$@" 2>/dev/null || true)"
+        out="$(git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard "$@" 2>/dev/null || true)"
     fi
 
     # Fall back to the filesystem when git has nothing to report. This is not

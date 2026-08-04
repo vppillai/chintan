@@ -41,7 +41,7 @@ usually what saves the time.
 
 **Confidence levels:** `verified` — observed directly on real hardware or against a live API. `documented` — stated in official vendor documentation. `reported` — from secondary sources or prior experience; re-verify before relying on it. Promote entries as they are confirmed, and correct them when they turn out wrong. A register that is never corrected becomes folklore.
 
-**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Fifty-eight entries are recorded here; the next new one is `G-063`.
+**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Fifty-nine entries are recorded here; the next new one is `G-064`.
 
 ### Mobile web / PWA
 
@@ -493,6 +493,14 @@ usually what saves the time.
 **Action:** Any check asserting "X fails when broken" must also assert **"X passes when not broken"** — verify the control case before drawing a conclusion from the failure case. Prove the boundary in both directions, which is the same discipline G-052 requires of IAM policies and A1's spike design requires of the irrelevant-prompt control arm.
 **Confidence:** verified (encountered building this pipeline)
 **Refs:** §0.5A, docs/findings/F-0001-checks-demonstrated-red.md
+
+#### G-063 — `git ls-files` lists only committed files, so a check built on it cannot see the change being checked
+**Assumption:** Selecting files with `git ls-files` gives a check the repository's contents while excluding generated artifacts and ignored paths — the right file set, cheaply.
+**Reality:** A bare `git ls-files` lists the **index**, which means committed files only. A newly added file is untracked and therefore invisible. So a static check that iterates it inspects everything *except* the work in progress — and reports green on the very change it exists to reject. Encountered here on `check-tenant-keys.sh`, the I11 enforcement check: a new handler building `"TENANT#" + id` by hand was not detected at all. CI still catches it after the commit, because a checkout tracks everything, which makes the local signal wrong while the remote one is right — the most confusing possible split.
+**Symptom:** The check passes locally on a change that violates it, then fails in CI after commit — or passes in both, if the violating file was committed in the same change that added the check. On an empty repository with no commits at all, `ls-files` returns nothing and **every** file-iterating check passes vacuously.
+**Action:** Use `git ls-files --cached --others --exclude-standard` — tracked, plus untracked, minus ignored. And demonstrate the check red by *adding a new file* that violates it, not by editing an existing one: editing a tracked file cannot expose this bug, so a red demonstration done that way looks successful while leaving the gap in place.
+**Confidence:** verified (encountered building this pipeline)
+**Refs:** §0.5A, I11, [[G-062]], docs/findings/F-0001-checks-demonstrated-red.md
 
 #### G-041 — Manual sync steps decay
 **Assumption:** A daily manual step is acceptable if the value is high.

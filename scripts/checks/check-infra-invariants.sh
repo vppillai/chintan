@@ -48,14 +48,10 @@ if [ "${#TEMPLATES[@]}" -eq 0 ]; then
 fi
 
 # yq reads the parsed document rather than grepping text, so a resource split
-# across lines or written in flow style is still seen. CloudFormation's short
-# intrinsic tags (!Sub, !Ref, !GetAtt) are not valid YAML tags to a strict
-# parser, so they are rewritten to their long form first — otherwise yq fails on
-# every template and the check reports a parse error as a pass.
-parsed_template() {
-    sed -E 's/!([A-Za-z]+)[[:space:]]/!!str &/g; s/!!str !([A-Za-z]+)/Fn_\1:/g' "$1" 2>/dev/null ||
-        cat "$1"
-}
+# across lines or written in flow style is still seen. It tolerates
+# CloudFormation's short intrinsic tags (!Sub, !Ref, !GetAtt) — verified against
+# these templates rather than assumed, because a parser that silently returned
+# nothing would make every check below pass vacuously.
 
 # resources_of_type lists the logical IDs of every resource of a given type.
 resources_of_type() {

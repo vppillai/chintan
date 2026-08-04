@@ -1,0 +1,580 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Chintan per-instance stack — DynamoDB single table, S3, two arm64 Lambdas,
+  HTTP API v2, Cognito. Deployed by CI only, one stack per instance (voicenotes-dev,
+  voicenotes-prod).
+
+# WHAT THIS TEMPLATE IS AND IS NOT
+#
+# Two functions, one per execution profile, each internally routed — a "Lambdalith"
+# per profile (§4). NOT one function per endpoint, which multiplies cold starts and
+# duplicated init for no benefit.
+#
+# EVERY COST DECISION HERE IS LOAD-BEARING. §10.7 targets ~$1/month, and five
+# choices hold that figure; removing any one moves the total by more than the total.
+# Three of them live in this file:
+#
+#   - AWS-managed keys, no CMK (I8, G-020). ~$1/month standing for a control with no
+#     benefit to a single-user deployment. The kms_key_id indirection makes the
+#     commercial-phase switch a provisioning change, not a re-encryption.
+#   - No CloudWatch alarms and no SNS topics (§10.1, G-022). The 10-alarm free
+#     allowance is account-WIDE, shared with passbook. An alarm with no confirmed
+#     subscription also emails into the void, which is worse than none because it
+#     looks like coverage.
+#   - Explicit RetentionInDays on every log group (§10.1). Unset retention is
+#     INFINITE at $0.50/GB ingested.
+#
+# And one absence that matters more than any of them: NO VPC. A Lambda in a VPC
+# needing internet access requires a NAT Gateway at ~$32/month standing — over
+# thirty times the entire target budget, and the single most common serverless cost
+# catastrophe (G-018). Nothing in this design requires VPC networking.
+#
+# scripts/checks/check-infra-invariants.sh enforces all four mechanically, because
+# a cost rule that depends on someone remembering it is a rule that will be broken
+# by someone who never read this comment.
+
+Parameters:
+  InstanceName:
+    Type: String
+    AllowedPattern: '^[a-z][a-z0-9-]*$'
+    MinLength: 1
+    MaxLength: 32
+    Description: >-
+      Instance suffix in every resource name (dev, prod). Not optional: a bare
+      `voicenotes` table cannot exist twice in one account, so dev and prod would
+      collide on the first parallel deploy (§6.3).
+
+  AllowedOrigin:
+    Type: String
+    AllowedPattern: '^https://[^*]+$'
+    Description: >-
+      CORS origin, from config (§10.6). Never a wildcard — this is an API serving
+      someone's private thinking. The pattern rejects one at deploy time as well as
+      in the config validator.
+
+  ArtifactBucket:
+    Type: String
+    Description: Bucket holding the Lambda zips, from the bootstrap stack.
+
+  ApiCodeKey:
+    Type: String
+    Description: S3 key of the sync API zip.
+
+  WorkerCodeKey:
+    Type: String
+    Description: S3 key of the async worker zip.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: >-
+      From config retention.log_group_days (§7.4). Mandatory and explicit; there is
+      no "unset" option because unset means infinite (§10.1).
+
+  WorkerMemoryMB:
+    Type: Number
+    Default: 1024
+    MinValue: 512
+    MaxValue: 3008
+    Description: >-
+      Worker memory. Sized for the Phase 5 semantic-search matrix, which must fit
+      resident: rows x dimensions x 4 bytes, so 50,000 blocks at 1536 dims is ~307MB
+      (G-061). The Phase 5 gate does this arithmetic against real corpus growth and
+      records an ADR; this default leaves headroom until then.
+
+  Owner:
+    Type: String
+    Default: vppillai
+    Description: Owner tag value (§6.4).
+
+Resources:
+  # ===========================================================================
+  # DynamoDB — single table per instance (§6.3)
+  # ===========================================================================
+  Table:
+    Type: AWS::DynamoDB::Table
+    # Retain on both: this table holds the corpus. A stack delete or a replacing
+    # update must not take it. §9.3 makes erasure a separate, explicitly
+    # permissioned operation precisely so that no ordinary code path can do this.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'voicenotes-${InstanceName}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+        - { AttributeName: GSI1PK, AttributeType: S }
+        - { AttributeName: GSI1SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        # Time-ordered capture and thread listing. SPARSE BY DESIGN: only Capture
+        # and Thread records carry the GSI1 attributes. Segment, Usage, Audit, and
+        # Metric records are high-volume and must never project into it, or the
+        # index becomes a second copy of the table (§6.3) — which at on-demand
+        # pricing means paying twice for every write.
+        - IndexName: GSI1
+          KeySchema:
+            - { AttributeName: GSI1PK, KeyType: HASH }
+            - { AttributeName: GSI1SK, KeyType: RANGE }
+          Projection:
+            # KEYS_ONLY plus a deliberate include list rather than ALL, for the same
+            # reason: ALL duplicates every attribute of every projected item.
+            ProjectionType: INCLUDE
+            NonKeyAttributes: [label, title, created_at, updated_at, ingest_source, item_count]
+      TimeToLiveSpecification:
+        # Usage records expire at 25 months, audit at ~7 years (§6.3). TTL is what
+        # makes those windows cost nothing to enforce.
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        # AWS-managed key. No CMK in the personal phase (I8). Note the consequence
+        # §9.3 spells out: without a customer key, crypto-shredding is unavailable,
+        # so erasure means object deletion plus waiting out the PITR window — stated
+        # honestly rather than overclaimed (G-021).
+        SSEEnabled: true
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: !Ref InstanceName }
+        - { Key: Environment, Value: !Ref InstanceName }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Sub 'voicenotes-${InstanceName}' }
+        - { Key: Protected, Value: 'true' }
+
+  # ===========================================================================
+  # S3 — audio, transcripts, embeddings (§6.2)
+  # ===========================================================================
+  DataBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Account and region in the name: bucket names are globally unique across all
+      # AWS accounts (§6.2).
+      BucketName: !Sub 'voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        # On, because L0 immutability (I1) is the training signal for Phase 4 and
+        # losing it to a bug is unrecoverable. Note this is also why object deletion
+        # is not erasure: versioning retains copies (G-021, §9.3).
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # The continuous safety copy (I2) is deleted as soon as every segment of
+          # its session transcribes successfully (§10.5.8). This rule is ONLY the
+          # backstop for a worker that died silently, which is why the window is 7
+          # days rather than 30 — a longer window buys nothing and stores audio.
+          - Id: ExpireContinuousSafetyCopies
+            Status: Enabled
+            Prefix: ''
+            TagFilters:
+              - { Key: chintan-continuous, Value: 'true' }
+            ExpirationInDays: 7
+          - Id: AbortStaleMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              # Device import uploads multi-hundred-MB batches by chunked presigned
+              # PUT (§Phase 6A); an abandoned one otherwise bills indefinitely.
+              DaysAfterInitiation: 7
+      # Deliberately NOT S3 Intelligent-Tiering: it charges per 1,000 objects
+      # monitored, and this bucket holds many small objects — one per segment — so
+      # the monitoring charge would exceed the storage saving (G-026).
+      NotificationConfiguration:
+        # Direct S3 -> Lambda notification. NOT routed through EventBridge: direct
+        # notification is free, and EventBridge in the ingestion path adds cost and
+        # indirection for no benefit at this scale (§10.2).
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt WorkerFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  # Only audio triggers the pipeline. Without this filter the worker
+                  # would invoke on its own writes — transcripts, alignment
+                  # sidecars, the embedding matrix — which is an infinite loop that
+                  # bills per invocation.
+                  - { Name: prefix, Value: tenants/ }
+                  - { Name: suffix, Value: .opus }
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: !Ref InstanceName }
+        - { Key: Environment, Value: !Ref InstanceName }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Sub 'voicenotes-${InstanceName}' }
+        - { Key: Protected, Value: 'true' }
+    DependsOn: WorkerInvokePermission
+
+  # ===========================================================================
+  # Cognito — admin-create-only (§9)
+  # ===========================================================================
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub 'voicenotes-${InstanceName}'
+      # Self-signup disabled. Fixed whitelist, no self-service registration in any
+      # phase covered by the spec — but the architecture does not preclude opening
+      # it later, which is why this is a setting rather than an absence (§8A).
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          # At or above AWS defaults (§Phase 0). No password material is stored or
+          # handled by application code, which is why Cognito is used rather than
+          # passbook's own Argon2id pattern (§4).
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      MfaConfiguration: OPTIONAL
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      UserPoolTags:
+        Project: voicenotes
+        Instance: !Ref InstanceName
+        Environment: !Ref InstanceName
+        ManagedBy: iac
+        Owner: !Ref Owner
+        CostCenter: !Sub 'voicenotes-${InstanceName}'
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub 'voicenotes-${InstanceName}-web'
+      UserPoolId: !Ref UserPool
+      # No client secret: this is a public client — the frontend bundle is
+      # world-readable on GitHub Pages regardless of repository visibility (G-057),
+      # so a secret in it would not be one.
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+
+  # ===========================================================================
+  # IAM — Lambda execution roles
+  # ===========================================================================
+  # Two roles rather than one shared role, so each function holds only what its
+  # profile needs. The API never writes an S3 audio object; the worker is never
+  # reachable from the internet.
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'voicenotes-api-${InstanceName}'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: data-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:BatchGetItem
+                Resource:
+                  - !GetAtt Table.Arn
+                  - !Sub '${Table.Arn}/index/GSI1'
+              # Per-tenant prefix isolation enforced in IAM, not only in
+              # application logic (§9.1). The application check is defence in
+              # depth; this is the primary control. The wildcard is per-tenant
+              # because one function serves every tenant — the tenant-scoped key
+              # helper (I11) is what keeps a request inside its own prefix, and
+              # verify.sh asserts no key escapes it.
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub '${DataBucket.Arn}/tenants/*'
+              # Read the provider secret at cold start. The API needs it for the
+              # search path (§Phase 5); it is cached in module scope, so this is one
+              # call per cold start rather than per request (§10.2).
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/voicenotes/${InstanceName}/*'
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: !Ref InstanceName }
+        - { Key: Environment, Value: !Ref InstanceName }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Sub 'voicenotes-${InstanceName}' }
+
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'voicenotes-worker-${InstanceName}'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: data-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt Table.Arn
+                  - !Sub '${Table.Arn}/index/GSI1'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:PutObjectTagging
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt DataBucket.Arn
+                  - !Sub '${DataBucket.Arn}/tenants/*'
+              # DeleteObject scoped to the continuous safety copies ONLY. The worker
+              # deletes them on transcription success (§10.5.8), and it must not be
+              # able to delete anything else: I1 says application code has no delete
+              # path for L0, and the erasure handler is the sole exception (§9.3).
+              # Scoping the permission is what makes that structural rather than a
+              # convention the code is trusted to follow.
+              - Effect: Allow
+                Action: s3:DeleteObject
+                Resource: !Sub '${DataBucket.Arn}/tenants/*/audio/*/continuous/*'
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/voicenotes/${InstanceName}/*'
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: !Ref InstanceName }
+        - { Key: Environment, Value: !Ref InstanceName }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Sub 'voicenotes-${InstanceName}' }
+
+  # ===========================================================================
+  # Lambda — sync API (§4)
+  # ===========================================================================
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'voicenotes-api-${InstanceName}'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures: [arm64]   # mandatory (§10.1) — ~20% cheaper per GB-second
+      MemorySize: 256
+      Timeout: 10
+      # Bounds worst-case spend structurally rather than by attention. Combined with
+      # the API throttle below and the per-tenant daily spend breaker (§10.5.9), the
+      # worst case is a documented number instead of an open question.
+      ReservedConcurrentExecutions: 5
+      Role: !GetAtt ApiRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ApiCodeKey
+      Environment:
+        Variables:
+          # Resource identifiers only. No provider keys, no model names: those live
+          # in config and SSM (I5, §9), and an env var is visible to anyone who can
+          # read the function configuration.
+          CHINTAN_INSTANCE: !Ref InstanceName
+          CHINTAN_TABLE: !Ref Table
+          CHINTAN_BUCKET: !Ref DataBucket
+          CHINTAN_USER_POOL_ID: !Ref UserPool
+          CHINTAN_USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          CHINTAN_ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: !Ref InstanceName }
+        - { Key: Environment, Value: !Ref InstanceName }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Sub 'voicenotes-${InstanceName}' }
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/voicenotes-api-${InstanceName}'
+      # Explicit, mandatory. Unset is infinite at $0.50/GB ingested (§10.1).
+      RetentionInDays: !Ref LogRetentionDays
+
+  # ===========================================================================
+  # Lambda — async worker (§4)
+  # ===========================================================================
+  WorkerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'voicenotes-worker-${InstanceName}'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Architectures: [arm64]
+      MemorySize: !Ref WorkerMemoryMB
+      # Long enough for a full session pipeline — transcribe, cleanup, extract,
+      # thread, summarise — chained within one invocation. §10.2 rejects Step
+      # Functions here: ~2,000 state transitions/month is cheap but unnecessary
+      # complexity. Revisit only if this approaches the 15-minute ceiling.
+      Timeout: 300
+      ReservedConcurrentExecutions: 2
+      Role: !GetAtt WorkerRole.Arn
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref WorkerCodeKey
+      Environment:
+        Variables:
+          CHINTAN_INSTANCE: !Ref InstanceName
+          CHINTAN_TABLE: !Ref Table
+          CHINTAN_BUCKET: !Ref DataBucket
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: !Ref InstanceName }
+        - { Key: Environment, Value: !Ref InstanceName }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: !Ref Owner }
+        - { Key: CostCenter, Value: !Sub 'voicenotes-${InstanceName}' }
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/voicenotes-worker-${InstanceName}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  WorkerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt WorkerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref 'AWS::AccountId'
+      # Constructed rather than !GetAtt: the bucket depends on this permission
+      # existing before it can declare the notification, so referencing the bucket
+      # here would be circular.
+      SourceArn: !Sub 'arn:aws:s3:::voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}'
+
+  # ===========================================================================
+  # API Gateway HTTP API v2 (§4, §10.2)
+  # ===========================================================================
+  # Deliberately NOT a Lambda Function URL. Function URLs have no per-request
+  # charge, and at ~1k requests/month API Gateway costs about $0.001 — but what
+  # Function URLs lose is ThrottlingRateLimit, which is the cost guard. The throttle
+  # is worth far more than the saving (§10.2).
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'voicenotes-api-${InstanceName}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          # Every POST and PATCH accepts an idempotency key (§2A.1, §6.6). Once
+          # clients retry on your behalf, duplicate capture creation is a
+          # data-integrity bug.
+          - Idempotency-Key
+        AllowCredentials: false
+        MaxAge: 86400
+      Tags:
+        Project: voicenotes
+        Instance: !Ref InstanceName
+        Environment: !Ref InstanceName
+        ManagedBy: iac
+        Owner: !Ref Owner
+        CostCenter: !Sub 'voicenotes-${InstanceName}'
+
+  HttpApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings:
+        # Single-user app. This is passbook's cost guard and it is why API Gateway
+        # is kept over a Function URL (§10.2).
+        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 10
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ApiFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      # $default: the function routes internally (§4). Per-route configuration here
+      # would duplicate the router and the two would drift.
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${ApiIntegration}'
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ApiFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint. The frontend's configured API base.
+    Value: !GetAtt HttpApi.ApiEndpoint
+    Export:
+      Name: !Sub 'voicenotes-api-endpoint-${InstanceName}'
+
+  TableName:
+    Description: DynamoDB single table.
+    Value: !Ref Table
+
+  DataBucketName:
+    Description: S3 bucket for audio, transcripts, and embeddings.
+    Value: !Ref DataBucket
+
+  UserPoolId:
+    Description: Cognito user pool. Used by scripts/users.sh.
+    Value: !Ref UserPool
+
+  UserPoolClientId:
+    Description: Cognito app client the frontend authenticates against.
+    Value: !Ref UserPoolClient

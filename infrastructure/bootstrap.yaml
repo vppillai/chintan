@@ -1,0 +1,507 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Chintan bootstrap — shared, manually deployed once per account. Creates the
+  artifact bucket and the GitHub OIDC deployment role. Mirrors the split in
+  vppillai/passbook (§4): this stack creates the CI role itself, so a push to it
+  must never trigger the per-instance deploy matrix.
+
+# WHY THIS STACK IS SEPARATE, AND MANUAL
+#
+# It creates the credentials the per-instance deploys run under. A stack that can
+# recreate its own deployer is a stack whose permissions cannot be reasoned about,
+# so this one is applied by a human (scripts/bootstrap.sh) and the instance stacks
+# are applied by CI (§0.5A: "Deploy credentials live only in CI").
+#
+# THE FIRST-DEPLOY FAILURE THIS TEMPLATE EXISTS TO AVOID (G-016)
+#
+# The GitHub OIDC provider is account-global and singleton:
+# arn:aws:iam::{account}:oidc-provider/token.actions.githubusercontent.com can
+# exist only once per account. passbook's bootstrap already created one in the
+# target account, so a second declaration fails with "provider already exists" —
+# and it works perfectly in a clean account, which means it survives testing and
+# fails in production. That is why creation is behind a Condition and the trust
+# policy references an ARN constructed from AWS::AccountId rather than !GetAtt on a
+# possibly-absent resource. scripts/doctor.sh detects which case applies and
+# reports the parameter value to use.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Default: vppillai
+    Description: GitHub organisation or username that owns the repository.
+
+  GitHubRepo:
+    Type: String
+    Default: chintan
+    Description: Repository name. Scopes the OIDC trust policy to this repo alone.
+
+  CreateOIDCProvider:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >-
+      Create the account-global GitHub OIDC provider. Defaults to false because
+      passbook has already created it in the target account (G-016). doctor.sh
+      detects which case applies; do not guess.
+
+  AgentBoundaryPolicyArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ARN of the permissions boundary created by scripts/bootstrap-agent.sh. When
+      set, every role in this stack carries it, so privilege cannot escalate
+      through a role the CI principal creates (G-046, §9.5). Empty only for the
+      very first bootstrap, before the boundary exists.
+
+Conditions:
+  ShouldCreateOIDC: !Equals [!Ref CreateOIDCProvider, "true"]
+  HasBoundary: !Not [!Equals [!Ref AgentBoundaryPolicyArn, ""]]
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Artifact bucket
+  # ---------------------------------------------------------------------------
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    # Account and region are part of the name, not decoration: S3 bucket names are
+    # globally unique across all AWS accounts, so a name without them collides with
+    # any other deployment of this repository (§6.2).
+    Properties:
+      BucketName: !Sub 'voicenotes-artifacts-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          # AES256 (SSE-S3, AWS-managed). No CMK in the personal phase — I8: a
+          # customer-managed key costs ~$1/month standing, roughly a fifth of the
+          # entire target budget, for a control with no benefit to a single-user
+          # deployment (G-020).
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          # Artifacts are reproducible from git — the same commit builds to the
+          # same bytes (scripts/build-lambda.sh) — so a superseded zip has no
+          # backup value. Expire noncurrent versions at the 1-day minimum and clean
+          # up the delete markers CI pruning leaves behind.
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+            ExpiredObjectDeleteMarker: true
+          - Id: AbortStaleMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        # I9: every resource carries the project tag set (§6.4). Instance is
+        # "shared" here because this stack is not per-instance — teardown keys on
+        # Instance, and this bucket must not be removed by tearing down dev.
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: shared }
+        - { Key: Environment, Value: shared }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: vppillai }
+        - { Key: CostCenter, Value: voicenotes-shared }
+        # Deletion of a Protected resource is denied to the agent principal
+        # (§9.5). Losing this bucket strands every stack mid-update.
+        - { Key: Protected, Value: 'true' }
+
+  # ---------------------------------------------------------------------------
+  # GitHub OIDC provider — conditional (G-016)
+  # ---------------------------------------------------------------------------
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOIDC
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+
+  # ---------------------------------------------------------------------------
+  # CI deployment role
+  # ---------------------------------------------------------------------------
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # IAM role names are account-global, so the project prefix is mandatory
+      # rather than stylistic — a generic name collides across projects and the
+      # stack fails on role creation, only in shared accounts (G-017).
+      RoleName: voicenotes-github-actions
+      # The boundary applies to the CI role too. It can create roles (deploying
+      # Lambda requires it), and a principal that can create roles and attach
+      # policies can create a more privileged role and use it (G-046).
+      PermissionsBoundary: !If [HasBoundary, !Ref AgentBoundaryPolicyArn, !Ref 'AWS::NoValue']
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              # Constructed from AWS::AccountId rather than !GetAtt, because the
+              # provider resource may not exist in this stack (G-016).
+              Federated: !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # Scoped to the `production` environment of this repository
+                # alone. Without the environment qualifier, any workflow on any
+                # branch — including one from a fork's pull request — could assume
+                # this role, which is the deployment-credential exfiltration that
+                # CODEOWNERS on .github/workflows/ also guards against (G-048).
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: shared }
+        - { Key: Environment, Value: shared }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: vppillai }
+        - { Key: CostCenter, Value: voicenotes-shared }
+      Policies:
+        - PolicyName: voicenotes-deployment
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # --- CloudFormation, scoped to this project's stacks ---
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/voicenotes-*/*'
+
+              # These two take no resource-level condition per the AWS API.
+              - Effect: Allow
+                Action:
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+
+              # --- Artifact bucket ---
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub '${ArtifactBucket.Arn}/*'
+
+              # --- Data buckets: create and configure only, never read ---
+              # CI provisions the per-instance bucket but has no business reading
+              # its contents: that is user audio and transcripts. §9.2 treats the
+              # corpus as among the most sensitive content a product can hold, and
+              # a deploy role with GetObject on it is a standing path to all of it.
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:PutBucketPolicy
+                  - s3:PutBucketVersioning
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:PutBucketTagging
+                  - s3:PutBucketNotification
+                  - s3:GetBucket*
+                  - s3:GetEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:DeleteBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::voicenotes-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- Lambda: reads unconditional, mutations via CloudFormation ---
+              # The CalledVia condition is what stops a compromised workflow
+              # swapping function code outside CloudFormation, which would leave
+              # the stack believing one thing while the live function ran another.
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                  - lambda:ListTags
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:voicenotes-*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:DeleteFunction
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:PutFunctionEventInvokeConfig
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:voicenotes-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- DynamoDB: describes unconditional, mutations via CFN ---
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/voicenotes-*'
+
+              # No item-level actions at all — not GetItem, not Query. CI
+              # provisions the table; it never reads a row. The same reasoning as
+              # the data bucket above, and it means a compromised workflow cannot
+              # exfiltrate the corpus even though it can create the table.
+              #
+              # DeleteTable is CFN-only specifically because that protects the
+              # DeletionPolicy: Retain on the table: a direct DeleteTable call
+              # would bypass it and take the corpus with it.
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/voicenotes-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- API Gateway ---
+              - Effect: Allow
+                Action: apigateway:GET
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+
+              - Effect: Allow
+                Action:
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:DELETE
+                  - apigateway:PATCH
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- Cognito ---
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:ListTagsForResource
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:CreateUserPoolDomain
+                  - cognito-idp:DeleteUserPoolDomain
+                  - cognito-idp:SetUserPoolMfaConfig
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                Resource: '*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- IAM: reads and tagging unconditional, mutations via CFN ---
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/voicenotes-*'
+
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePermissionsBoundary
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/voicenotes-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # AttachRolePolicy locked to the single managed policy the Lambda
+              # execution roles need. Without this, the CI role could attach
+              # AdministratorAccess to a voicenotes-* role and use it.
+              - Effect: Allow
+                Action: iam:AttachRolePolicy
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/voicenotes-*'
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # PassRole restricted to Lambda. The CI role cannot pass a
+              # voicenotes-* role to EC2 or SageMaker — services this project does
+              # not use and which an attacker could trick into running code (§9.5).
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/voicenotes-*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: 'lambda.amazonaws.com'
+
+              # --- CloudWatch Logs ---
+              # Note what is absent: no cloudwatch:PutMetricAlarm and no sns:*.
+              # §10.1 forbids alarms and SNS topics, and withholding the permission
+              # is a stronger statement of that than the template merely not
+              # declaring one — an alarm cannot be added even by hand (G-022).
+              - Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:TagLogGroup
+                  - logs:ListTagsLogGroup
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/voicenotes-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- EventBridge scheduled rules ---
+              # The only sanctioned use of EventBridge: three scheduled rules from
+              # config `schedules` (§7.4). S3 event notifications stay direct,
+              # because routing them through EventBridge adds cost and indirection
+              # for no benefit at this scale (§10.2).
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:DescribeRule
+                  - events:ListTagsForResource
+                  - events:TagResource
+                  - events:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/voicenotes-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # --- SSM: read parameter METADATA only, never values ---
+              # The deploy needs to confirm a provider secret exists. It must not
+              # be able to read one: §9.4 non-negotiable #3 is that there is no
+              # development task requiring the agent to see an API key, and
+              # kms:Decrypt on these paths is denied. GetParameters is deliberately
+              # absent; DescribeParameters returns metadata without values.
+              - Effect: Allow
+                Action: ssm:DescribeParameters
+                Resource: '*'
+
+              # --- Resource Groups: teardown completeness (§10.3) ---
+              - Effect: Allow
+                Action:
+                  - resource-groups:CreateGroup
+                  - resource-groups:DeleteGroup
+                  - resource-groups:GetGroup
+                  - resource-groups:GetGroupQuery
+                  - resource-groups:ListGroupResources
+                  - resource-groups:Tag
+                  - resource-groups:Untag
+                  - tag:GetResources
+                Resource: '*'
+
+  # ---------------------------------------------------------------------------
+  # Resource Group — makes teardown provable (§10.3)
+  # ---------------------------------------------------------------------------
+  # passbook verifies teardown by naming convention. A tag-based Resource Group is
+  # free and makes "everything this project owns" a single query, which matters far
+  # more in a shared account: teardown deletes the stacks, then queries this group
+  # and fails loudly if anything remains. Never a wildcard delete — in a shared
+  # account an over-broad teardown is catastrophic rather than merely annoying.
+  ProjectResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name: voicenotes
+      Description: Every resource owned by the Chintan project, for teardown verification.
+      ResourceQuery:
+        Type: TAG_FILTERS_1_0
+        Query:
+          ResourceTypeFilters: ['AWS::AllSupported']
+          TagFilters:
+            - Key: Project
+              Values: ['voicenotes']
+      Tags:
+        - { Key: Project, Value: voicenotes }
+        - { Key: Instance, Value: shared }
+        - { Key: Environment, Value: shared }
+        - { Key: ManagedBy, Value: iac }
+        - { Key: Owner, Value: vppillai }
+        - { Key: CostCenter, Value: voicenotes-shared }
+
+Outputs:
+  ArtifactBucketName:
+    Description: S3 bucket holding Lambda deployment artifacts.
+    Value: !Ref ArtifactBucket
+    Export:
+      Name: voicenotes-artifact-bucket
+
+  GitHubActionsRoleArn:
+    Description: IAM role ARN assumed by GitHub Actions via OIDC.
+    Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: voicenotes-github-actions-role
+
+  ResourceGroupName:
+    Description: Tag-based Resource Group used to verify teardown completeness.
+    Value: !Ref ProjectResourceGroup

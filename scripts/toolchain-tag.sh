@@ -43,8 +43,8 @@ fi
 # sort order independent of the caller's locale — without it, a machine with a
 # different collation would compute a different tag from identical content, which
 # would look exactly like a toolchain change.
-find "$TOOLCHAIN_DIR" -type f -print0 \
-    | LC_ALL=C sort -z \
-    | xargs -0 sha256sum \
-    | sha256sum \
-    | cut -c1-16
+find "$TOOLCHAIN_DIR" -type f -print0 |
+    LC_ALL=C sort -z |
+    xargs -0 sha256sum |
+    sha256sum |
+    cut -c1-16

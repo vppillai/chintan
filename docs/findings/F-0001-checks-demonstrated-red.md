@@ -1,5 +1,5 @@
 # F-0001: Does each §0.5A check actually fail when its subject is broken?
-Date: 2026-08-04   Phase: 0   Status: **partial**
+Date: 2026-08-04   Phase: 0   Status: **partial** — 11 of 21 checks demonstrated red
 
 ## Question
 
@@ -65,6 +65,50 @@ self-test additionally **verifies the control case** — that the script passes 
 undoctored tree — before concluding anything from a failure on the doctored one. A
 check that fails everywhere is not evidence of detection.
 
+### Demonstrated red — deliberate break, 2026-08-04, after the templates landed
+
+Each break applied to the real template, check run, break reverted, template
+confirmed byte-identical afterwards (`git diff --stat` empty).
+
+| Check | Break applied | Detected? |
+|---|---|---|
+| log retention | `RetentionInDays` removed from `ApiLogGroup` | yes |
+| no Lambda in VPC | `VpcConfig` added to `ApiFunction` | yes |
+| no alarms or SNS | an `AWS::CloudWatch::Alarm` added | yes |
+| resource prefix | `RoleName` changed to `api-role-${InstanceName}` | yes |
+| brand strings | `<h1>Chintan</h1>` in `frontend/index.html` | yes |
+| **tenant-key helper (I11)** | a handler building `"TENANT#" + id` by hand | **NO — see below** |
+
+Before running these, one thing was checked rather than assumed: that `yq` can
+actually parse a CloudFormation template. Its short intrinsic tags (`!Sub`, `!Ref`,
+`!GetAtt`) are not valid YAML tags to a strict parser, and a parser that silently
+returned nothing would make all four template checks pass vacuously while appearing
+to work. `yq` tolerates them and finds both functions and both log groups.
+
+### The tenant-key check was vacuous
+
+The most important check in Phase 0 — the one §Phase 0 acceptance names explicitly
+("a static check fails the build if any DynamoDB or S3 key is constructed outside
+the tenant-scoped helper") — **did not detect a deliberate violation.**
+
+`tracked_files()` selected files with a bare `git ls-files`, which lists the index:
+committed files only. The violating file was new, therefore untracked, therefore
+invisible. So the check inspected everything except the work in progress, and
+reported green on exactly the kind of change it exists to reject.
+
+Two details make this worse than a simple bug:
+
+1. **CI would have caught it, local would not.** A checkout tracks every file, so
+   the remote signal was correct while the local one was wrong — the most confusing
+   possible split, and the one most likely to be resolved by distrusting CI.
+2. **Editing a tracked file cannot expose it.** Had the red demonstration been done
+   by modifying an existing handler rather than adding a file, it would have passed
+   and the gap would have survived, documented as verified.
+
+Fixed to `git ls-files --cached --others --exclude-standard`. Re-demonstrated: the
+same violation is now reported on both literals with the file and line. Recorded as
+**G-063**.
+
 ### Not yet demonstrated red — no subject exists
 
 Per §0.5A these are present, pass trivially, and each tests for its subject rather
@@ -73,11 +117,6 @@ that gives it a subject, and this table is the outstanding list.
 
 | Check | Active | Demonstrate red by |
 |---|---|---|
-| log retention | 0 | removing `RetentionInDays` from a log group in `template.yaml` |
-| no Lambda in VPC | 0 | adding a `VpcConfig` to a function |
-| no alarms or SNS | 0 | adding an `AWS::CloudWatch::Alarm` |
-| resource prefix | 0 | renaming a role without the `voicenotes-` prefix |
-| tenant-key helper | 0 | writing `"TENANT#" + id` in a handler |
 | typecheck (frontend) | 1 | a type error in `frontend/js` |
 | accessibility | 1 | a sub-AA contrast pair in either theme |
 | responsive | 1 | a `vh` unit, or content that scrolls the page at 320px |
@@ -86,9 +125,6 @@ that gives it a subject, and this table is the outstanding list.
 | extraction fixtures | 3 | changing an expected item kind |
 | prompt integrity | 3 | shortening a `prompt` body |
 | trigger additivity | 8 | touching `RecorderController` while adding an adapter |
-
-The infrastructure checks (rows 1–4) become demonstrable as soon as
-`infrastructure/template.yaml` exists, which is the next slice.
 
 ## Consequence for the build
 
@@ -100,11 +136,25 @@ The infrastructure checks (rows 1–4) become demonstrable as soon as
 
 2. **A self-test can pass without testing anything.** The fix generalises: any check
    asserting "X fails when broken" must also assert "X passes when not broken",
-   or a universal failure reads as successful detection. Recorded as **G-062** in
-   `docs/gotchas.md`.
+   or a universal failure reads as successful detection. Recorded as **G-062**.
 
-3. **`make check` is green with 21 of 21 inventory rows wired.** Fourteen are active
-   and passing on real subjects; seven are dormant, each testing for its subject.
+3. **Two of the three most important checks were broken, and both were found only by
+   deliberately breaking their subject.** The guardrails self-test and the I11
+   tenant-key check both reported green while inspecting nothing relevant. Neither
+   would have been discovered by reading the code, and neither showed any symptom.
+   §0.5A's rule — "every check is demonstrated red before it is trusted" — is not a
+   process nicety; it is the only thing that surfaced either of these. Recorded as
+   **G-063**.
 
-4. No spec assumption is affected. This finding concerns the pipeline, not the
+4. **How a check is broken determines what the demonstration proves.** G-063 was
+   invisible to an edit of a tracked file and visible only to a *new* file. So the
+   break has to resemble the real failure: for a check over a file set, add a file;
+   for a check over content, edit content. A red demonstration that took the easier
+   route would have certified the gap as verified.
+
+5. **`make check` is green with 21 of 21 inventory rows wired.** Fourteen active on
+   real subjects, seven dormant. Eleven have now been demonstrated red; the
+   remaining ten are listed above against the phase that gives each a subject.
+
+6. No spec assumption is affected. This finding concerns the pipeline, not the
    product design.
