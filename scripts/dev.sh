@@ -48,17 +48,11 @@ fi
 # The image tag is the hash of everything that defines the image. Any change to
 # the Dockerfile, the pinned versions, or the installer changes the tag, so a
 # stale image can never be silently reused after a toolchain bump.
-toolchain_tag() {
-    # Hash file contents *and* paths, sorted, so the digest is stable across
-    # machines and changes if a file is renamed or removed.
-    find "$TOOLCHAIN_DIR" -type f -print0 |
-        LC_ALL=C sort -z |
-        xargs -0 sha256sum |
-        sha256sum |
-        cut -c1-16
-}
-
-TAG="$(toolchain_tag)"
+#
+# Computed by scripts/toolchain-tag.sh, which is the single implementation. A
+# second copy here could drift from the one CI uses, and the drift would present
+# as CI and dev appearing to agree on a tag while running different images.
+TAG="$("${REPO_ROOT}/scripts/toolchain-tag.sh")"
 LOCAL_REF="${IMAGE_NAME}:${TAG}"
 IMAGE="${CHINTAN_IMAGE:-$LOCAL_REF}"
 

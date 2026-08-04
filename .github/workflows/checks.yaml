@@ -111,6 +111,35 @@ jobs:
           key: go-${{ needs.toolchain.outputs.image }}-${{ hashFiles('backend/go.sum') }}
           restore-keys: go-${{ needs.toolchain.outputs.image }}-
 
+      # Close the loop on ADR 0005's guarantee. The job declares an image by
+      # reference; this asserts that the image it is actually running in is the one
+      # the checked-out source describes. It catches a stale reference, an image
+      # published under a tag that does not match its contents, and a locale or
+      # tooling difference that makes the hash non-deterministic.
+      #
+      # Without this the guarantee is asserted rather than verified — and this
+      # project's whole position on checks is that an unverified one gets believed.
+      - name: Assert the container matches the checked-out toolchain
+        run: |
+          declared='${{ needs.toolchain.outputs.image }}'
+          declared_tag="${declared##*:}"
+          actual_tag="$(./scripts/toolchain-tag.sh)"
+          echo "declared image: $declared"
+          echo "source-derived tag: $actual_tag"
+          if [ "$declared_tag" != "$actual_tag" ]; then
+            echo "::error::This job runs image tag '$declared_tag' but the checked-out containers/toolchain hashes to '$actual_tag'."
+            echo "The environment does not match the source that describes it, so no result from this job is trustworthy (ADR 0005)."
+            exit 1
+          fi
+          # Prove the tools are the ones versions.env pins, not merely that a tag
+          # matched: a correct tag on a broken image would still pass the above.
+          go_want="$(grep '^GO_VERSION=' containers/toolchain/versions.env | cut -d= -f2)"
+          go_have="$(go version | awk '{print $3}' | sed 's/^go//')"
+          if [ "$go_want" != "$go_have" ]; then
+            echo "::error::versions.env pins Go $go_want but this image has $go_have"
+            exit 1
+          fi
+
       - name: ${{ matrix.name }}
         env:
           # The job already runs inside the image, so make must not try to

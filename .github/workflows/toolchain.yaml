@@ -48,16 +48,23 @@ jobs:
       - id: resolve
         name: Resolve the content-addressed image tag
         run: |
-          # Identical computation to scripts/dev.sh's toolchain_tag(). Asserted
-          # equal below rather than trusted, because a divergence would mean CI
-          # and dev silently running different images — the one failure this
-          # whole design exists to prevent.
-          TAG="$(./scripts/dev.sh --tag)"
+          # Same implementation the local `make` uses — scripts/toolchain-tag.sh,
+          # not a copy of it. A divergence would mean CI and dev silently running
+          # different images, which is the one failure this design exists to
+          # prevent, so there is one implementation rather than two that agree
+          # (ADR 0005). The check job additionally asserts that the image it runs
+          # in matches the checked-out source.
+          TAG="$(./scripts/toolchain-tag.sh)"
           REGISTRY="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
           echo "tag=$TAG"                                  >> "$GITHUB_OUTPUT"
           echo "registry=$REGISTRY"                        >> "$GITHUB_OUTPUT"
           echo "image=${REGISTRY}/chintan-toolchain:${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Toolchain tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
+          # To the log as well as the summary. Written only to the summary, this
+          # value could not be read back from a completed run, which made the
+          # "CI and dev run the same image" claim unverifiable from the pipeline
+          # output — an asserted guarantee rather than a checked one.
+          echo "Toolchain tag: $TAG"
+          echo "Toolchain tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
