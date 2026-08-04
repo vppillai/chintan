@@ -106,8 +106,25 @@ Two details make this worse than a simple bug:
    and the gap would have survived, documented as verified.
 
 Fixed to `git ls-files --cached --others --exclude-standard`. Re-demonstrated: the
-same violation is now reported on both literals with the file and line. Recorded as
-**G-063**.
+same violation is now reported on both literals with the file and line.
+
+**It then confirmed itself, unprompted.** The commit that introduced
+`scripts/toolchain-tag.sh` passed `make check` locally and turned `main` red: CI's
+formatting gate rejected that file. Locally it was uncommitted and therefore
+invisible to the check; in CI it was committed and therefore visible. So the bug was
+demonstrated twice — once deliberately, once by causing the exact red main it
+predicts — and the second time is the better evidence, because nothing was arranged.
+
+Worth being precise about what went wrong there, since it is the failure mode rather
+than the bug: the local run and the CI run disagreed about **what files the
+repository contains.** That is not a category of disagreement anyone thinks to
+suspect, which is why it presents as a flaky or wrong CI rather than as a defect in
+the check. Recorded as **G-063**.
+
+`main` was red for one commit and fixed in the next, which is the rule §0.5A sets for
+Phases 0–1: CI cannot *prevent* a bad commit on a branch committed to directly, so
+the discipline that makes that safe is that a failing `main` is fixed before anything
+else is started, never accumulated.
 
 ### Not yet demonstrated red — no subject exists
 
