@@ -41,7 +41,7 @@ usually what saves the time.
 
 **Confidence levels:** `verified` — observed directly on real hardware or against a live API. `documented` — stated in official vendor documentation. `reported` — from secondary sources or prior experience; re-verify before relying on it. Promote entries as they are confirmed, and correct them when they turn out wrong. A register that is never corrected becomes folklore.
 
-**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Sixty-three entries are recorded here; the next new one is `G-068`.
+**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Sixty-six entries are recorded here; the next new one is `G-071`.
 
 ### Mobile web / PWA
 
@@ -534,6 +534,30 @@ usually what saves the time.
 **Action:** Treat **naming-prefix denies and resource-ARN scoping as the real control** — those are ARN-based and always supported. Keep the tag conditions as defence in depth for the services that do support them, but name the statement so it does not claim more than it delivers: a statement named as though it enforces something it cannot is how a guardrail gets trusted while absent (§9.8). Run every deny against the live API and assert it fires.
 **Confidence:** verified (IAM Access Analyzer, and per-action testing against the live API)
 **Refs:** §9.5, [[G-047]], [[G-066]]
+
+#### G-068 — `ForAnyValue:StringNotEquals` on `aws:CalledVia` does not fire on a direct call, which is the case it was written for
+**Assumption:** To require that an action only ever reach a resource through CloudFormation, deny it when `aws:CalledVia` is not CloudFormation: `ForAnyValue:StringNotEquals: {aws:CalledVia: [cloudformation.amazonaws.com]}`.
+**Reality:** A **direct** API call carries no `aws:CalledVia` key at all — the key exists only when another service is calling on your behalf. `ForAnyValue:*` evaluates to **false** for an absent key, because there are no values for any of which to hold. So the deny is skipped on exactly the direct call it exists to block, and applies only when some *other* service is the caller. Precisely backwards. Use `ForAllValues:StringNotEquals`, which returns **true** for an absent key.
+**Symptom:** None. The statement is present, names the right actions, and reads correctly. The direct call succeeds. Worse, `iam:simulate-principal-policy` agrees it is allowed, so a simulation-based test confirms the wrong answer with apparent authority.
+**Action:** `ForAllValues` when an absent key must be treated as a violation; `ForAnyValue` when it must not. Then test the absent-key case explicitly — that is the case the operators differ on, and it is the one that matters. This is [[G-060]] mirrored: there a naive condition denied global services, here a naive condition exempted direct calls. Both come from not asking what happens when the key is missing.
+**Confidence:** verified (observed against the live IAM API and the policy simulator)
+**Refs:** §9.5, [[G-060]], [[G-067]], docs/findings/F-0002-agent-boundary-bootstrap.md
+
+#### G-069 — `iam:simulate-principal-policy` populates no condition context, so conditional denies over-match and reads are worthless without it
+**Assumption:** The policy simulator evaluates a request the way IAM would, so its verdict can be trusted as a non-destructive substitute for attempting the action.
+**Reality:** The simulator supplies **no condition context of its own**. `aws:RequestedRegion`, `aws:RequestTag/*`, and `aws:CalledVia` are all absent unless passed with `--context-entries`. A region deny written as `StringNotEquals: {aws:RequestedRegion: <region>}` therefore matches *every* request in simulation, and the simulator reports `explicitDeny` for routine, obviously-permitted operations.
+**Symptom:** Wholesale `explicitDeny` on a policy that demonstrably works against the live API — `s3:PutObject`, `dynamodb:PutItem`, `cloudformation:CreateStack` all denied in simulation minutes after a real deploy succeeded. Reads as a broken boundary and invites "fixing" a policy that is correct.
+**Action:** Pass every condition key the policy references, and pass them per scenario — the same action must be simulated with `aws:CalledVia` present and absent to test both branches of a CloudFormation-only deny. Treat the simulator as a way to enumerate scenarios cheaply, and the live API as the authority.
+**Confidence:** verified (encountered testing this boundary)
+**Refs:** §9.5, [[G-068]], docs/findings/F-0002-agent-boundary-bootstrap.md
+
+#### G-070 — Testing a deny by attempting the action deletes the resource when the deny does not work
+**Assumption:** The safe way to verify a guardrail is to attempt the forbidden action and check that it fails — §9.5's own gate says "attempt each, assert each fails."
+**Reality:** That is exactly right for *creates* and for reads, and dangerous for *deletes*. If the deny does not work, the action succeeds, and for a delete the verification destroys the thing it was checking. Encountered here: a probe of the `Protected=true` deletion deny ran `s3api delete-bucket` against the live artifact bucket. The deny did not work — `aws:ResourceTag` is unsupported for S3 authorization ([[G-067]]) — so the bucket was deleted. It was empty, so nothing was lost, but the CloudFormation stack was left drifted, believing a resource that no longer existed.
+**Symptom:** The test reports "NOT DENIED", which is the correct finding, arrived at by causing the damage the guardrail existed to prevent. On a resource holding data the finding would be unrecoverable.
+**Action:** Verify destructive denies with `iam:simulate-principal-policy` (read-only) or against a throwaway resource created for the purpose — never against a live one. Keep attempt-the-action testing for creates, reads, and cross-project probes, where a working deny and a broken one differ only in an error message. And read [[G-069]] first: the simulator needs its condition context supplied or it will confirm whatever you feared.
+**Confidence:** verified (encountered, with consequences, testing this boundary)
+**Refs:** §9.5, §Phase 0 entry gate, [[G-067]], [[G-069]]
 
 #### G-041 — Manual sync steps decay
 **Assumption:** A daily manual step is acceptable if the value is high.

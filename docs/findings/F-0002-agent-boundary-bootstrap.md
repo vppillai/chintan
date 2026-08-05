@@ -1,5 +1,5 @@
 # F-0002: Does the permissions boundary permit legitimate work and block the intended actions?
-Date: 2026-08-04   Phase: 0   Status: **confirmed, after three refutations**
+Date: 2026-08-04   Phase: 0   Status: **confirmed, after six refutations**
 
 ## Question
 
@@ -158,13 +158,60 @@ looks identical to a missing deny exemption.
    table and bucket in `template.yaml`, and the CI role's CloudFormation-only
    `DeleteTable` grant, are the controls that actually hold there.
 
-5. **The boundary permits a real deploy.** Not yet proven end to end: the gate also
-   requires deploying a trivial stack, which needs the bootstrap CloudFormation stack
-   and is the next step. What is proven is that every read and describe the deploy path
-   needs succeeds, and that CloudFormation stack operations are permitted in the deploy
-   region.
+5. **The boundary permits a real CloudFormation deploy — proven end to end.** The
+   `voicenotes-bootstrap` stack deployed under the boundary, creating an S3 bucket, an
+   IAM role, and a Resource Group. §9.5 warns that "CloudFormation is the actual
+   caller, so the request tags CloudFormation propagates — not the ones the agent typed
+   — are what the condition sees. Verify propagation for each resource type rather than
+   assuming." Verified: every resource is discoverable through the tagging API, and
+   **the role CloudFormation created carries the permissions boundary**, which is
+   G-046's requirement that privilege cannot escalate through a role the agent creates.
 
-6. **Still outstanding, and not settled by this finding:** the GitHub token remains a
+   The one non-boundary failure on the way: the ResourceGroups API validates
+   `description` against `[\sa-zA-Z0-9_.-]*` and rejects commas, reporting only that
+   'description' failed a constraint without naming the resource or the character.
+
+6. **Three further defects were found after the boundary "worked", and they are the
+   most instructive part of this finding.**
+
+   **A direct `s3api delete-bucket` against the live artifact bucket succeeded.** The
+   `Protected=true` deletion deny does not work for S3 — the same G-067 gap — and the
+   grant policy allowed `s3:DeleteBucket` on `voicenotes-*`. The bucket was empty so
+   nothing was lost, but the stack was left drifted, and on a resource holding data
+   this would have been unrecoverable.
+
+   The probe itself was the mistake: verifying a *destructive* deny by attempting the
+   action destroys the resource whenever the deny does not work. Recorded as **G-070**.
+   Creates, reads, and cross-project probes are safe to test that way; deletes are not.
+
+   **The fix exposed a second defect.** Gating the irreversible deletes behind
+   CloudFormation — the pattern `bootstrap.yaml` already applies to the CI role, and
+   which the agent's own grants had omitted — was written with
+   `ForAnyValue:StringNotEquals` on `aws:CalledVia`. That operator returns **false**
+   for an absent key, and a direct call carries no `aws:CalledVia` at all. The deny
+   was skipped on precisely the direct call it existed to block. `ForAllValues` is
+   correct. Recorded as **G-068**, and it is G-060 mirrored: both come from not asking
+   what happens when the condition key is missing.
+
+   **And the simulator confirmed the wrong answer.** `iam:simulate-principal-policy`
+   populates no condition context, so with `aws:RequestedRegion` absent the region deny
+   matched everything and the simulator reported `explicitDeny` for `s3:PutObject` and
+   `cloudformation:CreateStack` — minutes after a real deploy had succeeded. Recorded
+   as **G-069**. Passed the full context, all eight scenarios behave as intended, and
+   the live API agrees: a direct delete-bucket is now denied and the bucket is intact.
+
+7. **What actually protects the irreversible resources, stated plainly**, since three
+   separate mechanisms turned out not to:
+
+   | Mechanism | Works? |
+   |---|---|
+   | `aws:ResourceTag/Protected` deny | **No** — unsupported for S3, DynamoDB, and most services here (G-067) |
+   | `aws:ResourceTag/Project` deny | **No** — same gap |
+   | `DeletionPolicy: Retain` | Yes, but only against a *stack* deletion, not a direct API call |
+   | **CloudFormation-only condition on delete actions** | **Yes** — verified in both branches |
+   | **Resource-ARN scoping in the grant policy** | **Yes** — always supported |
+
+8. **Still outstanding, and not settled by this finding:** the GitHub token remains a
    classic token (G-049), which `guardrails-check.sh` correctly reports as a violation
    rather than a warning. Provider keys are not in SSM. The `Project` cost allocation
    tag cannot be activated until a resource carries it, so it moves to the first deploy

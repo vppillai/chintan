@@ -81,6 +81,16 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
   least as likely and considerably more expensive in wasted time". The agent now runs
   as `voicenotes-agent` under its boundary, with short-lived credentials, and
   `guardrails-check.sh` fails if it is ever run under root.
+- **The bootstrap stack is deployed** — artifact bucket, OIDC deployment role, and the
+  tag-based Resource Group that makes teardown provable. Deployed *under the boundary*,
+  which settles the Phase 0 gate item that matters most: §9.5 warns CloudFormation is
+  the actual caller, so the tags it propagates rather than the ones typed are what
+  conditions see. Verified, including that the role CloudFormation created carries the
+  boundary (G-046).
+- **`bootstrap.sh` and `teardown.sh`.** Teardown proves completeness by querying the
+  Resource Group rather than matching a name pattern — never a wildcard delete, because
+  this account also hosts passbook. The corpus table and data bucket are retained by
+  policy; removing them is tenant erasure (§9.3), not a side effect of teardown.
 - **Registers seeded.** `docs/gotchas.md` with 63 entries (57 from §13 with IDs
   preserved verbatim, plus G-062 found while building the pipeline), five ADRs, and
   the first finding.

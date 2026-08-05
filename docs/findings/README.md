@@ -67,4 +67,5 @@ Each carries an entire phase design. None is proven yet.
 
 | Finding | Question | Status |
 |---|---|---|
-| [F-0001](F-0001-checks-demonstrated-red.md) | Does each §0.5A check actually fail when its subject is broken? | partial |
+| [F-0001](F-0001-checks-demonstrated-red.md) | Does each §0.5A check actually fail when its subject is broken? | partial — 11 of 21 |
+| [F-0002](F-0002-agent-boundary-bootstrap.md) | Does the permissions boundary permit legitimate work and block the intended actions? | confirmed, after six refutations |

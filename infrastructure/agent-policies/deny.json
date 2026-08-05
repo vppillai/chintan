@@ -18,6 +18,25 @@
       ]
     },
     {
+      "Sid": "DenyIrreversibleDeletesOutsideCloudFormation",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteBucket",
+        "dynamodb:DeleteTable",
+        "cognito-idp:DeleteUserPool",
+        "iam:DeleteRole",
+        "logs:DeleteLogGroup"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ForAllValues:StringNotEquals": {
+          "aws:CalledVia": [
+            "cloudformation.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
       "Sid": "DenyCreateUntaggedResources",
       "Effect": "Deny",
       "Action": [

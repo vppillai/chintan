@@ -473,7 +473,10 @@ Resources:
     Type: AWS::ResourceGroups::Group
     Properties:
       Name: voicenotes
-      Description: Every resource owned by the Chintan project, for teardown verification.
+      # No commas. The ResourceGroups API validates this field against
+      # [\sa-zA-Z0-9_.-]* and rejects punctuation, and the error names 'description'
+      # without saying which resource or which character.
+      Description: Every resource owned by this project - used to verify teardown completeness
       ResourceQuery:
         Type: TAG_FILTERS_1_0
         Query:
