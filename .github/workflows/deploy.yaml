@@ -25,6 +25,15 @@ on:
       # creates the CI role this workflow assumes, so pushing it must never kick off the
       # instance matrix (§4).
   workflow_dispatch:
+    inputs:
+      instance:
+        description: >-
+          Instance to deploy. A push to main deploys dev only (§Phase 0); prod is
+          deliberate, never automatic.
+        required: true
+        default: dev
+        type: choice
+        options: [dev, prod]
 
 permissions:
   contents: read
@@ -53,8 +62,11 @@ jobs:
       contents: read
       packages: write
 
-  # Instances are discovered from config/instances/*.yaml rather than listed here, so
-  # adding one is a config change (§Phase 0, mirroring passbook's dynamic matrix).
+  # Instances are discovered from config/instances/*.yaml rather than hardcoded, so adding
+  # one is a config change (§Phase 0, mirroring passbook's dynamic matrix) — but a push to
+  # main deploys **dev only**. §Phase 0 specifies "for main (checks, then deploy to dev
+  # through the OIDC role)", and an automatic prod deploy on every merge is neither what
+  # that says nor something anyone wants. prod goes through workflow_dispatch.
   discover:
     needs: [checks, toolchain]
     runs-on: ubuntu-latest
@@ -68,10 +80,27 @@ jobs:
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - id: list
+        env:
+          REQUESTED: ${{ inputs.instance }}
         run: |
-          INSTANCES=$(ls config/instances/*.yaml | xargs -n1 basename | sed 's/\.yaml$//' | jq -R . | jq -sc .)
-          echo "instances=$INSTANCES" >> "$GITHUB_OUTPUT"
-          echo "Discovered: $INSTANCES"
+          # Every instance that exists, for validation.
+          ALL=$(ls config/instances/*.yaml | xargs -n1 basename | sed 's/\.yaml$//' | jq -R . | jq -sc .)
+          echo "Configured instances: $ALL"
+
+          if [ -n "$REQUESTED" ]; then
+            # Dispatch: deploy exactly what was asked for, after confirming it exists —
+            # a typo would otherwise create a new empty stack rather than failing.
+            if ! echo "$ALL" | jq -e --arg i "$REQUESTED" 'index($i)' > /dev/null; then
+              echo "::error::no config/instances/${REQUESTED}.yaml"
+              exit 1
+            fi
+            SELECTED=$(jq -nc --arg i "$REQUESTED" '[$i]')
+          else
+            # Push to main: dev only.
+            SELECTED='["dev"]'
+          fi
+          echo "instances=$SELECTED" >> "$GITHUB_OUTPUT"
+          echo "Deploying: $SELECTED"
 
   deploy:
     needs: [toolchain, discover]
@@ -114,6 +143,26 @@ jobs:
         # is the one deployed. Reproducible: -trimpath, CGO off, and a pinned compiler
         # mean the same commit produces the same bytes.
         run: make build-lambda
+
+      # Diagnostic: report which identity GitHub is actually presenting. The role's trust
+      # policy pins the `sub` claim exactly, and a mismatch fails with "Not authorized to
+      # perform sts:AssumeRoleWithWebIdentity" — an error that names neither the expected
+      # nor the presented value, so without this the next step is guesswork.
+      #
+      # `sub` and `aud` are claims about which workflow is running; they are not secrets.
+      # The token itself is a credential and is never printed.
+      - name: Report the OIDC subject being presented
+        run: |
+          TOKEN=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" | jq -r '.value')
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "::error::could not obtain an OIDC token — is id-token: write granted to this job?"
+            exit 1
+          fi
+          CLAIMS=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null || true)
+          echo "presented sub: $(echo "$CLAIMS" | jq -r '.sub')"
+          echo "presented aud: $(echo "$CLAIMS" | jq -r '.aud')"
+          echo "expected  sub: repo:${GITHUB_REPOSITORY}:environment:production"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
