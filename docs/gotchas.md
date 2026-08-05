@@ -41,7 +41,7 @@ usually what saves the time.
 
 **Confidence levels:** `verified` — observed directly on real hardware or against a live API. `documented` — stated in official vendor documentation. `reported` — from secondary sources or prior experience; re-verify before relying on it. Promote entries as they are confirmed, and correct them when they turn out wrong. A register that is never corrected becomes folklore.
 
-**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Sixty-nine entries are recorded here; the next new one is `G-074`.
+**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Eighty-seven entries are recorded here; the next new one is `G-092`.
 
 ### Mobile web / PWA
 
@@ -582,6 +582,336 @@ usually what saves the time.
 **Action:** Pass a bound method value (`h.Handle`), not the receiver. Assert it in a test: `lambda.NewHandler` panics on a non-function, so a three-line test turns an in-production 500 into a build failure. And smoke-test a real endpoint at the end of every deploy — a stack that deploys while the function cannot serve is otherwise indistinguishable from a working one.
 **Confidence:** verified (encountered on the first deploy)
 **Refs:** §4, §0.6, docs/findings/F-0003-first-deploy-through-ci.md
+
+#### G-074 — DynamoDB destroys the Go type of a whole number, and the in-memory fake cannot reproduce it
+**Assumption:** The in-memory Repository fake is a faithful behavioural specification, so a test passing
+against it means the DynamoDB adapter behaves the same way.
+**Reality:** DynamoDB has one number type and carries it on the wire as a decimal string, so the Go
+type of a number is not recoverable. float64(3) is stored as "3" and must come back as
+either int64(3) or float64(3) — it cannot be both. Money forces the int64 choice (meter
+asserts .(int64) on cost_micros directly, and float64 cannot represent every int64),
+which means a float64 attribute whose value happens to be whole comes back as int64. The
+same applies to element types: []string goes out as a list of strings and comes back as
+[]any. The fake round-trips the exact Go value it was given, so it can never show
+either.
+**Symptom:** `v, ok := item.Attrs["quantity"].(float64)` yields (0, false) in production and (3,
+true) in every test — a metering quantity or a confidence score silently reads as zero.
+A `.([]string)` assertion on a stored list panics or fails only in production.
+**Action:** Read number attributes through repository.AsInt64/AsFloat64, never with a direct type
+assertion, and read list attributes as []any. Better still, make the fake normalise on
+read the way the adapter does, so the divergence stops existing — see the open question
+about that.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-075 — A DynamoDB TTL attribute written with its Go zero value expires the item immediately
+**Assumption:** Writing the TTL field unconditionally is harmless: 0 means "no expiry", so the attribute
+just says nothing.
+**Reality:** The TTL attribute is an absolute epoch second. 0 is 1 January 1970, which is in the
+past, so the item becomes eligible for TTL deletion the moment it is written. "No
+expiry" is expressed by the attribute being absent, not by it being zero.
+**Symptom:** Every mutable record — captures, items, threads — silently disappears within DynamoDB's
+TTL deletion window (up to 48 hours) after being written. Nothing errors, nothing logs,
+and the loss is delayed enough to look unrelated to the write.
+**Action:** Only ever write a TTL attribute when the value is strictly positive. In this codebase
+repository.marshalItem does that and refuses a negative TTL; anything that writes
+DynamoDB items outside that adapter needs the same rule.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-076 — Writing one of a GSI's two key attributes produces no error and no index entry
+**Assumption:** If GSI1PK or GSI1SK is wrong or missing, DynamoDB will reject the write or the index
+will be obviously broken.
+**Reality:** A sparse GSI projects an item only when it carries every index key attribute. An item
+with GSI1PK and no GSI1SK is stored successfully, is readable by key, and never appears
+in the index. There is no service error at any point.
+**Symptom:** A capture is created, is fetchable by ID, and never appears in GET /v1/captures. The
+user reports "my recording vanished" while the record is sitting in the table, and only
+a describe-table plus an item dump distinguishes it from a genuinely lost write.
+**Action:** Refuse the half-populated pair at the write boundary — repository.marshalItem errors
+when exactly one of GSI1PK/GSI1SK is set. Any new sparse index needs the same
+both-or-neither check on the write path, since there is nothing downstream that can
+detect it.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-077 — An empty DynamoDB Query page with a LastEvaluatedKey is normal, not the end of the results
+**Assumption:** Pagination ends when a page comes back with no items, so `if len(page.Items) == 0 {
+break }` is a safe loop condition.
+**Reality:** DynamoDB stops reading at the 1MB boundary, not at an item boundary, so a page can
+legitimately contain zero items and still carry a LastEvaluatedKey with more results
+behind it. The only correct termination condition is an absent LastEvaluatedKey.
+**Symptom:** A query silently returns fewer records than exist. For usage records this makes
+MonthTotal and DayTotal under-count, so the §10.5.9 daily spend breaker computes a
+plausible figure that is too low and the cap stops holding — no error, no log, just a
+number that is wrong in the safe-looking direction.
+**Action:** Loop on `len(page.LastEvaluatedKey) != 0` and never on page emptiness, and return no
+partial result when a page fails. Both are asserted in
+TestQueryPrefixPaginatesToExhaustion and
+TestQueryPrefixReturnsNothingRatherThanAPartialResultOnError.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-078 — A conditional PutItem is not retry-safe: the SDK's own retry turns your committed write into a conflict
+**Assumption:** A conditional write is idempotent, so letting the AWS SDK retry it is harmless.
+**Reality:** If the PutItem commits and its response is lost (network blip, 5xx, throttle), the
+standard retryer re-sends the identical request; the condition now fails against the
+item it just created, and the caller sees ConditionalCheckFailedException. A reservation
+record with nothing attempt-specific in it is then indistinguishable from another
+caller's reservation — the creator reads back its own row and concludes someone else
+holds the key.
+**Symptom:** One specific idempotency key answers 409 Conflict on every attempt for the whole TTL
+(24h) while every other request works. Looks like a stuck worker or a client bug; there
+is no self-heal and no log line, because from the server's point of view the code did
+the right thing.
+**Action:** Put something per-attempt in the row — a 128-bit random token minted once per logical
+call — and treat "stored token == mine" as proof of authorship, returning "new" rather
+than "in flight". Fail the call if the token cannot be generated; never substitute a
+fixed value, because then every attempt recognises every row as its own. See
+backend/internal/idem (Begin, attrAttempt) and
+TestACommittedReservationIsRecognisedByTheAttemptThatWroteIt.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-079 — A job-level `permissions` block replaces the workflow-level one, so a scope granted once is not granted everywhere
+**Assumption:** The workflow-level `permissions:` block is a floor every job inherits, and a job that
+declares its own adds to it. So `pages: write` on the job that deploys is enough for a
+Pages workflow.
+**Reality:** A job-level block REPLACES the workflow-level block entirely. A job that declares none
+inherits the workflow block verbatim; a job that declares one gets exactly what it lists
+and nothing more. In a two-job Pages workflow the build job runs configure-pages and
+upload, and with no `pages` scope it cannot even READ the Pages site — GET
+/repos/{owner}/{repo}/pages returns 403 "Resource not accessible by integration".
+Compounding it: `actions/configure-pages` with `enablement: true` can never work with
+GITHUB_TOKEN at all. Its action.yml states the input needs `administration:write` and
+`pages:write`, and `administration` is not a grantable GITHUB_TOKEN scope, so the create
+call can only 403.
+**Symptom:** The build job fails at configure-pages, deploy never runs, and nothing is ever published
+— while the workflow's own text reads as though the permission was granted, because the
+word appears on the other job. It fails identically when Pages HAS been enabled by hand,
+since with `pages: none` even the metadata read 403s. `enablement: true` makes the
+failure look like a Pages-configuration problem rather than a token-scope one.
+**Action:** Restate every scope a job needs on that job, including the ones the workflow already
+grants, and comment the workflow-level block as a default for jobs added later rather
+than as an inherited floor. Do not use `enablement: true` with GITHUB_TOKEN: enable
+Pages once by hand or by one authenticated POST, and keep configure-pages purely as the
+precondition check that fails with an actionable message when it is off. Assert the
+shape mechanically — `yq -e '.jobs.<job>.permissions.pages'` — because this defect is
+invisible from reading the file.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-080 — float64 to int64 conversion is architecture-dependent in Go, and the direction differs between CI and Lambda
+**Assumption:** An out-of-range float64 converted to int64 either wraps or is caught by the surrounding
+validation, and CI on x86 exercises the same behaviour as production.
+**Reality:** The result is implementation-defined. arm64 saturates to math.MaxInt64; amd64 wraps to
+math.MinInt64. §10.1 mandates Architectures: [arm64] for the Lambdas, while developer
+machines and x86 CI runners do the opposite — so a money boundary with no range check
+silently produces an unreachable ceiling in production and a rejected value everywhere
+it would be noticed.
+**Symptom:** A cap or limit derived from a config float (e.g. a mistyped `daily_spend_usd: 2.0e15`)
+deploys successfully and never fires; the same config fails validation locally, so the
+discrepancy is read as a local environment problem. No error, no log line, and the
+provider bill is the first signal.
+**Action:** Range-check the float *input* before converting, never the converted result — the
+saturated value is indistinguishable from a legitimate one on the architecture that
+produced it. Test the boundary by asserting a refusal (architecture-independent), not by
+asserting the converted number.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-081 — sync.Mutex ignores context deadlines: blocking is not refusing
+**Assumption:** A fail-closed check that holds a mutex across a slow dependency degrades safely —
+waiters block, and a blocked waiter admits nothing, so the degenerate case is still
+closed.
+**Reality:** sync.Mutex is not context-aware. A goroutine waiting on it ignores its own deadline, so
+it produces no error, no refusal value, no log line, and no return to its caller until
+the lock is free. A process-global lock also couples unrelated tenants or requests to
+one slow dependency.
+**Symptom:** A storage latency spike turns into a Lambda timeout for the whole SQS batch. Because the
+guard emitted nothing for the waiters, the incident presents as an unexplained worker
+timeout rather than as the guard's own "could not determine state" refusal — the
+opposite of the diagnosability the log line exists to provide.
+**Action:** Serialise with a 1-buffered channel acquired via `select` on `ctx.Done()`, scoped per
+tenant rather than per process, and return the same explicit refusal (with the context
+error as the cause) that the dependency's own failure would produce. Attempt the
+non-blocking send first so a free gate beats an already-cancelled context
+deterministically. Assert it with a test that holds the gate and passes a dead context.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-082 — Bash 5.2 expands `&` in a ${var//pat/rep} replacement, so a config value replaces a placeholder with itself
+**Assumption:** `${content//"{{KEY}}"/$value}` is literal text substitution, and quoting the pattern is
+the only care required.
+**Reality:** Bash 5.2 enables `patsub_replacement` by default: an unquoted `&` in the REPLACEMENT
+expands to the text that matched the pattern. A value containing `&` — `Capture & find
+your thinking.` is an ordinary tagline — replaces `{{KEY}}` with `{{KEY}}`. The failure
+then surfaces at whatever assertion catches surviving placeholders, which names the
+TEMPLATE file, so the operator is sent to look at index.html for a fault in a YAML
+config. Any escaper written as `${s//&/&amp;}` also corrupts its own output.
+**Symptom:** `make build` goes red with "unsubstituted placeholders remain in: dist/index.html" for a
+config edit that is entirely legitimate, and the diagnostic points at the wrong file.
+The same value works on bash 5.1.
+**Action:** `shopt -u patsub_replacement` at the top of the script, and PROBE that it took effect
+(`x="x"; x="${x//x/&y}"` must equal `&y`) — `shopt -u` on an option the shell lacks is
+itself an error, and a silent failure produces a wrong artifact. Then make any assertion
+message name both candidate causes, because "the template referenced an unknown key" and
+"a value substituted the placeholder into itself" look identical in the output and live
+in different files.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-083 — CacheStorage is partitioned by origin, not by service-worker scope, so a cache sweep reaches other applications
+**Assumption:** A service worker's `caches` is scoped to that worker, so deleting every cache whose name
+is not the current one is a safe way to evict the previous deploy.
+**Reality:** CacheStorage is partitioned by ORIGIN. `caches.keys()` inside a worker registered at
+/myapp/ returns the cache names of every application served from that origin, and
+`caches.delete(name)` will delete them. On a GitHub Pages user site — one origin serving
+every project site an account publishes — that is a dozen other applications.
+`caches.match(request)` without `{cacheName}` searches all of them too, so a foreign
+entry for an identical URL can be served as this app's asset. This is the shared-origin
+reasoning behind relative paths (G-007), applied to storage rather than to URLs, and it
+is easy to reason carefully about IndexedDB while walking straight through this.
+**Symptom:** A sibling PWA on the same account stops working offline and silently refetches or fails
+on its next load, every time the other app deploys, with nothing in either application
+to explain it. Symmetrically, any sibling doing the same sweep deletes this app's shell.
+Never reproduces on a dedicated domain.
+**Action:** Namespace the cache name with something unique to the app within the origin, and derive
+it rather than hardcode it — `ServiceWorkerRegistration.scope` is unique per project
+site by construction and cannot drift from where the worker is registered (a hardcoded
+app name would also breach §7.3). Sweep only names carrying that prefix, and pass
+`{cacheName}` to every `caches.match`. Put the naming and the sweep predicate in a plain
+module so they can be unit-tested: with no headless browser there is otherwise no way to
+exercise a destructive routine that runs on every deploy.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-084 — A validation error that quotes the rejected value publishes it twice
+**Assumption:** A check that refuses PII or content protects the store, so the check itself is on the
+safe side of §9.2.
+**Reality:** The rejection message is written to CloudWatch by whoever logs it and returned to the
+caller, who may put it in an HTTP body. In internal/audit the actor-email and
+action-shape checks used %q and Record logged the message with slog.Any, so the email
+the check refuses to store and a 10KB transcript passed where an action belongs were
+both written to CloudWatch at WARN — by the check whose entire purpose was keeping them
+out.
+**Symptom:** WARN lines whose byte size tracks the size of the input; a real email address or
+transcript prose visible in log search; a 10KB error string in an HTTP 500 body. Also a
+CloudWatch ingestion bill at $0.50/GB from a path that was supposed to be identifiers
+only.
+**Action:** A message about a rejected value DESCRIBES it: field name, byte length, and which rule
+failed. Never the bytes. Bound a field's length BEFORE any regexp so the over-bound case
+has its own length-only message. Return the rejection as a typed error carrying
+field/rule and log those attributes plus logging.Redacted — never format the message
+into the log line, so a %q added later cannot leak. Cover every field in the leak test,
+not just the one that was hardened first.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-085 — A gate that returns a verdict is bypassable; a gate that owns the call is not
+**Assumption:** A `Check(...) error` called before each provider call is enough, since the convention is
+to return on error.
+**Reality:** The failure mode is not forgetting the call, it is `if err != nil { log.Warn(...) }`
+followed by the provider call anyway — written under deadline pressure by someone
+treating an unreadable ledger as a transient nuisance. Passing the provider call to the
+breaker as a closure makes the bypass unwriteable, which is the same reasoning I4
+applies to cleanup patches: a structural guarantee where an instruction is not enough.
+**Symptom:** The check is present in the diff, the tests pass, and the cap is silently inoperative on
+exactly the path that matters — a storage fault, when the whole system is misbehaving.
+**Action:** Where a control must not be bypassed, have it own the guarded operation. If a
+verdict-only entry point is also needed (a pre-flight refusal at a request boundary),
+name and document it as a forecast that grants nothing, and keep the guarded path the
+only one that can reach the provider.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-086 — Crypto-shredding is not complete when the erasure operation returns
+**Assumption:** Scheduling the tenant's CMK for deletion makes the data unrecoverable immediately, so
+the erasure request can be reported complete.
+**Reality:** `ScheduleKeyDeletion` enforces a pending-deletion window of 7-30 days. The key is
+unusable during it (so data cannot be read), but the deletion is cancellable by anyone
+with `kms:CancelKeyDeletion` — the data is not yet destroyed. §9.3's "unrecoverable
+immediately" is true operationally and not true legally.
+**Symptom:** An erasure attestation dated before the key was actually destroyed. Discovered when
+someone asks for the destruction timestamp, or when a cancelled deletion silently
+restores a tenant's corpus.
+**Action:** Report the pending-deletion window as part of the erasure result and treat erasure as
+two-phase: scheduled, then destroyed. `kmsref.Ref.ErasureCaveat()` returns a non-empty
+caveat even for the shreddable case so a report has nothing to omit by accident.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-087 — Repointing a tenant at a CMK does not re-encrypt what it already wrote, so crypto-shredding is bounded in time
+**Assumption:** Once a tenant's kms_key_id names a customer-managed key, destroying that key erases that
+tenant's data.
+**Reality:** S3 objects keep the encryption they were written with. Every object written while the
+tenant pointed at alias/aws/s3 is SSE-S3 under a key the account cannot destroy, and it
+survives the CMK's destruction untouched. DynamoDB is worse: encryption is table-level,
+so items — and their PITR window and table backups — are under the table's key
+regardless of what the tenant record says.
+**Symptom:** An erasure report states the data is unrecoverable, the key is scheduled for deletion,
+and the pre-repoint audio and transcripts remain readable. The surviving objects are
+indistinguishable from the shredded ones, so it is found during an audit, not during
+testing (compare G-021).
+**Action:** Record the repoint instant on the tenant (kms_key_id_since) in the same update as
+kms_key_id, and treat its absence as "every object predates the key". A shredding claim
+may only cover all objects when the repoint is no later than created_at. State the
+DynamoDB exclusion separately and gate it on the table's own key, never on the tenant's.
+backend/internal/kmsref's ErasureScope is the one place that composes this claim.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-088 — DynamoDB encryption is table-level, so a per-tenant kms_key_id cannot be honoured on a shared table
+**Assumption:** Once a CMK exists, a per-tenant `kms_key_id` covers both S3 objects and DynamoDB records
+for that tenant.
+**Reality:** S3 SSE is per object (a write can name any key), but DynamoDB SSE is configured on the
+table. Every record in one table is under one key regardless of what the tenant record
+says, so per-tenant keys require a table per key (or client-side encryption of
+attributes).
+**Symptom:** Destroying a tenant's CMK shreds its S3 content and none of its DynamoDB records —
+items, threads, sessions, rules survive in PITR and backups. Nothing in the write path
+errors, because DynamoDB writes pass no key.
+**Action:** Check the tenant's key reference against the table's configured key on the DynamoDB
+write path and refuse a mismatch rather than writing silently
+(`kmsref.Ref.CheckDynamoPut`). Decide table-per-key vs client-side attribute encryption
+*before* provisioning the first per-tenant CMK, not after.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-089 — Passing an AWS-managed alias as an SSE-KMS key ID converts free encryption into billed encryption
+**Assumption:** If the tenant record says the key is `alias/aws/s3`, the write should pass that alias to
+S3 as the SSE-KMS key ID — it is, after all, the resolved key.
+**Reality:** S3 accepts it: the object is then encrypted with SSE-KMS under the AWS-managed S3 key,
+which bills per KMS request, instead of SSE-S3 (`AES256`), which is free. Protection at
+rest is identical (I8's own wording), so nothing about the data changes — only the bill.
+**Symptom:** KMS request charges appear on a stack whose cost model says "KMS: none in personal
+phase, $0.00" (§10.7), scaling with audio segment count — the highest-volume write in
+the system — with no configuration change to point at.
+**Action:** Treat an AWS-managed key reference as the *record* of which service-default key is in
+use, not as a value to pass. `kmsref.Ref.ForS3Put` returns `AES256` with an empty
+`KMSKeyID` for that case and a test asserts the key ID stays empty.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-090 — A discarded type assertion in a totaliser converts a data-shape problem into free spend
+**Assumption:** `if c, ok := attrs["cost_micros"].(int64); ok { total += c }` is defensive: a malformed
+record is skipped and the rest still total correctly.
+**Reality:** It is fail-open. The daily spend breaker refuses on a read *error* but trusts any total
+it receives, so a record counted as zero raises the effective cap and a whole day
+reading as zero removes the cap entirely. The same shape appeared three times in
+internal/meter: cost_micros, the ts filter, and a `len(day) < 7` window check that let
+DayTotal("2026-08") return (0, nil). The two Repository implementations also disagree on
+the Go type of a whole number, so the cost variant would have passed every CI run
+against the in-memory fake and read as zero against DynamoDB.
+**Symptom:** No error, no log line, no failed test. A provider invoice weeks later that exceeds the
+configured daily cap many times over, with a usage report that looks plausible but low.
+**Action:** In any function whose output gates spend or access, a value that cannot be read is an
+error, never a zero. Read stored numbers through repository.AsInt64 / AsFloat64 rather
+than a direct assertion, and validate a date window by parsing it — a length check
+accepts strings that match no record and resolve to zero.
+**Confidence:** verified (encountered building Phase 0)
+
+#### G-091 — A Phase 0 frontend activates the Phase 1 interface gates, which have no browser to run in
+**Assumption:** Shipping a minimal Phase 0 frontend is additive: the Phase 1 accessibility and
+responsive checks stay dormant until Phase 1 builds the capture face.
+**Reality:** check-a11y.sh and check-responsive.sh are gated on `[ -f frontend/index.html ]`, not on
+a phase marker. The moment any index.html exists they both run for real, and both fail
+on `command -v chromium` because containers/toolchain deliberately omits Chromium until
+Phase 1 (~400MB on every CI job is cost without coverage). The static halves of both
+checks — the vh-vs-dvh scan and the reserved-`live`-token rule — do pass.
+**Symptom:** `make check` goes red on two legs with 'frontend/index.html exists but the toolchain
+image has no headless browser', on a change that added no CSS bug. Because pages.yaml
+gates on checks.yaml, the Pages deploy never runs.
+**Action:** Treat 'a frontend surface exists' and not 'Phase 1 has started' as the trigger for
+adding a headless browser to containers/toolchain and implementing the axe/contrast and
+320px/1440px assertions. Do not rename the source file to keep the gate dormant, and do
+not relax the browser requirement — the check's own message says it must not pass
+trivially once there is a surface to test.
+**Confidence:** verified (encountered building Phase 0)
 
 #### G-041 — Manual sync steps decay
 **Assumption:** A daily manual step is acceptable if the value is high.

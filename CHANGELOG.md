@@ -91,7 +91,19 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
   Resource Group rather than matching a name pattern — never a wildcard delete, because
   this account also hosts passbook. The corpus table and data bucket are retained by
   policy; removing them is tenant erasure (§9.3), not a side effect of teardown.
-- **Registers seeded.** `docs/gotchas.md` with 63 entries (57 from §13 with IDs
+- **The §2A.1 irreversible foundations**: metering (I12), audit (I13), consent (I14),
+  idempotency, the per-tenant daily spend breaker (§10.5.9), the KMS key indirection (I8),
+  and the DynamoDB repository adapter. 55 defects fixed and 95 tests added across two
+  adversarial review passes.
+
+  Three §3 invariant violations were caught before merge, each demonstrated with a
+  reproduction: the `audit` validation that keeps PII out of the audit store was writing that
+  PII to CloudWatch and returning it to the caller; a concurrent settings write silently
+  reverted an *acknowledged consent withdrawal* to granted; and repointing a tenant onto a
+  customer-managed key flipped an erasure-completeness claim true for data written before the
+  repoint. Full account in
+  [F-0004](docs/findings/F-0004-parallel-implementation-with-adversarial-review.md).
+- **Registers seeded.** `docs/gotchas.md` with 87 entries (57 from §13 with IDs
   preserved verbatim, plus G-062 found while building the pipeline), five ADRs, and
   the first finding.
 

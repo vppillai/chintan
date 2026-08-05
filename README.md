@@ -55,7 +55,7 @@ Three registers sit alongside it, with distinct purposes:
 |---|---|
 | [`docs/decisions/`](docs/decisions/) | ADRs — choices made, alternatives considered, consequences accepted |
 | [`docs/findings/`](docs/findings/) | Empirical results answering a pre-registered question |
-| [`docs/gotchas.md`](docs/gotchas.md) | Surprises — where reality differed from reasonable expectation. 69 entries |
+| [`docs/gotchas.md`](docs/gotchas.md) | Surprises — where reality differed from reasonable expectation. 87 entries |
 
 `docs/gotchas.md` is a first-class deliverable, not a scratchpad. Most of its
 entries describe failures that *pass testing and fail in the real situation*, which
@@ -137,7 +137,7 @@ Done:
   constructed, enforced by a static check rather than by convention
 - **`GET /v1/health`**, versioned routing, structured logging that cannot casually
   log transcript content
-- **Registers seeded** — 69 gotchas, five ADRs, three findings
+- **Registers seeded** — 87 gotchas, five ADRs, four findings
 - **A deployed dev instance.** CI builds a reproducible arm64 artifact, assumes the
   deployment role via OIDC with no stored key, and deploys — then smoke-tests
   `/v1/health` before calling it a success. That last part caught a deploy where
@@ -146,14 +146,21 @@ Done:
 - **The §9.5 guardrails, applied and verified in both directions.** 13 denials fire, 8
   required operations succeed ([F-0002](docs/findings/F-0002-agent-boundary-bootstrap.md))
 
+- **The §2A.1 irreversible foundations** — metering (I12), audit (I13), consent (I14),
+  idempotency, the daily spend breaker (§10.5.9), the KMS key indirection (I8), and the
+  DynamoDB adapter. Written by parallel agents behind settled contracts, then adversarially
+  reviewed against §3 — which caught three invariant violations that would have passed an
+  ordinary review ([F-0004](docs/findings/F-0004-parallel-implementation-with-adversarial-review.md))
+
 Not done, and next:
 
-- The remaining Phase 0 commercial-readiness foundations: metering and audit are written
-  but not yet wired to a request path; consent, idempotency, the spend breaker, and the
-  KMS indirection remain
-- The DynamoDB repository adapter (the interface and in-memory fake exist)
-- `users.sh` and the remaining admin scripts
-- The frontend hello-world and its Pages deploy
+- Wiring these packages to a request path — they are built and tested but nothing calls them
+  yet, so I12/I13's "every billable operation" and "every access" are not yet enforced in
+  practice
+- The frontend, which is written and held back: creating `frontend/index.html` woke the
+  dormant §4A.7 accessibility gate, which correctly refuses to pass without a headless
+  browser the toolchain image does not carry. It ships with that browser in Phase 1
+- `users.sh` and the remaining admin scripts (§11.4)
 
 ### Blocked on a human
 
