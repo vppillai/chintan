@@ -64,12 +64,27 @@ if [ "$FIXTURES" = "0" ]; then
     require_tenant "$TENANT"
 fi
 
-# Guard on actual source, not on the directory: an empty directory is not a
-# subject, and treating it as one makes this check fail before its phase.
-if ! compgen -G "backend/internal/repository/*.go" >/dev/null 2>&1; then
-    no_subject_yet "corpus integrity" 2 "backend/internal/repository (captures, segments, alignment)"
+# The subject is a CORPUS — captures, segments, and alignment to validate — not the
+# storage seam. §11.6: "It first exists in Phase 2, when there are captures, segments,
+# and alignment to validate." Keying the guard on the repository package was wrong: that
+# package is the seam, and its existence says nothing about whether anything has been
+# captured. The segmentation package is what Phase 2 adds and what produces the artifacts
+# these checks inspect.
+if ! compgen -G "backend/internal/segment/*.go" >/dev/null 2>&1; then
+    no_subject_yet "corpus integrity" 2 "backend/internal/segment (captures, segments, alignment)"
     finish_check "corpus integrity (§11.6)" "$AS_JSON"
     exit 0
+fi
+
+# Closes the loophole a "no subject yet" guard otherwise leaves open: once the subject
+# exists the check must be implemented, and a missing implementation is a failure rather
+# than a skip. Without this, the guard above could be satisfied while the checks it gates
+# were never written — a check reporting success having inspected nothing, which is the
+# §0.5A failure mode.
+if ! (cd backend && go run ./cmd/chintanctl verify --help >/dev/null 2>&1); then
+    violation "backend/internal/segment exists, so a corpus exists, but chintanctl has no verify subcommand — the §11.6 checks are unimplemented and this check would otherwise pass having inspected nothing"
+    finish_check "corpus integrity (§11.6)" "$AS_JSON"
+    exit 1
 fi
 
 # The checks themselves live in the admin binary, not here: they are real logic —

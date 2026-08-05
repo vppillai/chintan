@@ -1,0 +1,160 @@
+# Deploy to AWS. The only path to a deployed artifact (§0.5A, I16).
+#
+# Gated on the full §0.5A check suite: the deploy job depends on `checks`, so a red
+# pipeline cannot deploy. §0.5A: "Deploys happen only from a green pipeline, and only
+# through deploy.sh invoked by CI."
+#
+# **This is the only job in the repository that holds AWS credentials.** Everything else
+# runs against the fake-AWS harness (§11.5), which keeps the blast radius of a malicious
+# dependency to a job that does not run on pull requests from forks — and is what lets
+# the agent hold no deploy credentials at all (I17).
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'config/instances/**'
+      - 'infrastructure/template.yaml'
+      - 'scripts/deploy.sh'
+      - 'scripts/build-lambda.sh'
+      - '.github/workflows/deploy.yaml'
+      # bootstrap.yaml is deliberately ABSENT. It is a manually-managed stack that
+      # creates the CI role this workflow assumes, so pushing it must never kick off the
+      # instance matrix (§4).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write   # OIDC: no stored AWS keys (§10.1)
+
+# Serialise deploys. Concurrent CloudFormation operations on one stack conflict
+# (§0.7.3), and the concurrency group is the mechanism that enforces "one deploy at a
+# time" rather than agent discipline. Queue rather than cancel: cancelling mid-
+# CloudFormation can strand a stack in UPDATE_IN_PROGRESS.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  # Every §0.5A gate must pass before anything is deployed.
+  checks:
+    uses: ./.github/workflows/checks.yaml
+    permissions:
+      contents: read
+      packages: write
+
+  toolchain:
+    uses: ./.github/workflows/toolchain.yaml
+    permissions:
+      contents: read
+      packages: write
+
+  # Instances are discovered from config/instances/*.yaml rather than listed here, so
+  # adding one is a config change (§Phase 0, mirroring passbook's dynamic matrix).
+  discover:
+    needs: [checks, toolchain]
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.toolchain.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      instances: ${{ steps.list.outputs.instances }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - id: list
+        run: |
+          INSTANCES=$(ls config/instances/*.yaml | xargs -n1 basename | sed 's/\.yaml$//' | jq -R . | jq -sc .)
+          echo "instances=$INSTANCES" >> "$GITHUB_OUTPUT"
+          echo "Discovered: $INSTANCES"
+
+  deploy:
+    needs: [toolchain, discover]
+    runs-on: ubuntu-latest
+    # The `production` environment is required, not decorative: the OIDC role's trust
+    # policy is scoped to repo:<owner>/<repo>:environment:production, so a job without it
+    # cannot assume the role. That scoping is what stops a workflow on any branch —
+    # including one from a fork's pull request — from reaching deployment credentials.
+    environment: production
+    container:
+      image: ${{ needs.toolchain.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    strategy:
+      matrix:
+        instance: ${{ fromJson(needs.discover.outputs.instances) }}
+      # One instance failing must not cancel another mid-CloudFormation.
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # Full history and tags: the build resolves its version from `git describe`,
+          # and a shallow clone yields "unstamped" (§0.6, G-036).
+          fetch-depth: 0
+
+      - name: Cache Go build and module cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            /go/pkg/mod
+            /go/cache
+          key: go-${{ needs.toolchain.outputs.image }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: go-${{ needs.toolchain.outputs.image }}-
+
+      - name: Build the arm64 artifacts
+        env:
+          CHINTAN_IN_CONTAINER: "1"
+        # Built here rather than in a prior job so the version resolved by `git describe`
+        # is the one deployed. Reproducible: -trimpath, CGO off, and a pinned compiler
+        # mean the same commit produces the same bytes.
+        run: make build-lambda
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/voicenotes-github-actions
+          aws-region: ca-central-1
+
+      - name: Deploy ${{ matrix.instance }}
+        env:
+          CHINTAN_IN_CONTAINER: "1"
+          CI: "true"
+        run: scripts/deploy.sh --instance ${{ matrix.instance }} --apply
+
+  # Superseded artifacts are pure cost: the zips are reproducible from git. Keep the two
+  # newest — the current deploy plus the previous one, which CloudFormation needs if a
+  # failed update auto-rolls-back (a missing previous key strands the stack in
+  # UPDATE_ROLLBACK_FAILED). Runs only when every instance deployed, so a failed leg keeps
+  # its rollback artifact.
+  prune-artifacts:
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/voicenotes-github-actions
+          aws-region: ca-central-1
+      - name: Delete superseded zips
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks --stack-name voicenotes-bootstrap \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactBucketName'].OutputValue" --output text)
+          for prefix in functions/api- functions/worker-; do
+            aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "$prefix" \
+              --query 'reverse(sort_by(Contents || `[]`, &LastModified))[2:].Key' --output text \
+              | tr '\t' '\n' | while read -r KEY; do
+                if [ -n "$KEY" ] && [ "$KEY" != "None" ]; then
+                  echo "deleting superseded artifact: $KEY"
+                  aws s3api delete-object --bucket "$BUCKET" --key "$KEY" > /dev/null
+                fi
+              done
+          done

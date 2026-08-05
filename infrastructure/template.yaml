@@ -64,6 +64,14 @@ Parameters:
     Type: String
     Description: S3 key of the async worker zip.
 
+  ConfigKey:
+    Type: String
+    Description: >-
+      S3 key of the instance config document in the artifact bucket. Read at cold start
+      rather than embedded in the binary, so a threshold change is an upload plus a
+      function update rather than a recompile (§7.4). It also means GET /v1/health
+      reports the config version actually in force.
+
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -319,6 +327,12 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource: !Sub '${DataBucket.Arn}/tenants/*'
+              # Read the instance config at cold start. Scoped to the config prefix
+              # rather than the whole artifact bucket: the bucket also holds deployment
+              # zips, and a function has no reason to read its own artifact.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${ArtifactBucket}/config/*'
               # Read the provider secret at cold start. The API needs it for the
               # search path (§Phase 5); it is cached in module scope, so this is one
               # call per cold start rather than per request (§10.2).
@@ -381,6 +395,12 @@ Resources:
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/voicenotes/${InstanceName}/*'
+              # Read the instance config at cold start. Scoped to the config prefix
+              # rather than the whole artifact bucket: the bucket also holds deployment
+              # zips, and a function has no reason to read its own artifact.
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub 'arn:aws:s3:::${ArtifactBucket}/config/*'
       Tags:
         - { Key: Project, Value: voicenotes }
         - { Key: Instance, Value: !Ref InstanceName }
@@ -420,6 +440,8 @@ Resources:
           CHINTAN_USER_POOL_ID: !Ref UserPool
           CHINTAN_USER_POOL_CLIENT_ID: !Ref UserPoolClient
           CHINTAN_ALLOWED_ORIGIN: !Ref AllowedOrigin
+          CHINTAN_CONFIG_BUCKET: !Ref ArtifactBucket
+          CHINTAN_CONFIG_KEY: !Ref ConfigKey
       Tags:
         - { Key: Project, Value: voicenotes }
         - { Key: Instance, Value: !Ref InstanceName }
@@ -461,6 +483,8 @@ Resources:
           CHINTAN_INSTANCE: !Ref InstanceName
           CHINTAN_TABLE: !Ref Table
           CHINTAN_BUCKET: !Ref DataBucket
+          CHINTAN_CONFIG_BUCKET: !Ref ArtifactBucket
+          CHINTAN_CONFIG_KEY: !Ref ConfigKey
       Tags:
         - { Key: Project, Value: voicenotes }
         - { Key: Instance, Value: !Ref InstanceName }
