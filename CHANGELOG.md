@@ -70,20 +70,37 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
   `s3:DeleteObject` is scoped to the continuous safety copies alone, which makes
   I1's "application code has no delete path for L0" structural rather than a
   convention the code is trusted to follow.
-- **Registers seeded.** `docs/gotchas.md` with 59 entries (57 from §13 with IDs
+- **Agent IAM principal, boundary, deny policies, and CloudTrail** — the §9.5
+  guardrails, applied and verified against the live API. `scripts/bootstrap-agent.sh`
+  creates them; `infrastructure/agent-policies/` holds the documents as reviewable,
+  diffable files in a CODEOWNERS-protected path. Every document is pre-flighted through
+  IAM Access Analyzer before creation.
+
+  All 13 denials in §9.5 fire when attempted, and all 8 operations the project needs
+  succeed — both directions, which G-052 insists on because "over-restriction is at
+  least as likely and considerably more expensive in wasted time". The agent now runs
+  as `voicenotes-agent` under its boundary, with short-lived credentials, and
+  `guardrails-check.sh` fails if it is ever run under root.
+- **Registers seeded.** `docs/gotchas.md` with 63 entries (57 from §13 with IDs
   preserved verbatim, plus G-062 found while building the pipeline), five ADRs, and
   the first finding.
 
 ### Notes
 
-- **The Phase 0 entry gate has not passed**, and cannot in the current environment:
-  it needs provider keys, an agent IAM principal under a permissions boundary, and a
-  hosting decision. All six §0.8 human prerequisites are outstanding. `make doctor`
-  reports each with what to do about it.
-- **Nothing here has used the AWS credentials present in the environment**, which
-  are the account root user. §9.4 non-negotiable #1 forbids the agent holding root,
-  and no permissions boundary can constrain root, so those credentials cannot be the
-  ones this project deploys with. `guardrails-check.sh` fails if run under them.
+- **The Phase 0 entry gate is partly passed.** The permissions boundary is proven in
+  both directions (F-0002) and the OIDC-provider collision predicted by G-016 is
+  confirmed empirically — the provider already exists, so `CreateOIDCProvider=false`.
+  Still outstanding: provider reachability, a trivial stack deployed under the
+  boundary, and the hosting decision.
+- **Four of the six §0.8 prerequisites remain**, down from six: the app-name voice
+  test, the visibility/assetlinks decision (ADR 0003), provider keys in SSM, and the
+  GitHub protections. `make doctor` reports each.
+- **Three assumptions about §9.5 were refuted while bootstrapping**, each recorded:
+  its ABAC snippet uses IAM action syntax that does not exist (G-066); root cannot
+  assume a role, so an IAM user is unavoidable on a root-only account (G-064); and
+  `aws:ResourceTag` authorization is unsupported for nearly every service in use, which
+  makes the tag-based half of the ABAC design decorative (G-067). Resource-ARN scoping
+  and naming-prefix denies carry the weight instead. F-0002 has the detail.
 - **Four checks were found to be wrong only by watching them go red**, two of them
   serious enough to be worth naming here:
   - The **I11 tenant-key check** — the one §Phase 0 acceptance names explicitly —

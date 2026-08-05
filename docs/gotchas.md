@@ -41,7 +41,7 @@ usually what saves the time.
 
 **Confidence levels:** `verified` — observed directly on real hardware or against a live API. `documented` — stated in official vendor documentation. `reported` — from secondary sources or prior experience; re-verify before relying on it. Promote entries as they are confirmed, and correct them when they turn out wrong. A register that is never corrected becomes folklore.
 
-**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Fifty-nine entries are recorded here; the next new one is `G-064`.
+**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Sixty-three entries are recorded here; the next new one is `G-068`.
 
 ### Mobile web / PWA
 
@@ -502,6 +502,38 @@ usually what saves the time.
 **Action:** Use `git ls-files --cached --others --exclude-standard` — tracked, plus untracked, minus ignored. And demonstrate the check red by *adding a new file* that violates it, not by editing an existing one: editing a tracked file cannot expose this bug, so a red demonstration done that way looks successful while leaving the gap in place.
 **Confidence:** verified (encountered building this pipeline)
 **Refs:** §0.5A, I11, [[G-062]], docs/findings/F-0001-checks-demonstrated-red.md
+
+#### G-064 — The account root user cannot assume any IAM role
+**Assumption:** Create a role with a permissions boundary, trust the account principal, and an administrator can assume it to get short-lived boundary-limited credentials. This is the shape §9.5 prefers — "a dedicated role assumed via short-lived credentials".
+**Reality:** AWS refuses outright: `AccessDenied: Roles may not be assumed by root accounts.` The trust policy is irrelevant; the restriction is on the caller. So on an account whose only credentials are root, and with no IAM Identity Center configured, **there is no path from root to boundary-limited credentials that does not pass through an IAM user.** An IAM user must be created, and it must hold a long-lived access key — the thing the role design was chosen to avoid.
+**Symptom:** Bootstrap completes, every policy validates, the role exists with its boundary correctly attached — and the first `sts:AssumeRole` fails. Nothing about the error suggests the caller's identity type is the problem, so the trust policy is the first and second place anyone looks.
+**Action:** Create a minimal IAM user whose only permission is `sts:AssumeRole` on the one role, with the boundary attached to it as well so it can never be granted more. The stored key then buys nothing except a bounded session, and the credentials doing actual work expire on their own. Scope the role's trust policy to that user specifically rather than to the account principal — naming the account root buys nothing, since root cannot use it.
+**Confidence:** verified (encountered bootstrapping this account)
+**Refs:** §9.5, §0.8 item 1, [[G-065]], docs/findings/F-0002-agent-boundary-bootstrap.md
+
+#### G-065 — A permissions boundary containing a blanket deny can lock a principal out of the action it exists to perform
+**Assumption:** A boundary's denies are a safety net. Adding one more deny narrows the ceiling and cannot break anything the principal legitimately needs.
+**Reality:** A boundary applies to **every** principal it is attached to, and its denies override the grants. A `Deny sts:AssumeRole on "*"` written to stop the *role* chaining onward to a more privileged role also denied the *user* the single action it existed for — assuming that role — because both carry the same boundary. The guardrail blocked the only way in.
+**Symptom:** `AccessDenied` on an action whose grant is plainly present in the identity policy, sitting right there in the console. Because a boundary is evaluated separately from the attached policies, the policy that is actually refusing is not the policy anyone is reading. Exactly G-052's shape: over-restriction surfacing mid-task as a confusing denial on something that should obviously be allowed.
+**Action:** Scope a role-chaining deny with `NotResource` naming the permitted role, rather than `Resource: "*"`. More generally: after writing any boundary, prove it permits a real end-to-end operation as well as blocking the intended ones — both directions, as G-052 requires. A boundary tested only for what it blocks is half-tested.
+**Confidence:** verified (encountered bootstrapping this account)
+**Refs:** §9.5, [[G-052]], [[G-064]]
+
+#### G-066 — A wildcard in the service position of an IAM action is invalid, so §9.5's ABAC snippet cannot be created
+**Assumption:** `"Action": ["*:Create*", "*:Run*"]` denies every create-like action across every service — the form the spec's own §9.5 ABAC example uses.
+**Reality:** IAM rejects the policy outright: `MalformedPolicyDocument: Action vendors (e.g., aws, ec2, etc.) must not contain wildcards.` A wildcard is permitted in the *action* part (`s3:Delete*`) and as the whole value (`"*"`), but never in the vendor part. §9.5 already warns its snippet is "a template, not a policy to paste unchanged" and gives two reasons; this is a third one it does not mention, and it blocks the bootstrap before either of the others can matter.
+**Symptom:** Fails loudly at policy-creation time, which is the good outcome — the alternative would have been a deny that matched nothing while appearing to be in force. Nothing is created, so there is no half-configured state.
+**Action:** Enumerate per-service action prefixes (`dynamodb:Delete*`, `s3:Put*`, `iam:Attach*`, …). This is more verbose but it is also what G-047 asks for — enumerate the services actually in use rather than presuming uniform coverage. Validate every policy document through IAM Access Analyzer before creating it; it catches this, and it catches non-existent service namespaces such as `emr:*`, `efs:*`, `neptune:*`, and `docdb:*`.
+**Confidence:** verified (observed against the live IAM API)
+**Refs:** §9.5, [[G-047]], docs/findings/F-0002-agent-boundary-bootstrap.md
+
+#### G-067 — `aws:ResourceTag` authorization is unsupported for most services this project uses, so a tag-based deny is decorative
+**Assumption:** An ABAC deny conditioned on `aws:ResourceTag/Project` protects every resource belonging to another project, as §9.5's `ModifyOnlyOwnedResources` statement intends.
+**Reality:** IAM Access Analyzer reports the condition key as unsupported for authorization on **cloudformation, cognito-idp, dynamodb, events, iam, lambda, logs, resource-groups, s3, and ssm** — which is very nearly every service in use — and states plainly: "The actions for the listed services are not denied by this statement." The deny is present, reads as protective, and does nothing for those services. G-047 predicts the category; the extent is the surprise.
+**Symptom:** None. The statement exists, the console shows it, and it never fires. Discoverable only by running the policy through a validator or by testing each denial.
+**Action:** Treat **naming-prefix denies and resource-ARN scoping as the real control** — those are ARN-based and always supported. Keep the tag conditions as defence in depth for the services that do support them, but name the statement so it does not claim more than it delivers: a statement named as though it enforces something it cannot is how a guardrail gets trusted while absent (§9.8). Run every deny against the live API and assert it fires.
+**Confidence:** verified (IAM Access Analyzer, and per-action testing against the live API)
+**Refs:** §9.5, [[G-047]], [[G-066]]
 
 #### G-041 — Manual sync steps decay
 **Assumption:** A daily manual step is acceptable if the value is high.

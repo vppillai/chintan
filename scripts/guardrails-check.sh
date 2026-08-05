@@ -198,7 +198,21 @@ else
         ok "calling identity is not root"
 
         info "the agent principal carries the expected permissions boundary (§9.5)"
-        principal="$(printf '%s' "$arn" | sed -E 's|.*/([^/]+)$|\1|')"
+        # An assumed-role ARN is arn:aws:sts::ACCT:assumed-role/ROLE/SESSION, so the
+        # LAST path segment is the session name, not the role. Taking it produced a
+        # lookup for a role named after the session, which failed and was reported as
+        # "cannot read the calling role" — a skip that looked like a permissions
+        # problem while the boundary went unverified. The role is the second-to-last
+        # segment for an assumed role, and the last for a plain role or user ARN.
+        case "$arn" in
+            *:assumed-role/*)
+                principal="$(printf '%s' "$arn" | sed -E 's|.*:assumed-role/([^/]+)/.*|\1|')"
+                ;;
+            *)
+                principal="$(printf '%s' "$arn" | sed -E 's|.*/([^/]+)$|\1|')"
+                ;;
+        esac
+        dim "  resolved principal: $principal"
         if boundary="$(aws_cli iam get-role --role-name "$principal" --query 'Role.PermissionsBoundary.PermissionsBoundaryArn' --output text 2>/dev/null)"; then
             if [ "$boundary" = "None" ] || [ -z "$boundary" ]; then
                 violation "the agent principal '$principal' carries no permissions boundary — a principal that can create roles can escalate through one (G-046, §9.5)"

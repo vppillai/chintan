@@ -1,0 +1,310 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CeilingServicesThisProjectUses",
+      "Effect": "Allow",
+      "Action": [
+        "access-analyzer:*",
+        "apigateway:*",
+        "budgets:*",
+        "ce:*",
+        "cloudformation:*",
+        "cloudtrail:*",
+        "cognito-idp:*",
+        "dynamodb:*",
+        "events:*",
+        "iam:*",
+        "lambda:*",
+        "logs:*",
+        "resource-groups:*",
+        "s3:*",
+        "ssm:*",
+        "sts:*",
+        "tag:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyOtherProjectsByNamePrefix",
+      "Effect": "Deny",
+      "Action": "*",
+      "Resource": [
+        "arn:aws:iam::ACCOUNT_ID:role/passbook-*",
+        "arn:aws:iam::ACCOUNT_ID:policy/passbook-*",
+        "arn:aws:dynamodb:*:ACCOUNT_ID:table/passbook-*",
+        "arn:aws:lambda:*:ACCOUNT_ID:function:passbook-*",
+        "arn:aws:s3:::passbook-*",
+        "arn:aws:s3:::passbook-*/*",
+        "arn:aws:cloudformation:*:ACCOUNT_ID:stack/passbook-*/*",
+        "arn:aws:logs:*:ACCOUNT_ID:log-group:/aws/lambda/passbook-*",
+        "arn:aws:logs:*:ACCOUNT_ID:log-group:/aws/lambda/passbook-*:*"
+      ]
+    },
+    {
+      "Sid": "DenyCreateUntaggedResources",
+      "Effect": "Deny",
+      "Action": [
+        "dynamodb:CreateTable",
+        "lambda:CreateFunction",
+        "iam:CreateRole",
+        "logs:CreateLogGroup",
+        "cloudformation:CreateStack",
+        "resource-groups:CreateGroup"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestTag/Project": "voicenotes"
+        }
+      }
+    },
+    {
+      "Sid": "DefenceInDepthDenyModifyOtherProjectTagged",
+      "Effect": "Deny",
+      "Action": [
+        "apigateway:DELETE",
+        "apigateway:PATCH",
+        "apigateway:PUT",
+        "cloudformation:Delete*",
+        "cloudformation:Update*",
+        "cognito-idp:Delete*",
+        "cognito-idp:Set*",
+        "cognito-idp:Update*",
+        "dynamodb:Delete*",
+        "dynamodb:Put*",
+        "dynamodb:Untag*",
+        "dynamodb:Update*",
+        "events:Delete*",
+        "events:Put*",
+        "events:Remove*",
+        "iam:Attach*",
+        "iam:Delete*",
+        "iam:Detach*",
+        "iam:Put*",
+        "iam:Untag*",
+        "iam:Update*",
+        "lambda:Add*",
+        "lambda:Delete*",
+        "lambda:Put*",
+        "lambda:Remove*",
+        "lambda:Untag*",
+        "lambda:Update*",
+        "logs:Delete*",
+        "logs:Put*",
+        "logs:Untag*",
+        "resource-groups:Delete*",
+        "resource-groups:Untag*",
+        "resource-groups:Update*",
+        "s3:Delete*",
+        "s3:Put*",
+        "ssm:Delete*",
+        "ssm:Put*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:ResourceTag/Project": "voicenotes"
+        },
+        "Null": {
+          "aws:ResourceTag/Project": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyRunawayCostServices",
+      "Effect": "Deny",
+      "Action": [
+        "aoss:*",
+        "appstream:*",
+        "ec2:*",
+        "ecs:*",
+        "eks:*",
+        "elasticache:*",
+        "elasticfilesystem:*",
+        "elasticmapreduce:*",
+        "es:*",
+        "fsx:*",
+        "globalaccelerator:*",
+        "kafka:*",
+        "mediaconvert:*",
+        "memorydb:*",
+        "opensearch:*",
+        "rds:*",
+        "redshift-serverless:*",
+        "redshift:*",
+        "sagemaker:*",
+        "transfer:*",
+        "workspaces:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyCredentialCreationAndPrivilegeEscalation",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreateUser",
+        "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:CreateLoginProfile",
+        "iam:UpdateLoginProfile",
+        "iam:CreateServiceSpecificCredential",
+        "iam:CreateVirtualMFADevice",
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:DeleteUserPermissionsBoundary",
+        "iam:CreateAccountAlias",
+        "iam:DeleteAccountAlias",
+        "iam:CreateSAMLProvider",
+        "iam:UpdateSAMLProvider",
+        "iam:CreateOpenIDConnectProvider",
+        "iam:DeleteOpenIDConnectProvider",
+        "iam:UpdateOpenIDConnectProviderThumbprint",
+        "organizations:*",
+        "account:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyTamperingWithOwnGuardrails",
+      "Effect": "Deny",
+      "Action": [
+        "iam:PutRolePermissionsBoundary",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:DeleteRole",
+        "iam:TagRole",
+        "iam:UntagRole"
+      ],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/voicenotes-agent"
+    },
+    {
+      "Sid": "DenyModifyingTheGuardrailPoliciesThemselves",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:SetDefaultPolicyVersion",
+        "iam:DeletePolicy"
+      ],
+      "Resource": [
+        "arn:aws:iam::ACCOUNT_ID:policy/voicenotes-agent-boundary",
+        "arn:aws:iam::ACCOUNT_ID:policy/voicenotes-agent-deny",
+        "arn:aws:iam::ACCOUNT_ID:policy/voicenotes-agent-permissions"
+      ]
+    },
+    {
+      "Sid": "DenyDisablingAudit",
+      "Effect": "Deny",
+      "Action": [
+        "cloudtrail:StopLogging",
+        "cloudtrail:DeleteTrail",
+        "cloudtrail:UpdateTrail",
+        "cloudtrail:PutEventSelectors",
+        "cloudtrail:RemoveTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyWritingToTheAuditBucket",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:DeleteBucket",
+        "s3:PutBucketPolicy"
+      ],
+      "Resource": [
+        "arn:aws:s3:::voicenotes-cloudtrail-ACCOUNT_ID-REGION",
+        "arn:aws:s3:::voicenotes-cloudtrail-ACCOUNT_ID-REGION/*"
+      ]
+    },
+    {
+      "Sid": "DenyReadingProviderSecretValues",
+      "Effect": "Deny",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory"
+      ],
+      "Resource": "arn:aws:ssm:*:ACCOUNT_ID:parameter/voicenotes/*"
+    },
+    {
+      "Sid": "DenyDecryptingProviderSecrets",
+      "Effect": "Deny",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "kms:EncryptionContext:PARAMETER_ARN": "arn:aws:ssm:*:ACCOUNT_ID:parameter/voicenotes/*"
+        }
+      }
+    },
+    {
+      "Sid": "DefenceInDepthDenyDeleteProtectedTagged",
+      "Effect": "Deny",
+      "Action": [
+        "apigateway:DELETE",
+        "cloudformation:Delete*",
+        "cognito-idp:Delete*",
+        "dynamodb:Delete*",
+        "events:Delete*",
+        "iam:Delete*",
+        "lambda:Delete*",
+        "logs:Delete*",
+        "resource-groups:Delete*",
+        "s3:Delete*",
+        "ssm:Delete*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Protected": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyAssumingAnyRoleExceptTheAgentRole",
+      "Effect": "Deny",
+      "Action": [
+        "sts:AssumeRole",
+        "sts:AssumeRoleWithSAML",
+        "sts:AssumeRoleWithWebIdentity"
+      ],
+      "NotResource": "arn:aws:iam::ACCOUNT_ID:role/voicenotes-agent"
+    },
+    {
+      "Sid": "DenyOutsideDeployRegionExceptGlobalServices",
+      "Effect": "Deny",
+      "NotAction": [
+        "iam:*",
+        "sts:*",
+        "cloudfront:*",
+        "route53:*",
+        "route53domains:*",
+        "budgets:*",
+        "organizations:*",
+        "support:*",
+        "ce:*",
+        "cur:*",
+        "account:*",
+        "health:*",
+        "waf:*",
+        "shield:*",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": "REGION"
+        }
+      }
+    }
+  ]
+}
