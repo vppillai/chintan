@@ -93,9 +93,15 @@ ENV LANG=C.UTF-8 \
 # The image runs as whatever uid the caller has, so that files written into the
 # bind-mounted worktree are owned by the developer rather than by root. That
 # means HOME may not exist and the Go caches must be world-writable.
+#
+# safe.directory is '*' rather than /workspace: locally the repository is mounted there,
+# but in CI the checkout lives at /__w/<repo>/<repo> and is owned by a different uid, so
+# git refuses it as "dubious ownership" and every git command fails — silently, because
+# the build falls back to an "unknown" commit. Broad here is correct: the image is
+# ephemeral, single-purpose, and contains no repository of its own to be confused about.
 RUN mkdir -p /go/cache /go/pkg /workspace \
     && chmod -R 0777 /go \
-    && git config --system --add safe.directory /workspace
+    && git config --system --add safe.directory '*'
 
 WORKDIR /workspace
 

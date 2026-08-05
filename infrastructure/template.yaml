@@ -300,6 +300,18 @@ Resources:
             Principal: { Service: lambda.amazonaws.com }
             Action: sts:AssumeRole
       Policies:
+        # NOTE ON THE DATA BUCKET ARNs BELOW, which are constructed with !Sub rather than
+        # derived with !GetAtt.
+        #
+        # The bucket's ObjectCreated notification references the worker function, the
+        # function references its execution role, and a role deriving the bucket ARN closes
+        # a cycle CloudFormation rejects outright — it lists nine resources and names none
+        # of the edges, so the cause is not obvious from the error.
+        #
+        # The bucket name is fully determined by the instance, account, and region (§6.2),
+        # so constructing the ARN is exact rather than an approximation, and it removes the
+        # dependency edge. WorkerInvokePermission's SourceArn already does this for the
+        # same reason, and so does CHINTAN_BUCKET on both functions.
         - PolicyName: data-access
           PolicyDocument:
             Version: '2012-10-17'
@@ -326,7 +338,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:PutObject
-                Resource: !Sub '${DataBucket.Arn}/tenants/*'
+                Resource: !Sub 'arn:aws:s3:::voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}/tenants/*'
               # Read the instance config at cold start. Scoped to the config prefix
               # rather than the whole artifact bucket: the bucket also holds deployment
               # zips, and a function has no reason to read its own artifact.
@@ -381,8 +393,8 @@ Resources:
                   - s3:PutObjectTagging
                   - s3:ListBucket
                 Resource:
-                  - !GetAtt DataBucket.Arn
-                  - !Sub '${DataBucket.Arn}/tenants/*'
+                  - !Sub 'arn:aws:s3:::voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}'
+                  - !Sub 'arn:aws:s3:::voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}/tenants/*'
               # DeleteObject scoped to the continuous safety copies ONLY. The worker
               # deletes them on transcription success (§10.5.8), and it must not be
               # able to delete anything else: I1 says application code has no delete
@@ -391,7 +403,7 @@ Resources:
               # convention the code is trusted to follow.
               - Effect: Allow
                 Action: s3:DeleteObject
-                Resource: !Sub '${DataBucket.Arn}/tenants/*/audio/*/continuous/*'
+                Resource: !Sub 'arn:aws:s3:::voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}/tenants/*/audio/*/continuous/*'
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/voicenotes/${InstanceName}/*'
@@ -436,7 +448,7 @@ Resources:
           # read the function configuration.
           CHINTAN_INSTANCE: !Ref InstanceName
           CHINTAN_TABLE: !Ref Table
-          CHINTAN_BUCKET: !Ref DataBucket
+          CHINTAN_BUCKET: !Sub 'voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}'
           CHINTAN_USER_POOL_ID: !Ref UserPool
           CHINTAN_USER_POOL_CLIENT_ID: !Ref UserPoolClient
           CHINTAN_ALLOWED_ORIGIN: !Ref AllowedOrigin
@@ -482,7 +494,7 @@ Resources:
         Variables:
           CHINTAN_INSTANCE: !Ref InstanceName
           CHINTAN_TABLE: !Ref Table
-          CHINTAN_BUCKET: !Ref DataBucket
+          CHINTAN_BUCKET: !Sub 'voicenotes-${InstanceName}-${AWS::AccountId}-${AWS::Region}'
           CHINTAN_CONFIG_BUCKET: !Ref ArtifactBucket
           CHINTAN_CONFIG_KEY: !Ref ConfigKey
       Tags:

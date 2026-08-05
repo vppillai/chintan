@@ -44,6 +44,18 @@ mkdir -p "$OUT"
 # instead of reporting a plausible-looking wrong version.
 TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo unstamped)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [ "$COMMIT" = "unknown" ]; then
+    # Not merely cosmetic. The deploy embeds the commit in the artifact's S3 key, so two
+    # different commits would both upload to api-unknown.zip, CloudFormation would see an
+    # unchanged key, and the function would keep running the previous code while the
+    # deploy reported success. It also makes the service worker cache token constant,
+    # which is exactly G-035's failure.
+    #
+    # In CI this means git could not read the repository — most often a "dubious
+    # ownership" refusal when the checkout is owned by a different uid than the container
+    # user (the toolchain image marks the workspace safe for this reason).
+    die "cannot resolve the commit with 'git rev-parse HEAD'. Refusing to build an artifact whose key would collide with every other unversioned build (G-035, G-036). In CI this is usually git refusing the repository as unsafe: check the safe.directory configuration."
+fi
 # The build timestamp is passed in rather than read from a clock inside the
 # program, so nothing at runtime depends on the build host's time.
 BUILD_TIME="${CHINTAN_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
