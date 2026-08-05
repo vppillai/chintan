@@ -95,11 +95,18 @@ func build(ctx context.Context, log *slog.Logger) (any, error) {
 	return newProxyHandler(mux, cfg.AllowedOrigin, log), nil
 }
 
-// newProxyHandler adapts API Gateway HTTP API v2 events to net/http.
+// newProxyHandler adapts API Gateway HTTP API v2 events to net/http, returning the
+// handler FUNCTION lambda.Start expects.
 //
-// Written against net/http rather than the raw event shape so that handlers are
-// testable with httptest and are not coupled to the invocation transport — the same
-// handler serves a unit test and a Lambda.
+// Returning the adapter struct instead fails at the first request, not at start-up, with
+// "handler kind ptr is not func" — after the cold start has already logged "api ready".
+// So the function reported healthy, served a 500 on everything, and the log said nothing
+// about configuration or permissions. Returning the bound method value is what
+// lambda.Start actually accepts.
+//
+// Written against net/http rather than the raw event shape so handlers stay testable with
+// httptest and uncoupled from the invocation transport — the same handler serves a unit
+// test and a Lambda.
 func newProxyHandler(mux http.Handler, allowedOrigin string, log *slog.Logger) any {
-	return newV2Handler(mux, allowedOrigin, log)
+	return newV2Handler(mux, allowedOrigin, log).Handle
 }
