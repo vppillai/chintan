@@ -79,6 +79,43 @@ const (
 	s3TenantRoot = "tenants/"
 )
 
+// describeRejected characterises a rejected value without reproducing it.
+//
+// **A validation error must describe the value, never quote it.** §9.2 forbids transcript
+// content, audio, or PII from appearing "in logs, error messages, exception traces, or
+// third-party monitoring" — and note that "error messages" is on that list, because a
+// caller logs an error, wraps it, or returns it in an HTTP body.
+//
+// This package is the reason that matters here rather than somewhere less central: every
+// stored record's key comes through these validators (I11), so a handler that passes a
+// transcript body, an email, or a search query where an identifier belongs gets that value
+// back inside an error. The audit package hardened its own messages for exactly this reason
+// and the leak survived one call frame below, in here — found by an adversarial review that
+// probed with a 15KB transcript body as a tenant id.
+//
+// Length and the first offending character class are diagnostic enough to fix a call site.
+// The bytes are not.
+func describeRejected(v string) string {
+	if len(v) > 64 {
+		// Deliberately no sample of the content, not even a prefix: the first 64 bytes of a
+		// transcript are still a transcript.
+		return fmt.Sprintf("length %d, too long for an identifier", len(v))
+	}
+	for _, r := range v {
+		switch {
+		case r == '#':
+			return fmt.Sprintf("length %d, contains the key delimiter '#'", len(v))
+		case r == '/':
+			return fmt.Sprintf("length %d, contains a path separator '/'", len(v))
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			return fmt.Sprintf("length %d, contains whitespace", len(v))
+		case r > 127:
+			return fmt.Sprintf("length %d, contains a non-ASCII character", len(v))
+		}
+	}
+	return fmt.Sprintf("length %d", len(v))
+}
+
 // identRe is the accepted shape for every identifier that reaches a key.
 //
 // The restriction is deliberate and tighter than DynamoDB requires. A key
@@ -100,7 +137,7 @@ func validateTenant(t TenantID) error {
 		return fmt.Errorf("keys: tenant_id is empty; every key must be tenant-scoped (I11)")
 	}
 	if !identRe.MatchString(string(t)) {
-		return fmt.Errorf("keys: tenant_id %q is not a valid identifier", string(t))
+		return fmt.Errorf("keys: tenant_id is not a valid identifier (%s)", describeRejected(string(t)))
 	}
 	return nil
 }
@@ -112,7 +149,7 @@ func validateIdent(field, v string) error {
 		return fmt.Errorf("keys: %s is empty", field)
 	}
 	if !identRe.MatchString(v) {
-		return fmt.Errorf("keys: %s %q contains characters not permitted in a key segment", field, v)
+		return fmt.Errorf("keys: %s contains characters not permitted in a key segment (%s)", field, describeRejected(v))
 	}
 	return nil
 }

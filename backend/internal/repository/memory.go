@@ -22,7 +22,12 @@ import (
 //     segment sequence observable (see keys.Segment).
 //   - An item over 400KB is rejected, because that ceiling is what forces the S3
 //     overflow path for long verbatim prompt bodies (§3A.4) — a fake with no ceiling
-//     would let that path go untested until a real prompt hit it.
+//     would let that path go untested until a real prompt hit it. The size is measured
+//     from the marshalled form, so a body hidden inside a list, a map, or a []byte is
+//     seen; an estimate that counted a fixed 8 bytes for those was a ceiling in name only.
+//   - A value DynamoDB cannot store faithfully is rejected here too, by asking the
+//     production marshaller rather than by keeping a second list of the rules — see
+//     validateItem.
 type Memory struct {
 	mu    sync.RWMutex
 	items map[string]Item
@@ -192,34 +197,38 @@ func validateItem(item Item) error {
 		// it at runtime too means a path the static check missed still fails.
 		return fmt.Errorf("repository: item has an empty key component (PK=%q SK=%q); keys must come from the keys package (I11)", item.Key.PK, item.Key.SK)
 	}
-	if n := approxSize(item); n > dynamoItemLimit {
+	// measureAttrs lives with the DynamoDB marshaller, and the fake calling into it is
+	// deliberate rather than a layering slip: it is what makes "the fake refuses exactly
+	// the items production refuses" true by construction. A separate size estimate and a
+	// separate list of representable values in this file would drift, and the drift is
+	// invisible — every test runs here and only production runs there. The first version
+	// of this file estimated the size itself, counted 8 bytes for a []byte or a nested map,
+	// and so let a 600KB body through a 400KB ceiling.
+	n, err := measureAttrs(item)
+	if err != nil {
+		return err
+	}
+	if n > dynamoItemLimit {
 		return fmt.Errorf("repository: item is ~%d bytes, over the %d-byte DynamoDB ceiling; oversized bodies go to S3 and are referenced by text_key (§3A.4)", n, dynamoItemLimit)
 	}
 	return nil
 }
 
-// approxSize estimates the stored size. Approximate is sufficient: its job is to make
-// the S3 overflow path testable, not to predict a billing figure.
-func approxSize(item Item) int {
-	n := len(item.Key.PK) + len(item.Key.SK) + len(item.GSI1PK) + len(item.GSI1SK)
-	for k, v := range item.Attrs {
-		n += len(k)
-		if s, ok := v.(string); ok {
-			n += len(s)
-			continue
-		}
-		n += 8
-	}
-	return n
-}
-
 func copyItem(in *Item) *Item {
 	out := *in
-	if in.Attrs != nil {
+	// len rather than a nil check: a record with no attributes must read back as a nil map
+	// from both implementations. DynamoDB stores no attribute for an empty map and cannot
+	// tell an empty map from an absent one, so the adapter has no way to return a non-nil
+	// empty map faithfully (see unmarshalItem) — and preserving one here would make a
+	// caller's `if item.Attrs == nil` take one branch in every test and the other in
+	// production.
+	if len(in.Attrs) > 0 {
 		out.Attrs = make(map[string]any, len(in.Attrs))
 		for k, v := range in.Attrs {
 			out.Attrs[k] = v
 		}
+	} else {
+		out.Attrs = nil
 	}
 	return &out
 }

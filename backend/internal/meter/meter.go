@@ -16,12 +16,20 @@
 //
 // **Every provider adapter calls Meter.Record.** There is one function, deliberately,
 // so that adding a provider cannot accidentally add an unmetered path.
+//
+// One routing rule, because the breaker depends on the ordering: a provider call made
+// through breaker.Do reports its cost back to Do, which writes the record itself before
+// releasing the call's in-flight reservation — so the cap never sees a completed call whose
+// cost is in neither figure. Such an adapter must *not* also call Record, or the day is
+// counted twice. Everything else billable — stored bytes, request counts, an operational
+// script's usage — calls Record directly.
 package meter
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/clock"
 	"github.com/vppillai/chintan/backend/internal/keys"
@@ -190,11 +198,40 @@ func (m *Meter) MonthTotal(ctx context.Context, tenant keys.TenantID, month stri
 	}
 	var total int64
 	for _, it := range items {
-		if c, ok := it.Attrs["cost_micros"].(int64); ok {
-			total += c
+		c, err := costMicros(it.Attrs)
+		if err != nil {
+			return 0, fmt.Errorf("meter: usage record %s: %w", it.Key.SK, err)
 		}
+		total += c
 	}
 	return total, nil
+}
+
+// costMicros reads one record's cost, refusing rather than contributing zero.
+//
+// **A failed read must not look like a free record.** The breaker (§10.5.9) refuses when
+// this total cannot be produced but trusts a total it receives, so a record silently
+// counted as zero raises the effective cap — and a whole day reading as zero is an
+// uncapped bill with no log line to explain it. That is the same reasoning as
+// Record returning its error rather than swallowing it.
+//
+// The read goes through repository.AsInt64 rather than a direct assertion because the two
+// Repository implementations do not agree on the Go type of a whole number — so a
+// `.(int64)` here can pass against the in-memory fake and read as zero against DynamoDB,
+// which is the same silent-zero failure in a form CI cannot catch.
+func costMicros(attrs map[string]any) (int64, error) {
+	v, ok := attrs["cost_micros"]
+	if !ok {
+		return 0, fmt.Errorf("no cost_micros attribute; usage records are written with one (I12)")
+	}
+	c, ok := repository.AsInt64(v)
+	if !ok {
+		// Cost is an integer number of micros (model.Usage.CostMicros). A fractional or
+		// unrepresentable value means something upstream did float arithmetic on money,
+		// and rounding it here would conceal that rather than surface it.
+		return 0, fmt.Errorf("cost_micros %v (%T) is not an exact integer number of micros", v, v)
+	}
+	return c, nil
 }
 
 // DayTotal sums cost across one day, in micros.
@@ -206,8 +243,14 @@ func (m *Meter) MonthTotal(ctx context.Context, tenant keys.TenantID, month stri
 // scale, and the fix then is a day-partitioned key, which is why the ULID in the key
 // keeps records sortable within their unit.
 func (m *Meter) DayTotal(ctx context.Context, tenant keys.TenantID, day string) (int64, error) {
-	if len(day) < 7 {
-		return 0, fmt.Errorf("meter: day %q is not yyyy-mm-dd", day)
+	// Parsed rather than length-checked. A length check passes "2026-08" and "2026-08-XX"
+	// alike, and both then match no record's timestamp and return a total of zero with no
+	// error — which the breaker reads as an empty day, i.e. as full headroom (§10.5.9).
+	// A malformed window must fail, not resolve to zero. time.Parse is strict about both
+	// the layout and the field ranges, and it reads no clock — so the clock package keeps
+	// its monopoly on time.Now.
+	if _, err := time.Parse("2006-01-02", day); err != nil {
+		return 0, fmt.Errorf("meter: day %q is not yyyy-mm-dd: %w", day, err)
 	}
 	month := day[:7]
 	pk, prefix, err := keys.UsageMonthPrefix(tenant, month)
@@ -220,13 +263,22 @@ func (m *Meter) DayTotal(ctx context.Context, tenant keys.TenantID, day string) 
 	}
 	var total int64
 	for _, it := range items {
-		ts, _ := it.Attrs["ts"].(string)
-		if len(ts) < 10 || ts[:10] != day {
+		ts, ok := it.Attrs["ts"].(string)
+		if !ok || len(ts) < 10 {
+			// Distinct from a record belonging to another day, which is skipped below.
+			// A record with no usable timestamp cannot be placed in or out of the
+			// window, and omitting it understates the day's spend — which the breaker
+			// would read as headroom (§10.5.9).
+			return 0, fmt.Errorf("meter: usage record %s has no usable ts; a day total that silently omits records grants headroom the breaker cannot see", it.Key.SK)
+		}
+		if ts[:10] != day {
 			continue
 		}
-		if c, ok := it.Attrs["cost_micros"].(int64); ok {
-			total += c
+		c, err := costMicros(it.Attrs)
+		if err != nil {
+			return 0, fmt.Errorf("meter: usage record %s: %w", it.Key.SK, err)
 		}
+		total += c
 	}
 	return total, nil
 }
