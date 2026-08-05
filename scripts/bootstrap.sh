@@ -81,6 +81,17 @@ else
     ok "GitHub OIDC provider absent — CreateOIDCProvider=true"
 fi
 
+# The trust policy matches the numeric GitHub ids, not the names (G-071). Resolved from
+# the API rather than hand-edited, so a fork needs no template change.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    OWNER_ID="$(gh api "repos/${GITHUB_ORG}/${GITHUB_REPO}" --jq '.owner.id' 2>/dev/null || echo "")"
+    REPO_ID="$(gh api "repos/${GITHUB_ORG}/${GITHUB_REPO}" --jq '.id' 2>/dev/null || echo "")"
+fi
+if [ -z "${OWNER_ID:-}" ] || [ -z "${REPO_ID:-}" ]; then
+    die "cannot resolve the GitHub owner and repository ids for ${GITHUB_ORG}/${GITHUB_REPO}. The OIDC trust policy matches on them because GitHub issues immutable subjects with the ids embedded (G-071). Authenticate gh, or pass them via the template parameters."
+fi
+ok "GitHub ids resolved: owner=${OWNER_ID} repo=${REPO_ID}"
+
 BOUNDARY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/voicenotes-agent-boundary"
 if aws_cli iam get-policy --policy-arn "$BOUNDARY_ARN" >/dev/null 2>&1; then
     ok "permissions boundary found; every role in this stack will carry it"

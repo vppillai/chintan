@@ -33,7 +33,23 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: chintan
-    Description: Repository name. Scopes the OIDC trust policy to this repo alone.
+    Description: Repository name. Used for naming and documentation only — the trust policy matches on the numeric IDs below.
+
+  GitHubOwnerId:
+    Type: String
+    Default: "3634378"
+    Description: >-
+      Numeric GitHub owner id. The trust policy matches on this rather than on the owner
+      NAME, because GitHub now issues immutable OIDC subjects with the numeric ids
+      embedded (G-071) and because an id survives a rename while a name does not.
+      Find it with: gh api repos/OWNER/REPO --jq .owner.id
+
+  GitHubRepoId:
+    Type: String
+    Default: "1323409209"
+    Description: >-
+      Numeric GitHub repository id. See GitHubOwnerId.
+      Find it with: gh api repos/OWNER/REPO --jq .id
 
   CreateOIDCProvider:
     Type: String
@@ -150,14 +166,45 @@ Resources:
               Federated: !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
+              # IAM REQUIRES a condition on `sub` or `job_workflow_ref` for a GitHub OIDC
+              # trust policy and rejects the role outright without one:
+              #   "Trust policy ... must evaluate, using StringEquals, StringLike or
+              #    StringEqualsIgnoreCase, token.actions.githubusercontent.com:sub or
+              #    token.actions.githubusercontent.com:job_workflow_ref"
+              # So the id-only conditions below cannot stand alone, however precise they
+              # are (G-071).
+              #
+              # The wildcards sit exactly where the numeric ids appear, and nowhere else:
+              # the owner name, the repository name, and the environment are all pinned.
+              # `vppillai*` also matches a bare `vppillai`, so this accepts both the
+              # immutable subject format and the older one — which matters because the
+              # format is GitHub's to change and has changed once already.
+              #
+              # The precision comes from the StringEquals below, not from here.
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}*/${GitHubRepo}*:environment:production'
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                # Scoped to the `production` environment of this repository
-                # alone. Without the environment qualifier, any workflow on any
-                # branch — including one from a fork's pull request — could assume
-                # this role, which is the deployment-credential exfiltration that
-                # CODEOWNERS on .github/workflows/ also guards against (G-048).
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+                # Matched on the individual immutable claims, NOT on `sub`.
+                #
+                # GitHub now issues subjects of the form
+                #   repo:owner@<owner_id>/repo@<repo_id>:environment:production
+                # so the documented `repo:OWNER/REPO:environment:production` form — which
+                # passbook's bootstrap uses and which every example still shows — does
+                # not match, and the failure is an opaque "Not authorized to perform
+                # sts:AssumeRoleWithWebIdentity" naming neither value (G-071).
+                #
+                # Matching the claims individually is better than chasing the new sub
+                # format: the numeric ids are immutable, so this keeps working across a
+                # repository rename or an owner rename, which is precisely why GitHub
+                # moved to embedding them.
+                token.actions.githubusercontent.com:repository_owner_id: !Ref GitHubOwnerId
+                token.actions.githubusercontent.com:repository_id: !Ref GitHubRepoId
+                # The environment qualifier is what stops a workflow on any branch —
+                # including one from a fork's pull request — from reaching deployment
+                # credentials, the exfiltration CODEOWNERS on .github/workflows/ also
+                # guards against (G-048).
+                token.actions.githubusercontent.com:environment: production
       Tags:
         - { Key: Project, Value: voicenotes }
         - { Key: Instance, Value: shared }
