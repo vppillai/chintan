@@ -95,6 +95,17 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
   preserved verbatim, plus G-062 found while building the pipeline), five ADRs, and
   the first finding.
 
+- **The dev instance is deployed, by CI, through the OIDC role.** This is §0.5A's first
+  slice — "a repository whose CI runs, gates, and deploys a hello-world through the real
+  OIDC role" — and it is now true rather than intended. `GET /v1/health` on the deployed
+  API returns its version, commit, config version, and instance; an unknown path returns
+  404; CORS is the single configured origin.
+
+  Two Lambda entrypoints (sync API and async worker), config read from S3 at cold start,
+  and `deploy.sh` refusing to run outside CI unless given `--incident-response`. Cold
+  start 142ms, 32MB peak against a 256MB allocation, 3.4MB artifact — recorded as the
+  baseline the Phase 2 native-ONNX gate is measured against.
+
 ### Notes
 
 - **The Phase 0 entry gate is partly passed.** The permissions boundary is proven in
@@ -111,6 +122,19 @@ Phase 1 (MVP: speak into the app, get a transcript back, see it).
   `aws:ResourceTag` authorization is unsupported for nearly every service in use, which
   makes the tag-based half of the ABAC design decorative (G-067). Resource-ARN scoping
   and naming-prefix denies carry the weight instead. F-0002 has the detail.
+- **The first deploy took five attempts, and four of the five errors named something
+  other than the cause.** GitHub now issues immutable OIDC subjects with numeric ids
+  embedded, so the documented trust-policy form no longer matches — and a sibling project
+  in the same account still using the old form made the nearest precedent misleading
+  (G-071). An S3 notification to a Lambda whose role referenced the bucket was a circular
+  dependency reported as nine resources with no edges named (G-072). git refused the CI
+  checkout as unsafe, so the build silently produced `commit=unknown`, which would have
+  collided every artifact on one S3 key. And `lambda.Start` accepted a struct, compiled,
+  logged "api ready", and then returned 500 for every request (G-073).
+
+  The deploy smoke test caught the last one. Without a real request at the end of the
+  deploy, CI would have reported success on a completely broken service. Full account in
+  [F-0003](docs/findings/F-0003-first-deploy-through-ci.md).
 - **Four checks were found to be wrong only by watching them go red**, two of them
   serious enough to be worth naming here:
   - The **I11 tenant-key check** — the one §Phase 0 acceptance names explicitly —

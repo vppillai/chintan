@@ -17,8 +17,9 @@ The primary use context is **hands-busy capture** — driving, walking, in a
 workshop, away from a desk. It optimises for capture with near-zero interaction,
 not for a rich editing experience while capturing. Triage happens later, at a desk.
 
-**Status: Phase 0, in progress.** The pipeline exists and is green; the application
-does not exist yet. See [Current state](#current-state).
+**Status: Phase 0, in progress.** The pipeline is green and deploys itself; the
+application does not exist yet — the API serves exactly one endpoint. See
+[Current state](#current-state).
 
 ---
 
@@ -54,7 +55,7 @@ Three registers sit alongside it, with distinct purposes:
 |---|---|
 | [`docs/decisions/`](docs/decisions/) | ADRs — choices made, alternatives considered, consequences accepted |
 | [`docs/findings/`](docs/findings/) | Empirical results answering a pre-registered question |
-| [`docs/gotchas.md`](docs/gotchas.md) | Surprises — where reality differed from reasonable expectation. 58 entries |
+| [`docs/gotchas.md`](docs/gotchas.md) | Surprises — where reality differed from reasonable expectation. 69 entries |
 
 `docs/gotchas.md` is a first-class deliverable, not a scratchpad. Most of its
 entries describe failures that *pass testing and fail in the real situation*, which
@@ -136,14 +137,22 @@ Done:
   constructed, enforced by a static check rather than by convention
 - **`GET /v1/health`**, versioned routing, structured logging that cannot casually
   log transcript content
-- **Registers seeded** — 58 gotchas, five ADRs, the first finding
+- **Registers seeded** — 69 gotchas, five ADRs, three findings
+- **A deployed dev instance.** CI builds a reproducible arm64 artifact, assumes the
+  deployment role via OIDC with no stored key, and deploys — then smoke-tests
+  `/v1/health` before calling it a success. That last part caught a deploy where
+  CloudFormation succeeded and the function returned 500 for everything
+  ([F-0003](docs/findings/F-0003-first-deploy-through-ci.md))
+- **The §9.5 guardrails, applied and verified in both directions.** 13 denials fire, 8
+  required operations succeed ([F-0002](docs/findings/F-0002-agent-boundary-bootstrap.md))
 
 Not done, and next:
 
-- `infrastructure/bootstrap.yaml` and `template.yaml`
-- The remaining Phase 0 commercial-readiness foundations: metering, audit, consent,
-  idempotency, the spend breaker, the KMS indirection
-- The remaining operational scripts, including `bootstrap-agent.sh`
+- The remaining Phase 0 commercial-readiness foundations: metering and audit are written
+  but not yet wired to a request path; consent, idempotency, the spend breaker, and the
+  KMS indirection remain
+- The DynamoDB repository adapter (the interface and in-memory fake exist)
+- `users.sh` and the remaining admin scripts
 - The frontend hello-world and its Pages deploy
 
 ### Blocked on a human

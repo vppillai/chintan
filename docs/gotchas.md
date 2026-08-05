@@ -41,7 +41,7 @@ usually what saves the time.
 
 **Confidence levels:** `verified` — observed directly on real hardware or against a live API. `documented` — stated in official vendor documentation. `reported` — from secondary sources or prior experience; re-verify before relying on it. Promote entries as they are confirmed, and correct them when they turn out wrong. A register that is never corrected becomes folklore.
 
-**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Sixty-six entries are recorded here; the next new one is `G-071`.
+**IDs are permanent labels, not an ordering.** Entries are grouped by category for reading; within a category the numbers run out of sequence, and some numbers are absent, because IDs are assigned when a gotcha is discovered and never reassigned afterwards. A gap is not a missing entry — it is an ID that was never used or whose entry was merged. **Never renumber, and never reuse a number**, in this section or in `docs/gotchas.md`: these IDs are cited from the spec body, from findings, and from commit messages, and a renumbering silently redirects every one of those references. Sixty-nine entries are recorded here; the next new one is `G-074`.
 
 ### Mobile web / PWA
 
@@ -558,6 +558,30 @@ usually what saves the time.
 **Action:** Verify destructive denies with `iam:simulate-principal-policy` (read-only) or against a throwaway resource created for the purpose — never against a live one. Keep attempt-the-action testing for creates, reads, and cross-project probes, where a working deny and a broken one differ only in an error message. And read [[G-069]] first: the simulator needs its condition context supplied or it will confirm whatever you feared.
 **Confidence:** verified (encountered, with consequences, testing this boundary)
 **Refs:** §9.5, §Phase 0 entry gate, [[G-067]], [[G-069]]
+
+#### G-071 — GitHub now issues immutable OIDC subjects with numeric ids embedded, so the documented trust-policy form does not match
+**Assumption:** An AWS role trusting GitHub Actions conditions on `token.actions.githubusercontent.com:sub` equal to `repo:OWNER/REPO:environment:NAME`. This is the form AWS documents, every example shows, and `vppillai/passbook`'s own bootstrap uses in the same account.
+**Reality:** GitHub embeds the numeric owner and repository ids in the subject: `repo:vppillai@3634378/chintan@1323409209:environment:production`. The documented form no longer matches. And IAM **refuses** a GitHub OIDC trust policy that does not condition on `sub` or `job_workflow_ref` at all, so the individual immutable claims cannot simply replace it: *"Trust policy ... must evaluate, using StringEquals, StringLike or StringEqualsIgnoreCase, token.actions.githubusercontent.com:sub or token.actions.githubusercontent.com:job_workflow_ref."*
+**Symptom:** `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`, retried twelve times over two minutes. The error names neither the expected nor the presented subject, so the trust policy — which is correct by every published example — is the first and second place anyone looks. Worse in a shared account: a sibling project's role using the old form still works, so the precedent next door actively misleads.
+**Action:** Condition on `repository_owner_id`, `repository_id`, and `environment` with `StringEquals` — these are immutable and survive a rename, which is why GitHub started embedding them — **plus** a `StringLike` on `sub` with wildcards placed exactly where the ids appear (`repo:owner*/repo*:environment:name`) to satisfy IAM's requirement. That pattern also matches the older format, since a trailing `*` matches empty. Resolve the ids from the API rather than hand-editing them. And when an OIDC assume fails, print the presented `sub` and `aud` before theorising: both are claims about which workflow is running, not secrets.
+**Confidence:** verified (observed against live GitHub Actions and IAM)
+**Refs:** §9.6, §10.1, docs/findings/F-0003-first-deploy-through-ci.md
+
+#### G-072 — An S3 notification to a Lambda whose role references the bucket is a circular dependency
+**Assumption:** A template can declare a bucket that notifies a function, and give that function's role permission on the bucket. Both directions are ordinary CloudFormation.
+**Reality:** Together they are a cycle: bucket → (notification) → function → (role) → bucket ARN. CloudFormation rejects the whole template, and the error lists every resource in the cycle without naming a single edge — nine resources here, most of them uninvolved in the actual loop. Environment variables close the same loop: a `!Ref` to the bucket on the function is the same edge as the role's `!GetAtt`.
+**Symptom:** `ValidationError: Circular dependency between resources: [DataBucket, WorkerFunction, ApiIntegration, ApiRole, WorkerInvokePermission, DefaultRoute, ApiFunction, WorkerRole, ApiInvokePermission]`. Reads as though the template is deeply tangled when one reference is at fault.
+**Action:** Construct the bucket name and ARN with `!Sub` from the values that determine it — instance, account, region — instead of deriving them with `!Ref`/`!GetAtt`. This is exact rather than approximate when the name is deterministic, and it removes the dependency edge. The tell that this is the intended pattern: the `AWS::Lambda::Permission` for the notification *already* has to construct its `SourceArn` this way, for precisely the same reason.
+**Confidence:** verified (encountered on the first deploy of this template)
+**Refs:** §6.2, docs/findings/F-0003-first-deploy-through-ci.md
+
+#### G-073 — `lambda.Start` accepts a value of any type and fails at the first request, not at start-up
+**Assumption:** Passing the wrong thing to `lambda.Start` is a compile error, or at worst a start-up failure.
+**Reality:** Its parameter is `any`, so a handler struct compiles and initialises happily. The type is checked on the first invocation, which fails with `handler kind ptr is not func` — after the cold start has already run and logged whatever it logs.
+**Symptom:** The deploy succeeds, the cold-start log shows config loaded and the process reporting ready, and then every request returns 500. Because start-up looked clean, the two things anyone checks first — configuration and IAM permissions — are both fine, and the log says nothing about the real cause.
+**Action:** Pass a bound method value (`h.Handle`), not the receiver. Assert it in a test: `lambda.NewHandler` panics on a non-function, so a three-line test turns an in-production 500 into a build failure. And smoke-test a real endpoint at the end of every deploy — a stack that deploys while the function cannot serve is otherwise indistinguishable from a working one.
+**Confidence:** verified (encountered on the first deploy)
+**Refs:** §4, §0.6, docs/findings/F-0003-first-deploy-through-ci.md
 
 #### G-041 — Manual sync steps decay
 **Assumption:** A daily manual step is acceptable if the value is high.
