@@ -29,14 +29,36 @@ fi
 # Checkable from source without a browser: vh instead of dvh is the specific bug
 # §4A.6 calls out, and it reproduces only on a phone with the keyboard open —
 # never in a desktop browser, which is why a static check earns its place here.
-if [ -d frontend/css ]; then
+#
+# Two things about the scan itself, both learned from it being weaker than it read:
+#
+#   - The scope is every place a length can be written, not just the stylesheets.
+#     An inline `style="height:100vh"` in the markup and a `style.height` assignment
+#     in a module are the same bug, and a check that only reads frontend/css would
+#     pass on both.
+#   - The exclusion is in the PATTERN, never a `grep -v dvh` on the line. `[0-9]+vh`
+#     cannot match `dvh`, `svh` or `lvh` — the character before `vh` is a letter —
+#     so the pattern alone is exact, whereas dropping any line that mentions `dvh`
+#     anywhere means `height: 100vh; min-height: 100dvh;` on one line evades the
+#     check entirely. Comment lines are skipped instead, so that prose naming the
+#     forbidden unit is not itself a violation.
+SCAN_DIRS=()
+[ -d frontend/css ] && SCAN_DIRS+=(frontend/css)
+[ -d frontend/js ] && SCAN_DIRS+=(frontend/js)
+[ -f frontend/index.html ] && SCAN_DIRS+=(frontend/index.html)
+if [ "${#SCAN_DIRS[@]}" -gt 0 ]; then
     info "checking for vh units where dvh is required (§4A.6)"
     while IFS= read -r hit; do
         file="${hit%%:*}"
         rest="${hit#*:}"
         line="${rest%%:*}"
+        text="${rest#*:}"
+        # Prose describing the rule is not a breach of it.
+        case "${text#"${text%%[![:space:]]*}"}" in
+            '*'* | '//'* | '/*'* | '#'* | '<!--'*) continue ;;
+        esac
         violation "$file:$line uses a vh unit — use dvh: on the primary device the on-screen keyboard halves the viewport and vh does not account for it (§4A.6)"
-    done < <(grep -rnE '[0-9]+vh\b' frontend/css 2>/dev/null | grep -v 'dvh' || true)
+    done < <(grep -rnE '[0-9]+(\.[0-9]+)?vh\b' "${SCAN_DIRS[@]}" 2>/dev/null || true)
 fi
 
 if ! command -v chromium >/dev/null 2>&1 && ! command -v chrome >/dev/null 2>&1; then

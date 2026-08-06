@@ -39,6 +39,15 @@ fi
 # §4A.2 that matters more than the values.
 if [ -f frontend/css/tokens.css ]; then
     info "checking the 'live' colour token is reserved for recording (§4A.2)"
+    # Every surface that can name a colour, not just the stylesheets: an inline
+    # style attribute in the markup and a `style.setProperty` in a module reach the
+    # same hue by the same token, and a scan of frontend/css alone would pass on
+    # both. The check is about a rule of the design system, so it applies wherever
+    # the system is referenced.
+    LIVE_SCAN=()
+    [ -d frontend/css ] && LIVE_SCAN+=(frontend/css)
+    [ -d frontend/js ] && LIVE_SCAN+=(frontend/js)
+    [ -f frontend/index.html ] && LIVE_SCAN+=(frontend/index.html)
     while IFS= read -r hit; do
         file="${hit%%:*}"
         rest="${hit#*:}"
@@ -48,7 +57,21 @@ if [ -f frontend/css/tokens.css ]; then
         if ! printf '%s' "$rest" | grep -qiE 'record|--color-live:|capture-live'; then
             violation "$file:$line uses the 'live' token outside a recording context — it must never be a decorative accent, a delete button, or an error (§4A.2)"
         fi
-    done < <(grep -rn 'var(--color-live)' frontend/css 2>/dev/null || true)
+    done < <(grep -rn 'var(--color-live)' "${LIVE_SCAN[@]}" 2>/dev/null || true)
+
+    # The raw palette entry, separately. `var(--palette-live)` outside tokens.css
+    # is the same violation wearing a different name, and it also EVADES the check
+    # above — which is the more dangerous half, because a reviewer reading the
+    # check would believe the hue was covered.
+    while IFS= read -r hit; do
+        file="${hit%%:*}"
+        rest="${hit#*:}"
+        line="${rest%%:*}"
+        case "$file" in
+            frontend/css/tokens.css) continue ;; # owns the palette-to-role mapping
+        esac
+        violation "$file:$line references --palette-live directly — the raw palette is private to tokens.css (§4A.2), and referencing it bypasses both the dark-theme remapping and the reservation check above"
+    done < <(grep -rn 'var(--palette-live)' "${LIVE_SCAN[@]}" 2>/dev/null || true)
 fi
 
 if ! command -v chromium >/dev/null 2>&1 && ! command -v chrome >/dev/null 2>&1; then

@@ -1,0 +1,157 @@
+/* Design tokens — §4A. The visual system for every surface in §3A.6.
+ *
+ * This file exists in Phase 0, before there is much to paint, because §4A is
+ * explicit about why: "The visual system is decided here so that Phase 1 and
+ * Phase 3 are not each inventing one." Two faces built six months apart against
+ * two ad-hoc palettes is the failure this prevents, and it is not recoverable by
+ * a later tidy-up — by then both faces have shipped.
+ *
+ * Rules encoded below, in the order §4A ranks them:
+ *
+ *   1. `live` is reserved for RECORDING and nothing else. Not an error, not a
+ *      delete button, not an accent. "A user glancing at a screen at 100km/h must
+ *      be able to answer 'is it recording?' from colour alone" — every other use
+ *      of the hue erodes that signal. scripts/checks/check-a11y.sh fails the
+ *      build on a use of the token outside a recording context, which is why the
+ *      role token is defined here and referenced nowhere in Phase 0: there is no
+ *      recording surface yet, and a decorative first use would set the precedent
+ *      the check exists to prevent.
+ *   2. Two of the seven values are configurable and five are not (§4A.2, §7.3).
+ *      `chrome` and `paper` are substituted from branding.theme_color and
+ *      branding.background_color at build time; a per-instance colour scheme
+ *      beyond those two is not a feature this product has.
+ *   3. The root font size is NOT locked (§4A.3). Every size below is in rem so
+ *      that a user who has set a larger system text size gets it. A px scale here
+ *      would silently override that preference on the device where it matters
+ *      most.
+ */
+
+:root {
+    /* --- The seven §4A.2 values, raw --------------------------------------
+     *
+     * Raw, then mapped to role tokens below, because the dark theme is a
+     * remapping of roles rather than a second set of colours. Referencing
+     * --palette-* outside this file defeats that: it hardcodes light-theme
+     * intent into a rule that then does not invert.
+     */
+    --palette-ink: #10262E; /* body text: the near-black END OF THE THEME HUE, not a neutral grey */
+    --palette-chrome: {{THEME_COLOR}}; /* branding.theme_color — primary surfaces, headers, focus rings */
+    --palette-paper: {{BACKGROUND_COLOR}}; /* branding.background_color — page ground */
+    --palette-paper-sunk: #F0EBE3; /* recessed: transcript blocks, code, quoted spans */
+    --palette-live: #C0391B; /* RECORDING, AND NOTHING ELSE */
+    --palette-pending: #B7791F; /* inbox, unreviewed, low-confidence */
+    --palette-settled: #4F7A6B; /* filed, done, resolved */
+
+    /* --- Role tokens: what every other stylesheet may reference ----------- */
+    --color-ink: var(--palette-ink);
+    --color-chrome: var(--palette-chrome);
+    --color-paper: var(--palette-paper);
+    --color-paper-sunk: var(--palette-paper-sunk);
+    --color-live: var(--palette-live);
+    --color-pending: var(--palette-pending);
+    --color-settled: var(--palette-settled);
+
+    /* Hairlines and alignment are the only structural devices §4A permits — no
+     * card shadows, no gradients, no dividers as ornament. So the hairline is
+     * derived from ink against the ground rather than being an eighth colour.
+     */
+    --color-hairline: color-mix(in oklab, var(--palette-ink) 16%, var(--color-paper));
+    --color-ink-quiet: color-mix(in oklab, var(--color-ink) 68%, var(--color-paper));
+
+    /* --- Type (§4A.3) -----------------------------------------------------
+     *
+     * Two faces, not three. One neutral grotesque carries interface AND
+     * long-form reading — reading is distinguished by size, measure, and
+     * leading, never by family, so a `prompt` body has one texture from the
+     * first word to the last.
+     *
+     * The Noto entries are not padding. The primary user thinks aloud in English
+     * with occasional Malayalam or Hindi (§1.2), so transcripts contain
+     * Devanagari and Malayalam INLINE. A stack that falls through to a system
+     * face at the script boundary changes texture and baseline mid-sentence,
+     * which reads as corruption — of the user's own speech.
+     *
+     * SELF-HOSTED SUBSETS GO IN frontend/assets/fonts/, declared with @font-face
+     * in this file and precached by the service worker under the
+     * {tag}-{short-sha} token (§4A.3, §0.6). Not shipped in Phase 0: no font
+     * subsetting tool is pinned in containers/toolchain yet, and a CDN reference
+     * is both an offline failure for an installable app and an external request
+     * from a page that is otherwise self-contained. Until then these stacks
+     * resolve to whatever the device has, which is correct for a version page
+     * and NOT acceptable for a transcript — Phase 1 ships the files.
+     */
+    --font-ui: "Inter Tight", "Instrument Sans", "Noto Sans Devanagari", "Noto Sans Malayalam", system-ui, -apple-system, sans-serif;
+    --font-mono: "IBM Plex Mono", "JetBrains Mono", "Noto Sans Mono", ui-monospace, monospace;
+
+    /* One ratio, 1.25, from a 17px base. 17/16 = 1.0625rem: expressed against
+     * the root the user controls, so the whole scale moves with their setting.
+     */
+    --step-000: 0.85rem; /* 13.6px — labels, metadata */
+    --step-0: 1.0625rem; /* 17px — body and reading */
+    --step-1: 1.328rem;
+    --step-2: 1.66rem;
+    --step-3: 2.0752rem;
+
+    --leading-body: 1.65; /* §4A.3: 17px/1.65 at a 60–70ch measure reads at length */
+    --leading-tight: 1.2;
+
+    /* Text has a maximum measure ALWAYS (§4A.6). A full-bleed line on a 27-inch
+     * display is unreadable, and this content is read at length.
+     */
+    --measure: 70ch;
+
+    /* --- Space ------------------------------------------------------------
+     * With this little decoration, sloppy rhythm is the only thing left to
+     * notice (§4A). One scale, used everywhere.
+     */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --space-6: 2rem;
+    --space-7: 3rem;
+
+    --hairline: 1px;
+    --radius: 2px; /* Nearly square. Rounding is decoration; §4A spends it nowhere. */
+
+    /* Minimum interactive target (§4A.7). A token rather than a literal so that
+     * "44px" is stated once and cannot be 40 somewhere.
+     */
+    --target-min: 44px;
+}
+
+/* §4A.2 rule 2: the interface inverts after dark, automatically. "A paper-bright
+ * screen in a car at night is a hazard, not a styling preference."
+ *
+ * This is a REMAPPING of the same seven values, not a second palette: the ground
+ * becomes `ink` and the text becomes `paper`. Inventing dark-mode hexes would
+ * mean two palettes to keep in agreement, and the second one always loses.
+ *
+ * The recessed surface and hairlines are derived with color-mix from the tokens
+ * rather than picked, for the same reason.
+ *
+ * Contrast, computed rather than eyeballed (§4A.7 requires AA in BOTH themes):
+ *   paper on ink        14.7:1   AAA
+ *   ink on paper        14.7:1   AAA
+ *   chrome on paper      8.5:1   AAA
+ *   settled on paper     4.5:1   AA  (normal text, just)
+ *   pending on paper     3.4:1   AA large text / non-text only — NOT body text.
+ * So `pending` and `settled` appear as markers, borders, and rules; the words
+ * they qualify are always set in ink. app.css does not deviate from that.
+ */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-paper: var(--palette-ink);
+        --color-ink: var(--palette-paper);
+        --color-paper-sunk: color-mix(in oklab, var(--palette-ink) 82%, black);
+        /* `chrome` at #1F4E5F is a surface colour, too dark to read against an
+         * ink ground. Lifted toward paper so it stays the same hue and still
+         * reads as the same token — the alternative, an eighth colour, is what
+         * §4A.2 forbids.
+         */
+        --color-chrome: color-mix(in oklab, var(--palette-chrome) 55%, var(--palette-paper));
+        --color-hairline: color-mix(in oklab, var(--palette-paper) 22%, var(--palette-ink));
+        --color-ink-quiet: color-mix(in oklab, var(--color-ink) 66%, var(--color-paper));
+    }
+}

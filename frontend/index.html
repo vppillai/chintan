@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover is what makes env(safe-area-inset-*) report non-zero
+     values. Without it the insets are always 0 and §4A.6's notch handling is
+     silently a no-op: it looks correct in every browser except the one device
+     that has a notch. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<!-- Every value below is substituted by scripts/build-frontend.sh from the
+     branding block of config/instances/{instance}.yaml (§7.3). A literal here
+     would make a rename a code change, and check-brand-strings.sh fails the
+     build on one. The build also asserts that no placeholder survives into
+     dist/, because an unsubstituted token would ship as visible mojibake. -->
+<title>{{APP_NAME}}</title>
+<meta name="description" content="{{APP_DESCRIPTION}}">
+
+<!-- One theme-color, from branding.theme_color (`chrome`). Deliberately not a
+     light/dark pair: `chrome` is legible against both grounds, and a second
+     literal here would duplicate a value that css/tokens.css already owns —
+     two copies of a colour drift, and the drift shows up only in the browser
+     chrome, where nobody is looking. -->
+<meta name="theme-color" content="{{THEME_COLOR}}">
+
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<!-- Relative, never root-absolute. A GitHub Pages *project* site serves under
+     https://{user}.github.io/{repo}/, so "/manifest.webmanifest" resolves to
+     the user site and 404s (§10.6, G-007). Same reason the manifest's own
+     start_url and the service worker scope are relative. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="shell">
+
+  <header class="masthead">
+    <h1 class="masthead__title">{{APP_NAME}}</h1>
+    <p class="masthead__subtitle">{{APP_SUBTITLE}}</p>
+  </header>
+
+  <main>
+    <!-- The whole point of this page (§0.6): the frontend and the backend deploy
+         through separate workflows and can drift, so the app displays both
+         versions and flags a mismatch rather than leaving it to be diagnosed by
+         guesswork. §Phase 0 acceptance: "the frontend surfaces a deliberate
+         mismatch rather than hiding it."
+
+         This app's own version is rendered here at BUILD time, not by script, so
+         it is still readable when the bundle fails to load or the API is
+         unreachable — the two situations in which someone most needs to know
+         which build they are looking at. -->
+    <section class="verdict" id="verdict" data-state="checking">
+      <h2 class="verdict__heading">Version check</h2>
+      <!-- The live region wraps BOTH the headline and the reasons, and that is
+           the whole point of the wrapper. With the region on the headline alone,
+           a screen reader announces "This app and the API are different builds."
+           and never the specifics — which is where every actionable fact is:
+           which version, which instance, which side is unstamped. The reasons
+           are appended silently outside the region and the user has to go
+           hunting for a list they were never told about.
+
+           role="status" implies aria-atomic="true", so the headline and the
+           reasons are re-announced together as one update rather than the list
+           items arriving as separate interruptions. That is correct here: the
+           verdict is one statement in two parts, and drift.ts emits every
+           difference it found rather than just the first. -->
+      <div class="verdict__live" role="status" aria-live="polite">
+        <p class="verdict__line" id="verdict-line">Checking the API version…</p>
+        <ul class="verdict__reasons" id="verdict-reasons"></ul>
+      </div>
+    </section>
+
+    <noscript>
+      <p class="notice">The version comparison needs JavaScript. This app's own
+      build is shown below regardless; the API's is not.</p>
+    </noscript>
+
+    <div class="panes">
+      <section class="pane">
+        <h2 class="pane__heading">This app</h2>
+        <dl class="facts">
+          <dt>Version</dt>
+          <dd class="mono">{{VERSION}}</dd>
+          <dt>Commit</dt>
+          <dd class="mono">{{COMMIT}}</dd>
+          <dt>Built</dt>
+          <dd class="mono">{{BUILD_TIME}}</dd>
+          <dt>Instance</dt>
+          <dd class="mono">{{INSTANCE}}</dd>
+        </dl>
+      </section>
+
+      <section class="pane">
+        <h2 class="pane__heading">API</h2>
+        <dl class="facts">
+          <dt>Version</dt>
+          <dd class="mono" id="api-version">—</dd>
+          <dt>Commit</dt>
+          <dd class="mono" id="api-commit">—</dd>
+          <dt>Built</dt>
+          <dd class="mono" id="api-build-time">—</dd>
+          <dt>Instance</dt>
+          <dd class="mono" id="api-instance">—</dd>
+          <dt>Config</dt>
+          <dd class="mono" id="api-config-version">—</dd>
+          <dt>Endpoint</dt>
+          <!-- An endpoint URL is longer than a 320px viewport. §4A.6 forbids
+               horizontal PAGE scroll and requires wide content to scroll inside
+               its own container, which is what .scroller is. -->
+          <dd class="mono scroller">{{API_BASE_URL}}</dd>
+        </dl>
+      </section>
+    </div>
+
+    <p class="actions">
+      <button type="button" class="button" id="recheck">Check again</button>
+    </p>
+  </main>
+
+  <footer class="footer">
+    <span>{{APP_NAME}}</span>
+    <span class="mono">{{VERSION}}</span>
+  </footer>
+
+</div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

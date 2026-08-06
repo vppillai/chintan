@@ -1,0 +1,185 @@
+# Deploy the frontend to GitHub Pages.
+#
+# The second of the two deploy paths, and deliberately separate from the first:
+# §0.6 states that "frontend and backend deploy through separate workflows and can
+# drift", which is why the app displays both versions and flags a mismatch. This
+# workflow is the half of that sentence that creates the drift; the version check on
+# the deployed page is what makes it visible instead of guesswork.
+#
+# Three rules from elsewhere in the build are load-bearing here:
+#
+#   - **Gated on the full §0.5A check suite.** "Deploys happen only from a green
+#     pipeline." A Pages deploy is a deploy: it publishes an artifact to a
+#     world-readable URL, and an ungated path to that URL would be exactly the
+#     ungated deploy path §0.5A exists to prevent. deploy.yaml does the same.
+#   - **Builds through the toolchain container**, like every other job, so the
+#     bundle CI produces is the bundle a developer's `make build-frontend` produces
+#     (§0.5A, ADR 0005). The image reference is resolved from
+#     .github/workflows/toolchain.yaml rather than written here, so a toolchain bump
+#     reaches this workflow in the same run that changes it.
+#   - **Every action pinned to a commit SHA, never a tag.** An action is code
+#     running in a job and a tag is mutable — the same reasoning as G-048 applied to
+#     third-party code. The comment beside each pin records which version it was.
+#
+# No AWS credentials are used anywhere in this workflow, and none are needed: the
+# artifact is static files. The Pages site is world-readable regardless of
+# repository visibility (G-057, §10.6), so no secret, key, or credential may reach
+# the bundle — scripts/build-frontend.sh scans the output for credential material
+# before it ships rather than trusting that rule to hold.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - 'config/instances/**'
+      - 'scripts/build-frontend.sh'
+      - '.github/workflows/pages.yaml'
+      - '.github/workflows/toolchain.yaml'
+  workflow_dispatch:
+
+# The least-privilege default. It governs no job in this workflow: every job below
+# declares its own block, and a job-level block REPLACES this one rather than adding
+# to it. Stated anyway, so that a job added later without a block starts from
+# read-only rather than from whatever the repository default happens to be — and
+# stated with this caveat, because reading it as a floor that every job inherits is
+# what made a missing `pages` scope on the build job invisible.
+permissions:
+  contents: read
+  packages: read
+
+# One Pages deployment at a time, queued rather than cancelled. Cancelling
+# mid-deployment can leave the Pages API with a half-applied deployment, and the
+# queued run is cheap: this is the same reasoning that serialises CloudFormation in
+# deploy.yaml (§0.7.3).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # Every §0.5A gate must pass before anything is published.
+  checks:
+    uses: ./.github/workflows/checks.yaml
+    permissions:
+      contents: read
+      packages: write
+
+  toolchain:
+    uses: ./.github/workflows/toolchain.yaml
+    permissions:
+      contents: read
+      packages: write
+
+  build:
+    needs: [checks, toolchain]
+    runs-on: ubuntu-latest
+    # Job-level `permissions` REPLACES the workflow-level block, it does not merge
+    # with it — so every scope this job needs is restated here, including the two
+    # the workflow already grants. Without `pages`, the configure-pages step below
+    # cannot even READ the Pages site: GET /repos/{owner}/{repo}/pages returns 403
+    # "Resource not accessible by integration", which the action reports as a
+    # warning before failing on the next call. The whole job then dies, `deploy`
+    # never runs, and nothing is ever published — while the workflow looks, from
+    # its own text, as though `pages: write` on the deploy job covered it.
+    #
+    # `pages: write` rather than `pages: read`: it is what the upstream Pages
+    # workflow templates grant a job running configure-pages + upload, and the
+    # margin between the two is not worth being wrong about on a path that cannot
+    # be tested without deploying. `id-token: write` is deliberately NOT here —
+    # nothing in this job mints an OIDC token. deploy-pages does, and it has the
+    # scope on the `deploy` job where it is actually used.
+    permissions:
+      contents: read
+      packages: read
+      pages: write
+    container:
+      image: ${{ needs.toolchain.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          # Full history AND tags. `git describe` on a shallow clone yields
+          # "unstamped" (G-036), and an unstamped frontend cannot be compared
+          # against the API's version — which is this deployment's only feature.
+          # It would also make the service-worker cache token constant, which is
+          # G-035 in full (scripts/build-frontend.sh refuses to build in that
+          # case rather than shipping it).
+          fetch-depth: 0
+
+      - name: Build the static bundle
+        env:
+          # The job already runs inside the image, so make must not try to
+          # re-enter it.
+          CHINTAN_IN_CONTAINER: '1'
+          # Phase 0 deploys the dev instance only, matching deploy.yaml: a push to
+          # main deploys dev, and prod is deliberate rather than automatic.
+          CHINTAN_INSTANCE: dev
+          # The API endpoint the bundle talks to. §7.4 has no api_base_url key yet,
+          # and §7.4 is explicit that a configured-but-unkeyed value is a spec bug
+          # to flag rather than hardcode — so it is supplied here from a repository
+          # variable, and build-frontend.sh reads the config key the moment one
+          # exists, at which point this line and the variable both go away.
+          #
+          # An unset variable fails the build with an actionable message rather
+          # than publishing a page that cannot perform its own check. That is the
+          # loud failure, but it IS a manual setup step, and manual steps decay
+          # (G-041) — moving the value into config/instances/*.yaml is the durable
+          # fix and is recorded as such.
+          CHINTAN_API_BASE_URL: ${{ vars.CHINTAN_API_BASE_URL }}
+        run: make build-frontend
+
+      # This step is a PRECONDITION CHECK, not a configuration step, and both
+      # halves of that are deliberate.
+      #
+      # It configures nothing this bundle needs: every path in the HTML, the
+      # manifest, the worker registration and the precache list is relative
+      # (§10.6, G-007), so the `base_url` and `base_path` outputs this action
+      # exists to produce have no consumer here. What it does do is fail with an
+      # actionable message when Pages is not enabled, or is enabled with a source
+      # other than GitHub Actions — the state in which upload succeeds and
+      # deploy-pages then fails with "Not Found", which reads as a broken artifact
+      # rather than a repository setting.
+      #
+      # `enablement: true` was here and is REMOVED, because it cannot work and its
+      # presence made a false claim in this file. The action's own action.yml says
+      # of that input: "This option requires a token other than GITHUB_TOKEN to be
+      # provided. In the context of a GitHub App, the administration:write and
+      # pages:write permissions are required." `administration` is not a grantable
+      # GITHUB_TOKEN scope at all, so POST /repos/{owner}/{repo}/pages returns 403
+      # and the step fails — turning the "no manual setup needed" convenience into
+      # a workflow that can never publish anything.
+      #
+      # So enabling Pages IS a one-time manual step (Settings → Pages → Source:
+      # GitHub Actions, or one authenticated POST). G-041 says a manual step
+      # decays, and the mitigation available here is the loud failure above rather
+      # than a silent one: this is a one-time step whose omission blocks the deploy
+      # visibly, not a recurring one whose omission degrades quietly. Automating it
+      # would require a PAT or an App token in this workflow, which would put a
+      # credential on the one deploy path that currently needs none.
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # Not the `production` environment. That name is bound to the AWS OIDC role's
+    # trust policy (deploy.yaml), and reusing it here would widen the set of jobs
+    # that can assume a deployment role to include one that has no need of it.
+    # `github-pages` is the environment the Pages API itself requires.
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

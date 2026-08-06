@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="app icon">
+  <!-- The icon source named by branding.icon_source (§7.3). Both colours are
+       substituted from branding at build time, so a rebrand does not require
+       redrawing this file. No lettering: a wordmark would be a user-visible string
+       baked into a binary asset, which is the one form check-brand-strings.sh
+       cannot see.
+
+       The mark is §4A.4's signature element at icon scale — speech as solid blocks
+       scaled to duration, silence as a hairline that keeps its ordinal position.
+       It is the shape of a thinking session, and it stays legible at 48px because
+       it is five rectangles.
+
+       Content is held inside the central ~55% so the same artwork survives a
+       maskable crop. PNG variants (192, 512, maskable) are generated from this
+       file in Phase 1, when installability lands and containers/toolchain gains a
+       rasteriser — there is no SVG rasteriser pinned in the image today, and an
+       unpinned one would make the icon a function of the build host. -->
+  <rect width="512" height="512" fill="{{BACKGROUND_COLOR}}"/>
+  <g fill="{{THEME_COLOR}}">
+    <rect x="116" y="166" width="48" height="180" rx="3"/>
+    <rect x="176" y="226" width="6" height="60" rx="3"/>
+    <rect x="194" y="136" width="64" height="240" rx="3"/>
+    <rect x="270" y="196" width="40" height="120" rx="3"/>
+    <rect x="322" y="232" width="6" height="48" rx="3"/>
+    <rect x="340" y="156" width="56" height="200" rx="3"/>
+  </g>
+</svg>

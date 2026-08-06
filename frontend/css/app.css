@@ -1,0 +1,340 @@
+/* Layout and components for the Phase 0 version surface (§0.6, §4A).
+ *
+ * Mobile-first, per §4A.6: the narrow layout is the base stylesheet and wider
+ * viewports add to it, never the reverse. Written the other way round, a narrow
+ * viewport inherits desktop rules it then has to undo, and the 320px case is
+ * discovered last — which is how a layout that only works at the width it was
+ * built on gets shipped.
+ *
+ * This is neither of the two faces in §4A.1. The capture face (one enormous
+ * target, no text, 2-second budget) and the triage face (keyboard-first, dense)
+ * arrive in Phase 1 and Phase 3, and §4A.1 forbids one component tree that adapts
+ * between them. Nothing here is a component either face should reuse; what they
+ * inherit is css/tokens.css.
+ *
+ * Every dimension that could involve the viewport height uses dvh. On the primary
+ * device the on-screen keyboard halves the viewport and vh does not account for
+ * it, so a vh-based layout is correct in every desktop browser and wrong on a
+ * phone mid-typing — which never reproduces where it is being tested.
+ * scripts/checks/check-responsive.sh fails the build on a vh unit for that
+ * reason.
+ */
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* No root font-size declaration, deliberately (§4A.3): the scale in tokens.css
+ * is expressed in rem so that the OS text-size setting moves it. Setting
+ * font-size here — even to 100% — is how that preference gets overridden by
+ * accident, and 200% text zoom is a §4A.7 requirement.
+ */
+body {
+    margin: 0;
+    /* dvh, not vh. See the file header. */
+    min-height: 100dvh;
+    /* A column flex container so .shell can be told to FILL that min-height.
+     * min-height does not propagate to a child: with body a block container,
+     * .shell is only as tall as its content, so .footer's `margin-top: auto` has
+     * no free space to consume and the footer sits directly under the last
+     * section on a short page. The symptom is subtle enough to be read as
+     * intentional, which is why it survived — a footer that is bottom-anchored
+     * only when the content happens to be tall enough is not anchored.
+     */
+    display: flex;
+    flex-direction: column;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-ui);
+    font-size: var(--step-0);
+    line-height: var(--leading-body);
+    /* Notches and home indicators are the normal case on the primary device
+     * (§4A.6). Inset padding on the body rather than on each pane, so no surface
+     * can be added later that forgets it.
+     */
+    padding:
+        env(safe-area-inset-top) env(safe-area-inset-right)
+        env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.shell {
+    /* The measure cap plus gutters, centred. §4A.6: text caps at a 70-character
+     * measure no matter how wide the window.
+     *
+     * `min()` rather than a media query: breakpoints change layout TOPOLOGY, and
+     * everything inside a range scales fluidly. A design that only looks right at
+     * three widths is not responsive.
+     */
+    width: min(100%, calc(var(--measure) + 2 * var(--space-6)));
+    margin-inline: auto;
+    /* Fill the body's min-height, so .footer { margin-top: auto } below has
+     * something to push against. Expressed as flex growth rather than a second
+     * `min-height: 100dvh` here: repeating the dvh would double-count the body's
+     * safe-area padding and make the page overflow by the inset height on exactly
+     * the notched device §4A.6 is about.
+     */
+    flex: 1;
+    padding: var(--space-6) clamp(var(--space-4), 4vw, var(--space-6)) var(--space-7);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+}
+
+/* --- Masthead ----------------------------------------------------------- */
+
+.masthead {
+    border-bottom: var(--hairline) solid var(--color-hairline);
+    padding-bottom: var(--space-4);
+}
+
+.masthead__title {
+    margin: 0;
+    font-size: var(--step-2);
+    line-height: var(--leading-tight);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--color-chrome);
+}
+
+.masthead__subtitle {
+    margin: var(--space-2) 0 0;
+    color: var(--color-ink-quiet);
+    font-size: var(--step-000);
+}
+
+/* --- Version verdict ----------------------------------------------------
+ *
+ * State is carried by the WORD and by a marker, with `pending` as the only
+ * attention hue. §4A.2 reserves `live` for recording — using red for "versions
+ * disagree" is exactly the erosion that section forbids, and it would cost the
+ * one signal the driving case depends on. So: no error colour exists in this
+ * system, by design.
+ */
+
+.verdict {
+    background: var(--color-paper-sunk);
+    border-left: 3px solid var(--color-hairline);
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-5);
+}
+
+.verdict__heading {
+    margin: 0;
+    font-size: var(--step-000);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-ink-quiet);
+}
+
+.verdict__line {
+    margin: var(--space-2) 0 0;
+    font-size: var(--step-1);
+    line-height: var(--leading-tight);
+}
+
+.verdict__reasons {
+    margin: var(--space-3) 0 0;
+    padding-left: var(--space-5);
+    font-size: var(--step-000);
+    color: var(--color-ink-quiet);
+}
+
+.verdict__reasons:empty {
+    display: none;
+}
+
+/* The four states the drift check can reach. `match` is the only one that is not
+ * asking for attention, which is the correct default weighting: a mismatch that
+ * looks the same as agreement is a mismatch that gets scrolled past (§0.6).
+ */
+.verdict[data-state="match"] {
+    border-left-color: var(--color-settled);
+}
+
+.verdict[data-state="mismatch"],
+.verdict[data-state="unverifiable"],
+.verdict[data-state="unreachable"] {
+    border-left-color: var(--color-pending);
+}
+
+/* --- Fact panes --------------------------------------------------------- */
+
+.panes {
+    display: grid;
+    gap: var(--space-5);
+}
+
+.pane {
+    /* min-width: 0 on a grid child is not optional. Without it the implicit
+     * `auto` minimum lets a long unbreakable value (an endpoint URL) force the
+     * track wider than the viewport, which produces horizontal PAGE scroll —
+     * forbidden at any width by §4A.6.
+     */
+    min-width: 0;
+}
+
+.pane__heading {
+    margin: 0 0 var(--space-3);
+    font-size: var(--step-000);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-ink-quiet);
+    border-bottom: var(--hairline) solid var(--color-hairline);
+    padding-bottom: var(--space-2);
+}
+
+.facts {
+    margin: 0;
+    display: grid;
+    /* Compact: label above value, one column. The two-column form arrives at the
+     * 600px boundary below, where there is room for it without cramping the
+     * value.
+     */
+    grid-template-columns: 1fr;
+    gap: var(--space-1) var(--space-4);
+}
+
+.facts dt {
+    font-size: var(--step-000);
+    color: var(--color-ink-quiet);
+}
+
+.facts dd {
+    margin: 0 0 var(--space-3);
+    min-width: 0;
+}
+
+.mono {
+    font-family: var(--font-mono);
+    /* Tabular figures stop timestamps jittering as they tick (§4A.3). Set on the
+     * mono role rather than per-element so no figure in this system is
+     * proportional by omission.
+     */
+    font-variant-numeric: tabular-nums;
+    font-size: var(--step-000);
+}
+
+/* Wide content scrolls inside its OWN container (§4A.6). The alternative —
+ * overflow-x: hidden on the body — hides the symptom and takes the content with
+ * it; the alternative after that is a page that scrolls sideways on a phone.
+ */
+.scroller {
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: var(--space-1);
+}
+
+.notice {
+    margin: 0;
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-paper-sunk);
+    border-left: 3px solid var(--color-pending);
+    border-radius: var(--radius);
+    font-size: var(--step-000);
+}
+
+/* --- Controls ----------------------------------------------------------- */
+
+.actions {
+    margin: 0;
+}
+
+.button {
+    /* 44px minimum (§4A.7). The primary device has no hover, so nothing about
+     * this control is discoverable by pointing at it: it is labelled, it is
+     * sized, and its focus ring is visible.
+     */
+    min-height: var(--target-min);
+    min-width: var(--target-min);
+    padding: var(--space-2) var(--space-5);
+    font-family: inherit;
+    font-size: var(--step-0);
+    color: var(--color-paper);
+    background: var(--color-chrome);
+    border: var(--hairline) solid var(--color-chrome);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: opacity 120ms ease-out;
+}
+
+.button:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+/* :focus-visible, and a real offset. §4A.7 requires visible keyboard focus
+ * throughout, and the browser default ring disappears against `chrome`.
+ */
+:focus-visible {
+    outline: 2px solid var(--color-chrome);
+    outline-offset: 2px;
+}
+
+/* The ring must survive the dark remap too: against an ink ground, `chrome`
+ * lifted toward paper is what stays visible.
+ */
+@media (prefers-color-scheme: dark) {
+    .button {
+        color: var(--palette-ink);
+    }
+}
+
+/* --- Footer ------------------------------------------------------------- */
+
+.footer {
+    /* Bottom-anchored. Load-bearing on `body { display: flex }` and
+     * `.shell { flex: 1 }` above: without both, this line is inert.
+     */
+    margin-top: auto;
+    padding-top: var(--space-4);
+    border-top: var(--hairline) solid var(--color-hairline);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+    font-size: var(--step-000);
+    color: var(--color-ink-quiet);
+}
+
+/* --- Ranges (§4A.6) -----------------------------------------------------
+ *
+ * Only where the layout genuinely changes shape. compact < 600px is the base
+ * above; medium starts here. The wide (≥1024px) two-pane topology belongs to the
+ * triage face and has no subject on this surface — adding a breakpoint with
+ * nothing to reflow would be inventing layout for a screen that does not exist.
+ */
+@media (min-width: 600px) {
+    .facts {
+        /* Label and value on one line once there is room. max-content on the
+         * label keeps the values aligned to a single column, which is the whole
+         * reason to do this — alignment is one of the two structural devices
+         * §4A allows.
+         */
+        grid-template-columns: max-content minmax(0, 1fr);
+        align-items: baseline;
+    }
+
+    .facts dd {
+        margin-bottom: var(--space-2);
+    }
+
+    .panes {
+        gap: var(--space-6);
+    }
+}
+
+/* §4A.7: prefers-reduced-motion respected. The only motion that survives it is
+ * the recording indicator, because it carries state — and that indicator does not
+ * exist until Phase 1, so on this surface the answer is simply "no motion".
+ */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
