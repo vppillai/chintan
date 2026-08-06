@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "One month past the §10.7 ceiling, for the usage.sh exit-code test (§11.5).",
+    "",
+    "6.00 USD in a month is above the $5 the spec calls a design error rather than a budget",
+    "overrun, so usage.sh must exit 4 and say so. Kept as its own fixture because the",
+    "records.json report has to stay comfortably inside the target for the isolation test to",
+    "mean anything — one fixture cannot demonstrate both."
+  ],
+  "usage": [
+    {
+      "tenant": "t-alpha",
+      "id": "01K0DDDDDDDDDDDDDDDDDDDDD1",
+      "unit": "stt_seconds",
+      "quantity": 540000,
+      "provider": "groq_whisper_turbo",
+      "cost_micros": 6000000,
+      "op": "transcribe",
+      "ts": "2026-07-20T10:00:00Z"
+    }
+  ]
+}

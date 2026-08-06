@@ -15,6 +15,12 @@ set -euo pipefail
 
 LOG="${FAKE_AWS_LOG:-/dev/null}"
 STATE="${FAKE_AWS_STATE:-}"
+# FAKE_AWS_STATE is one document for every call, which is enough for a script that
+# reads one thing. cleanup-aws.sh reads three different shapes — the stack list, each
+# stack's resources, and the tag query — and its safety argument is precisely about how
+# those three disagree, so it needs them answered separately. FAKE_AWS_FIXTURES is a
+# colon-separated search path of directories holding one file per operation; see below.
+FIXTURES="${FAKE_AWS_FIXTURES:-}"
 
 # Strip the global flags the scripts pass so the service/operation parse below
 # does not have to account for them.
@@ -38,6 +44,51 @@ case "$OPERATION" in
     get-*|describe-*|list-*|head-*) : ;;
     *) printf '%s %s %s\n' "$SERVICE" "$OPERATION" "$*" >> "$LOG" ;;
 esac
+
+# FAKE_AWS_UNREADABLE models an API that fails: a space-separated list of substrings
+# matched against the whole invocation, so a test can fail one operation
+# ("cloudformation:describe-stacks") or one resource ("passbook-prod") while everything
+# else answers normally.
+#
+# Needed because the interesting behaviour of a sweep is what it does when it CANNOT see
+# something. A script that fails closed on an unreadable inventory and one that treats it
+# as "nothing is claimed" are indistinguishable on a healthy account, and the difference
+# between them is the live deployment.
+if [ -n "${FAKE_AWS_UNREADABLE:-}" ]; then
+    read -ra FAKE_AWS_UNREADABLE_PATTERNS <<<"$FAKE_AWS_UNREADABLE"
+    for pattern in ${FAKE_AWS_UNREADABLE_PATTERNS[@]+"${FAKE_AWS_UNREADABLE_PATTERNS[@]}"}; do
+        case "$SERVICE:$OPERATION $*" in
+            *"$pattern"*)
+                echo "An error occurred (AccessDeniedException) when calling the ${OPERATION} operation: simulated by FAKE_AWS_UNREADABLE" >&2
+                exit 254
+                ;;
+        esac
+    done
+fi
+
+# Per-operation fixtures, checked before the built-in responses so a test can override
+# any of them: <dir>/<service>-<operation>.json is returned verbatim.
+#
+# FAKE_AWS_FIXTURES is a colon-separated SEARCH PATH, first match wins, so a scenario
+# directory overrides one operation and inherits every other response from a base
+# directory behind it. That is not convenience — a scenario that has to restate every
+# response is how "right exit code, wrong reason" gets into a test suite: the response
+# nobody restated answers `{}`, the script under test refuses on an unrelated branch,
+# and the test keeps passing after the guard it was written for is deleted. Two of the
+# cleanup-aws refusal tests did exactly that before this was a search path.
+#
+# A MISSING file is still deliberately not an error — it falls through to the default
+# `{}`, which is what lets a test model "this API could not be read" by omitting the
+# fixture. Prefer FAKE_AWS_UNREADABLE for that now: it says so explicitly.
+if [ -n "$FIXTURES" ]; then
+    IFS=: read -ra FAKE_AWS_FIXTURE_DIRS <<<"$FIXTURES"
+    for dir in ${FAKE_AWS_FIXTURE_DIRS[@]+"${FAKE_AWS_FIXTURE_DIRS[@]}"}; do
+        if [ -f "${dir}/${SERVICE}-${OPERATION}.json" ]; then
+            cat "${dir}/${SERVICE}-${OPERATION}.json"
+            exit 0
+        fi
+    done
+fi
 
 case "$SERVICE:$OPERATION" in
     sts:get-caller-identity)

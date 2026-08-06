@@ -1,0 +1,14 @@
+{
+  "Users": [
+    {
+      "Username": "someone@example.com",
+      "UserStatus": "FORCE_CHANGE_PASSWORD",
+      "Enabled": true,
+      "UserCreateDate": "2026-08-01T10:00:00Z",
+      "Attributes": [
+        { "Name": "sub", "Value": "11111111-2222-3333-4444-555555555555" },
+        { "Name": "email", "Value": "someone@example.com" }
+      ]
+    }
+  ]
+}

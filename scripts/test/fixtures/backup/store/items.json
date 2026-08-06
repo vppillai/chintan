@@ -1,0 +1,51 @@
+[
+  {
+    "pk": "TENANT#alice",
+    "sk": "META",
+    "attrs": {
+      "plan": "personal",
+      "region": "ca-central-1",
+      "kms_key_id": "alias/aws/dynamodb",
+      "status": "active",
+      "created_at": "2026-07-01T09:00:00Z",
+      "consent": {"corpus_retention": {"granted": true, "ts": "2026-07-01T09:00:00Z", "version": 1}}
+    }
+  },
+  {
+    "pk": "TENANT#alice",
+    "sk": "USER#alice",
+    "attrs": {"email": "alice@example.test", "role": "owner", "created_at": "2026-07-01T09:00:00Z"}
+  },
+  {
+    "pk": "TENANT#alice",
+    "sk": "CAPTURE#c1",
+    "attrs": {
+      "owner_user_id": "alice",
+      "session_id": "s_01H",
+      "label": "compression library evaluation",
+      "created_at": "2026-08-01T10:00:00Z",
+      "updated_at": "2026-08-01T10:05:00Z",
+      "s3_prefix": "tenants/alice/captures/c1/",
+      "active_l0_run": "prov-01HZZAAAA",
+      "ingest_source": "app"
+    },
+    "gsi1pk": "TENANT#alice",
+    "gsi1sk": "UPDATED#2026-08-01T10:05:00Z"
+  },
+  {
+    "pk": "TENANT#alice",
+    "sk": "CAPTURE#c1#SEG#000000",
+    "attrs": {
+      "block_id": "t-0001",
+      "audio_key": "tenants/alice/audio/c1/segments/seg_000000.opus",
+      "wall_start_ms": 4120,
+      "dur_ms": 7660,
+      "l0_keys": {"prov-01HZZAAAA": "tenants/alice/captures/c1/transcripts/L0/prov-01HZZAAAA/seg_000000.json"}
+    }
+  },
+  {
+    "pk": "TENANT#bob",
+    "sk": "META",
+    "attrs": {"plan": "personal", "status": "active", "kms_key_id": "alias/aws/dynamodb"}
+  }
+]

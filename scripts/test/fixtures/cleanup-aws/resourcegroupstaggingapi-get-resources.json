@@ -1,0 +1,140 @@
+{
+  "_comment": [
+    "The Project=voicenotes tag query - the only way candidates are ever identified",
+    "(§10.3: never a wildcard, never a name match). One entry per classification the",
+    "script can reach, so the plan is an exhaustive statement of its behaviour:",
+    "",
+    "  voicenotes-api-dev            claimed by voicenotes-dev -> skipped",
+    "  voicenotes-worker-dev         claimed by voicenotes-dev -> skipped",
+    "  voicenotes-ingest-dev         unclaimed, prefixed         -> DELETE (the orphan a",
+    "                                rollback leaves when a logical resource is removed",
+    "                                from the template but its physical resource survives)",
+    "  voicenotes-api-prod           unclaimed, prefixed, other instance -> DELETE, and",
+    "                                filtered out by --instance dev",
+    "  voicenotes-probe-dev          unclaimed, prefixed, Protected=true -> refused, and",
+    "                                refused ONLY by that tag: it is otherwise identical",
+    "                                to the orphan above. Without it the Protected gate is",
+    "                                untestable, because the table and bucket are already",
+    "                                refused for holding the corpus and would keep the test",
+    "                                green with the gate deleted",
+    "  passbook-notifier             MISTAGGED Project=voicenotes -> refused by the",
+    "                                name-prefix veto. This is the entry that proves the",
+    "                                tag alone never authorizes a delete (G-067)",
+    "  table voicenotes-dev          Protected=true              -> refused first of all",
+    "  the data bucket               corpus + audio (I1, I2)     -> refused, erasure only",
+    "  the user pool                 identities                  -> refused",
+    "  /aws/lambda/voicenotes-ingest-dev  log group               -> reported: deleting it",
+    "                                outside CloudFormation is denied to this principal",
+    "  role/voicenotes-ingest-dev    same                        -> reported. Roles and",
+    "                                functions share a name in the template, so the",
+    "                                stranded function's role carries the same name",
+    "  the HTTP API                  opaque identifier           -> reported",
+    "  group voicenotes              CLAIMED by the bootstrap stack, and NOT named",
+    "                                voicenotes-* -> proves the claim check runs before",
+    "                                the prefix veto, or the sweep would propose deleting",
+    "                                the Resource Group teardown verifies itself against",
+    "  stack voicenotes-dev-failed   a stack is Category A's business -> skipped here"
+  ],
+  "ResourceTagMappingList": [
+    {
+      "ResourceARN": "arn:aws:lambda:ca-central-1:000000000000:function:voicenotes-api-dev",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:lambda:ca-central-1:000000000000:function:voicenotes-worker-dev",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:lambda:ca-central-1:000000000000:function:voicenotes-ingest-dev",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:lambda:ca-central-1:000000000000:function:voicenotes-api-prod",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "prod" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:lambda:ca-central-1:000000000000:function:voicenotes-probe-dev",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" },
+        { "Key": "Protected", "Value": "true" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:lambda:ca-central-1:000000000000:function:passbook-notifier",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:dynamodb:ca-central-1:000000000000:table/voicenotes-dev",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" },
+        { "Key": "Protected", "Value": "true" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:s3:::voicenotes-dev-000000000000-ca-central-1",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:cognito-idp:ca-central-1:000000000000:userpool/ca-central-1_devpool01",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:logs:ca-central-1:000000000000:log-group:/aws/lambda/voicenotes-ingest-dev:*",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:iam::000000000000:role/voicenotes-ingest-dev",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:apigateway:ca-central-1::/apis/a1b2c3d4e5",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:resource-groups:ca-central-1:000000000000:group/voicenotes",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "shared" }
+      ]
+    },
+    {
+      "ResourceARN": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-dev-failed/2222",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    }
+  ]
+}

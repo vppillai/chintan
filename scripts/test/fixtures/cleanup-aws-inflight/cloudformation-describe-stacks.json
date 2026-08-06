@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "A deploy in flight. voicenotes-dev is UPDATE_IN_PROGRESS while an obvious sweep",
+    "target sits beside it, so the test proves the refusal is unconditional rather than",
+    "'refuse only when there is nothing to do'.",
+    "",
+    "The describe-stack-resources fixture next to this one is what makes the test",
+    "specific: without it the resource read returns {} and the script exits 3 on the",
+    "UNREADABLE-claim-set refusal instead, which is the right exit code for the wrong",
+    "reason - and a test that cannot tell those apart would pass if the in-flight check",
+    "were deleted outright."
+  ],
+  "Stacks": [
+    {
+      "StackName": "voicenotes-dev",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-dev/1111",
+      "StackStatus": "UPDATE_IN_PROGRESS",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "StackName": "voicenotes-dev-failed",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-dev-failed/2222",
+      "StackStatus": "ROLLBACK_COMPLETE",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    }
+  ]
+}

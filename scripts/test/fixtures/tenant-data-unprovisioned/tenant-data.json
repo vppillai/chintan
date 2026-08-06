@@ -1,0 +1,17 @@
+{
+  "records": [
+    {
+      "kind": "tenant",
+      "attrs": {
+        "plan": "personal",
+        "region": "ca-central-1",
+        "status": "active",
+        "created_at": "2026-01-04T09:00:00Z"
+      }
+    },
+    { "kind": "capture", "ids": ["c-0001"], "attrs": { "label": "a capture nobody may erase yet" } }
+  ],
+  "objects": [
+    { "kind": "capture_content", "ids": ["c-0001"], "body": "# unprovisioned tenant\n" }
+  ]
+}

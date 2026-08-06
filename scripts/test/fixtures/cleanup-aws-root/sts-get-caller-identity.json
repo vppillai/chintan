@@ -1,0 +1,14 @@
+{
+  "_comment": [
+    "Overrides the harness's default agent identity with the account root user. Root",
+    "bypasses every deny in the permissions boundary (§9.4), so it is the one caller for",
+    "which this script has no backstop at all - and the refusal has to be in the script,",
+    "because nothing underneath will catch the mistake (G-067).",
+    "",
+    "The fixture directory contains only this file: everything else falls through to the",
+    "harness defaults, and the run must refuse before it reads any of them."
+  ],
+  "UserId": "000000000000",
+  "Account": "000000000000",
+  "Arn": "arn:aws:iam::000000000000:root"
+}

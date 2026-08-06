@@ -30,7 +30,14 @@ Usage:
   chintanctl <command> [subcommand] [flags]
 
 Commands:
+  audit                        Query the audit log by actor, action, resource, time (§11.4)
+  backup                       Snapshot one tenant to a portable directory (§11.4)
   config validate <dir|file>   Validate instance configuration (§7.4)
+  erase                        Tenant erasure — the only path that deletes L0 (§9.3)
+  export                       Portability export of one tenant (§9.3, §Phase 7)
+  restore                      Restore a snapshot into a named tenant (§11.4)
+  usage                        Per-tenant cost report from Usage records (§11.4, §10.7)
+  users audit-item             Render the audit record for a users.sh invocation
   version                      Print build version information
 
 Every command supports --help. Commands that mutate state or spend provider
@@ -47,8 +54,31 @@ func main() {
 	// tell "I invoked this wrongly" from "the thing I asked for failed", which
 	// matters when the caller is a CI step rather than a person.
 	switch os.Args[1] {
+	case "audit":
+		os.Exit(runAudit(os.Args[2:]))
+	case "backup":
+		// Exits 3 as well as 0/1/2: a refusal — a non-empty destination, an
+		// unrepresentable record — is "nothing happened, deliberately", which calls for
+		// a different next action than a half-finished run. See snapshotExitCode.
+		os.Exit(runBackup(os.Args[2:]))
 	case "config":
 		os.Exit(runConfig(os.Args[2:]))
+	case "erase":
+		// Exits 3 as well as 0/1/2: a refusal — --apply without the tenant id retyped
+		// through --confirm — is "nothing happened, deliberately", which is a different
+		// next action from a run that half-completed. See exitCode.
+		os.Exit(runErase(os.Args[2:]))
+	case "export":
+		os.Exit(runExport(os.Args[2:]))
+	case "restore":
+		os.Exit(runRestore(os.Args[2:]))
+	case "usage":
+		// Exits 3 or 4 as well as 0/1/2: a report that was produced and contains a
+		// finding — a reconciliation outside tolerance, or a month over the §10.7 ceiling
+		// — is neither a success nor a tool failure. See usageExitCode.
+		os.Exit(runUsage(os.Args[2:]))
+	case "users":
+		os.Exit(runUsers(os.Args[2:]))
 	case "version":
 		os.Exit(runVersion(os.Args[2:]))
 	case "-h", "--help", "help":

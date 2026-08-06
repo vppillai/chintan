@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "The claim set. The fake CLI answers one document per <service>-<operation>, so this",
+    "is the union of every stack's resources rather than one stack's - which is exactly",
+    "what cleanup-aws.sh builds from the per-stack calls anyway, so the union is faithful",
+    "to the structure it tests.",
+    "",
+    "PhysicalResourceIds are what CloudFormation actually reports for these types: the",
+    "function NAME for a Lambda (not its ARN), the table name, the bucket name, the pool",
+    "id, and the group NAME for a resource group - which is 'voicenotes' with no prefix",
+    "hyphen (infrastructure/bootstrap.yaml). That last one matters: the name-prefix veto",
+    "would reject it, so this fixture proves the claim check runs first and a live",
+    "resource group is never a sweep candidate.",
+    "",
+    "Names follow infrastructure/template.yaml: voicenotes-api-<instance>, not",
+    "voicenotes-<instance>-api. A fixture that invents a naming scheme teaches the wrong",
+    "one to whoever copies it."
+  ],
+  "StackResources": [
+    {
+      "LogicalResourceId": "ApiFunction",
+      "ResourceType": "AWS::Lambda::Function",
+      "PhysicalResourceId": "voicenotes-api-dev"
+    },
+    {
+      "LogicalResourceId": "WorkerFunction",
+      "ResourceType": "AWS::Lambda::Function",
+      "PhysicalResourceId": "voicenotes-worker-dev"
+    },
+    {
+      "LogicalResourceId": "Table",
+      "ResourceType": "AWS::DynamoDB::Table",
+      "PhysicalResourceId": "voicenotes-dev"
+    },
+    {
+      "LogicalResourceId": "DataBucket",
+      "ResourceType": "AWS::S3::Bucket",
+      "PhysicalResourceId": "voicenotes-dev-000000000000-ca-central-1"
+    },
+    {
+      "LogicalResourceId": "UserPool",
+      "ResourceType": "AWS::Cognito::UserPool",
+      "PhysicalResourceId": "ca-central-1_devpool01"
+    },
+    {
+      "LogicalResourceId": "ProjectGroup",
+      "ResourceType": "AWS::ResourceGroups::Group",
+      "PhysicalResourceId": "voicenotes"
+    }
+  ]
+}

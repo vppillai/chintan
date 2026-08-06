@@ -1,0 +1,15 @@
+{
+  "Stacks": [
+    {
+      "StackName": "voicenotes-dev",
+      "StackStatus": "CREATE_COMPLETE",
+      "Outputs": [
+        { "OutputKey": "ApiEndpoint", "OutputValue": "https://api.example.invalid" },
+        { "OutputKey": "TableName", "OutputValue": "voicenotes-dev" },
+        { "OutputKey": "DataBucketName", "OutputValue": "voicenotes-dev-000000000000-ca-central-1" },
+        { "OutputKey": "UserPoolId", "OutputValue": "ca-central-1_devpool01" },
+        { "OutputKey": "UserPoolClientId", "OutputValue": "1exampleclientid" }
+      ]
+    }
+  ]
+}

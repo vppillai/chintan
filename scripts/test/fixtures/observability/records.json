@@ -1,0 +1,191 @@
+{
+  "_comment": [
+    "Seed records for the usage.sh and audit.sh tests (§11.5). Read into an in-memory",
+    "Repository by chintanctl's --fixtures mode, so the tests run in CI with no AWS",
+    "credentials and cannot reach an account.",
+    "",
+    "TWO TENANTS on purpose. t-alpha is the subject; t-beta exists so a cross-tenant leak",
+    "is loud rather than subtle: its single record is 9.00 USD, which is past the §10.7",
+    "ceiling, so any report for t-alpha that included it would flip from within_target to",
+    "above_ceiling and change the exit code. §Phase 0 requires the cross-tenant test to run",
+    "against the data layer and not only the API (I11), and these scripts ARE a data-layer",
+    "caller.",
+    "",
+    "The t-alpha 2026-07 figures are the §10.7 model at a small scale, with the numbers",
+    "chosen so the pricing cross-check is exact against config/instances/dev.yaml:",
+    "groq_whisper_turbo is 0.04 USD/hour with a 10-second billing minimum (G-013), so the",
+    "28s, 28s and 4s requests bill as 28 + 28 + 10 = 66 seconds = 733 micros, and the",
+    "recorded costs below sum to the same 733. The 4-second record is the one that matters:",
+    "a check derived from summed seconds instead of per-request minimums would expect 667",
+    "and report a false 10% variance."
+  ],
+  "usage": [
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA1",
+      "unit": "stt_seconds",
+      "quantity": 28,
+      "provider": "groq_whisper_turbo",
+      "cost_micros": 311,
+      "op": "transcribe",
+      "ts": "2026-07-02T09:15:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA2",
+      "unit": "stt_seconds",
+      "quantity": 28,
+      "provider": "groq_whisper_turbo",
+      "cost_micros": 311,
+      "op": "transcribe",
+      "ts": "2026-07-02T09:15:30Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA3",
+      "unit": "stt_seconds",
+      "quantity": 4,
+      "provider": "groq_whisper_turbo",
+      "cost_micros": 111,
+      "op": "transcribe",
+      "ts": "2026-07-02T09:16:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA4",
+      "unit": "stt_seconds",
+      "quantity": 28,
+      "provider": "sarvam_saaras_v3",
+      "cost_micros": 8400,
+      "op": "transcribe.shadow",
+      "ts": "2026-07-02T09:16:10Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA5",
+      "unit": "llm_input_tokens",
+      "quantity": 12000,
+      "provider": "minimax_m3",
+      "cost_micros": 3000,
+      "op": "cleanup",
+      "ts": "2026-07-02T09:20:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA6",
+      "unit": "llm_output_tokens",
+      "quantity": 800,
+      "provider": "minimax_m3",
+      "cost_micros": 1200,
+      "op": "cleanup",
+      "ts": "2026-07-02T09:20:01Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA7",
+      "unit": "embedding_tokens",
+      "quantity": 640,
+      "provider": "minimax_embed",
+      "cost_micros": 64,
+      "op": "embed",
+      "ts": "2026-07-02T09:21:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA8",
+      "unit": "storage_bytes",
+      "quantity": 314572800,
+      "provider": "aws",
+      "cost_micros": 100000,
+      "op": "storage",
+      "ts": "2026-07-31T23:59:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0BBBBBBBBBBBBBBBBBBBBB1",
+      "unit": "stt_seconds",
+      "quantity": 56,
+      "provider": "groq_whisper_turbo",
+      "cost_micros": 622,
+      "op": "transcribe",
+      "ts": "2026-08-01T08:00:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0BBBBBBBBBBBBBBBBBBBBB2",
+      "unit": "requests",
+      "quantity": 120,
+      "provider": "aws",
+      "cost_micros": 40,
+      "op": "api",
+      "ts": "2026-08-01T08:00:05Z"
+    },
+    {
+      "tenant": "t-beta",
+      "id": "01K0CCCCCCCCCCCCCCCCCCCCC1",
+      "unit": "stt_seconds",
+      "quantity": 810000,
+      "provider": "groq_whisper_turbo",
+      "cost_micros": 9000000,
+      "op": "transcribe",
+      "ts": "2026-07-15T12:00:00Z"
+    }
+  ],
+  "audit": [
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA1",
+      "actor": "user:u-alpha",
+      "action": "capture.create",
+      "resource": "capture/01K0CAP0000000000000000001",
+      "ip": "203.0.113.7",
+      "ua": "Mozilla/5.0",
+      "result": "allowed",
+      "ts": "2026-07-02T09:15:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA2",
+      "actor": "user:u-alpha",
+      "action": "capture.read",
+      "resource": "capture/01K0CAP0000000000000000001",
+      "ip": "203.0.113.7",
+      "ua": "Mozilla/5.0",
+      "result": "allowed",
+      "ts": "2026-07-02T09:30:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0AAAAAAAAAAAAAAAAAAAAA3",
+      "actor": "user:u-intruder",
+      "action": "capture.read",
+      "resource": "capture/01K0CAP0000000000000000009",
+      "ip": "198.51.100.4",
+      "ua": "curl/8.5.0",
+      "result": "denied",
+      "ts": "2026-07-03T11:00:00Z"
+    },
+    {
+      "tenant": "t-alpha",
+      "id": "01K0BBBBBBBBBBBBBBBBBBBBB1",
+      "actor": "script:usage.sh",
+      "action": "usage.report",
+      "resource": "usage-report:2026-07..2026-07",
+      "ip": "",
+      "ua": "",
+      "result": "allowed",
+      "ts": "2026-08-01T07:00:00Z"
+    },
+    {
+      "tenant": "t-beta",
+      "id": "01K0CCCCCCCCCCCCCCCCCCCCC1",
+      "actor": "user:u-beta",
+      "action": "capture.read",
+      "resource": "capture/01K0CAP0000000000000000042",
+      "ip": "203.0.113.99",
+      "ua": "Mozilla/5.0",
+      "result": "allowed",
+      "ts": "2026-07-02T09:15:00Z"
+    }
+  ]
+}

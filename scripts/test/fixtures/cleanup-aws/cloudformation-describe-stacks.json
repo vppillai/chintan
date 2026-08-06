@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "describe-stacks for the cleanup-aws.sh tests. Stack names are the real ones:",
+    "deploy.sh builds voicenotes-<instance>, bootstrap.sh builds voicenotes-bootstrap.",
+    "Each entry exists to drive one branch:",
+    "  voicenotes-dev         healthy; its resources ARE the claim set",
+    "  voicenotes-dev-failed  ROLLBACK_COMPLETE - the orphan a failed deploy leaves",
+    "  voicenotes-bootstrap   also ROLLBACK_COMPLETE, but shared: reported, never swept",
+    "  voicenotes-dev-stuck   UPDATE_ROLLBACK_FAILED - wants an operator, not a sweep",
+    "  passbook-prod          another project, also failed. The account really does host",
+    "                         passbook (§10.3); touching it is the catastrophe this",
+    "                         script exists to avoid, so a test proves it is left alone."
+  ],
+  "Stacks": [
+    {
+      "StackName": "voicenotes-dev",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-dev/1111",
+      "StackStatus": "CREATE_COMPLETE",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "StackName": "voicenotes-dev-failed",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-dev-failed/2222",
+      "StackStatus": "ROLLBACK_COMPLETE",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "StackName": "voicenotes-bootstrap",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-bootstrap/3333",
+      "StackStatus": "ROLLBACK_COMPLETE",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "shared" }
+      ]
+    },
+    {
+      "StackName": "voicenotes-dev-stuck",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/voicenotes-dev-stuck/4444",
+      "StackStatus": "UPDATE_ROLLBACK_FAILED",
+      "Tags": [
+        { "Key": "Project", "Value": "voicenotes" },
+        { "Key": "Instance", "Value": "dev" }
+      ]
+    },
+    {
+      "StackName": "passbook-prod",
+      "StackId": "arn:aws:cloudformation:ca-central-1:000000000000:stack/passbook-prod/5555",
+      "StackStatus": "ROLLBACK_COMPLETE",
+      "Tags": [
+        { "Key": "Project", "Value": "passbook" },
+        { "Key": "Instance", "Value": "prod" }
+      ]
+    }
+  ]
+}
