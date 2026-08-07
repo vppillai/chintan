@@ -195,11 +195,11 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:DeleteObject
-                Resource: !Sub '${ContentBucket}/*'
+                Resource: !Sub '${ContentBucket.Arn}/*'
               - Effect: Allow
                 Action:
                   - s3:ListBucket
-                Resource: !Ref ContentBucket
+                Resource: !GetAtt ContentBucket.Arn
         - PolicyName: SSMAccess
           PolicyDocument:
             Version: '2012-10-17'
