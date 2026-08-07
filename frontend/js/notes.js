@@ -275,9 +275,10 @@ class NotesManager {
             }
         }
 
-        ui.showContentScreen('notes-screen');
         this.currentNoteId = null;
         this.hasUnsavedChanges = false;
+        this.updateSaveButton();
+        await this.showNotesScreen();
     }
 
     markUnsaved() {
