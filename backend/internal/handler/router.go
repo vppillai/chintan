@@ -9,7 +9,7 @@ import (
 )
 
 // NewRouter creates a new HTTP router with all handlers configured
-func NewRouter(notesService *service.NotesService, settingsService *service.SettingsService, allowedOrigin string) http.Handler {
+func NewRouter(notesService *service.NotesService, settingsService *service.SettingsService, captureService *service.CaptureService, allowedOrigin string) http.Handler {
 	if allowedOrigin == "" {
 		allowedOrigin = os.Getenv("ALLOWED_ORIGIN")
 	}
@@ -19,6 +19,7 @@ func NewRouter(notesService *service.NotesService, settingsService *service.Sett
 	// Create handlers
 	notesHandler := NewNotesHandler(notesService)
 	settingsHandler := NewSettingsHandler(settingsService)
+	capturesHandler := NewCapturesHandler(captureService)
 
 	// Health endpoint (no auth required)
 	mux.HandleFunc("/v1/health", HealthHandler)
@@ -27,6 +28,8 @@ func NewRouter(notesService *service.NotesService, settingsService *service.Sett
 	mux.Handle("/v1/settings", middleware.Auth(settingsHandler))
 	mux.Handle("/v1/notes/", middleware.Auth(notesHandler))
 	mux.Handle("/v1/notes", middleware.Auth(notesHandler))
+	mux.Handle("/v1/captures/", middleware.Auth(capturesHandler))
+	mux.Handle("/v1/captures", middleware.Auth(capturesHandler))
 
 	// Apply CORS to all routes
 	return middleware.CORS(allowedOrigin)(mux)
