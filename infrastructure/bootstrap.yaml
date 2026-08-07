@@ -70,7 +70,12 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+              # GitHub issues immutable subjects (owner@id/repo@id). Accept both
+              # legacy and immutable forms for environment:production only.
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+                  - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:production'
       Tags:
         - Key: Application
           Value: Chintan

@@ -9,6 +9,7 @@ on:
       - 'infrastructure/**'
       - 'config/**'
       - '.github/workflows/deploy-backend.yaml'
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-west-2
@@ -17,6 +18,10 @@ permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
 jobs:
   discover-instances:
     name: Discover Instances
@@ -24,61 +29,102 @@ jobs:
     outputs:
       instances: ${{ steps.instances.outputs.instances }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Discover instances
-        id: instances
+      - uses: actions/checkout@v4
+      - id: instances
         run: |
-          instances=$(find config/instances -name "*.yaml" -exec basename {} .yaml \; | jq -R -s -c 'split("\n")[:-1]')
-          echo "instances=$instances" >> $GITHUB_OUTPUT
+          instances=$(find config/instances -name '*.yaml' -exec basename {} .yaml \; | jq -R -s -c 'split("\n") | map(select(length>0))')
+          echo "instances=$instances" >> "$GITHUB_OUTPUT"
+          echo "discovered: $instances"
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: go test
+        working-directory: backend
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+
+  build:
+    name: Build Lambda
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      artifact_key: ${{ steps.upload.outputs.key }}
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Build arm64 zip
+        working-directory: backend
+        run: |
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
+          zip "function-${GITHUB_SHA}.zip" bootstrap
+      - id: upload
+        name: Upload to artifact bucket
+        working-directory: backend
+        run: |
+          BUCKET="chintan-lambda-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}"
+          KEY="function-${GITHUB_SHA}.zip"
+          aws s3 cp "$KEY" "s3://${BUCKET}/${KEY}"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "bucket=$BUCKET"
 
   deploy:
-    name: Deploy to ${{ matrix.instance }}
+    name: Deploy ${{ matrix.instance }}
     runs-on: ubuntu-latest
-    needs: discover-instances
+    needs: [discover-instances, build]
     strategy:
       matrix:
         instance: ${{ fromJSON(needs.discover-instances.outputs.instances) }}
     environment: production
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: backend/go.mod
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Build Lambda function
+      - name: Deploy CloudFormation
         run: |
-          GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda
-          zip function-${{ github.sha }}.zip bootstrap
-        working-directory: backend
-
-      - name: Upload Lambda artifact
-        run: |
-          aws s3 cp backend/function-${{ github.sha }}.zip s3://chintan-artifacts-${{ matrix.instance }}/function-${{ github.sha }}.zip
-
-      - name: Get repository owner
-        id: repo-info
-        run: echo "owner=${{ github.repository_owner }}" >> $GITHUB_OUTPUT
-
-      - name: Deploy CloudFormation stack
-        run: |
+          BUCKET="chintan-lambda-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}"
+          OWNER="${{ github.repository_owner }}"
+          REPO="${{ github.event.repository.name }}"
           aws cloudformation deploy \
-            --stack-name chintan-${{ matrix.instance }}-prod \
+            --stack-name "chintan-${{ matrix.instance }}-prod" \
             --template-file infrastructure/template.yaml \
-            --capabilities CAPABILITY_IAM \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
             --parameter-overrides \
-              Instance=${{ matrix.instance }} \
-              LambdaCodeS3Key=function-${{ github.sha }}.zip \
-              AllowedOrigin=https://${{ steps.repo-info.outputs.owner }}.github.io \
-              CognitoUserPoolDomainPrefix=chintan-${{ matrix.instance }}-${{ github.repository_owner }} \
-              GitHubPagesUrl=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+              InstanceName="${{ matrix.instance }}" \
+              Environment=prod \
+              AllowedOrigin="https://${OWNER}.github.io" \
+              LambdaCodeBucket="${BUCKET}" \
+              LambdaCodeKey="${{ needs.build.outputs.artifact_key }}" \
+              PagesHost="${OWNER}.github.io" \
+              RepoName="${REPO}" \
+            --tags \
+              Application=Chintan \
+              Project=chintan \
+              Instance="${{ matrix.instance }}"
+      - name: Smoke health
+        run: |
+          ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name "chintan-${{ matrix.instance }}-prod" \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text)
+          echo "ApiEndpoint=$ENDPOINT"
+          curl -fsS "${ENDPOINT}/v1/health"
