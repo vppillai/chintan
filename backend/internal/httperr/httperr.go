@@ -2,6 +2,7 @@ package httperr
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -15,9 +16,7 @@ type ErrorResponse struct {
 func WriteJSON(w http.ResponseWriter, err error, defaultStatus int) {
 	status := defaultStatus
 
-	// Map known errors to specific status codes
-	switch err {
-	case repository.ErrNotFound:
+	if errors.Is(err, repository.ErrNotFound) {
 		status = http.StatusNotFound
 	}
 

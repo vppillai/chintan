@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/service"
@@ -9,6 +10,10 @@ import (
 
 // NewRouter creates a new HTTP router with all handlers configured
 func NewRouter(notesService *service.NotesService, settingsService *service.SettingsService, allowedOrigin string) http.Handler {
+	if allowedOrigin == "" {
+		allowedOrigin = os.Getenv("ALLOWED_ORIGIN")
+	}
+
 	mux := http.NewServeMux()
 
 	// Create handlers

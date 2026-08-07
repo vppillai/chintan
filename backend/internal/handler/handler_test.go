@@ -278,6 +278,34 @@ func TestNotesHandler(t *testing.T) {
 		}
 	})
 
+	t.Run("GET missing note returns 404", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/notes/does-not-exist", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 404 {
+			t.Errorf("expected 404 for missing note, got %d", w.Code)
+		}
+	})
+
+	t.Run("PATCH missing note returns 404", func(t *testing.T) {
+		patchReq := map[string]interface{}{
+			"title": "Updated Title",
+		}
+		body, _ := json.Marshal(patchReq)
+
+		req := httptest.NewRequest("PATCH", "/v1/notes/does-not-exist", bytes.NewReader(body))
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != 404 {
+			t.Errorf("expected 404 for missing note, got %d", w.Code)
+		}
+	})
+
 	t.Run("DELETE removes note", func(t *testing.T) {
 		// First create a note
 		createReq := map[string]interface{}{
@@ -464,6 +492,26 @@ func TestCORSHandling(t *testing.T) {
 		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
 		if corsOrigin != "http://localhost:3000" {
 			t.Errorf("expected CORS origin http://localhost:3000, got %s", corsOrigin)
+		}
+	})
+
+	t.Run("uses ALLOWED_ORIGIN env when parameter empty", func(t *testing.T) {
+		t.Setenv("ALLOWED_ORIGIN", "https://app.example.com")
+		envRouter := handler.NewRouter(notesService, settingsService, "")
+
+		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
+		req.Header.Set("Origin", "https://app.example.com")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		w := httptest.NewRecorder()
+		envRouter.ServeHTTP(w, req)
+
+		if w.Code != 200 {
+			t.Errorf("expected 200 for preflight, got %d", w.Code)
+		}
+
+		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
+		if corsOrigin != "https://app.example.com" {
+			t.Errorf("expected CORS origin from env, got %s", corsOrigin)
 		}
 	})
 }
