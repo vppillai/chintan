@@ -390,7 +390,6 @@ func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
 	}
 }
 
-
 func TestCompleteCaptureIdempotent(t *testing.T) {
 	store := newMockStore()
 	objects := newMockObjects()
