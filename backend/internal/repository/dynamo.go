@@ -49,10 +49,10 @@ func captureSK(captureID string) string {
 
 // dynamoItem represents the structure stored in DynamoDB
 type dynamoItem struct {
-	PK   string `dynamodb:"pk"`
-	SK   string `dynamodb:"sk"`
-	Type string `dynamodb:"type"`
-	Data string `dynamodb:"data"` // JSON-encoded model data
+	PK   string `dynamodbav:"pk"`
+	SK   string `dynamodbav:"sk"`
+	Type string `dynamodbav:"type"`
+	Data string `dynamodbav:"data"` // JSON-encoded model data
 }
 
 func (s *DynamoStore) GetSettings(ctx context.Context, userID string) (model.Settings, error) {

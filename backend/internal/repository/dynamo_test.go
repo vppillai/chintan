@@ -2,6 +2,8 @@ package repository
 
 import (
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 )
 
 func TestKeyMappingHelpers(t *testing.T) {
@@ -163,5 +165,22 @@ func TestKeyMappingPrefixes(t *testing.T) {
 
 	if testSettings != "SETTINGS" {
 		t.Errorf("settingsSK should be exactly 'SETTINGS', got %q", testSettings)
+	}
+}
+
+func TestDynamoItemMarshalUsesLowercaseKeys(t *testing.T) {
+	item := dynamoItem{PK: "USER#u", SK: "NOTE#n", Type: "note", Data: "{}"}
+	m, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["pk"]; !ok {
+		t.Fatalf("missing pk key, got %#v", m)
+	}
+	if _, ok := m["sk"]; !ok {
+		t.Fatalf("missing sk key, got %#v", m)
+	}
+	if _, ok := m["PK"]; ok {
+		t.Fatal("unexpected uppercase PK key")
 	}
 }
