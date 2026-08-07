@@ -538,7 +538,37 @@ textarea {
 .capture-status.transcribed { background: #3498DB; color: white; }
 .capture-status.cleaned { background: #9B59B6; color: white; }
 .capture-status.appended { background: var(--color-success); color: white; }
+.capture-status.needs_target { background: var(--color-warning); color: white; }
 .capture-status.failed { background: var(--color-danger); color: white; }
+
+.target-prompt {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--color-gray-100);
+    border-radius: var(--radius-md);
+}
+
+.target-prompt h4 {
+    margin-bottom: var(--spacing-sm);
+}
+
+.target-prompt-transcript {
+    color: var(--color-text-light);
+    font-size: 0.9rem;
+    margin-bottom: var(--spacing-md);
+}
+
+.target-prompt-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.target-prompt-label {
+    margin-top: var(--spacing-sm);
+    color: var(--color-text-light);
+    font-size: 0.85rem;
+}
 
 .capture-date {
     font-size: 0.8rem;

@@ -32,6 +32,9 @@ const (
 	StatusCleaned     CaptureStatus = "cleaned"
 	StatusAppended    CaptureStatus = "appended"
 	StatusFailed      CaptureStatus = "failed"
+	// StatusNeedsTarget means the transcript was understood but the destination
+	// note is uncertain, so the user has to confirm before anything is written.
+	StatusNeedsTarget CaptureStatus = "needs_target"
 )
 
 type CaptureIndex struct {
@@ -42,9 +45,15 @@ type CaptureIndex struct {
 	Mode      CleanupMode   `json:"cleanup_mode"`
 	AudioKey  string        `json:"audio_key"`
 	RawKey    string        `json:"raw_key"`
+	RoutedKey string        `json:"routed_key,omitempty"`
 	CleanKey  string        `json:"clean_key"`
 	Error     string        `json:"error,omitempty"`
 	CreatedAt string        `json:"created_at"`
+
+	// Routing suggestion, set when the destination could not be decided confidently.
+	SuggestedNoteID string  `json:"suggested_note_id,omitempty"`
+	SuggestedTitle  string  `json:"suggested_title,omitempty"`
+	RouteConfidence float64 `json:"route_confidence,omitempty"`
 }
 
 // WebAuthnChallenge is an in-flight ceremony (go-webauthn SessionData JSON).

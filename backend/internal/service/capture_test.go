@@ -40,8 +40,8 @@ func (m *mockStore) PutSettings(ctx context.Context, userID string, s model.Sett
 
 func (m *mockStore) ListNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
 	var notes []model.NoteIndex
-	for _, n := range m.notes {
-		if strings.HasPrefix(n.ID, userID+"/") {
+	for key, n := range m.notes {
+		if strings.HasPrefix(key, userID+"/") {
 			notes = append(notes, n)
 		}
 	}

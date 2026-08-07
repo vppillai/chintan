@@ -145,6 +145,18 @@ class NotesManager {
         this.updateSaveButton();
     }
 
+    captureStatusLabel(status) {
+        const labels = {
+            uploaded: 'Uploading',
+            transcribed: 'Transcribed',
+            cleaned: 'Tidying up',
+            appended: 'Saved to note',
+            needs_target: 'Waiting for you',
+            failed: 'Failed'
+        };
+        return labels[status] || status;
+    }
+
     async loadCapturesForNote(noteId) {
         const container = document.getElementById('captures-list');
         ui.showLoading(container, 'Loading captures...');
@@ -163,9 +175,8 @@ class NotesManager {
             container.innerHTML = captures.map(c => `
                 <div class="capture-item">
                     <div class="capture-meta">
-                        <strong>${c.id}</strong>
-                        <span class="capture-status ${c.status}">${c.status}</span>
-                        <span class="capture-time">${c.created_at || ''}</span>
+                        <span class="capture-status ${c.status}">${this.captureStatusLabel(c.status)}</span>
+                        <span class="capture-time">${ui.formatDate(c.created_at)}</span>
                     </div>
                     <div class="capture-downloads">
                         ${c.audio_key ? `<button class="btn btn-ghost btn-small" onclick="notes.downloadCapture('${c.id}', 'audio')">Audio</button>` : ''}

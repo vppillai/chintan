@@ -76,7 +76,7 @@ func init() {
 
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
-	captureService := service.NewCaptureService(store, objects, stt, llm)
+	captureService := service.NewCaptureService(store, objects, stt, llm).WithRouting(llm, notesService)
 
 	var webauthnService *service.WebAuthnService
 	clientID := strings.TrimSpace(os.Getenv("USER_POOL_CLIENT_ID"))

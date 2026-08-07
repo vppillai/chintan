@@ -23,10 +23,18 @@ func NewCapturesHandler(captureService *service.CaptureService) *CapturesHandler
 	}
 }
 
-// CreateCaptureRequest represents the request body for creating a capture
+// CreateCaptureRequest represents the request body for creating a capture.
+// NoteID is optional: when omitted, the destination note is decided from what
+// the speaker said once the audio has been transcribed.
 type CreateCaptureRequest struct {
 	NoteID      string `json:"note_id"`
 	ContentType string `json:"content_type"`
+}
+
+// SetCaptureTargetRequest chooses the destination for a capture awaiting one.
+type SetCaptureTargetRequest struct {
+	NoteID       string `json:"note_id"`
+	NewNoteTitle string `json:"new_note_title"`
 }
 
 // CreateCaptureResponse represents the response for creating a capture
@@ -82,9 +90,37 @@ func (h *CapturesHandler) handlePost(w http.ResponseWriter, r *http.Request, use
 	case "retry":
 		// Retry is the same as complete for now (idempotent)
 		h.completeCapture(w, r, userID, captureID)
+	case "target":
+		h.setCaptureTarget(w, r, userID, captureID)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
+}
+
+func (h *CapturesHandler) setCaptureTarget(w http.ResponseWriter, r *http.Request, userID, captureID string) {
+	var req SetCaptureTargetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httperr.BadRequest(w, "invalid request body")
+		return
+	}
+
+	capture, err := h.captureService.SetCaptureTarget(r.Context(), userID, captureID, req.NoteID, req.NewNoteTitle)
+	if err != nil {
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			w.WriteHeader(http.StatusNotFound)
+		case strings.Contains(err.Error(), "already targets"):
+			httperr.WriteJSON(w, err, http.StatusConflict)
+		case strings.Contains(err.Error(), "is required"):
+			httperr.BadRequest(w, err.Error())
+		default:
+			httperr.InternalServerError(w, err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(capture)
 }
 
 func (h *CapturesHandler) handleGet(w http.ResponseWriter, r *http.Request, userID string) {
@@ -152,11 +188,6 @@ func (h *CapturesHandler) createCapture(w http.ResponseWriter, r *http.Request, 
 	var req CreateCaptureRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httperr.BadRequest(w, "invalid request body")
-		return
-	}
-
-	if req.NoteID == "" {
-		httperr.BadRequest(w, "note_id is required")
 		return
 	}
 

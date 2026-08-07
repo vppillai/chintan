@@ -57,6 +57,17 @@ func CaptureRaw(userID, captureID string) (string, error) {
 	return fmt.Sprintf("tenants/%s/captures/%s/raw.txt", userID, captureID), nil
 }
 
+// CaptureRouted holds the transcript with any spoken routing instruction removed.
+func CaptureRouted(userID, captureID string) (string, error) {
+	if err := check(userID, "userID"); err != nil {
+		return "", err
+	}
+	if err := check(captureID, "captureID"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("tenants/%s/captures/%s/routed.txt", userID, captureID), nil
+}
+
 func CaptureClean(userID, captureID string) (string, error) {
 	if err := check(userID, "userID"); err != nil {
 		return "", err

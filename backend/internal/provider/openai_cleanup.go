@@ -56,8 +56,11 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 	if err != nil {
 		return "", err
 	}
-	systemPrompt := cleanup.SystemPrompt(mode)
+	return c.complete(ctx, cleanup.SystemPrompt(mode), userPrompt)
+}
 
+// complete runs a single chat completion and returns the assistant message text.
+func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	payload := map[string]any{
 		"model": c.model,
 		"messages": []map[string]string{
@@ -69,12 +72,12 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("provider: marshal cleanup request: %w", err)
+		return "", fmt.Errorf("provider: marshal llm request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("provider: build cleanup request: %w", err)
+		return "", fmt.Errorf("provider: build llm request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
@@ -91,7 +94,7 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not include response body — may contain transcript content.
-		return "", fmt.Errorf("provider: llm cleanup failed: status %d", resp.StatusCode)
+		return "", fmt.Errorf("provider: llm request failed: status %d", resp.StatusCode)
 	}
 
 	var parsed struct {

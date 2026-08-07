@@ -144,13 +144,22 @@ class ApiClient {
     }
 
     // Captures API
+    // Pass a null noteId to let the backend decide the destination from the recording.
     async createCapture(noteId, contentType) {
         return this.request('/v1/captures', {
             method: 'POST',
             body: JSON.stringify({
-                note_id: noteId,
+                note_id: noteId || '',
                 content_type: contentType
             })
+        });
+    }
+
+    // target is { note_id } or { new_note_title }.
+    async setCaptureTarget(captureId, target) {
+        return this.request(`/v1/captures/${captureId}/target`, {
+            method: 'POST',
+            body: JSON.stringify(target)
         });
     }
 

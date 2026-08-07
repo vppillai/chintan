@@ -60,7 +60,7 @@
                             <span class="record-icon">🎤</span>
                             <span class="record-text">Tap & Talk</span>
                         </button>
-                        <p class="quick-capture-hint">Just talk. Tap Stop and your words are saved as a new note automatically.</p>
+                        <p class="quick-capture-hint">Just talk. Say "add this to my roof repair note" to file it somewhere specific, or say nothing and it becomes a new note.</p>
                     </div>
 
                     <details class="capture-advanced">
@@ -91,6 +91,11 @@
                             <div class="progress-bar">
                                 <div id="progress" class="progress"></div>
                             </div>
+                        </div>
+                        <div id="target-prompt" class="target-prompt hidden">
+                            <h4 id="target-prompt-title">Where should this go?</h4>
+                            <p id="target-prompt-transcript" class="target-prompt-transcript"></p>
+                            <div id="target-prompt-options" class="target-prompt-options"></div>
                         </div>
                     </div>
                 </div>

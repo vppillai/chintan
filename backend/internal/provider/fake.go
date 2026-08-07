@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
 // FakeSTT is a fake STT implementation for testing
@@ -47,4 +48,30 @@ func (f *FakeLLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw strin
 	default:
 		return raw, nil
 	}
+}
+
+// FakeRouter is a fake Router implementation for testing.
+type FakeRouter struct {
+	ShouldFail bool
+	Decision   RouteDecision
+	// Calls records the transcripts the router was asked about.
+	Calls []string
+}
+
+func (f *FakeRouter) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error) {
+	f.Calls = append(f.Calls, transcript)
+	if f.ShouldFail {
+		return RouteDecision{}, fmt.Errorf("fake router failed")
+	}
+
+	decision := f.Decision
+	if decision.Action == "" {
+		decision.Action = RouteNew
+		decision.Title = "Fake routed note"
+		decision.Confidence = 1
+	}
+	if decision.Content == "" {
+		decision.Content = transcript
+	}
+	return decision, nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,7 +14,20 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 )
+
+// routeConfidenceThreshold is how sure the router must be before appending to an
+// existing note without asking. Below it, the user confirms first.
+const routeConfidenceThreshold = 0.75
+
+// maxRouteCandidates bounds the note list handed to the router.
+const maxRouteCandidates = 50
+
+// NoteCreator creates the destination note for a capture that has none.
+type NoteCreator interface {
+	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
+}
 
 // CaptureService handles audio capture processing pipeline
 type CaptureService struct {
@@ -21,6 +35,8 @@ type CaptureService struct {
 	objects repository.Objects
 	stt     provider.STT
 	llm     provider.LLM
+	router  provider.Router
+	notes   NoteCreator
 }
 
 // NewCaptureService creates a new capture service
@@ -33,11 +49,21 @@ func NewCaptureService(store repository.Store, objects repository.Objects, stt p
 	}
 }
 
-// CreateCapture creates a new capture and returns upload URL
+// WithRouting enables voice-directed routing, so a capture can be created with no
+// target note and have its destination decided from what the speaker said.
+func (s *CaptureService) WithRouting(router provider.Router, notes NoteCreator) *CaptureService {
+	s.router = router
+	s.notes = notes
+	return s
+}
+
+// CreateCapture creates a new capture and returns upload URL.
+// An empty noteID defers the destination to routing at completion time.
 func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, contentType string) (*model.CaptureIndex, string, error) {
-	_, err := s.store.GetNote(ctx, userID, noteID)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to get note: %w", err)
+	if noteID != "" {
+		if _, err := s.store.GetNote(ctx, userID, noteID); err != nil {
+			return nil, "", fmt.Errorf("failed to get note: %w", err)
+		}
 	}
 
 	settings, err := s.store.GetSettings(ctx, userID)
@@ -92,67 +118,39 @@ func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID 
 		return &capture, nil
 	}
 
+	if capture.RawKey == "" {
+		if err := s.transcribeCapture(ctx, userID, &capture); err != nil {
+			return nil, err
+		}
+		if capture.Status == model.StatusFailed {
+			return &capture, nil
+		}
+	}
+
+	if capture.NoteID == "" {
+		// Nothing is written until the user picks a destination.
+		if capture.Status == model.StatusNeedsTarget {
+			return &capture, nil
+		}
+		if err := s.routeCapture(ctx, userID, &capture); err != nil {
+			return nil, err
+		}
+		if capture.NoteID == "" {
+			return &capture, nil
+		}
+	}
+
 	note, err := s.store.GetNote(ctx, userID, capture.NoteID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get note: %w", err)
 	}
 
-	audioData, err := s.objects.Get(ctx, capture.AudioKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get audio: %w", err)
-	}
-
-	contentType := contentTypeForAudioKey(capture.AudioKey)
-
-	if capture.Status == model.StatusUploaded || capture.RawKey == "" {
-		rawText, err := s.stt.Transcribe(ctx, audioData, contentType)
-		if err != nil {
-			capture.Status = model.StatusFailed
-			capture.Error = err.Error()
-			_ = s.store.PutCapture(ctx, capture)
+	if capture.CleanKey == "" {
+		if err := s.cleanupCapture(ctx, userID, &capture); err != nil {
+			return nil, err
+		}
+		if capture.Status == model.StatusFailed {
 			return &capture, nil
-		}
-
-		rawKey, err := keys.CaptureRaw(userID, captureID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate raw key: %w", err)
-		}
-		if err := s.objects.Put(ctx, rawKey, []byte(rawText), "text/plain"); err != nil {
-			return nil, fmt.Errorf("failed to store raw text: %w", err)
-		}
-		capture.RawKey = rawKey
-		capture.Status = model.StatusTranscribed
-		capture.Error = ""
-		if err := s.store.PutCapture(ctx, capture); err != nil {
-			return nil, fmt.Errorf("failed to update capture: %w", err)
-		}
-	}
-
-	if capture.Status == model.StatusTranscribed || capture.CleanKey == "" {
-		rawBytes, err := s.objects.Get(ctx, capture.RawKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get raw text: %w", err)
-		}
-		cleanedText, err := s.llm.Cleanup(ctx, capture.Mode, string(rawBytes))
-		if err != nil {
-			capture.Status = model.StatusFailed
-			capture.Error = err.Error()
-			_ = s.store.PutCapture(ctx, capture)
-			return &capture, nil
-		}
-
-		cleanKey, err := keys.CaptureClean(userID, captureID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate clean key: %w", err)
-		}
-		if err := s.objects.Put(ctx, cleanKey, []byte(cleanedText), "text/plain"); err != nil {
-			return nil, fmt.Errorf("failed to store clean text: %w", err)
-		}
-		capture.CleanKey = cleanKey
-		capture.Status = model.StatusCleaned
-		capture.Error = ""
-		if err := s.store.PutCapture(ctx, capture); err != nil {
-			return nil, fmt.Errorf("failed to update capture: %w", err)
 		}
 	}
 
@@ -183,6 +181,215 @@ func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID 
 	}
 
 	return &capture, nil
+}
+
+// SetCaptureTarget records a user-chosen destination and resumes the pipeline.
+// Exactly one of noteID or newNoteTitle must be set.
+func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID, noteID, newNoteTitle string) (*model.CaptureIndex, error) {
+	capture, err := s.store.GetCapture(ctx, userID, captureID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get capture: %w", err)
+	}
+	if capture.NoteID != "" {
+		return nil, fmt.Errorf("capture already targets a note")
+	}
+
+	switch {
+	case noteID != "":
+		if _, err := s.store.GetNote(ctx, userID, noteID); err != nil {
+			return nil, fmt.Errorf("failed to get note: %w", err)
+		}
+		capture.NoteID = noteID
+	case strings.TrimSpace(newNoteTitle) != "":
+		if s.notes == nil {
+			return nil, fmt.Errorf("note creation is unavailable")
+		}
+		note, err := s.notes.CreateNote(ctx, userID, strings.TrimSpace(newNoteTitle), nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create note: %w", err)
+		}
+		capture.NoteID = note.ID
+	default:
+		return nil, fmt.Errorf("note_id or new_note_title is required")
+	}
+
+	capture.Status = model.StatusTranscribed
+	capture.SuggestedNoteID = ""
+	capture.SuggestedTitle = ""
+	capture.Error = ""
+	if err := s.store.PutCapture(ctx, capture); err != nil {
+		return nil, fmt.Errorf("failed to update capture: %w", err)
+	}
+
+	return s.CompleteCapture(ctx, userID, captureID)
+}
+
+func (s *CaptureService) transcribeCapture(ctx context.Context, userID string, capture *model.CaptureIndex) error {
+	audioData, err := s.objects.Get(ctx, capture.AudioKey)
+	if err != nil {
+		return fmt.Errorf("failed to get audio: %w", err)
+	}
+
+	rawText, err := s.stt.Transcribe(ctx, audioData, contentTypeForAudioKey(capture.AudioKey))
+	if err != nil {
+		s.markFailed(ctx, capture, err)
+		return nil
+	}
+
+	rawKey, err := keys.CaptureRaw(userID, capture.ID)
+	if err != nil {
+		return fmt.Errorf("failed to generate raw key: %w", err)
+	}
+	if err := s.objects.Put(ctx, rawKey, []byte(rawText), "text/plain"); err != nil {
+		return fmt.Errorf("failed to store raw text: %w", err)
+	}
+
+	capture.RawKey = rawKey
+	capture.Status = model.StatusTranscribed
+	capture.Error = ""
+	if err := s.store.PutCapture(ctx, *capture); err != nil {
+		return fmt.Errorf("failed to update capture: %w", err)
+	}
+	return nil
+}
+
+// routeCapture decides the destination note from what the speaker said. It either
+// sets NoteID, or leaves it empty with StatusNeedsTarget for the user to confirm.
+func (s *CaptureService) routeCapture(ctx context.Context, userID string, capture *model.CaptureIndex) error {
+	rawBytes, err := s.objects.Get(ctx, capture.RawKey)
+	if err != nil {
+		return fmt.Errorf("failed to get raw text: %w", err)
+	}
+	transcript := string(rawBytes)
+
+	decision, err := s.decideTarget(ctx, userID, transcript)
+	if err != nil {
+		// Routing is a convenience; a recording is never lost because of it.
+		decision = provider.RouteDecision{Action: provider.RouteNew, Content: transcript}
+	}
+
+	// Persist the transcript minus any spoken instruction, so cleanup and any
+	// later retry work from the words the user meant to keep.
+	routedKey, err := keys.CaptureRouted(userID, capture.ID)
+	if err != nil {
+		return fmt.Errorf("failed to generate routed key: %w", err)
+	}
+	if err := s.objects.Put(ctx, routedKey, []byte(decision.Content), "text/plain"); err != nil {
+		return fmt.Errorf("failed to store routed text: %w", err)
+	}
+	capture.RoutedKey = routedKey
+	capture.RouteConfidence = decision.Confidence
+
+	if decision.Action == provider.RouteAppend {
+		if _, err := s.store.GetNote(ctx, userID, decision.NoteID); err == nil {
+			if decision.Confidence >= routeConfidenceThreshold {
+				capture.NoteID = decision.NoteID
+			} else {
+				// Plausible but unsure: ask before writing into an existing note.
+				capture.SuggestedNoteID = decision.NoteID
+				capture.Status = model.StatusNeedsTarget
+			}
+			if err := s.store.PutCapture(ctx, *capture); err != nil {
+				return fmt.Errorf("failed to update capture: %w", err)
+			}
+			return nil
+		}
+	}
+
+	title := strings.TrimSpace(decision.Title)
+	if title == "" {
+		title = fallbackNoteTitle()
+	}
+	if s.notes == nil {
+		capture.SuggestedTitle = title
+		capture.Status = model.StatusNeedsTarget
+		if err := s.store.PutCapture(ctx, *capture); err != nil {
+			return fmt.Errorf("failed to update capture: %w", err)
+		}
+		return nil
+	}
+
+	note, err := s.notes.CreateNote(ctx, userID, title, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create note for capture: %w", err)
+	}
+	capture.NoteID = note.ID
+	if err := s.store.PutCapture(ctx, *capture); err != nil {
+		return fmt.Errorf("failed to update capture: %w", err)
+	}
+	return nil
+}
+
+func (s *CaptureService) decideTarget(ctx context.Context, userID, transcript string) (provider.RouteDecision, error) {
+	if s.router == nil {
+		return provider.RouteDecision{}, fmt.Errorf("routing is not configured")
+	}
+
+	notes, err := s.store.ListNotes(ctx, userID)
+	if err != nil {
+		return provider.RouteDecision{}, fmt.Errorf("failed to list notes: %w", err)
+	}
+
+	// Most recently touched notes are the likeliest destinations.
+	sort.Slice(notes, func(i, j int) bool { return notes[i].UpdatedAt > notes[j].UpdatedAt })
+	if len(notes) > maxRouteCandidates {
+		notes = notes[:maxRouteCandidates]
+	}
+
+	candidates := make([]routing.Candidate, 0, len(notes))
+	for _, n := range notes {
+		candidates = append(candidates, routing.Candidate{
+			NoteID:  n.ID,
+			Title:   n.Title,
+			Aliases: n.Aliases,
+		})
+	}
+
+	return s.router.Route(ctx, transcript, candidates)
+}
+
+func (s *CaptureService) cleanupCapture(ctx context.Context, userID string, capture *model.CaptureIndex) error {
+	sourceKey := capture.RoutedKey
+	if sourceKey == "" {
+		sourceKey = capture.RawKey
+	}
+
+	sourceBytes, err := s.objects.Get(ctx, sourceKey)
+	if err != nil {
+		return fmt.Errorf("failed to get raw text: %w", err)
+	}
+
+	cleanedText, err := s.llm.Cleanup(ctx, capture.Mode, string(sourceBytes))
+	if err != nil {
+		s.markFailed(ctx, capture, err)
+		return nil
+	}
+
+	cleanKey, err := keys.CaptureClean(userID, capture.ID)
+	if err != nil {
+		return fmt.Errorf("failed to generate clean key: %w", err)
+	}
+	if err := s.objects.Put(ctx, cleanKey, []byte(cleanedText), "text/plain"); err != nil {
+		return fmt.Errorf("failed to store clean text: %w", err)
+	}
+
+	capture.CleanKey = cleanKey
+	capture.Status = model.StatusCleaned
+	capture.Error = ""
+	if err := s.store.PutCapture(ctx, *capture); err != nil {
+		return fmt.Errorf("failed to update capture: %w", err)
+	}
+	return nil
+}
+
+func (s *CaptureService) markFailed(ctx context.Context, capture *model.CaptureIndex, cause error) {
+	capture.Status = model.StatusFailed
+	capture.Error = cause.Error()
+	_ = s.store.PutCapture(ctx, *capture)
+}
+
+func fallbackNoteTitle() string {
+	return "Voice note " + time.Now().UTC().Format("2006-01-02 15:04")
 }
 
 func (s *CaptureService) appendToNote(ctx context.Context, noteKey, text string) error {
