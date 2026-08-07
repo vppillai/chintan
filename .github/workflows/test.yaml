@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/test.yaml'
+
+jobs:
+  test:
+    name: Test Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Run go test
+        run: go test ./...
+        working-directory: backend
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted:"
+            gofmt -l .
+            exit 1
+          fi
+        working-directory: backend
+
+      - name: Run go vet
+        run: go vet ./...
+        working-directory: backend

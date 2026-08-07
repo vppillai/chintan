@@ -1,0 +1,84 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - 'infrastructure/**'
+      - 'config/**'
+      - '.github/workflows/deploy-backend.yaml'
+
+env:
+  AWS_REGION: us-west-2
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  discover-instances:
+    name: Discover Instances
+    runs-on: ubuntu-latest
+    outputs:
+      instances: ${{ steps.instances.outputs.instances }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Discover instances
+        id: instances
+        run: |
+          instances=$(find config/instances -name "*.yaml" -exec basename {} .yaml \; | jq -R -s -c 'split("\n")[:-1]')
+          echo "instances=$instances" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy to ${{ matrix.instance }}
+    runs-on: ubuntu-latest
+    needs: discover-instances
+    strategy:
+      matrix:
+        instance: ${{ fromJSON(needs.discover-instances.outputs.instances) }}
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build Lambda function
+        run: |
+          GOOS=linux GOARCH=arm64 go build -o bootstrap ./cmd/lambda
+          zip function-${{ github.sha }}.zip bootstrap
+        working-directory: backend
+
+      - name: Upload Lambda artifact
+        run: |
+          aws s3 cp backend/function-${{ github.sha }}.zip s3://chintan-artifacts-${{ matrix.instance }}/function-${{ github.sha }}.zip
+
+      - name: Get repository owner
+        id: repo-info
+        run: echo "owner=${{ github.repository_owner }}" >> $GITHUB_OUTPUT
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name chintan-${{ matrix.instance }}-prod \
+            --template-file infrastructure/template.yaml \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides \
+              Instance=${{ matrix.instance }} \
+              LambdaCodeS3Key=function-${{ github.sha }}.zip \
+              AllowedOrigin=https://${{ steps.repo-info.outputs.owner }}.github.io \
+              CognitoUserPoolDomainPrefix=chintan-${{ matrix.instance }}-${{ github.repository_owner }} \
+              GitHubPagesUrl=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
