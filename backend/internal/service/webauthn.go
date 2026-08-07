@@ -1,0 +1,368 @@
+package service
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
+	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
+)
+
+const webAuthnChallengeTTL = 5 * time.Minute
+
+var (
+	ErrWebAuthnChallengeNotFound = errors.New("webauthn challenge not found or expired")
+	ErrWebAuthnVerification      = errors.New("webauthn verification failed")
+	ErrWebAuthnNotEnrolled       = errors.New("no webauthn credentials enrolled")
+	ErrWebAuthnSubMismatch       = errors.New("cognito subject does not match webauthn user")
+	ErrWebAuthnMissingRefresh    = errors.New("refresh_token is required to enroll biometric unlock")
+)
+
+// TokenRefresher exchanges a Cognito refresh token for a new token set.
+type TokenRefresher interface {
+	Refresh(ctx context.Context, refreshToken string) (model.CognitoTokenSet, error)
+}
+
+// SealBox encrypts/decrypts the refresh-token vault payload.
+type SealBox interface {
+	Seal(ctx context.Context, plaintext []byte) ([]byte, error)
+	Open(ctx context.Context, ciphertext []byte) ([]byte, error)
+}
+
+type webAuthnUser struct {
+	id          []byte
+	name        string
+	displayName string
+	credentials []webauthn.Credential
+}
+
+func (u *webAuthnUser) WebAuthnID() []byte                         { return u.id }
+func (u *webAuthnUser) WebAuthnName() string                       { return u.name }
+func (u *webAuthnUser) WebAuthnDisplayName() string                { return u.displayName }
+func (u *webAuthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
+
+// WebAuthnService implements passbook-style biometric enroll/unlock with a Cognito refresh vault.
+type WebAuthnService struct {
+	store       repository.Store
+	wa          *webauthn.WebAuthn
+	refresher   TokenRefresher
+	box         SealBox
+	displayName string
+}
+
+// NewWebAuthnService builds the service. allowedOrigin is e.g. https://vppillai.github.io.
+func NewWebAuthnService(store repository.Store, allowedOrigin, displayName string, refresher TokenRefresher, box SealBox) (*WebAuthnService, error) {
+	if displayName == "" {
+		displayName = "Chintan"
+	}
+	rpID, err := rpIDFromOrigin(allowedOrigin)
+	if err != nil {
+		return nil, err
+	}
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:          rpID,
+		RPDisplayName: displayName,
+		RPOrigins:     []string{allowedOrigin},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("webauthn init: %w", err)
+	}
+	return &WebAuthnService{
+		store:       store,
+		wa:          wa,
+		refresher:   refresher,
+		box:         box,
+		displayName: displayName,
+	}, nil
+}
+
+func rpIDFromOrigin(allowedOrigin string) (string, error) {
+	u, err := url.Parse(allowedOrigin)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("invalid ALLOWED_ORIGIN %q for webauthn RPID", allowedOrigin)
+	}
+	return u.Hostname(), nil
+}
+
+func (s *WebAuthnService) Status(ctx context.Context, userID string) (bool, error) {
+	creds, err := s.store.ListWebAuthnCredentialsByUser(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return len(creds) > 0, nil
+}
+
+func (s *WebAuthnService) BeginRegistration(ctx context.Context, userID string) (*model.WebAuthnOptionsResponse, error) {
+	user, err := s.user(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	rrk := protocol.ResidentKeyRequirementRequired
+	sel := protocol.AuthenticatorSelection{
+		AuthenticatorAttachment: protocol.Platform,
+		ResidentKey:             rrk,
+		RequireResidentKey:      protocol.ResidentKeyRequired(),
+		UserVerification:        protocol.VerificationRequired,
+	}
+	exclusions := make([]protocol.CredentialDescriptor, 0, len(user.credentials))
+	for _, c := range user.credentials {
+		exclusions = append(exclusions, c.Descriptor())
+	}
+
+	creation, session, err := s.wa.BeginRegistration(
+		user,
+		webauthn.WithAuthenticatorSelection(sel),
+		webauthn.WithExclusions(exclusions),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("begin registration: %w", err)
+	}
+	return s.persistAndRespond(ctx, session, creation, userID)
+}
+
+func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID string, req *model.WebAuthnVerifyRequest) error {
+	if strings.TrimSpace(req.RefreshToken) == "" {
+		return ErrWebAuthnMissingRefresh
+	}
+	session, err := s.loadChallenge(ctx, req.ChallengeID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.store.DeleteWebAuthnChallenge(ctx, req.ChallengeID) }()
+
+	user, err := s.user(ctx, userID)
+	if err != nil {
+		return err
+	}
+	parsed, err := protocol.ParseCredentialCreationResponseBytes(req.Credential)
+	if err != nil {
+		return ErrWebAuthnVerification
+	}
+	credential, err := s.wa.CreateCredential(user, *session, parsed)
+	if err != nil {
+		return ErrWebAuthnVerification
+	}
+	if err := s.storeCredential(ctx, userID, credential); err != nil {
+		return err
+	}
+
+	// Bind vault only after Cognito accepts the refresh token and sub matches.
+	tokens, err := s.refresher.Refresh(ctx, req.RefreshToken)
+	if err != nil {
+		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
+		return fmt.Errorf("refresh token rejected: %w", err)
+	}
+	sub, err := subFromIDToken(tokens.IDToken)
+	if err != nil || sub != userID {
+		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
+		return ErrWebAuthnSubMismatch
+	}
+	cipher, err := s.box.Seal(ctx, []byte(tokens.RefreshToken))
+	if err != nil {
+		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
+		return fmt.Errorf("seal refresh token: %w", err)
+	}
+	return s.store.PutRefreshVault(ctx, model.RefreshVault{
+		UserID:     userID,
+		Ciphertext: cipher,
+		UpdatedAt:  time.Now().Unix(),
+	})
+}
+
+func (s *WebAuthnService) BeginLogin(ctx context.Context) (*model.WebAuthnOptionsResponse, error) {
+	creds, err := s.store.ListWebAuthnCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(creds) == 0 {
+		return nil, ErrWebAuthnNotEnrolled
+	}
+	assertion, session, err := s.wa.BeginDiscoverableLogin(
+		webauthn.WithUserVerification(protocol.VerificationRequired),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("begin login: %w", err)
+	}
+	return s.persistAndRespond(ctx, session, assertion, "")
+}
+
+func (s *WebAuthnService) FinishLogin(ctx context.Context, req *model.WebAuthnVerifyRequest) (*model.CognitoTokenSet, error) {
+	session, err := s.loadChallenge(ctx, req.ChallengeID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = s.store.DeleteWebAuthnChallenge(ctx, req.ChallengeID) }()
+
+	parsed, err := protocol.ParseCredentialRequestResponseBytes(req.Credential)
+	if err != nil {
+		return nil, ErrWebAuthnVerification
+	}
+
+	handler := func(rawID, userHandle []byte) (webauthn.User, error) {
+		credID := base64.RawURLEncoding.EncodeToString(rawID)
+		stored, err := s.store.GetWebAuthnCredential(ctx, credID)
+		if err != nil {
+			// Some authenticators report ID differently; try userHandle as sub.
+			if len(userHandle) > 0 {
+				return s.user(ctx, string(userHandle))
+			}
+			return nil, err
+		}
+		return s.user(ctx, stored.UserID)
+	}
+
+	credential, err := s.wa.ValidateDiscoverableLogin(handler, *session, parsed)
+	if err != nil {
+		return nil, ErrWebAuthnVerification
+	}
+
+	credID := base64.RawURLEncoding.EncodeToString(credential.ID)
+	stored, err := s.store.GetWebAuthnCredential(ctx, credID)
+	if err != nil {
+		return nil, ErrWebAuthnVerification
+	}
+	userID := stored.UserID
+	if err := s.storeCredential(ctx, userID, credential); err != nil {
+		return nil, err
+	}
+
+	vault, err := s.store.GetRefreshVault(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("refresh vault: %w", err)
+	}
+	plain, err := s.box.Open(ctx, vault.Ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("open vault: %w", err)
+	}
+	tokens, err := s.refresher.Refresh(ctx, string(plain))
+	if err != nil {
+		return nil, fmt.Errorf("cognito refresh: %w", err)
+	}
+	sub, err := subFromIDToken(tokens.IDToken)
+	if err != nil || sub != userID {
+		return nil, ErrWebAuthnSubMismatch
+	}
+	if tokens.RefreshToken != "" {
+		cipher, err := s.box.Seal(ctx, []byte(tokens.RefreshToken))
+		if err == nil {
+			_ = s.store.PutRefreshVault(ctx, model.RefreshVault{
+				UserID: userID, Ciphertext: cipher, UpdatedAt: time.Now().Unix(),
+			})
+		}
+	}
+	return &tokens, nil
+}
+
+func (s *WebAuthnService) Disable(ctx context.Context, userID string) error {
+	if err := s.store.DeleteAllWebAuthnCredentials(ctx, userID); err != nil {
+		return err
+	}
+	return s.store.DeleteRefreshVault(ctx, userID)
+}
+
+func (s *WebAuthnService) user(ctx context.Context, userID string) (*webAuthnUser, error) {
+	stored, err := s.store.ListWebAuthnCredentialsByUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	creds := make([]webauthn.Credential, 0, len(stored))
+	for _, c := range stored {
+		var cred webauthn.Credential
+		if err := json.Unmarshal([]byte(c.Credential), &cred); err != nil {
+			return nil, fmt.Errorf("decode credential: %w", err)
+		}
+		creds = append(creds, cred)
+	}
+	return &webAuthnUser{
+		id:          []byte(userID),
+		name:        userID,
+		displayName: s.displayName,
+		credentials: creds,
+	}, nil
+}
+
+func (s *WebAuthnService) storeCredential(ctx context.Context, userID string, credential *webauthn.Credential) error {
+	raw, err := json.Marshal(credential)
+	if err != nil {
+		return err
+	}
+	return s.store.PutWebAuthnCredential(ctx, model.WebAuthnCredential{
+		UserID:       userID,
+		CredentialID: base64.RawURLEncoding.EncodeToString(credential.ID),
+		Credential:   string(raw),
+		SignCount:    credential.Authenticator.SignCount,
+		CreatedAt:    time.Now().Unix(),
+	})
+}
+
+func (s *WebAuthnService) persistAndRespond(ctx context.Context, session *webauthn.SessionData, options interface{}, userID string) (*model.WebAuthnOptionsResponse, error) {
+	sessionJSON, err := json.Marshal(session)
+	if err != nil {
+		return nil, err
+	}
+	optionsJSON, err := json.Marshal(options)
+	if err != nil {
+		return nil, err
+	}
+	challengeID := uuid.New().String()
+	now := time.Now()
+	if err := s.store.PutWebAuthnChallenge(ctx, model.WebAuthnChallenge{
+		ChallengeID: challengeID,
+		SessionData: string(sessionJSON),
+		UserID:      userID,
+		CreatedAt:   now.Unix(),
+		ExpiresAt:   now.Add(webAuthnChallengeTTL).Unix(),
+	}); err != nil {
+		return nil, err
+	}
+	return &model.WebAuthnOptionsResponse{ChallengeID: challengeID, Options: optionsJSON}, nil
+}
+
+func (s *WebAuthnService) loadChallenge(ctx context.Context, challengeID string) (*webauthn.SessionData, error) {
+	entry, err := s.store.GetWebAuthnChallenge(ctx, challengeID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrWebAuthnChallengeNotFound
+		}
+		return nil, err
+	}
+	var session webauthn.SessionData
+	if err := json.Unmarshal([]byte(entry.SessionData), &session); err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+func subFromIDToken(idToken string) (string, error) {
+	parts := strings.Split(idToken, ".")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid id token")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return "", err
+		}
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", err
+	}
+	if claims.Sub == "" {
+		return "", fmt.Errorf("missing sub")
+	}
+	return claims.Sub, nil
+}

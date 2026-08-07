@@ -24,6 +24,20 @@ type Store interface {
 	GetCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error)
 	ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error)
 	UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error
+
+	PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error
+	GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error)
+	DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error
+
+	PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error
+	GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error)
+	ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error)
+	ListWebAuthnCredentialsByUser(ctx context.Context, userID string) ([]model.WebAuthnCredential, error)
+	DeleteAllWebAuthnCredentials(ctx context.Context, userID string) error
+
+	PutRefreshVault(ctx context.Context, v model.RefreshVault) error
+	GetRefreshVault(ctx context.Context, userID string) (model.RefreshVault, error)
+	DeleteRefreshVault(ctx context.Context, userID string) error
 }
 
 // Objects stores blob content addressed by S3-style keys.

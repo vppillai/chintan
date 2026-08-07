@@ -1,16 +1,20 @@
 module github.com/vppillai/chintan/backend
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/aws/aws-lambda-go v1.54.0
 	github.com/aws/aws-sdk-go-v2 v1.43.4
 	github.com/aws/aws-sdk-go-v2/config v1.32.35
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.59
+	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.67.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.63.1
+	github.com/aws/aws-sdk-go-v2/service/kms v1.55.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
+	github.com/go-webauthn/webauthn v0.17.4
+	github.com/google/uuid v1.6.0
 )
 
 require (
@@ -31,4 +35,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4 // indirect
 	github.com/aws/smithy-go v1.27.6 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-webauthn/x v0.2.6 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
+	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
+	golang.org/x/sys v0.45.0 // indirect
 )

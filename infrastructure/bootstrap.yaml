@@ -306,6 +306,30 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/*'
 
+              # Token-vault CMK for biometric unlock (CreateKey is unscoped; mutations CFN-only).
+              - Effect: Allow
+                Action:
+                  - kms:CreateKey
+                  - kms:DescribeKey
+                  - kms:GetKeyPolicy
+                  - kms:GetKeyRotationStatus
+                  - kms:ListResourceTags
+                  - kms:ScheduleKeyDeletion
+                  - kms:CancelKeyDeletion
+                  - kms:EnableKeyRotation
+                  - kms:DisableKeyRotation
+                  - kms:PutKeyPolicy
+                  - kms:TagResource
+                  - kms:UntagResource
+                  - kms:CreateAlias
+                  - kms:UpdateAlias
+                  - kms:DeleteAlias
+                  - kms:ListAliases
+                Resource: '*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
 Outputs:
   LambdaDeploymentBucketName:
     Description: S3 bucket for Lambda deployment artifacts

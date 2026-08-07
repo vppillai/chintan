@@ -124,6 +124,9 @@ Resources:
           KeyType: RANGE
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
       Tags:
         - Key: Project
           Value: chintan
@@ -169,6 +172,34 @@ Resources:
           Value: !Ref InstanceName
         - Key: Application
           Value: Chintan
+
+  TokenVaultKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'Chintan ${InstanceName} Cognito refresh-token vault'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootAccountPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  TokenVaultKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/chintan-${InstanceName}/token-vault'
+      TargetKeyId: !Ref TokenVaultKey
 
   # Lambda Execution Role
   LambdaExecutionRole:
@@ -228,6 +259,21 @@ Resources:
                 Action:
                   - kms:Decrypt
                 Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                  - kms:DescribeKey
+                Resource: !GetAtt TokenVaultKey.Arn
+        - PolicyName: CognitoRefresh
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:InitiateAuth
+                Resource: '*'
       Tags:
         - Key: Project
           Value: chintan
@@ -261,6 +307,9 @@ Resources:
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
+          WEBAUTHN_RP_DISPLAY_NAME: Chintan
       Tags:
         - Key: Project
           Value: chintan
@@ -350,6 +399,23 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'OPTIONS /{proxy+}'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # Biometric login must be reachable without a Cognito JWT.
+  WebAuthnLoginOptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /v1/auth/webauthn/login/options'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  WebAuthnLoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /v1/auth/webauthn/login'
       AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 

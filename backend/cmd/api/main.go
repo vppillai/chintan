@@ -11,7 +11,9 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
@@ -76,7 +78,26 @@ func init() {
 	settingsService := service.NewSettingsService(store)
 	captureService := service.NewCaptureService(store, objects, stt, llm)
 
-	router := handler.NewRouter(notesService, settingsService, captureService, allowedOrigin)
+	var webauthnService *service.WebAuthnService
+	clientID := strings.TrimSpace(os.Getenv("USER_POOL_CLIENT_ID"))
+	kmsKeyID := strings.TrimSpace(os.Getenv("TOKEN_VAULT_KMS_KEY_ID"))
+	rpName := envOr("WEBAUTHN_RP_DISPLAY_NAME", "Chintan")
+	if clientID != "" && kmsKeyID != "" {
+		refresher := &service.CognitoRefresher{
+			Client:   cognitoidentityprovider.NewFromConfig(cfg),
+			ClientID: clientID,
+		}
+		box := &service.KMSBox{Client: kms.NewFromConfig(cfg), KeyID: kmsKeyID}
+		webauthnService, err = service.NewWebAuthnService(store, allowedOrigin, rpName, refresher, box)
+		if err != nil {
+			log.Printf("WebAuthn disabled: %v", err)
+			webauthnService = nil
+		}
+	} else {
+		log.Printf("WebAuthn disabled: USER_POOL_CLIENT_ID or TOKEN_VAULT_KMS_KEY_ID not set")
+	}
+
+	router := handler.NewRouter(notesService, settingsService, captureService, webauthnService, allowedOrigin)
 	lambdaAdapter = httpadapter.NewV2(router)
 }
 

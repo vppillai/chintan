@@ -29,6 +29,9 @@
                     <h1>Chintan</h1>
                     <p>Voice brain-dump notes</p>
                 </div>
+                <button id="biometric-login-btn" class="btn btn-secondary btn-large hidden" type="button">
+                    Unlock with biometrics
+                </button>
                 <button id="login-btn" class="btn btn-primary btn-large">
                     Sign In with Cognito
                 </button>
@@ -150,6 +153,11 @@
                         <input type="number" id="retention-days" class="settings-input" min="0" placeholder="0">
                         <p class="settings-help">Number of days to keep notes. Set to 0 for indefinite storage.</p>
                     </div>
+                    <div class="settings-group">
+                        <label class="settings-label">Biometric unlock</label>
+                        <button id="biometric-toggle-btn" class="btn btn-secondary" type="button">Loading…</button>
+                        <p class="settings-help">Use Face ID / Touch ID / Windows Hello on this device after Cognito sign-in.</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -161,6 +169,7 @@
     <!-- Scripts -->
     <script src="js/config.js"></script>
     <script src="js/api.js"></script>
+    <script src="js/webauthn.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/settings.js"></script>

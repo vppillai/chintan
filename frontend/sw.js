@@ -1,7 +1,7 @@
 // Service Worker for Chintan PWA
-const CACHE_NAME = 'chintan-v3';
-const STATIC_CACHE = 'chintan-static-v3';
-const API_CACHE = 'chintan-api-v3';
+const CACHE_NAME = 'chintan-v4';
+const STATIC_CACHE = 'chintan-static-v4';
+const API_CACHE = 'chintan-api-v4';
 
 // Files to cache for offline use
 const STATIC_FILES = [
@@ -15,6 +15,7 @@ const STATIC_FILES = [
     './js/capture.js',
     './js/notes.js',
     './js/settings.js',
+    './js/webauthn.js',
     './js/config.js',
     './manifest.json',
     './assets/icon.svg'
@@ -198,9 +199,11 @@ function isApiRequest(url) {
 // Check if API response should be cached
 function shouldCacheApiResponse(request) {
     const url = new URL(request.url);
-    
+    if (url.pathname.indexOf('/v1/auth/') === 0) {
+        return false;
+    }
     // Only cache certain read-only endpoints
-    return CACHEABLE_APIS.some(endpoint => 
+    return CACHEABLE_APIS.some(endpoint =>
         url.pathname.startsWith(endpoint)
     );
 }

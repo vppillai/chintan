@@ -21,7 +21,7 @@ func TestHealthHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
 
 	req := httptest.NewRequest("GET", "/v1/health", nil)
 	w := httptest.NewRecorder()
@@ -48,7 +48,7 @@ func TestSettingsHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
 
 	t.Run("GET settings returns defaults", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/v1/settings", nil)
@@ -126,7 +126,7 @@ func TestNotesHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
 
 	t.Run("POST creates note", func(t *testing.T) {
 		createReq := map[string]interface{}{
@@ -354,7 +354,7 @@ func TestNotesMatchHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
 
 	// Create some test notes
 	testNotes := []map[string]interface{}{
@@ -469,7 +469,7 @@ func TestCORSHandling(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
 
 	t.Run("preflight request", func(t *testing.T) {
 		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
@@ -503,7 +503,7 @@ func TestCORSHandling(t *testing.T) {
 	t.Run("uses ALLOWED_ORIGIN env when parameter empty", func(t *testing.T) {
 		t.Setenv("ALLOWED_ORIGIN", "https://app.example.com")
 		captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-		envRouter := handler.NewRouter(notesService, settingsService, captureService, "")
+		envRouter := handler.NewRouter(notesService, settingsService, captureService, nil, "")
 
 		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
 		req.Header.Set("Origin", "https://app.example.com")

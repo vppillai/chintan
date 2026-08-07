@@ -34,11 +34,20 @@ class ApiClient {
         try {
             const response = await fetch(url, config);
 
-            // Handle 401 - session expired
+            // Handle 401 - session expired (except biometric login failures)
             if (response.status === 401) {
-                // Dispatch session expired event
-                window.dispatchEvent(new CustomEvent('session-expired'));
-                throw new Error('Session expired');
+                const isWebAuthnLogin = typeof endpoint === 'string' &&
+                    endpoint.indexOf('/v1/auth/webauthn/login') === 0;
+                if (!isWebAuthnLogin) {
+                    window.dispatchEvent(new CustomEvent('session-expired'));
+                    throw new Error('Session expired');
+                }
+                let msg = 'Biometric verification failed';
+                try {
+                    const errorData = await response.json();
+                    msg = errorData.error || errorData.message || msg;
+                } catch (e) { /* ignore */ }
+                throw new Error(msg);
             }
 
             // Handle other HTTP errors
@@ -159,6 +168,41 @@ class ApiClient {
 
     async getDownloadUrl(captureId, kind) {
         return this.request(`/v1/captures/${captureId}/download?kind=${kind}`);
+    }
+
+    async webauthnRegisterOptions() {
+        return this.request('/v1/auth/webauthn/register/options', { method: 'POST', body: '{}' });
+    }
+
+    async webauthnRegister(body) {
+        return this.request('/v1/auth/webauthn/register', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        });
+    }
+
+    async webauthnLoginOptions() {
+        return this.request('/v1/auth/webauthn/login/options', {
+            method: 'POST',
+            body: '{}',
+            useAuth: false,
+        });
+    }
+
+    async webauthnLogin(body) {
+        return this.request('/v1/auth/webauthn/login', {
+            method: 'POST',
+            body: JSON.stringify(body),
+            useAuth: false,
+        });
+    }
+
+    async webauthnStatus() {
+        return this.request('/v1/auth/webauthn/status');
+    }
+
+    async webauthnDisable() {
+        return this.request('/v1/auth/webauthn', { method: 'DELETE' });
     }
 
     // Upload audio file to pre-signed URL

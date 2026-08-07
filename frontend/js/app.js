@@ -90,6 +90,23 @@ class ChintanApp {
             }
         });
 
+        document.getElementById('biometric-login-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('biometric-login-btn');
+            ui.setButtonLoading(btn, true);
+            try {
+                const tokens = await ChintanWebAuthn.login();
+                auth.storeTokens(tokens);
+                ChintanWebAuthn.markEnrolled(true);
+                await this.showMainApp();
+            } catch (error) {
+                console.error('Biometric login error:', error);
+                ui.showToast('Biometric unlock failed: ' + error.message, 'error');
+                ChintanWebAuthn.markEnrolled(false);
+            } finally {
+                ui.setButtonLoading(btn, false);
+            }
+        });
+
         // Handle browser back/forward
         window.addEventListener('popstate', () => {
             this.handleAuthentication();
@@ -151,6 +168,18 @@ class ChintanApp {
 
     showLoginScreen() {
         ui.showScreen('login-screen');
+        this.refreshBiometricButton();
+    }
+
+    async refreshBiometricButton() {
+        const btn = document.getElementById('biometric-login-btn');
+        if (!btn || !window.ChintanWebAuthn) return;
+        const available = await ChintanWebAuthn.isPlatformAuthenticatorAvailable();
+        if (available && ChintanWebAuthn.isMarkedEnrolled()) {
+            btn.classList.remove('hidden');
+        } else {
+            btn.classList.add('hidden');
+        }
     }
 
     async showMainApp() {

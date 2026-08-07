@@ -33,12 +33,67 @@ class SettingsManager {
         document.getElementById('retention-days').addEventListener('input', () => {
             this.markChanged();
         });
+
+        const bioBtn = document.getElementById('biometric-toggle-btn');
+        if (bioBtn) {
+            bioBtn.addEventListener('click', () => this.toggleBiometric());
+        }
+    }
+
+    async refreshBiometricToggle() {
+        const btn = document.getElementById('biometric-toggle-btn');
+        if (!btn || !window.ChintanWebAuthn) return;
+        const available = await ChintanWebAuthn.isPlatformAuthenticatorAvailable();
+        if (!available) {
+            btn.disabled = true;
+            btn.textContent = 'Not available on this device';
+            return;
+        }
+        btn.disabled = false;
+        try {
+            const status = await api.webauthnStatus();
+            this.biometricEnrolled = !!status.enrolled;
+            ChintanWebAuthn.markEnrolled(this.biometricEnrolled);
+            btn.textContent = this.biometricEnrolled ? 'Disable biometric unlock' : 'Enable biometric unlock';
+        } catch (error) {
+            btn.textContent = 'Enable biometric unlock';
+            this.biometricEnrolled = false;
+        }
+    }
+
+    async toggleBiometric() {
+        const btn = document.getElementById('biometric-toggle-btn');
+        ui.setButtonLoading(btn, true);
+        try {
+            if (this.biometricEnrolled) {
+                await api.webauthnDisable();
+                ChintanWebAuthn.markEnrolled(false);
+                this.biometricEnrolled = false;
+                ui.showToast('Biometric unlock disabled', 'success');
+            } else {
+                const tokens = auth.getStoredTokens();
+                if (!tokens || !tokens.refresh_token) {
+                    throw new Error('Sign in again to enroll biometrics (missing refresh token)');
+                }
+                await ChintanWebAuthn.register(tokens.refresh_token);
+                ChintanWebAuthn.markEnrolled(true);
+                this.biometricEnrolled = true;
+                ui.showToast('Biometric unlock enabled', 'success');
+            }
+            await this.refreshBiometricToggle();
+        } catch (error) {
+            console.error('Biometric toggle error:', error);
+            ui.showToast(error.message || 'Biometric update failed', 'error');
+        } finally {
+            ui.setButtonLoading(btn, false);
+        }
     }
 
     async showSettings() {
         try {
             await this.loadSettings();
             this.populateForm();
+            await this.refreshBiometricToggle();
             ui.showContentScreen('settings-screen');
         } catch (error) {
             console.error('Failed to load settings:', error);

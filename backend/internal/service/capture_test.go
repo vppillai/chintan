@@ -103,6 +103,40 @@ func (m *mockStore) UpdateCaptureStatus(ctx context.Context, userID, captureID s
 	return repository.ErrNotFound
 }
 
+func (m *mockStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
+	return nil
+}
+func (m *mockStore) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
+	return model.WebAuthnChallenge{}, repository.ErrNotFound
+}
+func (m *mockStore) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
+	return nil
+}
+func (m *mockStore) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
+	return nil
+}
+func (m *mockStore) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
+	return model.WebAuthnCredential{}, repository.ErrNotFound
+}
+func (m *mockStore) ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *mockStore) ListWebAuthnCredentialsByUser(ctx context.Context, userID string) ([]model.WebAuthnCredential, error) {
+	return nil, nil
+}
+func (m *mockStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID string) error {
+	return nil
+}
+func (m *mockStore) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
+	return nil
+}
+func (m *mockStore) GetRefreshVault(ctx context.Context, userID string) (model.RefreshVault, error) {
+	return model.RefreshVault{}, repository.ErrNotFound
+}
+func (m *mockStore) DeleteRefreshVault(ctx context.Context, userID string) error {
+	return nil
+}
+
 // mockObjects implements repository.Objects for testing
 type mockObjects struct {
 	objects map[string][]byte

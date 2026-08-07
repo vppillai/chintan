@@ -18,18 +18,24 @@ type memoryObject struct {
 
 // MemoryStore is an in-memory Store for tests and local development.
 type MemoryStore struct {
-	mu       sync.RWMutex
-	settings map[string]model.Settings
-	notes    map[string]map[string]model.NoteIndex
-	captures map[string]map[string]model.CaptureIndex
+	mu          sync.RWMutex
+	settings    map[string]model.Settings
+	notes       map[string]map[string]model.NoteIndex
+	captures    map[string]map[string]model.CaptureIndex
+	challenges  map[string]model.WebAuthnChallenge
+	credentials map[string]model.WebAuthnCredential
+	vaults      map[string]model.RefreshVault
 }
 
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		settings: make(map[string]model.Settings),
-		notes:    make(map[string]map[string]model.NoteIndex),
-		captures: make(map[string]map[string]model.CaptureIndex),
+		settings:    make(map[string]model.Settings),
+		notes:       make(map[string]map[string]model.NoteIndex),
+		captures:    make(map[string]map[string]model.CaptureIndex),
+		challenges:  make(map[string]model.WebAuthnChallenge),
+		credentials: make(map[string]model.WebAuthnCredential),
+		vaults:      make(map[string]model.RefreshVault),
 	}
 }
 
@@ -180,6 +186,148 @@ func (s *MemoryStore) UpdateCaptureStatus(ctx context.Context, userID, captureID
 	c.Status = status
 	c.Error = errMsg
 	userCaptures[captureID] = c
+	return nil
+}
+
+func (s *MemoryStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.challenges[c.ChallengeID] = c
+	return nil
+}
+
+func (s *MemoryStore) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.WebAuthnChallenge{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.challenges[challengeID]
+	if !ok {
+		return model.WebAuthnChallenge{}, ErrNotFound
+	}
+	if c.ExpiresAt > 0 && time.Now().Unix() > c.ExpiresAt {
+		return model.WebAuthnChallenge{}, ErrNotFound
+	}
+	return c, nil
+}
+
+func (s *MemoryStore) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.challenges, challengeID)
+	return nil
+}
+
+func (s *MemoryStore) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.credentials[c.CredentialID] = c
+	return nil
+}
+
+func (s *MemoryStore) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.WebAuthnCredential{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.credentials[credentialID]
+	if !ok {
+		return model.WebAuthnCredential{}, ErrNotFound
+	}
+	return c, nil
+}
+
+func (s *MemoryStore) ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]model.WebAuthnCredential, 0, len(s.credentials))
+	for _, c := range s.credentials {
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) ListWebAuthnCredentialsByUser(ctx context.Context, userID string) ([]model.WebAuthnCredential, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]model.WebAuthnCredential, 0)
+	for _, c := range s.credentials {
+		if c.UserID == userID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (s *MemoryStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, c := range s.credentials {
+		if c.UserID == userID {
+			delete(s.credentials, id)
+		}
+	}
+	return nil
+}
+
+func (s *MemoryStore) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := v
+	if v.Ciphertext != nil {
+		cp.Ciphertext = append([]byte(nil), v.Ciphertext...)
+	}
+	s.vaults[v.UserID] = cp
+	return nil
+}
+
+func (s *MemoryStore) GetRefreshVault(ctx context.Context, userID string) (model.RefreshVault, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.RefreshVault{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.vaults[userID]
+	if !ok {
+		return model.RefreshVault{}, ErrNotFound
+	}
+	cp := v
+	if v.Ciphertext != nil {
+		cp.Ciphertext = append([]byte(nil), v.Ciphertext...)
+	}
+	return cp, nil
+}
+
+func (s *MemoryStore) DeleteRefreshVault(ctx context.Context, userID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.vaults, userID)
 	return nil
 }
 
