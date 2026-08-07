@@ -68,10 +68,16 @@ Resources:
           Name: email
           Required: true
           Mutable: true
-      Tags:
+      UserPoolTags:
         Project: chintan
         Instance: !Ref InstanceName
         Application: Chintan
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub 'chintan-${InstanceName}-${AWS::AccountId}'
+      UserPoolId: !Ref UserPool
 
   # Cognito User Pool Client (public, no secret)
   UserPoolClient:
@@ -92,6 +98,8 @@ Resources:
         - profile
       CallbackURLs:
         - !Sub 'https://${PagesHost}/${RepoName}/${InstanceName}/'
+      LogoutURLs:
+        - !Sub 'https://${PagesHost}/${RepoName}/${InstanceName}/'
       SupportedIdentityProviders:
         - COGNITO
       PreventUserExistenceErrors: ENABLED
@@ -99,6 +107,8 @@ Resources:
   # DynamoDB Table
   DynamoDBTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub 'chintan-${InstanceName}-${Environment}'
       BillingMode: PAY_PER_REQUEST
@@ -114,8 +124,6 @@ Resources:
           KeyType: RANGE
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
-      DeletionPolicy: Retain
-      UpdateReplacePolicy: Retain
       Tags:
         - Key: Project
           Value: chintan
@@ -229,7 +237,7 @@ Resources:
         - arm64
       MemorySize: 512
       Timeout: 120
-      ReservedConcurrencyLimit: 5
+      ReservedConcurrentExecutions: 5
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
@@ -371,6 +379,12 @@ Outputs:
   UserPoolClientId:
     Description: Cognito User Pool Client ID
     Value: !Ref UserPoolClient
+  UserPoolDomainName:
+    Description: Cognito Hosted UI domain prefix
+    Value: !Ref UserPoolDomain
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolDomain'
+
     Export:
       Name: !Sub '${AWS::StackName}-UserPoolClientId'
 
