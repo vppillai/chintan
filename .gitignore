@@ -1,0 +1,9 @@
+backend/bootstrap
+backend/*.zip
+build/
+.aws-sam/
+*.exe
+.DS_Store
+.env
+.env.*
+frontend/js/config.js

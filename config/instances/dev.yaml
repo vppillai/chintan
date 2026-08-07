@@ -1,0 +1,9 @@
+name: dev
+display_name: Chintan Dev
+pwa:
+  name: Chintan
+  short_name: Chintan
+  description: Voice brain-dump notes
+  theme_color: "#1B4332"
+  background_color: "#F7F3EB"
+# Cognito app client is created by CFN; invite first user via AWS console or scripts later
