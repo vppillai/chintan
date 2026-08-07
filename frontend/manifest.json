@@ -1,0 +1,21 @@
+{
+  "name": "Chintan - Voice Notes",
+  "short_name": "Chintan",
+  "description": "Voice brain-dump notes",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F7F3EB",
+  "theme_color": "#1B4332",
+  "orientation": "portrait-primary",
+  "scope": "./",
+  "lang": "en-US",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

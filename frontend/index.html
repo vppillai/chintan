@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chintan - Voice Notes</title>
+    <meta name="description" content="Voice brain-dump notes">
+    <meta name="theme-color" content="#1B4332">
+    
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/styles.css">
+    
+    <!-- CSP-friendly font loading -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="login-screen" class="screen">
+            <div class="login-container">
+                <div class="logo">
+                    <img src="assets/icon.svg" alt="Chintan" width="64" height="64">
+                    <h1>Chintan</h1>
+                    <p>Voice brain-dump notes</p>
+                </div>
+                <button id="login-btn" class="btn btn-primary btn-large">
+                    Sign In with Cognito
+                </button>
+            </div>
+        </div>
+
+        <!-- Main App -->
+        <div id="main-app" class="screen hidden">
+            <!-- Header -->
+            <header class="header">
+                <div class="header-content">
+                    <h1 class="app-title">Chintan</h1>
+                    <button id="logout-btn" class="btn btn-secondary">Sign Out</button>
+                </div>
+            </header>
+
+            <!-- Home Screen -->
+            <div id="home-screen" class="content-screen">
+                <div class="capture-section">
+                    <h2>Record a Note</h2>
+                    <div class="capture-input">
+                        <textarea id="query-input" placeholder="Describe what you want to record..." rows="3"></textarea>
+                        <button id="match-btn" class="btn btn-primary">Find Matching Notes</button>
+                    </div>
+                    
+                    <div id="match-results" class="match-results hidden">
+                        <h3>Choose a note to append to:</h3>
+                        <div id="match-candidates" class="match-candidates"></div>
+                        <button id="new-note-btn" class="btn btn-secondary btn-full">Create New Note</button>
+                    </div>
+                    
+                    <div id="recording-section" class="recording-section hidden">
+                        <h3 id="recording-title">Recording for: <span id="target-note-name"></span></h3>
+                        <div class="recording-controls">
+                            <button id="record-btn" class="btn btn-record">
+                                <span class="record-icon">🎤</span>
+                                <span class="record-text">Start Recording</span>
+                            </button>
+                            <button id="stop-btn" class="btn btn-danger hidden">Stop Recording</button>
+                        </div>
+                        <div id="recording-status" class="recording-status hidden">
+                            <p id="status-text">Recording...</p>
+                            <div class="progress-bar">
+                                <div id="progress" class="progress"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="notes-preview">
+                    <h2>Recent Notes</h2>
+                    <div id="recent-notes" class="notes-list">
+                        <div class="loading">Loading notes...</div>
+                    </div>
+                    <button id="view-all-notes" class="btn btn-secondary">View All Notes</button>
+                </div>
+            </div>
+
+            <!-- Notes List Screen -->
+            <div id="notes-screen" class="content-screen hidden">
+                <div class="screen-header">
+                    <button id="back-to-home" class="btn btn-ghost">← Back</button>
+                    <h2>All Notes</h2>
+                    <button id="create-note-btn" class="btn btn-primary">+ New Note</button>
+                </div>
+                <div id="all-notes" class="notes-list">
+                    <div class="loading">Loading notes...</div>
+                </div>
+            </div>
+
+            <!-- Note Detail Screen -->
+            <div id="note-detail-screen" class="content-screen hidden">
+                <div class="screen-header">
+                    <button id="back-to-notes" class="btn btn-ghost">← Back</button>
+                    <h2 id="note-detail-title">Note</h2>
+                    <button id="save-note-btn" class="btn btn-primary hidden">Save</button>
+                </div>
+                <div class="note-detail">
+                    <div class="note-meta">
+                        <input type="text" id="note-title-input" placeholder="Note title..." class="title-input">
+                        <div class="note-aliases">
+                            <label>Aliases (comma-separated):</label>
+                            <input type="text" id="note-aliases-input" placeholder="alias1, alias2..." class="aliases-input">
+                        </div>
+                    </div>
+                    <textarea id="note-body-input" placeholder="Note content..." class="body-input"></textarea>
+                    
+                    <div class="note-captures">
+                        <h3>Captures</h3>
+                        <div id="captures-list" class="captures-list">
+                            <div class="loading">Loading captures...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/capture.js"></script>
+    <script src="js/notes.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
