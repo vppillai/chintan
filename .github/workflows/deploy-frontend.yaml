@@ -11,39 +11,31 @@ on:
     paths:
       - 'frontend/**'
       - '.github/workflows/deploy-frontend.yaml'
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-west-2
+  PAGES_OWNER: vppillai
+  PAGES_REPO: chintan
 
 permissions:
   id-token: write
   contents: read
   pages: write
 
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
 jobs:
-  discover-instances:
-    name: Discover Instances
+  deploy:
+    name: Build and Deploy Pages
     runs-on: ubuntu-latest
-    outputs:
-      instances: ${{ steps.instances.outputs.instances }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Discover instances
-        id: instances
-        run: |
-          instances=$(find config/instances -name "*.yaml" -exec basename {} .yaml \; | jq -R -s -c 'split("\n")[:-1]')
-          echo "instances=$instances" >> $GITHUB_OUTPUT
-
-  build-and-deploy:
-    name: Build and Deploy ${{ matrix.instance }}
-    runs-on: ubuntu-latest
-    needs: discover-instances
     environment: production
-    strategy:
-      matrix:
-        instance: ${{ fromJSON(needs.discover-instances.outputs.instances) }}
+    # Only auto-follow successful backend deploys; allow manual/push otherwise.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -54,66 +46,78 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get CloudFormation outputs
-        id: cf-outputs
+      - name: Build instance sites
+        id: build
         run: |
-          outputs=$(aws cloudformation describe-stacks \
-            --stack-name chintan-${{ matrix.instance }}-prod \
-            --query 'Stacks[0].Outputs' \
-            --output json)
-          
-          api_endpoint=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ApiEndpoint") | .OutputValue')
-          user_pool_id=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="UserPoolId") | .OutputValue')
-          client_id=$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ClientId") | .OutputValue')
-          
-          if [ "$api_endpoint" = "null" ] || [ -z "$api_endpoint" ]; then
-            echo "Error: ApiEndpoint not found in CloudFormation outputs"
+          set -euo pipefail
+          mkdir -p site
+          deployed=()
+          for cfg in config/instances/*.yaml; do
+            instance="$(basename "$cfg" .yaml)"
+            stack="chintan-${instance}-prod"
+            if ! aws cloudformation describe-stacks --stack-name "$stack" >/dev/null 2>&1; then
+              echo "Skipping ${instance}: stack ${stack} not found"
+              continue
+            fi
+
+            outputs="$(aws cloudformation describe-stacks \
+              --stack-name "$stack" \
+              --query 'Stacks[0].Outputs' \
+              --output json)"
+
+            api_endpoint="$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="ApiEndpoint") | .OutputValue')"
+            user_pool_id="$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="UserPoolId") | .OutputValue')"
+            client_id="$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="UserPoolClientId") | .OutputValue')"
+            cognito_domain="$(echo "$outputs" | jq -r '.[] | select(.OutputKey=="UserPoolDomainName") | .OutputValue')"
+
+            if [ -z "$api_endpoint" ] || [ "$api_endpoint" = "null" ]; then
+              echo "Error: ApiEndpoint missing for ${stack}"
+              exit 1
+            fi
+            if [ -z "$client_id" ] || [ "$client_id" = "null" ]; then
+              echo "Error: UserPoolClientId missing for ${stack}"
+              exit 1
+            fi
+            if [ -z "$cognito_domain" ] || [ "$cognito_domain" = "null" ]; then
+              echo "Error: UserPoolDomainName missing for ${stack}"
+              exit 1
+            fi
+
+            dest="site/${instance}"
+            mkdir -p "$dest"
+            cp -a frontend/. "$dest/"
+            rm -f "$dest/js/config.example.js"
+            cat > "$dest/js/config.js" <<EOF
+window.CHINTAN_API_URL = '${api_endpoint}';
+window.CHINTAN_USER_POOL_ID = '${user_pool_id}';
+window.CHINTAN_CLIENT_ID = '${client_id}';
+window.CHINTAN_INSTANCE = '${instance}';
+window.CHINTAN_COGNITO_DOMAIN = '${cognito_domain}';
+EOF
+            deployed+=("$instance")
+            echo "Built ${dest} → https://${PAGES_OWNER}.github.io/${PAGES_REPO}/${instance}/"
+          done
+
+          if [ "${#deployed[@]}" -eq 0 ]; then
+            echo "No instance stacks available to deploy"
             exit 1
           fi
-          
-          echo "api-endpoint=$api_endpoint" >> $GITHUB_OUTPUT
-          echo "user-pool-id=$user_pool_id" >> $GITHUB_OUTPUT
-          echo "client-id=$client_id" >> $GITHUB_OUTPUT
 
-      - name: Create frontend directory structure
-        run: |
-          mkdir -p frontend/js
+          cat > site/index.html <<'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chintan</title>
+  <meta http-equiv="refresh" content="0; url=./dev/">
+</head>
+<body>
+  <p>Open <a href="./dev/">Chintan Dev</a>.</p>
+</body>
+</html>
+EOF
 
-      - name: Create config.js
-        run: |
-          cat > frontend/js/config.js << EOF
-          window.CONFIG = {
-            API_URL: '${{ steps.cf-outputs.outputs.api-endpoint }}',
-            USER_POOL_ID: '${{ steps.cf-outputs.outputs.user-pool-id }}',
-            CLIENT_ID: '${{ steps.cf-outputs.outputs.client-id }}',
-            INSTANCE: '${{ matrix.instance }}'
-          };
-          EOF
-
-      - name: Create basic index.html if missing
-        run: |
-          if [ ! -f frontend/index.html ]; then
-            cat > frontend/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Chintan - ${{ matrix.instance }}</title>
-          </head>
-          <body>
-            <div id="app">
-              <h1>Chintan - ${{ matrix.instance }}</h1>
-              <p>Frontend deployment successful!</p>
-            </div>
-            <script src="js/config.js"></script>
-            <script>
-              console.log('Config:', window.CONFIG);
-            </script>
-          </body>
-          </html>
-          EOF
-          fi
+          echo "instances=${deployed[*]}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -121,7 +125,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: frontend
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
