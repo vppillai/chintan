@@ -1,0 +1,385 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Chintan Instance Template - Per-instance resources for voice AI application'
+
+Parameters:
+  InstanceName:
+    Type: String
+    Description: Name of the Chintan instance (used in resource naming)
+    MinLength: 1
+    MaxLength: 32
+    AllowedPattern: '^[a-z0-9-]+$'
+  
+  AllowedOrigin:
+    Type: String
+    Description: CORS allowed origin for the API
+    MinLength: 1
+  
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+    MinLength: 1
+  
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key for Lambda deployment package
+    MinLength: 1
+  
+  Environment:
+    Type: String
+    Default: prod
+    Description: Environment name
+    AllowedValues:
+      - prod
+      - staging
+      - dev
+  
+  PagesHost:
+    Type: String
+    Description: GitHub Pages host for Cognito callbacks
+    MinLength: 1
+  
+  RepoName:
+    Type: String
+    Description: Repository name for Cognito callback URLs
+    MinLength: 1
+
+Resources:
+  # Cognito User Pool
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub 'chintan-${InstanceName}-${Environment}'
+      AutoVerifiedAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+          - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - AttributeDataType: String
+          Name: email
+          Required: true
+          Mutable: true
+      Tags:
+        Project: chintan
+        Instance: !Ref InstanceName
+        Application: Chintan
+
+  # Cognito User Pool Client (public, no secret)
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub 'chintan-${InstanceName}-${Environment}-client'
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      CallbackURLs:
+        - !Sub 'https://${PagesHost}/${RepoName}/${InstanceName}/'
+      SupportedIdentityProviders:
+        - COGNITO
+      PreventUserExistenceErrors: ENABLED
+
+  # DynamoDB Table
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'chintan-${InstanceName}-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionPolicy: Retain
+      UpdateReplacePolicy: Retain
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # S3 Content Bucket
+  ContentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'chintan-content-${InstanceName}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'chintan-lambda-${InstanceName}-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt DynamoDBTable.Arn
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub '${ContentBucket}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Ref ContentBucket
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/groq_api_key'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/llm_api_key'
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # Lambda Function
+  ApiLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'chintan-api-${InstanceName}-${Environment}'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref LambdaCodeKey
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 120
+      ReservedConcurrencyLimit: 5
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoDBTable
+          CONTENT_BUCKET: !Ref ContentBucket
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          LLM_BASE_URL: https://api.minimax.io/v1
+          LLM_MODEL: MiniMax-M3
+          GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
+          LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # CloudWatch Log Group
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/chintan-api-${InstanceName}-${Environment}'
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # HTTP API Gateway
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub 'chintan-api-${InstanceName}-${Environment}'
+      Description: !Sub 'Chintan HTTP API for ${InstanceName}'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: true
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - X-Amz-Date
+          - X-Api-Key
+          - X-Amz-Security-Token
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowOrigins:
+          - !Ref AllowedOrigin
+        MaxAge: 86400
+      Tags:
+        Project: chintan
+        Instance: !Ref InstanceName
+        Application: Chintan
+
+  # JWT Authorizer for Cognito
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      Name: !Sub 'chintan-jwt-${InstanceName}-${Environment}'
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource:
+        - '$request.header.Authorization'
+      JwtConfiguration:
+        Audience:
+          - !Ref UserPoolClient
+        Issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
+
+  # Lambda Integration
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambdaFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+
+  # Route for health check (no auth)
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /v1/health'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # Route for protected endpoints (with auth)
+  ProtectedRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+
+  # Default Stage
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: $default
+      ApiId: !Ref HttpApi
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
+      Tags:
+        Project: chintan
+        Instance: !Ref InstanceName
+        Application: Chintan
+
+  # Lambda Permission for API Gateway
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub '${HttpApi}/*/*'
+
+Outputs:
+  ApiEndpoint:
+    Description: HTTP API Gateway endpoint URL
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolId'
+
+  UserPoolClientId:
+    Description: Cognito User Pool Client ID
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+
+  ContentBucketName:
+    Description: S3 Content Bucket Name
+    Value: !Ref ContentBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ContentBucketName'
+
+  TableName:
+    Description: DynamoDB Table Name
+    Value: !Ref DynamoDBTable
+    Export:
+      Name: !Sub '${AWS::StackName}-TableName'

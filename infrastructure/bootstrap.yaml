@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Chintan Bootstrap - S3 artifact bucket and GitHub Actions IAM role'
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: GitHub organization name
+    MinLength: 1
+  
+  GitHubRepo:
+    Type: String
+    Description: GitHub repository name
+    MinLength: 1
+
+Resources:
+  # S3 bucket for Lambda artifacts
+  LambdaArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'chintan-lambda-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Application
+          Value: Chintan
+
+  # IAM OIDC Identity Provider for GitHub Actions
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OpenIDConnectProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+      Tags:
+        - Key: Application
+          Value: Chintan
+
+  # IAM role for GitHub Actions
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: chintan-github-actions
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com'
+              StringLike:
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: Chintan-IAM-Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:UpdateRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+              - Effect: Allow
+                Action:
+                  - iam:CreatePolicy
+                  - iam:DeletePolicy
+                  - iam:GetPolicy
+                  - iam:ListPolicyVersions
+                  - iam:GetPolicyVersion
+                  - iam:CreatePolicyVersion
+                  - iam:DeletePolicyVersion
+                  - iam:SetDefaultPolicyVersion
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-*'
+      Tags:
+        - Key: Application
+          Value: Chintan
+
+Outputs:
+  LambdaArtifactBucketName:
+    Description: S3 bucket for Lambda deployment artifacts
+    Value: !Ref LambdaArtifactBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-LambdaArtifactBucket'
+  
+  GitHubActionsRoleArn:
+    Description: IAM role ARN for GitHub Actions
+    Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubActionsRole'
+  
+  GitHubOIDCProviderArn:
+    Description: GitHub OIDC Provider ARN
+    Value: !Ref GitHubOIDCProvider
+    Export:
+      Name: !Sub '${AWS::StackName}-GitHubOIDCProvider'
