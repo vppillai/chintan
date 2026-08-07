@@ -1,7 +1,7 @@
 // Service Worker for Chintan PWA
-const CACHE_NAME = 'chintan-v1';
-const STATIC_CACHE = 'chintan-static-v1';
-const API_CACHE = 'chintan-api-v1';
+const CACHE_NAME = 'chintan-v2';
+const STATIC_CACHE = 'chintan-static-v2';
+const API_CACHE = 'chintan-api-v2';
 
 // Files to cache for offline use
 const STATIC_FILES = [
@@ -181,21 +181,17 @@ async function handleApiRequest(request) {
     }
 }
 
-// Handle external requests (like Google Fonts)
+// Handle external requests (API + fonts). Never invent status codes —
+// a failed cross-origin fetch must surface to the page, not become HTTP 404.
 async function handleExternalRequest(request) {
-    try {
-        return await fetch(request);
-    } catch (error) {
-        // For fonts and other external resources, fail silently
-        return new Response('', { status: 404 });
-    }
+    return fetch(request);
 }
 
-// Check if request is to our API
+// Check if request is to our API (cross-origin execute-api host)
 function isApiRequest(url) {
-    // This should match your API domain
-    return url.pathname.startsWith('/v1/') && 
-           url.hostname === new URL(self.registration.scope).hostname;
+    return url.hostname.includes('execute-api') &&
+           url.hostname.endsWith('.amazonaws.com') &&
+           url.pathname.startsWith('/v1/');
 }
 
 // Check if API response should be cached

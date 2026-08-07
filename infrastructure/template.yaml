@@ -288,6 +288,7 @@ Resources:
           - GET
           - POST
           - PUT
+          - PATCH
           - DELETE
           - OPTIONS
         AllowOrigins:
@@ -327,6 +328,15 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'GET /v1/health'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # $default JWT authorizer does not auto-answer CORS preflight; keep OPTIONS open.
+  OptionsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'OPTIONS /{proxy+}'
+      AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 
   # Route for protected endpoints (with auth)

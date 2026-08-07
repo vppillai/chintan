@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
+	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -40,10 +41,9 @@ type DownloadResponse struct {
 }
 
 func (h *CapturesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Extract user ID from context (set by auth middleware)
-	userID, ok := r.Context().Value("userID").(string)
+	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "missing user ID")
+		httperr.Unauthorized(w, "authentication required")
 		return
 	}
 
