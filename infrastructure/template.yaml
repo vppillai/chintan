@@ -361,7 +361,7 @@ Resources:
       FunctionName: !Ref ApiLambdaFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub '${HttpApi}/*/*'
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*'
 
 Outputs:
   ApiEndpoint:
