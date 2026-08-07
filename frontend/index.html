@@ -41,7 +41,10 @@
             <header class="header">
                 <div class="header-content">
                     <h1 class="app-title">Chintan</h1>
-                    <button id="logout-btn" class="btn btn-secondary">Sign Out</button>
+                    <div class="header-actions">
+                        <button id="settings-btn" class="btn btn-ghost">⚙️ Settings</button>
+                        <button id="logout-btn" class="btn btn-secondary">Sign Out</button>
+                    </div>
                 </div>
             </header>
 
@@ -124,6 +127,31 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Settings Screen -->
+            <div id="settings-screen" class="content-screen hidden">
+                <div class="screen-header">
+                    <button id="back-from-settings" class="btn btn-ghost">← Back</button>
+                    <h2>Settings</h2>
+                    <button id="save-settings-btn" class="btn btn-primary">Save</button>
+                </div>
+                <div class="settings-content">
+                    <div class="settings-group">
+                        <label for="cleanup-mode">Cleanup Mode</label>
+                        <select id="cleanup-mode" class="settings-select">
+                            <option value="faithful">Faithful - Preserve original wording and style</option>
+                            <option value="polished">Polished - Clean up grammar and improve clarity</option>
+                        </select>
+                        <p class="settings-help">Choose how voice transcriptions should be processed.</p>
+                    </div>
+                    
+                    <div class="settings-group">
+                        <label for="retention-days">Note Retention</label>
+                        <input type="number" id="retention-days" class="settings-input" min="0" placeholder="0">
+                        <p class="settings-help">Number of days to keep notes. Set to 0 for indefinite storage.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -135,6 +163,7 @@
     <script src="js/api.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/settings.js"></script>
     <script src="js/capture.js"></script>
     <script src="js/notes.js"></script>
     <script src="js/app.js"></script>
