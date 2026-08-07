@@ -153,6 +153,8 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub 'chintan-lambda-${InstanceName}-${Environment}'
+      # Bound by the same ceiling as the agent so privilege cannot escalate through Lambda (G-046).
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

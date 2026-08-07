@@ -1,125 +1,319 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Chintan Bootstrap - S3 artifact bucket and GitHub Actions IAM role'
+Description: >
+  Chintan bootstrap — artifact bucket + GitHub Actions deploy role.
+  Reuses the account's existing GitHub OIDC provider (do not create a second one).
+  Role permissions are scoped to chintan-* only; passbook-* is out of reach.
 
 Parameters:
   GitHubOrg:
     Type: String
-    Description: GitHub organization name
-    MinLength: 1
-  
+    Default: vppillai
+    Description: GitHub organization/username
+
   GitHubRepo:
     Type: String
+    Default: chintan
     Description: GitHub repository name
-    MinLength: 1
+
+  ExistingOIDCProviderArn:
+    Type: String
+    Default: arn:aws:iam::338186951935:oidc-provider/token.actions.githubusercontent.com
+    Description: >
+      Existing account OIDC provider for token.actions.githubusercontent.com.
+      Shared with other projects (e.g. passbook); this stack must not create another.
 
 Resources:
-  # S3 bucket for Lambda artifacts
-  LambdaArtifactBucket:
+  LambdaDeploymentBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub 'chintan-lambda-${AWS::AccountId}-${AWS::Region}'
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
       VersioningConfiguration:
         Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: CleanupOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+            ExpiredObjectDeleteMarker: true
+          - Id: AbortStaleMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
       Tags:
         - Key: Application
           Value: Chintan
+        - Key: Project
+          Value: chintan
 
-  # IAM OIDC Identity Provider for GitHub Actions
-  GitHubOIDCProvider:
-    Type: AWS::IAM::OpenIDConnectProvider
-    Properties:
-      Url: https://token.actions.githubusercontent.com
-      ClientIdList:
-        - sts.amazonaws.com
-      ThumbprintList:
-        - 6938fd4d98bab03faadb97b34396831e3780aea1
-        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
-      Tags:
-        - Key: Application
-          Value: Chintan
-
-  # IAM role for GitHub Actions
   GitHubActionsRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: chintan-github-actions
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Ref GitHubOIDCProvider
+              Federated: !Ref ExistingOIDCProviderArn
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
-                'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com'
-              StringLike:
-                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/PowerUserAccess
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
+      Tags:
+        - Key: Application
+          Value: Chintan
+        - Key: Project
+          Value: chintan
       Policies:
-        - PolicyName: Chintan-IAM-Access
+        - PolicyName: ChintanDeploymentPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - iam:CreateRole
-                  - iam:DeleteRole
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/chintan-*/*'
+
+              - Effect: Allow
+                Action:
+                  - cloudformation:GetTemplateSummary
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt LambdaDeploymentBucket.Arn
+                  - !Sub '${LambdaDeploymentBucket.Arn}/*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                  - lambda:ListTags
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:DeleteFunction
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:ListTagsOfResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:GetBucket*
+                  - s3:PutBucket*
+                  - s3:PutEncryptionConfiguration
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:PutBucketTagging
+                Resource:
+                  - !Sub 'arn:aws:s3:::chintan-content-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+
+              - Effect: Allow
+                Action:
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:DELETE
+                  - apigateway:PATCH
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # Cognito cannot be ARN-prefix-scoped (pool IDs are service-generated).
+              # Mutations restricted to CloudFormation; reads allowed for CI smoke.
+              - Effect: Allow
+                Action:
+                  - cognito-idp:Describe*
+                  - cognito-idp:List*
+                  - cognito-idp:Get*
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:CreateUserPoolDomain
+                  - cognito-idp:DeleteUserPoolDomain
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                Resource: '*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
                   - iam:GetRole
-                  - iam:UpdateRole
-                  - iam:AttachRolePolicy
-                  - iam:DetachRolePolicy
-                  - iam:PutRolePolicy
-                  - iam:DeleteRolePolicy
+                  - iam:ListRolePolicies
                   - iam:GetRolePolicy
-                  - iam:PassRole
                   - iam:TagRole
                   - iam:UntagRole
-                  - iam:ListRolePolicies
                   - iam:ListAttachedRolePolicies
                 Resource:
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+
               - Effect: Allow
                 Action:
-                  - iam:CreatePolicy
-                  - iam:DeletePolicy
-                  - iam:GetPolicy
-                  - iam:ListPolicyVersions
-                  - iam:GetPolicyVersion
-                  - iam:CreatePolicyVersion
-                  - iam:DeletePolicyVersion
-                  - iam:SetDefaultPolicyVersion
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
                 Resource:
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-*'
-      Tags:
-        - Key: Application
-          Value: Chintan
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - iam:AttachRolePolicy
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: 'lambda.amazonaws.com'
+
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:TagLogGroup
+                  - logs:ListTagsLogGroup
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/chintan-*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # SSM parameter read for deploy verification; Put remains a human/agent-cli step.
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:DescribeParameters
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/*'
 
 Outputs:
-  LambdaArtifactBucketName:
+  LambdaDeploymentBucketName:
     Description: S3 bucket for Lambda deployment artifacts
-    Value: !Ref LambdaArtifactBucket
+    Value: !Ref LambdaDeploymentBucket
     Export:
-      Name: !Sub '${AWS::StackName}-LambdaArtifactBucket'
-  
+      Name: ChintanLambdaBucket
+
   GitHubActionsRoleArn:
-    Description: IAM role ARN for GitHub Actions
+    Description: IAM Role ARN for GitHub Actions (chintan-* scoped)
     Value: !GetAtt GitHubActionsRole.Arn
     Export:
-      Name: !Sub '${AWS::StackName}-GitHubActionsRole'
-  
-  GitHubOIDCProviderArn:
-    Description: GitHub OIDC Provider ARN
-    Value: !Ref GitHubOIDCProvider
-    Export:
-      Name: !Sub '${AWS::StackName}-GitHubOIDCProvider'
+      Name: ChintanGitHubActionsRole
+
+  OIDCProviderArn:
+    Description: Existing GitHub OIDC Provider ARN (shared, not created by this stack)
+    Value: !Ref ExistingOIDCProviderArn

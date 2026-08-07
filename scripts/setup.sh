@@ -140,20 +140,26 @@ create_production_environment() {
 }
 
 enable_github_pages() {
-    log_info "Enabling GitHub Pages"
-    
-    local pages_config='{
-        "source": {
-            "branch": "main",
-            "path": "/"
-        }
-    }'
-    
-    execute_cmd "gh api repos/:owner/:repo/pages --method POST --input - <<< '$pages_config'" 
-    
-    if ! is_dry_run; then
-        log_success "GitHub Pages enabled"
+    log_info "Enabling GitHub Pages (Actions as build source)"
+
+    # Passbook pattern: build_type=workflow so deploy-frontend can publish.
+    if is_dry_run; then
+        log_info "[DRY-RUN] Would enable Pages with build_type=workflow"
+        return 0
     fi
+
+    if gh api -X POST "repos/$(get_github_repo_info)/pages" -f build_type=workflow >/dev/null 2>&1; then
+        log_success "GitHub Pages enabled (workflow)"
+        return 0
+    fi
+
+    # 409 already exists — switch source to workflow if needed
+    if gh api -X PUT "repos/$(get_github_repo_info)/pages" -f build_type=workflow >/dev/null 2>&1; then
+        log_success "GitHub Pages updated to workflow build"
+        return 0
+    fi
+
+    log_warn "Could not configure Pages via API; set Settings → Pages → Source: GitHub Actions manually"
 }
 
 main() {

@@ -1,0 +1,249 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationOnProjectStacks",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:Describe*",
+        "cloudformation:GetTemplate",
+        "cloudformation:List*",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:TagResource",
+        "cloudformation:UntagResource",
+        "cloudformation:GetStackPolicy",
+        "cloudformation:SetStackPolicy"
+      ],
+      "Resource": "arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/chintan-*/*"
+    },
+    {
+      "Sid": "CloudFormationValidationNeedsWildcard",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:ValidateTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:ListStacks",
+        "cloudformation:DescribeStacks"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectBuckets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:Get*",
+        "s3:Put*",
+        "s3:List*",
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::chintan-*",
+        "arn:aws:s3:::chintan-*/*"
+      ]
+    },
+    {
+      "Sid": "ListBucketsIsGlobalAndUnscopable",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectTable",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:*"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/chintan-*",
+        "arn:aws:dynamodb:REGION:ACCOUNT_ID:table/chintan-*/index/*"
+      ]
+    },
+    {
+      "Sid": "DynamoListingNeedsWildcard",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:ListTables"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ProjectFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*"
+      ],
+      "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:chintan-*"
+    },
+    {
+      "Sid": "LambdaListingAndLayersNeedWildcard",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListFunctions",
+        "lambda:GetAccountSettings",
+        "lambda:ListLayers"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ApiGateway",
+      "Effect": "Allow",
+      "Action": [
+        "apigateway:*"
+      ],
+      "Resource": [
+        "arn:aws:apigateway:REGION::/apis",
+        "arn:aws:apigateway:REGION::/apis/*",
+        "arn:aws:apigateway:REGION::/tags/*"
+      ]
+    },
+    {
+      "Sid": "CognitoCannotBePrefixScopedSeeReadme",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LogsForProjectGroups",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:PutRetentionPolicy",
+        "logs:TagLogGroup",
+        "logs:ListTagsLogGroup",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents"
+      ],
+      "Resource": [
+        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/chintan-*",
+        "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/chintan-*:*"
+      ]
+    },
+    {
+      "Sid": "LogsDescribeNeedsWildcard",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IamOnProjectRolesOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePermissionsBoundary"
+      ],
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/chintan-*"
+    },
+    {
+      "Sid": "IamReadOnlyForDoctorAndGuardrailsCheck",
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListRoles",
+        "iam:ListPolicies",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListOpenIDConnectProviders",
+        "iam:GetOpenIDConnectProvider",
+        "iam:SimulatePrincipalPolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ScheduledRules",
+      "Effect": "Allow",
+      "Action": [
+        "events:*"
+      ],
+      "Resource": "arn:aws:events:REGION:ACCOUNT_ID:rule/chintan-*"
+    },
+    {
+      "Sid": "ResourceGroupsForTeardownVerification",
+      "Effect": "Allow",
+      "Action": [
+        "resource-groups:*",
+        "tag:GetResources",
+        "tag:TagResources",
+        "tag:UntagResources",
+        "tag:GetTagKeys",
+        "tag:GetTagValues"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadOwnIdentityAndAuditState",
+      "Effect": "Allow",
+      "Action": [
+        "access-analyzer:ValidatePolicy",
+        "budgets:ViewBudget",
+        "ce:GetCostAndUsage",
+        "ce:ListCostAllocationTags",
+        "cloudtrail:DescribeTrails",
+        "cloudtrail:GetTrailStatus",
+        "cloudtrail:ListTrails",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SsmWriteOnlyWithinProjectNamespace",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:AddTagsToResource",
+        "ssm:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/chintan/*"
+    },
+    {
+      "Sid": "PassRoleToLambdaOnly",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::ACCOUNT_ID:role/chintan-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "SsmDescribeRequiresWildcardResource",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DescribeParameters"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
