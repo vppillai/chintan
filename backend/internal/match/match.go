@@ -21,10 +21,10 @@ var nonLetters = regexp.MustCompile(`[^a-z]+`)
 
 // Candidate is a ranked note match for a vague description query.
 type Candidate struct {
-	NoteID  string
-	Title   string
-	Score   float64
-	Aliases []string
+	NoteID  string    `json:"note_id"`
+	Title   string    `json:"title"`
+	Score   float64   `json:"score"`
+	Aliases []string  `json:"aliases"`
 }
 
 // Rank scores notes against query and returns the top limit matches, highest score first.
