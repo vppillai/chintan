@@ -8,3 +8,5 @@ build/
 .env.*
 !.env.example
 frontend/js/config.js
+
+.superpowers/
