@@ -15,6 +15,8 @@
         "dynamodb:*",
         "events:*",
         "iam:*",
+        "kms:Decrypt",
+        "kms:DescribeKey",
         "lambda:*",
         "logs:*",
         "resource-groups:*",
@@ -249,7 +251,15 @@
         "ssm:GetParametersByPath",
         "ssm:GetParameterHistory"
       ],
-      "Resource": "arn:aws:ssm:*:ACCOUNT_ID:parameter/chintan/*"
+      "Resource": "arn:aws:ssm:*:ACCOUNT_ID:parameter/chintan/*",
+      "Condition": {
+        "ArnNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::ACCOUNT_ID:role/chintan-lambda-*",
+            "arn:aws:sts::ACCOUNT_ID:assumed-role/chintan-lambda-*/*"
+          ]
+        }
+      }
     },
     {
       "Sid": "DenyDecryptingProviderSecrets",
@@ -261,6 +271,12 @@
       "Condition": {
         "StringLike": {
           "kms:EncryptionContext:PARAMETER_ARN": "arn:aws:ssm:*:ACCOUNT_ID:parameter/chintan/*"
+        },
+        "ArnNotLike": {
+          "aws:PrincipalArn": [
+            "arn:aws:iam::ACCOUNT_ID:role/chintan-lambda-*",
+            "arn:aws:sts::ACCOUNT_ID:assumed-role/chintan-lambda-*/*"
+          ]
         }
       }
     },

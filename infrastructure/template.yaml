@@ -379,14 +379,14 @@ Outputs:
   UserPoolClientId:
     Description: Cognito User Pool Client ID
     Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub '${AWS::StackName}-UserPoolClientId'
+
   UserPoolDomainName:
     Description: Cognito Hosted UI domain prefix
     Value: !Ref UserPoolDomain
     Export:
       Name: !Sub '${AWS::StackName}-UserPoolDomain'
-
-    Export:
-      Name: !Sub '${AWS::StackName}-UserPoolClientId'
 
   ContentBucketName:
     Description: S3 Content Bucket Name

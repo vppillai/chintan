@@ -22,7 +22,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-var lambdaAdapter *httpadapter.HandlerAdapter
+var lambdaAdapter *httpadapter.HandlerAdapterV2
 
 func init() {
 	ctx := context.Background()
@@ -77,7 +77,7 @@ func init() {
 	captureService := service.NewCaptureService(store, objects, stt, llm)
 
 	router := handler.NewRouter(notesService, settingsService, captureService, allowedOrigin)
-	lambdaAdapter = httpadapter.New(router)
+	lambdaAdapter = httpadapter.NewV2(router)
 }
 
 func mustEnv(key string) string {
@@ -117,7 +117,7 @@ func resolveSecret(ctx context.Context, client *ssm.Client, valueEnv, pathEnv st
 	return *out.Parameter.Value, nil
 }
 
-func Handler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+func Handler(ctx context.Context, req events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	return lambdaAdapter.ProxyWithContext(ctx, req)
 }
 
