@@ -58,15 +58,18 @@
                     <div class="quick-capture">
                         <button id="quick-record-btn" class="btn btn-record btn-full">
                             <span class="record-icon">🎤</span>
-                            <span class="record-text">Quick Record</span>
+                            <span class="record-text">Tap & Talk</span>
                         </button>
-                        <p class="quick-capture-hint">Start talking now — choose or create the note after you stop.</p>
+                        <p class="quick-capture-hint">Just talk. Tap Stop and your words are saved as a new note automatically.</p>
                     </div>
 
-                    <div class="capture-input">
-                        <textarea id="query-input" placeholder="Describe what you want to record..." rows="3"></textarea>
-                        <button id="match-btn" class="btn btn-primary">Find Matching Notes</button>
-                    </div>
+                    <details class="capture-advanced">
+                        <summary>Add to an existing note</summary>
+                        <div class="capture-input">
+                            <textarea id="query-input" placeholder="Describe the note to add to..." rows="3"></textarea>
+                            <button id="match-btn" class="btn btn-primary">Find Matching Notes</button>
+                        </div>
+                    </details>
                     
                     <div id="match-results" class="match-results hidden">
                         <h3 id="match-results-title">Choose a note to append to:</h3>

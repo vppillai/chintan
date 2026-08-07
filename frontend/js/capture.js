@@ -7,9 +7,9 @@ class CaptureManager {
         this.selectedNoteId = null;
         this.matchedNotes = [];
         this.currentCaptureId = null;
-        // Quick Record captures audio before a target note exists; the blob waits here.
-        this.pendingBlob = null;
+        // Quick Record path: audio is captured with no note, then a note is created automatically.
         this.quickMode = false;
+        this.quickNoteId = null;
         
         this.setupEventListeners();
     }
@@ -129,18 +129,10 @@ class CaptureManager {
         this.chooseTarget(this.noteIdOf(note), note.title);
     }
 
-    // A pending Quick Record upload goes out immediately; otherwise reveal the recorder.
-    async chooseTarget(noteId, noteTitle) {
+    // Advanced "append to existing note" path: reveal the recorder for the chosen note.
+    chooseTarget(noteId, noteTitle) {
         this.selectedNoteId = noteId;
         document.getElementById('match-results').classList.add('hidden');
-
-        if (this.pendingBlob) {
-            const blob = this.pendingBlob;
-            this.pendingBlob = null;
-            await this.uploadBlob(blob);
-            return;
-        }
-
         this.showRecordingSection(noteTitle);
     }
 
@@ -148,10 +140,7 @@ class CaptureManager {
         const queryInput = document.getElementById('query-input');
         const query = queryInput.value.trim();
 
-        // A quick recording is already captured, so fall back to a dated title.
-        const title = query || (this.pendingBlob ? this.defaultNoteTitle() : '');
-
-        if (!title) {
+        if (!query) {
             ui.showToast('Please enter a description for the new note', 'warning');
             return;
         }
@@ -160,9 +149,9 @@ class CaptureManager {
         ui.setButtonLoading(newNoteBtn, true);
 
         try {
-            const note = await api.createNote(title);
+            const note = await api.createNote(query);
             ui.showToast('Created new note: ' + note.title, 'success');
-            await this.chooseTarget(note.id, note.title);
+            this.chooseTarget(note.id, note.title);
         } catch (error) {
             console.error('Create note error:', error);
             ui.showToast('Failed to create note: ' + error.message, 'error');
@@ -182,7 +171,7 @@ class CaptureManager {
             titleEl.innerHTML = 'Recording for: <span id="target-note-name"></span>';
             document.getElementById('target-note-name').textContent = noteTitle;
         } else {
-            titleEl.textContent = 'Quick recording — choose a note when you stop';
+            titleEl.textContent = 'Recording… tap Stop and your note saves automatically';
         }
 
         document.getElementById('recording-section').classList.remove('hidden');
@@ -318,16 +307,16 @@ class CaptureManager {
                 throw new Error('No audio data recorded');
             }
 
+            // Voice-first default: no note was chosen, so create one automatically.
             if (!this.selectedNoteId) {
-                this.pendingBlob = audioBlob;
-                await this.promptForTarget();
+                await this.quickFinalize(audioBlob);
                 return;
             }
 
             await this.uploadBlob(audioBlob);
         } catch (error) {
             console.error('Upload error:', error);
-            ui.showToast('Failed to upload recording: ' + error.message, 'error');
+            ui.showToast('Failed to save recording: ' + error.message, 'error');
 
             // Reset UI but keep the recording
             document.getElementById('recording-status').classList.add('hidden');
@@ -336,38 +325,61 @@ class CaptureManager {
         }
     }
 
-    // Offer match candidates when a description was typed, else the most recent notes.
-    async promptForTarget() {
+    // Open → talk → stop → note. Creates a note, uploads, transcribes, and titles it, no prompts.
+    async quickFinalize(audioBlob) {
+        const statusEl = document.getElementById('recording-status');
         const statusText = document.getElementById('status-text');
         const progress = document.getElementById('progress');
-        statusText.textContent = 'Recording saved — choose where it goes';
-        progress.style.width = '15%';
+        statusEl.classList.remove('hidden');
+        statusText.textContent = 'Saving your note…';
+        progress.style.width = '10%';
 
-        const query = document.getElementById('query-input').value.trim();
+        const note = await api.createNote(this.defaultNoteTitle());
+        this.selectedNoteId = note.id;
+        this.quickNoteId = note.id;
 
+        statusText.textContent = 'Uploading recording…';
+        progress.style.width = '30%';
+        const captureResponse = await api.createCapture(note.id, audioBlob.type);
+        this.currentCaptureId = captureResponse.capture_id;
+        await api.uploadAudio(captureResponse.upload_url, audioBlob);
+
+        statusText.textContent = 'Transcribing…';
+        progress.style.width = '55%';
+        const completedCapture = await api.completeCapture(this.currentCaptureId);
+
+        this.showProcessingStatus(completedCapture);
+
+        if (completedCapture.status === 'failed') {
+            ui.showToast('Could not transcribe audio: ' + (completedCapture.error || 'unknown error'), 'error');
+            this.quickNoteId = null;
+            this.resetCaptureForm(false);
+        }
+    }
+
+    // Derive a readable title from the transcript, then open the note.
+    async autoTitleAndOpen(noteId) {
         try {
-            if (query) {
-                const result = await api.matchNotes(query);
-                this.matchedNotes = result.candidates || [];
-
-                if (result.auto_select_id) {
-                    const match = this.matchedNotes.find(n => this.noteIdOf(n) === result.auto_select_id);
-                    await this.chooseTarget(result.auto_select_id, match ? match.title : 'Selected Note');
-                    return;
+            const note = await api.getNote(noteId);
+            const body = (note.body || '').trim();
+            if (body) {
+                let title = body.split(/\s+/).slice(0, 8).join(' ');
+                if (title.length > 60) title = title.slice(0, 57) + '…';
+                title = title.replace(/[\s.,;:!?-]+$/, '');
+                if (title && title !== note.title) {
+                    await api.updateNote(noteId, { title });
                 }
-
-                this.renderNoteChoices(this.matchedNotes, 'Choose a note for your recording:');
-                return;
             }
-
-            const recent = await api.getNotes();
-            this.matchedNotes = (recent || []).slice(0, 5);
-            this.renderNoteChoices(this.matchedNotes, 'Choose a note for your recording:');
         } catch (error) {
-            console.error('Target lookup error:', error);
-            ui.showToast('Could not load notes: ' + error.message, 'error');
-            // The blob survives, so "Create New Note" can still take it.
-            this.renderNoteChoices([], 'Choose a note for your recording:');
+            console.warn('Auto-title failed:', error);
+        }
+
+        if (window.notes && typeof notes.showNoteDetail === 'function') {
+            try {
+                await notes.showNoteDetail(noteId);
+            } catch (error) {
+                console.warn('Open note failed:', error);
+            }
         }
     }
 
@@ -423,7 +435,6 @@ class CaptureManager {
         this.selectedNoteId = null;
         this.matchedNotes = [];
         this.audioChunks = [];
-        this.pendingBlob = null;
         this.quickMode = false;
         document.getElementById('record-btn').classList.remove('hidden');
         document.getElementById('stop-btn').classList.add('hidden');
@@ -453,9 +464,16 @@ class CaptureManager {
                 progress.style.width = '75%';
                 break;
             case 'appended':
-                statusText.textContent = 'Successfully added to note!';
+                statusText.textContent = 'Note saved!';
                 progress.style.width = '100%';
                 this.currentCaptureId = null;
+                // Quick Record: title the note from its transcript and open it.
+                if (this.quickNoteId) {
+                    const quickNoteId = this.quickNoteId;
+                    this.quickNoteId = null;
+                    this.quickMode = false;
+                    this.autoTitleAndOpen(quickNoteId).catch(() => {});
+                }
                 setTimeout(() => {
                     statusEl.classList.add('hidden');
                     notes.loadRecentNotes().catch(() => {});
@@ -465,6 +483,8 @@ class CaptureManager {
                 statusText.textContent = 'Processing failed: ' + (capture.error || 'Unknown error');
                 progress.style.width = '0%';
                 this.currentCaptureId = null;
+                this.quickNoteId = null;
+                this.quickMode = false;
                 ui.showToast('Recording processing failed', 'error');
                 break;
         }

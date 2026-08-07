@@ -285,6 +285,21 @@ textarea {
     color: var(--color-text-light);
 }
 
+.capture-advanced {
+    margin-bottom: var(--spacing-lg);
+}
+
+.capture-advanced summary {
+    cursor: pointer;
+    color: var(--color-text-light);
+    font-size: 0.9rem;
+    padding: var(--spacing-sm) 0;
+}
+
+.capture-advanced .capture-input {
+    margin-top: var(--spacing-md);
+}
+
 .capture-input {
     margin-bottom: var(--spacing-lg);
 }
