@@ -37,7 +37,7 @@ func (f *FakeLLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw strin
 	if f.Response != "" {
 		return f.Response, nil
 	}
-	
+
 	// Simple fake cleanup based on mode
 	switch mode {
 	case model.CleanupFaithful:

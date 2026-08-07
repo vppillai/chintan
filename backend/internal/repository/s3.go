@@ -93,7 +93,7 @@ func (o *S3Objects) PresignPut(ctx context.Context, key string, contentType stri
 	}
 
 	presignClient := s3.NewPresignClient(o.client)
-	
+
 	result, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(o.bucket),
 		Key:         aws.String(key),
@@ -114,7 +114,7 @@ func (o *S3Objects) PresignGet(ctx context.Context, key string, ttl time.Duratio
 	}
 
 	presignClient := s3.NewPresignClient(o.client)
-	
+
 	result, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),

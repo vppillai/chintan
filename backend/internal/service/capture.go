@@ -151,7 +151,7 @@ func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID 
 	if err := s.objects.Put(ctx, rawKey, []byte(rawText), "text/plain"); err != nil {
 		return nil, fmt.Errorf("failed to store raw text: %w", err)
 	}
-	
+
 	capture.RawKey = rawKey
 	capture.Status = model.StatusTranscribed
 

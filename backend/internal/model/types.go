@@ -13,13 +13,13 @@ type Settings struct {
 }
 
 type NoteIndex struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title"`
-	Aliases         []string `json:"aliases"`
-	Snippet         string   `json:"snippet,omitempty"` // first ~500 chars of note for light match
-	UpdatedAt       string   `json:"updated_at"`
-	S3MarkdownKey   string   `json:"s3_markdown_key"`
-	S3MetaKey       string   `json:"s3_meta_key"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	Aliases       []string `json:"aliases"`
+	Snippet       string   `json:"snippet,omitempty"` // first ~500 chars of note for light match
+	UpdatedAt     string   `json:"updated_at"`
+	S3MarkdownKey string   `json:"s3_markdown_key"`
+	S3MetaKey     string   `json:"s3_meta_key"`
 }
 
 type CaptureStatus string

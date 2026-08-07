@@ -43,13 +43,13 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 func (s *NotesService) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
 	// Generate a simple ID (in production, use UUID or similar)
 	noteID := fmt.Sprintf("note_%d", time.Now().UnixNano())
-	
+
 	// Generate S3 keys
 	markdownKey, err := keys.NoteMarkdown(userID, noteID)
 	if err != nil {
 		return model.NoteIndex{}, fmt.Errorf("failed to generate markdown key: %w", err)
 	}
-	
+
 	metaKey, err := keys.NoteMeta(userID, noteID)
 	if err != nil {
 		return model.NoteIndex{}, fmt.Errorf("failed to generate meta key: %w", err)
@@ -122,7 +122,7 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	if updates.Aliases != nil {
 		note.Aliases = *updates.Aliases
 	}
-	
+
 	// Update timestamp
 	note.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 
@@ -188,7 +188,7 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 
 	// Check for high confidence
 	highConfidence := match.HighConfidence(candidates)
-	
+
 	// Limit response to reasonable number for UI
 	if len(candidates) > 10 {
 		candidates = candidates[:10]

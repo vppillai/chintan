@@ -134,39 +134,39 @@ func TestCaptureService_CreateCapture(t *testing.T) {
 	objects := newMockObjects()
 	stt := &provider.FakeSTT{}
 	llm := &provider.FakeLLM{}
-	
+
 	service := NewCaptureService(store, objects, stt, llm)
-	
+
 	// Set up test note
 	note := model.NoteIndex{
 		ID:    "note1",
 		Title: "Test Note",
 	}
 	store.PutNote(context.Background(), "user1", note)
-	
+
 	ctx := context.Background()
 	capture, uploadURL, err := service.CreateCapture(ctx, "user1", "note1", "audio/wav")
-	
+
 	if err != nil {
 		t.Fatalf("CreateCapture failed: %v", err)
 	}
-	
+
 	if capture.ID == "" {
 		t.Error("Expected capture ID to be set")
 	}
-	
+
 	if capture.Status != model.StatusUploaded {
 		t.Errorf("Expected status %v, got %v", model.StatusUploaded, capture.Status)
 	}
-	
+
 	if capture.UserID != "user1" {
 		t.Errorf("Expected UserID user1, got %v", capture.UserID)
 	}
-	
+
 	if capture.NoteID != "note1" {
 		t.Errorf("Expected NoteID note1, got %v", capture.NoteID)
 	}
-	
+
 	if uploadURL == "" {
 		t.Error("Expected upload URL to be set")
 	}
@@ -177,56 +177,56 @@ func TestCaptureService_CompleteCapture_HappyPath(t *testing.T) {
 	objects := newMockObjects()
 	stt := &provider.FakeSTT{Response: "Hello world"}
 	llm := &provider.FakeLLM{Response: "Clean: Hello world"}
-	
+
 	service := NewCaptureService(store, objects, stt, llm)
-	
+
 	// Set up test data
 	note := model.NoteIndex{
-		ID:              "note1",
-		Title:           "Test Note",
-		S3MarkdownKey:   "tenants/user1/notes/note1/note.md",
-		Snippet:         "Original content",
+		ID:            "note1",
+		Title:         "Test Note",
+		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
+		Snippet:       "Original content",
 	}
 	store.PutNote(context.Background(), "user1", note)
-	
+
 	capture := model.CaptureIndex{
 		ID:       "capture1",
-		UserID:   "user1", 
+		UserID:   "user1",
 		NoteID:   "note1",
 		Status:   model.StatusUploaded,
 		Mode:     model.CleanupFaithful,
 		AudioKey: "tenants/user1/captures/capture1/audio.wav",
 	}
 	store.PutCapture(context.Background(), capture)
-	
+
 	// Put audio data
 	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
-	
+
 	// Put existing note content
 	objects.Put(context.Background(), note.S3MarkdownKey, []byte("Original note content"), "text/plain")
-	
+
 	ctx := context.Background()
 	result, err := service.CompleteCapture(ctx, "user1", "capture1")
-	
+
 	if err != nil {
 		t.Fatalf("CompleteCapture failed: %v", err)
 	}
-	
+
 	if result.Status != model.StatusAppended {
 		t.Errorf("Expected status %v, got %v", model.StatusAppended, result.Status)
 	}
-	
+
 	// Check that note was updated with cleaned text
 	updatedNote, err := objects.Get(ctx, note.S3MarkdownKey)
 	if err != nil {
 		t.Fatalf("Failed to get updated note: %v", err)
 	}
-	
+
 	expectedContent := "Original note content\n\nClean: Hello world"
 	if string(updatedNote) != expectedContent {
 		t.Errorf("Expected note content %q, got %q", expectedContent, string(updatedNote))
 	}
-	
+
 	// Check that raw and clean files were stored
 	rawData, err := objects.Get(ctx, "tenants/user1/captures/capture1/raw.txt")
 	if err != nil {
@@ -235,7 +235,7 @@ func TestCaptureService_CompleteCapture_HappyPath(t *testing.T) {
 	if string(rawData) != "Hello world" {
 		t.Errorf("Expected raw content 'Hello world', got %q", string(rawData))
 	}
-	
+
 	cleanData, err := objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
 	if err != nil {
 		t.Errorf("Expected clean.txt to be stored: %v", err)
@@ -250,9 +250,9 @@ func TestCaptureService_CompleteCapture_STTFailure(t *testing.T) {
 	objects := newMockObjects()
 	stt := &provider.FakeSTT{ShouldFail: true}
 	llm := &provider.FakeLLM{}
-	
+
 	service := NewCaptureService(store, objects, stt, llm)
-	
+
 	// Set up test data
 	note := model.NoteIndex{
 		ID:            "note1",
@@ -260,50 +260,50 @@ func TestCaptureService_CompleteCapture_STTFailure(t *testing.T) {
 		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
 	}
 	store.PutNote(context.Background(), "user1", note)
-	
+
 	capture := model.CaptureIndex{
 		ID:       "capture1",
 		UserID:   "user1",
-		NoteID:   "note1", 
+		NoteID:   "note1",
 		Status:   model.StatusUploaded,
 		AudioKey: "tenants/user1/captures/capture1/audio.wav",
 	}
 	store.PutCapture(context.Background(), capture)
-	
+
 	// Put audio data
 	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
-	
+
 	// Put original note content
 	originalContent := "Original note content"
 	objects.Put(context.Background(), note.S3MarkdownKey, []byte(originalContent), "text/plain")
-	
+
 	ctx := context.Background()
 	result, err := service.CompleteCapture(ctx, "user1", "capture1")
-	
+
 	if err != nil {
 		t.Fatalf("CompleteCapture failed: %v", err)
 	}
-	
+
 	if result.Status != model.StatusFailed {
 		t.Errorf("Expected status %v, got %v", model.StatusFailed, result.Status)
 	}
-	
+
 	// Check that note was NOT modified
 	noteContent, err := objects.Get(ctx, note.S3MarkdownKey)
 	if err != nil {
 		t.Fatalf("Failed to get note: %v", err)
 	}
-	
+
 	if string(noteContent) != originalContent {
 		t.Errorf("Note content should not have changed, got %q", string(noteContent))
 	}
-	
+
 	// Check that raw.txt was NOT created
 	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/raw.txt")
 	if err != repository.ErrNotFound {
 		t.Error("raw.txt should not exist after STT failure")
 	}
-	
+
 	// Check that clean.txt was NOT created
 	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
 	if err != repository.ErrNotFound {
@@ -316,17 +316,17 @@ func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
 	objects := newMockObjects()
 	stt := &provider.FakeSTT{Response: "Hello world"}
 	llm := &provider.FakeLLM{ShouldFail: true}
-	
+
 	service := NewCaptureService(store, objects, stt, llm)
-	
+
 	// Set up test data
 	note := model.NoteIndex{
 		ID:            "note1",
-		Title:         "Test Note", 
+		Title:         "Test Note",
 		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
 	}
 	store.PutNote(context.Background(), "user1", note)
-	
+
 	capture := model.CaptureIndex{
 		ID:       "capture1",
 		UserID:   "user1",
@@ -335,35 +335,35 @@ func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
 		AudioKey: "tenants/user1/captures/capture1/audio.wav",
 	}
 	store.PutCapture(context.Background(), capture)
-	
+
 	// Put audio data
 	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
-	
+
 	// Put original note content
 	originalContent := "Original note content"
 	objects.Put(context.Background(), note.S3MarkdownKey, []byte(originalContent), "text/plain")
-	
+
 	ctx := context.Background()
 	result, err := service.CompleteCapture(ctx, "user1", "capture1")
-	
+
 	if err != nil {
 		t.Fatalf("CompleteCapture failed: %v", err)
 	}
-	
+
 	if result.Status != model.StatusFailed {
 		t.Errorf("Expected status %v, got %v", model.StatusFailed, result.Status)
 	}
-	
+
 	// Check that note was NOT modified
 	noteContent, err := objects.Get(ctx, note.S3MarkdownKey)
 	if err != nil {
 		t.Fatalf("Failed to get note: %v", err)
 	}
-	
+
 	if string(noteContent) != originalContent {
 		t.Errorf("Note content should not have changed, got %q", string(noteContent))
 	}
-	
+
 	// Check that raw.txt WAS created (STT succeeded)
 	rawData, err := objects.Get(ctx, "tenants/user1/captures/capture1/raw.txt")
 	if err != nil {
@@ -372,7 +372,7 @@ func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
 	if string(rawData) != "Hello world" {
 		t.Errorf("Expected raw content 'Hello world', got %q", string(rawData))
 	}
-	
+
 	// Check that clean.txt was NOT created
 	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
 	if err != repository.ErrNotFound {

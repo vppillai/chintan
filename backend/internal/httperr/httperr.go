@@ -22,7 +22,7 @@ func WriteJSON(w http.ResponseWriter, err error, defaultStatus int) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	
+
 	response := ErrorResponse{Error: err.Error()}
 	json.NewEncoder(w).Encode(response)
 }
@@ -31,7 +31,7 @@ func WriteJSON(w http.ResponseWriter, err error, defaultStatus int) {
 func BadRequest(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	
+
 	response := ErrorResponse{Error: message}
 	json.NewEncoder(w).Encode(response)
 }
@@ -40,7 +40,7 @@ func BadRequest(w http.ResponseWriter, message string) {
 func Unauthorized(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
-	
+
 	response := ErrorResponse{Error: message}
 	json.NewEncoder(w).Encode(response)
 }
@@ -49,7 +49,7 @@ func Unauthorized(w http.ResponseWriter, message string) {
 func InternalServerError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusInternalServerError)
-	
+
 	response := ErrorResponse{Error: "internal server error"}
 	json.NewEncoder(w).Encode(response)
 }

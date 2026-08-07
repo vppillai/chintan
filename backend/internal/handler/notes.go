@@ -31,7 +31,7 @@ func (h *NotesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/v1/notes")
-	
+
 	switch {
 	case path == "" || path == "/":
 		// /v1/notes
