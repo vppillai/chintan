@@ -87,13 +87,13 @@ jobs:
             mkdir -p "$dest"
             cp -a frontend/. "$dest/"
             rm -f "$dest/js/config.example.js"
-            cat > "$dest/js/config.js" <<EOF
-window.CHINTAN_API_URL = '${api_endpoint}';
-window.CHINTAN_USER_POOL_ID = '${user_pool_id}';
-window.CHINTAN_CLIENT_ID = '${client_id}';
-window.CHINTAN_INSTANCE = '${instance}';
-window.CHINTAN_COGNITO_DOMAIN = '${cognito_domain}';
-EOF
+            {
+              echo "window.CHINTAN_API_URL = '${api_endpoint}';"
+              echo "window.CHINTAN_USER_POOL_ID = '${user_pool_id}';"
+              echo "window.CHINTAN_CLIENT_ID = '${client_id}';"
+              echo "window.CHINTAN_INSTANCE = '${instance}';"
+              echo "window.CHINTAN_COGNITO_DOMAIN = '${cognito_domain}';"
+            } > "$dest/js/config.js"
             deployed+=("$instance")
             echo "Built ${dest} → https://${PAGES_OWNER}.github.io/${PAGES_REPO}/${instance}/"
           done
@@ -103,19 +103,18 @@ EOF
             exit 1
           fi
 
-          cat > site/index.html <<'EOF'
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Chintan</title>
-  <meta http-equiv="refresh" content="0; url=./dev/">
-</head>
-<body>
-  <p>Open <a href="./dev/">Chintan Dev</a>.</p>
-</body>
-</html>
-EOF
+          printf '%s\n' \
+            '<!DOCTYPE html>' \
+            '<html lang="en">' \
+            '<head>' \
+            '<meta charset="UTF-8">' \
+            '<title>Chintan</title>' \
+            '<meta http-equiv="refresh" content="0; url=./dev/">' \
+            '</head>' \
+            '<body>' \
+            '<p>Open <a href="./dev/">Chintan Dev</a>.</p>' \
+            '</body>' \
+            '</html>' > site/index.html
 
           echo "instances=${deployed[*]}" >> "$GITHUB_OUTPUT"
 
