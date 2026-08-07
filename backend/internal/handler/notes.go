@@ -115,7 +115,7 @@ func (h *NotesHandler) createNote(w http.ResponseWriter, r *http.Request, userID
 }
 
 func (h *NotesHandler) getNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	note, err := h.notesService.GetNote(r.Context(), userID, noteID)
+	note, err := h.notesService.GetNoteDetail(r.Context(), userID, noteID)
 	if err != nil {
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)
 		return

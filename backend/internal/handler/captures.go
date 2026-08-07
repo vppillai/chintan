@@ -89,9 +89,44 @@ func (h *CapturesHandler) handlePost(w http.ResponseWriter, r *http.Request, use
 
 func (h *CapturesHandler) handleGet(w http.ResponseWriter, r *http.Request, userID string) {
 	path := strings.TrimPrefix(r.URL.Path, "/v1/captures")
+	path = strings.Trim(path, "/")
+
+	// GET /v1/captures?note_id=...
+	if path == "" {
+		noteID := r.URL.Query().Get("note_id")
+		if noteID == "" {
+			httperr.BadRequest(w, "note_id query parameter is required")
+			return
+		}
+		captures, err := h.captureService.ListCapturesForNote(r.Context(), userID, noteID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				httperr.WriteJSON(w, err, http.StatusNotFound)
+				return
+			}
+			httperr.InternalServerError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(captures)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+
+	// GET /v1/captures/{id}
+	if len(parts) == 1 {
+		capture, err := h.captureService.GetCapture(r.Context(), userID, parts[0])
+		if err != nil {
+			httperr.WriteJSON(w, err, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(capture)
+		return
+	}
 
 	// GET /v1/captures/{id}/download?kind=audio|raw|clean
-	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) != 2 || parts[1] != "download" {
 		w.WriteHeader(http.StatusNotFound)
 		return

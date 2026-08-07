@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"sync"
 	"time"
 
@@ -142,6 +143,24 @@ func (s *MemoryStore) GetCapture(ctx context.Context, userID, captureID string) 
 		return model.CaptureIndex{}, ErrNotFound
 	}
 	return c, nil
+}
+
+func (s *MemoryStore) ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]model.CaptureIndex, 0)
+	for _, c := range s.captures[userID] {
+		if c.NoteID == noteID {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
+	return out, nil
 }
 
 func (s *MemoryStore) UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error {

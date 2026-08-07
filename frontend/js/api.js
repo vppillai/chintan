@@ -87,6 +87,14 @@ class ApiClient {
         return this.request(`/v1/notes/${noteId}`);
     }
 
+    async listCaptures(noteId) {
+        return this.request(`/v1/captures?note_id=${encodeURIComponent(noteId)}`);
+    }
+
+    async getCapture(captureId) {
+        return this.request(`/v1/captures/${captureId}`);
+    }
+
     async createNote(title, aliases = []) {
         return this.request('/v1/notes', {
             method: 'POST',

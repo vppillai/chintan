@@ -82,6 +82,16 @@ func (m *mockStore) GetCapture(ctx context.Context, userID, captureID string) (m
 	return model.CaptureIndex{}, repository.ErrNotFound
 }
 
+func (m *mockStore) ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
+	var out []model.CaptureIndex
+	for _, c := range m.captures {
+		if c.UserID == userID && c.NoteID == noteID {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
 func (m *mockStore) UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error {
 	key := userID + "/" + captureID
 	if c, ok := m.captures[key]; ok {
@@ -377,5 +387,46 @@ func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
 	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
 	if err != repository.ErrNotFound {
 		t.Error("clean.txt should not exist after cleanup failure")
+	}
+}
+
+
+func TestCompleteCaptureIdempotent(t *testing.T) {
+	store := newMockStore()
+	objects := newMockObjects()
+	stt := &provider.FakeSTT{Response: "raw words"}
+	llm := &provider.FakeLLM{Response: "cleaned words"}
+	svc := NewCaptureService(store, objects, stt, llm)
+
+	ctx := context.Background()
+	userID := "user1"
+	noteID := "n1"
+	store.PutNote(ctx, userID, model.NoteIndex{
+		ID: noteID, Title: "T", S3MarkdownKey: "tenants/user1/notes/n1/note.md",
+	})
+	objects.Put(ctx, "tenants/user1/notes/n1/note.md", []byte(""), "text/markdown")
+	objects.Put(ctx, "tenants/user1/captures/c_1/audio.webm", []byte("audio"), "audio/webm")
+	store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_1", UserID: userID, NoteID: noteID, Status: model.StatusUploaded,
+		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
+	})
+
+	first, err := svc.CompleteCapture(ctx, userID, "c_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != model.StatusAppended {
+		t.Fatalf("status=%s", first.Status)
+	}
+	second, err := svc.CompleteCapture(ctx, userID, "c_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Status != model.StatusAppended {
+		t.Fatalf("second status=%s", second.Status)
+	}
+	body, _ := objects.Get(ctx, "tenants/user1/notes/n1/note.md")
+	if strings.Count(string(body), "cleaned words") != 1 {
+		t.Fatalf("expected single append, got %q", body)
 	}
 }

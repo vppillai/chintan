@@ -25,6 +25,7 @@ type Candidate struct {
 	Title   string   `json:"title"`
 	Score   float64  `json:"score"`
 	Aliases []string `json:"aliases"`
+	Snippet string   `json:"snippet,omitempty"`
 }
 
 // Rank scores notes against query and returns the top limit matches, highest score first.
@@ -52,6 +53,7 @@ func Rank(query string, notes []model.NoteIndex, limit int) []Candidate {
 			Title:   note.Title,
 			Score:   score,
 			Aliases: aliases,
+			Snippet: note.Snippet,
 		})
 	}
 

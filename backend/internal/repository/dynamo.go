@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -309,6 +310,44 @@ func (s *DynamoStore) GetCapture(ctx context.Context, userID, captureID string) 
 	}
 
 	return capture, nil
+}
+
+func (s *DynamoStore) ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	result, err := s.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(s.tableName),
+		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk":        &types.AttributeValueMemberS{Value: userPK(userID)},
+			":sk_prefix": &types.AttributeValueMemberS{Value: "CAPTURE#"},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dynamo query captures: %w", err)
+	}
+
+	captures := make([]model.CaptureIndex, 0, len(result.Items))
+	for _, item := range result.Items {
+		var dynamoItem dynamoItem
+		if err := attributevalue.UnmarshalMap(item, &dynamoItem); err != nil {
+			return nil, fmt.Errorf("dynamo unmarshal capture item: %w", err)
+		}
+		var capture model.CaptureIndex
+		if err := json.Unmarshal([]byte(dynamoItem.Data), &capture); err != nil {
+			return nil, fmt.Errorf("dynamo decode capture: %w", err)
+		}
+		if capture.NoteID == noteID {
+			captures = append(captures, capture)
+		}
+	}
+
+	sort.Slice(captures, func(i, j int) bool {
+		return captures[i].CreatedAt > captures[j].CreatedAt
+	})
+	return captures, nil
 }
 
 func (s *DynamoStore) UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error {

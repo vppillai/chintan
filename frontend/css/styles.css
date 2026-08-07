@@ -484,10 +484,20 @@ textarea {
     gap: var(--spacing-sm);
 }
 
-.capture-info {
+.btn-small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+}
+
+.capture-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+    align-items: center;
     flex: 1;
     min-width: 200px;
 }
+
 
 .capture-status {
     font-weight: 600;

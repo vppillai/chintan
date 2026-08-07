@@ -1,7 +1,7 @@
 // Service Worker for Chintan PWA
-const CACHE_NAME = 'chintan-v2';
-const STATIC_CACHE = 'chintan-static-v2';
-const API_CACHE = 'chintan-api-v2';
+const CACHE_NAME = 'chintan-v3';
+const STATIC_CACHE = 'chintan-static-v3';
+const API_CACHE = 'chintan-api-v3';
 
 // Files to cache for offline use
 const STATIC_FILES = [
@@ -14,6 +14,7 @@ const STATIC_FILES = [
     './js/ui.js',
     './js/capture.js',
     './js/notes.js',
+    './js/settings.js',
     './js/config.js',
     './manifest.json',
     './assets/icon.svg'

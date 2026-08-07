@@ -148,6 +148,20 @@ Resources:
         RestrictPublicBuckets: true
       VersioningConfiguration:
         Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - HEAD
+            AllowedOrigins:
+              - !Ref AllowedOrigin
+            ExposedHeaders:
+              - ETag
+              - Content-Type
+            MaxAge: 3600
       Tags:
         - Key: Project
           Value: chintan

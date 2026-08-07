@@ -267,16 +267,16 @@ class CaptureManager {
 
             // Complete capture (start processing)
             document.getElementById('status-text').textContent = 'Processing audio...';
+            document.getElementById('recording-status').classList.remove('hidden');
             const completedCapture = await api.completeCapture(this.currentCaptureId);
 
-            // Show success
             ui.showToast('Recording uploaded successfully!', 'success');
-            
-            // Reset form
-            this.resetCaptureForm();
-            
-            // Show processing status
+
+            // Keep capture id until processing UI finishes; then reset form fields.
             this.showProcessingStatus(completedCapture);
+            if (completedCapture.status === 'appended' || completedCapture.status === 'failed') {
+                this.resetCaptureForm(false);
+            }
             
         } catch (error) {
             console.error('Upload error:', error);
@@ -289,21 +289,27 @@ class CaptureManager {
         }
     }
 
-    resetCaptureForm() {
+    resetCaptureForm(hideStatus = true) {
         // Clear form
         document.getElementById('query-input').value = '';
         document.getElementById('match-results').classList.add('hidden');
         document.getElementById('recording-section').classList.add('hidden');
-        document.getElementById('recording-status').classList.add('hidden');
+        if (hideStatus) {
+            document.getElementById('recording-status').classList.add('hidden');
+        }
         
         // Reset state
         this.selectedNoteId = null;
         this.matchedNotes = [];
-        this.currentCaptureId = null;
         this.audioChunks = [];
+        if (hideStatus) {
+            this.currentCaptureId = null;
+        }
     }
 
     showProcessingStatus(capture) {
+        const statusEl = document.getElementById('recording-status');
+        statusEl.classList.remove('hidden');
         const statusText = document.getElementById('status-text');
         const progress = document.getElementById('progress');
         
@@ -324,22 +330,25 @@ class CaptureManager {
             case 'appended':
                 statusText.textContent = 'Successfully added to note!';
                 progress.style.width = '100%';
+                this.currentCaptureId = null;
                 setTimeout(() => {
-                    document.getElementById('recording-status').classList.add('hidden');
-                }, 3000);
+                    statusEl.classList.add('hidden');
+                    notes.loadRecentNotes().catch(() => {});
+                }, 2000);
                 break;
             case 'failed':
                 statusText.textContent = 'Processing failed: ' + (capture.error || 'Unknown error');
                 progress.style.width = '0%';
+                this.currentCaptureId = null;
                 ui.showToast('Recording processing failed', 'error');
                 break;
         }
 
-        // If still processing, check status periodically
+        // If still processing, poll status endpoint (idempotent complete as fallback)
         if (['uploaded', 'transcribed', 'cleaned'].includes(capture.status)) {
             setTimeout(() => {
                 this.checkCaptureStatus();
-            }, 3000);
+            }, 2000);
         }
     }
 
@@ -347,14 +356,17 @@ class CaptureManager {
         if (!this.currentCaptureId) return;
 
         try {
-            // We don't have a direct status endpoint, so we'll retry the complete call
-            // This is idempotent and will return the current status
-            const capture = await api.completeCapture(this.currentCaptureId);
+            let capture;
+            if (typeof api.getCapture === 'function') {
+                capture = await api.getCapture(this.currentCaptureId);
+            } else {
+                capture = await api.completeCapture(this.currentCaptureId);
+            }
             this.showProcessingStatus(capture);
         } catch (error) {
             console.error('Status check error:', error);
-            // Don't show error toast for status checks, just stop checking
             document.getElementById('recording-status').classList.add('hidden');
+            this.currentCaptureId = null;
         }
     }
 }

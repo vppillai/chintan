@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"path"
+	"strings"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/keys"
@@ -33,45 +35,28 @@ func NewCaptureService(store repository.Store, objects repository.Objects, stt p
 
 // CreateCapture creates a new capture and returns upload URL
 func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, contentType string) (*model.CaptureIndex, string, error) {
-	// Verify note exists
 	_, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get note: %w", err)
 	}
 
-	// Get user settings for cleanup mode
 	settings, err := s.store.GetSettings(ctx, userID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get settings: %w", err)
 	}
 
-	// Generate capture ID - use c_ prefix with hex
 	captureIDBytes := make([]byte, 8)
 	if _, err := rand.Read(captureIDBytes); err != nil {
 		return nil, "", fmt.Errorf("failed to generate capture ID: %w", err)
 	}
 	captureID := "c_" + hex.EncodeToString(captureIDBytes)
 
-	// Determine file extension from content type
-	ext := "bin"
-	switch contentType {
-	case "audio/wav":
-		ext = "wav"
-	case "audio/mp3", "audio/mpeg":
-		ext = "mp3"
-	case "audio/mp4", "audio/m4a":
-		ext = "m4a"
-	case "audio/ogg":
-		ext = "ogg"
-	}
-
-	// Generate keys
+	ext := extensionForContentType(contentType)
 	audioKey, err := keys.CaptureAudio(userID, captureID, ext)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate audio key: %w", err)
 	}
 
-	// Create capture index
 	capture := model.CaptureIndex{
 		ID:        captureID,
 		UserID:    userID,
@@ -82,12 +67,10 @@ func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, cont
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// Store capture
 	if err := s.store.PutCapture(ctx, capture); err != nil {
 		return nil, "", fmt.Errorf("failed to store capture: %w", err)
 	}
 
-	// Generate presigned upload URL
 	uploadURL, err := s.objects.PresignPut(ctx, audioKey, contentType, 15*time.Minute)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate upload URL: %w", err)
@@ -96,116 +79,118 @@ func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, cont
 	return &capture, uploadURL, nil
 }
 
-// CompleteCapture runs the capture processing pipeline
+// CompleteCapture runs the capture processing pipeline.
+// Already-terminal captures (appended/failed) are returned as-is (idempotent).
 func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
-	// Get capture
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
 
-	// Get note
+	switch capture.Status {
+	case model.StatusAppended, model.StatusFailed:
+		return &capture, nil
+	}
+
 	note, err := s.store.GetNote(ctx, userID, capture.NoteID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get note: %w", err)
 	}
 
-	// Get audio data
 	audioData, err := s.objects.Get(ctx, capture.AudioKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get audio: %w", err)
 	}
 
-	// Determine content type from audio key
-	contentType := "audio/wav" // default
-	if len(capture.AudioKey) > 4 {
-		switch capture.AudioKey[len(capture.AudioKey)-3:] {
-		case "mp3":
-			contentType = "audio/mp3"
-		case "m4a":
-			contentType = "audio/m4a"
-		case "ogg":
-			contentType = "audio/ogg"
+	contentType := contentTypeForAudioKey(capture.AudioKey)
+
+	if capture.Status == model.StatusUploaded || capture.RawKey == "" {
+		rawText, err := s.stt.Transcribe(ctx, audioData, contentType)
+		if err != nil {
+			capture.Status = model.StatusFailed
+			capture.Error = err.Error()
+			_ = s.store.PutCapture(ctx, capture)
+			return &capture, nil
+		}
+
+		rawKey, err := keys.CaptureRaw(userID, captureID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate raw key: %w", err)
+		}
+		if err := s.objects.Put(ctx, rawKey, []byte(rawText), "text/plain"); err != nil {
+			return nil, fmt.Errorf("failed to store raw text: %w", err)
+		}
+		capture.RawKey = rawKey
+		capture.Status = model.StatusTranscribed
+		capture.Error = ""
+		if err := s.store.PutCapture(ctx, capture); err != nil {
+			return nil, fmt.Errorf("failed to update capture: %w", err)
 		}
 	}
 
-	// Step 1: STT transcription
-	rawText, err := s.stt.Transcribe(ctx, audioData, contentType)
-	if err != nil {
-		// STT failed - update status and exit
-		if updateErr := s.store.UpdateCaptureStatus(ctx, userID, captureID, model.StatusFailed, err.Error()); updateErr != nil {
-			return nil, fmt.Errorf("failed to update capture status: %w", updateErr)
+	if capture.Status == model.StatusTranscribed || capture.CleanKey == "" {
+		rawBytes, err := s.objects.Get(ctx, capture.RawKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get raw text: %w", err)
 		}
-		capture.Status = model.StatusFailed
-		capture.Error = err.Error()
-		return &capture, nil
-	}
-
-	// Generate keys for raw and clean files
-	rawKey, err := keys.CaptureRaw(userID, captureID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate raw key: %w", err)
-	}
-
-	// Store raw text
-	if err := s.objects.Put(ctx, rawKey, []byte(rawText), "text/plain"); err != nil {
-		return nil, fmt.Errorf("failed to store raw text: %w", err)
-	}
-
-	capture.RawKey = rawKey
-	capture.Status = model.StatusTranscribed
-
-	// Step 2: LLM cleanup
-	cleanedText, err := s.llm.Cleanup(ctx, capture.Mode, rawText)
-	if err != nil {
-		// Cleanup failed - update status but keep raw text
-		if updateErr := s.store.UpdateCaptureStatus(ctx, userID, captureID, model.StatusFailed, err.Error()); updateErr != nil {
-			return nil, fmt.Errorf("failed to update capture status: %w", updateErr)
+		cleanedText, err := s.llm.Cleanup(ctx, capture.Mode, string(rawBytes))
+		if err != nil {
+			capture.Status = model.StatusFailed
+			capture.Error = err.Error()
+			_ = s.store.PutCapture(ctx, capture)
+			return &capture, nil
 		}
-		capture.Status = model.StatusFailed
-		capture.Error = err.Error()
-		return &capture, nil
+
+		cleanKey, err := keys.CaptureClean(userID, captureID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate clean key: %w", err)
+		}
+		if err := s.objects.Put(ctx, cleanKey, []byte(cleanedText), "text/plain"); err != nil {
+			return nil, fmt.Errorf("failed to store clean text: %w", err)
+		}
+		capture.CleanKey = cleanKey
+		capture.Status = model.StatusCleaned
+		capture.Error = ""
+		if err := s.store.PutCapture(ctx, capture); err != nil {
+			return nil, fmt.Errorf("failed to update capture: %w", err)
+		}
 	}
 
-	// Generate key for clean file
-	cleanKey, err := keys.CaptureClean(userID, captureID)
+	cleanBytes, err := s.objects.Get(ctx, capture.CleanKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate clean key: %w", err)
+		return nil, fmt.Errorf("failed to get clean text: %w", err)
 	}
+	cleanedText := string(cleanBytes)
 
-	// Store cleaned text
-	if err := s.objects.Put(ctx, cleanKey, []byte(cleanedText), "text/plain"); err != nil {
-		return nil, fmt.Errorf("failed to store clean text: %w", err)
-	}
-
-	capture.CleanKey = cleanKey
-	capture.Status = model.StatusCleaned
-
-	// Step 3: Append to note
 	if err := s.appendToNote(ctx, note.S3MarkdownKey, cleanedText); err != nil {
 		return nil, fmt.Errorf("failed to append to note: %w", err)
 	}
 
-	// Update capture status to appended
-	if err := s.store.UpdateCaptureStatus(ctx, userID, captureID, model.StatusAppended, ""); err != nil {
-		return nil, fmt.Errorf("failed to update capture status: %w", err)
+	if existing, err := s.objects.Get(ctx, note.S3MarkdownKey); err == nil {
+		note.Snippet = generateSnippet(string(existing))
+	} else {
+		note.Snippet = generateSnippet(cleanedText)
+	}
+	note.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if err := s.store.PutNote(ctx, userID, note); err != nil {
+		return nil, fmt.Errorf("failed to refresh note index: %w", err)
 	}
 
 	capture.Status = model.StatusAppended
 	capture.Error = ""
+	if err := s.store.PutCapture(ctx, capture); err != nil {
+		return nil, fmt.Errorf("failed to update capture status: %w", err)
+	}
 
 	return &capture, nil
 }
 
-// appendToNote appends text to existing note content
 func (s *CaptureService) appendToNote(ctx context.Context, noteKey, text string) error {
-	// Get existing content
 	existingContent, err := s.objects.Get(ctx, noteKey)
 	if err != nil && err != repository.ErrNotFound {
 		return fmt.Errorf("failed to get existing note: %w", err)
 	}
 
-	// Prepare new content
 	var newContent string
 	if len(existingContent) > 0 {
 		newContent = string(existingContent) + "\n\n" + text
@@ -213,12 +198,27 @@ func (s *CaptureService) appendToNote(ctx context.Context, noteKey, text string)
 		newContent = text
 	}
 
-	// Store updated content
-	if err := s.objects.Put(ctx, noteKey, []byte(newContent), "text/plain"); err != nil {
+	if err := s.objects.Put(ctx, noteKey, []byte(newContent), "text/markdown"); err != nil {
 		return fmt.Errorf("failed to update note: %w", err)
 	}
-
 	return nil
+}
+
+// GetCapture returns a capture by ID.
+func (s *CaptureService) GetCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
+	capture, err := s.store.GetCapture(ctx, userID, captureID)
+	if err != nil {
+		return nil, err
+	}
+	return &capture, nil
+}
+
+// ListCapturesForNote returns captures for a note, newest first.
+func (s *CaptureService) ListCapturesForNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
+	if _, err := s.store.GetNote(ctx, userID, noteID); err != nil {
+		return nil, err
+	}
+	return s.store.ListCapturesByNote(ctx, userID, noteID)
 }
 
 // GetDownloadURL returns a presigned download URL for capture artifacts
@@ -248,6 +248,47 @@ func (s *CaptureService) GetDownloadURL(ctx context.Context, userID, captureID, 
 	if err != nil {
 		return "", fmt.Errorf("failed to generate download URL: %w", err)
 	}
-
 	return url, nil
+}
+
+func extensionForContentType(contentType string) string {
+	base := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	switch base {
+	case "audio/wav", "audio/wave", "audio/x-wav":
+		return "wav"
+	case "audio/mp3", "audio/mpeg":
+		return "mp3"
+	case "audio/mp4", "audio/m4a", "audio/x-m4a":
+		return "m4a"
+	case "audio/ogg", "audio/ogg;codecs=opus":
+		return "ogg"
+	case "audio/webm", "audio/webm;codecs=opus":
+		return "webm"
+	default:
+		if strings.Contains(base, "webm") {
+			return "webm"
+		}
+		if strings.Contains(base, "ogg") {
+			return "ogg"
+		}
+		return "bin"
+	}
+}
+
+func contentTypeForAudioKey(audioKey string) string {
+	ext := strings.ToLower(strings.TrimPrefix(path.Ext(audioKey), "."))
+	switch ext {
+	case "mp3":
+		return "audio/mpeg"
+	case "m4a":
+		return "audio/mp4"
+	case "ogg":
+		return "audio/ogg"
+	case "webm":
+		return "audio/webm"
+	case "wav":
+		return "audio/wav"
+	default:
+		return "application/octet-stream"
+	}
 }

@@ -150,16 +150,34 @@ class NotesManager {
         ui.showLoading(container, 'Loading captures...');
 
         try {
-            // We don't have a direct captures-by-note endpoint, so we'll show a placeholder
-            // In a real implementation, you'd add this endpoint to the API
-            container.innerHTML = `
-                <div style="text-align: center; color: var(--color-text-light);">
-                    <p>Capture history will be available here once the backend supports listing captures by note.</p>
+            const captures = await api.listCaptures(noteId);
+            if (!captures || captures.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; color: var(--color-text-light);">
+                        <p>No captures yet for this note.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = captures.map(c => `
+                <div class="capture-item">
+                    <div class="capture-meta">
+                        <strong>${c.id}</strong>
+                        <span class="capture-status ${c.status}">${c.status}</span>
+                        <span class="capture-time">${c.created_at || ''}</span>
+                    </div>
+                    <div class="capture-downloads">
+                        ${c.audio_key ? `<button class="btn btn-ghost btn-small" onclick="notes.downloadCapture('${c.id}', 'audio')">Audio</button>` : ''}
+                        ${c.raw_key ? `<button class="btn btn-ghost btn-small" onclick="notes.downloadCapture('${c.id}', 'raw')">Raw STT</button>` : ''}
+                        ${c.clean_key ? `<button class="btn btn-ghost btn-small" onclick="notes.downloadCapture('${c.id}', 'clean')">Clean</button>` : ''}
+                    </div>
+                    ${c.error ? `<div class="error">${c.error}</div>` : ''}
                 </div>
-            `;
+            `).join('');
         } catch (error) {
             console.error('Load captures error:', error);
-            container.innerHTML = `<div class="error">Failed to load captures</div>`;
+            container.innerHTML = `<div class="error">Failed to load captures: ${error.message}</div>`;
         }
     }
 

@@ -22,6 +22,7 @@ type Store interface {
 
 	PutCapture(ctx context.Context, c model.CaptureIndex) error
 	GetCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error)
+	ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error)
 	UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error
 }
 

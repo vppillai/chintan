@@ -107,6 +107,25 @@ func (s *NotesService) GetNote(ctx context.Context, userID, noteID string) (mode
 	return s.store.GetNote(ctx, userID, noteID)
 }
 
+// NoteDetail is a note index plus markdown body for the editor.
+type NoteDetail struct {
+	model.NoteIndex
+	Body string `json:"body"`
+}
+
+// GetNoteDetail retrieves a note and its markdown body from object storage.
+func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string) (NoteDetail, error) {
+	note, err := s.store.GetNote(ctx, userID, noteID)
+	if err != nil {
+		return NoteDetail{}, err
+	}
+	bodyBytes, err := s.objects.Get(ctx, note.S3MarkdownKey)
+	if err != nil && err != repository.ErrNotFound {
+		return NoteDetail{}, fmt.Errorf("failed to load note body: %w", err)
+	}
+	return NoteDetail{NoteIndex: note, Body: string(bodyBytes)}, nil
+}
+
 // UpdateNote updates a note with partial changes
 func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, updates NoteUpdates) (model.NoteIndex, error) {
 	// Get existing note
