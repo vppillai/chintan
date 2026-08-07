@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -11,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
@@ -22,67 +25,43 @@ import (
 var lambdaAdapter *httpadapter.HandlerAdapter
 
 func init() {
-	// Read required environment variables
-	tableName := os.Getenv("TABLE_NAME")
-	if tableName == "" {
-		log.Fatal("TABLE_NAME environment variable is required")
-	}
+	ctx := context.Background()
 
-	contentBucket := os.Getenv("CONTENT_BUCKET")
-	if contentBucket == "" {
-		log.Fatal("CONTENT_BUCKET environment variable is required")
-	}
+	tableName := mustEnv("TABLE_NAME")
+	contentBucket := mustEnv("CONTENT_BUCKET")
+	allowedOrigin := mustEnv("ALLOWED_ORIGIN")
 
-	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
-	if allowedOrigin == "" {
-		log.Fatal("ALLOWED_ORIGIN environment variable is required")
-	}
-
-	groqAPIKey := os.Getenv("GROQ_API_KEY")
-	if groqAPIKey == "" {
-		log.Fatal("GROQ_API_KEY environment variable is required")
-	}
-
-	llmAPIKey := os.Getenv("LLM_API_KEY")
-	if llmAPIKey == "" {
-		log.Fatal("LLM_API_KEY environment variable is required")
-	}
-
-	// Optional environment variables with defaults
-	llmBaseURL := os.Getenv("LLM_BASE_URL")
-	if llmBaseURL == "" {
-		llmBaseURL = "https://api.minimax.io/v1"
-	}
-
-	llmModel := os.Getenv("LLM_MODEL")
-	if llmModel == "" {
-		llmModel = "MiniMax-M3"
-	}
-
-	// AWS region (optional, uses default if not set)
+	llmBaseURL := envOr("LLM_BASE_URL", "https://api.minimax.io/v1")
+	llmModel := envOr("LLM_MODEL", "MiniMax-M3")
 	awsRegion := os.Getenv("AWS_REGION")
 
-	// Initialize AWS config
 	var cfg aws.Config
 	var err error
 	if awsRegion != "" {
-		cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithRegion(awsRegion))
+		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
 	} else {
-		cfg, err = config.LoadDefaultConfig(context.TODO())
+		cfg, err = config.LoadDefaultConfig(ctx)
 	}
 	if err != nil {
 		log.Fatalf("Failed to load AWS config: %v", err)
 	}
 
-	// Initialize AWS clients
+	ssmClient := ssm.NewFromConfig(cfg)
+	groqAPIKey, err := resolveSecret(ctx, ssmClient, "GROQ_API_KEY", "GROQ_API_KEY_PATH")
+	if err != nil {
+		log.Fatalf("Failed to resolve Groq API key: %v", err)
+	}
+	llmAPIKey, err := resolveSecret(ctx, ssmClient, "LLM_API_KEY", "LLM_API_KEY_PATH")
+	if err != nil {
+		log.Fatalf("Failed to resolve LLM API key: %v", err)
+	}
+
 	dynamoClient := dynamodb.NewFromConfig(cfg)
 	s3Client := s3.NewFromConfig(cfg)
 
-	// Initialize repositories
 	store := repository.NewDynamoStore(dynamoClient, tableName)
 	objects := repository.NewS3Objects(s3Client, contentBucket)
 
-	// Initialize providers
 	stt, err := provider.NewGroqSTT(groqAPIKey, "", "", nil)
 	if err != nil {
 		log.Fatalf("Failed to create Groq STT: %v", err)
@@ -93,16 +72,49 @@ func init() {
 		log.Fatalf("Failed to create OpenAI Cleanup: %v", err)
 	}
 
-	// Initialize services
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 	captureService := service.NewCaptureService(store, objects, stt, llm)
 
-	// Create router
 	router := handler.NewRouter(notesService, settingsService, captureService, allowedOrigin)
-
-	// Initialize HTTP adapter for Lambda
 	lambdaAdapter = httpadapter.New(router)
+}
+
+func mustEnv(key string) string {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		log.Fatalf("%s environment variable is required", key)
+	}
+	return v
+}
+
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// resolveSecret prefers a direct env value (local/dev), else fetches SecureString from SSM path env.
+func resolveSecret(ctx context.Context, client *ssm.Client, valueEnv, pathEnv string) (string, error) {
+	if v := strings.TrimSpace(os.Getenv(valueEnv)); v != "" {
+		return v, nil
+	}
+	path := strings.TrimSpace(os.Getenv(pathEnv))
+	if path == "" {
+		return "", fmt.Errorf("%s or %s is required", valueEnv, pathEnv)
+	}
+	out, err := client.GetParameter(ctx, &ssm.GetParameterInput{
+		Name:           aws.String(path),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		return "", fmt.Errorf("ssm get %s: %w", path, err)
+	}
+	if out.Parameter == nil || out.Parameter.Value == nil || strings.TrimSpace(*out.Parameter.Value) == "" {
+		return "", fmt.Errorf("ssm parameter %s is empty", path)
+	}
+	return *out.Parameter.Value, nil
 }
 
 func Handler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
