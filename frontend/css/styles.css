@@ -274,6 +274,17 @@ textarea {
     margin-bottom: var(--spacing-lg);
 }
 
+.quick-capture {
+    margin-bottom: var(--spacing-lg);
+}
+
+.quick-capture-hint {
+    margin-top: var(--spacing-sm);
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--color-text-light);
+}
+
 .capture-input {
     margin-bottom: var(--spacing-lg);
 }

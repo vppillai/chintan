@@ -55,13 +55,21 @@
             <div id="home-screen" class="content-screen">
                 <div class="capture-section">
                     <h2>Record a Note</h2>
+                    <div class="quick-capture">
+                        <button id="quick-record-btn" class="btn btn-record btn-full">
+                            <span class="record-icon">🎤</span>
+                            <span class="record-text">Quick Record</span>
+                        </button>
+                        <p class="quick-capture-hint">Start talking now — choose or create the note after you stop.</p>
+                    </div>
+
                     <div class="capture-input">
                         <textarea id="query-input" placeholder="Describe what you want to record..." rows="3"></textarea>
                         <button id="match-btn" class="btn btn-primary">Find Matching Notes</button>
                     </div>
                     
                     <div id="match-results" class="match-results hidden">
-                        <h3>Choose a note to append to:</h3>
+                        <h3 id="match-results-title">Choose a note to append to:</h3>
                         <div id="match-candidates" class="match-candidates"></div>
                         <button id="new-note-btn" class="btn btn-secondary btn-full">Create New Note</button>
                     </div>

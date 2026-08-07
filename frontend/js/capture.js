@@ -7,6 +7,9 @@ class CaptureManager {
         this.selectedNoteId = null;
         this.matchedNotes = [];
         this.currentCaptureId = null;
+        // Quick Record captures audio before a target note exists; the blob waits here.
+        this.pendingBlob = null;
+        this.quickMode = false;
         
         this.setupEventListeners();
     }
@@ -20,6 +23,11 @@ class CaptureManager {
         // New note button
         document.getElementById('new-note-btn').addEventListener('click', () => {
             this.handleNewNote();
+        });
+
+        // Quick record: capture first, choose the note afterwards
+        document.getElementById('quick-record-btn').addEventListener('click', () => {
+            this.startQuickRecording();
         });
 
         // Recording controls
@@ -63,43 +71,50 @@ class CaptureManager {
         }
     }
 
+    // /v1/notes/match returns note_id, /v1/notes returns id
+    noteIdOf(note) {
+        return note.note_id || note.id;
+    }
+
     displayMatchResults(result) {
-        const resultsContainer = document.getElementById('match-results');
-        const candidatesContainer = document.getElementById('match-candidates');
-        
         this.matchedNotes = result.candidates || [];
 
-        // Clear previous results
+        if (result.auto_select_id) {
+            const selectedNote = this.matchedNotes.find(n => this.noteIdOf(n) === result.auto_select_id);
+            this.chooseTarget(result.auto_select_id, selectedNote ? selectedNote.title : 'Selected Note');
+            return;
+        }
+
+        this.renderNoteChoices(this.matchedNotes, 'Choose a note to append to:');
+    }
+
+    renderNoteChoices(notes, title) {
+        const resultsContainer = document.getElementById('match-results');
+        const candidatesContainer = document.getElementById('match-candidates');
+
+        document.getElementById('match-results-title').textContent = title;
         candidatesContainer.innerHTML = '';
 
-        if (result.auto_select_id) {
-            // Auto-selected a note
-            this.selectedNoteId = result.auto_select_id;
-            const selectedNote = this.matchedNotes.find(n => n.id === result.auto_select_id);
-            this.showRecordingSection(selectedNote ? selectedNote.title : 'Selected Note');
-        } else {
-            // Show candidate selection
-            this.matchedNotes.forEach(note => {
-                const candidate = document.createElement('div');
-                candidate.className = 'match-candidate';
-                candidate.dataset.noteId = note.id;
-                
-                candidate.innerHTML = `
-                    <div>
-                        <div class="candidate-title">${ui.escapeHtml(note.title)}</div>
-                        ${note.snippet ? `<div class="candidate-snippet">${ui.escapeHtml(ui.truncateText(note.snippet, 80))}</div>` : ''}
-                    </div>
-                `;
-                
-                candidate.addEventListener('click', () => {
-                    this.selectCandidate(candidate, note);
-                });
-                
-                candidatesContainer.appendChild(candidate);
+        notes.forEach(note => {
+            const candidate = document.createElement('div');
+            candidate.className = 'match-candidate';
+            candidate.dataset.noteId = this.noteIdOf(note);
+
+            candidate.innerHTML = `
+                <div>
+                    <div class="candidate-title">${ui.escapeHtml(note.title)}</div>
+                    ${note.snippet ? `<div class="candidate-snippet">${ui.escapeHtml(ui.truncateText(note.snippet, 80))}</div>` : ''}
+                </div>
+            `;
+
+            candidate.addEventListener('click', () => {
+                this.selectCandidate(candidate, note);
             });
-            
-            resultsContainer.classList.remove('hidden');
-        }
+
+            candidatesContainer.appendChild(candidate);
+        });
+
+        resultsContainer.classList.remove('hidden');
     }
 
     selectCandidate(candidateElement, note) {
@@ -110,17 +125,33 @@ class CaptureManager {
         
         // Select this candidate
         candidateElement.classList.add('selected');
-        this.selectedNoteId = note.id;
-        
-        // Show recording section
-        this.showRecordingSection(note.title);
+
+        this.chooseTarget(this.noteIdOf(note), note.title);
+    }
+
+    // A pending Quick Record upload goes out immediately; otherwise reveal the recorder.
+    async chooseTarget(noteId, noteTitle) {
+        this.selectedNoteId = noteId;
+        document.getElementById('match-results').classList.add('hidden');
+
+        if (this.pendingBlob) {
+            const blob = this.pendingBlob;
+            this.pendingBlob = null;
+            await this.uploadBlob(blob);
+            return;
+        }
+
+        this.showRecordingSection(noteTitle);
     }
 
     async handleNewNote() {
         const queryInput = document.getElementById('query-input');
         const query = queryInput.value.trim();
-        
-        if (!query) {
+
+        // A quick recording is already captured, so fall back to a dated title.
+        const title = query || (this.pendingBlob ? this.defaultNoteTitle() : '');
+
+        if (!title) {
             ui.showToast('Please enter a description for the new note', 'warning');
             return;
         }
@@ -129,10 +160,9 @@ class CaptureManager {
         ui.setButtonLoading(newNoteBtn, true);
 
         try {
-            const note = await api.createNote(query);
-            this.selectedNoteId = note.id;
-            this.showRecordingSection(note.title);
+            const note = await api.createNote(title);
             ui.showToast('Created new note: ' + note.title, 'success');
+            await this.chooseTarget(note.id, note.title);
         } catch (error) {
             console.error('Create note error:', error);
             ui.showToast('Failed to create note: ' + error.message, 'error');
@@ -141,16 +171,46 @@ class CaptureManager {
         }
     }
 
+    defaultNoteTitle() {
+        return 'Voice note ' + new Date().toLocaleString();
+    }
+
     showRecordingSection(noteTitle) {
-        document.getElementById('target-note-name').textContent = noteTitle;
+        const titleEl = document.getElementById('recording-title');
+
+        if (noteTitle) {
+            titleEl.innerHTML = 'Recording for: <span id="target-note-name"></span>';
+            document.getElementById('target-note-name').textContent = noteTitle;
+        } else {
+            titleEl.textContent = 'Quick recording — choose a note when you stop';
+        }
+
         document.getElementById('recording-section').classList.remove('hidden');
         
         // Hide match results
         document.getElementById('match-results').classList.add('hidden');
     }
 
-    async startRecording() {
-        if (!this.selectedNoteId) {
+    async startQuickRecording() {
+        this.quickMode = true;
+        this.pendingBlob = null;
+        this.selectedNoteId = null;
+
+        this.showRecordingSection(null);
+        // The in-section record button is redundant while quick recording runs.
+        document.getElementById('record-btn').classList.add('hidden');
+
+        await this.startRecording({ requireNote: false });
+
+        if (!this.isRecording) {
+            this.quickMode = false;
+            document.getElementById('recording-section').classList.add('hidden');
+            document.getElementById('record-btn').classList.remove('hidden');
+        }
+    }
+
+    async startRecording(options = {}) {
+        if (options.requireNote !== false && !this.selectedNoteId) {
             ui.showToast('No note selected', 'error');
             return;
         }
@@ -239,7 +299,10 @@ class CaptureManager {
             progress.style.width = '100%';
             progress.classList.add('pulse');
         } else {
-            recordBtn.classList.remove('hidden');
+            // In quick mode the note is still unknown, so re-recording would have no target.
+            if (!this.quickMode || this.selectedNoteId) {
+                recordBtn.classList.remove('hidden');
+            }
             stopBtn.classList.add('hidden');
             statusText.textContent = 'Processing recording...';
             progress.classList.remove('pulse');
@@ -254,6 +317,64 @@ class CaptureManager {
             if (audioBlob.size === 0) {
                 throw new Error('No audio data recorded');
             }
+
+            if (!this.selectedNoteId) {
+                this.pendingBlob = audioBlob;
+                await this.promptForTarget();
+                return;
+            }
+
+            await this.uploadBlob(audioBlob);
+        } catch (error) {
+            console.error('Upload error:', error);
+            ui.showToast('Failed to upload recording: ' + error.message, 'error');
+
+            // Reset UI but keep the recording
+            document.getElementById('recording-status').classList.add('hidden');
+            document.getElementById('record-btn').classList.remove('hidden');
+            document.getElementById('stop-btn').classList.add('hidden');
+        }
+    }
+
+    // Offer match candidates when a description was typed, else the most recent notes.
+    async promptForTarget() {
+        const statusText = document.getElementById('status-text');
+        const progress = document.getElementById('progress');
+        statusText.textContent = 'Recording saved — choose where it goes';
+        progress.style.width = '15%';
+
+        const query = document.getElementById('query-input').value.trim();
+
+        try {
+            if (query) {
+                const result = await api.matchNotes(query);
+                this.matchedNotes = result.candidates || [];
+
+                if (result.auto_select_id) {
+                    const match = this.matchedNotes.find(n => this.noteIdOf(n) === result.auto_select_id);
+                    await this.chooseTarget(result.auto_select_id, match ? match.title : 'Selected Note');
+                    return;
+                }
+
+                this.renderNoteChoices(this.matchedNotes, 'Choose a note for your recording:');
+                return;
+            }
+
+            const recent = await api.getNotes();
+            this.matchedNotes = (recent || []).slice(0, 5);
+            this.renderNoteChoices(this.matchedNotes, 'Choose a note for your recording:');
+        } catch (error) {
+            console.error('Target lookup error:', error);
+            ui.showToast('Could not load notes: ' + error.message, 'error');
+            // The blob survives, so "Create New Note" can still take it.
+            this.renderNoteChoices([], 'Choose a note for your recording:');
+        }
+    }
+
+    async uploadBlob(audioBlob) {
+        try {
+            document.getElementById('recording-section').classList.remove('hidden');
+            document.getElementById('recording-status').classList.remove('hidden');
 
             // Update status
             document.getElementById('status-text').textContent = 'Uploading recording...';
@@ -302,6 +423,10 @@ class CaptureManager {
         this.selectedNoteId = null;
         this.matchedNotes = [];
         this.audioChunks = [];
+        this.pendingBlob = null;
+        this.quickMode = false;
+        document.getElementById('record-btn').classList.remove('hidden');
+        document.getElementById('stop-btn').classList.add('hidden');
         if (hideStatus) {
             this.currentCaptureId = null;
         }
