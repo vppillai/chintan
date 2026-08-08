@@ -37,6 +37,16 @@ export class Session {
   private tokens: TokenSet | null;
   private inFlight: Promise<TokenSet> | null = null;
   private readonly listeners = new Set<SessionListener>();
+  /**
+   * Bumped by every `clear()`.
+   *
+   * A refresh captures the value it started under and refuses to apply its
+   * result if it no longer matches. Without it, a refresh in the air when the
+   * user signs out resolved into `set()` afterwards and wrote a fresh token set
+   * straight back — the session was cleared and then silently restored, which
+   * is a sign-out that did not sign anybody out.
+   */
+  private generation = 0;
 
   constructor(
     private readonly store: TokenStore,
@@ -66,6 +76,7 @@ export class Session {
    * decision to make, from a rendered state, not a side effect of a fetch.
    */
   clear(): void {
+    this.generation += 1;
     this.tokens = null;
     this.inFlight = null;
     this.store.clear();
@@ -102,9 +113,21 @@ export class Session {
       });
     }
 
+    const generation = this.generation;
+
     this.inFlight = this.refresher
       .refresh(current)
       .then((next) => {
+        // Signed out while this was in the air. Applying it now would undo the
+        // sign-out, so the result is dropped and the caller told.
+        if (generation !== this.generation) {
+          throw new ApiError({
+            kind: 'http',
+            status: 401,
+            title: 'Your session has ended',
+            detail: 'Sign in again to continue.',
+          });
+        }
         this.set(next);
         return next;
       })
@@ -113,11 +136,16 @@ export class Session {
         // user out — they are offline, not unauthenticated, and clearing the
         // session here would lose the queued mutations with it.
         if (error instanceof ApiError && error.isOffline) throw error;
+        // Already cleared — by sign-out, or by an earlier failure. Clearing
+        // again would bump the generation under a newer refresh.
+        if (generation !== this.generation) throw error;
         this.clear();
         throw error;
       })
       .finally(() => {
-        this.inFlight = null;
+        // Only if this is still the current attempt: a sign-out may already
+        // have started a new one.
+        if (generation === this.generation) this.inFlight = null;
       });
 
     return this.inFlight;
