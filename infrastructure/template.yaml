@@ -819,6 +819,22 @@ Resources:
 
   CaptureQueueEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
+    # Lambda validates, at mapping-creation time, that the function's execution
+    # role can ReceiveMessage on the queue. Nothing otherwise orders this against
+    # LambdaExecutionRole: the dependency runs through the alias to the function
+    # to the role, so CloudFormation is free to create the mapping while the
+    # role's inline policy is still propagating, and it fails with
+    #   "The function execution role does not have permissions to call
+    #    ReceiveMessage on SQS"
+    # naming a permission the role demonstrably has.
+    #
+    # DependsOn makes the ordering explicit rather than transitive. It does not
+    # abolish IAM's eventual consistency -- nothing in a template can -- so a
+    # first create can still lose the race; the deploy script clears
+    # ROLLBACK_COMPLETE so a retry is one re-run rather than a manual cleanup.
+    DependsOn:
+      - LambdaExecutionRole
+      - CaptureQueuePolicy
     Properties:
       EventSourceArn: !GetAtt CaptureQueue.Arn
       # The alias, not the function: a rollback that leaves the worker on the
