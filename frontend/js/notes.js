@@ -17,6 +17,8 @@ class NotesManager {
         });
 
         document.getElementById('back-to-home').addEventListener('click', () => {
+            this.viewingArchive = false;
+            this.setNotesTab('active');
             ui.showContentScreen('home-screen');
             this.loadRecentNotes();
         });

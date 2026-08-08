@@ -181,6 +181,16 @@ body {
     background: #C0392B;
 }
 
+.btn-danger.btn-ghost {
+    background: transparent;
+    color: var(--color-danger);
+    border: 1px solid var(--color-danger);
+}
+
+.btn-danger.btn-ghost:hover:not(:disabled) {
+    background: rgba(231, 76, 60, 0.1);
+}
+
 .btn-record {
     background: var(--color-success);
     color: var(--color-white);
