@@ -3,6 +3,8 @@ import { Outlet, useLocation } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
 import { sheetForPath } from '@/app/sheet.ts';
+import { ProgressCard } from '@/features/capture/ProgressCard.tsx';
+import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
 
@@ -54,6 +56,7 @@ export function AppShell() {
       <div className="app" data-sheet-state={sheet.state} data-sheet-tab={sheet.tab}>
         <header className="app__banner">
           <span className="app__wordmark">Chintan</span>
+          <OfflineBanner />
         </header>
 
         <main
@@ -68,6 +71,13 @@ export function AppShell() {
           )}
           <Outlet />
         </main>
+
+        {/*
+          The progress card lives in the shell, not in a screen, because a
+          capture must remain visible after the user navigates away from the
+          screen that started it.
+        */}
+        {sheet.state !== 'locked' && <ProgressCard />}
 
         {sheet.state === 'collapsed' && <LibraryStrip />}
         {sheet.state === 'expanded' && <BottomBar />}
