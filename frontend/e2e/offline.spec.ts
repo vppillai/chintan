@@ -96,6 +96,41 @@ test('a stranded recording is offered back after a reload', async ({ page, api }
   await expect(page.getByText(/unsent recording from/i)).toBeVisible();
 });
 
+/**
+ * Opening the installed app offline at a URL this device has never visited.
+ *
+ * Workbox precaches the shell as `index.html?__WB_REVISION__=<hash>` and the
+ * fallback was `caches.match('/index.html')` with no `ignoreSearch`, so it
+ * missed and the worker answered the bare 503 `new Response('Offline')`: a
+ * blank page containing one word, no app, no controls, no way back. Previously
+ * visited URLs work off the runtime cache, which is exactly why casual testing
+ * misses it.
+ */
+for (const path of ['/settings', '/capture']) {
+  test(`opening ${path} offline serves the app shell, not the word "Offline"`, async ({
+    page,
+    context,
+  }) => {
+    // One visit to `/` installs and activates the worker. Nothing here has ever
+    // fetched the URL under test.
+    await page.goto('/');
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller)))
+      .toBe(true);
+
+    await context.setOffline(true);
+    await page.goto(path);
+
+    await expect(page.locator('.app')).toBeVisible();
+    await expect(page.getByRole('banner')).toBeVisible();
+    await expect(page.locator('body')).not.toHaveText('Offline');
+
+    await context.setOffline(false);
+  });
+}
+
 test('the offline banner says the data is cached', async ({ page, context, api }) => {
   await page.goto('/notes');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();

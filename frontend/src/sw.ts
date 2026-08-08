@@ -32,7 +32,26 @@ declare const self: ServiceWorkerGlobalScope & {
 };
 
 const RUNTIME_CACHE = 'chintan-runtime-v1';
-const SHELL_URL = '/index.html';
+
+/**
+ * The precached app shell.
+ *
+ * Derived from the registration scope rather than hard-coded to `/index.html`:
+ * a Pages sub-path deploy (`VITE_BASE=/repo/dev/`) precaches
+ * `/repo/dev/index.html`, and the constant was wrong for every one of them.
+ */
+export const SHELL_URL = new URL('index.html', self.registration.scope).href;
+
+/**
+ * Workbox stores the shell as `index.html?__WB_REVISION__=<hash>`, so a plain
+ * `caches.match(SHELL_URL)` misses it. Matching without the query string is
+ * what makes an offline cold start at an unvisited URL — a car park, a lift, or
+ * the manifest's own "Record a thought" shortcut straight to `/capture` —
+ * render the app instead of a blank page reading "Offline".
+ */
+async function matchShell(): Promise<Response | undefined> {
+  return caches.match(SHELL_URL, { ignoreSearch: true });
+}
 
 /** How long to wait for the network before falling back to cache. */
 const NETWORK_TIMEOUT_MS = 4_000;
@@ -95,7 +114,7 @@ async function networkFirst(request: Request): Promise<Response> {
     }
     return response;
   } catch {
-    const cached = (await cache.match(request)) ?? (await caches.match(SHELL_URL));
+    const cached = (await cache.match(request)) ?? (await matchShell());
     if (cached) return cached;
     return new Response('Offline', { status: 503, statusText: 'Offline' });
   }
