@@ -249,6 +249,50 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  /v1/notes/purge:
+    post:
+      tags: [notes]
+      summary: Permanently delete several archived notes
+      description: |
+        Batch purge. This is the only batch endpoint, and the reason is cost of
+        failure rather than convenience: archive and restore are reversible and
+        cheap, so a client does those as N ordinary calls, while a purge
+        cascades to every capture's audio, raw transcript, routed transcript,
+        cleaned text, segments and peaks. Driving a hundred of those from a
+        phone is a hundred round trips that must all survive the connection, and
+        a partial failure leaves objects orphaned with nothing tracking which.
+
+        Explicit identifiers only. There is deliberately no "all" flag and no
+        filter — "clear all" is the client listing its archive and sending the
+        ids in batches — because a server-side delete-everything switch is one
+        malformed request away from emptying an account.
+
+        **Only archived notes are purged.** An id naming an active note comes
+        back `failed` and is left alone, so a client working from a stale
+        listing cannot turn "clear my archive" into "delete my notes".
+
+        The response is 200 even when some notes failed. No transaction spans
+        DynamoDB and S3, so a single verdict for the batch would be a claim the
+        server cannot make; each note reports its own outcome and the client
+        shows what survived.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotePurgeRequest' }
+      responses:
+        '200':
+          description: One result per requested note, in the order requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotePurgeResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+
   /v1/notes/match:
     post:
       tags: [notes]
@@ -878,6 +922,48 @@ components:
         cursor:
           type: string
           description: Absent or empty when the collection is exhausted.
+
+    NotePurgeRequest:
+      type: object
+      required: [note_ids]
+      properties:
+        note_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string }
+          description: |
+            The notes to delete permanently. At most 100 per request, which
+            bounds the cascade to what fits inside the API's 29-second ceiling.
+            Naming the same note twice is allowed; the repeat reports
+            `not_found`.
+
+    NotePurgeResult:
+      type: object
+      required: [note_id, status]
+      properties:
+        note_id: { type: string }
+        status:
+          type: string
+          enum: [purged, not_found, failed]
+          description: |
+            `purged` — the note and everything it owned are gone.
+            `not_found` — no such note, which is also what a replayed batch
+            reports and is what makes a retry safe.
+            `failed` — the note is still here. Either it was not archived, or
+            part of its cascade failed and the index row was deliberately kept
+            so the delete can be retried.
+        detail:
+          type: string
+          description: Safe to display. Never contains provider or AWS internals.
+
+    NotePurgeResponse:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/NotePurgeResult' }
 
     CaptureStatus:
       type: string

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/match"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
@@ -550,4 +552,129 @@ func (s *NotesService) deleteObject(ctx context.Context, key string) error {
 		return err
 	}
 	return nil
+}
+
+// MaxPurgeBatch bounds one batch purge.
+//
+// It keeps the work per request bounded and inside the API Lambda's 29-second
+// ceiling: a purge is not one delete but a cascade over every capture of every
+// note named, and each capture unlinks six objects. A hundred notes with a
+// handful of captures each is already several hundred S3 calls. "Clear all" is
+// the client listing its archive and sending it in batches, which is also why
+// there is deliberately no "purge everything" switch — a flag like that is one
+// malformed request away from emptying an account, and nothing here needs it.
+const MaxPurgeBatch = 100
+
+// Purge outcomes. They are stable strings because a client branches on them.
+const (
+	// PurgeStatusPurged means the note and everything it owned are gone.
+	PurgeStatusPurged = "purged"
+	// PurgeStatusNotFound means there was no such note. Replaying a batch that
+	// already succeeded reports this, which is what makes a retry safe.
+	PurgeStatusNotFound = "not_found"
+	// PurgeStatusFailed means the note is still there. Either it was not
+	// archived — refusing that is what stops a stale client turning "clear my
+	// archive" into "delete my notes" — or part of its cascade failed, in which
+	// case the index row is deliberately left so the delete can be retried.
+	PurgeStatusFailed = "failed"
+)
+
+// PurgeResult is one note's outcome. Detail is written for a person and never
+// carries infrastructure text.
+type PurgeResult struct {
+	NoteID string `json:"note_id"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// ErrPurgeBatchTooLarge rejects a batch above MaxPurgeBatch.
+var ErrPurgeBatchTooLarge = errors.New("too many notes in one purge")
+
+// ErrPurgeBatchEmpty rejects a batch naming nothing.
+var ErrPurgeBatchEmpty = errors.New("no notes named")
+
+// PurgeNotes permanently deletes several archived notes and reports each
+// outcome separately.
+//
+// It is not all-or-nothing, and it does not pretend to be. There is no
+// transaction spanning DynamoDB and S3, so a batch that reported a single
+// success or failure would be lying about the notes on the other side of the
+// first problem; the client is told what happened to each and can show what
+// survived.
+//
+// One note's failure never stops the batch. The alternative — abandoning the
+// rest — turns a single unlinkable object into a purge the user has to retry
+// from the beginning, repeatedly, with a different note failing each time.
+func (s *NotesService) PurgeNotes(ctx context.Context, userID string, noteIDs []string) ([]PurgeResult, error) {
+	switch {
+	case len(noteIDs) == 0:
+		return nil, ErrPurgeBatchEmpty
+	case len(noteIDs) > MaxPurgeBatch:
+		return nil, ErrPurgeBatchTooLarge
+	}
+
+	results := make([]PurgeResult, 0, len(noteIDs))
+	// A batch may name the same note twice — a client assembling "clear all"
+	// from overlapping pages will. Purging it once and reporting the second as
+	// already gone is honest; running the cascade twice is wasted work.
+	seen := make(map[string]bool, len(noteIDs))
+
+	for _, noteID := range noteIDs {
+		if seen[noteID] {
+			results = append(results, PurgeResult{
+				NoteID: noteID, Status: PurgeStatusNotFound,
+				Detail: "named more than once in this batch",
+			})
+			continue
+		}
+		seen[noteID] = true
+		results = append(results, s.purgeOne(ctx, userID, noteID))
+	}
+	return results, nil
+}
+
+// purgeOne is PermanentlyDeleteNote with its errors turned into an outcome
+// rather than a failure of the whole request.
+func (s *NotesService) purgeOne(ctx context.Context, userID, noteID string) PurgeResult {
+	note, err := s.store.GetNote(ctx, userID, noteID)
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		// Already gone, or never existed, or belongs to another tenant — the
+		// store cannot tell those apart from here and must not, since the
+		// answer would confirm another tenant's identifier.
+		return PurgeResult{NoteID: noteID, Status: PurgeStatusNotFound, Detail: "no such note"}
+	case err != nil:
+		return PurgeResult{
+			NoteID: noteID, Status: PurgeStatusFailed,
+			Detail: "the note could not be read; nothing was deleted",
+		}
+	}
+
+	if NoteIsActive(note) {
+		// The refusal that matters. A client working from a stale archive
+		// listing would otherwise turn "clear my archive" into "delete the
+		// notes I am still using", and a purge is not reversible.
+		return PurgeResult{
+			NoteID: noteID, Status: PurgeStatusFailed,
+			Detail: "this note is not archived, so it was not deleted; archive it first",
+		}
+	}
+
+	if err := s.hardDeleteNote(ctx, userID, noteID, note); err != nil {
+		// The index row survives a failed cascade by design, so the note is
+		// still listed as archived and the purge can be retried. Reporting
+		// success here is what v1 did, and it left audio in the bucket that the
+		// UI had already said was deleted.
+		//
+		// The detail is fixed text: the underlying error carries bucket and
+		// table names, and it is logged rather than returned.
+		obs.Log(ctx).Error("batch purge could not finish a note",
+			slog.String("note_id", noteID), slog.String("error", err.Error()))
+		return PurgeResult{
+			NoteID: noteID, Status: PurgeStatusFailed,
+			Detail: "some of this note's files could not be removed; it is still here and can be deleted again",
+		}
+	}
+
+	return PurgeResult{NoteID: noteID, Status: PurgeStatusPurged}
 }

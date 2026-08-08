@@ -110,6 +110,49 @@ export interface NoteUpdateWire {
 
 export type NoteState = 'active' | 'archived';
 
+/**
+ * Batch purge. The only batch endpoint on this API, and it exists because a
+ * purge cascades to every capture's audio, transcripts, segments and peaks —
+ * a hundred of those driven one at a time from a phone is a hundred round trips
+ * that all have to survive the connection.
+ *
+ * Explicit ids only. "Clear all" is this client listing its archive and sending
+ * the ids in batches; there is no server-side "delete everything" flag, on
+ * purpose.
+ */
+export interface NotePurgeRequestWire {
+  /** At most 100 per request. */
+  note_ids: string[];
+}
+
+/**
+ * One note's outcome.
+ *
+ * `purged` — gone, along with everything it owned.
+ * `not_found` — no such note. Also what a replayed batch reports, which is what
+ * makes a retry safe.
+ * `failed` — still here. Either it was not archived (an active note is refused,
+ * so a stale listing cannot turn "clear my archive" into "delete my notes"), or
+ * part of its cascade failed and the row was kept so it can be retried.
+ */
+export type NotePurgeStatus = 'purged' | 'not_found' | 'failed';
+
+export interface NotePurgeResultWire {
+  note_id: string;
+  status: NotePurgeStatus;
+  /** Safe to display. Never contains provider or AWS internals. */
+  detail?: string;
+}
+
+/**
+ * The response is 200 even when some notes failed: no transaction spans
+ * DynamoDB and S3, so one verdict for the batch would be a claim the server
+ * cannot make. Render what survived.
+ */
+export interface NotePurgeResponseWire {
+  results: NotePurgeResultWire[];
+}
+
 export interface NoteListQuery extends PageQuery {
   state?: NoteState;
   tag?: string;

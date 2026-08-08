@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
@@ -235,6 +236,50 @@ func (rt *router) purgeNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// purgeNotes permanently deletes a batch of archived notes.
+//
+// A batch endpoint exists for purge and for nothing else. Archive and restore
+// are reversible and cheap, so a client does those as N ordinary calls; a purge
+// cascades to every capture's audio, raw transcript, routed transcript, cleaned
+// text, segments and peaks, and driving a hundred of those from a phone means a
+// hundred round trips that all have to survive the connection, with a partial
+// failure leaving objects orphaned and nothing tracking which.
+//
+// It answers 200 with a result per note even when some of them failed. There is
+// no transaction spanning DynamoDB and S3, so a single verdict for the batch
+// would be a claim the server cannot make.
+func (rt *router) purgeNotes(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+
+	var req NotePurgeRequest
+	if !decodeJSON(w, r, MaxNoteRequestBytes, &req) {
+		return
+	}
+
+	results, err := rt.Notes.PurgeNotes(r.Context(), userID, req.NoteIDs)
+	switch {
+	case errors.Is(err, service.ErrPurgeBatchEmpty):
+		httperr.BadRequest(w, r, "note_ids must name at least one note")
+		return
+	case errors.Is(err, service.ErrPurgeBatchTooLarge):
+		httperr.BadRequest(w, r, fmt.Sprintf("note_ids may name at most %d notes in one request", service.MaxPurgeBatch))
+		return
+	case err != nil:
+		fail(w, r, err)
+		return
+	}
+
+	out := make([]NotePurgeResult, 0, len(results))
+	for _, res := range results {
+		out = append(out, NotePurgeResult{NoteID: res.NoteID, Status: res.Status, Detail: res.Detail})
+	}
+	writeJSON(w, http.StatusOK, NotePurgeResponse{Results: out})
 }
 
 func (rt *router) matchNotes(w http.ResponseWriter, r *http.Request) {

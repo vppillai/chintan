@@ -85,6 +85,31 @@ func notesOf(in []model.NoteIndex) []Note {
 	return out
 }
 
+// NotePurgeRequest is the body of POST /v1/notes/purge.
+//
+// Explicit identifiers only. There is deliberately no "all" flag and no filter:
+// "clear all" is the client listing its archive and sending the ids in batches,
+// and a server-side delete-everything switch is one malformed request away from
+// emptying an account.
+type NotePurgeRequest struct {
+	NoteIDs []string `json:"note_ids"`
+}
+
+// NotePurgeResult is one note's outcome. Status is one of purged, not_found or
+// failed; detail is safe to display.
+type NotePurgeResult struct {
+	NoteID string `json:"note_id"`
+	Status string `json:"status"`
+	Detail string `json:"detail,omitempty"`
+}
+
+// NotePurgeResponse reports every note separately, because a batch that
+// reported one verdict would be claiming an atomicity no transaction provides
+// across DynamoDB and S3.
+type NotePurgeResponse struct {
+	Results []NotePurgeResult `json:"results"`
+}
+
 // NoteDetail is the OpenAPI NoteDetail schema: a note, its body, and its
 // captures.
 type NoteDetail struct {

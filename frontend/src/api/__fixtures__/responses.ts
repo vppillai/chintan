@@ -27,6 +27,7 @@ import type {
   ExportJobWire,
   MatchResponseWire,
   NoteDetailWire,
+  NotePurgeResponseWire,
   NoteWire,
   Page,
   PresignedDownloadWire,
@@ -420,6 +421,26 @@ export const problemSpendCapped: ProblemWire = {
   "status": 429,
   "title": "Too Many Requests",
   "type": "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#spend-capped"
+};
+
+/** POST /v1/notes/purge → 200. One result per note: purged, not_found, and an active note refused. 200 even when some failed, because no transaction spans DynamoDB and S3. */
+export const notePurgeResults: NotePurgeResponseWire = {
+  "results": [
+    {
+      "note_id": "fixture-note-id",
+      "status": "purged"
+    },
+    {
+      "detail": "no such note",
+      "note_id": "fixture-note-id",
+      "status": "not_found"
+    },
+    {
+      "detail": "this note is not archived, so it was not deleted; archive it first",
+      "note_id": "fixture-note-id",
+      "status": "failed"
+    }
+  ]
 };
 
 /** POST /v1/auth/webauthn/login/options → 404 when nothing is enrolled. Offer enrolment; do not retry. */

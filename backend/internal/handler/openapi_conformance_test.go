@@ -487,6 +487,36 @@ func statusScenarios() map[string]scenario {
 			h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "First"}, key)
 			return h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "Second"}, key).Code
 		},
+		"POST /v1/notes/purge -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			// A note that does not exist is a legitimate 200: the batch reports
+			// not_found per note rather than failing the request.
+			return h.do(t, http.MethodPost, "/v1/notes/purge", "user1",
+				map[string]any{"note_ids": []string{"note_missing"}}).Code
+		},
+		"POST /v1/notes/purge -> 400": send(http.MethodPost, "/v1/notes/purge", "user1",
+			map[string]any{"note_ids": []string{}}),
+		"POST /v1/notes/purge -> 401": send(http.MethodPost, "/v1/notes/purge", "",
+			map[string]any{"note_ids": []string{"note_a"}}),
+		"POST /v1/notes/purge -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			key := [2]string{"Idempotency-Key", "purge-conflict-1"}
+			h.do(t, http.MethodPost, "/v1/notes/purge", "user1",
+				map[string]any{"note_ids": []string{"note_a"}}, key)
+			// The same key with a different batch. Replaying someone else's
+			// answer would be worse than refusing.
+			return h.do(t, http.MethodPost, "/v1/notes/purge", "user1",
+				map[string]any{"note_ids": []string{"note_b"}}, key).Code
+		},
+		"POST /v1/notes/purge -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			ids := make([]string, 40000)
+			for i := range ids {
+				ids[i] = strings.Repeat("x", 40)
+			}
+			return h.do(t, http.MethodPost, "/v1/notes/purge", "user1",
+				map[string]any{"note_ids": ids}).Code
+		},
 		"POST /v1/notes -> 413": func(t *testing.T) int {
 			h := newHarness(t)
 			return h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{
