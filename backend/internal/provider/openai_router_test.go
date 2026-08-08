@@ -217,6 +217,35 @@ func TestRouteAcceptsNoContentForAnInstructionOnlyRecording(t *testing.T) {
 	}
 }
 
+// Speech has no punctuation, so a router can mistake the dictation for part of the spoken
+// name and report no content. A title the length of a sentence gives that away, and the
+// dictation is kept rather than dropped.
+func TestRouteKeepsTranscriptWhenTitleSwallowedTheDictation(t *testing.T) {
+	t.Parallel()
+
+	transcript := "Create a note with the title test 1,2,3 Cyclops lived in a cave herding sheep"
+	body, err := json.Marshal(map[string]any{
+		"action": "new", "confidence": 1, "content": "",
+		"title": "test 1,2,3 Cyclops lived in a cave herding sheep",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := routerServer(t, string(body))
+	llm, err := NewOpenAICleanup("k", srv.URL, "m", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+
+	decision, err := llm.Route(context.Background(), transcript, nil)
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != transcript {
+		t.Errorf("content = %q, want the transcript kept so the dictation survives", decision.Content)
+	}
+}
+
 // Empty content for a long dictation is far more likely to be a lazy router than a
 // recording that was pure instruction, so the words are kept.
 func TestRouteKeepsTranscriptWhenNoContentWouldLoseDictation(t *testing.T) {

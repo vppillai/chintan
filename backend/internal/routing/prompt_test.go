@@ -38,6 +38,23 @@ func TestSystemPromptHonorsOnlyAppInstructions(t *testing.T) {
 	}
 }
 
+// STT gives no punctuation between a spoken name and the dictation that follows, so the
+// prompt has to teach the boundary and show the split.
+func TestSystemPromptSplitsSpokenTitleFromContent(t *testing.T) {
+	t.Parallel()
+	p := SystemPrompt()
+	for _, want := range []string{
+		"every word\n  spoken after the name is content",
+		"choose the\n  shorter title",
+		`{"action":"new","title":"test 1,2,3","confidence":1,"content":"Cyclops lived in a cave herding sheep"}`,
+		`{"action":"new","title":"test123","confidence":1,"content":""}`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("system prompt missing %q", want)
+		}
+	}
+}
+
 // A note title is chosen by the speaker, so rendering it must not let it pose as
 // another candidate or as extra fields on its own line.
 func TestUserPromptSanitizesCandidateFields(t *testing.T) {

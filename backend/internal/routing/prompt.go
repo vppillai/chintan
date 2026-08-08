@@ -64,8 +64,20 @@ Rules:
     title exactly as spoken, including short or single-word titles.
   - Only invent a short descriptive title (a few words) when the speaker did not name one.
   - Never invent a title from the topic when a spoken title was given.
-  - A title is a single line of at most 12 words. A longer spoken title is truncated, so take
-    only the words the speaker gave as the name.`
+  - A title is a single line, normally one to five words and never more than eight.
+- Speech has no punctuation, so a naming instruction usually runs straight into the note
+  content with nothing to mark the boundary. The title is only the name itself; every word
+  spoken after the name is content. When you cannot tell where the name ends, choose the
+  shorter title and put the remaining words in content: a wrong name is trivial to fix, but
+  dictation left out of the note is lost.
+
+Examples, transcript then reply:
+- "Create a note with the title test123"
+  {"action":"new","title":"test123","confidence":1,"content":""}
+- "Create a note with the title test 1,2,3 Cyclops lived in a cave herding sheep"
+  {"action":"new","title":"test 1,2,3","confidence":1,"content":"Cyclops lived in a cave herding sheep"}
+- "Add this to my roof repair note the gutter is leaking again"
+  {"action":"append","note_id":"<the id listed for Roof repair>","confidence":1,"content":"the gutter is leaking again"}`
 
 // SystemPrompt returns the routing system prompt.
 func SystemPrompt() string {

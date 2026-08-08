@@ -17,6 +17,9 @@ const (
 	// maxInstructionOnlyWords is the longest transcript that is plausibly nothing but a
 	// spoken app instruction. Past it, an empty content field looks like lost dictation.
 	maxInstructionOnlyWords = 20
+	// maxSpokenTitleWords is the longest title that still reads as a name rather than a
+	// sentence the router mistook for one.
+	maxSpokenTitleWords = 8
 )
 
 // Route asks the LLM which note the transcript belongs to.
@@ -53,9 +56,13 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	case strings.TrimSpace(decision.Content) == "":
 		// A recording can be nothing but an instruction ("create a note called
 		// test123"), which leaves no content. Believe that only while the transcript
-		// is too short to have held dictation worth keeping.
-		if dictated > maxInstructionOnlyWords {
-			log.Printf("provider: router returned no content for %d dictated words; keeping the transcript", dictated)
+		// is too short to have held dictation worth keeping, and while the title is
+		// short enough to be a name: a title the length of a sentence means the router
+		// swallowed the dictation into it instead of splitting the two.
+		titleWords := len(comparableWords(decision.Title))
+		if dictated > maxInstructionOnlyWords || titleWords > maxSpokenTitleWords {
+			log.Printf("provider: router returned no content for %d dictated words with a %d word title; keeping the transcript",
+				dictated, titleWords)
 			decision.Content = transcript
 		}
 	case !contentDerivedFrom(decision.Content, transcript):
