@@ -128,13 +128,23 @@ func New(cfg Config) (*Pipeline, error) {
 	return &Pipeline{cfg: cfg, now: now}, nil
 }
 
+// errDeliveryConceded means another delivery of the same capture owns the row,
+// and this one stopped rather than fight it for the conditional write.
+//
+// It is not a failure. SQS is at-least-once, so two deliveries of one capture is
+// a normal event; treating the loser as an error would redeliver it, exhaust
+// maximumReceiveCount, and put a dead-letter entry and an alarm in front of a
+// human for a system working exactly as designed.
+var errDeliveryConceded = errors.New("pipeline: another delivery owns this capture")
+
 // Run drives one capture as far as it can go and returns its final state.
 //
 // A returned error means the invocation should be retried by SQS: it is an
 // infrastructure fault, not a verdict on the capture. A capture that failed for
 // its own reasons — a provider error, an exhausted spend cap, an undecidable
 // destination — is persisted in that state and returned with a nil error, so the
-// message is not redelivered to fail identically twice more before the DLQ.
+// message is not redelivered to fail identically twice more before the DLQ. So
+// is a capture another delivery is already carrying.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("capture_id", captureID))
@@ -154,6 +164,17 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	elapsed := p.now().Sub(started)
 
 	obs.Duration(ctx, "CapturePipelineDuration", elapsed, map[string]string{"Outcome": string(final.Status)})
+	if errors.Is(err, errDeliveryConceded) {
+		// The other delivery is either finished or still running. Either way this
+		// one is done and its message must be deleted, not redelivered. If the
+		// owner dies mid-flight the queue's visibility timeout redelivers its
+		// message, and the append claim's lease lets that redelivery take the
+		// append over — so conceding drops nothing.
+		log.Info("capture is owned by a concurrent delivery; leaving it to that one",
+			slog.String("status", string(final.Status)),
+			slog.Bool("already_finished", service.CaptureIsTerminal(final.Status)))
+		return final, nil
+	}
 	if err != nil {
 		obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": string(capture.Status)})
 		log.Error("capture pipeline could not complete", slog.String("error", err.Error()))
@@ -196,8 +217,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, fmt.Errorf("pipeline: get note: %w", err)
 	}
 	if !service.NoteIsActive(note) {
-		p.markFailed(ctx, capture, service.ErrNoteArchived)
-		return *capture, nil
+		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived)
 	}
 
 	if capture.CleanKey == "" {
@@ -701,13 +721,47 @@ func (p *Pipeline) setStatus(ctx context.Context, capture *model.CaptureIndex, s
 	return nil
 }
 
+// persist writes the capture row under its optimistic-concurrency version.
+//
+// Losing that write is not a fault. The conditional write is load-bearing — it
+// is what stops two writers silently discarding one another — so the answer to
+// losing it is neither to drop the condition nor to retry until we win, both of
+// which reintroduce the lost update it prevents. The answer is to concede.
 func (p *Pipeline) persist(ctx context.Context, capture *model.CaptureIndex) error {
 	updated, err := p.cfg.Store.PutCapture(ctx, *capture)
-	if err != nil {
+	if err == nil {
+		*capture = updated
+		return nil
+	}
+	if !errors.Is(err, repository.ErrVersionConflict) {
 		return fmt.Errorf("pipeline: persist capture: %w", err)
 	}
-	*capture = updated
-	return nil
+	return p.concede(ctx, capture)
+}
+
+// concede reloads the capture after a lost conditional write and stops this
+// delivery.
+//
+// Whoever won holds a newer version than the copy this delivery is carrying, so
+// every subsequent write here would lose too. Reloading first means the status
+// this delivery reports is the truth rather than its own stale guess.
+func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) error {
+	current, err := p.cfg.Store.GetCapture(ctx, capture.UserID, capture.ID)
+	if err != nil {
+		// Genuinely retryable: we know we lost, but not to what.
+		return fmt.Errorf("pipeline: reload capture after a lost write: %w", err)
+	}
+	*capture = current
+
+	// Info, not warn. A duplicate delivery is expected of an at-least-once queue;
+	// the counter is here so that "expected" can be checked against reality
+	// rather than assumed, because a sustained rate of these means the visibility
+	// timeout is shorter than the pipeline and every capture is being done twice.
+	obs.Log(ctx).Info("lost a conditional write to a concurrent delivery",
+		slog.String("capture_id", current.ID),
+		slog.String("status", string(current.Status)))
+	obs.Count(ctx, "DuplicateDelivery", map[string]string{"Status": string(current.Status)})
+	return errDeliveryConceded
 }
 
 // handleProviderError records the capture's verdict and reports whether the
@@ -733,16 +787,17 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 		slog.String("stage", stage),
 		slog.String("error", cause.Error()))
 	obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
-	p.markFailed(ctx, capture, cause)
-	return nil
+	return p.markFailed(ctx, capture, cause)
 }
 
-func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, cause error) {
+// markFailed records the capture's own verdict. It returns the write's error
+// rather than swallowing it: a conceded write here means another delivery owns
+// the capture, and reporting that as "recorded" would hide a duplicate delivery
+// behind a status this worker never actually wrote.
+func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, cause error) error {
 	capture.Status = model.StatusFailed
 	capture.Error = cause.Error()
-	if err := p.persist(ctx, capture); err != nil {
-		obs.Log(ctx).Error("failed to record capture failure", slog.String("error", err.Error()))
-	}
+	return p.persist(ctx, capture)
 }
 
 // ---------------------------------------------------------------------------
