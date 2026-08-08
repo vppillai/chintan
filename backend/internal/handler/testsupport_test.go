@@ -39,7 +39,8 @@ type harness struct {
 type harnessOption func(*handler.Deps, *harness)
 
 // withoutWebAuthn builds an instance with biometrics unconfigured, which is what
-// an operator who never set TOKEN_VAULT_KMS_KEY_ID gets.
+// an operator whose TOKEN_VAULT_KEY_PATH parameter is missing or unreadable
+// gets. Fail closed: no vault key, no biometric unlock, no plaintext fallback.
 func withoutWebAuthn() harnessOption {
 	return func(d *handler.Deps, _ *harness) { d.WebAuthn = nil }
 }
