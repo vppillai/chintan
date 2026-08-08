@@ -187,11 +187,40 @@ clear_failed_create() {
     esac
 }
 
+# CloudFormation caps an inline --template-body at 51200 bytes. Past that the
+# call fails with "Member must have length less than or equal to 51200", which
+# names a constraint and not the template, and the natural response — deleting
+# comments until it fits — trades documentation for a limit that has a proper
+# answer. A template staged in S3 may be 1MB, so it is always staged: no cliff to
+# cross, and no behaviour that changes the first time the file grows a paragraph.
+#
+# The artifact bucket already exists and already holds the function zips; the
+# deploy role can read it, and CloudFormation reads the template as that role.
+stage_template() {
+    local account bucket key
+    account="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null || echo '')"
+    [ -n "$account" ] || die "could not resolve the account id to stage the template"
+    bucket="chintan-lambda-${account}-${AWS_REGION:-us-west-2}"
+    # Bucket root, not a templates/ prefix: the function zips are written to the
+    # root and that path is known to work, whereas a new prefix would be the
+    # first thing this role has ever written there. simulate-principal-policy
+    # reports explicitDeny for every key in this bucket including the zips it
+    # demonstrably uploads, so it cannot be used to check a new prefix — the
+    # deny is conditional and the simulator has no context keys to evaluate it.
+    key="${STACK}-$(date -u +%Y%m%dT%H%M%SZ)-$$.template.yaml"
+
+    aws_cli s3 cp "$TEMPLATE" "s3://${bucket}/${key}" >/dev/null ||
+        die "could not stage the template to s3://${bucket}/${key}"
+    TEMPLATE_URL="https://${bucket}.s3.${AWS_REGION:-us-west-2}.amazonaws.com/${key}"
+    info "template staged: s3://${bucket}/${key}"
+}
+
 # Clear a poisoned stack BEFORE deciding CREATE vs UPDATE. Deciding first and
 # deleting after leaves CHANGE_SET_TYPE=UPDATE pointing at a stack that no
 # longer exists, and the deploy dies on "Stack [...] does not exist" — a fresh
 # error with nothing to do with the original failure.
 clear_failed_create
+stage_template
 
 if stack_exists "$STACK"; then
     CHANGE_SET_TYPE=UPDATE
@@ -257,7 +286,7 @@ aws_cli cloudformation create-change-set \
     --stack-name "$STACK" \
     --change-set-name "$CHANGE_SET" \
     --change-set-type "$CHANGE_SET_TYPE" \
-    --template-body "file://$TEMPLATE" \
+    --template-url "$TEMPLATE_URL" \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameters "$parameters_json" \
     "${TAG_ARGS[@]}" \
