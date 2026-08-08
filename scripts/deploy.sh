@@ -142,6 +142,33 @@ cleanup_change_set() {
     fi
 }
 
+# A stack whose FIRST create fails lands in ROLLBACK_COMPLETE. That state cannot
+# be updated and cannot be re-created in place — the only legal move is delete.
+# Without this, every later deploy fails with
+#   "Stack ... is in ROLLBACK_COMPLETE state and can not be updated"
+# which says nothing about the actual defect and hides the fix you just pushed.
+#
+# Safe to automate precisely because ROLLBACK_COMPLETE means the stack never
+# reached CREATE_COMPLETE, so it holds no data anyone has used. It may still
+# have stranded resources carrying DeletionPolicy: Retain (KMS keys, buckets,
+# user pools); those are reported rather than deleted, because deleting retained
+# resources is a decision, not a cleanup.
+clear_failed_create() {
+    local status
+    status="$(aws_cli cloudformation describe-stacks --stack-name "$STACK" \
+        --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
+    case "$status" in
+        ROLLBACK_COMPLETE | REVIEW_IN_PROGRESS)
+            warn "stack $STACK is in $status from a failed first create; deleting it so this deploy can proceed"
+            warn "any resource with DeletionPolicy: Retain survives that delete — check for orphans if a create keeps colliding"
+            aws_cli cloudformation delete-stack --stack-name "$STACK" >/dev/null 2>&1 || true
+            aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK" >/dev/null 2>&1 || true
+            ;;
+    esac
+}
+
+clear_failed_create
+
 # Key=Value pairs are turned into the CLI's JSON shapes with jq rather than by
 # string concatenation, so a parameter value containing a space, a quote or an
 # '=' survives intact. Nothing here is eval'd.
