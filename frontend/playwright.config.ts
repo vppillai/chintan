@@ -69,6 +69,9 @@ export default defineConfig({
        */
       VITE_COGNITO_DOMAIN: 'https://cognito.e2e.test',
       VITE_INSTANCE: 'e2e',
+      // Injected in CI from the git SHA. Pinned here so the footnote spec can
+      // assert the value actually reaches the screen.
+      VITE_VERSION: 'e2e-abc1234',
     },
   },
 });

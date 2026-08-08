@@ -1876,3 +1876,20 @@
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
+
+/*
+ * The running build, at the foot of the You screen.
+ *
+ * `--color-faint` is the palette's quietest text and is documented in
+ * tokens.css as meeting AA in both themes — "faded" must still be legible to
+ * whoever is reading it out over a phone call to report a bug.
+ */
+.version-footnote {
+  margin-block-start: var(--space-8);
+  padding-block-end: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+  text-align: center;
+  /* Selectable on purpose: it exists to be copied into a bug report. */
+  user-select: text;
+}

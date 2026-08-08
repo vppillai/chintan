@@ -17,6 +17,7 @@ const SETTINGS: AppConfig = {
   clientId: 'client-abc',
   cognitoDomain: 'https://chintan-dev-prod-338186951935.auth.us-west-2.amazoncognito.com',
   instance: 'dev',
+  version: 'test-sha',
 };
 
 function json(body: unknown, status = 200): Response {

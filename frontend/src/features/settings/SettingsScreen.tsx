@@ -3,6 +3,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useSaveSettings, useSettings } from '@/api/queries.ts';
 import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { config } from '@/config/env.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
@@ -253,7 +254,26 @@ export function SettingsScreen() {
           setPreference(baseline.theme);
         }}
       />
+
+      <VersionFootnote />
     </div>
+  );
+}
+
+/**
+ * What is running, at the very bottom and deliberately quiet.
+ *
+ * The first thing anyone needs when a bug report comes in, so it is real text
+ * inside a `<code>` — selectable and copyable — rather than decoration. Faded
+ * via `--color-faint`, which `tokens.css` documents as meeting AA in both
+ * themes; "quiet" is not a licence to be unreadable.
+ */
+export function VersionFootnote() {
+  return (
+    <p className="version-footnote">
+      <span className="visually-hidden">App version </span>
+      <code>{config.version}</code>
+    </p>
   );
 }
 

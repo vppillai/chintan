@@ -14,7 +14,18 @@ export interface AppConfig {
   clientId: string;
   cognitoDomain: string;
   instance: string;
+  /**
+   * What is running, for a bug report to name.
+   *
+   * The git SHA, injected at build time — the only identifier that is not a
+   * guess. Absent outside CI, where the honest answer is that this is a local
+   * build rather than an empty string or `undefined` on screen.
+   */
+  version: string;
 }
+
+/** Shown wherever a build has no CI-injected version, which is every local one. */
+export const LOCAL_VERSION = 'local build';
 
 function required(value: string | undefined, name: string): string {
   if (value && value.length > 0) return value;
@@ -38,6 +49,7 @@ export const config: AppConfig = {
     required(import.meta.env.VITE_COGNITO_DOMAIN, 'VITE_COGNITO_DOMAIN'),
   ),
   instance: import.meta.env.VITE_INSTANCE ?? 'dev',
+  version: import.meta.env.VITE_VERSION || LOCAL_VERSION,
 };
 
 export function isConfigured(candidate: AppConfig = config): boolean {

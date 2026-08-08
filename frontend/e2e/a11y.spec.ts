@@ -123,3 +123,29 @@ test('a deep link seeds home beneath it, so Back stays in the app', async ({ pag
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('button', { name: /record/i })).toBeVisible();
 });
+
+/**
+ * The running build, at the foot of the You screen.
+ *
+ * Injected from the git SHA at build time; `playwright.config.ts` pins a known
+ * value so this can assert the injection actually reaches the screen rather
+ * than that some text is present.
+ */
+test('the You screen names the build it is running, legibly', async ({ page }) => {
+  await page.goto('/settings');
+
+  const footnote = page.locator('.version-footnote');
+  await expect(footnote).toContainText('e2e-abc1234');
+
+  // "Faded" is not a licence to be invisible: --color-faint is the palette's
+  // quietest text and tokens.css documents it as meeting AA.
+  const readable = await footnote.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { color: style.color, opacity: Number(style.opacity) };
+  });
+  expect(readable.opacity).toBeGreaterThan(0.5);
+  expect(readable.color).not.toBe('rgba(0, 0, 0, 0)');
+
+  // It exists to be copied into a bug report, so it must be selectable text.
+  await expect(footnote.locator('code')).toHaveText('e2e-abc1234');
+});

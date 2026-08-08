@@ -112,6 +112,14 @@ while IFS= read -r entry; do
         *) die "cognito domain did not resolve to a usable https origin: $cognito_domain" ;;
     esac
 
+    # The running build's identity, for the footnote on the You screen and for
+    # whatever a bug report has to name. The SHA is the only honest answer;
+    # `--short` because it is read off a phone screen. A shallow CI checkout
+    # still has HEAD, and outside a work tree the frontend falls back to
+    # LOCAL_VERSION rather than rendering an empty line.
+    local version
+    version="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
     info "building $site_path from $stack"
     (
         cd frontend
@@ -121,6 +129,7 @@ while IFS= read -r entry; do
             VITE_CLIENT_ID="$client_id" \
             VITE_COGNITO_DOMAIN="$cognito_domain" \
             VITE_INSTANCE="$instance" \
+            VITE_VERSION="$version" \
             bun run build
     )
 
