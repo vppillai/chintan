@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"unicode"
 
@@ -39,6 +40,9 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	// did not copy from the transcript is dropped, so no summary, translation, answer or
 	// commentary can reach the note behind cleanup's back.
 	if !contentDerivedFrom(decision.Content, transcript) {
+		// Counts only: note text does not belong in logs.
+		log.Printf("provider: discarded router content not taken from the transcript (%d words returned, %d words dictated)",
+			len(comparableWords(decision.Content)), len(comparableWords(transcript)))
 		decision.Content = transcript
 	}
 	return decision, nil
