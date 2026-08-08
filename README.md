@@ -213,7 +213,7 @@ cd backend && go build -o chintanctl ./cmd/chintanctl
 | `reconcile --instance <i> [--apply]` | Reports every disagreement between the table and the bucket in both directions: index rows whose objects are gone, objects whose owning row is gone, objects nothing references, and captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row — never a row, never an object it does not understand. |
 | `usage --instance <i> [--since <date>]` | Metered provider spend per tenant, provider, model, operation and unit, from the `USAGE#` records. |
 | `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere and reports every key it removed. `--apply` requires the tenant id typed exactly, interactively or via `--confirm`. |
-| `reindex --instance <i> [--apply]` | Writes the `gsi2` key attributes onto notes that lack them. Idempotent, and it touches only those two attributes so no `version` moves under an open editor. Dry run by default. **Required after any deploy that adds a secondary index — see below.** |
+| `reindex --instance <i> [--apply]` | Writes the `gsi2` key attributes onto every note in the tenant, with a conditional `UpdateItem` that sets those two attributes and nothing else — `version` does not move, so an editor open in another tab is unaffected, and a note purged mid-run is skipped rather than resurrected. Idempotent; the count it reports is notes **touched**, not notes repaired, so a second run reports the same number. Dry run by default. **Required after any deploy that adds a secondary index — see below.** |
 
 ### Adding a secondary index is a two-step deploy
 
