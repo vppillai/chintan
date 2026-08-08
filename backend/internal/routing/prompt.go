@@ -55,6 +55,10 @@ Rules:
   title-setting). Keep every other word verbatim: do not summarise, reorder, translate, or fix
   grammar. If no app instruction was spoken, return the transcript unchanged. Content that is
   not a verbatim copy of the transcript is discarded and your work is wasted.
+- When the transcript is nothing but app instructions, content is the empty string "". For
+  example, "create a note with the title test123" leaves no content: reply
+  {"action":"new","title":"test123","confidence":1,"content":""}. Never repeat the instruction
+  back as content.
 - For "new" titles:
   - If the speaker named a title (e.g. "title this test123", "call it roof notes"), use that
     title exactly as spoken, including short or single-word titles.

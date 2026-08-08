@@ -270,6 +270,7 @@ class NotesManager {
             transcribed: 'Transcribed',
             cleaned: 'Tidying up',
             appended: 'Saved to note',
+            no_content: 'Nothing to save',
             needs_target: 'Waiting for you',
             failed: 'Failed'
         };

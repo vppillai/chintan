@@ -11,8 +11,13 @@ import (
 	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
-// maxTitleLen bounds a dictated note title.
-const maxTitleLen = 120
+const (
+	// maxTitleLen bounds a dictated note title.
+	maxTitleLen = 120
+	// maxInstructionOnlyWords is the longest transcript that is plausibly nothing but a
+	// spoken app instruction. Past it, an empty content field looks like lost dictation.
+	maxInstructionOnlyWords = 20
+)
 
 // Route asks the LLM which note the transcript belongs to.
 func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error) {
@@ -26,7 +31,7 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		return RouteDecision{}, err
 	}
 
-	decision, err := parseRouteDecision(out)
+	decision, contentGiven, err := parseRouteDecision(out)
 	if err != nil {
 		return RouteDecision{}, err
 	}
@@ -39,10 +44,24 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	// The router is therefore allowed to delete words and nothing else: any content it
 	// did not copy from the transcript is dropped, so no summary, translation, answer or
 	// commentary can reach the note behind cleanup's back.
-	if !contentDerivedFrom(decision.Content, transcript) {
+	dictated := len(comparableWords(transcript))
+	switch {
+	case !contentGiven:
+		// No content field at all is a router that ignored the format, not an answer.
+		log.Printf("provider: router returned no content field; keeping the transcript")
+		decision.Content = transcript
+	case strings.TrimSpace(decision.Content) == "":
+		// A recording can be nothing but an instruction ("create a note called
+		// test123"), which leaves no content. Believe that only while the transcript
+		// is too short to have held dictation worth keeping.
+		if dictated > maxInstructionOnlyWords {
+			log.Printf("provider: router returned no content for %d dictated words; keeping the transcript", dictated)
+			decision.Content = transcript
+		}
+	case !contentDerivedFrom(decision.Content, transcript):
 		// Counts only: note text does not belong in logs.
 		log.Printf("provider: discarded router content not taken from the transcript (%d words returned, %d words dictated)",
-			len(comparableWords(decision.Content)), len(comparableWords(transcript)))
+			len(comparableWords(decision.Content)), dictated)
 		decision.Content = transcript
 	}
 	return decision, nil
@@ -91,26 +110,44 @@ func sanitizeTitle(title string) string {
 	return title
 }
 
-// parseRouteDecision tolerates markdown fences and surrounding prose.
-func parseRouteDecision(raw string) (RouteDecision, error) {
+// parseRouteDecision tolerates markdown fences and surrounding prose. The second result
+// reports whether the model supplied a content field at all, which distinguishes "there
+// was nothing to write" from a reply that ignored the format.
+func parseRouteDecision(raw string) (RouteDecision, bool, error) {
 	jsonText, err := extractJSONObject(raw)
 	if err != nil {
-		return RouteDecision{}, err
+		return RouteDecision{}, false, err
 	}
 
-	var decision RouteDecision
-	if err := json.Unmarshal([]byte(jsonText), &decision); err != nil {
-		return RouteDecision{}, fmt.Errorf("provider: decode route decision: %w", err)
+	var parsed struct {
+		Action     RouteAction `json:"action"`
+		NoteID     string      `json:"note_id"`
+		Title      string      `json:"title"`
+		Confidence float64     `json:"confidence"`
+		Content    *string     `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(jsonText), &parsed); err != nil {
+		return RouteDecision{}, false, fmt.Errorf("provider: decode route decision: %w", err)
+	}
+
+	decision := RouteDecision{
+		Action:     parsed.Action,
+		NoteID:     parsed.NoteID,
+		Title:      parsed.Title,
+		Confidence: parsed.Confidence,
+	}
+	if parsed.Content != nil {
+		decision.Content = *parsed.Content
 	}
 
 	switch decision.Action {
 	case RouteAppend:
 		if strings.TrimSpace(decision.NoteID) == "" {
-			return RouteDecision{}, fmt.Errorf("provider: router chose append without a note id")
+			return RouteDecision{}, false, fmt.Errorf("provider: router chose append without a note id")
 		}
 	case RouteNew:
 	default:
-		return RouteDecision{}, fmt.Errorf("provider: router returned unknown action %q", decision.Action)
+		return RouteDecision{}, false, fmt.Errorf("provider: router returned unknown action %q", decision.Action)
 	}
 
 	if decision.Confidence < 0 {
@@ -121,7 +158,7 @@ func parseRouteDecision(raw string) (RouteDecision, error) {
 	}
 	decision.Content = strings.TrimSpace(decision.Content)
 	decision.Title = sanitizeTitle(decision.Title)
-	return decision, nil
+	return decision, parsed.Content != nil, nil
 }
 
 // extractJSONObject returns the outermost {...} span, ignoring fences and prose.

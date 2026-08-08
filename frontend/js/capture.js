@@ -489,7 +489,7 @@ class CaptureManager {
 
             // Keep capture id until processing UI finishes; then reset form fields.
             this.showProcessingStatus(completedCapture);
-            if (completedCapture.status === 'appended' || completedCapture.status === 'failed') {
+            if (['appended', 'no_content', 'failed'].includes(completedCapture.status)) {
                 this.resetCaptureForm(false);
             }
             
@@ -555,6 +555,22 @@ class CaptureManager {
                 return;
             case 'appended':
                 statusText.textContent = 'Note saved!';
+                progress.style.width = '100%';
+                document.getElementById('target-prompt').classList.add('hidden');
+                this.currentCaptureId = null;
+                if (this.openNoteWhenDone) {
+                    this.openNoteWhenDone = false;
+                    this.quickMode = false;
+                    this.openNote(capture.note_id).catch(() => {});
+                }
+                setTimeout(() => {
+                    statusEl.classList.add('hidden');
+                    notes.loadRecentNotes().catch(() => {});
+                }, 2000);
+                break;
+            case 'no_content':
+                // The recording only asked for a note, so the note is empty by design.
+                statusText.textContent = 'Note created — nothing to add yet.';
                 progress.style.width = '100%';
                 document.getElementById('target-prompt').classList.add('hidden');
                 this.currentCaptureId = null;

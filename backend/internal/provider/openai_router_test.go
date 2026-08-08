@@ -56,7 +56,7 @@ func TestParseRouteDecision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseRouteDecision(tt.raw)
+			got, _, err := parseRouteDecision(tt.raw)
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %+v", got)
@@ -147,7 +147,6 @@ func TestRouteDiscardsContentNotTakenFromTranscript(t *testing.T) {
 		{name: "translated", content: "la gouttiere fuit"},
 		{name: "reordered", content: "badly leaks gutter the"},
 		{name: "commentary appended", content: "the gutter leaks badly. I have also filed this for you."},
-		{name: "empty", content: ""},
 	}
 
 	for _, tt := range tests {
@@ -198,6 +197,47 @@ func TestRouteKeepsContentWithOnlyTheInstructionRemoved(t *testing.T) {
 	}
 }
 
+// "Create a note with the title test123" is all instruction and no content, so an empty
+// content field is the right answer rather than a sign the router misbehaved.
+func TestRouteAcceptsNoContentForAnInstructionOnlyRecording(t *testing.T) {
+	t.Parallel()
+
+	srv := routerServer(t, `{"action":"new","title":"test123","confidence":1,"content":""}`)
+	llm, err := NewOpenAICleanup("k", srv.URL, "m", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+
+	decision, err := llm.Route(context.Background(), "Create a note with the title test123", nil)
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "" {
+		t.Errorf("content = %q, want empty so the instruction stays out of the note", decision.Content)
+	}
+}
+
+// Empty content for a long dictation is far more likely to be a lazy router than a
+// recording that was pure instruction, so the words are kept.
+func TestRouteKeepsTranscriptWhenNoContentWouldLoseDictation(t *testing.T) {
+	t.Parallel()
+
+	transcript := "title this roof notes " + strings.Repeat("the gutter leaks ", 10)
+	srv := routerServer(t, `{"action":"new","title":"Roof notes","confidence":1,"content":""}`)
+	llm, err := NewOpenAICleanup("k", srv.URL, "m", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+
+	decision, err := llm.Route(context.Background(), transcript, nil)
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != transcript {
+		t.Errorf("content = %q, want the transcript kept", decision.Content)
+	}
+}
+
 func TestParseRouteDecisionBoundsTitle(t *testing.T) {
 	t.Parallel()
 
@@ -209,7 +249,7 @@ func TestParseRouteDecisionBoundsTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decision, err := parseRouteDecision(string(body))
+	decision, _, err := parseRouteDecision(string(body))
 	if err != nil {
 		t.Fatalf("parseRouteDecision: %v", err)
 	}

@@ -54,6 +54,9 @@ func (f *FakeLLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw strin
 type FakeRouter struct {
 	ShouldFail bool
 	Decision   RouteDecision
+	// NoContent means the recording held nothing but an app instruction, so an empty
+	// Decision.Content is deliberate rather than a test that did not set it.
+	NoContent bool
 	// Calls records the transcripts the router was asked about.
 	Calls []string
 	// LastCandidates records the candidates from the most recent Route call.
@@ -75,7 +78,7 @@ func (f *FakeRouter) Route(ctx context.Context, transcript string, candidates []
 		decision.Title = "Fake routed note"
 		decision.Confidence = 1
 	}
-	if decision.Content == "" {
+	if decision.Content == "" && !f.NoContent {
 		decision.Content = transcript
 	}
 	return decision, nil

@@ -118,7 +118,7 @@ func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID 
 	}
 
 	switch capture.Status {
-	case model.StatusAppended, model.StatusFailed:
+	case model.StatusAppended, model.StatusFailed, model.StatusNoContent:
 		return &capture, nil
 	}
 
@@ -156,7 +156,8 @@ func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID 
 		if err := s.cleanupCapture(ctx, userID, &capture); err != nil {
 			return nil, err
 		}
-		if capture.Status == model.StatusFailed {
+		switch capture.Status {
+		case model.StatusFailed, model.StatusNoContent:
 			return &capture, nil
 		}
 	}
@@ -377,6 +378,17 @@ func (s *CaptureService) cleanupCapture(ctx context.Context, userID string, capt
 	sourceBytes, err := s.objects.Get(ctx, sourceKey)
 	if err != nil {
 		return fmt.Errorf("failed to get raw text: %w", err)
+	}
+
+	if strings.TrimSpace(string(sourceBytes)) == "" {
+		// The speaker only told the app what to do, so the note they asked for exists
+		// and there is nothing to clean or append.
+		capture.Status = model.StatusNoContent
+		capture.Error = ""
+		if err := s.store.PutCapture(ctx, *capture); err != nil {
+			return fmt.Errorf("failed to update capture: %w", err)
+		}
+		return nil
 	}
 
 	cleanedText, err := s.llm.Cleanup(ctx, capture.Mode, string(sourceBytes))

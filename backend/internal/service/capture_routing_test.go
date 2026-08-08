@@ -273,6 +273,50 @@ func TestCompleteCaptureCreatesNoteWithSpokenTitle(t *testing.T) {
 	}
 }
 
+// Asking only for a note is not dictation: the note is created and its body stays empty
+// rather than being filled with the instruction the speaker gave.
+func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T) {
+	f := newRoutingFixture(t, "Create a note with the title test123",
+		provider.RouteDecision{
+			Action:     provider.RouteNew,
+			Title:      "test123",
+			Confidence: 1,
+			Content:    "",
+		}, false)
+	f.router.NoContent = true
+
+	ctx := context.Background()
+	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	if err != nil {
+		t.Fatalf("CompleteCapture: %v", err)
+	}
+
+	if capture.Status != model.StatusNoContent {
+		t.Fatalf("status = %s, want no_content", capture.Status)
+	}
+	if len(f.creator.titles) != 1 || f.creator.titles[0] != "test123" {
+		t.Fatalf("created titles = %v, want [test123]", f.creator.titles)
+	}
+
+	note := f.store.notes[f.userID+"/"+capture.NoteID]
+	body, err := f.objects.Get(ctx, note.S3MarkdownKey)
+	if err == nil && strings.TrimSpace(string(body)) != "" {
+		t.Errorf("note body = %q, want empty", body)
+	}
+
+	// Completing again must not append the instruction on a second pass.
+	again, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	if err != nil {
+		t.Fatalf("second CompleteCapture: %v", err)
+	}
+	if again.Status != model.StatusNoContent {
+		t.Errorf("status = %s, want no_content", again.Status)
+	}
+	if body, err := f.objects.Get(ctx, note.S3MarkdownKey); err == nil && strings.TrimSpace(string(body)) != "" {
+		t.Errorf("note body = %q after retry, want empty", body)
+	}
+}
+
 // A spoken title is honoured, so it must not be able to carry structure into storage
 // or into the candidate list of a later routing prompt.
 func TestCompleteCaptureBoundsSpokenTitle(t *testing.T) {

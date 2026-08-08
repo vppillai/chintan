@@ -37,6 +37,9 @@ const (
 	// StatusNeedsTarget means the transcript was understood but the destination
 	// note is uncertain, so the user has to confirm before anything is written.
 	StatusNeedsTarget CaptureStatus = "needs_target"
+	// StatusNoContent means the recording was nothing but an instruction to the app,
+	// such as "create a note called test123", so there was no dictation to write.
+	StatusNoContent CaptureStatus = "no_content"
 )
 
 type CaptureIndex struct {
