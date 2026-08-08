@@ -179,6 +179,22 @@ Resources:
 
   UserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
+    # The branding must exist BEFORE this domain starts serving managed login.
+    #
+    # A version 2 domain with no ManagedLoginBranding for the app client does
+    # not fall back to the classic hosted UI — it serves "Login pages
+    # unavailable. Please contact an administrator." and sign-in is simply down.
+    # That was observed, not guessed: deleting the branding under a version 2
+    # domain took the dev pool's sign-in offline until the version was put back.
+    #
+    # Without this ordering CloudFormation is free to flip the domain first, so
+    # every deploy that touched both would open a window where nobody can sign
+    # in, and a fresh stack would spend its whole CREATE in that state.
+    #
+    # The dependency is safe in this direction: CreateManagedLoginBranding is a
+    # user-pool + client operation and does not require a domain to exist. That
+    # was verified against a throwaway pool with no domain at all.
+    DependsOn: ManagedLoginBranding
     Properties:
       # Globally unique, same reasoning as ContentBucket above. Renaming this
       # replaces the domain but NOT the user pool, so existing users survive;

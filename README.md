@@ -162,6 +162,13 @@ Two resources in `infrastructure/template.yaml` do it:
 - `UserPoolDomain` sets `ManagedLoginVersion: 2`, which selects **managed login** over the classic hosted UI. Without it the branding below applies cleanly and then renders nothing.
 - `ManagedLoginBranding` carries the palette and the logo.
 
+**The two go together.** A version 2 domain with no branding for the app client does not fall back to the classic UI — it serves *"Login pages unavailable. Please contact an administrator."*, and sign-in is down. `UserPoolDomain` therefore declares `DependsOn: ManagedLoginBranding`, so the branding always exists before the domain serves it. If you ever delete the branding by hand, put the domain back to `ManagedLoginVersion: 1` in the same breath:
+
+```bash
+aws cognito-idp update-user-pool-domain \
+  --user-pool-id <pool> --domain <prefix> --managed-login-version 1
+```
+
 Every colour is a token from `frontend/src/styles/tokens.css`, so the sign-in page and the app cannot drift apart without someone editing both. `colorSchemeMode: DYNAMIC` follows `prefers-color-scheme`, so **Ink & Paper** and **Nocturne** are both covered and a dark-theme user does not get a white flash at night.
 
 Managed login is included at the `ESSENTIALS` tier the pool already runs on, so this costs nothing. It styles the page; it does not change how sign-in works. The domain name, the OAuth endpoints, the callback URLs and the app client are all untouched.
