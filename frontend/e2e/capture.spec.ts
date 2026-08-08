@@ -60,6 +60,40 @@ test('records, uploads, and hands off to the progress card', async ({ page, api 
   await expect(page.getByRole('region', { name: /captures in progress/i })).toBeVisible();
 });
 
+/**
+ * The app must record more than once per page load.
+ *
+ * After a successful send the machine sits in the terminal `uploaded` state.
+ * Nothing reset it, so the mount effect's `idle` guard never fired again: the
+ * second tap of Record showed "Sent" and the previous elapsed time, bounced
+ * back home, and never opened the microphone. Only a reload recovered.
+ */
+test('records twice in one page load, without a reload', async ({ page, api }) => {
+  await page.goto('/');
+
+  for (const attempt of [1, 2]) {
+    await page.getByRole('button', { name: /record/i }).click();
+    await expect(page).toHaveURL(/\/capture$/);
+
+    // Never "Sent", and never the previous recording's clock.
+    await expect(page.locator('.capture__state')).toHaveText('Recording');
+    await expect(page.locator('.capture__timer')).toHaveText('00:00');
+
+    await page.waitForTimeout(1_100);
+    await page.getByRole('button', { name: 'Stop' }).click();
+    await expect(page.getByText('Ready to send')).toBeVisible();
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    await expect
+      .poll(() => api.captures.length, { message: `capture ${attempt} created`, timeout: 15_000 })
+      .toBe(attempt);
+
+    // Filed, so the progress card clears and Home is back to the record hero.
+    api.captures.at(-1)!.status = 'appended';
+    await expect(page).toHaveURL(/\/$/, { timeout: 10_000 });
+  }
+});
+
 test('pause and stop are distinct controls', async ({ page }) => {
   await page.goto('/capture');
 

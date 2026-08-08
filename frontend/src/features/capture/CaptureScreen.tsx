@@ -10,6 +10,8 @@ import { Waveform } from './Waveform.tsx';
 import {
   canRetryUpload,
   formatElapsed,
+  hasBufferedAudio,
+  isCaptureBusy,
   MAX_DURATION_MS,
   type CaptureModel,
 } from './machine.ts';
@@ -36,18 +38,52 @@ export function CaptureScreen() {
   const stop = useCaptureStore((state) => state.stop);
   const discard = useCaptureStore((state) => state.discard);
   const send = useCaptureStore((state) => state.send);
+  const reset = useCaptureStore((state) => state.reset);
   const amplitudes = useCaptureStore((state) => state.amplitudes);
 
   const noteId = params.get('note');
 
-  // Opening /capture starts a recording. The route IS the intent; requiring a
-  // second tap once here would put a dead screen between the user and the
-  // microphone.
+  /*
+   * Opening /capture starts a recording. The route IS the intent; requiring a
+   * second tap once here would put a dead screen between the user and the
+   * microphone.
+   *
+   * The guard used to be `state === 'idle'`, which meant exactly one recording
+   * per page load: a sent capture leaves the machine in the terminal `uploaded`
+   * state and nothing moved it back, so every later tap of Record landed on a
+   * screen showing "Sent" and the previous recording's clock, bounced home, and
+   * never opened the microphone. Only a reload recovered.
+   *
+   * So: arriving with audio the server has not got yet keeps that screen — those
+   * bytes exist in exactly one place and are the user's to send or discard.
+   * Anything else — idle, a finished capture, a failure with nothing buffered —
+   * is cleared and a fresh recording is minted.
+   */
   useEffect(() => {
-    if (model.state === 'idle') void start(noteId);
+    const current = useCaptureStore.getState().model;
+    // Unsent audio: leave it on screen with its Send / Discard controls.
+    if (hasBufferedAudio(current)) return;
+    // A live recording this screen is being re-entered on.
+    if (isCaptureBusy(current)) return;
+    if (current.state !== 'idle') reset();
+    void start(noteId);
     // Intentionally not re-run on model changes: this arms the recording once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /*
+   * A finished capture belongs to the progress card from here on, so the
+   * machine is released as this screen goes away. Without it the terminal state
+   * outlives the screen and wedges the next recording.
+   */
+  useEffect(
+    () => () => {
+      if (useCaptureStore.getState().model.state === 'uploaded') {
+        useCaptureStore.getState().reset();
+      }
+    },
+    [],
+  );
 
   const leave = useCallback(() => {
     void navigate(ROUTES.home);
