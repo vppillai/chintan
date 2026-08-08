@@ -17,6 +17,29 @@ export interface ApiState {
   offline: boolean;
   /** Forces the next PATCH to return 409 once. */
   conflictOnce: boolean;
+  /** The hosted UI, as exercised by the sign-in and sign-out specs. */
+  auth: AuthState;
+}
+
+/**
+ * What the stubbed Cognito hosted UI saw.
+ *
+ * Recorded rather than merely answered, because the interesting assertions are
+ * about the *request*: that a PKCE challenge was sent, that the verifier came
+ * back on the exchange, that the logout named the client.
+ */
+export interface AuthState {
+  authorize: Record<string, string>[];
+  token: Record<string, string>[];
+  logout: Record<string, string>[];
+  /** Set to refuse the exchange, standing in for an expired or replayed code. */
+  rejectExchange: boolean;
+  /** Set to send the user back with `error=access_denied` instead of a code. */
+  denyLogin: boolean;
+  /** Whether biometric unlock is enrolled, which sign-out has to deal with. */
+  webauthnEnrolled: boolean;
+  /** Every DELETE /v1/auth/webauthn the app made. */
+  webauthnDisabled: number;
 }
 
 interface NoteRecord {
@@ -87,6 +110,15 @@ export function freshState(): ApiState {
     requests: [],
     offline: false,
     conflictOnce: false,
+    auth: {
+      authorize: [],
+      token: [],
+      logout: [],
+      rejectExchange: false,
+      denyLogin: false,
+      webauthnEnrolled: false,
+      webauthnDisabled: 0,
+    },
   };
 }
 
@@ -104,6 +136,9 @@ const SEGMENTS = {
     { id: 2, start: 8, end: 12, text: 'Ellis quoted nine hundred.' },
   ],
 };
+
+/** Must match `VITE_COGNITO_DOMAIN` in `playwright.config.ts`. */
+export const COGNITO_ORIGIN = 'https://cognito.e2e.test';
 
 /** What cleanup produced, and what became the note body. */
 const CLEANED =
@@ -161,8 +196,19 @@ function problem(route: Route, status: number, extra: Record<string, unknown> = 
 }
 
 export async function installApi(page: Page, state: ApiState): Promise<void> {
-  // A token set the client accepts, so no sign-in flow is needed.
+  /*
+   * A token set the client accepts, so no sign-in flow is needed.
+   *
+   * Seeded ONCE per tab, not on every document. An init script runs on every
+   * navigation, so an unconditional seed re-authenticated the app the moment
+   * anything navigated — which made sign-out untestable and, worse, made it
+   * look like it worked: the session was cleared, the redirect went to the
+   * hosted UI, and the app came back signed in because the fixture had just put
+   * the token back.
+   */
   await page.addInitScript(() => {
+    if (sessionStorage.getItem('e2e.auth.seeded')) return;
+    sessionStorage.setItem('e2e.auth.seeded', '1');
     localStorage.setItem(
       'chintan.tokens.v2',
       JSON.stringify({
@@ -319,7 +365,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
     if (path === '/v1/auth/webauthn/status') {
-      await json(route, { enrolled: false });
+      await json(route, { enrolled: state.auth.webauthnEnrolled });
+      return;
+    }
+    if (path === '/v1/auth/webauthn' && method === 'DELETE') {
+      state.auth.webauthnDisabled += 1;
+      state.auth.webauthnEnrolled = false;
+      await route.fulfill({ status: 204, body: '' });
       return;
     }
     if (path === '/v1/tags') {
@@ -328,6 +380,79 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     }
 
     await json(route, { items: [] });
+  });
+
+  /*
+   * The Cognito hosted UI, on its own origin as the real one is.
+   *
+   * `VITE_COGNITO_DOMAIN` is `https://cognito.e2e.test` under test, so the whole
+   * authorization-code round trip — a real cross-origin navigation out of the
+   * app and a real redirect back onto the base URL carrying the code — happens
+   * in the browser rather than being mocked at the module level. That is the
+   * only way to exercise the part that has to survive the document being
+   * destroyed and rebuilt.
+   */
+  await page.route(`${COGNITO_ORIGIN}/**`, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+
+    if (path === '/oauth2/authorize') {
+      const params = Object.fromEntries(url.searchParams);
+      state.auth.authorize.push(params);
+
+      // Cognito only ever returns to a registered callback URL, so the stub
+      // returns to whatever the app asked for and the spec asserts on it.
+      const back = new URL(params['redirect_uri'] ?? '/');
+      if (state.auth.denyLogin) {
+        back.searchParams.set('error', 'access_denied');
+        back.searchParams.set('error_description', 'User cancelled the sign-in.');
+      } else {
+        back.searchParams.set('code', `e2e-code-${String(state.auth.authorize.length)}`);
+        back.searchParams.set('state', params['state'] ?? '');
+      }
+      await route.fulfill({ status: 302, headers: { location: back.href }, body: '' });
+      return;
+    }
+
+    if (path === '/oauth2/token') {
+      const body = Object.fromEntries(new URLSearchParams(route.request().postData() ?? ''));
+      state.auth.token.push(body);
+
+      if (state.auth.rejectExchange) {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'invalid_grant' }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id_token: 'e2e-id-token',
+          access_token: 'e2e-access-token',
+          refresh_token: 'e2e-refresh-token',
+          expires_in: 3600,
+          token_type: 'Bearer',
+        }),
+      });
+      return;
+    }
+
+    if (path === '/logout') {
+      const params = Object.fromEntries(url.searchParams);
+      state.auth.logout.push(params);
+      await route.fulfill({
+        status: 302,
+        headers: { location: params['logout_uri'] ?? '/' },
+        body: '',
+      });
+      return;
+    }
+
+    await route.fulfill({ status: 404, body: '' });
   });
 
   // Presigned uploads and artifact downloads.
@@ -398,6 +523,29 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       },
       body: audio,
     });
+  });
+}
+
+/**
+ * Starts the page with no token, as a first-time visitor or someone who signed
+ * out has.
+ *
+ * Registered *after* `installApi`'s seed, and init scripts run in registration
+ * order, so this removes what that put there. Must be called before the first
+ * `page.goto`.
+ */
+export async function startSignedOut(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    sessionStorage.setItem('e2e.auth.seeded', '1');
+    localStorage.removeItem('chintan.tokens.v2');
+  });
+}
+
+/** The token set the app holds once a stubbed sign-in completes. */
+export async function storedTokens(page: Page): Promise<Record<string, unknown> | null> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('chintan.tokens.v2');
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
   });
 }
 

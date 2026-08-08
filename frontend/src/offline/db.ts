@@ -108,3 +108,22 @@ export function openChintanDB(): Promise<ChintanDatabase> {
 export function resetDatabaseHandle(): void {
   dbPromise = null;
 }
+
+/**
+ * Empties every store. Used by sign-out, and by nothing else.
+ *
+ * All three stores hold one person's data: audio they recorded, the index over
+ * it, and mutations queued against their notes. Leaving any of it behind after
+ * a sign-out would at best show the next person a previous user's recording,
+ * and at worst flush their queued edits under the new session's token.
+ */
+export async function clearAllLocalData(): Promise<void> {
+  const db = await openChintanDB();
+  const tx = db.transaction(['captureChunks', 'captures', 'mutations'], 'readwrite');
+  await Promise.all([
+    tx.objectStore('captureChunks').clear(),
+    tx.objectStore('captures').clear(),
+    tx.objectStore('mutations').clear(),
+    tx.done,
+  ]);
+}

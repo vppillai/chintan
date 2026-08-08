@@ -3,6 +3,8 @@ import { Outlet, useLocation } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
 import { sheetForPath } from '@/app/sheet.ts';
+import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
+import { useAuthGate } from '@/features/auth/useAuth.ts';
 import { ProgressCard } from '@/features/capture/ProgressCard.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
@@ -44,11 +46,34 @@ function announcementFor(pathname: string): string {
 export function AppShell() {
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
+  const auth = useAuthGate();
 
   useBackGuard();
   useRouteFocus(mainRef);
 
   const sheet = sheetForPath(location.pathname);
+
+  /*
+   * The gate is here, above the outlet, rather than per screen.
+   *
+   * Every screen's first act is an authenticated query, and the shell itself
+   * runs two more — the progress card polls `GET /v1/captures?status=pending`
+   * and the resume prompt offers a Send. Rendering any of that without a token
+   * is what produced a shell of 401s with nothing on screen explaining itself.
+   * One decision point means none of it can mount.
+   */
+  if (auth.phase !== 'signed-in') {
+    return (
+      <div className="app" data-sheet-state="collapsed" data-signed-out="true">
+        <header className="app__banner">
+          <span className="app__wordmark">Chintan</span>
+        </header>
+        <main id="main" ref={mainRef} tabIndex={-1} className="app__main" aria-label="Sign in">
+          <SignedOutScreen {...auth} />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <>

@@ -58,7 +58,16 @@ export default defineConfig({
       VITE_API_URL: 'http://127.0.0.1:4173/api',
       VITE_CLIENT_ID: 'e2e-client',
       VITE_USER_POOL_ID: 'e2e-pool',
-      VITE_COGNITO_DOMAIN: 'http://127.0.0.1:4173/cognito',
+      /*
+       * A different origin, as the real hosted UI is.
+       *
+       * It was a path on the app's own origin, which is not merely unrealistic:
+       * `sw.ts` claims every same-origin navigation, so the service worker
+       * intercepted the redirect to `/cognito/logout`, served the SPA shell for
+       * it, and the app landed on its own Not Found screen instead of Cognito.
+       * Playwright fulfils the route without DNS, so nothing is ever resolved.
+       */
+      VITE_COGNITO_DOMAIN: 'https://cognito.e2e.test',
       VITE_INSTANCE: 'e2e',
     },
   },

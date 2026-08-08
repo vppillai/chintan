@@ -608,6 +608,78 @@
   color: var(--color-ink);
 }
 
+/* Sign-out reads as consequential without inventing a red the palette has not
+   defined. The accent border is the same device the resume prompt uses. */
+.option--destructive {
+  border-color: var(--color-accent);
+  color: var(--color-ink);
+  font-weight: var(--font-weight-medium);
+}
+
+/* --------------------------------------------------------------------------
+   Signed out — the only screen that renders without a token
+   -------------------------------------------------------------------------- */
+
+.signed-out {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--space-4);
+  inline-size: 100%;
+  min-block-size: 60dvh;
+  max-inline-size: var(--layout-content-max);
+  margin-inline: auto;
+  padding: var(--space-8) var(--layout-gutter);
+  text-align: center;
+}
+
+.signed-out__title {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+.signed-out__hint {
+  font-size: var(--font-size-md);
+  color: var(--color-muted);
+}
+
+.signed-out__error {
+  inline-size: 100%;
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.signed-out__action {
+  inline-size: 100%;
+  max-inline-size: var(--layout-card-max);
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-3) var(--space-8);
+  background-color: var(--color-ink);
+  border: 1px solid var(--color-ink);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ground);
+}
+
+.signed-out__action[disabled] {
+  background-color: var(--color-raised);
+  border-color: var(--color-line-strong);
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.signed-out__note {
+  max-inline-size: var(--layout-card-max);
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
 /* --------------------------------------------------------------------------
    Capture
    -------------------------------------------------------------------------- */

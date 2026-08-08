@@ -7,6 +7,8 @@ import { Icon } from '@/components/Icon.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
 
+import { SignOutSetting } from '@/features/auth/SignOutSetting.tsx';
+
 import { BiometricSetting } from './BiometricSetting.tsx';
 
 const CLEANUP_LABELS: Record<CleanupMode, string> = {
@@ -231,6 +233,8 @@ export function SettingsScreen() {
       </section>
 
       <BiometricSetting />
+
+      <SignOutSetting />
 
       {isLoading && <p className="screen__count">Loading your settings…</p>}
 

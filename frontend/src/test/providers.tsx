@@ -56,8 +56,12 @@ export function defaultTestFetch(): typeof fetch {
   };
 }
 
-export function testApiContext(fetchImpl: typeof fetch = defaultTestFetch()): ApiContextValue {
-  const session = new Session(createMemoryTokenStore(TEST_TOKENS), {
+export function testApiContext(
+  fetchImpl: typeof fetch = defaultTestFetch(),
+  /** Pass `null` for a signed-out app, which is what the auth gate renders. */
+  tokens: TokenSet | null = TEST_TOKENS,
+): ApiContextValue {
+  const session = new Session(createMemoryTokenStore(tokens), {
     async refresh(current) {
       return current;
     },
