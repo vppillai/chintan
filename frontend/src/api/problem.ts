@@ -11,6 +11,17 @@ import type { ProblemWire } from './schema.ts';
 
 export const CORRELATION_HEADER = 'X-Correlation-Id';
 
+/**
+ * The `type` the API puts on a spend-cap 429.
+ *
+ * It has to be exact and it has to come from the backend, because the two 429s
+ * this API produces — a rate limit and a budget — share the title "Too Many
+ * Requests" and need opposite handling. `httperr.TypeSpendCapped` is the other
+ * end of this string; the contract fixtures fail if the two stop matching.
+ */
+export const SPEND_CAP_PROBLEM_TYPE =
+  'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#spend-capped';
+
 export type ApiErrorKind =
   /** Non-2xx carrying (or presumed to carry) a problem document. */
   | 'http'
@@ -107,7 +118,16 @@ export class ApiError extends Error {
    * precisely so the UI can explain it rather than saying "something failed".
    */
   get isSpendCapped(): boolean {
-    return this.status === 429 && /spend|cap|budget/i.test(`${this.problemType} ${this.title}`);
+    if (this.status !== 429) return false;
+    // The machine-readable discriminator first and exactly. This is the branch
+    // the real API takes: its spend-cap body is titled "Too Many Requests" like
+    // every other 429, and only `type` tells them apart.
+    if (this.problemType === SPEND_CAP_PROBLEM_TYPE) return true;
+    // A body with no such type is still read for the words, because a gateway
+    // or an older deploy can produce one. It is a fallback, not the rule:
+    // classifying by prose is what made a reworded message a behaviour change
+    // in v1.
+    return /spend|cap|budget/i.test(`${this.problemType} ${this.title}`);
   }
 
   /** True when the client is offline or the request never left the device. */

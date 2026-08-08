@@ -61,6 +61,18 @@ type Problem struct {
 // a live endpoint, which RFC 9457 explicitly permits.
 const TypeURI = "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#"
 
+// TypeSpendCapped identifies the daily provider spend cap.
+//
+// It is the one 429 this API produces that a client must not retry: the other
+// is a rate limit, which backing off does fix. RFC 9457 makes `type` the
+// machine-readable discriminator precisely so a client does not have to read
+// the title, and a client that reads the title is one rewording away from
+// retrying a request that can never succeed.
+//
+// The frontend matches this exact string. Changing it changes the frontend's
+// behaviour, and the contract fixtures are what make that visible.
+const TypeSpendCapped = TypeURI + "spend-capped"
+
 // Write emits a problem response. It is the only writer of a non-2xx body.
 func Write(w http.ResponseWriter, r *http.Request, p Problem) {
 	if p.Type == "" {

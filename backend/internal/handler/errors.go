@@ -69,7 +69,13 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrSpendCapped):
 		// Distinct from a generic failure so the UI can explain a budget
 		// decision instead of inviting a retry that will fail the same way.
-		httperr.TooManyRequests(w, r, "the daily provider spend cap has been reached", 0)
+		//
+		// The distinction lives in `type`, not in the title. Both 429s this API
+		// produces say "Too Many Requests", and the client's rule — back off on
+		// a rate limit, stop on a budget — cannot be derived from prose.
+		capped := httperr.New(http.StatusTooManyRequests, "the daily provider spend cap has been reached")
+		capped.Type = httperr.TypeSpendCapped
+		httperr.Write(w, r, capped)
 
 	// ---- not configured on this instance ---------------------------------
 	case errors.Is(err, service.ErrCaptureQueueUnavailable):

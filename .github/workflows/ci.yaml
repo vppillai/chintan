@@ -216,6 +216,84 @@ jobs:
         working-directory: frontend
         run: bun run build
 
+  contract:
+    name: Frontend/backend contract
+    runs-on: ubuntu-latest
+    # The frontend and the backend were written in parallel, by different
+    # authors, from docs/api/openapi.yaml — and the frontend's wire types are
+    # hand-written from it. Every other job checks one side against the
+    # document. This is the only job that checks the two implementations
+    # against each other, in both directions, and it needs both toolchains at
+    # once, which is why it is its own job rather than a step in either.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      # 1. Record what the app sends, by driving the real ChintanApi against a
+      #    stub fetch. Not a transcription of the client — the client itself.
+      - name: Record the frontend's requests
+        working-directory: frontend
+        run: bun run vitest run src/api/contract-requests.test.ts
+
+      # 2. Replay those requests through the real Go router, and capture one
+      #    response per wire shape as a typed TypeScript literal. decodeJSON
+      #    rejects unknown fields, so a field renamed on the frontend alone is a
+      #    400 here.
+      - name: Replay them against the router and capture its responses
+        working-directory: backend
+        run: CHINTAN_UPDATE_FIXTURES=1 go test -count=1 ./internal/handler/ -run Contract -v
+
+      # 3. Compile the captured responses against the hand-written types. An
+      #    annotated object literal is checked for excess properties, so a field
+      #    the backend added, renamed or retyped fails here.
+      - name: Typecheck the frontend against those responses
+        working-directory: frontend
+        run: bun run typecheck
+
+      # 4. Everything the type system cannot see: enum completeness, the
+      #    {items, cursor} envelope, x-amz-tagging surviving into the upload,
+      #    and problem+json parsing through the app's own reader.
+      - name: Assert the runtime invariants
+        working-directory: frontend
+        run: bun run vitest run src/api/contract.test.ts
+
+      # 5. The fixtures are reviewable artefacts. A shape change that nobody
+      #    committed is a shape change nobody read.
+      - name: The committed fixtures are the ones the two sides produce
+        run: |
+          if ! git diff --exit-code -- frontend/src/api/__fixtures__/; then
+            echo "::error::The contract fixtures are stale. Run 'bun run test' in frontend/ and"
+            echo "::error::'CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract' in backend/, then commit."
+            exit 1
+          fi
+
+      # 6. A contract check nobody has watched fail is a contract check nobody
+      #    should trust. This renames one field on the Go side and nowhere else,
+      #    and asserts the frontend refuses to compile against it.
+      - name: Prove a one-sided field rename is caught
+        run: |
+          restore() {
+            git checkout -- backend/internal/handler/wire.go frontend/src/api/__fixtures__/
+          }
+          trap restore EXIT
+          sed -i 's/`json:"items"`/`json:"entries"`/' backend/internal/handler/wire.go
+          (cd backend && CHINTAN_UPDATE_FIXTURES=1 go test -count=1 ./internal/handler/ \
+            -run TestContractResponsesAreWhatTheFrontendTypesDeclare)
+          if (cd frontend && bun run typecheck); then
+            echo "::error::The backend renamed Page.items to Page.entries and the frontend still compiled."
+            exit 1
+          fi
+          echo "the rename was caught, as it must be"
+
   e2e:
     name: Playwright
     runs-on: ubuntu-latest

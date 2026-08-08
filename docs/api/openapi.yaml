@@ -655,6 +655,12 @@ components:
       description: |
         The daily provider spend cap was reached. Distinct from a generic
         failure so the UI can explain it.
+
+        The body's `type` is
+        `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#spend-capped`.
+        That URI is the discriminator, not the title: the rate-limit 429 and
+        this one both read "Too Many Requests", and only one of them may be
+        retried.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -750,6 +756,13 @@ components:
         version: { type: integer }
         archived: { type: boolean }
         purge_after: { type: string, format: date-time, nullable: true }
+        verbatim:
+          type: boolean
+          description: |
+            Cleanup is bypassed for this note. Settable through `NoteUpdate` and
+            returned on every read, because the toggle has to render the state
+            it is in. Declared here only after the frontend↔backend contract
+            fixtures caught the API sending a field this document did not list.
 
     NoteDetail:
       allOf:
@@ -912,6 +925,15 @@ components:
       properties:
         confidence: { type: number, minimum: 0, maximum: 1 }
         auto_selected: { type: boolean }
+        auto_select_id:
+          type: string
+          nullable: true
+          description: |
+            The note the router picked when it was confident enough to pick one
+            — the same fact `auto_selected` reports as a boolean. The routing
+            worker reads it. Declared here only after the frontend↔backend
+            contract fixtures caught the API sending a field this document did
+            not list.
         candidates:
           type: array
           items:

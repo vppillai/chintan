@@ -77,6 +77,14 @@ export interface NoteWire {
   version: number;
   archived: boolean;
   purge_after?: string | null;
+  /**
+   * Cleanup is bypassed for this note. Writable through `NoteUpdateWire` and
+   * returned on every read — the toggle has to render the state it is in.
+   *
+   * Present here because the contract fixtures proved the backend sends it. The
+   * OpenAPI document listed it on `NoteUpdate` only.
+   */
+  verbatim?: boolean;
 }
 
 export interface NoteDetailWire extends NoteWire {
@@ -210,6 +218,14 @@ export interface MatchResponseWire {
   confidence: number;
   auto_selected?: boolean;
   candidates: MatchCandidateWire[];
+  /**
+   * The note the router picked when it was confident enough to pick one, which
+   * is the same fact `auto_selected` reports as a boolean.
+   *
+   * The backend has always sent it and neither the OpenAPI document nor this
+   * file declared it; the contract fixtures are what surfaced that.
+   */
+  auto_select_id?: string | null;
 }
 
 export type SearchField = 'title' | 'alias' | 'tag' | 'body' | 'transcript';
