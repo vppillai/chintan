@@ -262,6 +262,17 @@ else
             unverified "permissions boundary: cannot read the calling role (iam:GetRole denied, or the principal is a user rather than a role)"
         fi
 
+        # Attached is not the same as correct. The boundary is the one guardrail
+        # CloudFormation does not own — bootstrap-agent.sh applies it, and a
+        # deploy never runs bootstrap-agent.sh — so the deployed ceiling can
+        # silently fall behind the template's needs while remaining firmly
+        # attached. That is how the worker's sqs:ReceiveMessage came to be void
+        # on a role that visibly held it.
+        info "the deployed boundary is the one in this repository (§9.8)"
+        if ! scripts/check-boundary-drift.sh --region "${CHINTAN_REGION:-${AWS_REGION:-us-west-2}}"; then
+            violation "the deployed permissions boundary does not match infrastructure/agent-policies/boundary.json — see the diff and remediation above (scripts/check-boundary-drift.sh)"
+        fi
+
         info "every role created by this project carries the boundary (§9.8)"
         while IFS= read -r role; do
             [ -n "$role" ] || continue

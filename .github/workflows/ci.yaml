@@ -146,6 +146,14 @@ jobs:
       # is a guardrail check nobody should trust.
       - name: guardrails-check --self-test
         run: scripts/guardrails-check.sh --self-test
+      # The live half of the boundary check needs credentials this job does not
+      # have, and runs from guardrails-check.sh's remote group wherever they
+      # exist. What runs here is its detector, against local fixtures: an
+      # unmodified document, a reordered-but-identical one, and one whose
+      # ceiling is missing sqs:* — the drift that made the worker's
+      # sqs:ReceiveMessage void on a role that visibly held it.
+      - name: check-boundary-drift --self-test
+        run: scripts/check-boundary-drift.sh --self-test
 
   log-hygiene:
     name: No user content in logs
