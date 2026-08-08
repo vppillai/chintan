@@ -104,7 +104,34 @@ export class RecorderController {
     return this.session?.peaks.recent(count) ?? [];
   }
 
+  /**
+   * True once `cancel()` or `stop()` has been asked for.
+   *
+   * Cleared at the very top of `start()`, before any await, so a cancel raised
+   * *during* microphone acquisition is still visible when the promise resolves.
+   * It used to be cleared afterwards, which erased the cancel and started the
+   * recorder anyway: the screen said "Starting the microphone…", the user tapped
+   * Cancel and went Home, and the track stayed live with the OS indicator on and
+   * chunks piling up in IndexedDB that nothing would ever list or prune.
+   */
+  private cancelled(): boolean {
+    return this.stopping;
+  }
+
+  /** Releases a stream acquired for a recording that is no longer wanted. */
+  private static discardStream(stream: MediaStream): void {
+    for (const track of stream.getTracks()) {
+      try {
+        track.stop();
+      } catch {
+        /* Already stopped. */
+      }
+    }
+  }
+
   async start(localId: string): Promise<void> {
+    this.stopping = false;
+
     if (!this.deps.isSupported()) {
       this.emit({ type: 'unsupported' });
       return;
@@ -133,9 +160,15 @@ export class RecorderController {
       return;
     }
 
+    // The cancel that arrived while `getUserMedia` was pending wins. Nothing
+    // has been attached to this stream yet, so releasing it is the whole job.
+    if (this.cancelled()) {
+      RecorderController.discardStream(stream);
+      return;
+    }
+
     this.stream = stream;
     this.chunkIndex = 0;
-    this.stopping = false;
     this.session = {
       localId,
       encoder,
@@ -189,7 +222,16 @@ export class RecorderController {
       return;
     }
 
-    this.wakeLock = await this.deps.acquireWakeLock();
+    // The wake lock is the second await, and a cancel can land across it too:
+    // `cancel()` has already torn everything down by then, so assigning the
+    // lock here would leave the screen awake for the rest of the session.
+    const wakeLock = await this.deps.acquireWakeLock();
+    if (this.cancelled()) {
+      void wakeLock?.release();
+      this.teardown();
+      return;
+    }
+    this.wakeLock = wakeLock;
     this.startTicking();
     this.emit({ type: 'streamReady', now: this.deps.now() });
   }

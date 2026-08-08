@@ -329,6 +329,64 @@ describe('pause, resume, stop, cancel', () => {
     expect(kinds(h.events).filter((kind) => kind === 'stop')).toHaveLength(1);
   });
 
+  it('a cancel during microphone acquisition stops the stream and never records', async () => {
+    /*
+     * First use, a permission prompt, a cold radio, or a Bluetooth handover
+     * makes acquisition slow. The screen says "Starting the microphone…" with a
+     * Cancel button.
+     *
+     * `stopping` was cleared *after* the await, so the cancel was erased when
+     * the promise resolved and the recorder started anyway: the track stayed
+     * `readyState=live`, the OS recording indicator stayed on, and chunks kept
+     * growing in IndexedDB that nothing could ever list or prune, because
+     * `discardCapture` had already run and there was no `captures` row.
+     */
+    let resolveStream: (stream: MediaStream) => void = () => {};
+    const late = new FakeStream();
+    const h = harness({
+      requestMicrophone: () =>
+        new Promise<MediaStream>((resolve) => {
+          resolveStream = resolve;
+        }),
+    });
+
+    const starting = h.start();
+    h.controller.cancel();
+    resolveStream(late as unknown as MediaStream);
+    await starting;
+
+    expect(late.track.stopped, 'the microphone track was left live').toBe(true);
+    expect(kinds(h.events)).not.toContain('streamReady');
+    expect(h.recorder.startCalls, 'the recorder was started after a cancel').toBe(0);
+    expect(h.persisted).toEqual([]);
+  });
+
+  it('a cancel while the wake lock is being acquired releases it', async () => {
+    let resolveLock: (lock: { release: () => Promise<void> }) => void = () => {};
+    let released = false;
+    const h = harness({
+      acquireWakeLock: () =>
+        new Promise((resolve) => {
+          resolveLock = resolve;
+        }),
+    });
+
+    const starting = h.start();
+    // Let the microphone resolve and the recorder start, so the cancel lands
+    // across the *second* await rather than the first.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    h.controller.cancel();
+    resolveLock({
+      async release() {
+        released = true;
+      },
+    });
+    await starting;
+
+    expect(released, 'the screen was left awake for the rest of the session').toBe(true);
+    expect(kinds(h.events)).not.toContain('streamReady');
+  });
+
   it('cancel tears down without emitting a finalised recording', async () => {
     const h = harness();
     await h.start();
