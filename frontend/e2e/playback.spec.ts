@@ -155,3 +155,50 @@ test('an edit conflict is surfaced rather than clobbering', async ({ page, api }
   await expect(page.getByRole('button', { name: 'Use the newer version' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Keep my edits' })).toBeVisible();
 });
+
+/**
+ * Copying a note's text out in one action.
+ *
+ * The owner asked for this: it is a voice-capture app whose point is getting a
+ * thought out and using it elsewhere, and the only route was select-all inside
+ * a textarea, which one-handed on a phone is miserable.
+ */
+test('copies the note as its title and body', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  await page.getByRole('button', { name: 'Copy note' }).click();
+
+  // A copy with no confirmation cannot be told from one that failed.
+  await expect(page.getByText('Copied')).toBeVisible();
+
+  const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+  // Title first: a body pasted elsewhere with no title loses what it was about.
+  expect(clipboard).toContain('Roof repair');
+  expect(clipboard).toContain('Ridge tiles on the south slope have slipped.');
+  expect(clipboard.indexOf('Roof repair')).toBeLessThan(
+    clipboard.indexOf('Ridge tiles'),
+  );
+});
+
+test('copies the transcript separately, and names which one', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/notes/roof-repair');
+
+  // Three different things could be meant by "copy" on this screen, so no
+  // control is allowed to be called just "Copy".
+  await expect(page.getByRole('button', { name: 'Copy note' })).toBeVisible();
+  await page.getByRole('button', { name: 'Copy transcript' }).click();
+
+  const raw = await page.evaluate(() => navigator.clipboard.readText());
+  expect(raw).toContain('Get two quotes before the autumn rain.');
+  // The raw transcript, not the rewritten note body.
+  expect(raw).not.toContain('Ellis quoted nine hundred.\n\n');
+
+  await page.getByRole('button', { name: 'Cleaned' }).click();
+  await page.getByRole('button', { name: 'Copy cleaned text' }).click();
+
+  const cleaned = await page.evaluate(() => navigator.clipboard.readText());
+  expect(cleaned).toContain('Ellis quoted nine hundred');
+});

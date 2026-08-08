@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 
+import { CopyButton } from '@/components/CopyButton.tsx';
+
 import { activeSegmentIndex, formatTime, type TranscriptSegment } from './artifacts.ts';
 
 /**
@@ -93,6 +95,21 @@ export function TranscriptPanel({
             </button>
           </div>
         )}
+
+        {/*
+          Named for the view it copies, because "copy" on this screen could mean
+          three different things — the note, what was said, or the rewrite — and
+          a button that might mean any of them means none of them.
+        */}
+        <CopyButton
+          className="transcript__copy"
+          label={effectiveView === 'raw' ? 'Copy transcript' : 'Copy cleaned text'}
+          text={() =>
+            effectiveView === 'raw'
+              ? segments.map((segment) => segment.text).join('\n')
+              : cleanedText
+          }
+        />
       </div>
 
       {/*

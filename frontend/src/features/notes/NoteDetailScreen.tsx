@@ -7,6 +7,7 @@ import { ApiError } from '@/api/problem.ts';
 import { useNote } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { CopyButton } from '@/components/CopyButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -141,6 +142,27 @@ export function NoteDetailScreen() {
         }}
         onBlur={() => void editor.saveNow()}
       />
+
+      {/*
+        Directly under the text it copies, where the eye already is — and a
+        clear distance above `NoteActions`, which holds Archive and Delete
+        forever. A copy control adjacent to an irreversible one is how a stray
+        thumb destroys a note it meant to keep.
+
+        Title first, then the body: a body pasted somewhere else with no title
+        loses what it was about, and re-typing that is exactly the friction this
+        is meant to remove.
+      */}
+      <div className="note-copy">
+        <CopyButton
+          label="Copy note"
+          text={() =>
+            [editor.model.draft.title.trim(), editor.model.draft.body.trim()]
+              .filter(Boolean)
+              .join('\n\n')
+          }
+        />
+      </div>
 
       <TagEditor
         label="Tags"
