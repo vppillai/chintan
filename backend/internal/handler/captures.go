@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -107,6 +108,8 @@ func (h *CapturesHandler) setCaptureTarget(w http.ResponseWriter, r *http.Reques
 	capture, err := h.captureService.SetCaptureTarget(r.Context(), userID, captureID, req.NoteID, req.NewNoteTitle)
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrNoteArchived):
+			httperr.WriteJSON(w, err, http.StatusConflict)
 		case strings.Contains(err.Error(), "not found"):
 			w.WriteHeader(http.StatusNotFound)
 		case strings.Contains(err.Error(), "already targets"):
@@ -198,6 +201,10 @@ func (h *CapturesHandler) createCapture(w http.ResponseWriter, r *http.Request, 
 
 	capture, uploadURL, err := h.captureService.CreateCapture(r.Context(), userID, req.NoteID, req.ContentType)
 	if err != nil {
+		if errors.Is(err, service.ErrNoteArchived) {
+			httperr.WriteJSON(w, err, http.StatusConflict)
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -219,6 +226,10 @@ func (h *CapturesHandler) createCapture(w http.ResponseWriter, r *http.Request, 
 func (h *CapturesHandler) completeCapture(w http.ResponseWriter, r *http.Request, userID, captureID string) {
 	capture, err := h.captureService.CompleteCapture(r.Context(), userID, captureID)
 	if err != nil {
+		if errors.Is(err, service.ErrNoteArchived) {
+			httperr.WriteJSON(w, err, http.StatusConflict)
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			w.WriteHeader(http.StatusNotFound)
 			return

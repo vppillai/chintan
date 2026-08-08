@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -34,19 +35,28 @@ func (h *NotesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case path == "" || path == "/":
-		// /v1/notes
 		h.handleNotesList(w, r, userID)
 	case path == "/match":
-		// /v1/notes/match
-		if r.Method != "POST" {
+		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		h.handleNotesMatch(w, r, userID)
 	case strings.HasPrefix(path, "/") && len(path) > 1:
-		// /v1/notes/{id}
-		noteID := strings.TrimPrefix(path, "/")
-		h.handleNoteDetail(w, r, userID, noteID)
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 2 && parts[1] == "restore" {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			h.restoreNote(w, r, userID, parts[0])
+			return
+		}
+		if len(parts) == 1 {
+			h.handleNoteDetail(w, r, userID, parts[0])
+			return
+		}
+		http.NotFound(w, r)
 	default:
 		http.NotFound(w, r)
 	}
@@ -54,9 +64,9 @@ func (h *NotesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *NotesHandler) handleNotesList(w http.ResponseWriter, r *http.Request, userID string) {
 	switch r.Method {
-	case "GET":
+	case http.MethodGet:
 		h.listNotes(w, r, userID)
-	case "POST":
+	case http.MethodPost:
 		h.createNote(w, r, userID)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -65,11 +75,11 @@ func (h *NotesHandler) handleNotesList(w http.ResponseWriter, r *http.Request, u
 
 func (h *NotesHandler) handleNoteDetail(w http.ResponseWriter, r *http.Request, userID, noteID string) {
 	switch r.Method {
-	case "GET":
+	case http.MethodGet:
 		h.getNote(w, r, userID, noteID)
-	case "PATCH":
+	case http.MethodPatch:
 		h.updateNote(w, r, userID, noteID)
-	case "DELETE":
+	case http.MethodDelete:
 		h.deleteNote(w, r, userID, noteID)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -77,7 +87,15 @@ func (h *NotesHandler) handleNoteDetail(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *NotesHandler) listNotes(w http.ResponseWriter, r *http.Request, userID string) {
-	notes, err := h.notesService.ListNotes(r.Context(), userID)
+	var (
+		notes interface{}
+		err   error
+	)
+	if r.URL.Query().Get("status") == "archived" {
+		notes, err = h.notesService.ListArchivedNotes(r.Context(), userID)
+	} else {
+		notes, err = h.notesService.ListNotes(r.Context(), userID)
+	}
 	if err != nil {
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)
 		return
@@ -145,6 +163,10 @@ func (h *NotesHandler) updateNote(w http.ResponseWriter, r *http.Request, userID
 
 	note, err := h.notesService.UpdateNote(r.Context(), userID, noteID, updates)
 	if err != nil {
+		if errors.Is(err, service.ErrNoteArchived) {
+			httperr.WriteJSON(w, err, http.StatusConflict)
+			return
+		}
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)
 		return
 	}
@@ -154,13 +176,33 @@ func (h *NotesHandler) updateNote(w http.ResponseWriter, r *http.Request, userID
 }
 
 func (h *NotesHandler) deleteNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	err := h.notesService.DeleteNote(r.Context(), userID, noteID)
+	var err error
+	if r.URL.Query().Get("permanent") == "true" {
+		err = h.notesService.PermanentlyDeleteNote(r.Context(), userID, noteID)
+		if errors.Is(err, service.ErrNoteNotArchived) {
+			httperr.BadRequest(w, err.Error())
+			return
+		}
+	} else {
+		err = h.notesService.DeleteNote(r.Context(), userID, noteID)
+	}
 	if err != nil {
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *NotesHandler) restoreNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
+	note, err := h.notesService.RestoreNote(r.Context(), userID, noteID)
+	if err != nil {
+		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(note)
 }
 
 func (h *NotesHandler) handleNotesMatch(w http.ResponseWriter, r *http.Request, userID string) {

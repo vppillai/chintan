@@ -545,3 +545,115 @@ func TestCORSHandling(t *testing.T) {
 		}
 	})
 }
+
+func TestNotesArchiveHTTP(t *testing.T) {
+	store := repository.NewMemoryStore()
+	objects := repository.NewMemoryObjects()
+	notesService := service.NewNotesService(store, objects)
+	settingsService := service.NewSettingsService(store)
+	captureService := service.NewCaptureService(store, objects, nil, nil)
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+
+	create := func(title string) model.NoteIndex {
+		t.Helper()
+		body, _ := json.Marshal(map[string]string{"title": title})
+		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 201 {
+			t.Fatalf("create: %d %s", w.Code, w.Body.String())
+		}
+		var note model.NoteIndex
+		json.Unmarshal(w.Body.Bytes(), &note)
+		return note
+	}
+
+	t.Run("archive list restore and permanent", func(t *testing.T) {
+		note := create("Archive Me")
+
+		req := httptest.NewRequest("DELETE", "/v1/notes/"+note.ID, nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 204 {
+			t.Fatalf("archive status %d", w.Code)
+		}
+
+		req = httptest.NewRequest("GET", "/v1/notes", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		var active []model.NoteIndex
+		json.Unmarshal(w.Body.Bytes(), &active)
+		for _, n := range active {
+			if n.ID == note.ID {
+				t.Fatal("archived note in active list")
+			}
+		}
+
+		req = httptest.NewRequest("GET", "/v1/notes?status=archived", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		var archived []model.NoteIndex
+		json.Unmarshal(w.Body.Bytes(), &archived)
+		found := false
+		for _, n := range archived {
+			if n.ID == note.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("note missing from archived list")
+		}
+
+		req = httptest.NewRequest("POST", "/v1/notes/"+note.ID+"/restore", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 200 {
+			t.Fatalf("restore status %d", w.Code)
+		}
+
+		req = httptest.NewRequest("DELETE", "/v1/notes/"+note.ID+"?permanent=true", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 400 {
+			t.Fatalf("permanent while active want 400 got %d", w.Code)
+		}
+
+		req = httptest.NewRequest("DELETE", "/v1/notes/"+note.ID, nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		req = httptest.NewRequest("DELETE", "/v1/notes/"+note.ID+"?permanent=true", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 204 {
+			t.Fatalf("permanent status %d", w.Code)
+		}
+	})
+
+	t.Run("PATCH archived returns 409", func(t *testing.T) {
+		note := create("Lock Me")
+		req := httptest.NewRequest("DELETE", "/v1/notes/"+note.ID, nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		body, _ := json.Marshal(map[string]string{"title": "Nope"})
+		req = httptest.NewRequest("PATCH", "/v1/notes/"+note.ID, bytes.NewReader(body))
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		req.Header.Set("Content-Type", "application/json")
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != 409 {
+			t.Fatalf("want 409 got %d body %s", w.Code, w.Body.String())
+		}
+	})
+}
