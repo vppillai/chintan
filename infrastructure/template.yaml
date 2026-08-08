@@ -208,8 +208,20 @@ Resources:
           KeyType: RANGE
       # gsi1pk = TENANT#<id>#NOTE#<noteId>, gsi1sk = CAPTURE#<createdAt>.
       # Turns note -> captures into a Query instead of a partition scan with
-      # client-side filtering. INCLUDE, not ALL: the projection carries exactly
-      # what the capture list renders, so the index does not duplicate bodies.
+      # client-side filtering.
+      #
+      # INCLUDE, not ALL. ALL would project `data`, the opaque JSON blob that is
+      # by far the largest attribute on a capture item, doubling its storage and
+      # pulling it over the wire on every list — which is the exact cost the
+      # projection work exists to remove. The set below is everything a capture
+      # list renders plus every S3 key a cascade delete has to unlink, which is
+      # the complete read; nothing here needs a second GetItem.
+      #
+      # Get this right now. Changing a GSI projection is not an update: the index
+      # must be deleted and rebuilt, which on a populated table is an outage of
+      # the note detail view. The keys are listed even where the model marks them
+      # omitempty, because an unused projected attribute costs nothing when the
+      # attribute is absent, and a missing one costs an index rebuild.
       GlobalSecondaryIndexes:
         - IndexName: gsi1
           KeySchema:
@@ -220,13 +232,19 @@ Resources:
           Projection:
             ProjectionType: INCLUDE
             NonKeyAttributes:
+              - capture_id
+              - note_id
               - status
               - created_at
               - appended_at
               - duration_ms
+              - version
               - segments_key
               - peaks_key
-              - version
+              - audio_key
+              - raw_key
+              - routed_key
+              - clean_key
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       TimeToLiveSpecification:
@@ -668,11 +686,61 @@ Resources:
         - Key: Application
           Value: Chintan
 
+  # ---------------------------------------------------------------------------
+  # Versions and the `live` alias — the cutover point, and the reason rollback
+  # means anything.
+  #
+  # CloudFormation stages new code on the function. Nothing serves it until the
+  # `live` alias moves, which scripts/deploy.sh does once the change set has
+  # succeeded. Rollback is then one `lambda update-alias` back to the previous
+  # version, with no CloudFormation operation and no rebuild.
+  #
+  # These versions are published once, at stack create, purely so each alias has
+  # a legal target: an alias may not point at $LATEST. They are deliberately NOT
+  # tied to LambdaCodeKey. If CloudFormation republished and re-pointed the alias
+  # on every deploy, the "previous version" deploy.sh captures for the rollback
+  # command would already be the new code, and rollback would be a no-op that
+  # looked like a success.
+  #
+  # The corollary: a bare `aws cloudformation deploy` updates the code without
+  # putting it in front of traffic. That is the intended two-phase behaviour, not
+  # an oversight — deploy.sh performs the second phase.
+  # ---------------------------------------------------------------------------
+  ApiLambdaInitialVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref ApiLambdaFunction
+      Description: Initial version, so the live alias has a target at stack create.
+
+  ApiLambdaLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref ApiLambdaFunction
+      Name: live
+      FunctionVersion: !GetAtt ApiLambdaInitialVersion.Version
+      Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
+
+  WorkerLambdaInitialVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref WorkerLambdaFunction
+      Description: Initial version, so the live alias has a target at stack create.
+
+  WorkerLambdaLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref WorkerLambdaFunction
+      Name: live
+      FunctionVersion: !GetAtt WorkerLambdaInitialVersion.Version
+      Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
+
   CaptureQueueEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
       EventSourceArn: !GetAtt CaptureQueue.Arn
-      FunctionName: !GetAtt WorkerLambdaFunction.Arn
+      # The alias, not the function: a rollback that leaves the worker on the
+      # bad version has rolled back half the system.
+      FunctionName: !Ref WorkerLambdaLiveAlias
       Enabled: true
       # One capture per invocation: a batch failure must not redeliver captures
       # that already appended.
@@ -772,7 +840,10 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambdaFunction.Arn}/invocations'
+      # The alias ARN, not the function ARN. Pointed at the bare function, the
+      # alias would be a record of what was deployed rather than a pointer to
+      # what is serving, and moving it back would roll nothing back.
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambdaLiveAlias}/invocations'
       PayloadFormatVersion: '2.0'
 
   # Route for health check (no auth)
@@ -842,10 +913,13 @@ Resources:
         Application: Chintan
 
   # Lambda Permission for API Gateway
+  # Granted on the alias, because a qualified invocation is authorised against
+  # the qualified resource. A permission on the bare function would not be
+  # consulted at all, and the gateway would get 403 on every request.
   LambdaApiPermission:
     Type: AWS::Lambda::Permission
     Properties:
-      FunctionName: !Ref ApiLambdaFunction
+      FunctionName: !Ref ApiLambdaLiveAlias
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*'
@@ -1149,3 +1223,15 @@ Outputs:
     Value: !Ref AlarmTopic
     Export:
       Name: !Sub '${AWS::StackName}-AlarmTopicArn'
+
+  ApiFunctionLiveAliasArn:
+    Description: Alias the API Gateway integration invokes; move it to roll back
+    Value: !Ref ApiLambdaLiveAlias
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiFunctionLiveAliasArn'
+
+  WorkerFunctionLiveAliasArn:
+    Description: Alias the capture queue invokes; move it to roll back
+    Value: !Ref WorkerLambdaLiveAlias
+    Export:
+      Name: !Sub '${AWS::StackName}-WorkerFunctionLiveAliasArn'

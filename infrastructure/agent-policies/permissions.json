@@ -275,13 +275,16 @@
       "Resource": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/chintan/*"
     },
     {
-      "Sid": "PassRoleToLambdaOnly",
+      "Sid": "PassRoleToLambdaAndCfnOnly",
       "Effect": "Allow",
       "Action": "iam:PassRole",
       "Resource": "arn:aws:iam::ACCOUNT_ID:role/chintan-*",
       "Condition": {
         "StringEquals": {
-          "iam:PassedToService": "lambda.amazonaws.com"
+          "iam:PassedToService": [
+            "lambda.amazonaws.com",
+            "cloudformation.amazonaws.com"
+          ]
         }
       }
     }
