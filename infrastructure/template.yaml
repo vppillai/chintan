@@ -713,6 +713,13 @@ Resources:
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          # Both halves are required. The service verifies tokens itself rather
+          # than trusting the gateway authorizer, and it builds the JWKS issuer
+          # URL from the region and the pool id — so with the client id alone it
+          # fails closed at init with "auth: issuer is required" and every
+          # request 500s. Fail-closed is right; shipping only half the config was
+          # not.
+          USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
           TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
@@ -756,6 +763,13 @@ Resources:
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          # Both halves are required. The service verifies tokens itself rather
+          # than trusting the gateway authorizer, and it builds the JWKS issuer
+          # URL from the region and the pool id — so with the client id alone it
+          # fails closed at init with "auth: issuer is required" and every
+          # request 500s. Fail-closed is right; shipping only half the config was
+          # not.
+          USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
           TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
