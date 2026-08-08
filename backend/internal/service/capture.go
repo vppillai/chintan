@@ -341,17 +341,21 @@ func (s *CaptureService) decideTarget(ctx context.Context, userID, transcript st
 		return provider.RouteDecision{}, fmt.Errorf("failed to list notes: %w", err)
 	}
 
-	// Most recently touched notes are the likeliest destinations.
-	sort.Slice(notes, func(i, j int) bool { return notes[i].UpdatedAt > notes[j].UpdatedAt })
-	if len(notes) > maxRouteCandidates {
-		notes = notes[:maxRouteCandidates]
+	active := make([]model.NoteIndex, 0, len(notes))
+	for _, n := range notes {
+		if NoteIsActive(n) {
+			active = append(active, n)
+		}
 	}
 
-	candidates := make([]routing.Candidate, 0, len(notes))
-	for _, n := range notes {
-		if !NoteIsActive(n) {
-			continue
-		}
+	// Most recently touched notes are the likeliest destinations.
+	sort.Slice(active, func(i, j int) bool { return active[i].UpdatedAt > active[j].UpdatedAt })
+	if len(active) > maxRouteCandidates {
+		active = active[:maxRouteCandidates]
+	}
+
+	candidates := make([]routing.Candidate, 0, len(active))
+	for _, n := range active {
 		candidates = append(candidates, routing.Candidate{
 			NoteID:  n.ID,
 			Title:   n.Title,

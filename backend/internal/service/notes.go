@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -348,24 +349,31 @@ func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID
 
 // hardDeleteNote performs the actual deletion (used by PermanentlyDeleteNote and purgeExpired)
 func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
-	// Delete associated captures and their S3 objects
-	captures, _ := s.store.ListCapturesByNote(ctx, userID, noteID)
-	for _, c := range captures {
-		// Delete capture S3 objects
-		for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey} {
-			if key != "" {
-				_ = s.objects.Delete(ctx, key)
+	captures, err := s.store.ListCapturesByNote(ctx, userID, noteID)
+	if err != nil {
+		log.Printf("hardDeleteNote: ListCapturesByNote failed userID=%s noteID=%s: %v", userID, noteID, err)
+	} else {
+		for _, c := range captures {
+			for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey} {
+				if key != "" {
+					if err := s.objects.Delete(ctx, key); err != nil {
+						log.Printf("hardDeleteNote: objects.Delete failed userID=%s noteID=%s captureID=%s key=%s: %v", userID, noteID, c.ID, key, err)
+					}
+				}
+			}
+			if err := s.store.DeleteCapture(ctx, userID, c.ID); err != nil {
+				log.Printf("hardDeleteNote: DeleteCapture failed userID=%s noteID=%s captureID=%s: %v", userID, noteID, c.ID, err)
 			}
 		}
-		// Delete capture from store
-		_ = s.store.DeleteCapture(ctx, userID, c.ID)
 	}
 
-	// Delete note S3 objects
-	_ = s.objects.Delete(ctx, note.S3MarkdownKey)
-	_ = s.objects.Delete(ctx, note.S3MetaKey)
+	if err := s.objects.Delete(ctx, note.S3MarkdownKey); err != nil {
+		log.Printf("hardDeleteNote: objects.Delete failed userID=%s noteID=%s key=%s: %v", userID, noteID, note.S3MarkdownKey, err)
+	}
+	if err := s.objects.Delete(ctx, note.S3MetaKey); err != nil {
+		log.Printf("hardDeleteNote: objects.Delete failed userID=%s noteID=%s key=%s: %v", userID, noteID, note.S3MetaKey, err)
+	}
 
-	// Delete note from store
 	return s.store.DeleteNote(ctx, userID, noteID)
 }
 
@@ -381,8 +389,9 @@ func (s *NotesService) purgeExpired(ctx context.Context, userID string) error {
 		if !NoteIsActive(n) && n.PurgeAfter != "" {
 			purgeTime, err := time.Parse(time.RFC3339Nano, n.PurgeAfter)
 			if err == nil && !now.Before(purgeTime) {
-				// Note has expired, hard delete it
-				_ = s.hardDeleteNote(ctx, userID, n.ID, n)
+				if err := s.hardDeleteNote(ctx, userID, n.ID, n); err != nil {
+					log.Printf("purgeExpired: hardDeleteNote failed userID=%s noteID=%s: %v", userID, n.ID, err)
+				}
 			}
 		}
 	}
