@@ -1,0 +1,122 @@
+/* Element defaults and cross-cutting primitives. Tokens only. */
+
+/* No `font-size` on <html>: the root stays at the user's browser setting so
+   the rem-based scale in tokens.css honours it. */
+html {
+  font-family: var(--font-sans);
+}
+
+body {
+  background-color: var(--color-ground);
+  color: var(--color-ink);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+::selection {
+  background-color: var(--color-selection);
+}
+
+/* --------------------------------------------------------------------------
+   Focus. §5.7 requires a visible :focus-visible on every interactive element.
+   Applied to the element wholesale rather than per-component so nothing can
+   be added later without one.
+   -------------------------------------------------------------------------- */
+
+:focus-visible {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: var(--layout-focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* A programmatically focused region (route change) should not draw a ring. */
+[tabindex='-1']:focus {
+  outline: none;
+}
+
+/* --------------------------------------------------------------------------
+   Typography primitives
+   -------------------------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-tight);
+}
+
+h1 {
+  font-size: var(--font-size-2xl);
+}
+
+h2 {
+  font-size: var(--font-size-xl);
+}
+
+h3 {
+  font-size: var(--font-size-lg);
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 0.18em;
+}
+
+/* Tabular serif numerals — timers, durations, counts (§5.6). */
+.numeric {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.eyebrow {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+/* --------------------------------------------------------------------------
+   Skip link (§5.7)
+   -------------------------------------------------------------------------- */
+
+.skip-link {
+  position: fixed;
+  inset-inline-start: var(--space-3);
+  inset-block-start: var(--space-3);
+  z-index: var(--z-skip-link);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  transform: translateY(calc(-1 * (100% + var(--space-6))));
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
+/* --------------------------------------------------------------------------
+   Screen-reader-only text
+   -------------------------------------------------------------------------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

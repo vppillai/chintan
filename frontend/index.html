@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" data-theme="ink">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="description" content="Speak a thought. It files itself." />
+    <meta name="color-scheme" content="light dark" />
+    <title>Chintan</title>
+    <script>
+      /*
+       * Theme pre-paint. The stylesheet resolves `system` with a media query,
+       * so all this has to do is restore the stored preference before first
+       * paint — otherwise a Nocturne user sees a frame of Ink & Paper on every
+       * cold start. Inline and synchronous by necessity; kept to the minimum.
+       */
+      try {
+        var stored = localStorage.getItem('chintan.theme');
+        if (stored === 'ink' || stored === 'nocturne' || stored === 'system') {
+          document.documentElement.setAttribute('data-theme', stored);
+        }
+      } catch (e) {
+        /* Storage denied. The default theme applies. */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

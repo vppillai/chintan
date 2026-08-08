@@ -1,0 +1,301 @@
+/*
+ * Chintan design tokens.
+ *
+ * Spec: docs/superpowers/specs/2026-08-07-chintan-v2-design.md §5.6.
+ *
+ * This is the ONLY file in the codebase permitted to contain a literal colour
+ * or a literal font size. `bun run lint` enforces that (scripts/check-tokens.mjs).
+ *
+ * Themes are selected by `data-theme` on <html>:
+ *   (absent) | "ink"  -> Ink & Paper (default, light)
+ *   "nocturne"        -> Nocturne (dark)
+ *   "system"          -> Ink & Paper, swapped to Nocturne under
+ *                        `prefers-color-scheme: dark`
+ *
+ * Colour tokens are *semantic*. Nothing outside this file names a hue.
+ */
+
+/* ==========================================================================
+   1. Primitives — theme-independent
+   ========================================================================== */
+
+:root {
+  /* ---- Type families -------------------------------------------------- */
+  /* Grotesk for UI chrome; serif for note titles and numerals (§5.6). */
+  --font-sans:
+    'Inter var', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-serif:
+    'Iowan Old Style', 'Source Serif 4', 'Charter', 'Palatino Linotype',
+    Palatino, Georgia, 'Times New Roman', serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+  /* Numerals are serif per §5.6 and always tabular so timers do not jitter. */
+  --font-numeric: var(--font-serif);
+
+  /* ---- Type scale ------------------------------------------------------
+     One modular scale, ratio 1.2 (minor third), base 1rem = 16px.
+     Eight steps derived from a single ratio — not ten ad-hoc sizes.
+       xs   = base / 1.2^2   sm  = base / 1.2
+       md   = base           lg  = base * 1.2
+       xl   = base * 1.2^2   2xl = base * 1.2^3
+       3xl  = base * 1.2^4   4xl = base * 1.2^5
+     ---------------------------------------------------------------------- */
+  --font-scale-ratio: 1.2;
+  --font-size-xs: 0.694rem; /* 11.1px — metadata only, never body copy */
+  --font-size-sm: 0.833rem; /* 13.3px */
+  --font-size-md: 1rem; /* 16px  — body base */
+  --font-size-lg: 1.2rem; /* 19.2px */
+  --font-size-xl: 1.44rem; /* 23.0px */
+  --font-size-2xl: 1.728rem; /* 27.6px */
+  --font-size-3xl: 2.074rem; /* 33.2px */
+  --font-size-4xl: 2.488rem; /* 39.8px */
+
+  --line-height-tight: 1.15;
+  --line-height-snug: 1.3;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.7;
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --letter-spacing-tight: -0.015em;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.02em;
+  --letter-spacing-caps: 0.08em;
+
+  /* ---- Spacing ---------------------------------------------------------
+     4px base unit. Steps are multiples, not a second scale. */
+  --space-0: 0;
+  --space-1: 0.25rem; /*  4px */
+  --space-2: 0.5rem; /*  8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-10: 2.5rem; /* 40px */
+  --space-12: 3rem; /* 48px */
+  --space-16: 4rem; /* 64px */
+  --space-20: 5rem; /* 80px */
+
+  /* ---- Radius ---------------------------------------------------------- */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.75rem;
+  --radius-full: 999rem;
+
+  /* ---- Motion ----------------------------------------------------------
+     Every animation in the app references these. `prefers-reduced-motion`
+     collapses all of them to a single frame in one place (see §4 below), so
+     no component can forget to honour the preference. */
+  --motion-duration-instant: 80ms;
+  --motion-duration-fast: 140ms;
+  --motion-duration-base: 220ms;
+  --motion-duration-slow: 340ms;
+  --motion-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-decelerate: cubic-bezier(0, 0, 0, 1);
+  --motion-ease-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --motion-ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* ---- Layout ----------------------------------------------------------- */
+  --layout-content-max: 42rem;
+  --layout-strip-height: 4rem;
+  --layout-bottom-bar-height: 5.25rem;
+  --layout-touch-target-min: 2.75rem; /* 44px */
+  --layout-focus-ring-width: 3px;
+  --layout-focus-ring-offset: 2px;
+
+  --z-content: 1;
+  --z-sheet: 20;
+  --z-bottom-bar: 30;
+  --z-dialog: 40;
+  --z-toast: 50;
+  --z-skip-link: 60;
+}
+
+/* ==========================================================================
+   2. Theme — Ink & Paper (default, light)
+   ==========================================================================
+
+   Palette
+     ground  #FBF9F4   warm off-white paper
+     surface #F2EEE4   recessed / sheet ground
+     raised  #F5F1E8   cards on ground
+     ink     #1A1917   near-black
+     muted   #534F48   secondary text
+     faint   #716A5B   tertiary text
+     line    #E4DFD2   hairline separators (decorative)
+     line-strong #8A8478  control borders (non-text 3:1)
+     accent  #C2410C   burnt orange — LIVE/RECORD STATE ONLY
+
+   WCAG 2.2 contrast, computed (not estimated), against each ground:
+
+     token          on ground  on surface  on raised   requirement  verdict
+     ------------------------------------------------------------------------
+     ink              16.70      15.16       15.59      4.5 (AA)     pass
+     muted             7.74       7.03        7.22      4.5 (AA)     pass
+     faint             5.10       4.63        4.76      4.5 (AA)     pass
+     accent-strong     6.17       5.60        5.76      4.5 (AA)     pass
+     line-strong       3.53       3.21        3.30      3.0 (1.4.11) pass
+     accent (as fill)  4.92       4.47        4.59      3.0 (1.4.11) pass
+     ground on accent  4.92          —           —      4.5 (AA)     pass
+
+   v1 shipped muted at #8A8478 (3.53:1) and faint at #A39C8D (2.59:1), both
+   below AA. They are darkened here to #534F48 and #716A5B, preserving hue and
+   saturation. #8A8478 survives as `line-strong`, where 3:1 is the bar.
+
+   `accent` is a FILL, never body text: as text it is 4.47:1 on surface, which
+   misses AA by a hair. `accent-strong` is the text-safe variant and is still
+   reserved to the live/record state.
+   ========================================================================== */
+
+:root,
+[data-theme='ink'] {
+  color-scheme: light;
+
+  --color-ground: #fbf9f4;
+  --color-surface: #f2eee4;
+  --color-raised: #f5f1e8;
+  --color-ink: #1a1917;
+  --color-muted: #534f48;
+  --color-faint: #716a5b;
+  --color-line: #e4dfd2;
+  --color-line-strong: #8a8478;
+
+  --color-accent: #c2410c;
+  --color-accent-strong: #a8380a;
+  --color-on-accent: #fbf9f4;
+
+  --color-overlay: rgb(26 25 23 / 38%);
+  --color-selection: rgb(194 65 12 / 18%);
+
+  --shadow-sm: 0 1px 2px rgb(26 25 23 / 6%);
+  --shadow-md: 0 2px 8px rgb(26 25 23 / 8%);
+  --shadow-lg: 0 8px 28px rgb(26 25 23 / 12%);
+  --shadow-sheet: 0 -6px 32px rgb(26 25 23 / 10%);
+}
+
+/* ==========================================================================
+   3. Theme — Nocturne (dark)
+   ==========================================================================
+
+   Palette
+     ground  #0A0C0B   near-black
+     surface #141816
+     raised  #1C211F
+     ink     #F2F5F3   soft off-white text
+     muted   #A4ACA8   secondary text
+     faint   #7C8C82   tertiary text
+     line    #242A27   hairline separators (decorative)
+     line-strong #5E6E66  control borders (non-text 3:1)
+     accent  #B8F135   electric lime — LIVE/RECORD STATE ONLY
+
+   WCAG 2.2 contrast, computed, against each ground:
+
+     token          on ground  on surface  on raised   requirement  verdict
+     ------------------------------------------------------------------------
+     ink              17.87      16.32       14.87      4.5 (AA)     pass
+     muted             8.45       7.72        7.03      4.5 (AA)     pass
+     faint             5.54       5.06        4.61      4.5 (AA)     pass
+     accent           14.64      13.37       12.18      4.5 (AA)     pass
+     line-strong       3.64       3.33        3.03      3.0 (1.4.11) pass
+     ground on accent 14.64          —           —      4.5 (AA)     pass
+
+   v1's dark muted #6B7570 (4.11:1) and faint #5E6B63 (3.51:1) both missed AA;
+   they are lightened to #A4ACA8 and #7C8C82. #5E6B63 survives, nudged to
+   #5E6E66, as `line-strong`.
+
+   The Nocturne accent clears AA as text on every ground, so `accent-strong`
+   is simply the accent — the token exists for parity, not for a second hue.
+   ========================================================================== */
+
+[data-theme='nocturne'] {
+  color-scheme: dark;
+
+  --color-ground: #0a0c0b;
+  --color-surface: #141816;
+  --color-raised: #1c211f;
+  --color-ink: #f2f5f3;
+  --color-muted: #a4aca8;
+  --color-faint: #7c8c82;
+  --color-line: #242a27;
+  --color-line-strong: #5e6e66;
+
+  --color-accent: #b8f135;
+  --color-accent-strong: #b8f135;
+  --color-on-accent: #0a0c0b;
+
+  --color-overlay: rgb(10 12 11 / 62%);
+  --color-selection: rgb(184 241 53 / 22%);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%);
+  --shadow-md: 0 2px 10px rgb(0 0 0 / 50%);
+  --shadow-lg: 0 10px 34px rgb(0 0 0 / 58%);
+  --shadow-sheet: 0 -6px 34px rgb(0 0 0 / 55%);
+}
+
+/*
+ * Follow system. `data-theme="system"` inherits Ink & Paper from :root and is
+ * swapped to Nocturne only when the OS asks for dark. Declaring the Nocturne
+ * block twice (rather than pointing at a shared class) keeps the cascade
+ * predictable: an explicit choice always outranks the media query because the
+ * attribute value differs.
+ */
+@media (prefers-color-scheme: dark) {
+  [data-theme='system'] {
+    color-scheme: dark;
+
+    --color-ground: #0a0c0b;
+    --color-surface: #141816;
+    --color-raised: #1c211f;
+    --color-ink: #f2f5f3;
+    --color-muted: #a4aca8;
+    --color-faint: #7c8c82;
+    --color-line: #242a27;
+    --color-line-strong: #5e6e66;
+
+    --color-accent: #b8f135;
+    --color-accent-strong: #b8f135;
+    --color-on-accent: #0a0c0b;
+
+    --color-overlay: rgb(10 12 11 / 62%);
+    --color-selection: rgb(184 241 53 / 22%);
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%);
+    --shadow-md: 0 2px 10px rgb(0 0 0 / 50%);
+    --shadow-lg: 0 10px 34px rgb(0 0 0 / 58%);
+    --shadow-sheet: 0 -6px 34px rgb(0 0 0 / 55%);
+  }
+}
+
+/* ==========================================================================
+   4. Reduced motion — §5.6, honoured for every animation
+   ==========================================================================
+   Because every transition and animation in the app reads its duration from a
+   motion token, zeroing the tokens here disables motion app-wide. The
+   belt-and-braces `*` rule catches anything a future component hard-codes.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration-instant: 1ms;
+    --motion-duration-fast: 1ms;
+    --motion-duration-base: 1ms;
+    --motion-duration-slow: 1ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+}
