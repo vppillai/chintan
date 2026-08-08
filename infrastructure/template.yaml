@@ -82,6 +82,19 @@ Parameters:
     Description: CloudWatch log retention, set explicitly so groups never default to never-expire.
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
 
+  DailySpendCapMicros:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 1000000000
+    Description: >
+      Per-tenant, per-day provider spend ceiling in MICRODOLLARS — 1000000 is
+      one US dollar, so a ten-dollar day is 10000000. 0 means the meter still
+      records every call but the breaker enforces nothing, which is the default
+      because a cap that is guessed at is worse than one that is chosen. The
+      ceiling here is $1000/day, high enough never to bind and low enough to
+      catch a fat-fingered extra zero.
+
   RefreshTokenValidityDays:
     Type: Number
     Default: 7
@@ -95,6 +108,7 @@ Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   HasWorkerCodeKey: !Not [!Equals [!Ref WorkerCodeKey, '']]
   HasRetention: !Not [!Equals [!Ref RetentionDays, 0]]
+  HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
 
 Resources:
   # Cognito User Pool
@@ -642,6 +656,7 @@ Resources:
           TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
+          DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
         - Key: Project
           Value: chintan
@@ -684,6 +699,7 @@ Resources:
           TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
+          DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
         - Key: Project
           Value: chintan
@@ -1121,6 +1137,43 @@ Resources:
       DatapointsToAlarm: 2
       Threshold: 0.05
       ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # A breaker nobody hears about is a silent outage with a good excuse: captures
+  # start failing for cost reasons and look identical to failing for technical
+  # ones. Only installed when a cap is actually set — at DailySpendCapMicros 0
+  # the breaker never rejects, and an alarm that cannot fire is worse than no
+  # alarm, because the console shows it green.
+  #
+  # This is a Metrics Insights query rather than a plain metric alarm because
+  # obs.Emit declares exactly one dimension set, ["Provider","Op"], so CloudWatch
+  # holds no dimensionless rollup of SpendCapRejections to alarm on. A
+  # no-dimension alarm would never receive a datapoint and, with notBreaching,
+  # would sit permanently OK. SCHEMA() sums across every provider and op without
+  # naming any of them, so adding a provider needs no template edit.
+  SpendCapRejectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasSpendCap
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-spend-cap-tripped'
+      AlarmDescription: >-
+        The daily spend cap rejected a provider call. Captures are being refused
+        on cost, not on failure.
+      Metrics:
+        - Id: rejections
+          Expression: 'SELECT SUM(SpendCapRejections) FROM SCHEMA("Chintan", Provider, Op)'
+          Period: 300
+          ReturnData: true
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      # The metric does not exist at all until the first rejection, which is the
+      # healthy state. Without this the alarm would read INSUFFICIENT_DATA for
+      # the entire life of an instance that never trips.
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
