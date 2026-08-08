@@ -9,18 +9,28 @@
 # one main package (backend/cmd/api). When the worker gets its own main package,
 # build it here and set WorkerCodeKey.
 #
+# Two binaries, not one. cmd/api serves HTTP; cmd/worker drains the capture
+# queue. They are separate main packages and must be separate artifacts: the
+# worker running the API handler starts cleanly and then fails every SQS event,
+# which looks like a broken pipeline rather than a broken deploy.
+#
 # Usage:
-#   scripts/build-lambda.sh [--output PATH]
+#   scripts/build-lambda.sh [--output PATH] [--worker-output PATH]
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT="$REPO_ROOT/backend/lambda-function.zip"
+WORKER_OUTPUT=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --output)
             OUTPUT="${2:?--output needs a value}"
+            shift
+            ;;
+        --worker-output)
+            WORKER_OUTPUT="${2:?--worker-output needs a value}"
             shift
             ;;
         -h | --help)
@@ -47,15 +57,35 @@ command -v go >/dev/null 2>&1 || {
     exit 1
 }
 
+# Resolve outputs against the caller's directory BEFORE cd'ing. A relative
+# --output would otherwise land in backend/ while the caller looks for it where
+# it was standing.
+abspath() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *) printf '%s/%s\n' "$PWD" "$1" ;;
+    esac
+}
+OUTPUT="$(abspath "$OUTPUT")"
+[ -n "$WORKER_OUTPUT" ] && WORKER_OUTPUT="$(abspath "$WORKER_OUTPUT")"
+
 cd "$REPO_ROOT/backend"
 
-echo "Building bootstrap (linux/arm64)..."
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -trimpath -o bootstrap ./cmd/api
-
-echo "Packaging $OUTPUT..."
 # -X so a rebuild replaces the archive rather than adding a second member, and -j
 # so the zip has `bootstrap` at its root, which is where the runtime looks.
-rm -f "$OUTPUT"
-zip -j -X -q "$OUTPUT" bootstrap
+package() {
+    local pkg="$1" out="$2"
+    echo "Building bootstrap from $pkg (linux/arm64)..."
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -trimpath -o bootstrap "$pkg"
+    echo "Packaging $out..."
+    rm -f "$out"
+    zip -j -X -q "$out" bootstrap
+    rm -f bootstrap
+    echo "Built $out"
+}
 
-echo "Built $OUTPUT"
+package ./cmd/api "$OUTPUT"
+
+if [ -n "$WORKER_OUTPUT" ]; then
+    package ./cmd/worker "$WORKER_OUTPUT"
+fi

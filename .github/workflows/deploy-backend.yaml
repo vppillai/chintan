@@ -117,6 +117,7 @@ jobs:
     needs: test
     outputs:
       artifact_key: ${{ steps.upload.outputs.key }}
+      worker_key: ${{ steps.upload.outputs.worker_key }}
       artifact_bucket: ${{ steps.upload.outputs.bucket }}
     steps:
       - uses: actions/checkout@v4
@@ -128,8 +129,14 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
-      - name: Build arm64 zip
-        run: scripts/build-lambda.sh --output "function-${GITHUB_SHA}.zip"
+      - name: Build arm64 zips
+        # Two artifacts: cmd/api and cmd/worker are separate main packages. A
+        # worker running the API handler starts cleanly and then fails every SQS
+        # event, which reads as a broken pipeline rather than a broken deploy.
+        run: |
+          scripts/build-lambda.sh \
+            --output "function-${GITHUB_SHA}.zip" \
+            --worker-output "worker-${GITHUB_SHA}.zip"
       - id: upload
         name: Upload to the artifact bucket
         env:
@@ -138,9 +145,12 @@ jobs:
           set -euo pipefail
           BUCKET="chintan-lambda-${ACCOUNT_ID}-${AWS_REGION}"
           KEY="function-${GITHUB_SHA}.zip"
+          WORKER_KEY="worker-${GITHUB_SHA}.zip"
           aws s3 cp "$KEY" "s3://${BUCKET}/${KEY}"
+          aws s3 cp "$WORKER_KEY" "s3://${BUCKET}/${WORKER_KEY}"
           {
             printf 'key=%s\n' "$KEY"
+            printf 'worker_key=%s\n' "$WORKER_KEY"
             printf 'bucket=%s\n' "$BUCKET"
           } >> "$GITHUB_OUTPUT"
 
@@ -170,6 +180,7 @@ jobs:
           EXTRA_PARAMETERS: ${{ toJSON(matrix.entry.parameters) }}
           LAMBDA_BUCKET: ${{ needs.build.outputs.artifact_bucket }}
           LAMBDA_KEY: ${{ needs.build.outputs.artifact_key }}
+          WORKER_KEY: ${{ needs.build.outputs.worker_key }}
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
           # When the bootstrap stack exports it, CloudFormation acts under a
@@ -206,6 +217,7 @@ jobs:
           EXTRA_PARAMETERS: ${{ toJSON(matrix.entry.parameters) }}
           LAMBDA_BUCKET: ${{ needs.build.outputs.artifact_bucket }}
           LAMBDA_KEY: ${{ needs.build.outputs.artifact_key }}
+          WORKER_KEY: ${{ needs.build.outputs.worker_key }}
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}

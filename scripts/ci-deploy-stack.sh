@@ -37,7 +37,8 @@ args=(
     --parameter "Environment=${ENVIRONMENT}"
     --parameter "AllowedOrigin=${ALLOWED_ORIGIN}"
     --parameter "LambdaCodeBucket=${LAMBDA_BUCKET}"
-    --parameter "LambdaCodeKey=${LAMBDA_KEY}"
+    --parameter "LambdaCodeKey=${LAMBDA_KEY}" \
+    --parameter "WorkerCodeKey=${WORKER_KEY:-}"
     --parameter "PagesHost=${PAGES_HOST}"
     --parameter "RepoName=${REPO_NAME}"
     --tag Application=Chintan
@@ -47,8 +48,8 @@ args=(
     --apply
 )
 
-# WorkerCodeKey is deliberately not passed. It defaults to empty, which the
-# template reads as "the worker shares LambdaCodeKey" — correct while both
+# WorkerCodeKey is passed when the caller supplies WORKER_KEY. Empty means the
+# template shares LambdaCodeKey, which was correct only while both
 # handlers ship in one binary built from backend/cmd/api. Pass it here the day
 # the worker gets its own main package.
 
