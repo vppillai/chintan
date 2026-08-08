@@ -202,8 +202,22 @@ Resources:
                   - dynamodb:ListTagsOfResource
                   - dynamodb:TagResource
                   - dynamodb:UntagResource
+                  # The expiry stream. UpdateTable is what turns
+                  # StreamSpecification on, and DescribeStream/ListStreams are
+                  # what the table handler and the event-source-mapping handler
+                  # call to resolve the stream ARN afterwards. Enumerated here
+                  # rather than discovered: a missing action on this role costs
+                  # a whole deploy round trip to find, because only a real
+                  # deploy exercises it.
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
                 Resource:
                   - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*'
+                  # A stream ARN is table/<name>/stream/<label>. IAM wildcards
+                  # match '/', so the entry above already covers it — this is
+                  # written out so that reading the policy does not require
+                  # knowing that.
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*/stream/*'
 
               - Effect: Allow
                 Action:
@@ -813,8 +827,13 @@ Resources:
                   - dynamodb:DescribeContinuousBackups
                   - dynamodb:DescribeTimeToLive
                   - dynamodb:ListTagsOfResource
+                  # The expiry stream, for the deploys that run without
+                  # CFN_DEPLOY_ROLE_ARN and therefore act as this role.
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
                 Resource:
                   - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*/stream/*'
 
               - Effect: Allow
                 Action:

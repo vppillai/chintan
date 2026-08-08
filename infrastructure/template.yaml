@@ -306,6 +306,19 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+      # NEW_AND_OLD_IMAGES, and the OLD image is the one that matters. TTL
+      # removes an archived note's index row and nothing else, so the S3 objects
+      # it named — audio, raw transcript, routed transcript, cleaned text,
+      # segments, peaks — used to stay in the bucket, billed, referenced by
+      # nothing and reachable by nothing. The only record of what to delete is
+      # the item as it was immediately before it vanished, and a TTL deletion
+      # has no new image at all.
+      #
+      # KEYS_ONLY would carry pk and sk and none of the six S3 keys, which would
+      # force the handler to read a row that no longer exists. NEW_IMAGE is
+      # empty on a REMOVE. Only this view type answers the question.
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
       Tags:
         - Key: Project
           Value: chintan
@@ -342,6 +355,28 @@ Resources:
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt CaptureDLQ.Arn
         maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # The expiry handler's own dead-letter queue, matching the capture worker's.
+  # A stream record that cannot be unlinked after its retries lands here rather
+  # than ageing out of the stream unnoticed, which is what "the leak came back"
+  # would otherwise look like: nothing in the logs and a bill that grows.
+  #
+  # It holds the record's metadata, not the record. Lambda's OnFailure
+  # destination for a stream sends a pointer — stream ARN, shard, sequence
+  # number range — so no note content and no S3 key reaches this queue.
+  ExpiryDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'chintan-expiry-dlq-${InstanceName}-${Environment}'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
       Tags:
         - Key: Project
           Value: chintan
@@ -561,6 +596,21 @@ Resources:
                 Resource:
                   - !GetAtt DynamoDBTable.Arn
                   - !Sub '${DynamoDBTable.Arn}/index/gsi1'
+              # The expiry stream. Lambda checks these four at
+              # CreateEventSourceMapping time and refuses the mapping without
+              # them, so a missing grant here fails the deploy rather than the
+              # first expired note. The stream ARN carries a creation-time label
+              # that changes if streams are ever disabled and re-enabled, hence
+              # the wildcard: !GetAtt DynamoDBTable.StreamArn would pin this
+              # policy to one label and silently stop matching after that.
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource:
+                  - !Sub '${DynamoDBTable.Arn}/stream/*'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
@@ -630,6 +680,16 @@ Resources:
                 Action:
                   - sqs:GetQueueAttributes
                 Resource: !GetAtt CaptureDLQ.Arn
+              # A stream event source has no redrive policy of its own: the
+              # OnFailure destination is written by LAMBDA using the function's
+              # execution role, so without this the mapping is created, the
+              # retries are exhausted, and the record is dropped with the
+              # destination silently unwritten.
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt ExpiryDLQ.Arn
         - PolicyName: XRayTracing
           PolicyDocument:
             Version: '2012-10-17'
@@ -751,6 +811,72 @@ Resources:
         - Key: Application
           Value: Chintan
 
+  # Expiry Lambda — unlinks the S3 objects belonging to a record DynamoDB TTL
+  # has expired. Same deployment package as the worker (backend/cmd/worker
+  # dispatches on the event's own eventSource), a different function.
+  #
+  # A separate function rather than a second event source mapping on the worker,
+  # for reasons that are all about blast radius rather than code:
+  #   * Concurrency. The worker's five reserved executions are sized for
+  #     provider round-trips measured in minutes. A month's worth of notes
+  #     expiring in one hour must not consume them and leave a recording the
+  #     user just made sitting in the queue.
+  #   * Timeout. 900 seconds is right for a transcription and absurd for a
+  #     handful of DeleteObject calls; five minutes bounds a runaway.
+  #   * Its own dead-letter queue and its own alarm, which is only possible per
+  #     function and per mapping.
+  #   * Memory. 2048 MB is sized for the worker's provider work; this holds a
+  #     page of capture rows.
+  #
+  # Same package rather than a third artifact: a new zip would mean a new
+  # required template parameter plus edits to build-lambda.sh, bootstrap.sh,
+  # ci-deploy-stack.sh and the deploy workflow, and a required parameter with no
+  # default breaks every existing deploy invocation that does not yet pass it.
+  ExpiryLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ExpiryLogGroup
+    Properties:
+      FunctionName: !Sub 'chintan-expiry-${InstanceName}-${Environment}'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref WorkerCodeKey
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - arm64
+      MemorySize: 512
+      Timeout: 300
+      ReservedConcurrentExecutions: 2
+      TracingConfig:
+        Mode: Active
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoDBTable
+          CONTENT_BUCKET: !Ref ContentBucket
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          LLM_BASE_URL: https://api.minimax.io/v1
+          LLM_MODEL: MiniMax-M3
+          # The binary is shared with the worker and refuses to start without a
+          # resolvable provider key, deliberately: that fail-fast is what stops
+          # a misconfigured worker from reporting healthy. This function never
+          # calls a provider, but it is the same process and must satisfy the
+          # same contract.
+          GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
+          LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          WEBAUTHN_RP_DISPLAY_NAME: Chintan
+          CAPTURE_QUEUE_URL: !Ref CaptureQueue
+          DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
   # ---------------------------------------------------------------------------
   # Versions and the `live` alias — the cutover point, and the reason rollback
   # means anything.
@@ -799,6 +925,20 @@ Resources:
       FunctionVersion: !GetAtt WorkerLambdaInitialVersion.Version
       Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
 
+  ExpiryLambdaInitialVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref ExpiryLambdaFunction
+      Description: Initial version, so the live alias has a target at stack create.
+
+  ExpiryLambdaLiveAlias:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref ExpiryLambdaFunction
+      Name: live
+      FunctionVersion: !GetAtt ExpiryLambdaInitialVersion.Version
+      Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
+
   CaptureQueueEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     # Lambda validates, at mapping-creation time, that the function's execution
@@ -831,6 +971,54 @@ Resources:
       ScalingConfig:
         MaximumConcurrency: 5
 
+  # The expiry stream. This is what closes the orphaned-object leak: TTL removes
+  # an archived note's index row, and this mapping is how anything finds out.
+  TableExpiryEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    # Same reasoning as CaptureQueueEventSourceMapping: Lambda validates the
+    # execution role's stream permissions when the mapping is created, and
+    # nothing else orders this against the role's inline policy.
+    DependsOn:
+      - LambdaExecutionRole
+    Properties:
+      EventSourceArn: !GetAtt DynamoDBTable.StreamArn
+      # The alias, not the function, so a rollback moves this too.
+      FunctionName: !Ref ExpiryLambdaLiveAlias
+      Enabled: true
+      # TRIM_HORIZON, not LATEST. The stream is created empty by this same
+      # change, so on a first deploy the two are identical — but if the mapping
+      # is ever replaced, LATEST silently discards every expiry that happened
+      # in between, and those are precisely the records nothing else can
+      # reconstruct. Replaying up to 24 hours is harmless because the handler
+      # is idempotent: a redelivered record re-deletes objects that are already
+      # gone, which repository.Objects reports as success.
+      StartingPosition: TRIM_HORIZON
+      BatchSize: 10
+      MaximumRetryAttempts: 3
+      # A poison record must not block its shard. Without this, one record the
+      # handler cannot process is retried with the whole batch until it ages
+      # out, and every expiry behind it waits.
+      BisectBatchOnFunctionError: true
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt ExpiryDLQ.Arn
+      # Belt to the handler's braces. purge.IsTTLExpiry makes the same decision
+      # in code and is what the tests cover; this filter means Lambda is never
+      # invoked for the other 99% of the stream — every note write, every
+      # capture status change, every idempotency record — which is both the
+      # cost argument and a second lock on the one mistake that matters.
+      #
+      # userIdentity is stamped only on a deletion DynamoDB performed itself.
+      # A user pressing "delete forever" produces a REMOVE with no userIdentity
+      # at all, does not match this pattern, and must not: that path has already
+      # deleted its own objects, and unlinking again on an ordinary archive
+      # would destroy a recording the user still has.
+      FilterCriteria:
+        Filters:
+          - Pattern: '{"eventName":["REMOVE"],"userIdentity":{"type":["Service"],"principalId":["dynamodb.amazonaws.com"]}}'
+
   # CloudWatch Log Group
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
@@ -849,6 +1037,19 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/chintan-worker-${InstanceName}-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  ExpiryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/chintan-expiry-${InstanceName}-${Environment}'
       RetentionInDays: !Ref LogRetentionDays
       Tags:
         - Key: Project
@@ -1223,6 +1424,36 @@ Resources:
       OKActions:
         - !Ref AlarmTopic
 
+  # A message here is an expired note whose objects were not unlinked. Nothing
+  # else reports that: the index row is already gone, the UI never showed the
+  # note again, and the only symptom is a storage bill that keeps growing.
+  #
+  # There is deliberately no companion Errors alarm on ExpiryLambdaFunction, as
+  # there is on the worker. The worker's exists because a capture failure is
+  # user-visible and worth hearing about before the DLQ fills three retries
+  # later; nobody is waiting on an expiry, and an alarm per transient
+  # DeleteObject blip would be noise for a job the retries fix on their own.
+  ExpiryDLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-expiry-dlq'
+      AlarmDescription: An expired record exhausted its retries; its S3 objects are still in the bucket.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ExpiryDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
   # Average of the 5xx metric is the 5xx rate: 0.05 is five percent of requests.
   Api5xxRateAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -1379,6 +1610,18 @@ Outputs:
     Value: !Ref WorkerLambdaFunction
     Export:
       Name: !Sub '${AWS::StackName}-WorkerFunctionName'
+
+  ExpiryFunctionName:
+    Description: Expiry Lambda function name (DynamoDB TTL stream consumer)
+    Value: !Ref ExpiryLambdaFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-ExpiryFunctionName'
+
+  ExpiryDLQUrl:
+    Description: Dead-letter queue for expired records whose objects were not unlinked
+    Value: !Ref ExpiryDLQ
+    Export:
+      Name: !Sub '${AWS::StackName}-ExpiryDLQUrl'
 
   AlarmTopicArn:
     Description: SNS topic every alarm publishes to

@@ -485,11 +485,31 @@ func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID
 // the index anyway, permanently orphaning audio that the UI reported as purged.
 // Here the index survives any failure, so the note stays visible as archived and
 // the delete can be retried.
-//
-// TODO(phase 4+): when DynamoDB TTL expires an archived note, a Streams handler
-// performs this same S3 cascade. Until that exists, TTL removes the index row
-// and leaves the objects; `chintanctl` reconciliation (§4.5) is the backstop.
 func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
+	if err := s.PurgeNoteArtifacts(ctx, userID, noteID, note); err != nil {
+		return err
+	}
+	return s.store.DeleteNote(ctx, userID, noteID)
+}
+
+// PurgeNoteArtifacts unlinks everything a note owns apart from its own index
+// row: every capture filed against it, every S3 object those captures name, and
+// the note's own body and metadata.
+//
+// It is separate from hardDeleteNote because the same cascade has to run from
+// two places that disagree about whether the index row still exists. A user
+// asking to delete forever arrives through hardDeleteNote, which removes the row
+// last so a failed cascade leaves the note visible and retryable. DynamoDB TTL
+// arrives through internal/purge, by which point the row is already gone and
+// there is nothing left to delete — only the objects it named, which is exactly
+// this. Before that handler existed, TTL removed the index row and left the
+// audio, raw transcript, routed transcript, cleaned text, segments and peaks in
+// the bucket, billed and unreachable, with `chintanctl reconcile` as the only
+// way to find them.
+//
+// Every failure is returned rather than logged, so a caller that must not
+// declare a purge complete can tell that it is not.
+func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
 	// Every page, not just the first: a truncated list is how "delete forever"
 	// leaves orphans behind.
 	captures, err := repository.DrainPages(ctx, 0, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
@@ -517,7 +537,7 @@ func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string
 		return fmt.Errorf("%w: note meta: %w", ErrPurgeIncomplete, err)
 	}
 
-	return s.store.DeleteNote(ctx, userID, noteID)
+	return nil
 }
 
 // deleteObject removes a key, treating "already gone" as success so a retried

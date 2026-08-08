@@ -1,4 +1,4 @@
-// Command worker drains the capture queue.
+// Command worker drains the capture queue and the table's expiry stream.
 //
 // It is a second Lambda because the first one cannot do this work. API Gateway's
 // HTTP API caps an integration at 30 seconds and the cap is not adjustable, so a
@@ -6,10 +6,26 @@
 // user while the API Lambda kept running and billing — and the retry that
 // followed appended the same text again. Here the ceiling is Lambda's 900
 // seconds and nobody is waiting on the other end of a socket.
+//
+// One binary, two event sources, and the template deploys it as two functions.
+// The capture queue and the DynamoDB expiry stream want different concurrency,
+// different timeouts and different dead-letter queues, which is why they are
+// separate functions rather than two mappings onto one; but they want the same
+// store, the same object storage and the same cascade, which is why they are one
+// binary rather than a third artifact. A third artifact would have meant a new
+// required template parameter and edits to build-lambda.sh, bootstrap.sh,
+// ci-deploy-stack.sh and the deploy workflow — four more places for a deploy to
+// fail — to save an init this process performs in single-digit milliseconds.
+//
+// Which handler runs is decided by the event, not by configuration: a stream
+// record says `aws:dynamodb` and a queue message says `aws:sqs`. A function
+// pointed at the wrong source therefore does nothing rather than the wrong
+// thing.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -30,13 +46,25 @@ import (
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/pipeline"
 	"github.com/vppillai/chintan/backend/internal/provider"
+	"github.com/vppillai/chintan/backend/internal/purge"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-var worker *pipeline.Worker
+var (
+	worker *pipeline.Worker
+	purger *purge.Handler
+)
 
-func init() {
+// setup builds everything the handlers need. It is called from main rather
+// than from init so that the package is testable at all: an init that calls
+// log.Fatalf on a missing TABLE_NAME kills the test binary before a single test
+// runs, which is why the dispatch below had no test until it needed one.
+//
+// The fail-fast property is unchanged. Lambda's init phase runs package
+// initialisation *and* main up to lambda.Start, so a missing environment
+// variable still stops the cold start rather than the first invocation.
+func setup() {
 	obs.Setup(logLevel())
 
 	ctx := context.Background()
@@ -121,6 +149,15 @@ func init() {
 	}
 
 	worker = pipeline.NewWorker(p)
+
+	// The expiry stream runs the same cascade a permanent delete runs, over the
+	// same store and bucket. Building it here rather than lazily keeps the
+	// failure at init, where the deploy can see it, instead of on the first
+	// expired note thirty days after the deploy that broke it.
+	purger, err = purge.New(notes, objects)
+	if err != nil {
+		log.Fatalf("failed to build the expiry stream handler: %v", err)
+	}
 }
 
 // tenantSpendCaps answers the one question breaker.CapResolver asks, from the
@@ -204,11 +241,79 @@ func resolveSecret(ctx context.Context, client *ssm.Client, valueEnv, pathEnv st
 	return *out.Parameter.Value, nil
 }
 
-// Handler is the SQS entry point.
-func Handler(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
-	return worker.Handle(ctx, event)
+// eventSource names the AWS service a Lambda event came from. Both of the
+// sources this binary serves stamp it on every record.
+type eventSource string
+
+const (
+	sourceSQS            eventSource = "aws:sqs"
+	sourceDynamoDBStream eventSource = "aws:dynamodb"
+)
+
+// sourceOf reads the event source off the first record.
+//
+// Sniffing the payload rather than reading an environment variable means a
+// function wired to the wrong event source is inert rather than wrong: an SQS
+// message arriving at the expiry function is not run through the purge cascade
+// because it does not claim to be a stream record. Lambda guarantees the field
+// — a record without one is not a record either of these sources produced.
+//
+// An event with no records at all is legal and means there is nothing to do.
+func sourceOf(raw json.RawMessage) (eventSource, error) {
+	var probe struct {
+		Records []struct {
+			EventSource string `json:"eventSource"`
+		} `json:"Records"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return "", fmt.Errorf("worker: decode event: %w", err)
+	}
+	if len(probe.Records) == 0 {
+		return "", nil
+	}
+	return eventSource(probe.Records[0].EventSource), nil
+}
+
+// Handler is the entry point for both event sources.
+//
+// The return value is whichever batch-failure report the source understands.
+// They are different types with the same JSON shape, and returning the wrong
+// one would tell Lambda the whole batch succeeded.
+func Handler(ctx context.Context, raw json.RawMessage) (any, error) {
+	source, err := sourceOf(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	switch source {
+	case sourceSQS:
+		var event events.SQSEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return nil, fmt.Errorf("worker: decode sqs event: %w", err)
+		}
+		return worker.Handle(ctx, event)
+
+	case sourceDynamoDBStream:
+		var event events.DynamoDBEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return nil, fmt.Errorf("worker: decode dynamodb stream event: %w", err)
+		}
+		return purger.Handle(ctx, event)
+
+	case "":
+		// No records. Nothing to report and nothing to fail.
+		return events.SQSEventResponse{}, nil
+
+	default:
+		// Retrying cannot make this recognisable, so it is logged and dropped
+		// rather than redelivered until it dead-letters.
+		obs.Log(ctx).Error("ignoring an event from an unrecognised source",
+			slog.String("event_source", string(source)))
+		return events.SQSEventResponse{}, nil
+	}
 }
 
 func main() {
+	setup()
 	lambda.Start(Handler)
 }
