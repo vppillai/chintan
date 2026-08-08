@@ -331,6 +331,21 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, filter string, ex
 		}
 
 		for _, raw := range out.Items {
+			if readString(raw, "note_id") == "" {
+				// An item written before the attributes were promoted carries
+				// only the `data` blob, which the list projection does not
+				// fetch. Read it whole rather than dropping the note. One write
+				// later it is projectable like everything else.
+				n, err := s.GetNote(ctx, tenantID, trimPrefix(readString(raw, "sk"), "NOTE#"))
+				if errors.Is(err, ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return Page[model.NoteIndex]{}, err
+				}
+				items = append(items, n)
+				continue
+			}
 			n, err := noteFromItem(raw)
 			if err != nil {
 				return Page[model.NoteIndex]{}, err

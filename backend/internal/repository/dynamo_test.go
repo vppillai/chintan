@@ -199,11 +199,9 @@ func TestArchivedNotesAreSeparatedFromActiveOnes(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := context.Background()
 
-	active, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: "n_active", Title: "Active"})
-	if err != nil {
+	if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: "n_active", Title: "Active"}); err != nil {
 		t.Fatalf("PutNote: %v", err)
 	}
-	_ = active
 
 	future := time.Now().Add(24 * time.Hour)
 	if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
@@ -554,4 +552,30 @@ func (d *putRetryingDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInp
 	d.retried = true
 	// Same request again: the item now exists, so the condition fails.
 	return d.fakeDynamo.PutItem(ctx, in, opts...)
+}
+
+// Items written by v1 carry only the `data` blob, which the list projection
+// deliberately does not fetch. They must still list, not vanish and not error.
+func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
+	api := newFakeDynamo()
+	store := repository.NewDynamoStore(api, tableName)
+
+	legacy := `{"id":"note_legacy","title":"Written by v1","aliases":["old"],"updated_at":"2026-08-01T00:00:00Z","s3_markdown_key":"tenants/tenant-a/notes/note_legacy/note.md"}`
+	api.put(map[string]types.AttributeValue{
+		"pk":   &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+		"sk":   &types.AttributeValueMemberS{Value: "NOTE#note_legacy"},
+		"type": &types.AttributeValueMemberS{Value: "note"},
+		"data": &types.AttributeValueMemberS{Value: legacy},
+	})
+
+	page, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("got %d notes, want the one legacy note", len(page.Items))
+	}
+	if page.Items[0].Title != "Written by v1" {
+		t.Fatalf("legacy note = %+v, want its title recovered from the blob", page.Items[0])
+	}
 }
