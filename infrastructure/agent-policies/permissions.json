@@ -22,13 +22,28 @@
       "Resource": "arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/chintan-*/*"
     },
     {
-      "Sid": "CloudFormationValidationNeedsWildcard",
+      "Sid": "ActionsThatTakeNoResourceToScopeTo",
       "Effect": "Allow",
       "Action": [
-        "cloudformation:ValidateTemplate",
+        "cloudformation:DescribeStacks",
         "cloudformation:GetTemplateSummary",
         "cloudformation:ListStacks",
-        "cloudformation:DescribeStacks"
+        "cloudformation:ValidateTemplate",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListTagsForResource",
+        "dynamodb:ListTables",
+        "lambda:GetAccountSettings",
+        "lambda:GetEventSourceMapping",
+        "lambda:ListEventSourceMappings",
+        "lambda:ListFunctions",
+        "lambda:ListLayers",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "s3:GetBucketLocation",
+        "s3:ListAllMyBuckets",
+        "sqs:ListQueues",
+        "ssm:DescribeParameters"
       ],
       "Resource": "*"
     },
@@ -50,15 +65,6 @@
       ]
     },
     {
-      "Sid": "ListBucketsIsGlobalAndUnscopable",
-      "Effect": "Allow",
-      "Action": [
-        "s3:ListAllMyBuckets",
-        "s3:GetBucketLocation"
-      ],
-      "Resource": "*"
-    },
-    {
       "Sid": "ProjectTable",
       "Effect": "Allow",
       "Action": [
@@ -70,14 +76,6 @@
       ]
     },
     {
-      "Sid": "DynamoListingNeedsWildcard",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:ListTables"
-      ],
-      "Resource": "*"
-    },
-    {
       "Sid": "ProjectFunctions",
       "Effect": "Allow",
       "Action": [
@@ -86,14 +84,74 @@
       "Resource": "arn:aws:lambda:REGION:ACCOUNT_ID:function:chintan-*"
     },
     {
-      "Sid": "LambdaListingAndLayersNeedWildcard",
+      "Sid": "EventSourceMappingsScopedByFunction",
       "Effect": "Allow",
       "Action": [
-        "lambda:ListFunctions",
-        "lambda:GetAccountSettings",
-        "lambda:ListLayers"
+        "lambda:CreateEventSourceMapping",
+        "lambda:UpdateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping"
       ],
-      "Resource": "*"
+      "Resource": "*",
+      "Condition": {
+        "ArnLike": {
+          "lambda:FunctionArn": "arn:aws:lambda:REGION:ACCOUNT_ID:function:chintan-*"
+        }
+      }
+    },
+    {
+      "Sid": "CapturePipelineQueues",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:SetQueueAttributes",
+        "sqs:ListQueueTags",
+        "sqs:TagQueue",
+        "sqs:UntagQueue"
+      ],
+      "Resource": "arn:aws:sqs:REGION:ACCOUNT_ID:chintan-*"
+    },
+    {
+      "Sid": "AlarmTopics",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:Unsubscribe",
+        "sns:ListSubscriptionsByTopic",
+        "sns:ListTagsForResource",
+        "sns:TagResource",
+        "sns:UntagResource"
+      ],
+      "Resource": "arn:aws:sns:REGION:ACCOUNT_ID:chintan-*"
+    },
+    {
+      "Sid": "ProjectAlarms",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": "arn:aws:cloudwatch:REGION:ACCOUNT_ID:alarm:chintan-*"
+    },
+    {
+      "Sid": "ProjectBudget",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget",
+        "budgets:ModifyBudget",
+        "budgets:ListTagsForResource",
+        "budgets:TagResource",
+        "budgets:UntagResource"
+      ],
+      "Resource": "arn:aws:budgets::ACCOUNT_ID:budget/*"
     },
     {
       "Sid": "ApiGateway",
@@ -135,15 +193,6 @@
         "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/chintan-*",
         "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/chintan-*:*"
       ]
-    },
-    {
-      "Sid": "LogsDescribeNeedsWildcard",
-      "Effect": "Allow",
-      "Action": [
-        "logs:DescribeLogGroups",
-        "logs:DescribeLogStreams"
-      ],
-      "Resource": "*"
     },
     {
       "Sid": "IamOnProjectRolesOnly",
@@ -206,7 +255,6 @@
       "Effect": "Allow",
       "Action": [
         "access-analyzer:ValidatePolicy",
-        "budgets:ViewBudget",
         "ce:GetCostAndUsage",
         "ce:ListCostAllocationTags",
         "cloudtrail:DescribeTrails",
@@ -227,23 +275,18 @@
       "Resource": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/chintan/*"
     },
     {
-      "Sid": "PassRoleToLambdaOnly",
+      "Sid": "PassRoleToLambdaAndCfnOnly",
       "Effect": "Allow",
       "Action": "iam:PassRole",
       "Resource": "arn:aws:iam::ACCOUNT_ID:role/chintan-*",
       "Condition": {
         "StringEquals": {
-          "iam:PassedToService": "lambda.amazonaws.com"
+          "iam:PassedToService": [
+            "lambda.amazonaws.com",
+            "cloudformation.amazonaws.com"
+          ]
         }
       }
-    },
-    {
-      "Sid": "SsmDescribeRequiresWildcardResource",
-      "Effect": "Allow",
-      "Action": [
-        "ssm:DescribeParameters"
-      ],
-      "Resource": "*"
     }
   ]
 }

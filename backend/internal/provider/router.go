@@ -24,6 +24,11 @@ type RouteDecision struct {
 	Title      string      `json:"title"`
 	Confidence float64     `json:"confidence"`
 	Content    string      `json:"content"`
+
+	// Usage is what the routing call consumed. It is carried on the decision so
+	// the breaker can reconcile its reservation against the real cost without a
+	// second round trip or a second interface.
+	Usage TokenUsage `json:"-"`
 }
 
 // Router decides which note a transcript belongs to.

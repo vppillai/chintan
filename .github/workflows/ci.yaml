@@ -1,0 +1,331 @@
+name: CI
+
+# Every gate that must be green before a change reaches main, in one workflow so
+# there is one place to look and one place to add the next one.
+#
+# v1 ran `go test` + `gofmt` + `go vet` and nothing else: no -race, no linter, no
+# vulnerability scan, no template validation, no shell checks, and no frontend
+# job at all against ~1,900 lines of JavaScript.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-test:
+    name: Go test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: gofmt
+        working-directory: backend
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+      # -race is the point of this job. The capture pipeline runs concurrent
+      # writers against the same note, which is exactly the class of bug a
+      # non-race test run cannot see.
+      - name: go test -race
+        working-directory: backend
+        run: go test -race ./...
+
+  backend-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Installed through the project's own install script rather than through
+      # golangci-lint-action, whose major version has to be matched to
+      # golangci-lint's major version — a mismatch fails with a config-format
+      # error that says nothing about versions. The install script always
+      # resolves a build that supports the Go toolchain in use.
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh |
+            sh -s -- -b "$(go env GOPATH)/bin"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: golangci-lint
+        working-directory: backend
+        run: golangci-lint run --timeout=5m ./...
+
+  backend-vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Reports only the vulnerabilities that are actually reachable from this
+      # code, so a finding here is a finding worth acting on rather than a
+      # dependency-graph alert.
+      - name: govulncheck
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+  infrastructure-lint:
+    name: cfn-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: cfn-lint
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check cfn-lint
+          cfn-lint infrastructure/*.yaml
+
+  shell:
+    name: shellcheck and shfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install shfmt
+        run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.10.0
+      - name: shellcheck
+        run: shellcheck --severity=warning scripts/*.sh scripts/lib/*.sh
+      # -i 4 -ci is the style the repository already uses; -d fails on any diff
+      # rather than rewriting, so CI never disagrees silently with the tree.
+      - name: shfmt
+        run: |
+          "$(go env GOPATH)/bin/shfmt" -d -i 4 -ci scripts/*.sh scripts/lib/*.sh
+      - name: Scripts parse
+        run: |
+          for f in scripts/*.sh scripts/lib/*.sh; do
+            bash -n "$f"
+          done
+
+  guardrails:
+    name: Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      # --local-only because a pull-request job holds no AWS or GitHub deploy
+      # credentials by design. The remote guardrails are reported UNVERIFIED
+      # rather than passed, which is the distinction the script exists to make.
+      - name: guardrails-check --local-only
+        run: scripts/guardrails-check.sh --local-only
+      # The self-test removes .github/CODEOWNERS from a copy of the tree and
+      # asserts the check then fails. A guardrail check nobody has watched fail
+      # is a guardrail check nobody should trust.
+      - name: guardrails-check --self-test
+        run: scripts/guardrails-check.sh --self-test
+
+  log-hygiene:
+    name: No user content in logs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Provider adapters must not log response bodies
+        run: scripts/check-log-hygiene.sh
+      - name: Prove the check can fail
+        run: scripts/check-log-hygiene.sh --self-test
+
+  vite-env:
+    name: Frontend env contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The deploy pipeline exports VITE_* variables the bundle reads. A name
+      # mismatch produces a bundle that builds and deploys green and cannot sign
+      # in, because a missing variable is an empty string rather than an error.
+      - name: Exports match reads
+        run: scripts/check-vite-env.sh
+      - name: Prove the check can fail
+        run: scripts/check-vite-env.sh --self-test
+
+  instance-configs:
+    name: Instance configs resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      # A malformed or duplicate instance config must fail here, not half-way
+      # through a deploy matrix.
+      - name: list-instances
+        run: scripts/list-instances.sh --format text
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Bun, not npm: there is no Node in this project's toolchain and the
+      # lockfile is bun.lock.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: frontend
+        run: bun run typecheck
+      # `lint` is eslint plus scripts/check-tokens.mjs, which is what enforces
+      # "no literal colour or font-size outside design tokens". Skipping it would
+      # leave that rule to code review.
+      - name: Lint
+        working-directory: frontend
+        run: bun run lint
+      - name: Test
+        working-directory: frontend
+        run: bun run test
+      # No VITE_* variables: config/env.ts treats them as optional at build time
+      # and only the deploy pipeline supplies them, so this proves the bundle
+      # compiles, not that it is configured.
+      - name: Build
+        working-directory: frontend
+        run: bun run build
+
+  contract:
+    name: Frontend/backend contract
+    runs-on: ubuntu-latest
+    # The frontend and the backend were written in parallel, by different
+    # authors, from docs/api/openapi.yaml — and the frontend's wire types are
+    # hand-written from it. Every other job checks one side against the
+    # document. This is the only job that checks the two implementations
+    # against each other, in both directions, and it needs both toolchains at
+    # once, which is why it is its own job rather than a step in either.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      # 1. Record what the app sends, by driving the real ChintanApi against a
+      #    stub fetch. Not a transcription of the client — the client itself.
+      - name: Record the frontend's requests
+        working-directory: frontend
+        run: bun run vitest run src/api/contract-requests.test.ts
+
+      # 2. Replay those requests through the real Go router, and capture one
+      #    response per wire shape as a typed TypeScript literal. decodeJSON
+      #    rejects unknown fields, so a field renamed on the frontend alone is a
+      #    400 here.
+      - name: Replay them against the router and capture its responses
+        working-directory: backend
+        run: CHINTAN_UPDATE_FIXTURES=1 go test -count=1 ./internal/handler/ -run Contract -v
+
+      # 3. Compile the captured responses against the hand-written types. An
+      #    annotated object literal is checked for excess properties, so a field
+      #    the backend added, renamed or retyped fails here.
+      - name: Typecheck the frontend against those responses
+        working-directory: frontend
+        run: bun run typecheck
+
+      # 4. Everything the type system cannot see: enum completeness, the
+      #    {items, cursor} envelope, x-amz-tagging surviving into the upload,
+      #    and problem+json parsing through the app's own reader.
+      - name: Assert the runtime invariants
+        working-directory: frontend
+        run: bun run vitest run src/api/contract.test.ts
+
+      # 5. The fixtures are reviewable artefacts. A shape change that nobody
+      #    committed is a shape change nobody read.
+      - name: The committed fixtures are the ones the two sides produce
+        run: |
+          if ! git diff --exit-code -- frontend/src/api/__fixtures__/; then
+            echo "::error::The contract fixtures are stale. Run 'bun run test' in frontend/ and"
+            echo "::error::'CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract' in backend/, then commit."
+            exit 1
+          fi
+
+      # 6. A contract check nobody has watched fail is a contract check nobody
+      #    should trust. This renames one field on the Go side and nowhere else,
+      #    and asserts the frontend refuses to compile against it.
+      - name: Prove a one-sided field rename is caught
+        run: |
+          restore() {
+            git checkout -- backend/internal/handler/wire.go frontend/src/api/__fixtures__/
+          }
+          trap restore EXIT
+          sed -i 's/`json:"items"`/`json:"entries"`/' backend/internal/handler/wire.go
+          (cd backend && CHINTAN_UPDATE_FIXTURES=1 go test -count=1 ./internal/handler/ \
+            -run TestContractResponsesAreWhatTheFrontendTypesDeclare)
+          if (cd frontend && bun run typecheck); then
+            echo "::error::The backend renamed Page.items to Page.entries and the frontend still compiled."
+            exit 1
+          fi
+          echo "the rename was caught, as it must be"
+
+  e2e:
+    name: Playwright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      # Chromium only — playwright.config.ts defines exactly one project, and
+      # installing the other two engines triples the setup time for browsers no
+      # spec runs in.
+      - name: Install Chromium
+        working-directory: frontend
+        run: bunx playwright install --with-deps chromium
+      # playwright.config.ts's webServer runs `bun run build && bun run preview`
+      # itself, because three of the specs need the service worker and the hashed
+      # asset paths that only exist in a real build. There is no separate build
+      # step here on purpose.
+      #
+      # This job runs on every pull request rather than behind a label. It is the
+      # gate that caught two bugs the unit tests could not, and a gate that only
+      # runs when someone remembers to ask for it is not a gate.
+      - name: e2e
+        working-directory: frontend
+        run: bun run e2e
+      - name: Upload the report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

@@ -2,473 +2,263 @@ package service
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
-	"github.com/vppillai/chintan/backend/internal/provider"
-	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
-// mockStore implements repository.Store for testing
-type mockStore struct {
-	settings map[string]model.Settings
-	notes    map[string]model.NoteIndex
-	captures map[string]model.CaptureIndex
+// recordingPresigner captures what the service asked to be signed, which is
+// where the retention tag either is or is not.
+type recordingPresigner struct {
+	calls []presignCall
 }
 
-func newMockStore() *mockStore {
-	return &mockStore{
-		settings: make(map[string]model.Settings),
-		notes:    make(map[string]model.NoteIndex),
-		captures: make(map[string]model.CaptureIndex),
+type presignCall struct {
+	key         string
+	contentType string
+	tags        map[string]string
+	maxBytes    int64
+}
+
+func (p *recordingPresigner) PresignPut(_ context.Context, key, contentType string, tags map[string]string, maxBytes int64, ttl time.Duration) (upload.Presigned, error) {
+	p.calls = append(p.calls, presignCall{key: key, contentType: contentType, tags: tags, maxBytes: maxBytes})
+	headers := map[string]string{"Content-Type": contentType}
+	if tagging := upload.EncodeTags(tags); tagging != "" {
+		headers[upload.TaggingHeader] = tagging
 	}
+	return upload.Presigned{
+		URL:       "https://example.invalid/" + key,
+		ExpiresAt: time.Now().Add(ttl),
+		MaxBytes:  maxBytes,
+		Headers:   headers,
+	}, nil
 }
 
-func (m *mockStore) GetSettings(ctx context.Context, userID string) (model.Settings, error) {
-	if s, ok := m.settings[userID]; ok {
-		return s, nil
+type stubQueue struct {
+	calls []string
+}
+
+func (q *stubQueue) EnqueueCapture(_ context.Context, tenantID, captureID, reason string) error {
+	q.calls = append(q.calls, tenantID+"/"+captureID+"/"+reason)
+	return nil
+}
+
+func TestCaptureService_BeginCapture(t *testing.T) {
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	svc := NewCaptureService(store, objects)
+
+	note := model.NoteIndex{ID: "note1", Title: "Test Note"}
+	if _, err := store.PutNote(context.Background(), "user1", note); err != nil {
+		t.Fatalf("PutNote: %v", err)
 	}
-	return model.Settings{CleanupMode: model.CleanupFaithful, RetentionDays: 0}, nil
-}
-
-func (m *mockStore) PutSettings(ctx context.Context, userID string, s model.Settings) error {
-	m.settings[userID] = s
-	return nil
-}
-
-func (m *mockStore) ListNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
-	var notes []model.NoteIndex
-	for key, n := range m.notes {
-		if strings.HasPrefix(key, userID+"/") {
-			notes = append(notes, n)
-		}
-	}
-	return notes, nil
-}
-
-func (m *mockStore) GetNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
-	key := userID + "/" + noteID
-	if n, ok := m.notes[key]; ok {
-		return n, nil
-	}
-	return model.NoteIndex{}, repository.ErrNotFound
-}
-
-func (m *mockStore) PutNote(ctx context.Context, userID string, n model.NoteIndex) error {
-	key := userID + "/" + n.ID
-	m.notes[key] = n
-	return nil
-}
-
-func (m *mockStore) DeleteNote(ctx context.Context, userID, noteID string) error {
-	key := userID + "/" + noteID
-	delete(m.notes, key)
-	return nil
-}
-
-func (m *mockStore) PutCapture(ctx context.Context, c model.CaptureIndex) error {
-	key := c.UserID + "/" + c.ID
-	m.captures[key] = c
-	return nil
-}
-
-func (m *mockStore) GetCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error) {
-	key := userID + "/" + captureID
-	if c, ok := m.captures[key]; ok {
-		return c, nil
-	}
-	return model.CaptureIndex{}, repository.ErrNotFound
-}
-
-func (m *mockStore) ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
-	var out []model.CaptureIndex
-	for _, c := range m.captures {
-		if c.UserID == userID && c.NoteID == noteID {
-			out = append(out, c)
-		}
-	}
-	return out, nil
-}
-
-func (m *mockStore) UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error {
-	key := userID + "/" + captureID
-	if c, ok := m.captures[key]; ok {
-		c.Status = status
-		c.Error = errMsg
-		m.captures[key] = c
-		return nil
-	}
-	return repository.ErrNotFound
-}
-
-func (m *mockStore) DeleteCapture(ctx context.Context, userID, captureID string) error {
-	key := userID + "/" + captureID
-	if _, ok := m.captures[key]; !ok {
-		return repository.ErrNotFound
-	}
-	delete(m.captures, key)
-	return nil
-}
-
-func (m *mockStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
-	return nil
-}
-func (m *mockStore) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
-	return model.WebAuthnChallenge{}, repository.ErrNotFound
-}
-func (m *mockStore) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
-	return nil
-}
-func (m *mockStore) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
-	return nil
-}
-func (m *mockStore) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
-	return model.WebAuthnCredential{}, repository.ErrNotFound
-}
-func (m *mockStore) ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error) {
-	return nil, nil
-}
-func (m *mockStore) ListWebAuthnCredentialsByUser(ctx context.Context, userID string) ([]model.WebAuthnCredential, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID string) error {
-	return nil
-}
-func (m *mockStore) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
-	return nil
-}
-func (m *mockStore) GetRefreshVault(ctx context.Context, userID string) (model.RefreshVault, error) {
-	return model.RefreshVault{}, repository.ErrNotFound
-}
-func (m *mockStore) DeleteRefreshVault(ctx context.Context, userID string) error {
-	return nil
-}
-
-// mockObjects implements repository.Objects for testing
-type mockObjects struct {
-	objects map[string][]byte
-}
-
-func newMockObjects() *mockObjects {
-	return &mockObjects{
-		objects: make(map[string][]byte),
-	}
-}
-
-func (m *mockObjects) Put(ctx context.Context, key string, body []byte, contentType string) error {
-	m.objects[key] = body
-	return nil
-}
-
-func (m *mockObjects) Get(ctx context.Context, key string) ([]byte, error) {
-	if data, ok := m.objects[key]; ok {
-		return data, nil
-	}
-	return nil, repository.ErrNotFound
-}
-
-func (m *mockObjects) Delete(ctx context.Context, key string) error {
-	delete(m.objects, key)
-	return nil
-}
-
-func (m *mockObjects) PresignPut(ctx context.Context, key string, contentType string, ttl time.Duration) (url string, err error) {
-	return "https://presigned.upload.url/" + key, nil
-}
-
-func (m *mockObjects) PresignGet(ctx context.Context, key string, ttl time.Duration) (url string, err error) {
-	return "https://presigned.download.url/" + key, nil
-}
-
-func TestCaptureService_CreateCapture(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{}
-	llm := &provider.FakeLLM{}
-
-	service := NewCaptureService(store, objects, stt, llm)
-
-	// Set up test note
-	note := model.NoteIndex{
-		ID:    "note1",
-		Title: "Test Note",
-	}
-	store.PutNote(context.Background(), "user1", note)
 
 	ctx := context.Background()
-	capture, uploadURL, err := service.CreateCapture(ctx, "user1", "note1", "audio/wav")
-
+	created, err := svc.BeginCapture(ctx, "user1", CaptureRequest{NoteID: "note1", ContentType: "audio/wav"})
 	if err != nil {
-		t.Fatalf("CreateCapture failed: %v", err)
+		t.Fatalf("BeginCapture failed: %v", err)
 	}
-
+	capture, uploadURL := created.Capture, created.Audio.URL
 	if capture.ID == "" {
 		t.Error("Expected capture ID to be set")
 	}
-
 	if capture.Status != model.StatusUploaded {
 		t.Errorf("Expected status %v, got %v", model.StatusUploaded, capture.Status)
 	}
-
 	if capture.UserID != "user1" {
 		t.Errorf("Expected UserID user1, got %v", capture.UserID)
 	}
-
 	if capture.NoteID != "note1" {
 		t.Errorf("Expected NoteID note1, got %v", capture.NoteID)
 	}
-
 	if uploadURL == "" {
 		t.Error("Expected upload URL to be set")
 	}
 }
 
-func TestCaptureService_CompleteCapture_HappyPath(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{Response: "Clean: Hello world"}
+// The presigned audio PUT must carry the retention tag. In v1 RetentionDays was
+// stored, returned, shown in the UI, and read by nothing; an S3 lifecycle filter
+// takes one prefix and one suffix with no wildcards, so tenants/*/captures/
+// cannot be expressed and the rule matches this tag instead.
+func TestBeginCaptureRequiresTheRetentionTagOnTheAudioUpload(t *testing.T) {
+	presigner := &recordingPresigner{}
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects()).WithUploads(presigner)
 
-	service := NewCaptureService(store, objects, stt, llm)
-
-	// Set up test data
-	note := model.NoteIndex{
-		ID:            "note1",
-		Title:         "Test Note",
-		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
-		Snippet:       "Original content",
-	}
-	store.PutNote(context.Background(), "user1", note)
-
-	capture := model.CaptureIndex{
-		ID:       "capture1",
-		UserID:   "user1",
-		NoteID:   "note1",
-		Status:   model.StatusUploaded,
-		Mode:     model.CleanupFaithful,
-		AudioKey: "tenants/user1/captures/capture1/audio.wav",
-	}
-	store.PutCapture(context.Background(), capture)
-
-	// Put audio data
-	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
-
-	// Put existing note content
-	objects.Put(context.Background(), note.S3MarkdownKey, []byte("Original note content"), "text/plain")
-
-	ctx := context.Background()
-	result, err := service.CompleteCapture(ctx, "user1", "capture1")
-
-	if err != nil {
-		t.Fatalf("CompleteCapture failed: %v", err)
-	}
-
-	if result.Status != model.StatusAppended {
-		t.Errorf("Expected status %v, got %v", model.StatusAppended, result.Status)
-	}
-
-	// Check that note was updated with cleaned text
-	updatedNote, err := objects.Get(ctx, note.S3MarkdownKey)
-	if err != nil {
-		t.Fatalf("Failed to get updated note: %v", err)
-	}
-
-	expectedContent := "Original note content\n\nClean: Hello world"
-	if string(updatedNote) != expectedContent {
-		t.Errorf("Expected note content %q, got %q", expectedContent, string(updatedNote))
-	}
-
-	// Check that raw and clean files were stored
-	rawData, err := objects.Get(ctx, "tenants/user1/captures/capture1/raw.txt")
-	if err != nil {
-		t.Errorf("Expected raw.txt to be stored: %v", err)
-	}
-	if string(rawData) != "Hello world" {
-		t.Errorf("Expected raw content 'Hello world', got %q", string(rawData))
-	}
-
-	cleanData, err := objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
-	if err != nil {
-		t.Errorf("Expected clean.txt to be stored: %v", err)
-	}
-	if string(cleanData) != "Clean: Hello world" {
-		t.Errorf("Expected clean content 'Clean: Hello world', got %q", string(cleanData))
-	}
-}
-
-func TestCaptureService_CompleteCapture_STTFailure(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{ShouldFail: true}
-	llm := &provider.FakeLLM{}
-
-	service := NewCaptureService(store, objects, stt, llm)
-
-	// Set up test data
-	note := model.NoteIndex{
-		ID:            "note1",
-		Title:         "Test Note",
-		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
-	}
-	store.PutNote(context.Background(), "user1", note)
-
-	capture := model.CaptureIndex{
-		ID:       "capture1",
-		UserID:   "user1",
-		NoteID:   "note1",
-		Status:   model.StatusUploaded,
-		AudioKey: "tenants/user1/captures/capture1/audio.wav",
-	}
-	store.PutCapture(context.Background(), capture)
-
-	// Put audio data
-	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
-
-	// Put original note content
-	originalContent := "Original note content"
-	objects.Put(context.Background(), note.S3MarkdownKey, []byte(originalContent), "text/plain")
-
-	ctx := context.Background()
-	result, err := service.CompleteCapture(ctx, "user1", "capture1")
-
-	if err != nil {
-		t.Fatalf("CompleteCapture failed: %v", err)
-	}
-
-	if result.Status != model.StatusFailed {
-		t.Errorf("Expected status %v, got %v", model.StatusFailed, result.Status)
-	}
-
-	// Check that note was NOT modified
-	noteContent, err := objects.Get(ctx, note.S3MarkdownKey)
-	if err != nil {
-		t.Fatalf("Failed to get note: %v", err)
-	}
-
-	if string(noteContent) != originalContent {
-		t.Errorf("Note content should not have changed, got %q", string(noteContent))
-	}
-
-	// Check that raw.txt was NOT created
-	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/raw.txt")
-	if err != repository.ErrNotFound {
-		t.Error("raw.txt should not exist after STT failure")
-	}
-
-	// Check that clean.txt was NOT created
-	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
-	if err != repository.ErrNotFound {
-		t.Error("clean.txt should not exist after STT failure")
-	}
-}
-
-func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{ShouldFail: true}
-
-	service := NewCaptureService(store, objects, stt, llm)
-
-	// Set up test data
-	note := model.NoteIndex{
-		ID:            "note1",
-		Title:         "Test Note",
-		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
-	}
-	store.PutNote(context.Background(), "user1", note)
-
-	capture := model.CaptureIndex{
-		ID:       "capture1",
-		UserID:   "user1",
-		NoteID:   "note1",
-		Status:   model.StatusUploaded,
-		AudioKey: "tenants/user1/captures/capture1/audio.wav",
-	}
-	store.PutCapture(context.Background(), capture)
-
-	// Put audio data
-	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
-
-	// Put original note content
-	originalContent := "Original note content"
-	objects.Put(context.Background(), note.S3MarkdownKey, []byte(originalContent), "text/plain")
-
-	ctx := context.Background()
-	result, err := service.CompleteCapture(ctx, "user1", "capture1")
-
-	if err != nil {
-		t.Fatalf("CompleteCapture failed: %v", err)
-	}
-
-	if result.Status != model.StatusFailed {
-		t.Errorf("Expected status %v, got %v", model.StatusFailed, result.Status)
-	}
-
-	// Check that note was NOT modified
-	noteContent, err := objects.Get(ctx, note.S3MarkdownKey)
-	if err != nil {
-		t.Fatalf("Failed to get note: %v", err)
-	}
-
-	if string(noteContent) != originalContent {
-		t.Errorf("Note content should not have changed, got %q", string(noteContent))
-	}
-
-	// Check that raw.txt WAS created (STT succeeded)
-	rawData, err := objects.Get(ctx, "tenants/user1/captures/capture1/raw.txt")
-	if err != nil {
-		t.Errorf("raw.txt should exist after STT success: %v", err)
-	}
-	if string(rawData) != "Hello world" {
-		t.Errorf("Expected raw content 'Hello world', got %q", string(rawData))
-	}
-
-	// Check that clean.txt was NOT created
-	_, err = objects.Get(ctx, "tenants/user1/captures/capture1/clean.txt")
-	if err != repository.ErrNotFound {
-		t.Error("clean.txt should not exist after cleanup failure")
-	}
-}
-
-func TestCompleteCaptureIdempotent(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "raw words"}
-	llm := &provider.FakeLLM{Response: "cleaned words"}
-	svc := NewCaptureService(store, objects, stt, llm)
-
-	ctx := context.Background()
-	userID := "user1"
-	noteID := "n1"
-	store.PutNote(ctx, userID, model.NoteIndex{
-		ID: noteID, Title: "T", S3MarkdownKey: "tenants/user1/notes/n1/note.md",
+	created, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{
+		ContentType: "audio/webm",
+		SizeBytes:   4 << 20,
 	})
-	objects.Put(ctx, "tenants/user1/notes/n1/note.md", []byte(""), "text/markdown")
-	objects.Put(ctx, "tenants/user1/captures/c_1/audio.webm", []byte("audio"), "audio/webm")
-	store.PutCapture(ctx, model.CaptureIndex{
-		ID: "c_1", UserID: userID, NoteID: noteID, Status: model.StatusUploaded,
-		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
-	})
+	if err != nil {
+		t.Fatalf("BeginCapture: %v", err)
+	}
 
-	first, err := svc.CompleteCapture(ctx, userID, "c_1")
+	if len(presigner.calls) != 2 {
+		t.Fatalf("presigned %d uploads, want audio and peaks", len(presigner.calls))
+	}
+	audio := presigner.calls[0]
+	if got := audio.tags[upload.ArtifactTagKey]; got != upload.ArtifactCaptureAudio {
+		t.Fatalf("audio presign tags = %v, want %s=%s",
+			audio.tags, upload.ArtifactTagKey, upload.ArtifactCaptureAudio)
+	}
+	if audio.maxBytes != 4<<20 {
+		t.Errorf("audio presign max bytes = %d, want the declared size", audio.maxBytes)
+	}
+	if got := created.Audio.Headers[upload.TaggingHeader]; got != "chintan-artifact=capture-audio" {
+		t.Fatalf("audio upload headers = %v, want the tagging header the client must send", created.Audio.Headers)
+	}
+
+	// The peaks object is the client's waveform envelope, not source audio, and
+	// must not be expired with it.
+	peaks := presigner.calls[1]
+	if _, tagged := peaks.tags[upload.ArtifactTagKey]; tagged {
+		t.Errorf("peaks presign carries the capture-audio retention tag: %v", peaks.tags)
+	}
+	if created.Peaks.URL == "" {
+		t.Error("no peaks upload URL was returned; the client computes the envelope and needs somewhere to PUT it")
+	}
+	if created.Capture.PeaksKey == "" {
+		t.Error("the capture row does not record where peaks will land")
+	}
+}
+
+func TestBeginCaptureRejectsUnsupportedAudio(t *testing.T) {
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
+
+	_, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{ContentType: "application/pdf"})
+	if !errors.Is(err, ErrUnsupportedContentType) {
+		t.Fatalf("err = %v, want ErrUnsupportedContentType", err)
+	}
+}
+
+func TestBeginCaptureRejectsAnOversizeUpload(t *testing.T) {
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
+
+	_, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{
+		ContentType: "audio/webm",
+		SizeBytes:   MaxCaptureBytes + 1,
+	})
+	if !errors.Is(err, ErrCaptureTooLarge) {
+		t.Fatalf("err = %v, want ErrCaptureTooLarge", err)
+	}
+}
+
+// The extension decides whether the bucket ever tells the worker the object
+// exists: the notification filters are a fixed list of suffixes.
+func TestBeginCaptureWritesAKeyTheBucketNotifiesOn(t *testing.T) {
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
+
+	for contentType, wantSuffix := range map[string]string{
+		"audio/webm;codecs=opus": "/audio.webm",
+		"audio/mp4":              "/audio.m4a",
+		"audio/ogg":              "/audio.ogg",
+		"audio/wav":              "/audio.wav",
+		"audio/mpeg":             "/audio.mp3",
+	} {
+		created, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{ContentType: contentType})
+		if err != nil {
+			t.Fatalf("BeginCapture(%s): %v", contentType, err)
+		}
+		if got := created.Capture.AudioKey; len(got) < len(wantSuffix) || got[len(got)-len(wantSuffix):] != wantSuffix {
+			t.Errorf("%s produced audio key %q, want it to end in %q", contentType, got, wantSuffix)
+		}
+	}
+}
+
+// Retry hands the capture back to the worker. v1 ran the whole pipeline inline,
+// which is what turned a gateway timeout into duplicated note content.
+func TestRetryCaptureEnqueuesRatherThanRunningTheWorkInline(t *testing.T) {
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	queue := &stubQueue{}
+	svc := NewCaptureService(store, objects).WithQueue(queue)
+
+	ctx := context.Background()
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_1", UserID: "user1", NoteID: "n1", Status: model.StatusFailed,
+		Error: "provider outage", RawKey: "tenants/user1/captures/c_1/raw.txt",
+	}); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+
+	capture, err := svc.RetryCapture(ctx, "user1", "c_1")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RetryCapture: %v", err)
 	}
-	if first.Status != model.StatusAppended {
-		t.Fatalf("status=%s", first.Status)
+	if capture.Status != model.StatusTranscribed {
+		t.Fatalf("status = %s, want the last good stage (transcribed)", capture.Status)
 	}
-	second, err := svc.CompleteCapture(ctx, userID, "c_1")
-	if err != nil {
-		t.Fatal(err)
+	if capture.Error != "" {
+		t.Errorf("error = %q, want it cleared on retry", capture.Error)
 	}
-	if second.Status != model.StatusAppended {
-		t.Fatalf("second status=%s", second.Status)
+	if len(queue.calls) != 1 || queue.calls[0] != "user1/c_1/retry" {
+		t.Fatalf("queue calls = %v, want one retry enqueue", queue.calls)
 	}
-	body, _ := objects.Get(ctx, "tenants/user1/notes/n1/note.md")
-	if strings.Count(string(body), "cleaned words") != 1 {
-		t.Fatalf("expected single append, got %q", body)
+}
+
+func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
+	store := memory.NewStore()
+	queue := &stubQueue{}
+	svc := NewCaptureService(store, memory.NewObjects()).WithQueue(queue)
+
+	ctx := context.Background()
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_1", UserID: "user1", NoteID: "n1", Status: model.StatusAppended,
+	}); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+
+	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); !errors.Is(err, ErrCaptureTerminal) {
+		t.Fatalf("err = %v, want ErrCaptureTerminal", err)
+	}
+	if len(queue.calls) != 0 {
+		t.Fatalf("an appended capture was re-enqueued: %v", queue.calls)
+	}
+}
+
+// Without a queue there is nowhere for the slow work to go. Failing loudly beats
+// quietly running the pipeline on the request path, which is the defect this
+// phase removes.
+func TestRetryCaptureFailsLoudlyWithNoQueue(t *testing.T) {
+	store := memory.NewStore()
+	svc := NewCaptureService(store, memory.NewObjects())
+
+	ctx := context.Background()
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_1", UserID: "user1", NoteID: "n1", Status: model.StatusUploaded,
+	}); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+
+	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); !errors.Is(err, ErrCaptureQueueUnavailable) {
+		t.Fatalf("err = %v, want ErrCaptureQueueUnavailable", err)
+	}
+}
+
+func TestGetDownloadURLServesTimestampsAndPeaks(t *testing.T) {
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	svc := NewCaptureService(store, objects)
+
+	ctx := context.Background()
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_1", UserID: "user1", Status: model.StatusAppended,
+		SegmentsKey: "tenants/user1/captures/c_1/segments.json",
+		PeaksKey:    "tenants/user1/captures/c_1/peaks.json",
+	}); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+
+	for _, kind := range []string{"segments", "peaks"} {
+		url, err := svc.GetDownloadURL(ctx, "user1", "c_1", kind)
+		if err != nil {
+			t.Fatalf("GetDownloadURL(%s): %v", kind, err)
+		}
+		if url == "" {
+			t.Errorf("GetDownloadURL(%s) returned an empty URL", kind)
+		}
 	}
 }

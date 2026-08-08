@@ -78,6 +78,32 @@ func CaptureClean(userID, captureID string) (string, error) {
 	return fmt.Sprintf("tenants/%s/captures/%s/clean.txt", userID, captureID), nil
 }
 
+// CaptureSegments holds the timestamped raw transcript that drives tap-to-seek
+// playback. Timestamps belong to the raw transcript: cleanup rewrites the text,
+// so cleaned prose carries no reliable time mapping.
+func CaptureSegments(userID, captureID string) (string, error) {
+	if err := check(userID, "userID"); err != nil {
+		return "", err
+	}
+	if err := check(captureID, "captureID"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("tenants/%s/captures/%s/segments.json", userID, captureID), nil
+}
+
+// CapturePeaks holds the amplitude envelope the client computes while recording.
+// The browser already has the decoded signal from its AnalyserNode; deriving it
+// server-side would mean shipping an Opus decoder into Lambda.
+func CapturePeaks(userID, captureID string) (string, error) {
+	if err := check(userID, "userID"); err != nil {
+		return "", err
+	}
+	if err := check(captureID, "captureID"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("tenants/%s/captures/%s/peaks.json", userID, captureID), nil
+}
+
 func CaptureMeta(userID, captureID string) (string, error) {
 	if err := check(userID, "userID"); err != nil {
 		return "", err

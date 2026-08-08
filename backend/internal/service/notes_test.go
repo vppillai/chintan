@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 func TestNotesService(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -48,7 +49,8 @@ func TestNotesService(t *testing.T) {
 			t.Fatalf("CreateNote failed: %v", err)
 		}
 
-		notes, err := notesService.ListNotes(ctx, userID)
+		notesPage, err := notesService.ListNotes(ctx, userID, repository.ListOptions{})
+		notes := notesPage.Items
 		if err != nil {
 			t.Fatalf("ListNotes failed: %v", err)
 		}
@@ -151,7 +153,8 @@ func TestNotesService(t *testing.T) {
 		}
 
 		// Verify it's not in active list
-		activeNotes, err := notesService.ListNotes(ctx, userID)
+		activeNotesPage, err := notesService.ListNotes(ctx, userID, repository.ListOptions{})
+		activeNotes := activeNotesPage.Items
 		if err != nil {
 			t.Fatalf("ListNotes failed: %v", err)
 		}

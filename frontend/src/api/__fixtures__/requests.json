@@ -1,0 +1,253 @@
+[
+  {
+    "name": "health",
+    "method": "GET",
+    "path": "/v1/health"
+  },
+  {
+    "name": "ready",
+    "method": "GET",
+    "path": "/v1/health/ready"
+  },
+  {
+    "name": "getSettings",
+    "method": "GET",
+    "path": "/v1/settings"
+  },
+  {
+    "name": "putSettings",
+    "method": "PUT",
+    "path": "/v1/settings",
+    "body": {
+      "cleanup_mode": "polished",
+      "retention_days": 30,
+      "theme": "nocturne",
+      "daily_spend_cap_micros": 500000
+    }
+  },
+  {
+    "name": "listNotes",
+    "method": "GET",
+    "path": "/v1/notes"
+  },
+  {
+    "name": "listNotesFiltered",
+    "method": "GET",
+    "path": "/v1/notes?limit=25&state=archived&tag=house"
+  },
+  {
+    "name": "listNotesPaged",
+    "method": "GET",
+    "path": "/v1/notes?cursor=__CONTRACT_CURSOR__&limit=200"
+  },
+  {
+    "name": "getNote",
+    "method": "GET",
+    "path": "/v1/notes/contract-note"
+  },
+  {
+    "name": "createNote",
+    "method": "POST",
+    "path": "/v1/notes",
+    "body": {
+      "title": "Kitchen rebuild",
+      "body": "Quotes are in.",
+      "aliases": [
+        "kitchen"
+      ],
+      "tags": [
+        "house",
+        "money"
+      ]
+    }
+  },
+  {
+    "name": "updateNote",
+    "method": "PATCH",
+    "path": "/v1/notes/contract-note",
+    "body": {
+      "version": 1,
+      "title": "Kitchen rebuild",
+      "body": "The tiler can start on the fourteenth.",
+      "aliases": [
+        "kitchen",
+        "reno"
+      ],
+      "tags": [
+        "house"
+      ],
+      "verbatim": true
+    }
+  },
+  {
+    "name": "archiveNote",
+    "method": "DELETE",
+    "path": "/v1/notes/contract-note"
+  },
+  {
+    "name": "restoreNote",
+    "method": "POST",
+    "path": "/v1/notes/contract-archived-note/restore"
+  },
+  {
+    "name": "deleteNoteForever",
+    "method": "DELETE",
+    "path": "/v1/notes/contract-archived-note/permanent"
+  },
+  {
+    "name": "matchNotes",
+    "method": "POST",
+    "path": "/v1/notes/match",
+    "body": {
+      "query": "kitchen rebuild"
+    }
+  },
+  {
+    "name": "listTags",
+    "method": "GET",
+    "path": "/v1/tags"
+  },
+  {
+    "name": "search",
+    "method": "GET",
+    "path": "/v1/search?q=tiler"
+  },
+  {
+    "name": "searchPaged",
+    "method": "GET",
+    "path": "/v1/search?q=tiler&cursor=__CONTRACT_CURSOR__&limit=20"
+  },
+  {
+    "name": "listCaptures_pending",
+    "method": "GET",
+    "path": "/v1/captures?status=pending"
+  },
+  {
+    "name": "listCaptures_failed",
+    "method": "GET",
+    "path": "/v1/captures?status=failed"
+  },
+  {
+    "name": "listCaptures_needs_target",
+    "method": "GET",
+    "path": "/v1/captures?status=needs_target"
+  },
+  {
+    "name": "listCaptures_all",
+    "method": "GET",
+    "path": "/v1/captures?status=all"
+  },
+  {
+    "name": "listCapturesPaged",
+    "method": "GET",
+    "path": "/v1/captures?cursor=__CONTRACT_CURSOR__&limit=10"
+  },
+  {
+    "name": "createCapture",
+    "method": "POST",
+    "path": "/v1/captures",
+    "body": {
+      "content_type": "audio/webm",
+      "note_id": "contract-note",
+      "duration_ms": 12000,
+      "size_bytes": 1048576
+    }
+  },
+  {
+    "name": "createCaptureUnrouted",
+    "method": "POST",
+    "path": "/v1/captures",
+    "body": {
+      "content_type": "audio/mp4"
+    }
+  },
+  {
+    "name": "getCapture",
+    "method": "GET",
+    "path": "/v1/captures/contract-capture"
+  },
+  {
+    "name": "setCaptureTargetExisting",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/target",
+    "body": {
+      "note_id": "contract-note"
+    }
+  },
+  {
+    "name": "setCaptureTargetNew",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/target",
+    "body": {
+      "new_note_title": "A brand new note"
+    }
+  },
+  {
+    "name": "retryCapture",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/retry"
+  },
+  {
+    "name": "downloadUrl_audio",
+    "method": "GET",
+    "path": "/v1/captures/contract-capture/download?kind=audio"
+  },
+  {
+    "name": "downloadUrl_raw",
+    "method": "GET",
+    "path": "/v1/captures/contract-capture/download?kind=raw"
+  },
+  {
+    "name": "downloadUrl_clean",
+    "method": "GET",
+    "path": "/v1/captures/contract-capture/download?kind=clean"
+  },
+  {
+    "name": "downloadUrl_segments",
+    "method": "GET",
+    "path": "/v1/captures/contract-capture/download?kind=segments"
+  },
+  {
+    "name": "downloadUrl_peaks",
+    "method": "GET",
+    "path": "/v1/captures/contract-capture/download?kind=peaks"
+  },
+  {
+    "name": "webauthnStatus",
+    "method": "GET",
+    "path": "/v1/auth/webauthn/status"
+  },
+  {
+    "name": "webauthnRegisterOptions",
+    "method": "POST",
+    "path": "/v1/auth/webauthn/register/options"
+  },
+  {
+    "name": "webauthnRegister",
+    "method": "POST",
+    "path": "/v1/auth/webauthn/register",
+    "body": {
+      "challenge_id": "ch_1",
+      "credential": {
+        "id": "abc",
+        "type": "public-key"
+      },
+      "refresh_token": "refresh-token"
+    }
+  },
+  {
+    "name": "webauthnDisable",
+    "method": "DELETE",
+    "path": "/v1/auth/webauthn"
+  },
+  {
+    "name": "startExport",
+    "method": "POST",
+    "path": "/v1/export"
+  },
+  {
+    "name": "getExport",
+    "method": "GET",
+    "path": "/v1/export/contract-export"
+  }
+]

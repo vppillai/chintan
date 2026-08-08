@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -22,12 +23,11 @@ func NewSettingsService(store repository.Store) *SettingsService {
 // GetSettings retrieves user settings, returning defaults if not found
 func (s *SettingsService) GetSettings(ctx context.Context, userID string) (model.Settings, error) {
 	settings, err := s.store.GetSettings(ctx, userID)
-	if err == repository.ErrNotFound {
+	// errors.Is, not identity: one fmt.Errorf("...%w") added anywhere below this
+	// would otherwise turn "no settings yet" into a 500.
+	if errors.Is(err, repository.ErrNotFound) {
 		// Return defaults for new users
-		return model.Settings{
-			CleanupMode:   model.CleanupFaithful,
-			RetentionDays: 0,
-		}, nil
+		return repository.DefaultSettings(), nil
 	}
 	return settings, err
 }

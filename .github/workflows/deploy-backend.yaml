@@ -1,5 +1,18 @@
 name: Deploy Backend
 
+# Staging first, smoke-tested, then production.
+#
+# v1 deployed straight to prod and ran the smoke test afterwards, so a failing
+# smoke test reported a red build over a live bad version with no way back. The
+# order here is the fix: every change reaches chintan-<instance>-staging first,
+# the smoke test there gates the production job, and the production job is behind
+# an environment that requires a human.
+#
+# All matrix and repository values reach the shell through `env:` rather than
+# through ${{ }} inside a run block. An expression interpolated into a script is
+# substituted before bash sees it, so a value containing a quote is executed
+# rather than read.
+
 on:
   push:
     branches:
@@ -8,10 +21,18 @@ on:
       - 'backend/**'
       - 'infrastructure/**'
       - 'config/**'
+      - 'scripts/deploy.sh'
+      - 'scripts/build-lambda.sh'
+      - 'scripts/lib/common.sh'
+      - 'scripts/list-instances.sh'
       - '.github/workflows/deploy-backend.yaml'
   workflow_dispatch:
 
 env:
+  # One region for the artifact bucket and every stack. infrastructure/bootstrap.yaml
+  # creates exactly one chintan-lambda-<account>-<region> bucket, and Lambda can
+  # only load code from a bucket in its own region, so a second region needs a
+  # second bootstrap stack before an instance config may name it.
   AWS_REGION: us-west-2
 
 permissions:
@@ -23,18 +44,53 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  discover-instances:
-    name: Discover Instances
+  discover:
+    name: Discover instances
     runs-on: ubuntu-latest
     outputs:
-      instances: ${{ steps.instances.outputs.instances }}
+      staging: ${{ steps.instances.outputs.staging }}
+      prod: ${{ steps.instances.outputs.prod }}
+      has_staging: ${{ steps.instances.outputs.has_staging }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      # scripts/list-instances.sh is the single reader of config/instances/*.yaml.
+      # v1 derived the instance name from the FILENAME and hardcoded
+      # Environment=prod, so the config files were decorative and there was no way
+      # to express a staging stack at all.
       - id: instances
         run: |
-          instances=$(find config/instances -name '*.yaml' -exec basename {} .yaml \; | jq -R -s -c 'split("\n") | map(select(length>0))')
-          echo "instances=$instances" >> "$GITHUB_OUTPUT"
-          echo "discovered: $instances"
+          set -euo pipefail
+          staging="$(scripts/list-instances.sh --environment staging)"
+          prod="$(scripts/list-instances.sh --environment prod)"
+          if [ "$(printf '%s' "$prod" | jq 'length')" -eq 0 ]; then
+            echo "no prod instance configs found" >&2
+            exit 1
+          fi
+          {
+            printf 'staging=%s\n' "$staging"
+            printf 'prod=%s\n' "$prod"
+            printf 'has_staging=%s\n' \
+              "$([ "$(printf '%s' "$staging" | jq 'length')" -gt 0 ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          printf 'staging: %s\nprod: %s\n' "$staging" "$prod"
+
+      - name: Every instance region matches the artifact bucket region
+        env:
+          EXPECTED_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          bad="$(scripts/list-instances.sh | jq -r --arg r "$EXPECTED_REGION" \
+            '.[] | select(.region != $r) | .config')"
+          if [ -n "$bad" ]; then
+            echo "these configs name a region other than ${EXPECTED_REGION}:" >&2
+            echo "$bad" >&2
+            echo "deploy a bootstrap stack in that region first, then widen this check" >&2
+            exit 1
+          fi
 
   test:
     name: Test
@@ -45,12 +101,12 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - name: go test
+      - name: go test -race
         working-directory: backend
         run: |
           test -z "$(gofmt -l .)"
           go vet ./...
-          go test ./...
+          go test -race ./...
 
   build:
     name: Build Lambda
@@ -58,7 +114,7 @@ jobs:
     needs: test
     outputs:
       artifact_key: ${{ steps.upload.outputs.key }}
-    environment: production
+      artifact_bucket: ${{ steps.upload.outputs.bucket }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -70,61 +126,84 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
       - name: Build arm64 zip
-        working-directory: backend
-        run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o bootstrap ./cmd/api
-          zip "function-${GITHUB_SHA}.zip" bootstrap
+        run: scripts/build-lambda.sh --output "function-${GITHUB_SHA}.zip"
       - id: upload
-        name: Upload to artifact bucket
-        working-directory: backend
+        name: Upload to the artifact bucket
+        env:
+          ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
-          BUCKET="chintan-lambda-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}"
+          set -euo pipefail
+          BUCKET="chintan-lambda-${ACCOUNT_ID}-${AWS_REGION}"
           KEY="function-${GITHUB_SHA}.zip"
           aws s3 cp "$KEY" "s3://${BUCKET}/${KEY}"
-          echo "key=$KEY" >> "$GITHUB_OUTPUT"
-          echo "bucket=$BUCKET"
+          {
+            printf 'key=%s\n' "$KEY"
+            printf 'bucket=%s\n' "$BUCKET"
+          } >> "$GITHUB_OUTPUT"
 
-  deploy:
-    name: Deploy ${{ matrix.instance }}
+  deploy-staging:
+    name: Staging ${{ matrix.entry.stack }}
     runs-on: ubuntu-latest
-    needs: [discover-instances, build]
+    needs: [discover, build]
+    if: needs.discover.outputs.has_staging == 'true'
+    environment: staging
     strategy:
+      # One instance failing must not cancel its siblings mid-flight: a cancelled
+      # CloudFormation deploy leaves a stack in UPDATE_IN_PROGRESS that the next
+      # run cannot touch without a manual continue-update-rollback.
+      fail-fast: false
       matrix:
-        instance: ${{ fromJSON(needs.discover-instances.outputs.instances) }}
-    environment: production
+        entry: ${{ fromJSON(needs.discover.outputs.staging) }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy CloudFormation
-        run: |
-          BUCKET="chintan-lambda-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}"
-          OWNER="${{ github.repository_owner }}"
-          REPO="${{ github.event.repository.name }}"
-          aws cloudformation deploy \
-            --stack-name "chintan-${{ matrix.instance }}-prod" \
-            --template-file infrastructure/template.yaml \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              InstanceName="${{ matrix.instance }}" \
-              Environment=prod \
-              AllowedOrigin="https://${OWNER}.github.io" \
-              LambdaCodeBucket="${BUCKET}" \
-              LambdaCodeKey="${{ needs.build.outputs.artifact_key }}" \
-              PagesHost="${OWNER}.github.io" \
-              RepoName="${REPO}" \
-            --tags \
-              Application=Chintan \
-              Project=chintan \
-              Instance="${{ matrix.instance }}"
-      - name: Smoke health
-        run: |
-          ENDPOINT=$(aws cloudformation describe-stacks \
-            --stack-name "chintan-${{ matrix.instance }}-prod" \
-            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
-            --output text)
-          echo "ApiEndpoint=$ENDPOINT"
-          curl -fsS "${ENDPOINT}/v1/health"
+      - name: Deploy and smoke ${{ matrix.entry.stack }}
+        env:
+          INSTANCE: ${{ matrix.entry.instance }}
+          ENVIRONMENT: ${{ matrix.entry.environment }}
+          EXTRA_PARAMETERS: ${{ toJSON(matrix.entry.parameters) }}
+          LAMBDA_BUCKET: ${{ needs.build.outputs.artifact_bucket }}
+          LAMBDA_KEY: ${{ needs.build.outputs.artifact_key }}
+          PAGES_HOST: ${{ github.repository_owner }}.github.io
+          REPO_NAME: ${{ github.event.repository.name }}
+          # When the bootstrap stack exports it, CloudFormation acts under a
+          # service role scoped to one stack rather than under the CI role.
+          CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
+        run: scripts/ci-deploy-stack.sh
+
+  deploy-prod:
+    name: Production ${{ matrix.entry.stack }}
+    runs-on: ubuntu-latest
+    needs: [discover, build, deploy-staging]
+    # Runs when staging succeeded, and also when there was no staging stack to
+    # deploy to. It must not run when staging failed — that is the entire point
+    # of deploying there first.
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.deploy-staging.result == 'success' || needs.deploy-staging.result == 'skipped')
+    environment: production
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.discover.outputs.prod) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy and smoke ${{ matrix.entry.stack }}
+        env:
+          INSTANCE: ${{ matrix.entry.instance }}
+          ENVIRONMENT: ${{ matrix.entry.environment }}
+          EXTRA_PARAMETERS: ${{ toJSON(matrix.entry.parameters) }}
+          LAMBDA_BUCKET: ${{ needs.build.outputs.artifact_bucket }}
+          LAMBDA_KEY: ${{ needs.build.outputs.artifact_key }}
+          PAGES_HOST: ${{ github.repository_owner }}.github.io
+          REPO_NAME: ${{ github.event.repository.name }}
+          CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
+        run: scripts/ci-deploy-stack.sh

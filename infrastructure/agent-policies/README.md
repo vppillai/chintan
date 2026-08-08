@@ -12,10 +12,20 @@ against them, which is how a silently-altered guardrail is detected (§9.8).
 
 | File | Role |
 |---|---|
-| `boundary.json` | The permissions **ceiling**. Attached to the agent role *and* the CLI user, and required on every role the agent creates, so privilege cannot escalate through a Lambda execution role (G-046). |
+| `policy-source.json` | **The source.** `Ceiling` is the single Allow statement; `Shared` is every deny. Edit this, never the two generated files. |
+| `generate-policies.py` | Writes `boundary.json` and `deny.json` from the source, and refuses to emit a policy over the IAM size limit. `--check` verifies the committed files are current. |
+| `boundary.json` | *Generated.* The permissions **ceiling**. Attached to the agent role *and* the CLI user, and required on every role the agent creates, so privilege cannot escalate through a Lambda execution role (G-046). |
 | `permissions.json` | What the agent may actually do. Effective permission is this **intersected** with the boundary. |
-| `deny.json` | Explicit denies. Override any allow. |
+| `deny.json` | *Generated.* Explicit denies. Override any allow. |
 | `trust.json` | Who may assume the agent role. Rewritten by the bootstrap to name the CLI user specifically. |
+
+`boundary.json` and `deny.json` are the same document apart from the ceiling
+statement, so they are generated rather than kept in step by hand:
+
+```sh
+infrastructure/agent-policies/generate-policies.py            # write
+infrastructure/agent-policies/generate-policies.py --check    # verify, for CI
+```
 
 ## What actually enforces what
 
@@ -25,7 +35,12 @@ as written and the remainder carry the weight.
 **Resource-ARN scoping is the primary control.** Every statement in
 `permissions.json` is scoped to `chintan-*` ARNs in the deploy region. ARN
 conditions are supported by every service, always. This is what actually confines the
-agent.
+agent. The one exception is `ActionsThatTakeNoResourceToScopeTo`, which collects the
+listing and validation calls that genuinely accept no resource ARN — `ListStacks`,
+`ListAllMyBuckets`, `ListTables`, `ListFunctions`, `ListQueues`, `DescribeLogGroups`,
+`DescribeAlarms`, `ValidateTemplate` and friends. They were previously eight separate
+statements whose Sids all said the same thing; folding them together says it once and
+returns roughly 500 characters of the 6144 budget.
 
 **Naming-prefix denies are the cross-project control.** `deny.json` denies all actions
 against `passbook-*` ARNs by name. Also always supported.
@@ -70,17 +85,24 @@ boundary is attached to the user as well as the role (G-065).
 
 ## Changing these
 
-1. Edit the document.
-2. Run `scripts/bootstrap-agent.sh` (dry run) to render and validate it. Every document
+1. Edit `policy-source.json` — not `boundary.json` or `deny.json`.
+2. Run `generate-policies.py`, and commit the regenerated files alongside the source.
+   It prints the size of each policy and fails outright on an oversized one.
+3. Run `scripts/bootstrap-agent.sh` (dry run) to render and validate it. Every document
    is pre-flighted through IAM Access Analyzer, which catches invalid action syntax,
    non-existent service namespaces, and unsupported condition keys — all three of which
    occurred while writing these.
-3. Check the size. An IAM managed policy is capped at **6144 characters** and a
-   permissions boundary is exactly one managed policy, so the boundary is deliberately
-   coarser than the grant policy: the concatenation of grants plus denies was 10132.
-4. Re-run with `--apply`. Policies are updated as new default versions rather than
+4. **Watch the size.** An IAM managed policy is capped at **6144 characters**, whitespace
+   excluded, and a permissions boundary is exactly one managed policy. The boundary is
+   therefore deliberately coarser than the grant policy: the concatenation of grants plus
+   denies was 10132. It currently runs at **6068 characters, leaving 76** — under a tenth
+   of a statement. The next service the project adopts does not fit, and adding it will
+   fail the generator rather than the deploy. When that happens the fix is to narrow the
+   ceiling (drop a service the project no longer uses) or to move denies that need no
+   ceiling into a separate attached policy, not to trim the deny statements.
+5. Re-run with `--apply`. Policies are updated as new default versions rather than
    deleted and recreated, because a window in which a guardrail does not exist is a
    window.
-5. **Test both directions.** Prove the boundary still permits a real deploy as well as
+6. **Test both directions.** Prove the boundary still permits a real deploy as well as
    blocking what it should. A boundary tested only for what it blocks is half-tested
    (G-052), and over-restriction is the failure that wastes the most time.

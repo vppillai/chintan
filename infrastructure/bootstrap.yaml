@@ -17,10 +17,26 @@ Parameters:
 
   ExistingOIDCProviderArn:
     Type: String
-    Default: arn:aws:iam::338186951935:oidc-provider/token.actions.githubusercontent.com
+    Default: ''
     Description: >
-      Existing account OIDC provider for token.actions.githubusercontent.com.
-      Shared with other projects (e.g. passbook); this stack must not create another.
+      Existing OIDC provider for token.actions.githubusercontent.com. Leave empty
+      to use the deploying account's own provider, which is what a clone wants;
+      set it explicitly only to point at a provider in another account. This
+      stack never creates one — the provider is shared with other projects.
+
+  ArtifactRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 3650
+    Description: >
+      Days a Lambda deployment package stays in the artifact bucket. Every build
+      writes a new current key, so without this the bucket grows without bound.
+
+Conditions:
+  # Empty means "this account", spelled out rather than hardcoded to whichever
+  # account the template was first written in.
+  UseOwnAccountOIDCProvider: !Equals [!Ref ExistingOIDCProviderArn, '']
 
 Resources:
   LambdaDeploymentBucket:
@@ -40,10 +56,18 @@ Resources:
         Status: Enabled
       LifecycleConfiguration:
         Rules:
-          - Id: CleanupOldVersions
+          # Expiring only noncurrent versions left every build's current key in
+          # place forever. The current object now expires too; it becomes
+          # noncurrent, the next rule removes it a day later, and the third
+          # sweeps the delete marker. S3 rejects ExpiredObjectDeleteMarker in
+          # the same rule as a day count, hence the split.
+          - Id: ExpireOldArtifacts
             Status: Enabled
+            ExpirationInDays: !Ref ArtifactRetentionDays
             NoncurrentVersionExpiration:
               NoncurrentDays: 1
+          - Id: CleanupExpiredDeleteMarkers
+            Status: Enabled
             ExpiredObjectDeleteMarker: true
           - Id: AbortStaleMultipartUploads
             Status: Enabled
@@ -55,6 +79,353 @@ Resources:
         - Key: Project
           Value: chintan
 
+  # ---------------------------------------------------------------------------
+  # CloudFormation service role.
+  #
+  # Without --role-arn, CloudFormation acts with the caller's permissions, so
+  # the instance stack is deployed by whatever the CI role happens to be allowed
+  # to do — which is necessarily wider than one stack needs, and grows every time
+  # anything else is added to that role. Passing this role instead pins the blast
+  # radius of a deploy to exactly the resource types template.yaml declares.
+  #
+  # It deliberately carries NO permissions boundary. The boundary's denies are
+  # conditioned on aws:CalledVia containing cloudformation.amazonaws.com, which
+  # is populated for forward-access sessions — a principal calling *through*
+  # CloudFormation. A service role is assumed by CloudFormation and calls *as*
+  # itself, so the key is absent, `ForAllValues:StringNotEquals` is vacuously
+  # true, and DenyIrreversibleDeletesOutsideCloudFormation would block every
+  # delete this role exists to perform. Teardown would fail with a denial that
+  # reads like a bug in the boundary.
+  #
+  # The escalation path the boundary would have closed is closed here instead,
+  # at the source: this role may only create a role that carries the boundary,
+  # may only attach the one managed policy Lambda needs, and may not remove a
+  # boundary from anything. That is the documented delegation pattern, and it is
+  # stronger than a boundary on this role would have been.
+  CfnDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: chintan-cfn-deploy
+      Description: Service role CloudFormation assumes to manage chintan instance stacks.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Tags:
+        - Key: Application
+          Value: Chintan
+        - Key: Project
+          Value: chintan
+      Policies:
+        - PolicyName: ChintanStackResources
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Cognito cannot be prefix-scoped: pool IDs are service-generated,
+              # so there is no ARN to match before the pool exists.
+              - Effect: Allow
+                Action:
+                  - cognito-idp:CreateUserPool
+                  - cognito-idp:DeleteUserPool
+                  - cognito-idp:UpdateUserPool
+                  - cognito-idp:CreateUserPoolClient
+                  - cognito-idp:DeleteUserPoolClient
+                  - cognito-idp:UpdateUserPoolClient
+                  - cognito-idp:CreateUserPoolDomain
+                  - cognito-idp:DeleteUserPoolDomain
+                  - cognito-idp:SetUserPoolMfaConfig
+                  - cognito-idp:GetUserPoolMfaConfig
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:DescribeUserPoolDomain
+                  - cognito-idp:ListTagsForResource
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - dynamodb:CreateTable
+                  - dynamodb:DeleteTable
+                  - dynamodb:UpdateTable
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                  - dynamodb:UpdateContinuousBackups
+                  - dynamodb:DescribeTimeToLive
+                  - dynamodb:UpdateTimeToLive
+                  - dynamodb:ListTagsOfResource
+                  - dynamodb:TagResource
+                  - dynamodb:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:GetBucket*
+                  - s3:PutBucket*
+                  - s3:GetEncryptionConfiguration
+                  - s3:PutEncryptionConfiguration
+                  - s3:GetLifecycleConfiguration
+                  - s3:PutLifecycleConfiguration
+                  - s3:GetAccelerateConfiguration
+                Resource:
+                  - 'arn:aws:s3:::chintan-content-*'
+
+              # CreateKey takes no resource. Everything after it is the key this
+              # stack made, which the account root policy already governs.
+              - Effect: Allow
+                Action:
+                  - kms:CreateKey
+                  - kms:DescribeKey
+                  - kms:GetKeyPolicy
+                  - kms:PutKeyPolicy
+                  - kms:GetKeyRotationStatus
+                  - kms:EnableKeyRotation
+                  - kms:DisableKeyRotation
+                  - kms:ScheduleKeyDeletion
+                  - kms:CancelKeyDeletion
+                  - kms:ListResourceTags
+                  - kms:TagResource
+                  - kms:UntagResource
+                  - kms:CreateAlias
+                  - kms:UpdateAlias
+                  - kms:DeleteAlias
+                  - kms:ListAliases
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:GetFunctionConcurrency
+                  - lambda:PutFunctionConcurrency
+                  - lambda:DeleteFunctionConcurrency
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - lambda:GetPolicy
+                  - lambda:ListTags
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  # Versions and the live alias are stack resources, not just
+                  # deploy-script artefacts.
+                  - lambda:PublishVersion
+                  - lambda:CreateAlias
+                  - lambda:UpdateAlias
+                  - lambda:DeleteAlias
+                  - lambda:GetAlias
+                  - lambda:ListVersionsByFunction
+                  - lambda:ListAliases
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:GetEventSourceMapping
+                  - lambda:ListEventSourceMappings
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:CreateEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                Resource: '*'
+                Condition:
+                  ArnLike:
+                    lambda:FunctionArn: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:PutRetentionPolicy
+                  - logs:DeleteRetentionPolicy
+                  - logs:TagLogGroup
+                  - logs:UntagLogGroup
+                  - logs:TagResource
+                  - logs:UntagResource
+                  - logs:ListTagsLogGroup
+                  - logs:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/chintan-*'
+                  - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/apigateway/chintan-*'
+
+              # Access logging: API Gateway needs the stage's destination group
+              # writable, and checks that at stage-update time.
+              - Effect: Allow
+                Action:
+                  - logs:GetLogDelivery
+                  - logs:CreateLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                # Tagging is not a separate action here: API Gateway tags through
+                # PUT and DELETE on /tags/*, which the verbs above already cover.
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
+
+              - Effect: Allow
+                Action:
+                  - sqs:CreateQueue
+                  - sqs:DeleteQueue
+                  - sqs:GetQueueAttributes
+                  - sqs:SetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:ListQueueTags
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                Resource:
+                  - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:GetTopicAttributes
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:GetSubscriptionAttributes
+                  - sns:ListSubscriptionsByTopic
+                  - sns:ListTagsForResource
+                  - sns:TagResource
+                  - sns:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListTagsForResource
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - budgets:ViewBudget
+                  - budgets:ModifyBudget
+                  - budgets:ListTagsForResource
+                  - budgets:TagResource
+                  - budgets:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/*'
+
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+
+              # The delegation: a role may be created, and its policies written,
+              # only while it carries the agent boundary. Without this condition
+              # a stack template could mint an unbounded role and pass it to
+              # Lambda, and the deploy path would be an escalation path.
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:UpdateAssumeRolePolicy
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
+
+              - Effect: Allow
+                Action:
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+                Condition:
+                  ArnEquals:
+                    iam:PolicyARN: 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+                  StringEquals:
+                    iam:PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
+
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: 'lambda.amazonaws.com'
+
+              # Belt and braces over the condition above: the boundary can never
+              # be taken off a role this role touches, whatever a future template
+              # asks for.
+              - Effect: Deny
+                Action:
+                  - iam:DeleteRolePermissionsBoundary
+                  - iam:CreateUser
+                  - iam:CreateAccessKey
+                  - iam:CreateOpenIDConnectProvider
+                  - iam:CreatePolicyVersion
+                  - iam:SetDefaultPolicyVersion
+                Resource: '*'
+
+              # It must not be able to rewrite the guardrails it is checked
+              # against, nor to reach the other project in this account.
+              - Effect: Deny
+                Action: '*'
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-agent'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-github-actions'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-cfn-deploy'
+                  - 'arn:aws:s3:::passbook-*'
+                  - 'arn:aws:s3:::passbook-*/*'
+                  - !Sub 'arn:aws:dynamodb:*:${AWS::AccountId}:table/passbook-*'
+                  - !Sub 'arn:aws:lambda:*:${AWS::AccountId}:function:passbook-*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/passbook-*'
+
   GitHubActionsRole:
     Type: AWS::IAM::Role
     Properties:
@@ -65,7 +436,10 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Ref ExistingOIDCProviderArn
+              Federated: !If
+                - UseOwnAccountOIDCProvider
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+                - !Ref ExistingOIDCProviderArn
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
@@ -145,6 +519,127 @@ Resources:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
 
+              # Publishing a version and moving the `live` alias happens in
+              # scripts/deploy.sh, after the change set succeeds and outside any
+              # CloudFormation operation, so these cannot carry the CalledVia
+              # condition the mutations above do. They are the rollback handle:
+              # without them a bad deploy can only be undone by another deploy.
+              - Effect: Allow
+                Action:
+                  - lambda:PublishVersion
+                  - lambda:GetAlias
+                  - lambda:ListAliases
+                  - lambda:CreateAlias
+                  - lambda:UpdateAlias
+                  - lambda:ListVersionsByFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+
+              # Event source mappings are named by service-generated UUID, so the
+              # scope has to come from the function they attach to.
+              - Effect: Allow
+                Action:
+                  - lambda:GetEventSourceMapping
+                  - lambda:ListEventSourceMappings
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:CreateEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                Resource: '*'
+                Condition:
+                  ArnLike:
+                    lambda:FunctionArn: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:ListQueueTags
+                Resource:
+                  - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - sqs:CreateQueue
+                  - sqs:DeleteQueue
+                  - sqs:SetQueueAttributes
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                Resource:
+                  - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - sns:GetTopicAttributes
+                  - sns:ListTagsForResource
+                  - sns:ListSubscriptionsByTopic
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:TagResource
+                  - sns:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # Alarm ARNs are name-scoped, so chintan-* holds.
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListTagsForResource
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # The budget the README used to ask a human to click. Budgets is a
+              # global service; its ARNs carry no region.
+              # Budgets has no per-verb actions: ViewBudget reads and
+              # ModifyBudget covers create, update and delete alike.
+              - Effect: Allow
+                Action:
+                  - budgets:ViewBudget
+                  - budgets:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/*'
+
+              - Effect: Allow
+                Action:
+                  - budgets:ModifyBudget
+                  - budgets:TagResource
+                  - budgets:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
               - Effect: Allow
                 Action:
                   - dynamodb:DescribeTable
@@ -178,8 +673,11 @@ Resources:
                   - s3:PutEncryptionConfiguration
                   - s3:PutBucketPublicAccessBlock
                   - s3:PutBucketTagging
+                # A bucket ARN carries no region or account, so there is nothing
+                # for Fn::Sub to substitute. Written plain, as CfnDeployRole
+                # already writes the same ARN.
                 Resource:
-                  - !Sub 'arn:aws:s3:::chintan-content-*'
+                  - 'arn:aws:s3:::chintan-content-*'
                 Condition:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
@@ -198,8 +696,10 @@ Resources:
                   - apigateway:PUT
                   - apigateway:DELETE
                   - apigateway:PATCH
-                  - apigateway:TagResource
-                  - apigateway:UntagResource
+                # Tagging is not a separate action here: API Gateway tags through
+                # PUT and DELETE on /tags/*, which the verbs above already cover.
+                # apigateway:TagResource / :UntagResource are not actions the
+                # service defines, so naming them granted nothing.
                 Resource:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
@@ -227,6 +727,8 @@ Resources:
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
+                  # Hardened pool config: MFA and advanced security.
+                  - cognito-idp:SetUserPoolMfaConfig
                   - cognito-idp:TagResource
                   - cognito-idp:UntagResource
                 Resource: '*'
@@ -269,6 +771,9 @@ Resources:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
 
+              # lambda.amazonaws.com for the function execution role;
+              # cloudformation.amazonaws.com for the deploy service role passed
+              # as --role-arn, without which the scoped deploy silently is not one.
               - Effect: Allow
                 Action:
                   - iam:PassRole
@@ -276,7 +781,9 @@ Resources:
                   - !Sub 'arn:aws:iam::${AWS::AccountId}:role/chintan-*'
                 Condition:
                   StringEquals:
-                    iam:PassedToService: 'lambda.amazonaws.com'
+                    iam:PassedToService:
+                      - 'lambda.amazonaws.com'
+                      - 'cloudformation.amazonaws.com'
 
               - Effect: Allow
                 Action:
@@ -343,6 +850,18 @@ Outputs:
     Export:
       Name: ChintanGitHubActionsRole
 
+  CfnDeployRoleArn:
+    Description: >
+      CloudFormation service role. Pass to scripts/deploy.sh as
+      CFN_DEPLOY_ROLE_ARN so the stack is managed with these permissions rather
+      than the caller's.
+    Value: !GetAtt CfnDeployRole.Arn
+    Export:
+      Name: ChintanCfnDeployRole
+
   OIDCProviderArn:
-    Description: Existing GitHub OIDC Provider ARN (shared, not created by this stack)
-    Value: !Ref ExistingOIDCProviderArn
+    Description: GitHub OIDC Provider ARN the deploy role trusts (shared, not created by this stack)
+    Value: !If
+      - UseOwnAccountOIDCProvider
+      - !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+      - !Ref ExistingOIDCProviderArn

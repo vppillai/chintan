@@ -1,217 +1,249 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Delete one Chintan instance stack and the resources it retains.
+#
+# Everything this script touches is discovered from the stack itself, through
+# describe-stack-resources. Nothing is found by matching a name prefix across the
+# account. That distinction is the difference between deleting the DynamoDB table
+# belonging to chintan-dev-staging and deleting every table in the account whose
+# name happens to start with "chintan-".
+#
+# Two v1 defects are fixed here beyond the naming:
+#
+#   * v1 built the stack name as chintan-<instance>, found no such stack because
+#     CI deploys chintan-<instance>-prod, warned, returned — and then went on to
+#     delete /chintan/<instance>/groq_api_key and /chintan/<instance>/llm_api_key
+#     unconditionally. It broke the running application and cleaned up nothing.
+#     Secrets are now deleted only after the stack is actually gone, and only when
+#     no other stack for that instance still needs them.
+#
+#   * v1 prompted on stdin with no way to answer. teardown.sh exported
+#     SKIP_CONFIRMATION=true, which this script never read, so an automated
+#     teardown blocked on an invisible prompt. --yes is now a real flag, and
+#     ASSUME_YES is honoured from the environment so a nested run inherits it.
+#
+# Usage:
+#   scripts/cleanup-aws.sh --instance dev [--environment prod] [--region R]
+#                          [--yes] [--apply]
+#
+# Options:
+#   --instance NAME     instance name                       (required)
+#   --environment ENV   prod | staging | dev                (default: prod)
+#   --region REGION     AWS region                          (default: $AWS_REGION)
+#   --yes               skip the typed confirmation
+#   --apply             execute; without it nothing is deleted
 
-# Cleanup script for Chintan - Remove specific instance resources
-set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-# Source common utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
+INSTANCE=""
+ENVIRONMENT="prod"
 
-# Default values
-INSTANCE_NAME=""
-
-show_usage() {
-    cat << EOF
-Usage: $(basename "$0") --instance INSTANCE [--dry-run|--apply]
-
-Delete Chintan instance infrastructure including retained resources.
-
-Required:
-  --instance INSTANCE   Instance name to delete
-
-Options:
-  --dry-run            Show what would be done without making changes (default)
-  --apply              Actually perform the deletions
-
-This will delete:
-  - CloudFormation stack: chintan-INSTANCE
-  - DynamoDB table (even with DeletionPolicy: Retain)
-  - S3 content bucket and all versions
-  - CloudWatch log groups
-
-Examples:
-  $(basename "$0") --instance dev                    # Dry run
-  $(basename "$0") --instance dev --apply            # Actually delete
-EOF
-}
-
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --instance)
-                INSTANCE_NAME="$2"
-                shift 2
-                ;;
-            --dry-run)
-                DRY_RUN="true"
-                shift
-                ;;
-            --apply)
-                DRY_RUN="false"
-                shift
-                ;;
-            -h|--help)
-                show_usage
-                exit 0
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                show_usage
-                exit 1
-                ;;
-        esac
-    done
-    
-    export DRY_RUN
-}
-
-validate_args() {
-    if [[ -z "$INSTANCE_NAME" ]]; then
-        log_error "Instance name is required"
-        show_usage
-        exit 1
-    fi
-    
-    validate_instance_name "$INSTANCE_NAME"
-}
-
-get_stack_resources() {
-    local stack_name="$1"
-    
-    if ! stack_exists "$stack_name"; then
-        log_warn "Stack $stack_name does not exist"
-        return 0
-    fi
-    
-    aws cloudformation describe-stack-resources \
-        --stack-name "$stack_name" \
-        --query 'StackResources[].[LogicalResourceId,ResourceType,PhysicalResourceId]' \
-        --output text
-}
-
-cleanup_retained_resources() {
-    local stack_name="$1"
-    
-    log_info "Cleaning up retained resources for stack: $stack_name"
-    
-    local resources
-    if ! is_dry_run; then
-        resources=$(get_stack_resources "$stack_name")
-    else
-        resources="DynamoDBTable	AWS::DynamoDB::Table	chintan-${INSTANCE_NAME}-prod
-ContentBucket	AWS::S3::Bucket	chintan-content-${INSTANCE_NAME}-123456789
-ApiLogGroup	AWS::Logs::LogGroup	/aws/lambda/chintan-api-${INSTANCE_NAME}-prod"
-    fi
-    
-    # Clean up DynamoDB table
-    while IFS=$'\t' read -r logical_id resource_type physical_id; do
-        case "$resource_type" in
-            "AWS::DynamoDB::Table")
-                if [[ "$physical_id" =~ ^chintan- ]]; then
-                    log_info "Deleting DynamoDB table: $physical_id"
-                    execute_cmd "aws dynamodb delete-table --table-name '$physical_id'"
-                fi
-                ;;
-            "AWS::S3::Bucket")
-                if [[ "$physical_id" =~ ^chintan-content- ]]; then
-                    log_info "Emptying and deleting S3 bucket: $physical_id"
-                    if ! is_dry_run; then
-                        empty_s3_bucket "$physical_id"
-                    fi
-                    execute_cmd "aws s3 rb 's3://$physical_id' --force"
-                fi
-                ;;
-            "AWS::Logs::LogGroup")
-                if [[ "$physical_id" =~ /aws/lambda/chintan- ]]; then
-                    log_info "Deleting CloudWatch log group: $physical_id"
-                    execute_cmd "aws logs delete-log-group --log-group-name '$physical_id'"
-                fi
-                ;;
-        esac
-    done <<< "$resources"
-}
-
-delete_stack() {
-    local stack_name="$1"
-    
-    if ! stack_exists "$stack_name"; then
-        log_warn "Stack $stack_name does not exist, skipping deletion"
-        return 0
-    fi
-    
-    log_info "Deleting CloudFormation stack: $stack_name"
-    execute_cmd "aws cloudformation delete-stack --stack-name '$stack_name'"
-    
-    if ! is_dry_run; then
-        wait_for_stack "$stack_name" "stack-delete-complete"
-        log_success "Stack deleted successfully"
-    fi
-}
-
-cleanup_ssm_parameters() {
-    log_info "Cleaning up SSM parameters for instance: $INSTANCE_NAME"
-    
-    local parameters=(
-        "/chintan/$INSTANCE_NAME/groq_api_key"
-        "/chintan/$INSTANCE_NAME/llm_api_key"
-    )
-    
-    for param in "${parameters[@]}"; do
-        if ! is_dry_run; then
-            if aws ssm get-parameter --name "$param" &> /dev/null; then
-                execute_cmd "aws ssm delete-parameter --name '$param'"
-            else
-                log_info "Parameter $param does not exist"
-            fi
-        else
-            execute_cmd "aws ssm delete-parameter --name '$param'"
-        fi
-    done
-}
-
-main() {
-    # Default to dry-run
-    DRY_RUN="true"
-    
-    parse_args "$@"
-    validate_args
-    
-    if is_dry_run; then
-        log_warn "DRY-RUN MODE: No actual deletions will be performed"
-        log_warn "Use --apply to execute the deletions"
-    else
-        log_warn "This will permanently delete all resources for instance: $INSTANCE_NAME"
-        read -p "Are you sure you want to continue? (y/N): " -r
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Cleanup cancelled"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --instance)
+            INSTANCE="${2:?--instance needs a value}"
+            shift
+            ;;
+        --environment)
+            ENVIRONMENT="${2:?--environment needs a value}"
+            shift
+            ;;
+        --region)
+            AWS_REGION="${2:?--region needs a value}"
+            export AWS_REGION
+            shift
+            ;;
+        --yes) ASSUME_YES=1 ;;
+        --apply) APPLY=1 ;;
+        --dry-run) APPLY=0 ;;
+        -h | --help)
+            usage_from_header "${BASH_SOURCE[0]}"
             exit 0
-        fi
-    fi
-    
-    # Validate prerequisites
-    check_aws_cli
-    
-    local stack_name="${CHINTAN_PREFIX}${INSTANCE_NAME}"
-    
-    log_info "Starting cleanup for Chintan instance: $INSTANCE_NAME"
-    log_info "Stack: $stack_name"
-    
-    # Clean up retained resources first (before stack deletion)
-    cleanup_retained_resources "$stack_name"
-    
-    # Delete SSM parameters
-    cleanup_ssm_parameters
-    
-    # Delete the stack
-    delete_stack "$stack_name"
-    
-    if is_dry_run; then
-        log_info "Dry-run completed successfully"
-        log_info "Run with --apply to execute these deletions"
-    else
-        log_success "Chintan instance cleanup completed successfully!"
-        log_info "Instance '$INSTANCE_NAME' has been completely removed"
-    fi
-}
+            ;;
+        *) die "unknown flag '$1' (see --help)" ;;
+    esac
+    shift
+done
 
-main "$@"
+[ -n "$INSTANCE" ] || die "--instance is required (see --help)"
+validate_instance_name "$INSTANCE"
+validate_environment "$ENVIRONMENT"
+
+require_aws
+require_cmd jq
+
+STACK="$(stack_name "$INSTANCE" "$ENVIRONMENT")"
+
+info "instance:    $INSTANCE"
+info "environment: $ENVIRONMENT"
+info "stack:       $STACK"
+
+if ! stack_exists "$STACK"; then
+    warn "stack $STACK does not exist — nothing to clean up"
+    warn "SSM parameters under /chintan/${INSTANCE}/ are left alone: they may belong"
+    warn "to another environment of this instance, and deleting them would break it"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Inventory, taken while the stack still exists
+# ---------------------------------------------------------------------------
+
+BUCKETS="$(stack_resources_of_type "$STACK" 'AWS::S3::Bucket')"
+TABLES="$(stack_resources_of_type "$STACK" 'AWS::DynamoDB::Table')"
+LOG_GROUPS="$(stack_resources_of_type "$STACK" 'AWS::Logs::LogGroup')"
+USER_POOLS="$(stack_resources_of_type "$STACK" 'AWS::Cognito::UserPool')"
+KMS_KEYS="$(stack_resources_of_type "$STACK" 'AWS::KMS::Key')"
+QUEUES="$(stack_resources_of_type "$STACK" 'AWS::SQS::Queue')"
+
+log ""
+info "resources belonging to $STACK"
+for b in $BUCKETS; do dim "  s3 bucket     $b (Retain)"; done
+for t in $TABLES; do dim "  dynamodb      $t (Retain)"; done
+for p in $USER_POOLS; do dim "  user pool     $p (Retain, DeletionProtection ACTIVE)"; done
+for k in $KMS_KEYS; do dim "  kms key       $k (Retain)"; done
+for q in $QUEUES; do dim "  sqs queue     $q (deleted with the stack)"; done
+for g in $LOG_GROUPS; do dim "  log group     $g"; done
+[ -n "$BUCKETS$TABLES$LOG_GROUPS$USER_POOLS$KMS_KEYS$QUEUES" ] || dim "  (no resources found)"
+
+# Every one of these carries DeletionPolicy: Retain in infrastructure/template.yaml,
+# and correctly so — deleting the stack must not schedule the token-vault CMK for
+# deletion and silently brick every enrolled biometric credential, which is what
+# v1 did. The consequence is that "delete the stack" and "delete the data" are two
+# separate acts, and this script performs the second one explicitly, after the
+# first, on resources it identified while the stack still listed them.
+
+# Whether the provider secrets may go depends on what else still uses them. They
+# live at /chintan/<instance>/, one level above the environment, so a staging
+# teardown must not take prod's keys with it.
+SIBLINGS="$(list_chintan_stacks | grep -E "^${CHINTAN_PREFIX}${INSTANCE}-" | grep -v "^${STACK}\$" || true)"
+if [ -n "$SIBLINGS" ]; then
+    log ""
+    warn "other stacks still use /chintan/${INSTANCE}/*, so the provider secrets stay:"
+    for s in $SIBLINGS; do dim "  $s"; done
+fi
+
+log ""
+if ! confirm_apply "$APPLY" "delete $STACK, its retained resources, and all of its data"; then
+    exit 0
+fi
+
+confirm_destructive "DELETE ${STACK}" \
+    "This permanently deletes every note, transcript and audio recording in ${STACK}." \
+    "It also deletes the Cognito user pool, so every enrolled identity and every" \
+    "biometric credential goes with it, and schedules the token-vault CMK for" \
+    "deletion 30 days out." \
+    "DynamoDB point-in-time recovery does not survive table deletion."
+
+# ---------------------------------------------------------------------------
+# Empty buckets before the stack delete
+# ---------------------------------------------------------------------------
+#
+# CloudFormation cannot delete a non-empty bucket, and the failure aborts the
+# whole stack delete part-way through.
+
+for bucket in $BUCKETS; do
+    empty_s3_bucket "$bucket"
+done
+
+# ---------------------------------------------------------------------------
+# Cognito deletion protection
+# ---------------------------------------------------------------------------
+#
+# DeletionProtection: ACTIVE is what stops an accidental `delete-user-pool` from
+# taking every enrolled identity with it. Turning it off is therefore the point at
+# which this run stops being reversible, and it is done here — deliberately, named
+# in the log — rather than discovered as an API error later.
+
+for pool in $USER_POOLS; do
+    if aws_cli cognito-idp describe-user-pool --user-pool-id "$pool" >/dev/null 2>&1; then
+        info "disabling deletion protection on user pool $pool"
+        # update-user-pool resets any property not restated in the call. That is
+        # normally a trap; here the pool is deleted moments later, so the only
+        # exposure is a stack delete that fails in between. If that happens,
+        # redeploy the stack before doing anything else — CloudFormation will put
+        # the pool's configuration back.
+        aws_cli cognito-idp update-user-pool --user-pool-id "$pool" \
+            --deletion-protection INACTIVE >/dev/null
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Delete the stack
+# ---------------------------------------------------------------------------
+
+info "deleting stack $STACK"
+aws_cli cloudformation delete-stack --stack-name "$STACK"
+aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK"
+ok "stack deleted"
+
+# ---------------------------------------------------------------------------
+# Retained resources
+# ---------------------------------------------------------------------------
+
+for table in $TABLES; do
+    if aws_cli dynamodb describe-table --table-name "$table" >/dev/null 2>&1; then
+        info "deleting retained table $table"
+        aws_cli dynamodb delete-table --table-name "$table" >/dev/null
+        ok "table $table deleted"
+    fi
+done
+
+for bucket in $BUCKETS; do
+    delete_s3_bucket "$bucket"
+done
+
+for pool in $USER_POOLS; do
+    if aws_cli cognito-idp describe-user-pool --user-pool-id "$pool" >/dev/null 2>&1; then
+        info "deleting retained user pool $pool"
+        aws_cli cognito-idp delete-user-pool --user-pool-id "$pool" >/dev/null
+        ok "user pool $pool deleted"
+    fi
+done
+
+# A CMK is SCHEDULED for deletion, never deleted: AWS gives no other option, and
+# the 30-day window is chosen rather than the 7-day minimum on purpose. This key
+# wraps the Cognito refresh tokens behind biometric unlock, so if this teardown
+# turns out to have been a mistake, cancel-key-deletion inside the window is the
+# difference between "re-enrol" and "the vault is gone".
+for key in $KMS_KEYS; do
+    state="$(aws_cli kms describe-key --key-id "$key" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || echo NONE)"
+    case "$state" in
+        Enabled | Disabled)
+            info "scheduling deletion of KMS key $key (30-day window)"
+            aws_cli kms schedule-key-deletion --key-id "$key" --pending-window-in-days 30 >/dev/null
+            warn "to cancel within 30 days: aws kms cancel-key-deletion --key-id $key"
+            ;;
+        PendingDeletion) dim "  KMS key $key is already pending deletion" ;;
+        NONE) dim "  KMS key $key not found" ;;
+        *) dim "  KMS key $key is in state $state; leaving it alone" ;;
+    esac
+done
+
+for group in $LOG_GROUPS; do
+    if aws_cli logs describe-log-groups --log-group-name-prefix "$group" \
+        --query 'logGroups[0].logGroupName' --output text 2>/dev/null | grep -qx "$group"; then
+        info "deleting log group $group"
+        aws_cli logs delete-log-group --log-group-name "$group" >/dev/null
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Provider secrets
+# ---------------------------------------------------------------------------
+
+if [ -n "$SIBLINGS" ]; then
+    warn "leaving /chintan/${INSTANCE}/* in place: still used by $(printf '%s' "$SIBLINGS" | tr '\n' ' ')"
+else
+    info "removing SSM parameters under /chintan/${INSTANCE}/"
+    while IFS= read -r param; do
+        [ -n "$param" ] || continue
+        info "deleting $param"
+        aws_cli ssm delete-parameter --name "$param" >/dev/null
+    done < <(aws_cli ssm get-parameters-by-path --path "/chintan/${INSTANCE}/" --recursive \
+        --query 'Parameters[].Name' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)
+fi
+
+log ""
+ok "cleanup of $STACK complete"

@@ -7,12 +7,13 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 func TestArchiveNoteHidesFromActiveList(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -25,7 +26,8 @@ func TestArchiveNoteHidesFromActiveList(t *testing.T) {
 	}
 
 	// Verify it's in active list
-	activeNotes, err := notesService.ListNotes(ctx, userID)
+	activeNotesPage, err := notesService.ListNotes(ctx, userID, repository.ListOptions{})
+	activeNotes := activeNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListNotes failed: %v", err)
 	}
@@ -48,7 +50,8 @@ func TestArchiveNoteHidesFromActiveList(t *testing.T) {
 	}
 
 	// Verify it's hidden from active list
-	activeNotes, err = notesService.ListNotes(ctx, userID)
+	activeNotesPage, err = notesService.ListNotes(ctx, userID, repository.ListOptions{})
+	activeNotes = activeNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListNotes failed: %v", err)
 	}
@@ -59,7 +62,8 @@ func TestArchiveNoteHidesFromActiveList(t *testing.T) {
 	}
 
 	// Verify it's in archived list
-	archivedNotes, err := notesService.ListArchivedNotes(ctx, userID)
+	archivedNotesPage, err := notesService.ListArchivedNotes(ctx, userID, repository.ListOptions{})
+	archivedNotes := archivedNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListArchivedNotes failed: %v", err)
 	}
@@ -78,8 +82,8 @@ func TestArchiveNoteHidesFromActiveList(t *testing.T) {
 }
 
 func TestRestoreNoteReturnsToActive(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -111,7 +115,8 @@ func TestRestoreNoteReturnsToActive(t *testing.T) {
 	}
 
 	// Verify it's back in active list
-	activeNotes, err := notesService.ListNotes(ctx, userID)
+	activeNotesPage, err := notesService.ListNotes(ctx, userID, repository.ListOptions{})
+	activeNotes := activeNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListNotes failed: %v", err)
 	}
@@ -127,7 +132,8 @@ func TestRestoreNoteReturnsToActive(t *testing.T) {
 	}
 
 	// Verify it's not in archived list
-	archivedNotes, err := notesService.ListArchivedNotes(ctx, userID)
+	archivedNotesPage, err := notesService.ListArchivedNotes(ctx, userID, repository.ListOptions{})
+	archivedNotes := archivedNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListArchivedNotes failed: %v", err)
 	}
@@ -139,8 +145,8 @@ func TestRestoreNoteReturnsToActive(t *testing.T) {
 }
 
 func TestPermanentlyDeleteRequiresArchive(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -172,8 +178,8 @@ func TestPermanentlyDeleteRequiresArchive(t *testing.T) {
 }
 
 func TestPermanentlyDeleteCascadesCaptures(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -210,7 +216,7 @@ func TestPermanentlyDeleteCascadesCaptures(t *testing.T) {
 
 	// Create captures linked to the note
 	capture := createCaptureWithKeys(userID, note.ID, audioKey, rawKey, cleanKey, routedKey)
-	err = store.PutCapture(ctx, capture)
+	_, err = store.PutCapture(ctx, capture)
 	if err != nil {
 		t.Fatalf("Failed to put capture: %v", err)
 	}
@@ -268,9 +274,13 @@ func TestPermanentlyDeleteCascadesCaptures(t *testing.T) {
 	}
 }
 
-func TestLazyPurgeExpiredOnList(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+// Expiry is DynamoDB TTL's job now, not a synchronous sweep performed inside
+// every list, restore, and archived-list read. What the service still owes the
+// user is that an expired note is invisible in both lists until the table
+// collects it.
+func TestExpiredArchivedNoteIsInvisibleInBothLists(t *testing.T) {
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -282,49 +292,54 @@ func TestLazyPurgeExpiredOnList(t *testing.T) {
 		t.Fatalf("CreateNote failed: %v", err)
 	}
 
-	// Manually set it as expired (PurgeAfter in the past)
-	note.DeletedAt = time.Now().Add(-2 * time.Hour).Format(time.RFC3339Nano)
-	note.PurgeAfter = time.Now().Add(-1 * time.Hour).Format(time.RFC3339Nano)
-	err = store.PutNote(ctx, userID, note)
+	// Manually set it as expired (purge deadline in the past)
+	expired := time.Now().Add(-1 * time.Hour)
+	note.DeletedAt = model.FormatTime(time.Now().Add(-2 * time.Hour))
+	note.PurgeAfter = model.FormatTime(expired)
+	note.PurgeAfterEpoch = expired.Unix()
+	_, err = store.PutNote(ctx, userID, note)
 	if err != nil {
 		t.Fatalf("Failed to update note with expired purge time: %v", err)
 	}
 
-	// Call ListNotes - should trigger lazy purge
-	activeNotes, err := notesService.ListNotes(ctx, userID)
+	// Archived, so it is not active.
+	activeNotesPage, err := notesService.ListNotes(ctx, userID, repository.ListOptions{})
+	activeNotes := activeNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListNotes failed: %v", err)
 	}
 
-	// Note should be gone from active list (and purged)
+	// Note must not appear in the active list.
 	for _, n := range activeNotes {
 		if n.ID == note.ID {
 			t.Errorf("expired note %s should be purged from active list", note.ID)
 		}
 	}
 
-	// Call ListArchivedNotes - should also not find it
-	archivedNotes, err := notesService.ListArchivedNotes(ctx, userID)
+	// Past its purge deadline, so it must not appear in the archived list either.
+	archivedNotesPage, err := notesService.ListArchivedNotes(ctx, userID, repository.ListOptions{})
+	archivedNotes := archivedNotesPage.Items
 	if err != nil {
 		t.Fatalf("ListArchivedNotes failed: %v", err)
 	}
 
 	for _, n := range archivedNotes {
 		if n.ID == note.ID {
-			t.Errorf("expired note %s should be purged from archived list", note.ID)
+			t.Errorf("expired note %s should be hidden from the archived list", note.ID)
 		}
 	}
 
-	// Verify note is completely gone from store
-	_, err = store.GetNote(ctx, userID, note.ID)
-	if err != repository.ErrNotFound {
-		t.Errorf("expected ErrNotFound for purged note, got %v", err)
+	// The index row itself survives until DynamoDB TTL removes it. v1 deleted it
+	// inline on the read path, which turned a GET into an unbounded cascade of
+	// S3 and DynamoDB deletes.
+	if _, err := store.GetNote(ctx, userID, note.ID); err != nil {
+		t.Errorf("expired note should still be readable by id until TTL collects it, got %v", err)
 	}
 }
 
 func TestUpdateArchivedNoteRejected(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()
@@ -352,8 +367,8 @@ func TestUpdateArchivedNoteRejected(t *testing.T) {
 }
 
 func TestMatchNotesSkipsArchived(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
 	ctx := context.Background()

@@ -1,659 +1,547 @@
 package handler_test
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"net/http/httptest"
+	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
-	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/model"
-	"github.com/vppillai/chintan/backend/internal/repository"
-	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-func TestHealthHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
+func TestHealthIsLiveness(t *testing.T) {
+	h := newHarness(t)
 
-	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
-
-	req := httptest.NewRequest("GET", "/v1/health", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	if w.Code != 200 {
-		t.Errorf("expected 200, got %d", w.Code)
+	w := h.do(t, http.MethodGet, "/v1/health", "", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
 	}
-
-	var response map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if response["status"] != "ok" {
-		t.Errorf("expected status=ok, got %s", response["status"])
+	var body map[string]string
+	decodeInto(t, w, &body)
+	if body["status"] != "ok" {
+		t.Errorf("status = %q, want ok", body["status"])
 	}
 }
 
-func TestSettingsHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
-
-	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
-
-	t.Run("GET settings returns defaults", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/settings", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
+// Readiness is a real probe, not the static answer v1 served for both questions.
+func TestReadinessProbesDependencies(t *testing.T) {
+	t.Run("reachable", func(t *testing.T) {
+		h := newHarness(t)
+		w := h.do(t, http.MethodGet, "/v1/health/ready", "", nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
 		}
-
-		var settings model.Settings
-		if err := json.Unmarshal(w.Body.Bytes(), &settings); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
+		var out struct {
+			Status string `json:"status"`
+			Checks map[string]struct {
+				OK        bool  `json:"ok"`
+				LatencyMS int64 `json:"latency_ms"`
+			} `json:"checks"`
 		}
-
-		if settings.CleanupMode != model.CleanupFaithful {
-			t.Errorf("expected faithful cleanup mode, got %s", settings.CleanupMode)
+		decodeInto(t, w, &out)
+		if out.Status != "ok" {
+			t.Errorf("status = %q", out.Status)
 		}
-		if settings.RetentionDays != 0 {
-			t.Errorf("expected 0 retention days, got %d", settings.RetentionDays)
+		for _, dep := range []string{"dynamodb", "s3"} {
+			if _, ok := out.Checks[dep]; !ok {
+				t.Errorf("no probe reported for %s", dep)
+			}
 		}
 	})
 
-	t.Run("PUT settings updates", func(t *testing.T) {
-		newSettings := model.Settings{
-			CleanupMode:   model.CleanupPolished,
-			RetentionDays: 30,
+	t.Run("a broken dependency is reported, not hidden", func(t *testing.T) {
+		h := newHarness(t, withBrokenStore())
+		w := h.do(t, http.MethodGet, "/v1/health/ready", "", nil)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503", w.Code)
 		}
-		body, _ := json.Marshal(newSettings)
+		body := w.Body.String()
+		// The dependency's own error text names the table. It is logged, and it
+		// must not be serialised.
+		if strings.Contains(body, "connection refused") {
+			t.Fatalf("response leaked the dependency error: %s", body)
+		}
+	})
+}
 
-		req := httptest.NewRequest("PUT", "/v1/settings", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+// ------------------------------------------------------------------ settings
 
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
+func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
+	h := newHarness(t)
+
+	t.Run("defaults are complete", func(t *testing.T) {
+		w := h.do(t, http.MethodGet, "/v1/settings", "user1", nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		var s handler.Settings
+		decodeInto(t, w, &s)
+		if s.CleanupMode != string(model.CleanupFaithful) {
+			t.Errorf("cleanup_mode = %q", s.CleanupMode)
+		}
+		if s.Theme != string(model.ThemeInk) {
+			t.Errorf("theme = %q, want the default rather than an empty string", s.Theme)
+		}
+	})
+
+	t.Run("stores and reads back", func(t *testing.T) {
+		w := h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{
+			"cleanup_mode":   "polished",
+			"retention_days": 30,
+			"theme":          "nocturne",
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+		}
+		var put handler.Settings
+		decodeInto(t, w, &put)
+		if put.RetentionDays != 30 || put.Theme != "nocturne" {
+			t.Fatalf("stored settings = %+v", put)
 		}
 
-		// Verify it was saved
-		req = httptest.NewRequest("GET", "/v1/settings", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		var settings model.Settings
-		json.Unmarshal(w.Body.Bytes(), &settings)
-
-		if settings.CleanupMode != model.CleanupPolished {
-			t.Errorf("expected polished cleanup mode, got %s", settings.CleanupMode)
+		w = h.do(t, http.MethodGet, "/v1/settings", "user1", nil)
+		var got handler.Settings
+		decodeInto(t, w, &got)
+		if got != put {
+			t.Fatalf("GET returned %+v, PUT returned %+v", got, put)
 		}
-		if settings.RetentionDays != 30 {
-			t.Errorf("expected 30 retention days, got %d", settings.RetentionDays)
+	})
+
+	// v1 stored whatever it was sent and echoed the request back, so a value the
+	// server did not understand looked accepted.
+	t.Run("an unknown value is refused, not coerced silently", func(t *testing.T) {
+		for _, body := range []map[string]any{
+			{"theme": "purple"},
+			{"cleanup_mode": "creative"},
+			{"retention_days": -1},
+			{"retention_days": 100000},
+			{"daily_spend_cap_micros": -5},
+		} {
+			w := h.do(t, http.MethodPut, "/v1/settings", "user1", body)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("PUT %v: status = %d, want 400", body, w.Code)
+			}
+			problemOf(t, w)
 		}
 	})
 
 	t.Run("requires auth", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/settings", nil)
-		// No userID in context
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 401 {
-			t.Errorf("expected 401, got %d", w.Code)
+		w := h.do(t, http.MethodGet, "/v1/settings", "", nil)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", w.Code)
 		}
+		problemOf(t, w)
 	})
 }
 
-func TestNotesHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
+// --------------------------------------------------------------------- notes
 
-	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+func TestNotesLifecycle(t *testing.T) {
+	h := newHarness(t)
 
-	t.Run("POST creates note", func(t *testing.T) {
-		createReq := map[string]interface{}{
-			"title":   "My Test Note",
-			"aliases": []string{"test", "note"},
+	note := h.createNote(t, "user1", "My Test Note", map[string]any{
+		"aliases": []string{"test", "note"},
+		"tags":    []string{"Work", "work ", "roof"},
+	})
+	if note.ID == "" {
+		t.Fatal("created note has no id")
+	}
+	if len(note.Aliases) != 2 {
+		t.Errorf("aliases = %v", note.Aliases)
+	}
+	// Tags are folded to a canonical form, so "Work" and "work " are one tag.
+	if len(note.Tags) != 2 {
+		t.Errorf("tags = %v, want the duplicates folded", note.Tags)
+	}
+	if note.Archived {
+		t.Error("a new note is not archived")
+	}
+
+	t.Run("detail carries the body and the captures", func(t *testing.T) {
+		version := note.Version
+		w := h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{
+			"version": version,
+			"body":    "the body",
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("patch: status = %d body = %s", w.Code, w.Body.String())
 		}
-		body, _ := json.Marshal(createReq)
 
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 201 {
-			t.Errorf("expected 201, got %d", w.Code)
+		w = h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get: status = %d", w.Code)
 		}
-
-		var response model.NoteIndex
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
+		var detail handler.NoteDetail
+		decodeInto(t, w, &detail)
+		if detail.Body != "the body" {
+			t.Errorf("body = %q", detail.Body)
 		}
-
-		if response.Title != "My Test Note" {
-			t.Errorf("expected title 'My Test Note', got %s", response.Title)
-		}
-		if len(response.Aliases) != 2 || response.Aliases[0] != "test" || response.Aliases[1] != "note" {
-			t.Errorf("expected aliases [test, note], got %v", response.Aliases)
-		}
-		if response.ID == "" {
-			t.Errorf("expected non-empty ID")
+		if detail.Captures == nil {
+			t.Error("captures is null; it must be an empty array")
 		}
 	})
 
-	t.Run("GET lists notes", func(t *testing.T) {
-		// First create a note
-		createReq := map[string]interface{}{
-			"title": "Listed Note",
-		}
-		body, _ := json.Marshal(createReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		// Now list notes
-		req = httptest.NewRequest("GET", "/v1/notes", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
-		}
-
-		var notes []model.NoteIndex
-		if err := json.Unmarshal(w.Body.Bytes(), &notes); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		// Should have at least the notes we created (plus any from previous tests)
-		found := false
-		for _, note := range notes {
-			if note.Title == "Listed Note" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected to find 'Listed Note' in list")
-		}
-	})
-
-	t.Run("GET specific note", func(t *testing.T) {
-		// First create a note
-		createReq := map[string]interface{}{
-			"title": "Specific Note",
-		}
-		body, _ := json.Marshal(createReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		var created model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &created)
-
-		// Now get specific note
-		req = httptest.NewRequest("GET", "/v1/notes/"+created.ID, nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
-		}
-
-		var note model.NoteIndex
-		if err := json.Unmarshal(w.Body.Bytes(), &note); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		if note.Title != "Specific Note" {
-			t.Errorf("expected title 'Specific Note', got %s", note.Title)
-		}
-	})
-
-	t.Run("PATCH updates note", func(t *testing.T) {
-		// First create a note
-		createReq := map[string]interface{}{
-			"title": "Original Title",
-		}
-		body, _ := json.Marshal(createReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		var created model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &created)
-
-		// Now patch the note
-		patchReq := map[string]interface{}{
-			"title": "Updated Title",
-			"body":  "This is the body content",
-		}
-		body, _ = json.Marshal(patchReq)
-
-		req = httptest.NewRequest("PATCH", "/v1/notes/"+created.ID, bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
-		}
-
-		var updated model.NoteIndex
-		if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		if updated.Title != "Updated Title" {
-			t.Errorf("expected title 'Updated Title', got %s", updated.Title)
-		}
-	})
-
-	t.Run("GET missing note returns 404", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/notes/does-not-exist", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 404 {
-			t.Errorf("expected 404 for missing note, got %d", w.Code)
-		}
-	})
-
-	t.Run("PATCH missing note returns 404", func(t *testing.T) {
-		patchReq := map[string]interface{}{
-			"title": "Updated Title",
-		}
-		body, _ := json.Marshal(patchReq)
-
-		req := httptest.NewRequest("PATCH", "/v1/notes/does-not-exist", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 404 {
-			t.Errorf("expected 404 for missing note, got %d", w.Code)
-		}
-	})
-
-	t.Run("DELETE archives note", func(t *testing.T) {
-		// First create a note
-		createReq := map[string]interface{}{
-			"title": "To Be Deleted",
-		}
-		body, _ := json.Marshal(createReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		var created model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &created)
-
-		// Now delete (archive) the note
-		req = httptest.NewRequest("DELETE", "/v1/notes/"+created.ID, nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 204 {
-			t.Errorf("expected 204, got %d", w.Code)
-		}
-
-		// Verify note is still accessible but archived
-		req = httptest.NewRequest("GET", "/v1/notes/"+created.ID, nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200 for archived note, got %d", w.Code)
-		}
-
-		// Verify note has archive fields set
-		var noteDetail map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &noteDetail)
-		if noteDetail["deleted_at"] == nil || noteDetail["deleted_at"] == "" {
-			t.Errorf("expected archived note to have deleted_at set")
-		}
-		if noteDetail["purge_after"] == nil || noteDetail["purge_after"] == "" {
-			t.Errorf("expected archived note to have purge_after set")
-		}
-
-		// Verify it's not in the active notes list
-		req = httptest.NewRequest("GET", "/v1/notes", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		var notes []model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &notes)
-		for _, note := range notes {
-			if note.ID == created.ID {
-				t.Errorf("archived note should not appear in active notes list")
+	t.Run("a note never carries its storage keys", func(t *testing.T) {
+		w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+		for _, leak := range []string{"s3_markdown_key", "s3_meta_key", "tenants/"} {
+			if strings.Contains(w.Body.String(), leak) {
+				t.Fatalf("response leaked %q: %s", leak, w.Body.String())
 			}
 		}
 	})
-}
 
-func TestNotesMatchHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
+	t.Run("archive, list, restore, purge", func(t *testing.T) {
+		target := h.createNote(t, "user1", "Archive Me", nil)
 
-	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
-
-	// Create some test notes
-	testNotes := []map[string]interface{}{
-		{"title": "Machine Learning Notes", "aliases": []string{"ml", "ai"}},
-		{"title": "Go Programming", "aliases": []string{"golang"}},
-		{"title": "Database Design", "aliases": []string{"db", "sql"}},
-	}
-
-	ctx := middleware.WithUserID(context.Background(), "user1")
-	for _, noteData := range testNotes {
-		body, _ := json.Marshal(noteData)
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(ctx)
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-	}
-
-	t.Run("high confidence match sets auto_select_id", func(t *testing.T) {
-		matchReq := map[string]string{
-			"query": "Machine Learning Notes", // Exact match should be high confidence
-		}
-		body, _ := json.Marshal(matchReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes/match", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
+		if w := h.do(t, http.MethodDelete, "/v1/notes/"+target.ID, "user1", nil); w.Code != http.StatusNoContent {
+			t.Fatalf("archive: status = %d", w.Code)
 		}
 
-		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		candidates, ok := response["candidates"].([]interface{})
-		if !ok || len(candidates) == 0 {
-			t.Fatalf("expected candidates array, got %v", response)
-		}
-
-		autoSelectID, hasAutoSelect := response["auto_select_id"]
-		if !hasAutoSelect {
-			t.Errorf("expected auto_select_id for high confidence match")
-		}
-
-		firstCandidate := candidates[0].(map[string]interface{})
-		expectedID := firstCandidate["note_id"].(string)
-		actualID := autoSelectID.(string)
-		if actualID != expectedID {
-			t.Errorf("auto_select_id should match first candidate ID, expected %s, got %s", expectedID, actualID)
-		}
-	})
-
-	t.Run("low confidence match omits auto_select_id", func(t *testing.T) {
-		matchReq := map[string]string{
-			"query": "programming", // Vague query should be ambiguous
-		}
-		body, _ := json.Marshal(matchReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes/match", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200, got %d", w.Code)
-		}
-
-		var response map[string]interface{}
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
-		}
-
-		candidates, ok := response["candidates"].([]interface{})
-		if !ok || len(candidates) == 0 {
-			t.Fatalf("expected candidates array, got %v", response)
-		}
-
-		_, hasAutoSelect := response["auto_select_id"]
-		if hasAutoSelect {
-			t.Errorf("should not have auto_select_id for ambiguous match")
-		}
-	})
-
-	t.Run("requires auth", func(t *testing.T) {
-		matchReq := map[string]string{
-			"query": "test",
-		}
-		body, _ := json.Marshal(matchReq)
-
-		req := httptest.NewRequest("POST", "/v1/notes/match", bytes.NewReader(body))
-		// No userID in context
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 401 {
-			t.Errorf("expected 401, got %d", w.Code)
-		}
-	})
-}
-
-func TestCORSHandling(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
-
-	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
-
-	t.Run("preflight request", func(t *testing.T) {
-		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
-		req.Header.Set("Origin", "http://localhost:3000")
-		req.Header.Set("Access-Control-Request-Method", "POST")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200 for preflight, got %d", w.Code)
-		}
-
-		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
-		if corsOrigin != "http://localhost:3000" {
-			t.Errorf("expected CORS origin http://localhost:3000, got %s", corsOrigin)
-		}
-	})
-
-	t.Run("actual request with CORS", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/v1/health", nil)
-		req.Header.Set("Origin", "http://localhost:3000")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
-		if corsOrigin != "http://localhost:3000" {
-			t.Errorf("expected CORS origin http://localhost:3000, got %s", corsOrigin)
-		}
-	})
-
-	t.Run("uses ALLOWED_ORIGIN env when parameter empty", func(t *testing.T) {
-		t.Setenv("ALLOWED_ORIGIN", "https://app.example.com")
-		captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-		envRouter := handler.NewRouter(notesService, settingsService, captureService, nil, "")
-
-		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
-		req.Header.Set("Origin", "https://app.example.com")
-		req.Header.Set("Access-Control-Request-Method", "POST")
-		w := httptest.NewRecorder()
-		envRouter.ServeHTTP(w, req)
-
-		if w.Code != 200 {
-			t.Errorf("expected 200 for preflight, got %d", w.Code)
-		}
-
-		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
-		if corsOrigin != "https://app.example.com" {
-			t.Errorf("expected CORS origin from env, got %s", corsOrigin)
-		}
-	})
-}
-
-func TestNotesArchiveHTTP(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
-	captureService := service.NewCaptureService(store, objects, nil, nil)
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
-
-	create := func(title string) model.NoteIndex {
-		t.Helper()
-		body, _ := json.Marshal(map[string]string{"title": title})
-		req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 201 {
-			t.Fatalf("create: %d %s", w.Code, w.Body.String())
-		}
-		var note model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &note)
-		return note
-	}
-
-	t.Run("archive list restore and permanent", func(t *testing.T) {
-		note := create("Archive Me")
-
-		req := httptest.NewRequest("DELETE", "/v1/notes/"+note.ID, nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 204 {
-			t.Fatalf("archive status %d", w.Code)
-		}
-
-		req = httptest.NewRequest("GET", "/v1/notes", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		var active []model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &active)
+		active := listNotes(t, h, "user1", "/v1/notes")
 		for _, n := range active {
-			if n.ID == note.ID {
-				t.Fatal("archived note in active list")
+			if n.ID == target.ID {
+				t.Fatal("an archived note appeared in the active list")
 			}
 		}
 
-		req = httptest.NewRequest("GET", "/v1/notes?status=archived", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		var archived []model.NoteIndex
-		json.Unmarshal(w.Body.Bytes(), &archived)
+		archived := listNotes(t, h, "user1", "/v1/notes?state=archived")
 		found := false
 		for _, n := range archived {
-			if n.ID == note.ID {
+			if n.ID == target.ID {
 				found = true
+				if !n.Archived {
+					t.Error("an archived note is not marked archived")
+				}
+				if n.PurgeAfter == nil || *n.PurgeAfter == "" {
+					t.Error("an archived note has no purge_after")
+				}
 			}
 		}
 		if !found {
-			t.Fatal("note missing from archived list")
+			t.Fatal("the archived note is missing from the archived list")
 		}
 
-		req = httptest.NewRequest("POST", "/v1/notes/"+note.ID+"/restore", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 200 {
-			t.Fatalf("restore status %d", w.Code)
+		if w := h.do(t, http.MethodPost, "/v1/notes/"+target.ID+"/restore", "user1", nil); w.Code != http.StatusOK {
+			t.Fatalf("restore: status = %d", w.Code)
 		}
 
-		req = httptest.NewRequest("DELETE", "/v1/notes/"+note.ID+"?permanent=true", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 400 {
-			t.Fatalf("permanent while active want 400 got %d", w.Code)
+		// Purging an active note is refused: archive is the safety catch.
+		if w := h.do(t, http.MethodDelete, "/v1/notes/"+target.ID+"/permanent", "user1", nil); w.Code != http.StatusBadRequest {
+			t.Fatalf("purge while active: status = %d, want 400", w.Code)
 		}
 
-		req = httptest.NewRequest("DELETE", "/v1/notes/"+note.ID, nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		req = httptest.NewRequest("DELETE", "/v1/notes/"+note.ID+"?permanent=true", nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 204 {
-			t.Fatalf("permanent status %d", w.Code)
+		h.do(t, http.MethodDelete, "/v1/notes/"+target.ID, "user1", nil)
+		if w := h.do(t, http.MethodDelete, "/v1/notes/"+target.ID+"/permanent", "user1", nil); w.Code != http.StatusNoContent {
+			t.Fatalf("purge: status = %d", w.Code)
 		}
 	})
 
-	t.Run("PATCH archived returns 409", func(t *testing.T) {
-		note := create("Lock Me")
-		req := httptest.NewRequest("DELETE", "/v1/notes/"+note.ID, nil)
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
+	t.Run("editing an archived note is a conflict", func(t *testing.T) {
+		locked := h.createNote(t, "user1", "Lock Me", nil)
+		h.do(t, http.MethodDelete, "/v1/notes/"+locked.ID, "user1", nil)
 
-		body, _ := json.Marshal(map[string]string{"title": "Nope"})
-		req = httptest.NewRequest("PATCH", "/v1/notes/"+note.ID, bytes.NewReader(body))
-		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
-		req.Header.Set("Content-Type", "application/json")
-		w = httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 409 {
-			t.Fatalf("want 409 got %d body %s", w.Code, w.Body.String())
+		w := h.do(t, http.MethodPatch, "/v1/notes/"+locked.ID, "user1", map[string]any{
+			"version": locked.Version,
+			"title":   "Nope",
+		})
+		if w.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409 (body=%s)", w.Code, w.Body.String())
+		}
+		problemOf(t, w)
+	})
+
+	t.Run("a missing note is 404, not 500", func(t *testing.T) {
+		for _, tc := range []struct{ method, path string }{
+			{http.MethodGet, "/v1/notes/does-not-exist"},
+			{http.MethodDelete, "/v1/notes/does-not-exist"},
+			{http.MethodPost, "/v1/notes/does-not-exist/restore"},
+		} {
+			w := h.do(t, tc.method, tc.path, "user1", nil)
+			if w.Code != http.StatusNotFound {
+				t.Errorf("%s %s: status = %d, want 404", tc.method, tc.path, w.Code)
+			}
+		}
+		w := h.do(t, http.MethodPatch, "/v1/notes/does-not-exist", "user1", map[string]any{"version": 1})
+		if w.Code != http.StatusNotFound {
+			t.Errorf("PATCH missing note: status = %d, want 404", w.Code)
 		}
 	})
+}
+
+// Optimistic concurrency is the point of `version`: a voice append landing while
+// the editor is open must surface as a conflict, not discard one of the writes.
+func TestUpdateRequiresVersionAndReportsTheCurrentOne(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "user1", "Concurrent", nil)
+
+	t.Run("version is required", func(t *testing.T) {
+		w := h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"title": "No version"})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", w.Code)
+		}
+	})
+
+	first := h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{
+		"version": note.Version,
+		"title":   "First writer",
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first write: status = %d body = %s", first.Code, first.Body.String())
+	}
+	var afterFirst handler.Note
+	decodeInto(t, first, &afterFirst)
+
+	second := h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{
+		"version": note.Version, // stale
+		"title":   "Second writer",
+	})
+	if second.Code != http.StatusConflict {
+		t.Fatalf("stale write: status = %d, want 409", second.Code)
+	}
+	p := problemOf(t, second)
+	current, ok := p["current_version"].(float64)
+	if !ok {
+		t.Fatalf("409 has no current_version: %v", p)
+	}
+	if int64(current) != afterFirst.Version {
+		t.Fatalf("current_version = %v, want %d", current, afterFirst.Version)
+	}
+
+	// The losing write left nothing behind.
+	w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+	var detail handler.NoteDetail
+	decodeInto(t, w, &detail)
+	if detail.Title != "First writer" {
+		t.Fatalf("title = %q; the losing write was applied", detail.Title)
+	}
+}
+
+// -------------------------------------------------------------- pagination
+
+func TestListsReturnTheEnvelopeAndRoundTripTheirCursor(t *testing.T) {
+	h := newHarness(t)
+	const total = 7
+	for i := 0; i < total; i++ {
+		h.createNote(t, "user1", fmt.Sprintf("Note %d", i), nil)
+	}
+
+	seen := map[string]bool{}
+	cursor := ""
+	for pages := 0; ; pages++ {
+		if pages > 20 {
+			t.Fatal("pagination did not terminate")
+		}
+		path := "/v1/notes?limit=2"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		w := h.do(t, http.MethodGet, path, "user1", nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("list: status = %d body = %s", w.Code, w.Body.String())
+		}
+
+		var got handler.Page[handler.Note]
+		decodeInto(t, w, &got)
+		if got.Items == nil {
+			t.Fatal("items is null; the envelope always carries an array")
+		}
+		if len(got.Items) > 2 {
+			t.Fatalf("page has %d notes, want at most the requested 2", len(got.Items))
+		}
+		for _, n := range got.Items {
+			if seen[n.ID] {
+				t.Fatalf("note %s appeared on two pages", n.ID)
+			}
+			seen[n.ID] = true
+		}
+		cursor = got.Cursor
+		if cursor == "" {
+			break
+		}
+	}
+	if len(seen) != total {
+		t.Fatalf("paged through %d notes, want %d", len(seen), total)
+	}
+}
+
+func TestPaginationParametersAreBounded(t *testing.T) {
+	h := newHarness(t)
+	for _, path := range []string{
+		"/v1/notes?limit=0",
+		"/v1/notes?limit=201",
+		"/v1/notes?limit=abc",
+		"/v1/notes?cursor=" + strings.Repeat("A", 4096),
+		"/v1/notes?cursor=not-base64!!",
+	} {
+		w := h.do(t, http.MethodGet, path, "user1", nil)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", path, w.Code)
+		}
+	}
+}
+
+// ----------------------------------------------------------------- limits
+
+func TestOversizeBodiesAreRefused(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "user1", "Big", nil)
+
+	huge := strings.Repeat("x", handler.MaxNoteBodyBytes+1)
+	w := h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{
+		"version": note.Version,
+		"body":    huge,
+	})
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize body: status = %d, want 413", w.Code)
+	}
+	problemOf(t, w)
+
+	// Past the transport cap the reader stops before any JSON is parsed, which
+	// is the point: the bytes never reach the decoder.
+	overCap := make([]byte, handler.MaxNoteRequestBytes+1024)
+	for i := range overCap {
+		overCap[i] = 'x'
+	}
+	w = h.do(t, http.MethodPost, "/v1/notes", "user1", overCap)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("over the transport cap: status = %d, want 413", w.Code)
+	}
+}
+
+func TestFieldCapsAreEnforced(t *testing.T) {
+	h := newHarness(t)
+
+	tooManyAliases := make([]string, handler.MaxAliases+1)
+	for i := range tooManyAliases {
+		tooManyAliases[i] = "a"
+	}
+	tooManyTags := make([]string, handler.MaxTags+1)
+	for i := range tooManyTags {
+		tooManyTags[i] = "t"
+	}
+
+	for name, payload := range map[string]map[string]any{
+		"title too long":   {"title": strings.Repeat("t", handler.MaxTitleRunes+1)},
+		"alias too long":   {"title": "ok", "aliases": []string{strings.Repeat("a", handler.MaxAliasRunes+1)}},
+		"too many aliases": {"title": "ok", "aliases": tooManyAliases},
+		"tag too long":     {"title": "ok", "tags": []string{strings.Repeat("t", handler.MaxTagRunes+1)}},
+		"too many tags":    {"title": "ok", "tags": tooManyTags},
+	} {
+		w := h.do(t, http.MethodPost, "/v1/notes", "user1", payload)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400 (body=%s)", name, w.Code, w.Body.String())
+		}
+	}
+}
+
+// ----------------------------------------------------------------- routing
+
+func TestMethodNotAllowedSetsAllow(t *testing.T) {
+	h := newHarness(t)
+	for _, tc := range []struct {
+		method, path string
+		want         []string
+	}{
+		{http.MethodPut, "/v1/notes", []string{"GET", "POST"}},
+		{http.MethodPost, "/v1/health", []string{"GET"}},
+		{http.MethodPut, "/v1/notes/n1", []string{"GET", "PATCH", "DELETE"}},
+	} {
+		w := h.do(t, tc.method, tc.path, "user1", nil)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s %s: status = %d, want 405", tc.method, tc.path, w.Code)
+		}
+		allow := w.Header().Get("Allow")
+		if allow == "" {
+			t.Fatalf("%s %s: no Allow header; RFC 9110 requires one", tc.method, tc.path)
+		}
+		for _, m := range tc.want {
+			if !strings.Contains(allow, m) {
+				t.Errorf("%s %s: Allow = %q, missing %s", tc.method, tc.path, allow, m)
+			}
+		}
+		problemOf(t, w)
+	}
+}
+
+// Every error on this API is problem+json. v1 had four shapes, two of which were
+// not JSON at all.
+func TestUnknownRoutesUseTheOneErrorEnvelope(t *testing.T) {
+	h := newHarness(t)
+	w := h.do(t, http.MethodGet, "/v1/nope", "user1", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", w.Code)
+	}
+	p := problemOf(t, w)
+	if p["instance"] != "/v1/nope" {
+		t.Errorf("instance = %v, want the request path", p["instance"])
+	}
+	if strings.Contains(w.Body.String(), "404 page not found") {
+		t.Error("the net/http default body is still being served")
+	}
+}
+
+// The 404 fallback rewrites net/http's plain-text body. It must not stomp a
+// 404 one of our own handlers wrote, which says something more specific.
+func TestAHandlerNotFoundKeepsItsOwnDetail(t *testing.T) {
+	h := newHarness(t)
+
+	routed := problemOf(t, h.do(t, http.MethodGet, "/v1/notes/missing", "user1", nil))
+	unrouted := problemOf(t, h.do(t, http.MethodGet, "/v1/no-such-collection", "user1", nil))
+
+	if routed["detail"] == unrouted["detail"] {
+		t.Fatalf("a missing note and a missing route read the same: %v", routed["detail"])
+	}
+	if routed["detail"] != "no such resource" {
+		t.Errorf("detail = %v", routed["detail"])
+	}
+}
+
+func TestEveryProblemCarriesTheCorrelationID(t *testing.T) {
+	h := newHarness(t)
+	w := h.do(t, http.MethodGet, "/v1/notes/missing", "user1", nil)
+	p := problemOf(t, w)
+	header := w.Header().Get("X-Correlation-Id")
+	if header == "" {
+		t.Fatal("no X-Correlation-Id response header")
+	}
+	if p["correlation_id"] != header {
+		t.Fatalf("correlation_id = %v, want the header value %q", p["correlation_id"], header)
+	}
+}
+
+// --------------------------------------------------------------- CORS
+
+func TestCORS(t *testing.T) {
+	h := newHarness(t)
+
+	t.Run("preflight", func(t *testing.T) {
+		w := h.do(t, http.MethodOptions, "/v1/notes", "", nil,
+			[2]string{"Origin", "http://localhost:3000"},
+			[2]string{"Access-Control-Request-Method", "POST"})
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", w.Code)
+		}
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
+			t.Errorf("allow-origin = %q", got)
+		}
+	})
+
+	t.Run("a foreign origin is not reflected", func(t *testing.T) {
+		w := h.do(t, http.MethodGet, "/v1/health", "", nil, [2]string{"Origin", "https://evil.example"})
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Fatalf("allow-origin = %q, want empty for a foreign origin", got)
+		}
+	})
+}
+
+func listNotes(t *testing.T, h *harness, userID, path string) []handler.Note {
+	t.Helper()
+	w := h.do(t, http.MethodGet, path, userID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: status = %d body = %s", path, w.Code, w.Body.String())
+	}
+	var got handler.Page[handler.Note]
+	decodeInto(t, w, &got)
+	return got.Items
 }

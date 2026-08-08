@@ -2,74 +2,74 @@ package middleware
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"strings"
 
+	"github.com/vppillai/chintan/backend/internal/auth"
 	"github.com/vppillai/chintan/backend/internal/httperr"
 )
 
-type contextKey string
-
-const userIDKey contextKey = "userID"
-
-// WithUserID adds a userID to the context (for testing)
+// WithUserID puts a single-tenant identity in the context.
+//
+// This is in-process wiring only. Unlike the request header the v1 build
+// trusted, a context value cannot be supplied by a remote caller.
 func WithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userIDKey, userID)
+	return auth.WithIdentity(ctx, auth.Identity{UserID: userID, TenantID: userID})
 }
 
-// GetUserID extracts userID from context
+// GetUserID returns the authenticated user id.
 func GetUserID(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(userIDKey).(string)
-	return userID, ok
+	id, ok := auth.FromContext(ctx)
+	if !ok || id.UserID == "" {
+		return "", false
+	}
+	return id.UserID, true
 }
 
-// Auth middleware extracts userID from JWT claims or context and adds to request context.
-// Signature verification is performed by API Gateway's JWT authorizer; this only reads `sub`.
-func Auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := GetUserID(r.Context()); ok {
-			next.ServeHTTP(w, r)
-			return
-		}
+// Auth verifies the bearer token and stores the resulting identity.
+//
+// There is deliberately no header-based identity path. v1 read an unverified
+// `X-User-ID` header and preferred it over the token, which let any caller
+// holding one valid token act as any other user.
+//
+// A nil verifier fails closed: every request without an in-process identity is
+// rejected. cmd/api refuses to start without one, so this can only be reached
+// by a test that has not wired an identity.
+func Auth(v auth.Verifier) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := auth.FromContext(r.Context()); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
 
-		userID := r.Header.Get("X-User-ID")
-		if userID == "" {
-			userID = userIDFromBearer(r.Header.Get("Authorization"))
-		}
-		if userID == "" {
-			httperr.Unauthorized(w, "authentication required")
-			return
-		}
+			raw, ok := bearerToken(r.Header.Get("Authorization"))
+			if !ok || v == nil {
+				httperr.Unauthorized(w, r, "authentication required")
+				return
+			}
 
-		next.ServeHTTP(w, r.WithContext(WithUserID(r.Context(), userID)))
-	})
+			id, err := v.Verify(r.Context(), raw)
+			if err != nil {
+				// The specific claim that failed goes to logs, never to the
+				// caller: a precise error is a probing oracle.
+				httperr.Unauthorized(w, r, "authentication required")
+				return
+			}
+
+			next.ServeHTTP(w, r.WithContext(auth.WithIdentity(r.Context(), id)))
+		})
+	}
 }
 
-func userIDFromBearer(header string) string {
-	const prefix = "Bearer "
-	if !strings.HasPrefix(header, prefix) {
-		return ""
+func bearerToken(header string) (string, bool) {
+	const prefix = "bearer "
+	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return "", false
 	}
 	token := strings.TrimSpace(header[len(prefix):])
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ""
+	if token == "" {
+		return "", false
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		// Some issuers pad; try standard encoding as a fallback.
-		payload, err = base64.URLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return ""
-		}
-	}
-	var claims struct {
-		Sub string `json:"sub"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(claims.Sub)
+	return token, true
 }

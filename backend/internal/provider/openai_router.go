@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"unicode"
 
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
@@ -29,7 +30,7 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		return RouteDecision{}, err
 	}
 
-	out, err := c.complete(ctx, routing.SystemPrompt(), userPrompt)
+	out, usage, err := c.complete(ctx, routing.SystemPrompt(), userPrompt)
 	if err != nil {
 		return RouteDecision{}, err
 	}
@@ -38,6 +39,7 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	if err != nil {
 		return RouteDecision{}, err
 	}
+	decision.Usage = usage
 
 	// The model may return an id that is not on the list; refuse to trust it.
 	if decision.Action == RouteAppend && !containsNoteID(candidates, decision.NoteID) {
@@ -51,7 +53,8 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	switch {
 	case !contentGiven:
 		// No content field at all is a router that ignored the format, not an answer.
-		log.Printf("provider: router returned no content field; keeping the transcript")
+		obs.Log(ctx).Warn("router returned no content field; keeping the dictation")
+		obs.Count(ctx, "RouterContentDiscarded", map[string]string{"Reason": "missing_field"})
 		decision.Content = transcript
 	case strings.TrimSpace(decision.Content) == "":
 		// A recording can be nothing but an instruction ("create a note called
@@ -61,14 +64,19 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		// swallowed the dictation into it instead of splitting the two.
 		titleWords := len(comparableWords(decision.Title))
 		if dictated > maxInstructionOnlyWords || titleWords > maxSpokenTitleWords {
-			log.Printf("provider: router returned no content for %d dictated words with a %d word title; keeping the transcript",
-				dictated, titleWords)
+			// Counts only: note text does not belong in logs.
+			obs.Log(ctx).Warn("router returned no content for a recording too long to be instruction-only; keeping the dictation",
+				slog.Int("dictated_words", dictated),
+				slog.Int("title_words", titleWords))
+			obs.Count(ctx, "RouterContentDiscarded", map[string]string{"Reason": "empty_content"})
 			decision.Content = transcript
 		}
 	case !contentDerivedFrom(decision.Content, transcript):
 		// Counts only: note text does not belong in logs.
-		log.Printf("provider: discarded router content not taken from the transcript (%d words returned, %d words dictated)",
-			len(comparableWords(decision.Content)), dictated)
+		obs.Log(ctx).Warn("discarded router content that was not taken from the dictation",
+			slog.Int("returned_words", len(comparableWords(decision.Content))),
+			slog.Int("dictated_words", dictated))
+		obs.Count(ctx, "RouterContentDiscarded", map[string]string{"Reason": "not_derived"})
 		decision.Content = transcript
 	}
 	return decision, nil

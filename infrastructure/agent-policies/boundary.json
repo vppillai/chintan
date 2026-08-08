@@ -11,6 +11,7 @@
         "ce:*",
         "cloudformation:*",
         "cloudtrail:*",
+        "cloudwatch:*",
         "cognito-idp:*",
         "dynamodb:*",
         "events:*",
@@ -20,9 +21,12 @@
         "logs:*",
         "resource-groups:*",
         "s3:*",
+        "sns:*",
+        "sqs:*",
         "ssm:*",
         "sts:*",
-        "tag:*"
+        "tag:*",
+        "xray:*"
       ],
       "Resource": "*"
     },

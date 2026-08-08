@@ -1,0 +1,334 @@
+package service
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"slices"
+	"testing"
+
+	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
+)
+
+// captureFixture writes capture rows straight to the store, which is how a test
+// reaches a pipeline state the API alone cannot produce.
+func captureFixture(t *testing.T, captures ...model.CaptureIndex) (*memory.Store, *CaptureService) {
+	t.Helper()
+	store := memory.NewStore()
+	ctx := context.Background()
+	for _, c := range captures {
+		if _, err := store.PutCapture(ctx, c); err != nil {
+			t.Fatalf("PutCapture(%s): %v", c.ID, err)
+		}
+	}
+	return store, NewCaptureService(store, memory.NewObjects())
+}
+
+func captureIDs(page repository.Page[model.CaptureIndex]) []string {
+	out := make([]string, 0, len(page.Items))
+	for _, c := range page.Items {
+		out = append(out, c.ID)
+	}
+	return out
+}
+
+// A capture awaiting disambiguation has no destination note, so it has no note
+// partition to be indexed under. The list must still find it: needs_target *is*
+// the disambiguation flow, and a capture that is recorded, durable and
+// unreachable from the UI is not distinguishable, from where the user sits,
+// from lost. This is the defect e61e043 fixed and it stays pinned here.
+func TestListCapturesIncludesACaptureWithNowhereToGo(t *testing.T) {
+	_, svc := captureFixture(t,
+		model.CaptureIndex{
+			ID: "c_00000000000000010_a", UserID: "user1", NoteID: "n1",
+			Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z",
+		},
+		model.CaptureIndex{
+			ID: "c_00000000000000020_b", UserID: "user1", NoteID: "",
+			Status: model.StatusNeedsTarget, CreatedAt: "2026-08-08T11:00:00.000000000Z",
+		},
+	)
+	ctx := context.Background()
+
+	all, err := svc.ListCaptures(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCaptures: %v", err)
+	}
+	if got := captureIDs(all); !slices.Contains(got, "c_00000000000000020_b") {
+		t.Fatalf("captures = %v, want the unrouted needs_target capture c_00000000000000020_b among them", got)
+	}
+	if len(all.Items) != 2 {
+		t.Fatalf("captures = %v, want both the routed and the unrouted capture", captureIDs(all))
+	}
+
+	needsTarget, err := svc.ListCaptures(ctx, "user1", CaptureFilterNeedsTarget, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCaptures(needs_target): %v", err)
+	}
+	if got := captureIDs(needsTarget); len(got) != 1 || got[0] != "c_00000000000000020_b" {
+		t.Fatalf("needs_target captures = %v, want only c_00000000000000020_b", got)
+	}
+}
+
+// The tenant-wide list reads the base table, whose sort key leads with the
+// capture id, and capture ids lead with a fixed-width creation instant. The
+// progress card only ever asks for the first page, so newest-first is what
+// makes an in-flight capture visible at all.
+func TestListCapturesReturnsTheNewestCaptureFirst(t *testing.T) {
+	_, svc := captureFixture(t,
+		model.CaptureIndex{ID: "c_00000000000000010_a", UserID: "user1", Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_00000000000000030_c", UserID: "user1", Status: model.StatusUploaded, CreatedAt: "2026-08-08T12:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_00000000000000020_b", UserID: "user1", Status: model.StatusFailed, CreatedAt: "2026-08-08T11:00:00.000000000Z"},
+	)
+
+	page, err := svc.ListCaptures(context.Background(), "user1", CaptureFilterAll, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCaptures: %v", err)
+	}
+
+	want := []string{"c_00000000000000030_c", "c_00000000000000020_b", "c_00000000000000010_a"}
+	if got := captureIDs(page); !slices.Equal(got, want) {
+		t.Fatalf("captures = %v, want %v (newest first)", got, want)
+	}
+}
+
+func TestListCapturesFiltersToWhatEachStatusGroupMeans(t *testing.T) {
+	_, svc := captureFixture(t,
+		model.CaptureIndex{ID: "c_uploaded", UserID: "user1", Status: model.StatusUploaded},
+		model.CaptureIndex{ID: "c_cleaning", UserID: "user1", Status: model.StatusCleaning},
+		model.CaptureIndex{ID: "c_failed", UserID: "user1", Status: model.StatusFailed},
+		model.CaptureIndex{ID: "c_capped", UserID: "user1", Status: model.StatusSpendCapped},
+		model.CaptureIndex{ID: "c_target", UserID: "user1", Status: model.StatusNeedsTarget},
+		model.CaptureIndex{ID: "c_appended", UserID: "user1", Status: model.StatusAppended},
+	)
+	ctx := context.Background()
+
+	cases := []struct {
+		filter CaptureFilter
+		want   []string
+	}{
+		{CaptureFilterAll, []string{"c_appended", "c_capped", "c_cleaning", "c_failed", "c_target", "c_uploaded"}},
+		{CaptureFilterPending, []string{"c_cleaning", "c_uploaded"}},
+		// spend_capped is a distinct outcome but it is still a capture that
+		// stopped, so the failed filter has to surface it or a spend-capped
+		// capture is invisible everywhere.
+		{CaptureFilterFailed, []string{"c_capped", "c_failed"}},
+		{CaptureFilterNeedsTarget, []string{"c_target"}},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.filter), func(t *testing.T) {
+			page, err := svc.ListCaptures(ctx, "user1", tc.filter, repository.ListOptions{})
+			if err != nil {
+				t.Fatalf("ListCaptures(%s): %v", tc.filter, err)
+			}
+			got := captureIDs(page)
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("ListCaptures(%s) = %v, want %v", tc.filter, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCaptureFilterAcceptsTheDeclaredValues(t *testing.T) {
+	cases := map[string]CaptureFilter{
+		"":             CaptureFilterAll,
+		"all":          CaptureFilterAll,
+		"  pending  ":  CaptureFilterPending,
+		"failed":       CaptureFilterFailed,
+		"needs_target": CaptureFilterNeedsTarget,
+		"\tall\n":      CaptureFilterAll,
+	}
+	for in, want := range cases {
+		got, ok := ParseCaptureFilter(in)
+		if !ok {
+			t.Errorf("ParseCaptureFilter(%q) was rejected, want %s", in, want)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseCaptureFilter(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// An unknown status is a client mistake, not a request for everything.
+// Defaulting it to "all" would hand back the whole list for a typo.
+func TestParseCaptureFilterRejectsAValueTheAPIDoesNotDeclare(t *testing.T) {
+	for _, in := range []string{"appended", "PENDING", "needs-target", "done", "'; drop"} {
+		got, ok := ParseCaptureFilter(in)
+		if ok {
+			t.Errorf("ParseCaptureFilter(%q) = %s, ok — want it rejected", in, got)
+		}
+		if got != "" {
+			t.Errorf("ParseCaptureFilter(%q) returned filter %q alongside the rejection", in, got)
+		}
+	}
+}
+
+func TestListUnroutedCapturesReturnsOnlyTheCapturesWithNoNote(t *testing.T) {
+	_, svc := captureFixture(t,
+		model.CaptureIndex{ID: "c_routed", UserID: "user1", NoteID: "n1", Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_orphan", UserID: "user1", NoteID: "", Status: model.StatusNeedsTarget, CreatedAt: "2026-08-08T11:00:00.000000000Z"},
+	)
+
+	page, err := svc.ListUnroutedCaptures(context.Background(), "user1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListUnroutedCaptures: %v", err)
+	}
+	if got := captureIDs(page); !slices.Equal(got, []string{"c_orphan"}) {
+		t.Fatalf("unrouted captures = %v, want only c_orphan", got)
+	}
+}
+
+// The walk is the fallback for a store with no tenant-wide capture query. Every
+// repository.Store now declares ListCaptures, so nothing reaches it through
+// ListCaptures any more; it is exercised directly so that the property it was
+// fixed for cannot rot unnoticed while it is still in the tree.
+func TestTheCaptureWalkFallbackAlsoFindsAnUnroutedCapture(t *testing.T) {
+	store, svc := captureFixture(t,
+		model.CaptureIndex{ID: "c_routed", UserID: "user1", NoteID: "n1", Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_orphan", UserID: "user1", NoteID: "", Status: model.StatusNeedsTarget, CreatedAt: "2026-08-08T11:00:00.000000000Z"},
+	)
+	ctx := context.Background()
+	if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Roof"}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	page, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("listCapturesByWalk: %v", err)
+	}
+
+	want := []string{"c_orphan", "c_routed"}
+	if got := captureIDs(page); !slices.Equal(got, want) {
+		t.Fatalf("walked captures = %v, want %v (newest first, unrouted included)", got, want)
+	}
+}
+
+// The walk's cursor is its own offset token, not the store's, so it is only
+// valid against this same walk. It is honest about that rather than passing off
+// an offset as a continuation key.
+func TestTheCaptureWalkPagesWithItsOwnCursor(t *testing.T) {
+	store, svc := captureFixture(t,
+		model.CaptureIndex{ID: "c_1", UserID: "user1", CreatedAt: "2026-08-08T10:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_2", UserID: "user1", CreatedAt: "2026-08-08T11:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_3", UserID: "user1", CreatedAt: "2026-08-08T12:00:00.000000000Z"},
+	)
+	ctx := context.Background()
+	if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Roof"}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	first, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("listCapturesByWalk: %v", err)
+	}
+	if got := captureIDs(first); !slices.Equal(got, []string{"c_3", "c_2"}) {
+		t.Fatalf("first page = %v, want [c_3 c_2]", got)
+	}
+	if first.Cursor == "" {
+		t.Fatal("first page returned no cursor with a third capture behind it")
+	}
+
+	second, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{Limit: 2, Cursor: first.Cursor})
+	if err != nil {
+		t.Fatalf("listCapturesByWalk(cursor): %v", err)
+	}
+	if got := captureIDs(second); !slices.Equal(got, []string{"c_1"}) {
+		t.Fatalf("second page = %v, want [c_1]", got)
+	}
+	if second.Cursor != "" {
+		t.Errorf("second page returned cursor %q with nothing behind it", second.Cursor)
+	}
+}
+
+func TestWalkCursorRoundTripsItsOffset(t *testing.T) {
+	for _, offset := range []int{0, 1, 50, 4096} {
+		got, err := decodeWalkCursor(encodeWalkCursor(offset))
+		if err != nil {
+			t.Errorf("decodeWalkCursor(encodeWalkCursor(%d)): %v", offset, err)
+			continue
+		}
+		if got != offset {
+			t.Errorf("offset round-tripped to %d, want %d", got, offset)
+		}
+	}
+	if got, err := decodeWalkCursor(""); err != nil || got != 0 {
+		t.Fatalf("decodeWalkCursor(\"\") = %d, %v; want 0 and no error for a first page", got, err)
+	}
+}
+
+// A malformed cursor is a client mistake. Typing it as ErrInvalidCursor is what
+// lets the handler answer 400 rather than 500, which is the difference between
+// the client fixing its request and the client retrying the same broken one.
+func TestWalkCursorRejectsAForeignOrMalformedToken(t *testing.T) {
+	cases := map[string]string{
+		"not base64":            "!!!not base64!!!",
+		"another query's token": base64.RawURLEncoding.EncodeToString([]byte("notes:12")),
+		"a store continuation":  base64.RawURLEncoding.EncodeToString([]byte("user1\x00note_007")),
+		"not a number":          base64.RawURLEncoding.EncodeToString([]byte(walkCursorPrefix + "seven")),
+		"negative offset":       base64.RawURLEncoding.EncodeToString([]byte(walkCursorPrefix + "-1")),
+	}
+	for name, cursor := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := decodeWalkCursor(cursor)
+			if !errors.Is(err, ErrInvalidCursor) {
+				t.Fatalf("decodeWalkCursor(%q) err = %v, want ErrInvalidCursor", cursor, err)
+			}
+			if got != 0 {
+				t.Fatalf("decodeWalkCursor(%q) = %d alongside the rejection, want 0", cursor, got)
+			}
+		})
+	}
+}
+
+func TestListCapturesSurfacesAStoreFailure(t *testing.T) {
+	boom := errors.New("dynamodb: dial tcp: connection refused")
+	svc := NewCaptureService(captureListErrStore{Store: memory.NewStore(), err: boom}, memory.NewObjects())
+
+	if _, err := svc.ListCaptures(context.Background(), "user1", CaptureFilterAll, repository.ListOptions{}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the store's failure rather than an empty capture list", err)
+	}
+}
+
+func TestCaptureStatusGroupsCoverEveryDeclaredStatus(t *testing.T) {
+	pending := []model.CaptureStatus{
+		model.StatusUploaded, model.StatusTranscribed, model.StatusCleaned,
+		model.StatusTranscribing, model.StatusRouting, model.StatusCleaning, model.StatusAppending,
+	}
+	terminal := []model.CaptureStatus{
+		model.StatusAppended, model.StatusNoContent, model.StatusFailed, model.StatusSpendCapped,
+	}
+	for _, s := range pending {
+		if !CaptureIsPending(s) {
+			t.Errorf("CaptureIsPending(%s) = false; the progress card will lose a capture mid-pipeline", s)
+		}
+		if CaptureIsTerminal(s) {
+			t.Errorf("CaptureIsTerminal(%s) = true for a stage the pipeline still moves on from", s)
+		}
+	}
+	for _, s := range terminal {
+		if !CaptureIsTerminal(s) {
+			t.Errorf("CaptureIsTerminal(%s) = false; the pipeline will not leave this state on its own", s)
+		}
+		if CaptureIsPending(s) {
+			t.Errorf("CaptureIsPending(%s) = true for a capture that has stopped", s)
+		}
+	}
+	// needs_target is neither: the pipeline is waiting on the user, not on itself.
+	if CaptureIsPending(model.StatusNeedsTarget) || CaptureIsTerminal(model.StatusNeedsTarget) {
+		t.Error("needs_target is neither pending nor terminal: it waits on the user, and calling it pending puts it in the progress card forever")
+	}
+}
+
+// captureListErrStore fails the tenant-wide capture query.
+type captureListErrStore struct {
+	repository.Store
+	err error
+}
+
+func (s captureListErrStore) ListCaptures(context.Context, string, repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+	return repository.Page[model.CaptureIndex]{}, s.err
+}

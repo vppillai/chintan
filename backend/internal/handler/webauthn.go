@@ -1,168 +1,170 @@
 package handler
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// WebAuthnHandler serves biometric enroll/unlock endpoints.
-type WebAuthnHandler struct {
-	svc *service.WebAuthnService
+// WebAuthnAPI is the biometric surface the router needs.
+//
+// It is an interface rather than *service.WebAuthnService for one reason worth
+// the indirection: it makes the biometric routes testable without a real
+// authenticator ceremony, so the conformance test can prove every status the
+// contract declares is actually reachable.
+type WebAuthnAPI interface {
+	Status(ctx context.Context, userID string) (bool, error)
+	Disable(ctx context.Context, userID string) error
+	BeginRegistration(ctx context.Context, userID string) (*model.WebAuthnOptionsResponse, error)
+	FinishRegistration(ctx context.Context, userID string, req *model.WebAuthnVerifyRequest) error
+	BeginLogin(ctx context.Context) (*model.WebAuthnOptionsResponse, error)
+	FinishLogin(ctx context.Context, req *model.WebAuthnVerifyRequest) (*model.CognitoTokenSet, error)
 }
 
-func NewWebAuthnHandler(svc *service.WebAuthnService) *WebAuthnHandler {
-	return &WebAuthnHandler{svc: svc}
-}
+var _ WebAuthnAPI = (*service.WebAuthnService)(nil)
 
-func (h *WebAuthnHandler) unavailable(w http.ResponseWriter) bool {
-	if h == nil || h.svc == nil {
-		httperr.WriteJSON(w, errors.New("WebAuthn is not available"), http.StatusServiceUnavailable)
-		return true
+// available reports whether biometrics are configured, answering 503 if not.
+//
+// An instance without a KMS key for the token vault genuinely cannot do this,
+// and saying so is better than a 500 that looks like a fault.
+func (rt *router) available(w http.ResponseWriter, r *http.Request) bool {
+	if rt.WebAuthn == nil {
+		httperr.ServiceUnavailable(w, r, "biometric unlock is not configured on this instance")
+		return false
 	}
-	return false
+	return true
 }
 
-func (h *WebAuthnHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.unavailable(w) {
+func (rt *router) webauthnStatus(w http.ResponseWriter, r *http.Request) {
+	if !rt.available(w, r) {
 		return
 	}
-	path := strings.TrimPrefix(r.URL.Path, "/v1/auth/webauthn")
-	path = strings.Trim(path, "/")
-
-	switch {
-	case r.Method == http.MethodGet && path == "status":
-		h.status(w, r)
-	case r.Method == http.MethodDelete && path == "":
-		h.disable(w, r)
-	case r.Method == http.MethodPost && path == "register/options":
-		h.registerOptions(w, r)
-	case r.Method == http.MethodPost && path == "register":
-		h.register(w, r)
-	case r.Method == http.MethodPost && path == "login/options":
-		h.loginOptions(w, r)
-	case r.Method == http.MethodPost && path == "login":
-		h.login(w, r)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-func (h *WebAuthnHandler) status(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
-	enrolled, err := h.svc.Status(r.Context(), userID)
+	enrolled, err := rt.WebAuthn.Status(r.Context(), userID)
 	if err != nil {
-		httperr.InternalServerError(w, err)
+		httperr.InternalServerError(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"enrolled": enrolled})
+	writeJSON(w, http.StatusOK, map[string]bool{"enrolled": enrolled})
 }
 
-func (h *WebAuthnHandler) disable(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
-	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+func (rt *router) webauthnDisable(w http.ResponseWriter, r *http.Request) {
+	if !rt.available(w, r) {
 		return
 	}
-	if err := h.svc.Disable(r.Context(), userID); err != nil {
-		httperr.InternalServerError(w, err)
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	if err := rt.WebAuthn.Disable(r.Context(), userID); err != nil {
+		httperr.InternalServerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *WebAuthnHandler) registerOptions(w http.ResponseWriter, r *http.Request) {
+func (rt *router) webauthnRegisterOptions(w http.ResponseWriter, r *http.Request) {
+	if !rt.available(w, r) {
+		return
+	}
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
-	resp, err := h.svc.BeginRegistration(r.Context(), userID)
+	resp, err := rt.WebAuthn.BeginRegistration(r.Context(), userID)
 	if err != nil {
-		log.Printf("webauthn.register.options: %v", err)
-		httperr.InternalServerError(w, err)
+		httperr.InternalServerError(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *WebAuthnHandler) register(w http.ResponseWriter, r *http.Request) {
+func (rt *router) webauthnRegister(w http.ResponseWriter, r *http.Request) {
+	if !rt.available(w, r) {
+		return
+	}
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
+
 	var req model.WebAuthnVerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid request body")
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
 		return
 	}
-	if err := h.svc.FinishRegistration(r.Context(), userID, &req); err != nil {
+	if err := rt.WebAuthn.FinishRegistration(r.Context(), userID, &req); err != nil {
 		switch {
 		case errors.Is(err, service.ErrWebAuthnMissingRefresh):
-			httperr.BadRequest(w, "refresh_token is required")
+			httperr.BadRequest(w, r, "refresh_token is required")
 		case errors.Is(err, service.ErrWebAuthnChallengeNotFound):
-			httperr.BadRequest(w, "registration challenge expired, please retry")
+			httperr.BadRequest(w, r, "the enrollment challenge expired; start again")
 		case errors.Is(err, service.ErrWebAuthnVerification), errors.Is(err, service.ErrWebAuthnSubMismatch):
-			httperr.BadRequest(w, "could not verify authenticator")
+			httperr.BadRequest(w, r, "the authenticator could not be verified")
 		default:
-			log.Printf("webauthn.register: %v", err)
-			httperr.InternalServerError(w, err)
+			httperr.InternalServerError(w, r, err)
 		}
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "Biometric unlock enabled"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *WebAuthnHandler) loginOptions(w http.ResponseWriter, r *http.Request) {
-	resp, err := h.svc.BeginLogin(r.Context())
+func (rt *router) webauthnLoginOptions(w http.ResponseWriter, r *http.Request) {
+	if !rt.available(w, r) {
+		return
+	}
+	resp, err := rt.WebAuthn.BeginLogin(r.Context())
 	if err != nil {
 		if errors.Is(err, service.ErrWebAuthnNotEnrolled) {
-			httperr.BadRequest(w, "biometric unlock is not set up")
+			// Not enrolled is not a fault and not a probing oracle: it is the
+			// same answer for every caller of this instance.
+			httperr.ServiceUnavailable(w, r, "biometric unlock is not set up on this account")
 			return
 		}
-		log.Printf("webauthn.login.options: %v", err)
-		httperr.InternalServerError(w, err)
+		httperr.InternalServerError(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *WebAuthnHandler) login(w http.ResponseWriter, r *http.Request) {
-	var req model.WebAuthnVerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid request body")
+func (rt *router) webauthnLogin(w http.ResponseWriter, r *http.Request) {
+	if !rt.available(w, r) {
 		return
 	}
-	tokens, err := h.svc.FinishLogin(r.Context(), &req)
+
+	var req model.WebAuthnVerifyRequest
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+		return
+	}
+	tokens, err := rt.WebAuthn.FinishLogin(r.Context(), &req)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrWebAuthnChallengeNotFound):
-			httperr.BadRequest(w, "login challenge expired, please retry")
-		case errors.Is(err, service.ErrWebAuthnVerification), errors.Is(err, service.ErrWebAuthnSubMismatch):
-			// 401 means biometric failed — clients must not treat as Cognito session expiry.
-			httperr.Unauthorized(w, "biometric verification failed")
+		case errors.Is(err, service.ErrWebAuthnChallengeNotFound),
+			errors.Is(err, service.ErrWebAuthnVerification),
+			errors.Is(err, service.ErrWebAuthnSubMismatch):
+			// One answer for every biometric failure. A client must not be able
+			// to tell "expired challenge" from "wrong finger" from "no such
+			// credential" — and a 401 here means biometrics failed, which
+			// clients must not confuse with an expired Cognito session.
+			obs.Log(r.Context()).Info("biometric login refused", slog.String("reason", "verification"))
+			httperr.Unauthorized(w, r, "biometric verification failed")
 		default:
-			log.Printf("webauthn.login: %v", err)
-			httperr.InternalServerError(w, err)
+			httperr.InternalServerError(w, r, err)
 		}
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tokens)
+	writeJSON(w, http.StatusOK, tokens)
 }

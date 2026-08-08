@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -18,15 +18,30 @@ import (
 
 const ArchiveRetention = 30 * 24 * time.Hour
 
-// maxNoteTitleLen bounds a stored title. Titles can be dictated, and they are rendered
-// back into the routing prompt for later recordings.
-const maxNoteTitleLen = 120
+// maxNoteTitleLen bounds a stored title. It matches the OpenAPI document's
+// maxLength for a note title, so a title the API accepts is a title that is
+// stored whole. Two different limits for one field means a request the handler
+// validated is quietly truncated by the service, which is data loss with a
+// receipt.
+//
+// The routing prompt does not depend on this number: it bounds every rendered
+// candidate field itself (routing.maxFieldLen), so a longer stored title cannot
+// grow the prompt.
+const maxNoteTitleLen = 200
 
 var (
 	ErrNoteArchived    = errors.New("note is archived")
 	ErrNoteNotArchived = errors.New("note is not archived")
 	ErrEmptyNoteTitle  = errors.New("note title is empty")
+	// ErrPurgeIncomplete means part of a permanent delete failed. The note index
+	// is deliberately left in place so the delete can be retried, because
+	// reporting "purged" while audio survives in S3 is worse than reporting a
+	// failure.
+	ErrPurgeIncomplete = errors.New("note purge incomplete")
 )
+
+// maxMatchCandidates bounds how many notes note-matching will page through.
+const maxMatchCandidates = 500
 
 // sanitizeNoteTitle collapses a title to a single bounded line.
 func sanitizeNoteTitle(title string) string {
@@ -47,17 +62,60 @@ func NoteIsActive(n model.NoteIndex) bool {
 	return strings.TrimSpace(n.DeletedAt) == ""
 }
 
+// maxTagLen bounds one tag. Tags are rendered into list filters and into the
+// routing prompt, so an unbounded tag is a stored cost amplifier.
+const maxTagLen = 40
+
+// normalizeTags folds tags to a canonical form: trimmed, lowercased, collapsed
+// whitespace, deduplicated, ordered. Without this "Roof", "roof " and "roof"
+// are three tags in the index and one tag to the person who said them.
+func normalizeTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, raw := range tags {
+		t := strings.ToLower(strings.Join(strings.Fields(raw), " "))
+		if t == "" {
+			continue
+		}
+		if runes := []rune(t); len(runes) > maxTagLen {
+			t = strings.TrimSpace(string(runes[:maxTagLen]))
+		}
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // NotesService handles note operations
 type NotesService struct {
 	store   repository.Store
 	objects repository.Objects
 }
 
-// NoteUpdates represents partial updates to a note
+// NoteUpdates represents partial updates to a note.
+//
+// ExpectedVersion is the version the client read. It is compared before
+// anything is written, so a voice append landing while the editor is open
+// surfaces as a conflict the client reconciles rather than one of the two
+// writes vanishing. A nil ExpectedVersion skips the check and is for in-process
+// callers only — every HTTP caller supplies one.
 type NoteUpdates struct {
-	Title   *string
-	Aliases *[]string
-	Body    *string
+	Title           *string
+	Aliases         *[]string
+	Tags            *[]string
+	Body            *string
+	Verbatim        *bool
+	ExpectedVersion *int64
 }
 
 // MatchResult represents the result of a note matching operation
@@ -74,8 +132,16 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 	}
 }
 
-// CreateNote creates a new note
+// CreateNote creates a new note.
+//
+// The signature is what the worker's NoteCreator expects; CreateNoteWithTags is
+// the fuller form the API uses.
 func (s *NotesService) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
+	return s.CreateNoteWithTags(ctx, userID, title, aliases, nil)
+}
+
+// CreateNoteWithTags creates a note carrying tags.
+func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title string, aliases, tags []string) (model.NoteIndex, error) {
 	title = sanitizeNoteTitle(title)
 	if title == "" {
 		return model.NoteIndex{}, ErrEmptyNoteTitle
@@ -99,12 +165,15 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 		aliases = []string{}
 	}
 
+	now := model.Now()
 	note := model.NoteIndex{
 		ID:            noteID,
 		Title:         title,
 		Aliases:       aliases,
+		Tags:          normalizeTags(tags),
 		Snippet:       "", // No content initially
-		UpdatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 		S3MarkdownKey: markdownKey,
 		S3MetaKey:     metaKey,
 	}
@@ -119,7 +188,8 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 	metaData := map[string]interface{}{
 		"title":      title,
 		"aliases":    aliases,
-		"created_at": note.UpdatedAt,
+		"tags":       note.Tags,
+		"created_at": note.CreatedAt,
 		"updated_at": note.UpdatedAt,
 	}
 	metaBytes, _ := json.Marshal(metaData)
@@ -129,28 +199,18 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 	}
 
 	// Save to store
-	err = s.store.PutNote(ctx, userID, note)
+	stored, err := s.store.PutNote(ctx, userID, note)
 	if err != nil {
 		return model.NoteIndex{}, fmt.Errorf("failed to save note: %w", err)
 	}
 
-	return note, nil
+	return stored, nil
 }
 
-// ListNotes lists active notes for a user (excludes archived notes)
-func (s *NotesService) ListNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
-	_ = s.purgeExpired(ctx, userID)
-	all, err := s.store.ListNotes(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.NoteIndex, 0, len(all))
-	for _, n := range all {
-		if NoteIsActive(n) {
-			out = append(out, n)
-		}
-	}
-	return out, nil
+// ListNotes returns one page of active notes. Archived notes are excluded by
+// the store, so the filtering is no longer paid for in Go.
+func (s *NotesService) ListNotes(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	return s.store.ListNotes(ctx, userID, opts)
 }
 
 // GetNote retrieves a specific note
@@ -171,7 +231,7 @@ func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string)
 		return NoteDetail{}, err
 	}
 	bodyBytes, err := s.objects.Get(ctx, note.S3MarkdownKey)
-	if err != nil && err != repository.ErrNotFound {
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return NoteDetail{}, fmt.Errorf("failed to load note body: %w", err)
 	}
 	return NoteDetail{NoteIndex: note, Body: string(bodyBytes)}, nil
@@ -190,6 +250,12 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		return model.NoteIndex{}, ErrNoteArchived
 	}
 
+	// The version the client read is checked before any object is written, so a
+	// losing writer does not leave a rewritten body behind with the index intact.
+	if updates.ExpectedVersion != nil && *updates.ExpectedVersion != note.Version {
+		return note, repository.ErrVersionConflict
+	}
+
 	// Apply updates
 	if updates.Title != nil {
 		title := sanitizeNoteTitle(*updates.Title)
@@ -201,9 +267,15 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	if updates.Aliases != nil {
 		note.Aliases = *updates.Aliases
 	}
+	if updates.Tags != nil {
+		note.Tags = normalizeTags(*updates.Tags)
+	}
+	if updates.Verbatim != nil {
+		note.Verbatim = *updates.Verbatim
+	}
 
 	// Update timestamp
-	note.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	note.UpdatedAt = model.Now()
 
 	// Handle body update
 	if updates.Body != nil {
@@ -221,6 +293,8 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	metaData := map[string]interface{}{
 		"title":      note.Title,
 		"aliases":    note.Aliases,
+		"tags":       note.Tags,
+		"verbatim":   note.Verbatim,
 		"updated_at": note.UpdatedAt,
 	}
 	metaBytes, _ := json.Marshal(metaData)
@@ -229,13 +303,15 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		return model.NoteIndex{}, fmt.Errorf("failed to update meta: %w", err)
 	}
 
-	// Save to store
-	err = s.store.PutNote(ctx, userID, note)
+	// Save to store. A version conflict here means somebody else wrote the note
+	// between the read and this write; the caller reconciles rather than one of
+	// the two edits vanishing.
+	stored, err := s.store.PutNote(ctx, userID, note)
 	if err != nil {
 		return model.NoteIndex{}, err
 	}
 
-	return note, nil
+	return stored, nil
 }
 
 // DeleteNote archives a note (soft delete)
@@ -246,8 +322,11 @@ func (s *NotesService) DeleteNote(ctx context.Context, userID, noteID string) er
 
 // MatchNotes finds matching notes for a query (only searches active notes)
 func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (MatchResult, error) {
-	// Get active notes only
-	notes, err := s.ListNotes(ctx, userID)
+	// Matching scores against every candidate, so it pages through the whole
+	// active set rather than seeing whatever fitted in one page.
+	notes, err := repository.DrainPages(ctx, maxMatchCandidates, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+		return s.store.ListNotes(ctx, userID, opts)
+	})
 	if err != nil {
 		return MatchResult{}, err
 	}
@@ -275,13 +354,18 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 	return result, nil
 }
 
-// generateSnippet creates a snippet from note body (first ~500 chars)
+// generateSnippet creates a snippet from a note body.
+//
+// The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
+// writes invalid UTF-8 into DynamoDB and into the routing prompt, which is what
+// v1 did.
 func generateSnippet(body string) string {
-	const maxLength = 500
-	if len(body) <= maxLength {
+	const maxRunes = 500
+	runes := []rune(body)
+	if len(runes) <= maxRunes {
 		return body
 	}
-	return body[:maxLength] + "..."
+	return string(runes[:maxRunes]) + "..."
 }
 
 // ArchiveNote archives a note (soft delete with retention period)
@@ -296,23 +380,25 @@ func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (
 		return note, nil
 	}
 
-	// Set archive timestamps
+	// Set archive timestamps. PurgeAfterEpoch is the DynamoDB TTL attribute, so
+	// expiry is the table's job rather than a synchronous sweep on every read.
 	now := time.Now().UTC()
-	note.DeletedAt = now.Format(time.RFC3339Nano)
-	note.PurgeAfter = now.Add(ArchiveRetention).Format(time.RFC3339Nano)
+	purgeAt := now.Add(ArchiveRetention)
+	note.DeletedAt = model.FormatTime(now)
+	note.PurgeAfter = model.FormatTime(purgeAt)
+	note.PurgeAfterEpoch = purgeAt.Unix()
 
 	// Save updated note
-	err = s.store.PutNote(ctx, userID, note)
+	stored, err := s.store.PutNote(ctx, userID, note)
 	if err != nil {
 		return model.NoteIndex{}, err
 	}
 
-	return note, nil
+	return stored, nil
 }
 
 // RestoreNote restores an archived note to active status
 func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
-	_ = s.purgeExpired(ctx, userID)
 	note, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
 		return model.NoteIndex{}, err
@@ -323,47 +409,29 @@ func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (
 		return note, nil
 	}
 
-	// Clear archive fields
+	// Clear archive fields, including the TTL, so the table stops counting down.
 	note.DeletedAt = ""
 	note.PurgeAfter = ""
+	note.PurgeAfterEpoch = 0
 
 	// Save updated note
-	err = s.store.PutNote(ctx, userID, note)
+	stored, err := s.store.PutNote(ctx, userID, note)
 	if err != nil {
 		return model.NoteIndex{}, err
 	}
 
-	return note, nil
+	return stored, nil
 }
 
-// ListArchivedNotes lists archived notes for a user (excludes expired ones)
-func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
-	_ = s.purgeExpired(ctx, userID)
-	all, err := s.store.ListNotes(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	out := make([]model.NoteIndex, 0)
-	now := time.Now().UTC()
-
-	for _, n := range all {
-		if !NoteIsActive(n) {
-			// Check if not yet expired
-			if n.PurgeAfter != "" {
-				purgeTime, err := time.Parse(time.RFC3339Nano, n.PurgeAfter)
-				if err == nil && now.Before(purgeTime) {
-					out = append(out, n)
-				}
-			}
-		}
-	}
-	return out, nil
+// ListArchivedNotes returns one page of archived notes that have not passed
+// their purge deadline. Expiry itself belongs to DynamoDB TTL; the filter only
+// keeps an item the table has not collected yet out of the UI.
+func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	return s.store.ListArchivedNotes(ctx, userID, opts)
 }
 
 // PermanentlyDeleteNote permanently deletes an archived note and all its captures
 func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID string) error {
-	_ = s.purgeExpired(ctx, userID)
 	note, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
 		return err
@@ -377,53 +445,55 @@ func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID
 	return s.hardDeleteNote(ctx, userID, noteID, note)
 }
 
-// hardDeleteNote performs the actual deletion (used by PermanentlyDeleteNote and purgeExpired)
+// hardDeleteNote removes a note's captures, its objects, and finally its index.
+//
+// It fails loudly. v1 logged and ignored every cascade failure and then deleted
+// the index anyway, permanently orphaning audio that the UI reported as purged.
+// Here the index survives any failure, so the note stays visible as archived and
+// the delete can be retried.
+//
+// TODO(phase 4+): when DynamoDB TTL expires an archived note, a Streams handler
+// performs this same S3 cascade. Until that exists, TTL removes the index row
+// and leaves the objects; `chintanctl` reconciliation (§4.5) is the backstop.
 func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
-	captures, err := s.store.ListCapturesByNote(ctx, userID, noteID)
+	// Every page, not just the first: a truncated list is how "delete forever"
+	// leaves orphans behind.
+	captures, err := repository.DrainPages(ctx, 0, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+		return s.store.ListCapturesByNote(ctx, userID, noteID, opts)
+	})
 	if err != nil {
-		log.Printf("hardDeleteNote: ListCapturesByNote failed userID=%s noteID=%s: %v", userID, noteID, err)
-	} else {
-		for _, c := range captures {
-			for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey} {
-				if key != "" {
-					if err := s.objects.Delete(ctx, key); err != nil {
-						log.Printf("hardDeleteNote: objects.Delete failed userID=%s noteID=%s captureID=%s key=%s: %v", userID, noteID, c.ID, key, err)
-					}
-				}
+		return fmt.Errorf("%w: list captures: %w", ErrPurgeIncomplete, err)
+	}
+
+	for _, c := range captures {
+		for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, c.PeaksKey} {
+			if err := s.deleteObject(ctx, key); err != nil {
+				return fmt.Errorf("%w: capture %s object: %w", ErrPurgeIncomplete, c.ID, err)
 			}
-			if err := s.store.DeleteCapture(ctx, userID, c.ID); err != nil {
-				log.Printf("hardDeleteNote: DeleteCapture failed userID=%s noteID=%s captureID=%s: %v", userID, noteID, c.ID, err)
-			}
+		}
+		if err := s.store.DeleteCapture(ctx, userID, c.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return fmt.Errorf("%w: capture %s index: %w", ErrPurgeIncomplete, c.ID, err)
 		}
 	}
 
-	if err := s.objects.Delete(ctx, note.S3MarkdownKey); err != nil {
-		log.Printf("hardDeleteNote: objects.Delete failed userID=%s noteID=%s key=%s: %v", userID, noteID, note.S3MarkdownKey, err)
+	if err := s.deleteObject(ctx, note.S3MarkdownKey); err != nil {
+		return fmt.Errorf("%w: note body: %w", ErrPurgeIncomplete, err)
 	}
-	if err := s.objects.Delete(ctx, note.S3MetaKey); err != nil {
-		log.Printf("hardDeleteNote: objects.Delete failed userID=%s noteID=%s key=%s: %v", userID, noteID, note.S3MetaKey, err)
+	if err := s.deleteObject(ctx, note.S3MetaKey); err != nil {
+		return fmt.Errorf("%w: note meta: %w", ErrPurgeIncomplete, err)
 	}
 
 	return s.store.DeleteNote(ctx, userID, noteID)
 }
 
-// purgeExpired removes notes that have passed their purge deadline
-func (s *NotesService) purgeExpired(ctx context.Context, userID string) error {
-	all, err := s.store.ListNotes(ctx, userID)
-	if err != nil {
-		return err
+// deleteObject removes a key, treating "already gone" as success so a retried
+// purge can make progress.
+func (s *NotesService) deleteObject(ctx context.Context, key string) error {
+	if key == "" {
+		return nil
 	}
-
-	now := time.Now().UTC()
-	for _, n := range all {
-		if !NoteIsActive(n) && n.PurgeAfter != "" {
-			purgeTime, err := time.Parse(time.RFC3339Nano, n.PurgeAfter)
-			if err == nil && !now.Before(purgeTime) {
-				if err := s.hardDeleteNote(ctx, userID, n.ID, n); err != nil {
-					log.Printf("purgeExpired: hardDeleteNote failed userID=%s noteID=%s: %v", userID, n.ID, err)
-				}
-			}
-		}
+	if err := s.objects.Delete(ctx, key); err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return err
 	}
 	return nil
 }

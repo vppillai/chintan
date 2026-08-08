@@ -1,0 +1,289 @@
+/**
+ * Typed wrappers over every operation in `docs/api/openapi.yaml`.
+ *
+ * One method per operation, so a contract change is a compile error rather
+ * than a runtime surprise, and so no component ever builds a URL by hand.
+ */
+
+import { NO_RETRY } from './client.ts';
+import type { ApiClient, RequestOptions } from './client.ts';
+import type {
+  CaptureArtifactKind,
+  CaptureCreateWire,
+  CaptureCreatedWire,
+  CaptureListQuery,
+  CaptureTargetWire,
+  CaptureWire,
+  ExportJobWire,
+  MatchResponseWire,
+  NoteCreateWire,
+  NoteDetailWire,
+  NoteListQuery,
+  NoteUpdateWire,
+  NoteWire,
+  Page,
+  PageQuery,
+  PresignedDownloadWire,
+  PresignedUploadWire,
+  ReadinessWire,
+  SearchHitWire,
+  SettingsWire,
+  TagWire,
+  WebAuthnOptionsWire,
+  WebAuthnVerifyWire,
+} from './schema.ts';
+
+type Query = NonNullable<RequestOptions['query']>;
+
+function pageQuery(query: PageQuery = {}): Query {
+  return { cursor: query.cursor, limit: query.limit };
+}
+
+export class ChintanApi {
+  constructor(private readonly client: ApiClient) {}
+
+  /* ---- Health --------------------------------------------------------- */
+
+  health(): Promise<{ status: 'ok' }> {
+    return this.client.request('/v1/health', { anonymous: true, retry: NO_RETRY });
+  }
+
+  ready(): Promise<ReadinessWire> {
+    return this.client.request('/v1/health/ready', { anonymous: true, retry: NO_RETRY });
+  }
+
+  /* ---- Settings ------------------------------------------------------- */
+
+  getSettings(): Promise<SettingsWire> {
+    return this.client.request('/v1/settings');
+  }
+
+  putSettings(body: SettingsWire, idempotencyKey?: string): Promise<SettingsWire> {
+    return this.client.request('/v1/settings', {
+      method: 'PUT',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  /* ---- Notes ---------------------------------------------------------- */
+
+  listNotes(query: NoteListQuery = {}): Promise<Page<NoteWire>> {
+    return this.client.request('/v1/notes', {
+      query: { ...pageQuery(query), state: query.state, tag: query.tag },
+    });
+  }
+
+  getNote(noteId: string): Promise<NoteDetailWire> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}`);
+  }
+
+  createNote(body: NoteCreateWire, idempotencyKey?: string): Promise<NoteWire> {
+    return this.client.request('/v1/notes', { method: 'POST', body, idempotencyKey });
+  }
+
+  updateNote(
+    noteId: string,
+    body: NoteUpdateWire,
+    idempotencyKey?: string,
+  ): Promise<NoteWire> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}`, {
+      method: 'PATCH',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  /** Soft delete. Recoverable via `restoreNote` for 30 days. */
+  archiveNote(noteId: string): Promise<void> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  restoreNote(noteId: string): Promise<NoteWire> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/restore`, {
+      method: 'POST',
+    });
+  }
+
+  /** Irreversible, and one of the two actions gated by the confirm dialog. */
+  deleteNoteForever(noteId: string): Promise<void> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/permanent`, {
+      method: 'DELETE',
+      retry: NO_RETRY,
+    });
+  }
+
+  matchNotes(query: string): Promise<MatchResponseWire> {
+    return this.client.request('/v1/notes/match', {
+      method: 'POST',
+      body: { query },
+    });
+  }
+
+  listTags(): Promise<{ items: TagWire[] }> {
+    return this.client.request('/v1/tags');
+  }
+
+  /* ---- Search --------------------------------------------------------- */
+
+  search(q: string, query: PageQuery = {}): Promise<Page<SearchHitWire>> {
+    return this.client.request('/v1/search', { query: { q, ...pageQuery(query) } });
+  }
+
+  /* ---- Captures ------------------------------------------------------- */
+
+  listCaptures(query: CaptureListQuery = {}): Promise<Page<CaptureWire>> {
+    return this.client.request('/v1/captures', {
+      query: { ...pageQuery(query), status: query.status },
+    });
+  }
+
+  /**
+   * Begins a capture. Fast by contract — it writes the row and returns a
+   * presigned PUT; the upload event drives the pipeline out of band.
+   *
+   * The idempotency key must be the capture's own stable key, so that a retry
+   * of this call after a flaky response reuses the original upload URL instead
+   * of stranding a half-created capture.
+   */
+  createCapture(
+    body: CaptureCreateWire,
+    idempotencyKey: string,
+  ): Promise<CaptureCreatedWire> {
+    return this.client.request('/v1/captures', {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  getCapture(captureId: string): Promise<CaptureWire> {
+    return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}`);
+  }
+
+  setCaptureTarget(
+    captureId: string,
+    body: CaptureTargetWire,
+    idempotencyKey?: string,
+  ): Promise<CaptureWire> {
+    return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}/target`, {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  /**
+   * Retries a failed capture from its last good stage.
+   *
+   * In v1 an equivalent method existed on the client and was called from
+   * nowhere: a failed capture was a dead end with a toast.
+   */
+  retryCapture(captureId: string, idempotencyKey?: string): Promise<CaptureWire> {
+    return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}/retry`, {
+      method: 'POST',
+      idempotencyKey,
+    });
+  }
+
+  downloadUrl(
+    captureId: string,
+    kind: CaptureArtifactKind,
+  ): Promise<PresignedDownloadWire> {
+    return this.client.request(
+      `/v1/captures/${encodeURIComponent(captureId)}/download`,
+      { query: { kind } },
+    );
+  }
+
+  /* ---- Biometric unlock (WebAuthn) ------------------------------------- */
+
+  webauthnStatus(): Promise<{ enrolled: boolean }> {
+    return this.client.request('/v1/auth/webauthn/status');
+  }
+
+  webauthnRegisterOptions(): Promise<WebAuthnOptionsWire> {
+    return this.client.request('/v1/auth/webauthn/register/options', { method: 'POST' });
+  }
+
+  webauthnRegister(body: WebAuthnVerifyWire, idempotencyKey?: string): Promise<void> {
+    return this.client.request('/v1/auth/webauthn/register', {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  /** Disables biometric unlock and destroys the KMS-sealed token vault. */
+  webauthnDisable(): Promise<void> {
+    return this.client.request('/v1/auth/webauthn', { method: 'DELETE', retry: NO_RETRY });
+  }
+
+  /* ---- Export --------------------------------------------------------- */
+
+  startExport(idempotencyKey?: string): Promise<ExportJobWire> {
+    return this.client.request('/v1/export', { method: 'POST', idempotencyKey });
+  }
+
+  getExport(exportId: string): Promise<ExportJobWire> {
+    return this.client.request(`/v1/export/${encodeURIComponent(exportId)}`);
+  }
+}
+
+/**
+ * Uploads bytes to a presigned URL.
+ *
+ * Deliberately not routed through `ApiClient`: a presigned PUT is
+ * pre-authorised, and attaching our bearer would break the S3 signature. It
+ * still gets a timeout and bounded retry, because a capture upload dying on a
+ * cellular blip is the one failure the product cannot absorb.
+ */
+export async function putPresigned(
+  upload: PresignedUploadWire,
+  body: Blob | ArrayBuffer | string,
+  options: {
+    contentType?: string;
+    signal?: AbortSignal;
+    maxRetries?: number;
+    fetchImpl?: typeof fetch;
+    onAttempt?: (attempt: number) => void;
+  } = {},
+): Promise<void> {
+  const fetchImpl = options.fetchImpl ?? ((...args: Parameters<typeof fetch>) =>
+    globalThis.fetch(...args));
+  const maxRetries = options.maxRetries ?? 4;
+  const headers = new Headers(upload.headers);
+  if (options.contentType) headers.set('Content-Type', options.contentType);
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    options.onAttempt?.(attempt);
+    try {
+      const response = await fetchImpl(upload.url, {
+        method: 'PUT',
+        headers,
+        body,
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+      if (response.ok) return;
+      // A presigned URL that has expired returns 403. Retrying will not fix
+      // it — the caller has to mint a new one.
+      if (response.status === 403 || response.status === 400) {
+        throw new Error(`Upload rejected with ${response.status}`);
+      }
+      lastError = new Error(`Upload failed with ${response.status}`);
+    } catch (error) {
+      if ((error as Error)?.name === 'AbortError') throw error;
+      lastError = error;
+    }
+    if (attempt < maxRetries) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.random() * Math.min(500 * 2 ** attempt, 8_000)),
+      );
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Upload failed');
+}

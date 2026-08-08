@@ -1,0 +1,21 @@
+# Staging for the `dev` instance.
+#
+# Same `name` as config/instances/dev.yaml, different `environment`, therefore a
+# different stack: chintan-dev-staging alongside chintan-dev-prod. Every deploy
+# reaches this stack first and its smoke test gates the prod job, so a template
+# or Lambda change that fails on real AWS fails somewhere that has no user data.
+#
+# Its own Cognito user pool, DynamoDB table and S3 bucket. Nothing is shared with
+# prod except the SSM provider keys under /chintan/dev/, which is why
+# cleanup-aws.sh refuses to delete those while any other chintan-dev-* stack
+# still exists.
+name: dev
+environment: staging
+site_path: dev-staging
+display_name: Chintan Dev (staging)
+pwa:
+  name: Chintan Staging
+  short_name: Chintan-stg
+  description: Voice brain-dump notes (staging)
+  theme_color: "#1B4332"
+  background_color: "#F7F3EB"

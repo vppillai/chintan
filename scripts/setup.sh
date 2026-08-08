@@ -1,208 +1,201 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# One-time account and repository setup: the bootstrap stack, the GitHub OIDC
+# deploy role, the repository secrets, the deployment environments and Pages.
+#
+# Run this once per AWS account + fork, before scripts/bootstrap.sh.
+#
+# It does NOT create the agent IAM principal, its permissions boundary or
+# CloudTrail — scripts/bootstrap-agent.sh does that, it needs administrative
+# credentials, and infrastructure/bootstrap.yaml refuses to deploy without the
+# boundary it creates. bootstrap-agent.sh comes first.
+#
+# Usage:
+#   scripts/setup.sh --region us-west-2 [--repo OWNER/NAME] [--apply]
+#
+# Options:
+#   --region REGION        AWS region for the bootstrap stack (required)
+#   --repo OWNER/NAME      GitHub repository (default: resolved with gh)
+#   --reviewer LOGIN       GitHub user who must approve a production deploy
+#                          (default: the repository owner; repeatable)
+#   --apply                execute; without it, print the plan and change nothing
 
-# Setup script for Chintan - Deploy bootstrap and configure GitHub Actions
-set -euo pipefail
+# shellcheck source-path=SCRIPTDIR source=lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-# Source common utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/common.sh"
-
-# Default values
 REGION=""
-GITHUB_REPO=""
+REPO=""
+REVIEWERS=()
 
-show_usage() {
-    cat << EOF
-Usage: $(basename "$0") --region REGION [--dry-run|--apply]
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --region)
+            REGION="${2:?--region needs a value}"
+            shift
+            ;;
+        --repo)
+            REPO="${2:?--repo needs a value}"
+            shift
+            ;;
+        --reviewer)
+            REVIEWERS+=("${2:?--reviewer needs a value}")
+            shift
+            ;;
+        --apply) APPLY=1 ;;
+        --dry-run) APPLY=0 ;;
+        -h | --help)
+            usage_from_header "${BASH_SOURCE[0]}"
+            exit 0
+            ;;
+        *) die "unknown flag '$1' (see --help)" ;;
+    esac
+    shift
+done
 
-Deploy Chintan bootstrap infrastructure and configure GitHub Actions.
+[ -n "$REGION" ] || die "--region is required (see --help)"
 
-Required:
-  --region REGION    AWS region for deployment (e.g., us-west-2)
+export AWS_REGION="$REGION"
+require_aws
+require_gh
+require_cmd jq
 
-Options:
-  --dry-run         Show what would be done without making changes (default)
-  --apply           Actually perform the operations
+[ -n "$REPO" ] || REPO="$(github_repo)"
+OWNER="${REPO%/*}"
+NAME="${REPO#*/}"
+[ "${#REVIEWERS[@]}" -gt 0 ] || REVIEWERS=("$OWNER")
 
-Examples:
-  $(basename "$0") --region us-west-2                # Dry run
-  $(basename "$0") --region us-west-2 --apply        # Actually deploy
-EOF
-}
+ACCOUNT_ID="$(aws_account_id)"
+TEMPLATE="$REPO_ROOT/infrastructure/bootstrap.yaml"
+[ -f "$TEMPLATE" ] || die "bootstrap template not found: $TEMPLATE"
 
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --region)
-                REGION="$2"
-                shift 2
-                ;;
-            --dry-run)
-                DRY_RUN="true"
-                shift
-                ;;
-            --apply)
-                DRY_RUN="false"
-                shift
-                ;;
-            -h|--help)
-                show_usage
-                exit 0
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                show_usage
-                exit 1
-                ;;
-        esac
-    done
-    
-    export DRY_RUN
-}
+info "account:     $ACCOUNT_ID"
+info "region:      $REGION"
+info "repository:  $REPO"
+info "reviewers:   ${REVIEWERS[*]}"
 
-validate_args() {
-    if [[ -z "$REGION" ]]; then
-        log_error "Region is required"
-        show_usage
-        exit 1
-    fi
-}
+# ---------------------------------------------------------------------------
+# Pre-flight: the OIDC provider
+# ---------------------------------------------------------------------------
+#
+# infrastructure/bootstrap.yaml deliberately never creates the provider — it is
+# shared with other projects in the account — and defaults to the deploying
+# account's own. If the account has none, the stack fails while creating the
+# role's trust policy, with an error that names the ARN rather than the cause.
 
-deploy_bootstrap() {
-    local stack_name="$CHINTAN_BOOTSTRAP_STACK"
-    local template_path="$SCRIPT_DIR/../infrastructure/bootstrap.yaml"
-    
-    if [[ ! -f "$template_path" ]]; then
-        log_error "Bootstrap template not found: $template_path"
-        exit 1
-    fi
-    
-    log_info "Deploying bootstrap stack: $stack_name"
-    
-    local repo_info
-    repo_info=$(get_github_repo_info)
-    local repo_owner="${repo_info%/*}"
-    local repo_name="${repo_info#*/}"
-    
-    local deploy_cmd="aws cloudformation deploy \
-        --template-file '$template_path' \
-        --stack-name '$stack_name' \
-        --region '$REGION' \
-        --parameter-overrides \
-            GitHubOrg='$repo_owner' \
-            GitHubRepo='$repo_name' \
-        --capabilities CAPABILITY_NAMED_IAM \
-        --tags \
-            Application=Chintan \
-            Project=chintan"
-    
-    execute_cmd "$deploy_cmd"
-    
-    if ! is_dry_run; then
-        wait_for_stack "$stack_name"
-        log_success "Bootstrap stack deployed successfully"
-    fi
-}
+if aws_cli iam list-open-id-connect-providers --output json |
+    jq -e '.OpenIDConnectProviderList[]? | select(.Arn | contains("token.actions.githubusercontent.com"))' >/dev/null; then
+    ok "GitHub OIDC provider present in account $ACCOUNT_ID"
+else
+    err "account $ACCOUNT_ID has no OIDC provider for token.actions.githubusercontent.com"
+    err "create it once, as an administrator:"
+    dim "  aws iam create-open-id-connect-provider \\"
+    dim "    --url https://token.actions.githubusercontent.com \\"
+    dim "    --client-id-list sts.amazonaws.com"
+    exit 1
+fi
 
-set_github_secrets() {
-    log_info "Setting GitHub repository secrets"
-    
-    local account_id
-    account_id=$(get_aws_account_id)
-    
-    local role_arn="arn:aws:iam::${account_id}:role/chintan-github-actions"
-    
-    execute_cmd "gh secret set AWS_ACCOUNT_ID --body '$account_id'"
-    execute_cmd "gh secret set AWS_ROLE_ARN --body '$role_arn'"
-    execute_cmd "gh secret set AWS_REGION --body '$REGION'"
-    
-    if ! is_dry_run; then
-        log_success "GitHub secrets configured"
-    fi
-}
+# ---------------------------------------------------------------------------
+# Plan
+# ---------------------------------------------------------------------------
 
-create_production_environment() {
-    log_info "Ensuring production GitHub environment exists"
-    
-    # Check if environment already exists
-    if ! is_dry_run; then
-        if gh api repos/:owner/:repo/environments/production &> /dev/null; then
-            log_info "Production environment already exists"
-            return 0
-        fi
-    fi
-    
-    execute_cmd "gh api repos/:owner/:repo/environments/production --method PUT --field wait_timer=0"
-    
-    if ! is_dry_run; then
-        log_success "Production environment created"
-    fi
-}
+log ""
+info "plan"
+dim "  deploy stack        $CHINTAN_BOOTSTRAP_STACK in $REGION"
+dim "  gh secret           AWS_ACCOUNT_ID, AWS_REGION"
+dim "  gh environment      production (reviewers: ${REVIEWERS[*]}, protected branches only)"
+dim "  gh environment      staging"
+dim "  gh pages            build_type=workflow"
 
-enable_github_pages() {
-    log_info "Enabling GitHub Pages (Actions as build source)"
+if ! confirm_apply "$APPLY" "create the bootstrap stack and configure $REPO"; then
+    exit 0
+fi
 
-    # Passbook pattern: build_type=workflow so deploy-frontend can publish.
-    if is_dry_run; then
-        log_info "[DRY-RUN] Would enable Pages with build_type=workflow"
-        return 0
-    fi
+# ---------------------------------------------------------------------------
+# Bootstrap stack
+# ---------------------------------------------------------------------------
 
-    if gh api -X POST "repos/$(get_github_repo_info)/pages" -f build_type=workflow >/dev/null 2>&1; then
-        log_success "GitHub Pages enabled (workflow)"
-        return 0
-    fi
+info "deploying $CHINTAN_BOOTSTRAP_STACK"
+aws_cli cloudformation deploy \
+    --template-file "$TEMPLATE" \
+    --stack-name "$CHINTAN_BOOTSTRAP_STACK" \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --no-fail-on-empty-changeset \
+    --parameter-overrides \
+    "GitHubOrg=$OWNER" \
+    "GitHubRepo=$NAME" \
+    --tags Application=Chintan Project=chintan Instance=shared Environment=shared
 
-    # 409 already exists — switch source to workflow if needed
-    if gh api -X PUT "repos/$(get_github_repo_info)/pages" -f build_type=workflow >/dev/null 2>&1; then
-        log_success "GitHub Pages updated to workflow build"
-        return 0
-    fi
+wait_for_stack "$CHINTAN_BOOTSTRAP_STACK"
+ok "$CHINTAN_BOOTSTRAP_STACK deployed"
 
-    log_warn "Could not configure Pages via API; set Settings → Pages → Source: GitHub Actions manually"
-}
+ROLE_ARN="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" GitHubActionsRoleArn)"
+BUCKET="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" LambdaDeploymentBucketName)"
+ok "deploy role:     $ROLE_ARN"
+ok "artifact bucket: $BUCKET"
 
-main() {
-    # Default to dry-run
-    DRY_RUN="true"
-    
-    parse_args "$@"
-    validate_args
-    
-    if is_dry_run; then
-        log_warn "DRY-RUN MODE: No actual changes will be made"
-        log_warn "Use --apply to execute the operations"
-    fi
-    
-    # Validate prerequisites
-    check_aws_cli
-    check_gh_cli
-    
-    # Check if we're in a git repository
-    if ! git rev-parse --git-dir &> /dev/null; then
-        log_error "Must be run from within a git repository"
-        exit 1
-    fi
-    
-    log_info "Starting Chintan setup for region: $REGION"
-    
-    # Deploy infrastructure
-    deploy_bootstrap
-    
-    # Configure GitHub integration
-    set_github_secrets
-    create_production_environment
-    enable_github_pages
-    
-    if is_dry_run; then
-        log_info "Dry-run completed successfully"
-        log_info "Run with --apply to execute these operations"
-    else
-        log_success "Chintan setup completed successfully!"
-        log_info "Bootstrap stack: $CHINTAN_BOOTSTRAP_STACK"
-        log_info "Region: $REGION"
-        log_info "GitHub Actions configured with AWS integration"
-    fi
-}
+# ---------------------------------------------------------------------------
+# Repository secrets
+# ---------------------------------------------------------------------------
+#
+# The workflows build the role ARN from AWS_ACCOUNT_ID rather than storing it, so
+# there is one fewer secret to keep in step with the stack.
 
-main "$@"
+info "setting repository secrets"
+gh secret set AWS_ACCOUNT_ID --repo "$REPO" --body "$ACCOUNT_ID"
+gh secret set AWS_REGION --repo "$REPO" --body "$REGION"
+ok "AWS_ACCOUNT_ID and AWS_REGION set"
+
+# ---------------------------------------------------------------------------
+# Environments
+# ---------------------------------------------------------------------------
+#
+# v1 created `production` with wait_timer=0 and no reviewers, which is an
+# environment in name only: it gated nothing while appearing in the UI as
+# protection. A production deploy now waits for a human.
+
+reviewer_ids="$(
+    for login in "${REVIEWERS[@]}"; do
+        gh api "users/${login}" --jq '{type: "User", id: .id}'
+    done | jq -sc .
+)"
+
+info "configuring the production environment"
+jq -nc --argjson reviewers "$reviewer_ids" \
+    '{wait_timer: 0, prevent_self_review: false, reviewers: $reviewers,
+      deployment_branch_policy: {protected_branches: true, custom_branch_policies: false}}' |
+    gh api "repos/${REPO}/environments/production" --method PUT --input - >/dev/null
+ok "production requires approval from ${REVIEWERS[*]} and deploys only from a protected branch"
+
+info "configuring the staging environment"
+jq -nc '{wait_timer: 0,
+         deployment_branch_policy: {protected_branches: true, custom_branch_policies: false}}' |
+    gh api "repos/${REPO}/environments/staging" --method PUT --input - >/dev/null
+ok "staging configured (no reviewer: staging exists to be deployed to freely)"
+
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+#
+# actions/deploy-pages@v4 requires the job to target the `github-pages`
+# environment, which GitHub creates itself the first time Pages is set to build
+# from a workflow. deploy-frontend.yaml names that environment; v1 named
+# `production`, so the deployment was rejected.
+
+info "enabling GitHub Pages with Actions as the build source"
+if gh api -X POST "repos/${REPO}/pages" -f build_type=workflow >/dev/null 2>&1; then
+    ok "Pages enabled (workflow)"
+elif gh api -X PUT "repos/${REPO}/pages" -f build_type=workflow >/dev/null 2>&1; then
+    ok "Pages updated to workflow build"
+else
+    warn "could not configure Pages via the API"
+    warn "set Settings -> Pages -> Source: GitHub Actions by hand"
+fi
+
+log ""
+ok "setup complete"
+info "next:"
+dim "  1. store the provider keys:"
+dim "       aws ssm put-parameter --type SecureString --name /chintan/<instance>/groq_api_key --value ..."
+dim "       aws ssm put-parameter --type SecureString --name /chintan/<instance>/llm_api_key  --value ..."
+dim "  2. scripts/bootstrap.sh --instance <instance> --region $REGION --origin https://${OWNER}.github.io --apply"
+dim "  3. scripts/invite-user.sh --instance <instance> --email you@example.com --apply"

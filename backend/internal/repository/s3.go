@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // S3Objects implements the Objects interface using AWS S3.
@@ -61,7 +64,7 @@ func (o *S3Objects) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("s3 get object: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	body, err := io.ReadAll(result.Body)
 	if err != nil {
@@ -69,6 +72,85 @@ func (o *S3Objects) Get(ctx context.Context, key string) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// GetWithETag returns the body together with the ETag a later PutIfMatch must
+// present. A missing object returns ErrNotFound with an empty ETag, which
+// PutIfMatch then reads as "must not exist".
+func (o *S3Objects) GetWithETag(ctx context.Context, key string) ([]byte, string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
+
+	result, err := o.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		var noSuchKey *types.NoSuchKey
+		if errors.As(err, &noSuchKey) {
+			return nil, "", ErrNotFound
+		}
+		return nil, "", fmt.Errorf("s3 get object: %w", err)
+	}
+	defer func() { _ = result.Body.Close() }()
+
+	body, err := io.ReadAll(result.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("s3 read object body: %w", err)
+	}
+	return body, aws.ToString(result.ETag), nil
+}
+
+// PutIfMatch writes body only if the object still carries etag. An empty etag
+// means the object must not exist. A lost race returns ErrPreconditionFailed so
+// the caller can re-read and retry rather than silently discarding a concurrent
+// write.
+func (o *S3Objects) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	in := &s3.PutObjectInput{
+		Bucket:      aws.String(o.bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(body),
+		ContentType: aws.String(contentType),
+	}
+	if etag == "" {
+		in.IfNoneMatch = aws.String("*")
+	} else {
+		in.IfMatch = aws.String(etag)
+	}
+
+	if _, err := o.client.PutObject(ctx, in); err != nil {
+		if isS3PreconditionFailure(err) {
+			return ErrPreconditionFailed
+		}
+		return fmt.Errorf("s3 put object: %w", err)
+	}
+	return nil
+}
+
+// isS3PreconditionFailure recognises the two statuses S3 uses to reject a
+// conditional write: 412 for a failed If-Match and 409 for a lost If-None-Match
+// race.
+func isS3PreconditionFailure(err error) bool {
+	var respErr *awshttp.ResponseError
+	if errors.As(err, &respErr) {
+		switch respErr.HTTPStatusCode() {
+		case http.StatusPreconditionFailed, http.StatusConflict:
+			return true
+		}
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "PreconditionFailed", "ConditionalRequestConflict":
+			return true
+		}
+	}
+	return false
 }
 
 func (o *S3Objects) Delete(ctx context.Context, key string) error {

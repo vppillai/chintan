@@ -1,0 +1,34 @@
+# Paths where an unreviewed change is a security change.
+#
+# Write access to a workflow is write access to deployment credentials: a
+# workflow can print an OIDC-issued session, or add a step that assumes the
+# deploy role and does anything that role can do. The same is true of the
+# CloudFormation templates that define the role, and of the scripts CI invokes.
+# These paths therefore require a review from an owner before merge.
+#
+# This file is only enforced when branch protection on `main` has "Require review
+# from Code Owners" enabled. scripts/guardrails-check.sh asserts that this file
+# exists and covers the paths below; it reports branch protection separately,
+# because CODEOWNERS without it is a suggestion.
+#
+# A fork must replace @vppillai with its own owner or team. Ownership cannot be
+# derived: GitHub resolves these handles against this repository's collaborators.
+
+# Everything, by default. Later rules win, so this is the floor and not the ceiling.
+*                       @vppillai
+
+# CI: holds the deploy credentials.
+/.github/workflows/     @vppillai
+/.github/CODEOWNERS     @vppillai
+
+# Infrastructure: defines the deploy role, the permissions boundary, the deny
+# policies and every data store.
+/infrastructure/        @vppillai
+
+# Operations scripts: bootstrap-agent.sh creates the agent principal, deploy.sh is
+# the only path to a deployed stack, teardown.sh and cleanup-aws.sh delete data.
+/scripts/               @vppillai
+
+# Instance configs drive the deployment matrix — adding a file here deploys a
+# stack.
+/config/instances/      @vppillai

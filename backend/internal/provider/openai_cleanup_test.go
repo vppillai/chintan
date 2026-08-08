@@ -30,7 +30,7 @@ func TestOpenAICleanupRequestShape(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Cleaned text."}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Cleaned text."}}],"usage":{"prompt_tokens":91,"completion_tokens":13}}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -43,8 +43,14 @@ func TestOpenAICleanupRequestShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
-	if got != "Cleaned text." {
-		t.Fatalf("got %q", got)
+	if got.Text != "Cleaned text." {
+		t.Fatalf("got %q", got.Text)
+	}
+	// Token counts are what the breaker reconciles its reservation against, so a
+	// day's spend reflects what was actually consumed rather than what was
+	// guessed. They are counts only and can never carry what was said.
+	if got.Usage.InputTokens != 91 || got.Usage.OutputTokens != 13 {
+		t.Errorf("usage = %+v, want 91 in / 13 out", got.Usage)
 	}
 	if gotAuth != "Bearer test-llm-key" {
 		t.Errorf("Authorization = %q", gotAuth)
