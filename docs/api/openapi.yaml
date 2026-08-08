@@ -9,8 +9,11 @@ info:
 
     Three rules hold across every endpoint and are not repeated per-operation:
 
-    1. **Authentication.** Every route except `/v1/health` and the two WebAuthn
-       login routes requires a verified Cognito bearer token. The service
+    1. **Authentication.** Every route except the two health probes
+       (`/v1/health`, `/v1/health/ready`) and the two WebAuthn login routes
+       requires a verified Cognito bearer token. Those four, and only those
+       four, declare `security: []` below and are the four the API Gateway
+       route table admits without an authorizer. The service
        verifies signature, issuer, audience, expiry, and `token_use` itself; it
        does not rely on the API Gateway authorizer alone. There is no header-based
        identity path.

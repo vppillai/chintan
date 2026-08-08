@@ -204,22 +204,6 @@ func (rt *router) archiveNote(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// archiveNotePost is the POST spelling of the same action, for a client that
-// cannot send a DELETE.
-func (rt *router) archiveNotePost(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
-	if !ok {
-		httperr.Unauthorized(w, r, "authentication required")
-		return
-	}
-	note, err := rt.Notes.ArchiveNote(r.Context(), userID, r.PathValue("noteId"))
-	if err != nil {
-		fail(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, noteOf(note))
-}
-
 func (rt *router) restoreNote(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {

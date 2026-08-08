@@ -31,7 +31,6 @@ func (rt *router) routes() {
 	rt.handle("GET "+p+"/notes/{noteId}", rt.getNote)
 	rt.handle("PATCH "+p+"/notes/{noteId}", rt.updateNote, idempotent(), body(MaxNoteRequestBytes))
 	rt.handle("DELETE "+p+"/notes/{noteId}", rt.archiveNote)
-	rt.handle("POST "+p+"/notes/{noteId}/archive", rt.archiveNotePost, idempotent())
 	rt.handle("POST "+p+"/notes/{noteId}/restore", rt.restoreNote, idempotent())
 	rt.handle("DELETE "+p+"/notes/{noteId}/permanent", rt.purgeNote)
 

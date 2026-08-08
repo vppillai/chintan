@@ -15,7 +15,7 @@ Everything below is CloudFormation. There is no Terraform in this repository.
 
 Naming is uniform: every stack is `chintan-<instance>-<environment>`, every provider secret is `/chintan/<instance>/<key>`, and every physical resource is `chintan-*`. The scripts, the workflows and the templates all derive names from that one rule, and `scripts/lib/common.sh` is the single place it is written down.
 
-Every script defaults to a **dry run**. Nothing changes until you pass `--apply`. Every script has `--help`.
+Every script has `--help`, and every script you run by hand defaults to a **dry run** — nothing changes until you pass `--apply`. The one exception is `scripts/ci-deploy-stack.sh`, the CI wrapper: it is invoked by an already-gated workflow job, takes no flags, and always applies.
 
 ### Prerequisites
 
@@ -81,7 +81,9 @@ aws ssm put-parameter --type SecureString \
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
 | `retention_days` | `0` (indefinite) | Audio expiry. |
 | `log_retention_days` | `14` | CloudWatch retention. |
+| `daily_spend_cap_micros` | `0` (record, never enforce) | Instance-wide daily provider spend ceiling, in **microdollars** — `1000000` = $1. A tenant may set a lower cap of its own; the breaker enforces whichever is lower. Non-zero also creates the `chintan-<i>-<env>-spend-cap-tripped` alarm. |
 | `refresh_token_validity_days` | `7` | Cognito refresh token lifetime. |
+| `pwa` | none | A mapping (`name`, `short_name`, `description`, `theme_color`, `background_color`) that both shipped configs carry and **nothing currently reads** — `frontend/vite.config.ts` hardcodes the manifest. Setting it has no effect today. |
 
 Two files may share a `name` as long as their `environment` differs — that is how a staging copy is expressed. The repository ships `dev.yaml` (prod) and `dev-staging.yaml`, which produce `chintan-dev-prod` and `chintan-dev-staging`.
 
@@ -184,7 +186,9 @@ cd backend && go build -o chintanctl ./cmd/chintanctl
 | `usage --instance <i> [--since <date>]` | Metered provider spend per tenant, provider, model, operation and unit, from the `USAGE#` records. |
 | `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere and reports every key it removed. `--apply` requires the tenant id typed exactly, interactively or via `--confirm`. |
 
-Every subcommand takes `--json` for machine-readable results on stdout, with diagnostics on stderr. Table and bucket names are derived from the instance (`chintan-<i>-<env>`, `chintan-content-<i>-<account>`) and can be overridden with `--table` / `--bucket`.
+Every subcommand takes `--json` for machine-readable results on stdout, with diagnostics on stderr. The table name is derived from the instance (`chintan-<i>-<env>`); the **bucket is read from the stack's `ContentBucketName` output**, not re-derived, because a fourth hand-written copy of a naming convention is a fourth place for it to go stale. Both can be overridden with `--table` / `--bucket`. The principal running `chintanctl` therefore needs `cloudformation:DescribeStacks` on `chintan-*`; without it the tool warns and falls back to the convention.
+
+`erase` and `export` refuse to report success when the index rows reference S3 keys and the bucket returns zero objects — that combination means the wrong bucket, and it previously produced a deletion request that exited 0 having deleted no recordings.
 
 Design constraints it holds to: enumeration is by **S3 prefix and DynamoDB partition**, never by entity type, so a future schema addition cannot silently fall out of the export; no object body is ever held in memory; dry run is the default for everything destructive; and no note body, title or transcript ever reaches a log line.
 
@@ -192,19 +196,24 @@ Design constraints it holds to: enumeration is by **S3 prefix and DynamoDB parti
 
 ## Continuous integration
 
-`.github/workflows/ci.yaml` runs on every pull request:
+`.github/workflows/ci.yaml` runs on every pull request, and on pushes to `main` and `feat/v2`:
 
-| Job | Gate |
-|---|---|
-| `backend-test` | `gofmt`, `go vet`, `go test -race ./...` |
-| `backend-lint` | `golangci-lint` |
-| `backend-vuln` | `govulncheck` (reachable vulnerabilities only) |
-| `infrastructure-lint` | `cfn-lint` on both templates |
-| `shell` | `shellcheck`, `shfmt -d -i 4 -ci`, `bash -n` on every script |
-| `guardrails` | `guardrails-check.sh --local-only`, and `--self-test` to prove it can still fail |
-| `log-hygiene` | no provider adapter logs a response body, plus a self-test |
-| `instance-configs` | every `config/instances/*.yaml` resolves to a unique stack |
-| `frontend` | `bun install --frozen-lockfile`, `bun run typecheck`, `bun run test`, `bun run build` |
+| Job | Gate | Run it locally |
+|---|---|---|
+| `backend-test` | `gofmt`, `go vet`, `go test -race ./...` | `cd backend && go test -race ./...` |
+| `backend-lint` | `golangci-lint` | `cd backend && golangci-lint run ./...` |
+| `backend-vuln` | `govulncheck` (reachable vulnerabilities only) | `cd backend && govulncheck ./...` |
+| `infrastructure-lint` | `cfn-lint` on both templates | `uvx cfn-lint infrastructure/*.yaml` |
+| `shell` | `shellcheck`, `shfmt -d -i 4 -ci`, `bash -n` on every script | `shellcheck --severity=warning scripts/*.sh` |
+| `guardrails` | `guardrails-check.sh --local-only` and `--self-test`; `check-boundary-drift.sh --self-test` | `scripts/guardrails-check.sh --local-only` |
+| `log-hygiene` | no provider adapter logs a response body, plus a self-test | `scripts/check-log-hygiene.sh` |
+| `vite-env` | the `VITE_*` names the deploy exports are the ones the bundle reads | `scripts/check-vite-env.sh` |
+| `instance-configs` | every `config/instances/*.yaml` resolves to a unique stack | `scripts/list-instances.sh --format text` |
+| `frontend` | `bun install --frozen-lockfile`, `bun run typecheck`, **`bun run lint`**, `bun run test`, `bun run build` | `cd frontend && bun run lint` |
+| `contract` | the committed frontend↔backend fixtures are the ones both sides actually produce — it fails on stale fixtures | `cd backend && CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract` |
+| `e2e` | Playwright | `cd frontend && bunx playwright install chromium && bun run e2e` |
+
+`bun run lint` is eslint **plus** `scripts/check-tokens.mjs`, which forbids literal colours and font sizes outside the design tokens. A change with `color: #1B4332` passes typecheck, test and build, and is blocked here.
 
 The frontend toolchain is **Bun**, not npm. The lockfile is `bun.lock`.
 

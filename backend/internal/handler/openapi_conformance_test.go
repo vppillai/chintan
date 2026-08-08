@@ -11,24 +11,39 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 // docs/api/openapi.yaml is normative: a frontend has been written against it.
 // This file is the check that keeps it honest in both directions — every
-// operation it declares must be routable, and every status code it declares
-// must be one this API can actually produce.
+// operation it declares must be routable, every route the router registers must
+// be declared, and every status code it declares must be one this API can
+// actually produce.
+//
+// It also checks the third place the surface is described: the API Gateway
+// route table in infrastructure/template.yaml decides which routes reach Lambda
+// without a JWT, and a route that is public in the document but authenticated at
+// the gateway answers 401 with the gateway's own body, never reaching any of the
+// code below.
 //
 // Without this, the document is a description of what somebody once intended.
 
-const openAPIPath = "../../../docs/api/openapi.yaml"
+const (
+	openAPIPath  = "../../../docs/api/openapi.yaml"
+	routesGoPath = "routes.go"
+	templatePath = "../../../infrastructure/template.yaml"
+)
 
 // operation is one path+method from the document.
 type operation struct {
 	Method   string
 	Path     string
 	Statuses []int
+	// Public records `security: []` on the operation, which overrides the
+	// document's global cognitoBearer requirement.
+	Public bool
 }
 
 func (o operation) key() string { return o.Method + " " + o.Path }
@@ -103,6 +118,10 @@ func parseOpenAPI(t *testing.T, path string) []operation {
 			// Another key at method depth, such as `parameters:`.
 			flush()
 			inResponses = false
+			continue
+		}
+		if line == "      security: []" && current != nil {
+			current.Public = true
 			continue
 		}
 		if line == "      responses:" {
@@ -193,6 +212,181 @@ func TestEveryDocumentedOperationIsRoutable(t *testing.T) {
 				t.Fatalf("the document declares %s but the router answers %d", op.key(), w.Code)
 			}
 		})
+	}
+}
+
+// --------------------------------------------------- the reverse direction
+
+// registrationLine matches one row of the routes() table, which is written as
+// rt.handle("METHOD "+p+"/rest/of/path", ...) without exception.
+var registrationLine = regexp.MustCompile(`rt\.handle\("([A-Z]+) "\s*\+\s*p\s*\+\s*"([^"]*)"`)
+
+// parseRegisteredRoutes reads routes.go and returns every pattern it registers.
+//
+// It reads the source rather than the built router because net/http's ServeMux
+// does not enumerate its patterns. The table in routes.go is one regular line
+// per route by construction, so a reader this small cannot silently disagree
+// with it — and the sanity check below fails if the shape ever changes.
+func parseRegisteredRoutes(t *testing.T, path string) []string {
+	t.Helper()
+
+	src, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+
+	var routes []string
+	for _, m := range registrationLine.FindAllStringSubmatch(string(src), -1) {
+		routes = append(routes, m[1]+" "+handler.APIPrefix+m[2])
+	}
+	if len(routes) < 25 {
+		t.Fatalf("parsed %d registrations from %s; the reader and the route table have diverged",
+			len(routes), path)
+	}
+	return routes
+}
+
+// TestEveryRegisteredRouteIsDocumented is the direction
+// TestEveryDocumentedOperationIsRoutable does not cover.
+//
+// Without it a route can be added to the router, shipped, and never appear in
+// the document — so a generated client cannot reach it and nobody finds out,
+// because every assertion in this file starts from the document.
+func TestEveryRegisteredRouteIsDocumented(t *testing.T) {
+	documented := map[string]bool{}
+	for _, op := range parseOpenAPI(t, openAPIPath) {
+		documented[op.key()] = true
+	}
+
+	for _, route := range parseRegisteredRoutes(t, routesGoPath) {
+		if !documented[route] {
+			t.Errorf("the router serves %s but %s does not declare it; document it or stop registering it",
+				route, openAPIPath)
+		}
+	}
+}
+
+// ------------------------------------------------- gateway authorization
+
+// gatewayRoute is one AWS::ApiGatewayV2::Route from the CloudFormation template.
+type gatewayRoute struct {
+	Resource string
+	RouteKey string
+	AuthType string
+}
+
+var (
+	cfnResourceLine = regexp.MustCompile(`^ {2}([A-Za-z0-9]+):\s*$`)
+	cfnTypeLine     = regexp.MustCompile(`^ {4}Type:\s*(\S+)\s*$`)
+	cfnRouteKeyLine = regexp.MustCompile(`^ {6}RouteKey:\s*'?([^'\n]+?)'?\s*$`)
+	cfnAuthTypeLine = regexp.MustCompile(`^ {6}AuthorizationType:\s*(\S+)\s*$`)
+)
+
+// parseGatewayRoutes reads the API Gateway route table out of the template.
+//
+// An absent AuthorizationType is reported as NONE, which is what API Gateway
+// itself does with one — so a public route added without the property is still
+// seen here rather than passing unnoticed.
+func parseGatewayRoutes(t *testing.T, path string) []gatewayRoute {
+	t.Helper()
+
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var (
+		routes  []gatewayRoute
+		current *gatewayRoute
+		isRoute bool
+	)
+	flush := func() {
+		if current != nil && isRoute {
+			if current.AuthType == "" {
+				current.AuthType = "NONE"
+			}
+			routes = append(routes, *current)
+		}
+		current, isRoute = nil, false
+	}
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if m := cfnResourceLine.FindStringSubmatch(line); m != nil {
+			flush()
+			current = &gatewayRoute{Resource: m[1]}
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		if m := cfnTypeLine.FindStringSubmatch(line); m != nil {
+			isRoute = m[1] == "AWS::ApiGatewayV2::Route"
+			continue
+		}
+		if m := cfnRouteKeyLine.FindStringSubmatch(line); m != nil {
+			current.RouteKey = m[1]
+			continue
+		}
+		if m := cfnAuthTypeLine.FindStringSubmatch(line); m != nil {
+			current.AuthType = m[1]
+		}
+	}
+	flush()
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if len(routes) < 4 {
+		t.Fatalf("parsed %d gateway routes from %s; the reader and the template have diverged",
+			len(routes), path)
+	}
+	return routes
+}
+
+// TestPublicRoutesMatchTheGatewayRouteTable asserts that the set of routes the
+// gateway lets through without a JWT is exactly the set the document declares
+// with `security: []`.
+//
+// These two drifted once already: /v1/health/ready was documented public, coded
+// public, and authenticated at the gateway, so it answered API Gateway's
+// 401 {"message":"Unauthorized"} — not this API's problem+json, and never
+// reaching the handler at all. Nothing in the Go tests could see it, because
+// they exercise the router directly and the gateway is a YAML file.
+func TestPublicRoutesMatchTheGatewayRouteTable(t *testing.T) {
+	documented := map[string]bool{}
+	for _, op := range parseOpenAPI(t, openAPIPath) {
+		if op.Public {
+			documented[op.key()] = true
+		}
+	}
+
+	gateway := map[string]bool{}
+	for _, route := range parseGatewayRoutes(t, templatePath) {
+		if route.AuthType != "NONE" {
+			continue
+		}
+		// $default carries the authorizer and is the catch-all, and the CORS
+		// preflight is not an operation any document declares: the JWT
+		// authorizer does not answer OPTIONS, so it has to stay open.
+		if route.RouteKey == "$default" || strings.HasPrefix(route.RouteKey, "OPTIONS ") {
+			continue
+		}
+		gateway[route.RouteKey] = true
+	}
+
+	for key := range documented {
+		if !gateway[key] {
+			t.Errorf("%s declares %s public but the template has no AuthorizationType: NONE route for it, "+
+				"so the gateway answers 401 before Lambda is reached", openAPIPath, key)
+		}
+	}
+	for key := range gateway {
+		if !documented[key] {
+			t.Errorf("the template exposes %s without a JWT but %s does not declare it `security: []`",
+				key, openAPIPath)
+		}
 	}
 }
 
