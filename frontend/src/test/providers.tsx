@@ -23,13 +23,40 @@ export const TEST_TOKENS: TokenSet = {
  * client's own behaviour — bearer, idempotency, problem parsing — is exercised
  * rather than bypassed.
  */
-export function testApiContext(
-  fetchImpl: typeof fetch = async () =>
-    new Response(JSON.stringify({ items: [] }), {
+/** A small corpus so shell tests have something real-shaped to render. */
+export const TEST_NOTES = [
+  {
+    id: 'roof-repair',
+    title: 'Roof repair',
+    snippet: 'Ridge tiles on the south slope have slipped. Two quotes before the rain.',
+    updated_at: '2026-08-06T09:14:00.000Z',
+    version: 3,
+    archived: false,
+    tags: ['house'],
+  },
+  {
+    id: 'reading-list',
+    title: 'Reading list',
+    snippet: 'Seeing Like a State, then the Vitruvius translation from the walk.',
+    updated_at: '2026-08-04T18:02:00.000Z',
+    version: 11,
+    archived: false,
+    tags: ['books'],
+  },
+];
+
+export function defaultTestFetch(): typeof fetch {
+  return async (input) => {
+    const url = String(input);
+    const body = url.includes('/v1/notes') ? { items: TEST_NOTES } : { items: [] };
+    return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
-    }),
-): ApiContextValue {
+    });
+  };
+}
+
+export function testApiContext(fetchImpl: typeof fetch = defaultTestFetch()): ApiContextValue {
   const session = new Session(createMemoryTokenStore(TEST_TOKENS), {
     async refresh(current) {
       return current;

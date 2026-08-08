@@ -3,11 +3,11 @@ import type { RouteObject } from 'react-router';
 import { AppShell } from '@/components/AppShell.tsx';
 import { CaptureScreen } from '@/features/capture/CaptureScreen.tsx';
 import { HomeScreen } from '@/screens/HomeScreen.tsx';
+import { NoteDetailScreen } from '@/features/notes/NoteDetailScreen.tsx';
+import { SearchScreen } from '@/features/search/SearchScreen.tsx';
+import { SettingsScreen } from '@/features/settings/SettingsScreen.tsx';
 import { NotFoundScreen } from '@/screens/NotFoundScreen.tsx';
-import { NoteDetailScreen } from '@/screens/NoteDetailScreen.tsx';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
-import { SearchScreen } from '@/screens/SearchScreen.tsx';
-import { SettingsScreen } from '@/screens/SettingsScreen.tsx';
 
 import { ROUTES } from './routes.ts';
 

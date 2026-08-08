@@ -1,0 +1,185 @@
+/**
+ * Autosave state, as a pure machine.
+ *
+ * Two things v1 got wrong and this exists to fix:
+ *
+ * 1. **Failures were swallowed.** The save was fire-and-forget; if it failed,
+ *    nothing said so and there was no `beforeunload`, so the user closed the
+ *    tab believing their edit was stored. Every state here is one the UI
+ *    renders verbatim.
+ * 2. **There was no version.** A voice append landing while the editor was open
+ *    silently discarded one of the two writes. `PATCH` now carries `version`,
+ *    and a 409 is a state the user resolves — never an automatic clobber in
+ *    either direction.
+ */
+
+export type SaveState =
+  | 'clean'
+  /** Edited, not yet sent. */
+  | 'dirty'
+  | 'saving'
+  | 'saved'
+  /** The save failed for a reason a retry might fix. */
+  | 'error'
+  /** Someone else wrote first. Requires a decision. */
+  | 'conflict';
+
+export interface NoteDraft {
+  title: string;
+  body: string;
+  aliases: string[];
+  tags: string[];
+}
+
+export interface EditorModel {
+  draft: NoteDraft;
+  /** The last draft the server acknowledged, for dirty comparison. */
+  saved: NoteDraft;
+  version: number;
+  state: SaveState;
+  error: string | null;
+  /** The server's copy, held while a conflict is unresolved. */
+  theirs: { draft: NoteDraft; version: number } | null;
+}
+
+export type EditorEvent =
+  | { type: 'edit'; patch: Partial<NoteDraft> }
+  | { type: 'saveStart' }
+  | { type: 'saveSuccess'; version: number; draft?: NoteDraft }
+  | { type: 'saveError'; message: string }
+  | { type: 'conflict'; theirs: NoteDraft; version: number; message: string }
+  /** Discard my edit and take the server's copy. */
+  | { type: 'takeTheirs' }
+  /** Re-apply my edit on top of the server's version and save again. */
+  | { type: 'keepMine' }
+  | { type: 'reset'; draft: NoteDraft; version: number };
+
+export function emptyDraft(): NoteDraft {
+  return { title: '', body: '', aliases: [], tags: [] };
+}
+
+export function initialEditor(draft: NoteDraft, version: number): EditorModel {
+  return {
+    draft,
+    saved: draft,
+    version,
+    state: 'clean',
+    error: null,
+    theirs: null,
+  };
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
+  return (
+    a.title === b.title &&
+    a.body === b.body &&
+    sameList(a.aliases, b.aliases) &&
+    sameList(a.tags, b.tags)
+  );
+}
+
+export function editorReducer(model: EditorModel, event: EditorEvent): EditorModel {
+  switch (event.type) {
+    case 'edit': {
+      const draft = { ...model.draft, ...event.patch };
+      // An unresolved conflict outranks everything. Letting a keystroke drop
+      // back to `dirty` would dismiss the conflict UI and let the next autosave
+      // clobber the other write — the exact failure this state exists to stop.
+      if (model.state === 'conflict') return { ...model, draft };
+      // Editing back to the saved text is not a change worth a request.
+      return {
+        ...model,
+        draft,
+        state: draftsEqual(draft, model.saved) ? 'clean' : 'dirty',
+      };
+    }
+
+    case 'saveStart':
+      if (model.state === 'conflict') return model;
+      return { ...model, state: 'saving', error: null };
+
+    case 'saveSuccess': {
+      const draft = event.draft ?? model.draft;
+      // If the user typed while the request was in flight, the draft is
+      // already ahead of what was acknowledged — stay dirty rather than
+      // claiming a save that does not include the latest keystrokes.
+      const stillDirty = !draftsEqual(model.draft, draft);
+      return {
+        ...model,
+        saved: draft,
+        version: event.version,
+        state: stillDirty ? 'dirty' : 'saved',
+        error: null,
+        theirs: null,
+      };
+    }
+
+    case 'saveError':
+      return { ...model, state: 'error', error: event.message };
+
+    case 'conflict':
+      // The edit is NOT discarded and NOT forced through. Both copies are held
+      // until the user chooses.
+      return {
+        ...model,
+        state: 'conflict',
+        error: event.message,
+        theirs: { draft: event.theirs, version: event.version },
+      };
+
+    case 'takeTheirs': {
+      if (!model.theirs) return model;
+      return {
+        draft: model.theirs.draft,
+        saved: model.theirs.draft,
+        version: model.theirs.version,
+        state: 'saved',
+        error: null,
+        theirs: null,
+      };
+    }
+
+    case 'keepMine': {
+      if (!model.theirs) return model;
+      // Adopt their version number so the next PATCH is accepted, keeping the
+      // local text. This overwrites their text, which is exactly what the user
+      // just chose — it is not something the app decided on its own.
+      return {
+        ...model,
+        version: model.theirs.version,
+        state: 'dirty',
+        error: null,
+        theirs: null,
+      };
+    }
+
+    case 'reset':
+      return initialEditor(event.draft, event.version);
+
+    default: {
+      const exhaustive: never = event;
+      return exhaustive;
+    }
+  }
+}
+
+/** True when there is an edit that is not safely on the server. */
+export function hasUnsavedWork(model: EditorModel): boolean {
+  return model.state === 'dirty' || model.state === 'saving' || model.state === 'error' || model.state === 'conflict';
+}
+
+export const SAVE_LABELS: Record<SaveState, string> = {
+  clean: '',
+  dirty: 'Unsaved changes',
+  saving: 'Saving…',
+  saved: 'Saved',
+  error: "Couldn't save",
+  conflict: 'This note changed elsewhere',
+};
+
+/** Debounce for the autosave. Long enough to not save mid-word. */
+export const AUTOSAVE_DELAY_MS = 1_200;
