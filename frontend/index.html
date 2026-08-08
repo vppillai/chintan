@@ -116,6 +116,10 @@
                     <h2>All Notes</h2>
                     <button id="create-note-btn" class="btn btn-primary">+ New Note</button>
                 </div>
+                <div class="notes-tabs">
+                    <button id="notes-tab-active" class="notes-tab active" type="button">Notes</button>
+                    <button id="notes-tab-archive" class="notes-tab" type="button">Archive</button>
+                </div>
                 <div id="all-notes" class="notes-list">
                     <div class="loading">Loading notes...</div>
                 </div>
@@ -126,7 +130,12 @@
                 <div class="screen-header">
                     <button id="back-to-notes" class="btn btn-ghost">← Back</button>
                     <h2 id="note-detail-title">Note</h2>
-                    <button id="save-note-btn" class="btn btn-primary hidden">Save</button>
+                    <div class="note-detail-actions">
+                        <button id="restore-note-btn" class="btn btn-secondary hidden" type="button">Restore</button>
+                        <button id="purge-note-btn" class="btn btn-danger hidden" type="button">Delete forever</button>
+                        <button id="delete-note-btn" class="btn btn-ghost hidden" type="button">Delete</button>
+                        <button id="save-note-btn" class="btn btn-primary hidden">Save</button>
+                    </div>
                 </div>
                 <div class="note-detail">
                     <div class="note-meta">

@@ -88,8 +88,9 @@ class ApiClient {
     }
 
     // Notes API
-    async getNotes() {
-        return this.request('/v1/notes');
+    async getNotes(opts = {}) {
+        const q = opts.archived ? '?status=archived' : '';
+        return this.request('/v1/notes' + q);
     }
 
     async getNote(noteId) {
@@ -120,6 +121,18 @@ class ApiClient {
 
     async deleteNote(noteId) {
         return this.request(`/v1/notes/${noteId}`, {
+            method: 'DELETE'
+        });
+    }
+
+    async restoreNote(noteId) {
+        return this.request(`/v1/notes/${noteId}/restore`, {
+            method: 'POST'
+        });
+    }
+
+    async permanentlyDeleteNote(noteId) {
+        return this.request(`/v1/notes/${noteId}?permanent=true`, {
             method: 'DELETE'
         });
     }

@@ -4,6 +4,8 @@ class NotesManager {
         this.currentNoteId = null;
         this.notes = [];
         this.hasUnsavedChanges = false;
+        this.viewingArchive = false;
+        this.currentNoteArchived = false;
         
         this.setupEventListeners();
     }
@@ -27,6 +29,26 @@ class NotesManager {
             this.createNewNote();
         });
 
+        document.getElementById('notes-tab-active').addEventListener('click', () => {
+            this.showNotesScreen();
+        });
+
+        document.getElementById('notes-tab-archive').addEventListener('click', () => {
+            this.showArchiveScreen();
+        });
+
+        document.getElementById('delete-note-btn').addEventListener('click', () => {
+            this.archiveCurrentNote();
+        });
+
+        document.getElementById('restore-note-btn').addEventListener('click', () => {
+            this.restoreCurrentNote();
+        });
+
+        document.getElementById('purge-note-btn').addEventListener('click', () => {
+            this.purgeCurrentNote();
+        });
+
         // Note editing
         document.getElementById('save-note-btn').addEventListener('click', () => {
             this.saveNote();
@@ -45,7 +67,7 @@ class NotesManager {
 
         // Auto-save with debounce
         const autoSave = ui.debounce(() => {
-            if (this.hasUnsavedChanges && this.currentNoteId) {
+            if (this.hasUnsavedChanges && this.currentNoteId && !this.currentNoteArchived) {
                 this.saveNote(true); // silent save
             }
         }, 3000);
@@ -69,8 +91,11 @@ class NotesManager {
     }
 
     async showNotesScreen() {
+        this.viewingArchive = false;
+        this.setNotesTab('active');
         ui.showContentScreen('notes-screen');
-        
+        document.getElementById('create-note-btn').classList.remove('hidden');
+
         const container = document.getElementById('all-notes');
         ui.showLoading(container, 'Loading all notes...');
 
@@ -83,11 +108,39 @@ class NotesManager {
         }
     }
 
-    displayNotes(container, notes, isPreview = false) {
+    async showArchiveScreen() {
+        this.viewingArchive = true;
+        this.setNotesTab('archive');
+        ui.showContentScreen('notes-screen');
+        document.getElementById('create-note-btn').classList.add('hidden');
+
+        const container = document.getElementById('all-notes');
+        ui.showLoading(container, 'Loading archive...');
+
+        try {
+            this.notes = await api.getNotes({ archived: true });
+            this.displayNotes(container, this.notes, false, true);
+        } catch (error) {
+            console.error('Load archive error:', error);
+            container.innerHTML = `<div class="error">Failed to load archive: ${error.message}</div>`;
+        }
+    }
+
+    setNotesTab(which) {
+        document.getElementById('notes-tab-active').classList.toggle('active', which === 'active');
+        document.getElementById('notes-tab-archive').classList.toggle('active', which === 'archive');
+    }
+
+    daysUntilPurge(purgeAfter) {
+        const ms = new Date(purgeAfter) - Date.now();
+        return Math.max(0, Math.ceil(ms / 86400000));
+    }
+
+    displayNotes(container, notes, isPreview = false, isArchive = false) {
         if (notes.length === 0) {
             container.innerHTML = `
                 <div class="empty-state" style="text-align: center; padding: 2rem; color: var(--color-text-light);">
-                    <p>No notes yet. Create your first note to get started!</p>
+                    <p>${isArchive ? 'Archive is empty.' : 'No notes yet. Create your first note to get started!'}</p>
                 </div>
             `;
             return;
@@ -98,8 +151,9 @@ class NotesManager {
                 <div class="note-item-title">${ui.escapeHtml(note.title)}</div>
                 ${note.snippet ? `<div class="note-item-snippet">${ui.escapeHtml(ui.truncateText(note.snippet, 120))}</div>` : ''}
                 <div class="note-item-meta">
-                    ${note.aliases && note.aliases.length > 0 ? `<span>Aliases: ${ui.escapeHtml(note.aliases.join(', '))}</span> • ` : ''}
-                    <span>Updated ${ui.formatDate(note.updated_at)}</span>
+                    ${isArchive
+                        ? `<span>Deleted ${ui.formatDate(note.deleted_at)}</span> • <span>Deletes in ${this.daysUntilPurge(note.purge_after)} days</span>`
+                        : `${note.aliases && note.aliases.length > 0 ? `<span>Aliases: ${ui.escapeHtml(note.aliases.join(', '))}</span> • ` : ''}<span>Updated ${ui.formatDate(note.updated_at)}</span>`}
                 </div>
             </div>
         `).join('');
@@ -140,9 +194,72 @@ class NotesManager {
         document.getElementById('note-title-input').value = note.title || '';
         document.getElementById('note-aliases-input').value = (note.aliases || []).join(', ');
         document.getElementById('note-body-input').value = note.body || '';
-        
+
+        this.currentNoteArchived = Boolean(note.deleted_at);
+        const titleInput = document.getElementById('note-title-input');
+        const aliasesInput = document.getElementById('note-aliases-input');
+        const bodyInput = document.getElementById('note-body-input');
+        const readOnly = this.currentNoteArchived;
+        titleInput.readOnly = readOnly;
+        aliasesInput.readOnly = readOnly;
+        bodyInput.readOnly = readOnly;
+
+        document.getElementById('delete-note-btn').classList.toggle('hidden', this.currentNoteArchived);
+        document.getElementById('restore-note-btn').classList.toggle('hidden', !this.currentNoteArchived);
+        document.getElementById('purge-note-btn').classList.toggle('hidden', !this.currentNoteArchived);
+
         this.hasUnsavedChanges = false;
         this.updateSaveButton();
+    }
+
+    async archiveCurrentNote() {
+        if (!this.currentNoteId || this.currentNoteArchived) return;
+        const ok = await ui.confirm(
+            'Move to Archive? You can restore for 30 days.',
+            'Delete note'
+        );
+        if (!ok) return;
+
+        try {
+            await api.deleteNote(this.currentNoteId);
+            ui.showToast('Moved to Archive', 'success');
+            this.hasUnsavedChanges = false;
+            this.currentNoteId = null;
+            await this.showNotesScreen();
+        } catch (error) {
+            ui.showToast('Failed to archive note: ' + error.message, 'error');
+        }
+    }
+
+    async restoreCurrentNote() {
+        if (!this.currentNoteId) return;
+        try {
+            await api.restoreNote(this.currentNoteId);
+            ui.showToast('Note restored', 'success');
+            this.viewingArchive = false;
+            await this.showNoteDetail(this.currentNoteId);
+        } catch (error) {
+            ui.showToast('Failed to restore note: ' + error.message, 'error');
+        }
+    }
+
+    async purgeCurrentNote() {
+        if (!this.currentNoteId || !this.currentNoteArchived) return;
+        const ok = await ui.confirm(
+            'Delete forever? This cannot be undone. Recordings for this note will also be removed.',
+            'Delete forever'
+        );
+        if (!ok) return;
+
+        try {
+            await api.permanentlyDeleteNote(this.currentNoteId);
+            ui.showToast('Note permanently deleted', 'success');
+            this.hasUnsavedChanges = false;
+            this.currentNoteId = null;
+            await this.showArchiveScreen();
+        } catch (error) {
+            ui.showToast('Failed to delete note: ' + error.message, 'error');
+        }
     }
 
     captureStatusLabel(status) {
@@ -276,7 +393,7 @@ class NotesManager {
     }
 
     async handleBackToNotes() {
-        if (this.hasUnsavedChanges) {
+        if (this.hasUnsavedChanges && !this.currentNoteArchived) {
             const shouldSave = await ui.confirm(
                 'You have unsaved changes. Do you want to save before leaving?',
                 'Unsaved Changes'
@@ -289,17 +406,22 @@ class NotesManager {
         this.currentNoteId = null;
         this.hasUnsavedChanges = false;
         this.updateSaveButton();
-        await this.showNotesScreen();
+        if (this.viewingArchive) {
+            await this.showArchiveScreen();
+        } else {
+            await this.showNotesScreen();
+        }
     }
 
     markUnsaved() {
+        if (this.currentNoteArchived) return;
         this.hasUnsavedChanges = true;
         this.updateSaveButton();
     }
 
     updateSaveButton() {
         const saveBtn = document.getElementById('save-note-btn');
-        if (this.hasUnsavedChanges) {
+        if (this.hasUnsavedChanges && !this.currentNoteArchived) {
             saveBtn.classList.remove('hidden');
         } else {
             saveBtn.classList.add('hidden');
