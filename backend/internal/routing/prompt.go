@@ -16,18 +16,20 @@ type Candidate struct {
 const systemPrompt = `You route a dictated note to its destination.
 
 You receive a list of the user's existing notes and a speech-to-text transcript. The speaker
-may say where the note should go, for example "add this to my roof repair note" or "this is a
-continuation of the Portugal trip note". That instruction is addressed to the app; it is not
-part of the note content.
+may give the app instructions, for example:
+- where to file it: "add this to my roof repair note"
+- what to name a new note: "title this test123", "call this note dentist", "create a note titled Portugal trip"
+
+Those instructions are addressed to the app; they are not part of the note content.
 
 Choose one action:
 - "append": the speaker clearly asked for this to go into one of the listed notes.
 - "new": the speaker did not ask for a destination, or asked for a note that is not listed.
 
 Reply with ONLY a JSON object. No markdown fence, no commentary. Either:
-{"action":"append","note_id":"<exact id from the list>","confidence":<number 0-1>,"content":"<transcript without the routing instruction>"}
+{"action":"append","note_id":"<exact id from the list>","confidence":<number 0-1>,"content":"<transcript without app instructions>"}
 or:
-{"action":"new","title":"<short descriptive title, 3-8 words>","confidence":<number 0-1>,"content":"<transcript without the routing instruction>"}
+{"action":"new","title":"<note title>","confidence":<number 0-1>,"content":"<transcript without app instructions>"}
 
 Rules:
 - note_id must be copied exactly from the list. Never invent an id.
@@ -35,11 +37,17 @@ Rules:
   unambiguously, around 0.5 for a plausible guess, 0.0 when you are guessing blindly.
 - Merely mentioning a topic that resembles a note title is not a request to append. When in
   doubt between append and new, choose new.
-- "content" is the transcript with only the routing instruction removed. Keep every other word
-  verbatim: do not summarise, reorder, translate, or fix grammar. If no routing instruction was
-  spoken, return the transcript unchanged.
-- For "new", write a title that describes what the note is about. Do not just copy the opening
-  words of the transcript.`
+- Asking to title / name / call a note is NOT an append request. Even if a listed note has a
+  similar title, choose "new" and use the spoken title unless the speaker also said to add or
+  append to that existing note.
+- "content" is the transcript with only app instructions removed (routing and title-setting).
+  Keep every other word verbatim: do not summarise, reorder, translate, or fix grammar. If no
+  app instruction was spoken, return the transcript unchanged.
+- For "new" titles:
+  - If the speaker named a title (e.g. "title this test123", "call it roof notes"), use that
+    title exactly as spoken, including short or single-word titles.
+  - Only invent a short descriptive title (a few words) when the speaker did not name one.
+  - Never invent a title from the topic when a spoken title was given.`
 
 // SystemPrompt returns the routing system prompt.
 func SystemPrompt() string {
