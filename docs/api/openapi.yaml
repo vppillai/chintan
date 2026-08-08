@@ -727,9 +727,24 @@ components:
           maximum: 3650
           default: 0
           description: |
-            Days to retain source audio. 0 means indefinite and installs no
-            lifecycle rule. In v1 this field was stored, returned, shown in the
-            UI, and read by nothing.
+            Days to retain source audio, as one of a fixed set of tiers:
+            **0, 7, 30, 90, 365**. 0 means keep indefinitely.
+
+            Any value in range is accepted, and the value that is STORED — and
+            returned by this endpoint, and by the PUT that set it — is the tier
+            that will actually be enforced. A request is resolved DOWN to the
+            longest tier no longer than it, because a retention setting is a
+            promise to delete and rounding it up would break that promise
+            silently; a value below the shortest tier becomes the shortest.
+            So a client that sends 45 is answered with 30, and must render what
+            it was answered rather than what it sent.
+
+            The tiers are fixed because the expiry is performed by an S3
+            lifecycle rule, and a rule carries its own period rather than
+            reading one out of this record: the upload tags the object with its
+            tier and one rule per tier matches it. In v1 — and, until the tag
+            existed, in v2 — this field was stored, returned, shown in the UI,
+            and read by nothing.
         theme:
           type: string
           enum: [ink, nocturne, system]

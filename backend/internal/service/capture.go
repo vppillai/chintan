@@ -242,11 +242,16 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 		maxBytes = MaxCaptureBytes
 	}
 
-	// The tag is the whole point: an S3 lifecycle filter takes one prefix and one
-	// suffix with no wildcards, so tenants/*/captures/ cannot be expressed and
-	// the retention rule matches on this tag instead. Signing it means an upload
-	// cannot quietly omit it and escape expiry.
-	audioUpload, err := s.uploads.PresignPut(ctx, audioKey, contentType, upload.CaptureAudioTags(), maxBytes, uploadTTL)
+	// The tags are the whole point: an S3 lifecycle filter takes one prefix and
+	// one suffix with no wildcards, so tenants/*/captures/ cannot be expressed
+	// and the retention rules match on these tags instead. Signing them means an
+	// upload cannot quietly omit them and escape expiry.
+	//
+	// The tenant's own retention is what decides the second tag, and this is the
+	// only place in the request path that reads it. Without it the setting was
+	// validated, stored and returned while nothing acted on it — the v1 defect,
+	// fixed for the instance and reintroduced for the user.
+	audioUpload, err := s.uploads.PresignPut(ctx, audioKey, contentType, upload.CaptureAudioTags(settings.RetentionDays), maxBytes, uploadTTL)
 	if err != nil {
 		return CaptureCreated{}, fmt.Errorf("failed to generate upload URL: %w", err)
 	}

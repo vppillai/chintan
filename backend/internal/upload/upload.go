@@ -10,7 +10,11 @@
 // does not.
 //
 // In v1 RetentionDays was stored, returned, rendered in the UI, and read by
-// nothing. This is the piece that stops that being true.
+// nothing. This is the piece that stops that being true — for the TENANT's
+// setting, not merely for a deploy-time stack parameter. The first version of
+// this package tagged every object with one constant value and took the expiry
+// period from CloudFormation, which fixed the defect one level up and left it
+// exactly as it was one level down.
 package upload
 
 import (
@@ -18,6 +22,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +30,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+
+	"github.com/vppillai/chintan/backend/internal/model"
 )
 
 // ArtifactTagKey is the tag the S3 lifecycle rule filters on.
@@ -33,6 +40,19 @@ const ArtifactTagKey = "chintan-artifact"
 // ArtifactCaptureAudio marks source audio — the only artifact retention expires.
 // Cleaned text and note bodies are never expired by a retention setting.
 const ArtifactCaptureAudio = "capture-audio"
+
+// RetentionTagKey carries the tenant's chosen retention onto the object.
+//
+// This is the tag that makes the per-user setting mean something. The artifact
+// tag above says "this is expirable audio"; it cannot say for how long, because
+// it is the same on every object. A lifecycle rule cannot read a number out of
+// a DynamoDB item either, so the only way a per-user period can reach S3 is as
+// a tag VALUE that a rule matches on — one rule per value, which is why
+// model.RetentionTiers is a fixed set rather than any integer.
+//
+// An object with no retention tag matches no expiry rule and is kept
+// indefinitely, which is what a retention of 0 means.
+const RetentionTagKey = "chintan-retention"
 
 // TaggingHeader is the header S3 reads object tags from. It is an x-amz-*
 // header, so a presigned request that sends it unsigned is rejected outright:
@@ -176,8 +196,17 @@ func EncodeTags(tags map[string]string) string {
 	return strings.Join(parts, "&")
 }
 
-// CaptureAudioTags is the tag set every recording must carry for the retention
-// lifecycle rule to see it.
-func CaptureAudioTags() map[string]string {
-	return map[string]string{ArtifactTagKey: ArtifactCaptureAudio}
+// CaptureAudioTags is the tag set a recording must carry for the retention
+// lifecycle rules to see it, for a tenant whose retention is retentionDays.
+//
+// retentionDays is resolved to a tier here as well as at the point it is
+// stored, so a settings record written before tiers existed — or by anything
+// that bypassed the validator — still produces a tag some rule matches, rather
+// than one no rule matches, which reads identically to "keep forever".
+func CaptureAudioTags(retentionDays int) map[string]string {
+	tags := map[string]string{ArtifactTagKey: ArtifactCaptureAudio}
+	if tier := model.RetentionTierFor(retentionDays); tier > 0 {
+		tags[RetentionTagKey] = strconv.Itoa(tier)
+	}
+	return tags
 }

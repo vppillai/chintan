@@ -43,7 +43,13 @@ func ValidateSettings(s model.Settings) (model.Settings, error) {
 	case s.RetentionDays > model.MaxRetentionDays:
 		return model.Settings{}, fmt.Errorf("%w", ErrInvalidRetentionDays)
 	default:
-		out.RetentionDays = s.RetentionDays
+		// Stored as the tier that will actually expire the audio, not as the
+		// number that was typed. Only a fixed set of retentions can be enforced
+		// — an S3 lifecycle rule carries its own ExpirationInDays and cannot
+		// read one out of a note — so storing 45 would mean returning 45 to a
+		// client while deleting on day 30. The response echoes what was stored,
+		// which is the value the system will honour.
+		out.RetentionDays = model.RetentionTierFor(s.RetentionDays)
 	}
 
 	switch s.Theme {
@@ -72,8 +78,9 @@ func NormalizeSettings(s model.Settings) model.Settings {
 	if s.Theme == "" {
 		s.Theme = model.ThemeInk
 	}
-	if s.RetentionDays < 0 {
-		s.RetentionDays = 0
-	}
+	// A record written before retention was expressed in tiers can hold any
+	// number. Reporting it verbatim would tell the user their audio expires on a
+	// day nothing acts on, so a read resolves it the same way a write does.
+	s.RetentionDays = model.RetentionTierFor(s.RetentionDays)
 	return s
 }

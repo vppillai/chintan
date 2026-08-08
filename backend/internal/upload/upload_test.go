@@ -3,12 +3,16 @@ package upload
 import (
 	"context"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/vppillai/chintan/backend/internal/model"
 )
 
 func testPresigner(t *testing.T) *S3Presigner {
@@ -31,7 +35,7 @@ func testPresigner(t *testing.T) *S3Presigner {
 func TestPresignedAudioPutSignsTheRetentionTag(t *testing.T) {
 	got, err := testPresigner(t).PresignPut(context.Background(),
 		"tenants/user1/captures/c_1/audio.webm", "audio/webm",
-		CaptureAudioTags(), 4<<20, 30*time.Minute)
+		CaptureAudioTags(30), 4<<20, 30*time.Minute)
 	if err != nil {
 		t.Fatalf("PresignPut: %v", err)
 	}
@@ -47,9 +51,12 @@ func TestPresignedAudioPutSignsTheRetentionTag(t *testing.T) {
 	if !strings.Contains(signed, "x-amz-tagging") {
 		t.Fatalf("X-Amz-SignedHeaders = %q; the retention tag is not signed, so an upload can omit it and never expire", signed)
 	}
-	if got.Headers[TaggingHeader] != "chintan-artifact=capture-audio" {
-		t.Fatalf("headers[%s] = %q, want chintan-artifact=capture-audio",
-			TaggingHeader, got.Headers[TaggingHeader])
+	// Both tags, and both signed. The artifact tag says "this is expirable
+	// audio" and is the same on every object; the retention tag is the only
+	// thing that can differ per tenant, because a lifecycle rule carries its own
+	// ExpirationInDays and cannot read one out of a settings record.
+	if want := "chintan-artifact=capture-audio&chintan-retention=30"; got.Headers[TaggingHeader] != want {
+		t.Fatalf("headers[%s] = %q, want %q", TaggingHeader, got.Headers[TaggingHeader], want)
 	}
 	if got.Headers["Content-Type"] != "audio/webm" {
 		t.Errorf("headers[Content-Type] = %q", got.Headers["Content-Type"])
@@ -75,7 +82,7 @@ func TestPresignedAudioPutSignsTheRetentionTag(t *testing.T) {
 func TestPresignedAudioPutSignsTheContentType(t *testing.T) {
 	got, err := testPresigner(t).PresignPut(context.Background(),
 		"tenants/user1/captures/c_1/audio.webm", "audio/webm",
-		CaptureAudioTags(), 4<<20, 30*time.Minute)
+		CaptureAudioTags(30), 4<<20, 30*time.Minute)
 	if err != nil {
 		t.Fatalf("PresignPut: %v", err)
 	}
@@ -121,5 +128,72 @@ func TestEncodeTagsIsStableAndEscaped(t *testing.T) {
 func TestPresignRejectsAnEmptyKey(t *testing.T) {
 	if _, err := testPresigner(t).PresignPut(context.Background(), "  ", "audio/webm", nil, 0, time.Minute); err == nil {
 		t.Fatal("expected an error for an empty key")
+	}
+}
+
+// TestTheRetentionTagCarriesTheTenantsChoice is the defect this closes.
+//
+// `retention_days` was validated, stored, returned and rendered in the UI while
+// nothing in the request path read it: every object got the same constant tag
+// and the expiry period came from a CloudFormation parameter. A user asking for
+// thirty days kept their audio forever and was told otherwise, which is
+// precisely the v1 defect the package comment claims to have fixed.
+func TestTheRetentionTagCarriesTheTenantsChoice(t *testing.T) {
+	cases := []struct {
+		requested int
+		want      string
+	}{
+		// Kept indefinitely: no retention tag at all, so no expiry rule matches.
+		{0, "chintan-artifact=capture-audio"},
+		{7, "chintan-artifact=capture-audio&chintan-retention=7"},
+		{30, "chintan-artifact=capture-audio&chintan-retention=30"},
+		{90, "chintan-artifact=capture-audio&chintan-retention=90"},
+		{365, "chintan-artifact=capture-audio&chintan-retention=365"},
+		// Between tiers: resolved DOWN, because a retention setting is a promise
+		// to delete and rounding it up would break that promise quietly.
+		{45, "chintan-artifact=capture-audio&chintan-retention=30"},
+		{364, "chintan-artifact=capture-audio&chintan-retention=90"},
+		// Longer than the longest tier: the longest tier, not "forever".
+		{3650, "chintan-artifact=capture-audio&chintan-retention=365"},
+		// Shorter than the shortest: the shortest, because the alternative is
+		// answering "delete after two days" with "never".
+		{2, "chintan-artifact=capture-audio&chintan-retention=7"},
+		// A stored value that predates tiers, or a negative one that escaped
+		// validation, must not produce a tag no rule matches.
+		{-5, "chintan-artifact=capture-audio"},
+	}
+
+	for _, tc := range cases {
+		got := EncodeTags(CaptureAudioTags(tc.requested))
+		if got != tc.want {
+			t.Errorf("CaptureAudioTags(%d) = %q, want %q", tc.requested, got, tc.want)
+		}
+	}
+}
+
+// TestEveryRetentionTierHasALifecycleRule ties the tiers to the template.
+//
+// The tag only expires anything if a rule matches its value. A tier added in Go
+// with no rule beside it in infrastructure/template.yaml is the same defect in a
+// new place: a setting the user can choose, that is stored and returned, and
+// that expires nothing.
+func TestEveryRetentionTierHasALifecycleRule(t *testing.T) {
+	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
+	if err != nil {
+		t.Fatalf("read the template: %v", err)
+	}
+	template := string(raw)
+
+	for _, tier := range model.RetentionTiers {
+		// The rule's tag filter and its expiry must both name the tier, or a
+		// rule exists that deletes on the wrong day.
+		filter := "Value: '" + strconv.Itoa(tier) + "'"
+		expiry := "ExpirationInDays: " + strconv.Itoa(tier)
+		if !strings.Contains(template, filter) {
+			t.Errorf("no lifecycle rule filters on chintan-retention=%d; that tier expires nothing", tier)
+		}
+		if !strings.Contains(template, expiry) {
+			t.Errorf("no lifecycle rule expires after %d days", tier)
+		}
 	}
 }

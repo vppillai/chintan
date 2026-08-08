@@ -50,6 +50,44 @@ const (
 // value is not a policy, it is a typo.
 const MaxRetentionDays = 3650
 
+// RetentionTiers are the audio retention periods this system can actually
+// enforce, in days, shortest first.
+//
+// It is a fixed set rather than any number the user types, and that is a
+// property of S3 rather than a shortcut. An expiry is performed by a lifecycle
+// rule, a rule carries its own ExpirationInDays, and a rule cannot read a
+// number out of a DynamoDB item — so the only thing an upload can vary per user
+// is WHICH rule matches, by way of an object tag. One rule per tier is
+// therefore one tier per rule, and the set has to be small enough to write down
+// in the template.
+//
+// The alternative that was actually shipped is worse: a free-text number that
+// is validated, stored, returned and read by nothing, so a user asking for
+// thirty days keeps their audio forever and is told otherwise.
+var RetentionTiers = []int{7, 30, 90, 365}
+
+// RetentionTierFor maps a requested retention to the tier that will enforce it.
+//
+// 0 means keep indefinitely and stays 0. Anything else resolves to the longest
+// tier that is no longer than what was asked for, so a retention setting is
+// honoured no later than requested — it is a promise to delete, and rounding it
+// up would break that promise silently. A value shorter than the shortest tier
+// is the one exception: there is nothing briefer to offer, so it becomes the
+// shortest tier and the caller is told, because the alternative is to answer a
+// request for two days with "forever".
+func RetentionTierFor(days int) int {
+	if days <= 0 {
+		return 0
+	}
+	tier := RetentionTiers[0]
+	for _, t := range RetentionTiers {
+		if t <= days {
+			tier = t
+		}
+	}
+	return tier
+}
+
 type Settings struct {
 	CleanupMode   CleanupMode `json:"cleanup_mode"`
 	RetentionDays int         `json:"retention_days"` // 0 = indefinite

@@ -76,16 +76,6 @@ Parameters:
     MaxValue: 100000
     Description: Monthly cost budget, in USD, defined here rather than clicked into the console.
 
-  RetentionDays:
-    Type: Number
-    Default: 0
-    MinValue: 0
-    MaxValue: 3650
-    Description: >
-      Days after which capture audio expires. 0 means indefinite and installs no
-      lifecycle rule at all (see §4.9). Note bodies and cleaned text are never
-      expired by this setting.
-
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -130,7 +120,6 @@ Parameters:
 Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
-  HasRetention: !Not [!Equals [!Ref RetentionDays, 0]]
   HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
 
 Resources:
@@ -493,31 +482,80 @@ Resources:
                   - Name: suffix
                     Value: '/audio.bin'
       # §4.9. Retention expires source audio only. The prefix cannot isolate
-      # captures either, so the rule is keyed on the object tag the presigned
+      # captures either, so the rules are keyed on the object tags the presigned
       # PUT carries; an untagged object is never expired, which fails safe.
+      #
+      # One rule per retention tier, because a lifecycle rule carries its own
+      # ExpirationInDays and cannot read a number out of a DynamoDB item. The
+      # only thing an upload can vary per user is WHICH rule matches, by way of
+      # the chintan-retention tag value — so the set of periods this system can
+      # offer is exactly the set of rules written here, and model.RetentionTiers
+      # is the same list on the Go side. TestEveryRetentionTierHasALifecycleRule
+      # fails if the two drift.
+      #
+      # This replaces a single rule whose period came from a stack parameter,
+      # which meant the per-user `retention_days` setting was validated, stored,
+      # returned and rendered while nothing expired anything on account of it —
+      # the v1 defect, fixed at the instance level and reintroduced at the user
+      # level. An object carrying no chintan-retention tag matches none of these
+      # and is kept indefinitely, which is what a retention of 0 means and is
+      # now the only thing it means.
       LifecycleConfiguration:
         Rules:
-          - !If
-            - HasRetention
-            - Id: ExpireCaptureAudio
-              Status: Enabled
-              Prefix: 'tenants/'
-              TagFilters:
-                - Key: chintan-artifact
-                  Value: capture-audio
-              ExpirationInDays: !Ref RetentionDays
-              NoncurrentVersionExpiration:
-                NoncurrentDays: !Ref RetentionDays
-            - !Ref AWS::NoValue
+          - Id: ExpireCaptureAudio7
+            Status: Enabled
+            Prefix: 'tenants/'
+            TagFilters:
+              - Key: chintan-artifact
+                Value: capture-audio
+              - Key: chintan-retention
+                Value: '7'
+            ExpirationInDays: 7
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+          - Id: ExpireCaptureAudio30
+            Status: Enabled
+            Prefix: 'tenants/'
+            TagFilters:
+              - Key: chintan-artifact
+                Value: capture-audio
+              - Key: chintan-retention
+                Value: '30'
+            ExpirationInDays: 30
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+          - Id: ExpireCaptureAudio90
+            Status: Enabled
+            Prefix: 'tenants/'
+            TagFilters:
+              - Key: chintan-artifact
+                Value: capture-audio
+              - Key: chintan-retention
+                Value: '90'
+            ExpirationInDays: 90
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+          - Id: ExpireCaptureAudio365
+            Status: Enabled
+            Prefix: 'tenants/'
+            TagFilters:
+              - Key: chintan-artifact
+                Value: capture-audio
+              - Key: chintan-retention
+                Value: '365'
+            ExpirationInDays: 365
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 365
           # Versioning is on unconditionally, so every delete and every rewrite
           # of an artifact leaves a noncurrent version behind that is billed and
-          # invisible to `aws s3 ls`. This rule is deliberately outside the
-          # HasRetention !If above: RetentionDays defaults to 0 and no shipped
-          # config sets it, so a conditional rule would mean the default deploy
-          # never frees a byte. It expires the superseded copy only; the current
-          # object is untouched, which is a different concern and belongs to
-          # ExpireCaptureAudio. ExpireDeleteMarkers below cannot do this job
-          # either — a delete marker only expires once nothing is behind it.
+          # invisible to `aws s3 ls`. This rule is deliberately unconditional and
+          # untagged: the tier rules above only match audio a tenant asked to
+          # expire, and the default retention is 0, so a rule that depended on
+          # them would mean the default deploy never frees a byte. It expires the
+          # superseded copy only; the current object is untouched, which is a
+          # different concern and belongs to the tier rules. ExpireDeleteMarkers
+          # below cannot do this job either — a delete marker only expires once
+          # nothing is behind it.
           - Id: ExpireNoncurrentVersions
             Status: Enabled
             NoncurrentVersionExpiration:
@@ -626,10 +664,11 @@ Resources:
                   # whose signature is perfectly valid, and the client sees only
                   # "Forbidden" with nothing naming the missing permission.
                   #
-                  # The tag is not decorative: the lifecycle rule selects on
-                  # chintan-artifact=capture-audio, so it is what makes
-                  # RetentionDays expire audio and nothing else. Adding the tag
-                  # without this grant made every upload fail.
+                  # The tags are not decorative: the lifecycle rules select on
+                  # chintan-artifact=capture-audio, which is what makes them
+                  # expire audio and nothing else, and on chintan-retention,
+                  # which is what makes the tenant's own setting decide when.
+                  # Adding the tag without this grant made every upload fail.
                   - s3:PutObjectTagging
                   - s3:GetObjectTagging
                 Resource: !Sub '${ContentBucket.Arn}/*'

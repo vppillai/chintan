@@ -91,7 +91,6 @@ Biometric unlock fails closed: no vault key, no biometric unlock, and the API sa
 | `display_name` | `<name>` | Human label. |
 | `alarm_email` | none | Subscribed to the alarm topic and the budget. |
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
-| `retention_days` | `0` (indefinite) | Audio expiry. |
 | `log_retention_days` | `14` | CloudWatch retention. |
 | `daily_spend_cap_micros` | `0` (record, never enforce) | Instance-wide daily provider spend ceiling, in **microdollars** — `1000000` = $1. A tenant may set a lower cap of its own; the breaker enforces whichever is lower. Non-zero also creates the `chintan-<i>-<env>-spend-cap-tripped` alarm. |
 | `refresh_token_validity_days` | `7` | Cognito refresh token lifetime. |

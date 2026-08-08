@@ -102,8 +102,13 @@ func TestValidateSettingsReturnsWhatWillBeStoredNotWhatWasSent(t *testing.T) {
 
 func TestValidateSettingsKeepsAValueTheCallerActuallyChose(t *testing.T) {
 	sent := model.Settings{
-		CleanupMode:         model.CleanupPolished,
-		RetentionDays:       model.MaxRetentionDays,
+		CleanupMode: model.CleanupPolished,
+		// The longest retention this system can enforce. It was
+		// model.MaxRetentionDays, which is the largest value the API ACCEPTS —
+		// a different thing, now that retention is stored as the tier that will
+		// actually expire the audio. 3650 is still accepted and is still not
+		// rejected; it now comes back as 365, which is asserted below.
+		RetentionDays:       365,
 		Theme:               model.ThemeSystem,
 		DailySpendCapMicros: 1,
 	}
@@ -177,5 +182,55 @@ func TestNormalizeSettingsLeavesACompleteRecordAlone(t *testing.T) {
 	}
 	if got := NormalizeSettings(want); got != want {
 		t.Fatalf("NormalizeSettings(%+v) = %+v, want it unchanged", want, got)
+	}
+}
+
+// TestValidateSettingsStoresTheRetentionItCanActuallyEnforce covers the
+// coercion the test above deliberately avoids triggering.
+//
+// Audio is expired by an S3 lifecycle rule, a rule carries its own
+// ExpirationInDays, and a rule cannot read a number out of a settings record —
+// so only the periods written into infrastructure/template.yaml can be
+// enforced, and any other number is a promise nothing keeps. Storing the tier
+// rather than the request is what makes the value the API returns the value the
+// bucket will honour: a client shown "45 days" while the object expires on day
+// 30 has been told something false, which is the whole shape of the defect this
+// replaced.
+func TestValidateSettingsStoresTheRetentionItCanActuallyEnforce(t *testing.T) {
+	cases := map[int]int{
+		0:                      0, // keep indefinitely, and nothing else means that
+		7:                      7, // exact tiers survive unchanged
+		365:                    365,
+		45:                     30, // between tiers: down, because it is a promise to delete
+		364:                    90,
+		model.MaxRetentionDays: 365, // accepted, and honoured at the longest tier
+		2:                      7,   // below the shortest: the shortest, not "never"
+	}
+
+	for requested, want := range cases {
+		got, err := ValidateSettings(model.Settings{
+			CleanupMode: model.CleanupFaithful, Theme: model.ThemeInk, RetentionDays: requested,
+		})
+		if err != nil {
+			t.Fatalf("ValidateSettings(retention=%d): %v", requested, err)
+		}
+		if got.RetentionDays != want {
+			t.Errorf("ValidateSettings(retention=%d).RetentionDays = %d, want %d — "+
+				"the stored value must be the one the lifecycle rules enforce",
+				requested, got.RetentionDays, want)
+		}
+	}
+}
+
+// TestNormalizeSettingsResolvesARetentionWrittenBeforeTiers covers the read
+// path. A record stored when any integer was accepted must not be reported
+// verbatim, or the UI shows an expiry date nothing acts on.
+func TestNormalizeSettingsResolvesARetentionWrittenBeforeTiers(t *testing.T) {
+	got := NormalizeSettings(model.Settings{RetentionDays: 45})
+	if got.RetentionDays != 30 {
+		t.Errorf("NormalizeSettings(45).RetentionDays = %d, want 30", got.RetentionDays)
+	}
+	if got := NormalizeSettings(model.Settings{RetentionDays: -1}); got.RetentionDays != 0 {
+		t.Errorf("NormalizeSettings(-1).RetentionDays = %d, want 0", got.RetentionDays)
 	}
 }

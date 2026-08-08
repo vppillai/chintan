@@ -262,3 +262,66 @@ func TestGetDownloadURLServesTimestampsAndPeaks(t *testing.T) {
 		}
 	}
 }
+
+// TestTheUploadCarriesTheTenantsOwnRetention is the request-path half of making
+// `retention_days` mean something.
+//
+// The setting was validated, stored, returned and rendered in the UI while
+// nothing on the way to S3 read it: every recording was tagged with the same
+// constant and the expiry period came from a CloudFormation parameter. That is
+// the v1 defect — a control that does nothing — fixed at the instance level and
+// left in place at the user level, and this is the only line of code that can
+// close it, because the presigned PUT is the last moment a per-tenant value can
+// reach the object.
+func TestTheUploadCarriesTheTenantsOwnRetention(t *testing.T) {
+	cases := map[string]struct {
+		saved int
+		want  string // "" means no retention tag at all
+	}{
+		"a tenant who chose thirty days":        {30, "30"},
+		"a tenant who chose the longest tier":   {365, "365"},
+		"a tenant between tiers":                {45, "30"},
+		"a tenant who chose to keep everything": {0, ""},
+		"a tenant who has saved nothing at all": {0, ""},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			store := memory.NewStore()
+			presigner := &recordingPresigner{}
+			svc := NewCaptureService(store, memory.NewObjects()).WithUploads(presigner)
+
+			if tc.saved != 0 {
+				if err := store.PutSettings(ctx, "user1", model.Settings{
+					CleanupMode: model.CleanupFaithful, RetentionDays: tc.saved,
+				}); err != nil {
+					t.Fatalf("PutSettings: %v", err)
+				}
+			}
+
+			if _, err := svc.BeginCapture(ctx, "user1", CaptureRequest{ContentType: "audio/webm"}); err != nil {
+				t.Fatalf("BeginCapture: %v", err)
+			}
+			if len(presigner.calls) == 0 {
+				t.Fatal("nothing was presigned")
+			}
+
+			tags := presigner.calls[0].tags
+			if tags[upload.ArtifactTagKey] != upload.ArtifactCaptureAudio {
+				t.Fatalf("artifact tag = %q, want %q", tags[upload.ArtifactTagKey], upload.ArtifactCaptureAudio)
+			}
+			got, present := tags[upload.RetentionTagKey]
+			if tc.want == "" {
+				if present {
+					t.Errorf("retention tag = %q; a retention of 0 must carry no tag, so no rule matches and the audio is kept", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("retention tag = %q, want %q — the object expires on whatever day this names, and nothing else reads the setting",
+					got, tc.want)
+			}
+		})
+	}
+}

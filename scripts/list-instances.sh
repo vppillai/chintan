@@ -135,7 +135,6 @@ for path in sorted(config_dir.glob("*.yaml")):
     optional = {
         "AlarmEmail": doc.get("alarm_email"),
         "MonthlyBudgetUSD": doc.get("monthly_budget_usd"),
-        "RetentionDays": doc.get("retention_days"),
         "LogRetentionDays": doc.get("log_retention_days"),
         # MICRODOLLARS: 1000000 = $1. Absent here means the template default of
         # 0, which leaves HasSpendCap false and the spend-cap alarm uncreated.
