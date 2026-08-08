@@ -4,6 +4,17 @@ Description: >
   Reuses the account's existing GitHub OIDC provider (do not create a second one).
   Role permissions are scoped to chintan-* only; passbook-* is out of reach.
 
+Metadata:
+  cfn-lint:
+    config:
+      ignore_checks:
+        # W3037 flags apigateway:TagResource / :UntagResource as unknown actions.
+        # They are real, and ApiGatewayV2's stage handler calls TagResource --
+        # removing them to satisfy this rule made every deploy fail with
+        # AccessDenied. cfn-lint's action list for this service is stale, so the
+        # rule is suppressed here rather than the grant being deleted again.
+        - W3037
+
 Parameters:
   GitHubOrg:
     Type: String
@@ -287,8 +298,16 @@ Resources:
                   - apigateway:PUT
                   - apigateway:PATCH
                   - apigateway:DELETE
-                # Tagging is not a separate action here: API Gateway tags through
-                # PUT and DELETE on /tags/*, which the verbs above already cover.
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                # apigateway:TagResource IS a real action, whatever cfn-lint's
+                # W3037 says -- its action list for this service is stale. The
+                # ApiGatewayV2 stage handler calls TagResource, and without this
+                # grant the deploy fails with:
+                #   "not authorized to perform: apigateway:TagResource ...
+                #    because no identity-based policy allows the action"
+                # Removing these to silence a lint warning cost four deploys to
+                # find, because only a real deploy can prove it.
                 Resource:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
@@ -717,10 +736,16 @@ Resources:
                   - apigateway:PUT
                   - apigateway:DELETE
                   - apigateway:PATCH
-                # Tagging is not a separate action here: API Gateway tags through
-                # PUT and DELETE on /tags/*, which the verbs above already cover.
-                # apigateway:TagResource / :UntagResource are not actions the
-                # service defines, so naming them granted nothing.
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                # apigateway:TagResource IS a real action, whatever cfn-lint's
+                # W3037 says -- its action list for this service is stale. The
+                # ApiGatewayV2 stage handler calls TagResource, and without this
+                # grant the deploy fails with:
+                #   "not authorized to perform: apigateway:TagResource ...
+                #    because no identity-based policy allows the action"
+                # Removing these to silence a lint warning cost four deploys to
+                # find, because only a real deploy can prove it.
                 Resource:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
