@@ -384,6 +384,30 @@ func (s *DynamoStore) UpdateCaptureStatus(ctx context.Context, userID, captureID
 	return s.PutCapture(ctx, capture)
 }
 
+func (s *DynamoStore) DeleteCapture(ctx context.Context, userID, captureID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
+			"sk": &types.AttributeValueMemberS{Value: captureSK(captureID)},
+		},
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	})
+	if err != nil {
+		var condErr *types.ConditionalCheckFailedException
+		if errors.As(err, &condErr) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("dynamo delete capture: %w", err)
+	}
+
+	return nil
+}
+
 func (s *DynamoStore) putJSONItem(ctx context.Context, pk, sk, typ, data string, ttl int64) error {
 	item := dynamoItem{PK: pk, SK: sk, Type: typ, Data: data, TTL: ttl}
 	itemMap, err := attributevalue.MarshalMap(item)

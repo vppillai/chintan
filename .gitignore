@@ -10,3 +10,4 @@ build/
 frontend/js/config.js
 
 .superpowers/
+.worktrees/

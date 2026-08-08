@@ -103,6 +103,15 @@ func (m *mockStore) UpdateCaptureStatus(ctx context.Context, userID, captureID s
 	return repository.ErrNotFound
 }
 
+func (m *mockStore) DeleteCapture(ctx context.Context, userID, captureID string) error {
+	key := userID + "/" + captureID
+	if _, ok := m.captures[key]; !ok {
+		return repository.ErrNotFound
+	}
+	delete(m.captures, key)
+	return nil
+}
+
 func (m *mockStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
 	return nil
 }

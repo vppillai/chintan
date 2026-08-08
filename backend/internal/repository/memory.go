@@ -189,6 +189,23 @@ func (s *MemoryStore) UpdateCaptureStatus(ctx context.Context, userID, captureID
 	return nil
 }
 
+func (s *MemoryStore) DeleteCapture(ctx context.Context, userID, captureID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	userCaptures, ok := s.captures[userID]
+	if !ok {
+		return ErrNotFound
+	}
+	if _, ok := userCaptures[captureID]; !ok {
+		return ErrNotFound
+	}
+	delete(userCaptures, captureID)
+	return nil
+}
+
 func (s *MemoryStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
 	if err := s.checkCtx(ctx); err != nil {
 		return err

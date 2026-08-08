@@ -22,6 +22,8 @@ type NoteIndex struct {
 	UpdatedAt     string   `json:"updated_at"`
 	S3MarkdownKey string   `json:"s3_markdown_key"`
 	S3MetaKey     string   `json:"s3_meta_key"`
+	DeletedAt     string   `json:"deleted_at,omitempty"`
+	PurgeAfter    string   `json:"purge_after,omitempty"`
 }
 
 type CaptureStatus string

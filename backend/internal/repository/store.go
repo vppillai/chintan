@@ -24,6 +24,7 @@ type Store interface {
 	GetCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error)
 	ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error)
 	UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error
+	DeleteCapture(ctx context.Context, userID, captureID string) error
 
 	PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error
 	GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error)

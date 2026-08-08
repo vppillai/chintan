@@ -195,6 +195,24 @@ func TestGetCaptureNotFound(t *testing.T) {
 	}
 }
 
+func TestDeleteCapture(t *testing.T) {
+	store := repository.NewMemoryStore()
+	ctx := context.Background()
+	c := model.CaptureIndex{ID: "c1", UserID: "user1", NoteID: "n1", Status: model.StatusUploaded}
+	if err := store.PutCapture(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteCapture(ctx, "user1", "c1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	if _, err := store.GetCapture(ctx, "user1", "c1"); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if err := store.DeleteCapture(ctx, "user1", "missing"); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("missing err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestObjectsPutGetDelete(t *testing.T) {
 	objs := repository.NewMemoryObjects()
 	ctx := context.Background()
