@@ -227,6 +227,29 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		ID: "c_needs_target", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedTitle: "Kitchen rebuild", RouteConfidence: 0.41,
 	})
+	// The other half of a routing suggestion, and the one v1 led with: an
+	// existing note the router named but was not confident enough to write to
+	// unasked. Exactly one of the two fields is ever set, so a fixture carrying
+	// only SuggestedTitle would leave the frontend's handling of this branch
+	// unchecked.
+	//
+	// The destination is written with a fixed id rather than through
+	// createNote, whose ids embed the creation instant: a fixture is compared
+	// byte for byte against the committed copy, so a value that changes every
+	// run would fail the "the committed fixtures are the ones the two sides
+	// produce" gate on every unrelated build.
+	suggestedNote, err := h.store.PutNote(t.Context(), contractUser, model.NoteIndex{
+		ID: "contract-suggested-note", Title: "Kitchen rebuild", UpdatedAt: contractTime,
+		S3MarkdownKey: "tenants/user1/notes/contract-suggested-note/note.md",
+		S3MetaKey:     "tenants/user1/notes/contract-suggested-note/meta.json",
+	})
+	if err != nil {
+		t.Fatalf("seed the suggested note: %v", err)
+	}
+	suggested := h.putCapture(t, model.CaptureIndex{
+		ID: "c_needs_target_note", UserID: contractUser, Status: model.StatusNeedsTarget,
+		CreatedAt: model.Now(), SuggestedNoteID: suggestedNote.ID, RouteConfidence: 0.62,
+	})
 	failed := h.putCapture(t, model.CaptureIndex{
 		ID: "c_failed", UserID: contractUser, NoteID: note.ID,
 		Status: model.StatusFailed, CreatedAt: model.Now(),
@@ -237,6 +260,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("capturesPage", "Page<CaptureWire>",
 		"GET /v1/captures → 200. Includes the unrouted needs_target capture the progress card has to show.",
 		h.do(t, http.MethodGet, "/v1/captures", contractUser, nil))
+	add("captureSuggestedNote", "CaptureWire",
+		"GET /v1/captures/{captureId} → 200 for a needs_target capture the router matched to an existing note. "+
+			"`suggested_note_id` is what the \"Add to <note>\" prompt is built from.",
+		h.do(t, http.MethodGet, "/v1/captures/"+suggested.ID, contractUser, nil))
 	add("captureFailed", "CaptureWire",
 		"GET /v1/captures/{captureId} → 200 for a failed capture. `error` is the text the progress card renders.",
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID, contractUser, nil))

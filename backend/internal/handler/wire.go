@@ -95,16 +95,33 @@ type NoteDetail struct {
 
 // Capture is the OpenAPI Capture schema.
 type Capture struct {
-	ID          string  `json:"id"`
-	NoteID      *string `json:"note_id"`
-	Status      string  `json:"status"`
-	Error       *string `json:"error"`
-	CreatedAt   string  `json:"created_at"`
-	AppendedAt  *string `json:"appended_at"`
-	DurationMS  *int64  `json:"duration_ms"`
-	HasSegments bool    `json:"has_segments"`
-	HasPeaks    bool    `json:"has_peaks"`
-	Version     int64   `json:"version"`
+	ID        string  `json:"id"`
+	NoteID    *string `json:"note_id"`
+	Status    string  `json:"status"`
+	Error     *string `json:"error"`
+	CreatedAt string  `json:"created_at"`
+	// SuggestedNoteID and SuggestedTitle are the router's answer to "where does
+	// this belong", and they are the whole reason a `needs_target` capture is
+	// different from an unroutable one.
+	//
+	// They were computed and then dropped here. The pipeline pays an LLM call to
+	// produce them (pipeline.route), stores them on the capture, and this struct
+	// left them out — so a client asking why a capture is waiting could only
+	// offer an unranked list of every note the user has, which is the question
+	// the inference had already answered. Paying for a routing decision and
+	// discarding it is worse than not routing at all.
+	//
+	// Exactly one is ever set. SuggestedNoteID names an existing note the router
+	// was confident enough to propose but not confident enough to write to
+	// unasked; SuggestedTitle is the title it would give a new note when there
+	// was no plausible destination.
+	SuggestedNoteID *string `json:"suggested_note_id"`
+	SuggestedTitle  *string `json:"suggested_title"`
+	AppendedAt      *string `json:"appended_at"`
+	DurationMS      *int64  `json:"duration_ms"`
+	HasSegments     bool    `json:"has_segments"`
+	HasPeaks        bool    `json:"has_peaks"`
+	Version         int64   `json:"version"`
 }
 
 func captureOf(c model.CaptureIndex) Capture {
@@ -125,6 +142,14 @@ func captureOf(c model.CaptureIndex) Capture {
 	if c.Error != "" {
 		v := c.Error
 		out.Error = &v
+	}
+	if c.SuggestedNoteID != "" {
+		v := c.SuggestedNoteID
+		out.SuggestedNoteID = &v
+	}
+	if c.SuggestedTitle != "" {
+		v := c.SuggestedTitle
+		out.SuggestedTitle = &v
 	}
 	if c.AppendedAt != 0 {
 		v := model.FormatTime(time.Unix(c.AppendedAt, 0))

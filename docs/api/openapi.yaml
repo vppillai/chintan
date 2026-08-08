@@ -851,6 +851,21 @@ components:
           type: string
           nullable: true
           description: Safe to display. Never contains provider or AWS internals.
+        suggested_note_id:
+          type: string
+          nullable: true
+          description: >
+            The note the router proposed for a `needs_target` capture: plausible
+            enough to offer, not confident enough to append to unasked. Present
+            only when the router named an existing, active note. A client should
+            lead with this rather than with an unranked list of every note.
+        suggested_title:
+          type: string
+          nullable: true
+          description: >
+            The title the router would give a new note, when it found no
+            plausible existing destination. Never set at the same time as
+            `suggested_note_id`.
         created_at: { type: string, format: date-time }
         appended_at: { type: string, format: date-time, nullable: true }
         duration_ms: { type: integer, nullable: true }

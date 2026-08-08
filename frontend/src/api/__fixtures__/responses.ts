@@ -142,6 +142,8 @@ export const noteDetail: NoteDetailWire = {
       "id": "fixture-id",
       "note_id": "fixture-note-id",
       "status": "appended",
+      "suggested_note_id": null,
+      "suggested_title": null,
       "version": 1
     }
   ],
@@ -226,6 +228,8 @@ export const capturesPage: Page<CaptureWire> = {
       "id": "fixture-id",
       "note_id": "fixture-note-id",
       "status": "failed",
+      "suggested_note_id": null,
+      "suggested_title": null,
       "version": 1
     },
     {
@@ -238,6 +242,22 @@ export const capturesPage: Page<CaptureWire> = {
       "id": "fixture-id",
       "note_id": null,
       "status": "needs_target",
+      "suggested_note_id": "contract-suggested-note",
+      "suggested_title": null,
+      "version": 1
+    },
+    {
+      "appended_at": null,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "duration_ms": null,
+      "error": null,
+      "has_peaks": false,
+      "has_segments": false,
+      "id": "fixture-id",
+      "note_id": null,
+      "status": "needs_target",
+      "suggested_note_id": null,
+      "suggested_title": "Kitchen rebuild",
       "version": 1
     },
     {
@@ -250,9 +270,27 @@ export const capturesPage: Page<CaptureWire> = {
       "id": "fixture-id",
       "note_id": "fixture-note-id",
       "status": "appended",
+      "suggested_note_id": null,
+      "suggested_title": null,
       "version": 1
     }
   ]
+};
+
+/** GET /v1/captures/{captureId} → 200 for a needs_target capture the router matched to an existing note. `suggested_note_id` is what the "Add to <note>" prompt is built from. */
+export const captureSuggestedNote: CaptureWire = {
+  "appended_at": null,
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "duration_ms": null,
+  "error": null,
+  "has_peaks": false,
+  "has_segments": false,
+  "id": "fixture-id",
+  "note_id": null,
+  "status": "needs_target",
+  "suggested_note_id": "contract-suggested-note",
+  "suggested_title": null,
+  "version": 1
 };
 
 /** GET /v1/captures/{captureId} → 200 for a failed capture. `error` is the text the progress card renders. */
@@ -266,6 +304,8 @@ export const captureFailed: CaptureWire = {
   "id": "fixture-id",
   "note_id": "fixture-note-id",
   "status": "failed",
+  "suggested_note_id": null,
+  "suggested_title": null,
   "version": 1
 };
 
@@ -287,6 +327,8 @@ export const captureCreated: CaptureCreatedWire = {
     "id": "fixture-id",
     "note_id": null,
     "status": "uploaded",
+    "suggested_note_id": null,
+    "suggested_title": null,
     "version": 1
   },
   "peaks_upload": {

@@ -158,6 +158,21 @@ export interface CaptureWire {
   status: CaptureStatus;
   error?: string | null;
   created_at: string;
+  /**
+   * Where the router thinks this recording belongs. Exactly one of the two is
+   * ever set, and only on a `needs_target` capture: `suggested_note_id` names an
+   * existing note it was confident enough to propose but not to append to
+   * unasked, `suggested_title` is the title it would give a new note when there
+   * was no plausible destination.
+   *
+   * The backend has always computed these — it pays an LLM call for them — and
+   * used to drop them before the response left the API, which is why the
+   * "where should this go?" prompt could only show an unranked list of every
+   * note. They are declared here so the fixtures typecheck; rendering them is
+   * the capture screen's to do.
+   */
+  suggested_note_id?: string | null;
+  suggested_title?: string | null;
   appended_at?: string | null;
   duration_ms?: number | null;
   has_segments?: boolean;
