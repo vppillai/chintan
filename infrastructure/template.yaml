@@ -338,7 +338,13 @@ Resources:
             Resource: !GetAtt CaptureQueue.Arn
             Condition:
               ArnLike:
-                aws:SourceArn: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${AWS::AccountId}'
+                # MUST stay byte-identical to ContentBucket's BucketName below.
+                # These are two hand-written copies of one name, coupled only by
+                # this comment: when the bucket gained ${Environment} this was
+                # left behind, the ArnLike pattern matched nothing, and S3's
+                # test-publish failed the whole stack with "Unable to validate
+                # the following destination configurations".
+                aws:SourceArn: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
               StringEquals:
                 aws:SourceAccount: !Ref AWS::AccountId
 
