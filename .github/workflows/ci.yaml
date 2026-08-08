@@ -1,0 +1,194 @@
+name: CI
+
+# Every gate that must be green before a change reaches main, in one workflow so
+# there is one place to look and one place to add the next one.
+#
+# v1 ran `go test` + `gofmt` + `go vet` and nothing else: no -race, no linter, no
+# vulnerability scan, no template validation, no shell checks, and no frontend
+# job at all against ~1,900 lines of JavaScript.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feat/v2
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-test:
+    name: Go test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: gofmt
+        working-directory: backend
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+      # -race is the point of this job. The capture pipeline runs concurrent
+      # writers against the same note, which is exactly the class of bug a
+      # non-race test run cannot see.
+      - name: go test -race
+        working-directory: backend
+        run: go test -race ./...
+
+  backend-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Installed through the project's own install script rather than through
+      # golangci-lint-action, whose major version has to be matched to
+      # golangci-lint's major version — a mismatch fails with a config-format
+      # error that says nothing about versions. The install script always
+      # resolves a build that supports the Go toolchain in use.
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh |
+            sh -s -- -b "$(go env GOPATH)/bin"
+      - name: golangci-lint
+        working-directory: backend
+        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=5m ./..."
+
+  backend-vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      # Reports only the vulnerabilities that are actually reachable from this
+      # code, so a finding here is a finding worth acting on rather than a
+      # dependency-graph alert.
+      - name: govulncheck
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+  infrastructure-lint:
+    name: cfn-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: cfn-lint
+        run: |
+          python3 -m pip install --quiet --disable-pip-version-check cfn-lint
+          cfn-lint infrastructure/*.yaml
+
+  shell:
+    name: shellcheck and shfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Install shfmt
+        run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.10.0
+      - name: shellcheck
+        run: shellcheck --severity=warning scripts/*.sh scripts/lib/*.sh
+      # -i 4 -ci is the style the repository already uses; -d fails on any diff
+      # rather than rewriting, so CI never disagrees silently with the tree.
+      - name: shfmt
+        run: |
+          "$(go env GOPATH)/bin/shfmt" -d -i 4 -ci scripts/*.sh scripts/lib/*.sh
+      - name: Scripts parse
+        run: |
+          for f in scripts/*.sh scripts/lib/*.sh; do
+            bash -n "$f"
+          done
+
+  guardrails:
+    name: Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      # --local-only because a pull-request job holds no AWS or GitHub deploy
+      # credentials by design. The remote guardrails are reported UNVERIFIED
+      # rather than passed, which is the distinction the script exists to make.
+      - name: guardrails-check --local-only
+        run: scripts/guardrails-check.sh --local-only
+      # The self-test removes .github/CODEOWNERS from a copy of the tree and
+      # asserts the check then fails. A guardrail check nobody has watched fail
+      # is a guardrail check nobody should trust.
+      - name: guardrails-check --self-test
+        run: scripts/guardrails-check.sh --self-test
+
+  log-hygiene:
+    name: No user content in logs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Provider adapters must not log response bodies
+        run: scripts/check-log-hygiene.sh
+      - name: Prove the check can fail
+        run: scripts/check-log-hygiene.sh --self-test
+
+  instance-configs:
+    name: Instance configs resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      # A malformed or duplicate instance config must fail here, not half-way
+      # through a deploy matrix.
+      - name: list-instances
+        run: scripts/list-instances.sh --format text
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Bun, not npm: there is no Node in this project's toolchain and the
+      # lockfile is bun.lock.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: frontend
+        run: bun run typecheck
+      - name: Test
+        working-directory: frontend
+        run: bun run test
+      - name: Build
+        working-directory: frontend
+        run: bun run build

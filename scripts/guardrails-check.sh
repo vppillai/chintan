@@ -39,8 +39,8 @@
 #
 # Usage: guardrails-check.sh [--json] [--local-only] [--self-test]
 
-# shellcheck source-path=SCRIPTDIR source=lib/agent-common.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/agent-common.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 AS_JSON=""
 LOCAL_ONLY=0
@@ -79,7 +79,7 @@ if [ "$SELF_TEST" = "1" ]; then
     # Build a tree that differs from this one in exactly one way: the guardrail is
     # gone. Copying only part of the repo would leave other checks skipping for
     # lack of a subject, and then a pass could not be attributed to the removal.
-    cp -r .github config scripts "$tmp/" 2>/dev/null || true
+    cp -r .github config scripts infrastructure "$tmp/" 2>/dev/null || true
     rm -f "$tmp/.github/CODEOWNERS"
 
     # Sanity-check the control case first. If the script does not pass on the
@@ -115,10 +115,21 @@ info "CODEOWNERS is in force on the paths where agent autonomy is dangerous (§9
 if [ ! -f .github/CODEOWNERS ]; then
     violation ".github/CODEOWNERS is absent — write access to a workflow is write access to deployment credentials (G-048)"
 else
-    # §9.6 names these four paths specifically. The workflow directory matters
-    # most: CI holds deployment credentials, so an agent able to modify workflows
-    # unreviewed can exfiltrate them.
-    for path in '/.github/workflows/' '/infrastructure/' '/scripts/bootstrap' '/docs/security/'; do
+    # Each of these is a path through which an unreviewed change reaches
+    # deployment credentials or user data. The workflow directory matters most:
+    # CI holds the deploy role, so an agent able to modify a workflow unreviewed
+    # can exfiltrate a session for it.
+    #
+    # Every entry is also asserted to EXIST. The previous list required
+    # /docs/security/, a directory this repository has never had, so the check
+    # failed for a reason no operator could act on — and, because it could never
+    # pass, no workflow ran it. A required path that does not exist is a
+    # requirement nobody has read.
+    for path in '/.github/workflows/' '/infrastructure/' '/scripts/' '/config/instances/'; do
+        if [ ! -e ".${path}" ]; then
+            violation "CODEOWNERS requires coverage of ${path}, which does not exist in this repository — fix the list or restore the path"
+            continue
+        fi
         if ! grep -qF -- "$path" .github/CODEOWNERS; then
             violation "CODEOWNERS does not cover $path (§9.6)"
         fi
@@ -157,18 +168,46 @@ while IFS= read -r file; do
 done < <(tracked_files 2>/dev/null)
 
 info "every provider secret is referenced by path, not value (§9.4)"
-# One file at a time: yq emits a '---' document separator between inputs when
-# given several files, and those separators would be read as secret_ref values.
-for cfg in config/instances/*.yaml; do
-    [ -f "$cfg" ] || continue
-    while IFS= read -r ref; do
+# Parsed with python3 + PyYAML rather than yq. yq was an undeclared dependency:
+# it is not installed on a stock GitHub runner, and the call site swallowed its
+# absence with `2>/dev/null || true`, so on any machine without yq this loop
+# iterated over nothing and the check passed while inspecting no files at all.
+# A missing parser is now reported as UNVERIFIED, which is what it is.
+if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    unverified "instance config secret_ref: python3 with PyYAML is unavailable (pip install pyyaml)"
+else
+    while IFS=$'\t' read -r cfg ref; do
+        [ -n "$cfg" ] || continue
         case "$ref" in
             /*) ;;
-            null | '') ;;
             *) violation "$cfg: secret_ref '$ref' is not an absolute SSM path — secrets are referenced by path, never by value (§7.4, §9.4)" ;;
         esac
-    done < <(yq -r '.. | select(type == "!!map" and has("secret_ref")) | .secret_ref' "$cfg" 2>/dev/null || true)
-done
+    done < <(
+        python3 - config/instances/*.yaml <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+
+def walk(node, path):
+    if isinstance(node, dict):
+        if "secret_ref" in node:
+            print(f"{path}\t{node['secret_ref']}")
+        for value in node.values():
+            walk(value, path)
+    elif isinstance(node, list):
+        for value in node:
+            walk(value, path)
+
+
+for name in sys.argv[1:]:
+    p = pathlib.Path(name)
+    if p.is_file():
+        walk(yaml.safe_load(p.read_text()) or {}, name)
+PY
+    )
+fi
 
 # ---------------------------------------------------------------------------
 # REMOTE: needs AWS or GitHub API access
@@ -255,7 +294,14 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     fi
 
     info "branch protection is in force on main (§9.6)"
-    if prot="$(gh api "repos/vppillai/chintan/branches/main/protection" 2>/dev/null)"; then
+    # Resolved, not hardcoded. This read `repos/vppillai/chintan` literally, so on
+    # a fork it reported the upstream's protection — or, more often, an
+    # unverified skip caused by a 404 on someone else's repository, which reads
+    # like "not configured" rather than "asked the wrong question".
+    repo_slug="$(github_repo 2>/dev/null || printf '')"
+    if [ -z "$repo_slug" ]; then
+        unverified "branch protection: cannot resolve the repository (set GITHUB_REPOSITORY or run inside a gh-authenticated clone)"
+    elif prot="$(gh api "repos/${repo_slug}/branches/main/protection" 2>/dev/null)"; then
         for field in 'required_pull_request_reviews' 'required_status_checks'; do
             if ! printf '%s' "$prot" | jq -e ".$field" >/dev/null 2>&1; then
                 # Required from Phase 2 (§0.5); reported as unverified rather

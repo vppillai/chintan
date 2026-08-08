@@ -1,205 +1,570 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# The single shared library for every script in scripts/.
+#
+# Sourced, never executed.
+#
+# This file is the merge of what used to be two mutually incompatible libraries:
+# lib/common.sh (log_info/DRY_RUN/execute_cmd+eval) and lib/agent-common.sh
+# (info/APPLY/confirm_apply). Two libraries meant two conventions for the same
+# thing, and every script picked one at random — which is how teardown.sh came to
+# export SKIP_CONFIRMATION for a cleanup-aws.sh that never read it.
+#
+# The conventions that survived, and why:
+#
+#   APPLY=0 is the default          A mistaken invocation prints a plan instead of
+#                                   destroying data. v1 got this right in four
+#                                   scripts and it is kept verbatim.
+#   run() takes argv, not a string  execute_cmd built a command string and eval'd
+#                                   it, so every interpolated bucket name, ARN and
+#                                   instance name was an injection surface. Nothing
+#                                   in this file calls eval.
+#   Diagnostics go to stderr        so --json output on stdout stays parseable.
+#
+# shellcheck shell=bash
 
-# Common utilities for Chintan ops scripts
+# Guard against double-sourcing, which would reset counters mid-run.
+if [ -n "${CHINTAN_COMMON_SOURCED:-}" ]; then
+    return 0
+fi
+CHINTAN_COMMON_SOURCED=1
+
 set -euo pipefail
 
-# Colors for output
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly NC='\033[0m' # No Color
+# ---------------------------------------------------------------------------
+# Paths and identifiers
+# ---------------------------------------------------------------------------
 
-# Chintan resource prefix
-readonly CHINTAN_PREFIX="chintan-"
-readonly CHINTAN_BOOTSTRAP_STACK="${CHINTAN_PREFIX}bootstrap"
+# REPO_ROOT is resolved from this file's location, so a script works regardless
+# of the directory it was invoked from. Every path in every script is built from
+# this rather than from $PWD.
+CHINTAN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${CHINTAN_REPO_ROOT:-}" ]; then
+    # Explicit override, for tests that need to run a check against a doctored
+    # tree — guardrails-check.sh --self-test proves it fails when a guardrail is
+    # removed, which requires pointing it at a tree that is missing one. Not for
+    # ordinary use.
+    REPO_ROOT="$(cd "$CHINTAN_REPO_ROOT" && pwd)"
+else
+    REPO_ROOT="$(cd "${CHINTAN_LIB_DIR}/../.." && pwd)"
+fi
+export REPO_ROOT
 
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $*" >&2
+# The frozen system identifier. Every physical resource this project creates is
+# named chintan-*, and every enumeration in this file is anchored on it.
+SYSTEM_ID="chintan"
+CHINTAN_PREFIX="${SYSTEM_ID}-"
+CHINTAN_BOOTSTRAP_STACK="${CHINTAN_PREFIX}bootstrap"
+export SYSTEM_ID CHINTAN_PREFIX CHINTAN_BOOTSTRAP_STACK
+
+# The environments a stack name may end in. Stack naming is
+# chintan-<instance>-<environment>, unified across the scripts and the workflows;
+# v1 had the scripts assume chintan-<instance> while CI deployed
+# chintan-<instance>-prod, so teardown derived the instance name "dev-prod" and
+# deleted SSM parameters under a path that had never existed.
+CHINTAN_ENVIRONMENTS="prod staging dev"
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+# Colour only when attached to a terminal. CI logs are not a terminal, and
+# escape codes in a CI log make a failure harder to read, not easier.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RED=$'\033[31m'
+    C_GREEN=$'\033[32m'
+    C_YELLOW=$'\033[33m'
+    C_DIM=$'\033[2m'
+    C_BOLD=$'\033[1m'
+    C_OFF=$'\033[0m'
+else
+    C_RED=''
+    C_GREEN=''
+    C_YELLOW=''
+    C_DIM=''
+    C_BOLD=''
+    C_OFF=''
+fi
+
+log() { printf '%s\n' "$*" >&2; }
+info() { printf '%s==>%s %s\n' "$C_BOLD" "$C_OFF" "$*" >&2; }
+warn() { printf '%swarning:%s %s\n' "$C_YELLOW" "$C_OFF" "$*" >&2; }
+err() { printf '%serror:%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; }
+ok() { printf '%s  ok%s %s\n' "$C_GREEN" "$C_OFF" "$*" >&2; }
+dim() { printf '%s%s%s\n' "$C_DIM" "$*" "$C_OFF" >&2; }
+
+die() {
+    err "$*"
+    exit 1
 }
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*" >&2
+# ---------------------------------------------------------------------------
+# Violation accumulation
+# ---------------------------------------------------------------------------
+#
+# Checks report every violation rather than stopping at the first. An operator
+# fixing a config or a template should see the whole list, not discover the next
+# problem after each push.
+
+VIOLATION_COUNT=0
+VIOLATIONS=()
+
+violation() {
+    VIOLATION_COUNT=$((VIOLATION_COUNT + 1))
+    VIOLATIONS+=("$1")
+    printf '%s  FAIL%s %s\n' "$C_RED" "$C_OFF" "$1" >&2
 }
 
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $*" >&2
-}
+# finish_check prints a summary and exits with 0 or 1.
+#
+# Takes the check's name and, optionally, "--json" to emit a machine-readable
+# result instead of prose.
+finish_check() {
+    local name="$1" as_json="${2:-}"
 
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $*" >&2
-}
-
-# Check if we're in dry-run mode
-is_dry_run() {
-    [[ "${DRY_RUN:-}" == "true" ]]
-}
-
-# Execute command with dry-run support
-execute_cmd() {
-    local cmd="$1"
-    if is_dry_run; then
-        log_info "[DRY-RUN] Would execute: $cmd"
-    else
-        log_info "Executing: $cmd"
-        eval "$cmd"
+    if [ "$as_json" = "--json" ]; then
+        # Build the array with jq rather than string concatenation so a
+        # violation containing a quote cannot produce invalid JSON.
+        local arr='[]'
+        if [ "$VIOLATION_COUNT" -gt 0 ]; then
+            arr="$(printf '%s\n' "${VIOLATIONS[@]}" | jq -R . | jq -sc .)"
+        fi
+        jq -nc \
+            --arg check "$name" \
+            --argjson ok "$([ "$VIOLATION_COUNT" -eq 0 ] && echo true || echo false)" \
+            --argjson violations "$arr" \
+            '{check: $check, ok: $ok, violation_count: ($violations|length), violations: $violations}'
     fi
-}
 
-# Check if AWS CLI is available and configured
-check_aws_cli() {
-    if ! command -v aws &> /dev/null; then
-        log_error "AWS CLI is not installed. Please install it first."
-        exit 1
-    fi
-    
-    if ! aws sts get-caller-identity &> /dev/null; then
-        log_error "AWS CLI is not configured or credentials are invalid."
-        exit 1
-    fi
-}
-
-# Get AWS account ID
-get_aws_account_id() {
-    aws sts get-caller-identity --query Account --output text
-}
-
-# Check if GitHub CLI is available
-check_gh_cli() {
-    if ! command -v gh &> /dev/null; then
-        log_error "GitHub CLI is not installed. Please install it first."
-        exit 1
-    fi
-    
-    if ! gh auth status &> /dev/null; then
-        log_error "GitHub CLI is not authenticated. Please run 'gh auth login' first."
-        exit 1
-    fi
-}
-
-# Get GitHub repository info
-get_github_repo_info() {
-    if ! gh repo view --json name,owner &> /dev/null; then
-        log_error "Not in a GitHub repository or repository not found."
-        exit 1
-    fi
-    
-    local repo_json
-    repo_json=$(gh repo view --json name,owner)
-    local repo_name
-    repo_name=$(echo "$repo_json" | jq -r '.name')
-    local repo_owner
-    repo_owner=$(echo "$repo_json" | jq -r '.owner.login')
-    
-    echo "${repo_owner}/${repo_name}"
-}
-
-# Check if CloudFormation stack exists
-stack_exists() {
-    local stack_name="$1"
-    aws cloudformation describe-stacks --stack-name "$stack_name" &> /dev/null
-}
-
-# Wait for CloudFormation stack operation to complete
-wait_for_stack() {
-    local stack_name="$1"
-    local operation="${2:-}"
-    
-    log_info "Waiting for stack $stack_name to complete..."
-    
-    if [[ -n "$operation" ]]; then
-        aws cloudformation wait "$operation" --stack-name "$stack_name"
-    else
-        # Determine the operation based on stack status
-        local status
-        status=$(aws cloudformation describe-stacks --stack-name "$stack_name" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo "NOT_EXISTS")
-        
-        case "$status" in
-            *CREATE_IN_PROGRESS*)
-                aws cloudformation wait stack-create-complete --stack-name "$stack_name"
-                ;;
-            *UPDATE_IN_PROGRESS*)
-                aws cloudformation wait stack-update-complete --stack-name "$stack_name"
-                ;;
-            *DELETE_IN_PROGRESS*)
-                aws cloudformation wait stack-delete-complete --stack-name "$stack_name"
-                ;;
-        esac
-    fi
-}
-
-# List all Chintan stacks
-list_chintan_stacks() {
-    local region="${1:-}"
-    local aws_cmd="aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE"
-    
-    if [[ -n "$region" ]]; then
-        aws_cmd="$aws_cmd --region $region"
-    fi
-    
-    $aws_cmd --query "StackSummaries[?starts_with(StackName, \`$CHINTAN_PREFIX\`)].{Name:StackName,Status:StackStatus,Created:CreationTime}" --output table
-}
-
-# Delete S3 bucket versions and contents
-empty_s3_bucket() {
-    local bucket_name="$1"
-    
-    if ! aws s3api head-bucket --bucket "$bucket_name" &> /dev/null; then
-        log_warn "Bucket $bucket_name does not exist or is not accessible"
+    if [ "$VIOLATION_COUNT" -eq 0 ]; then
+        ok "$name"
         return 0
     fi
-    
-    log_info "Emptying S3 bucket: $bucket_name"
-    
-    # Delete all versions and delete markers
-    execute_cmd "aws s3api delete-objects --bucket '$bucket_name' --delete \"\$(aws s3api list-object-versions --bucket '$bucket_name' --output json | jq '{Objects: [.Versions[]?, .DeleteMarkers[]?] | map({Key:.Key, VersionId:.VersionId}) | map(select(.VersionId != null)), Quiet: false}')\""
-    
-    # Delete remaining objects (if any)
-    execute_cmd "aws s3 rm s3://$bucket_name --recursive"
+    err "$name: $VIOLATION_COUNT violation(s)"
+    exit 1
 }
 
-# Validate instance name
+# ---------------------------------------------------------------------------
+# File selection
+# ---------------------------------------------------------------------------
+
+# tracked_files lists every file in the worktree that git does not ignore, so
+# generated artifacts, vendored code, and node_modules never reach a check. Falls
+# back to find when git is unavailable (a source tarball, or a container without
+# the repo's .git).
+#
+# --cached --others --exclude-standard, NOT a bare `ls-files`. A bare `ls-files`
+# lists only COMMITTED files, which quietly makes a check unable to see the change
+# being checked.
+tracked_files() {
+    local out=""
+    if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        out="$(git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard "$@" 2>/dev/null || true)"
+    fi
+
+    # Fall back to the filesystem when git has nothing to report. This is not
+    # only for a source tarball: `git ls-files` is also empty on a repository
+    # with no commits yet, and a check that iterates over an empty list PASSES
+    # VACUOUSLY.
+    if [ -z "$out" ]; then
+        local patterns=("$@")
+        if [ "${#patterns[@]}" -eq 0 ]; then
+            out="$(cd "$REPO_ROOT" && find . -type f \
+                -not -path './.git/*' -not -path './build/*' \
+                -not -path './frontend/node_modules/*' -not -path './frontend/dist/*' |
+                sed 's|^\./||')"
+        else
+            local pat found=""
+            for pat in "${patterns[@]}"; do
+                # Translate a git pathspec glob into a find -path pattern.
+                found="$(cd "$REPO_ROOT" && find . -type f -path "./${pat//\*\*\//}" \
+                    -not -path './.git/*' 2>/dev/null | sed 's|^\./||' || true)"
+                [ -n "$found" ] && out="${out}${found}"$'\n'
+            done
+            # A '**' pattern needs a recursive match as well as the literal one.
+            for pat in "${patterns[@]}"; do
+                case "$pat" in
+                    *'**'*)
+                        local suffix="${pat##*/}"
+                        local prefix="${pat%%/**}"
+                        found="$(cd "$REPO_ROOT" && find "./$prefix" -type f -name "$suffix" \
+                            2>/dev/null | sed 's|^\./||' || true)"
+                        [ -n "$found" ] && out="${out}${found}"$'\n'
+                        ;;
+                esac
+            done
+        fi
+    fi
+
+    # Dedupe and sort: the fallback runs several overlapping patterns, and a file
+    # listed twice makes a check report the same violation twice.
+    printf '%s' "$out" | grep -v '^$' | LC_ALL=C sort -u || true
+}
+
+# shell_files lists every shell script, which is what shellcheck and shfmt run
+# over. Selected by path and extension rather than by shebang scan, so a new
+# script in scripts/ is covered the moment it is added.
+shell_files() {
+    tracked_files 'scripts/**/*.sh' 'scripts/*.sh' 2>/dev/null |
+        grep -v '^scripts/test/fake-aws/' || true
+}
+
+# ---------------------------------------------------------------------------
+# Dry-run execution
+# ---------------------------------------------------------------------------
+
+# APPLY is the one dry-run switch. 0 (the default) prints the plan; 1 executes.
+: "${APPLY:=0}"
+
+is_apply() { [ "${APPLY:-0}" = "1" ]; }
+
+# run executes a command, or prints it when APPLY is not 1.
+#
+# It takes the command as separate arguments and invokes it directly. Its
+# predecessor, execute_cmd, took a single string and eval'd it, which meant a
+# bucket name or ARN interpolated into that string was executed as shell source.
+# printf %q is used for the *display* only, so what is printed can be pasted into
+# a terminal without changing what is run.
+run() {
+    if ! is_apply; then
+        dim "  would run: $(quoted_cmd "$@")"
+        return 0
+    fi
+    dim "  + $(quoted_cmd "$@")"
+    "$@"
+}
+
+quoted_cmd() {
+    local out=""
+    local a
+    for a in "$@"; do
+        out+="$(printf '%q' "$a") "
+    done
+    printf '%s' "${out% }"
+}
+
+# confirm_apply implements the convention that matters most for agent safety:
+# --dry-run is the DEFAULT for anything destructive or costly, and --apply
+# executes.
+#
+# Usage: confirm_apply "$APPLY" "delete 412 objects"
+confirm_apply() {
+    local apply="$1" description="$2"
+    if [ "$apply" != "1" ]; then
+        log ""
+        info "DRY RUN — nothing was changed."
+        dim "  Would: ${description}"
+        dim "  Re-run with --apply to execute."
+        return 1
+    fi
+    return 0
+}
+
+# confirm_destructive asks for an explicit typed phrase before a destructive
+# --apply run.
+#
+# ASSUME_YES (set by --yes, and exported by teardown.sh so a nested cleanup run
+# does not stop to ask again) skips the prompt. Without a TTY and without
+# ASSUME_YES it FAILS rather than blocking: v1 read from stdin unconditionally,
+# so an automated teardown hung forever on a prompt nobody could see.
+confirm_destructive() {
+    local phrase="$1"
+    shift
+    local line
+    for line in "$@"; do
+        warn "$line"
+    done
+
+    if [ "${ASSUME_YES:-0}" = "1" ]; then
+        dim "  --yes: skipping the confirmation prompt"
+        return 0
+    fi
+
+    if [ ! -t 0 ]; then
+        err "refusing to run destructively without a terminal and without --yes"
+        err "a prompt on a closed stdin blocks forever; pass --yes if that is what you meant"
+        exit 2
+    fi
+
+    local reply=""
+    printf 'Type %s to confirm: ' "$phrase" >&2
+    read -r reply
+    if [ "$reply" != "$phrase" ]; then
+        info "cancelled"
+        exit 0
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Preconditions
+# ---------------------------------------------------------------------------
+
+require_cmd() {
+    local c
+    for c in "$@"; do
+        command -v "$c" >/dev/null 2>&1 || die "$c is required but not installed"
+    done
+}
+
+require_aws() {
+    require_cmd aws
+    aws_cli sts get-caller-identity >/dev/null 2>&1 ||
+        die "no usable AWS credentials (aws sts get-caller-identity failed)"
+}
+
+require_gh() {
+    require_cmd gh
+    gh auth status >/dev/null 2>&1 || die "gh is not authenticated; run 'gh auth login'"
+}
+
+aws_account_id() { aws_cli sts get-caller-identity --query Account --output text; }
+
+# github_repo returns owner/name, preferring the CI-provided value so the scripts
+# do not need gh in a workflow.
+github_repo() {
+    if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+        printf '%s' "$GITHUB_REPOSITORY"
+        return 0
+    fi
+    require_gh
+    gh repo view --json nameWithOwner --jq .nameWithOwner
+}
+
+# ---------------------------------------------------------------------------
+# AWS
+# ---------------------------------------------------------------------------
+
+# aws_cli wraps the AWS CLI so region handling has one place to live, and so no
+# script has to remember to pass --region. AWS_PAGER is cleared because a script
+# that opens a pager in CI hangs.
+aws_cli() {
+    local region="${CHINTAN_REGION:-${AWS_REGION:-}}"
+    if [ -n "$region" ]; then
+        AWS_PAGER='' command aws --region "$region" "$@"
+    else
+        AWS_PAGER='' command aws "$@"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Naming
+# ---------------------------------------------------------------------------
+
 validate_instance_name() {
     local name="$1"
-    
-    if [[ ! "$name" =~ ^[a-z0-9-]+$ ]]; then
-        log_error "Instance name must contain only lowercase letters, numbers, and hyphens"
-        exit 1
-    fi
-    
-    if [[ ${#name} -gt 32 ]]; then
-        log_error "Instance name must be 32 characters or less"
-        exit 1
-    fi
+    [[ "$name" =~ ^[a-z0-9-]+$ ]] ||
+        die "instance name '$name' must contain only lowercase letters, numbers and hyphens"
+    [ "${#name}" -le 32 ] || die "instance name '$name' must be 32 characters or less"
 }
 
-# Parse command line arguments for dry-run
-parse_dry_run_args() {
-    DRY_RUN="true"  # Default to dry-run
-    
-    for arg in "$@"; do
-        case "$arg" in
-            --apply)
-                DRY_RUN="false"
-                ;;
-            --dry-run)
-                DRY_RUN="true"
-                ;;
-        esac
+validate_environment() {
+    local env="$1" e
+    for e in $CHINTAN_ENVIRONMENTS; do
+        [ "$env" = "$e" ] && return 0
     done
-    
-    export DRY_RUN
+    die "environment '$env' must be one of: $CHINTAN_ENVIRONMENTS"
 }
 
-# Show usage for dry-run scripts
-show_dry_run_usage() {
-    local script_name="$1"
-    shift
-    echo "Usage: $script_name $* [--dry-run|--apply]"
-    echo
-    echo "Options:"
-    echo "  --dry-run    Show what would be done without making changes (default)"
-    echo "  --apply      Actually perform the operations"
-    echo
+# stack_name is the single definition of the naming scheme. Everything —
+# bootstrap.sh, deploy.sh, cleanup-aws.sh, teardown.sh and both workflows —
+# derives its stack name from here or from the identical expression in YAML.
+stack_name() {
+    local instance="$1" env="$2"
+    validate_instance_name "$instance"
+    validate_environment "$env"
+    printf '%s%s-%s' "$CHINTAN_PREFIX" "$instance" "$env"
+}
+
+# parse_stack_name is the inverse, and it refuses to guess. Given
+# chintan-dev-prod it sets STACK_INSTANCE=dev and STACK_ENV=prod; given anything
+# that is not chintan-<instance>-<known environment> it returns 1 so the caller
+# can skip the stack rather than invent an instance name for it.
+STACK_INSTANCE=""
+STACK_ENV=""
+parse_stack_name() {
+    local stack="$1" rest env matched=0 e
+    case "$stack" in
+        "$CHINTAN_PREFIX"*) ;;
+        *) return 1 ;;
+    esac
+    rest="${stack#"$CHINTAN_PREFIX"}"
+    env="${rest##*-}"
+    for e in $CHINTAN_ENVIRONMENTS; do
+        [ "$env" = "$e" ] && matched=1
+    done
+    [ "$matched" = "1" ] || return 1
+    [ "$rest" != "$env" ] || return 1
+    STACK_INSTANCE="${rest%-*}"
+    # shellcheck disable=SC2034  # read by callers, not by this file.
+    STACK_ENV="$env"
+    [ -n "$STACK_INSTANCE" ] || return 1
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# CloudFormation
+# ---------------------------------------------------------------------------
+
+stack_exists() {
+    aws_cli cloudformation describe-stacks --stack-name "$1" >/dev/null 2>&1
+}
+
+stack_output() {
+    local stack="$1" key="$2"
+    aws_cli cloudformation describe-stacks --stack-name "$stack" \
+        --query "Stacks[0].Outputs[?OutputKey=='${key}'].OutputValue" --output text
+}
+
+wait_for_stack() {
+    local stack="$1" op="${2:-}"
+    if [ -z "$op" ]; then
+        local status
+        status="$(aws_cli cloudformation describe-stacks --stack-name "$stack" \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NOT_EXISTS)"
+        case "$status" in
+            *CREATE_IN_PROGRESS*) op="stack-create-complete" ;;
+            *UPDATE_IN_PROGRESS*) op="stack-update-complete" ;;
+            *DELETE_IN_PROGRESS*) op="stack-delete-complete" ;;
+            *) return 0 ;;
+        esac
+    fi
+    info "waiting for $stack ($op)"
+    aws_cli cloudformation wait "$op" --stack-name "$stack"
+}
+
+# list_chintan_stacks lists stack NAMES only. Enumerating stacks by prefix is
+# safe; enumerating *resources* by prefix is not, which is why nothing else in
+# this library does it. Every resource acted on below is discovered through
+# describe-stack-resources on a named stack.
+list_chintan_stacks() {
+    aws_cli cloudformation list-stacks \
+        --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE \
+        UPDATE_ROLLBACK_COMPLETE IMPORT_COMPLETE UPDATE_ROLLBACK_FAILED \
+        --query "StackSummaries[?starts_with(StackName, \`${CHINTAN_PREFIX}\`)].StackName" \
+        --output text | tr '\t' '\n' | grep -v '^$' || true
+}
+
+# stack_resources_of_type prints the physical IDs of every resource of a given
+# type that BELONGS TO the named stack.
+#
+# This function is the whole fix for the teardown blast radius. v1 answered
+# "which buckets should I empty?" with `s3api list-buckets | starts_with(chintan-)`,
+# which matches chintan-cloudtrail-<account>-<region> — the audit bucket
+# bootstrap-agent.sh creates precisely so that a destructive action is
+# attributable. Teardown's first act was to destroy the record of it.
+stack_resources_of_type() {
+    local stack="$1" type="$2"
+    aws_cli cloudformation describe-stack-resources --stack-name "$stack" \
+        --query "StackResources[?ResourceType=='${type}'].PhysicalResourceId" \
+        --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+}
+
+# ---------------------------------------------------------------------------
+# Protected resources
+# ---------------------------------------------------------------------------
+
+# Even stack-scoped, a destructive helper is given one more guard: the audit
+# trail is never a legitimate target, and a bucket carrying Protected=true has
+# been marked by a human as not-to-be-deleted. Belt and braces, because the cost
+# of being wrong here is losing the evidence of having been wrong.
+assert_not_protected_bucket() {
+    local bucket="$1"
+    case "$bucket" in
+        "${CHINTAN_PREFIX}cloudtrail-"*)
+            die "refusing to touch $bucket: it is the CloudTrail audit bucket created by scripts/bootstrap-agent.sh"
+            ;;
+    esac
+    local tags
+    tags="$(aws_cli s3api get-bucket-tagging --bucket "$bucket" --output json 2>/dev/null || echo '{}')"
+    if printf '%s' "$tags" | jq -e '.TagSet[]? | select(.Key=="Protected" and .Value=="true")' >/dev/null 2>&1; then
+        die "refusing to touch $bucket: it is tagged Protected=true"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# S3
+# ---------------------------------------------------------------------------
+
+# empty_s3_bucket deletes every object version and delete marker in a bucket.
+#
+# Two defects in the v1 implementation are fixed here.
+#
+#   1. It piped the output of list-object-versions straight into delete-objects.
+#      On an already-empty bucket that produces {"Objects": []}, which the CLI
+#      rejects — and under `set -euo pipefail` the rejection killed teardown
+#      mid-run, after some resources were gone and before others were. The loop
+#      below breaks on an empty page and never calls delete-objects with nothing.
+#
+#   2. list-object-versions returns at most 1000 keys, and v1 called it once. A
+#      bucket of audio recordings exceeds that on the first day. The loop re-lists
+#      after each delete — the deleted versions are gone, so the next page is the
+#      next 1000 — and terminates when nothing is left.
+empty_s3_bucket() {
+    local bucket="$1"
+    assert_not_protected_bucket "$bucket"
+
+    if ! aws_cli s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+        dim "  bucket $bucket does not exist or is not accessible"
+        return 0
+    fi
+
+    if ! is_apply; then
+        local count
+        count="$(aws_cli s3api list-object-versions --bucket "$bucket" --output json 2>/dev/null |
+            jq '[.Versions[]?, .DeleteMarkers[]?] | length' 2>/dev/null || echo 0)"
+        dim "  would empty s3://$bucket (at least $count object version(s))"
+        return 0
+    fi
+
+    info "emptying s3://$bucket"
+    local payload tmp n total=0
+    tmp="$(mktemp)"
+    # shellcheck disable=SC2064  # $tmp must be expanded now, not at trap time.
+    trap "rm -f '$tmp'" RETURN
+
+    while :; do
+        payload="$(aws_cli s3api list-object-versions --bucket "$bucket" \
+            --max-items 1000 --output json 2>/dev/null || echo '{}')"
+        printf '%s' "$payload" | jq -c \
+            '{Objects: ([.Versions[]?, .DeleteMarkers[]?]
+                        | map({Key, VersionId})
+                        | map(select(.VersionId != null))),
+              Quiet: true}' >"$tmp"
+        n="$(jq '.Objects | length' <"$tmp")"
+        if [ "$n" -eq 0 ]; then
+            break
+        fi
+        aws_cli s3api delete-objects --bucket "$bucket" --delete "file://$tmp" >/dev/null
+        total=$((total + n))
+        dim "  deleted $total object version(s) so far"
+    done
+
+    ok "emptied s3://$bucket ($total object version(s))"
+}
+
+delete_s3_bucket() {
+    local bucket="$1"
+    assert_not_protected_bucket "$bucket"
+    if ! aws_cli s3api head-bucket --bucket "$bucket" >/dev/null 2>&1; then
+        dim "  bucket $bucket already gone"
+        return 0
+    fi
+    empty_s3_bucket "$bucket"
+    run aws_cli s3api delete-bucket --bucket "$bucket"
+}
+
+# ---------------------------------------------------------------------------
+# Usage conventions
+# ---------------------------------------------------------------------------
+
+# usage_from_header prints the leading comment block of the calling script as its
+# --help text, so the documentation and the help output cannot drift apart.
+#
+# It reads to the end of the block rather than to a fixed line number: a hardcoded
+# range silently truncates --help the first time someone adds a paragraph, and the
+# truncation is invisible unless you already know what the missing text said.
+usage_from_header() {
+    awk 'NR == 1 { next }
+         /^#/    { sub(/^# ?/, ""); print; next }
+                 { exit }' "$1"
 }

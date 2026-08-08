@@ -69,8 +69,8 @@
 #       also create an access key for the CLI user and write it to that path,
 #       mode 600. The value is never printed. Omit to skip key creation.
 
-# shellcheck source-path=SCRIPTDIR source=lib/agent-common.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/agent-common.sh"
+# shellcheck source-path=SCRIPTDIR source=lib/common.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 APPLY=0
 VERIFY_ONLY=0
