@@ -4,6 +4,7 @@ import { Outlet, useLocation } from 'react-router';
 import { ROUTES } from '@/app/routes.ts';
 import { sheetForPath } from '@/app/sheet.ts';
 import { ProgressCard } from '@/features/capture/ProgressCard.tsx';
+import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
@@ -77,7 +78,16 @@ export function AppShell() {
           capture must remain visible after the user navigates away from the
           screen that started it.
         */}
-        {sheet.state !== 'locked' && <ProgressCard />}
+        {sheet.state !== 'locked' && (
+          <>
+            {/*
+              Offered before anything else: a recording stranded by a killed tab
+              is the only artifact in the app that exists in exactly one place.
+            */}
+            <ResumePrompt />
+            <ProgressCard />
+          </>
+        )}
 
         {sheet.state === 'collapsed' && <LibraryStrip />}
         {sheet.state === 'expanded' && <BottomBar />}

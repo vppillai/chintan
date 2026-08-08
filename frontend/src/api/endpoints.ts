@@ -29,6 +29,8 @@ import type {
   SearchHitWire,
   SettingsWire,
   TagWire,
+  WebAuthnOptionsWire,
+  WebAuthnVerifyWire,
 } from './schema.ts';
 
 type Query = NonNullable<RequestOptions['query']>;
@@ -194,6 +196,29 @@ export class ChintanApi {
       `/v1/captures/${encodeURIComponent(captureId)}/download`,
       { query: { kind } },
     );
+  }
+
+  /* ---- Biometric unlock (WebAuthn) ------------------------------------- */
+
+  webauthnStatus(): Promise<{ enrolled: boolean }> {
+    return this.client.request('/v1/auth/webauthn/status');
+  }
+
+  webauthnRegisterOptions(): Promise<WebAuthnOptionsWire> {
+    return this.client.request('/v1/auth/webauthn/register/options', { method: 'POST' });
+  }
+
+  webauthnRegister(body: WebAuthnVerifyWire, idempotencyKey?: string): Promise<void> {
+    return this.client.request('/v1/auth/webauthn/register', {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    });
+  }
+
+  /** Disables biometric unlock and destroys the KMS-sealed token vault. */
+  webauthnDisable(): Promise<void> {
+    return this.client.request('/v1/auth/webauthn', { method: 'DELETE', retry: NO_RETRY });
   }
 
   /* ---- Export --------------------------------------------------------- */
