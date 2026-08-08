@@ -1,0 +1,559 @@
+package handler_test
+
+import (
+	"bufio"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/service"
+)
+
+// docs/api/openapi.yaml is normative: a frontend has been written against it.
+// This file is the check that keeps it honest in both directions — every
+// operation it declares must be routable, and every status code it declares
+// must be one this API can actually produce.
+//
+// Without this, the document is a description of what somebody once intended.
+
+const openAPIPath = "../../../docs/api/openapi.yaml"
+
+// operation is one path+method from the document.
+type operation struct {
+	Method   string
+	Path     string
+	Statuses []int
+}
+
+func (o operation) key() string { return o.Method + " " + o.Path }
+
+// ---------------------------------------------------------------- parsing
+
+var (
+	pathLine   = regexp.MustCompile(`^ {2}(/\S*):\s*$`)
+	methodLine = regexp.MustCompile(`^ {4}(get|put|post|patch|delete|head|options):\s*$`)
+	statusLine = regexp.MustCompile(`^ {8}'(\d{3})':`)
+)
+
+// parseOpenAPI reads the paths section.
+//
+// It is a purpose-built reader rather than a YAML dependency: the shape it
+// needs is three nesting levels deep and fixed by the document's own layout,
+// and a parser small enough to read is a parser that cannot quietly disagree
+// with what the file says.
+func parseOpenAPI(t *testing.T, path string) []operation {
+	t.Helper()
+
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		t.Fatalf("open %s: %v", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	var (
+		ops         []operation
+		currentPath string
+		current     *operation
+		inPaths     bool
+		inResponses bool
+	)
+
+	flush := func() {
+		if current != nil {
+			ops = append(ops, *current)
+			current = nil
+		}
+	}
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case line == "paths:":
+			inPaths = true
+			continue
+		case !inPaths:
+			continue
+		case len(line) > 0 && line[0] != ' ' && strings.HasSuffix(line, ":"):
+			// A new top-level key ends the paths section.
+			flush()
+			inPaths = false
+			continue
+		}
+
+		if m := pathLine.FindStringSubmatch(line); m != nil {
+			flush()
+			currentPath = m[1]
+			inResponses = false
+			continue
+		}
+		if m := methodLine.FindStringSubmatch(line); m != nil {
+			flush()
+			current = &operation{Method: strings.ToUpper(m[1]), Path: currentPath}
+			inResponses = false
+			continue
+		}
+		if strings.HasPrefix(line, "    ") && !strings.HasPrefix(line, "     ") && strings.HasSuffix(line, ":") {
+			// Another key at method depth, such as `parameters:`.
+			flush()
+			inResponses = false
+			continue
+		}
+		if line == "      responses:" {
+			inResponses = true
+			continue
+		}
+		if inResponses && current != nil {
+			if m := statusLine.FindStringSubmatch(line); m != nil {
+				var code int
+				if _, err := fmt.Sscanf(m[1], "%d", &code); err == nil {
+					current.Statuses = append(current.Statuses, code)
+				}
+			}
+		}
+	}
+	flush()
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if len(ops) == 0 {
+		t.Fatalf("no operations parsed from %s; the reader and the document have diverged", path)
+	}
+	return ops
+}
+
+// The parser is itself a thing that can be wrong, so it is checked against
+// operations known to be in the document.
+func TestOpenAPIReaderFindsTheDocument(t *testing.T) {
+	ops := parseOpenAPI(t, openAPIPath)
+	byKey := map[string]operation{}
+	for _, op := range ops {
+		byKey[op.key()] = op
+	}
+
+	for _, want := range []string{
+		"GET /v1/health",
+		"GET /v1/health/ready",
+		"PUT /v1/settings",
+		"POST /v1/notes",
+		"PATCH /v1/notes/{noteId}",
+		"DELETE /v1/notes/{noteId}/permanent",
+		"GET /v1/search",
+		"POST /v1/captures/{captureId}/retry",
+		"GET /v1/export/{exportId}",
+		"DELETE /v1/auth/webauthn",
+	} {
+		if _, ok := byKey[want]; !ok {
+			t.Errorf("the reader did not find %q; every other assertion here is unreliable", want)
+		}
+	}
+
+	retry := byKey["POST /v1/captures/{captureId}/retry"]
+	if !containsInt(retry.Statuses, 202) || !containsInt(retry.Statuses, 429) {
+		t.Errorf("retry statuses = %v, want at least 202 and 429", retry.Statuses)
+	}
+	if len(byKey) < 25 {
+		t.Errorf("parsed %d operations; the document declares many more", len(byKey))
+	}
+}
+
+// ------------------------------------------------------------ routability
+
+// TestEveryDocumentedOperationIsRoutable asserts the router has a handler for
+// every path and method the document declares.
+//
+// An unauthenticated request is enough: reaching authentication means the route
+// exists. A 404 or 405 means the document promises something the router does
+// not serve.
+func TestEveryDocumentedOperationIsRoutable(t *testing.T) {
+	h := newHarness(t)
+
+	for _, op := range parseOpenAPI(t, openAPIPath) {
+		t.Run(op.key(), func(t *testing.T) {
+			path := concretePath(op.Path)
+			if op.Method == http.MethodGet && op.Path == "/v1/search" {
+				path += "?q=x"
+			}
+			if strings.HasSuffix(op.Path, "/download") {
+				path += "?kind=audio"
+			}
+
+			var body any
+			if op.Method == http.MethodPost || op.Method == http.MethodPut || op.Method == http.MethodPatch {
+				body = map[string]any{}
+			}
+			w := h.do(t, op.Method, path, "", body)
+			if w.Code == http.StatusNotFound || w.Code == http.StatusMethodNotAllowed {
+				t.Fatalf("the document declares %s but the router answers %d", op.key(), w.Code)
+			}
+		})
+	}
+}
+
+// concretePath substitutes a sample identifier for every path template.
+func concretePath(p string) string {
+	r := strings.NewReplacer(
+		"{noteId}", "sample-note",
+		"{captureId}", "sample-capture",
+		"{exportId}", "sample-export",
+	)
+	return r.Replace(p)
+}
+
+// ------------------------------------------------------- status reachability
+
+// scenario produces one documented status.
+type scenario func(t *testing.T) int
+
+// TestEveryDocumentedStatusIsReachable runs a scenario for each declared
+// (path, method, status) and asserts it produces that status.
+//
+// A declared status with no scenario fails the test. That is the point: it is
+// how a status somebody added to the document but never implemented — or
+// implemented and then lost — gets noticed.
+func TestEveryDocumentedStatusIsReachable(t *testing.T) {
+	scenarios := statusScenarios()
+
+	for _, op := range parseOpenAPI(t, openAPIPath) {
+		for _, status := range op.Statuses {
+			key := fmt.Sprintf("%s %s -> %d", op.Method, op.Path, status)
+			run, ok := scenarios[key]
+			if !ok {
+				t.Errorf("no scenario proves %s is reachable; add one or stop declaring it", key)
+				continue
+			}
+			t.Run(key, func(t *testing.T) {
+				if got := run(t); got != status {
+					t.Fatalf("scenario produced %d, want the documented %d", got, status)
+				}
+			})
+			delete(scenarios, key)
+		}
+	}
+
+	// A scenario for something the document does not declare means the two have
+	// drifted the other way.
+	if len(scenarios) > 0 {
+		keys := make([]string, 0, len(scenarios))
+		for k := range scenarios {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		t.Errorf("scenarios exist for undocumented outcomes: %v", keys)
+	}
+}
+
+// would hide the thing worth seeing, which is the whole contract at once.
+//
+//nolint:funlen // One table, one entry per documented outcome; splitting it
+func statusScenarios() map[string]scenario {
+	// Each scenario builds its own harness, so one cannot leave state behind
+	// that changes another's answer.
+	get := func(path, user string) scenario {
+		return func(t *testing.T) int {
+			return newHarness(t).do(t, http.MethodGet, path, user, nil).Code
+		}
+	}
+	send := func(method, path, user string, body any) scenario {
+		return func(t *testing.T) int {
+			return newHarness(t).do(t, method, path, user, body).Code
+		}
+	}
+
+	return map[string]scenario{
+		// ---- health
+		"GET /v1/health -> 200":       get("/v1/health", ""),
+		"GET /v1/health/ready -> 200": get("/v1/health/ready", ""),
+		"GET /v1/health/ready -> 503": func(t *testing.T) int {
+			return newHarness(t, withBrokenStore()).do(t, http.MethodGet, "/v1/health/ready", "", nil).Code
+		},
+
+		// ---- settings
+		"GET /v1/settings -> 200": get("/v1/settings", "user1"),
+		"GET /v1/settings -> 401": get("/v1/settings", ""),
+		"PUT /v1/settings -> 200": send(http.MethodPut, "/v1/settings", "user1", map[string]any{"theme": "nocturne"}),
+		"PUT /v1/settings -> 400": send(http.MethodPut, "/v1/settings", "user1", map[string]any{"theme": "puce"}),
+		"PUT /v1/settings -> 401": send(http.MethodPut, "/v1/settings", "", map[string]any{}),
+
+		// ---- notes
+		"GET /v1/notes -> 200":  get("/v1/notes", "user1"),
+		"GET /v1/notes -> 401":  get("/v1/notes", ""),
+		"POST /v1/notes -> 201": send(http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "A note"}),
+		"POST /v1/notes -> 400": send(http.MethodPost, "/v1/notes", "user1", map[string]any{"title": ""}),
+		"POST /v1/notes -> 401": send(http.MethodPost, "/v1/notes", "", map[string]any{"title": "x"}),
+		"POST /v1/notes -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			key := [2]string{"Idempotency-Key", "conflict-key-1"}
+			h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "First"}, key)
+			return h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{"title": "Second"}, key).Code
+		},
+		"POST /v1/notes -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/notes", "user1", map[string]any{
+				"title": "Big", "body": strings.Repeat("x", 1<<20+1),
+			}).Code
+		},
+
+		"GET /v1/notes/{noteId} -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Readable", nil)
+			return h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil).Code
+		},
+		"GET /v1/notes/{noteId} -> 401": get("/v1/notes/whatever", ""),
+		"GET /v1/notes/{noteId} -> 404": get("/v1/notes/missing", "user1"),
+
+		"PATCH /v1/notes/{noteId} -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Editable", nil)
+			return h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+				map[string]any{"version": note.Version, "title": "Edited"}).Code
+		},
+		"PATCH /v1/notes/{noteId} -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Editable", nil)
+			return h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+				map[string]any{"title": "no version"}).Code
+		},
+		"PATCH /v1/notes/{noteId} -> 401": send(http.MethodPatch, "/v1/notes/x", "", map[string]any{"version": 1}),
+		"PATCH /v1/notes/{noteId} -> 404": send(http.MethodPatch, "/v1/notes/missing", "user1", map[string]any{"version": 1}),
+		"PATCH /v1/notes/{noteId} -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Contended", nil)
+			h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+				map[string]any{"version": note.Version, "title": "Winner"})
+			return h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+				map[string]any{"version": note.Version, "title": "Loser"}).Code
+		},
+		"PATCH /v1/notes/{noteId} -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Big", nil)
+			return h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{
+				"version": note.Version, "body": strings.Repeat("x", 1<<20+1),
+			}).Code
+		},
+
+		"DELETE /v1/notes/{noteId} -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Archivable", nil)
+			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil).Code
+		},
+		"DELETE /v1/notes/{noteId} -> 401": send(http.MethodDelete, "/v1/notes/x", "", nil),
+		"DELETE /v1/notes/{noteId} -> 404": send(http.MethodDelete, "/v1/notes/missing", "user1", nil),
+
+		"POST /v1/notes/{noteId}/restore -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Restorable", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/restore", "user1", nil).Code
+		},
+		"POST /v1/notes/{noteId}/restore -> 401": send(http.MethodPost, "/v1/notes/x/restore", "", nil),
+		"POST /v1/notes/{noteId}/restore -> 404": send(http.MethodPost, "/v1/notes/missing/restore", "user1", nil),
+
+		"DELETE /v1/notes/{noteId}/permanent -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Purgeable", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
+			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
+		},
+		"DELETE /v1/notes/{noteId}/permanent -> 401": send(http.MethodDelete, "/v1/notes/x/permanent", "", nil),
+		"DELETE /v1/notes/{noteId}/permanent -> 404": send(http.MethodDelete, "/v1/notes/missing/permanent", "user1", nil),
+		// A cascade that cannot finish fails loudly and leaves the note in
+		// place, rather than reporting success over orphaned audio.
+		"DELETE /v1/notes/{noteId}/permanent -> 500": func(t *testing.T) int {
+			h := newHarness(t, withBrokenObjects())
+			note := h.createNote(t, "user1", "Undeletable", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
+			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
+		},
+
+		"POST /v1/notes/match -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			h.createNote(t, "user1", "Matchable", nil)
+			return h.do(t, http.MethodPost, "/v1/notes/match", "user1", map[string]any{"query": "matchable"}).Code
+		},
+		"POST /v1/notes/match -> 400": send(http.MethodPost, "/v1/notes/match", "user1", map[string]any{"query": ""}),
+		"POST /v1/notes/match -> 401": send(http.MethodPost, "/v1/notes/match", "", map[string]any{"query": "x"}),
+
+		// ---- tags and search
+		"GET /v1/tags -> 200":   get("/v1/tags", "user1"),
+		"GET /v1/tags -> 401":   get("/v1/tags", ""),
+		"GET /v1/search -> 200": get("/v1/search?q=anything", "user1"),
+		"GET /v1/search -> 400": get("/v1/search", "user1"),
+		"GET /v1/search -> 401": get("/v1/search?q=anything", ""),
+
+		// ---- captures
+		"GET /v1/captures -> 200":  get("/v1/captures", "user1"),
+		"GET /v1/captures -> 401":  get("/v1/captures", ""),
+		"POST /v1/captures -> 201": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm"}),
+		"POST /v1/captures -> 400": send(http.MethodPost, "/v1/captures", "user1", map[string]any{}),
+		"POST /v1/captures -> 401": send(http.MethodPost, "/v1/captures", "", map[string]any{"content_type": "audio/webm"}),
+		"POST /v1/captures -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm"}).Code
+		},
+
+		"GET /v1/captures/{captureId} -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			c := h.putCapture(t, model.CaptureIndex{ID: "c_r", UserID: "user1", Status: model.StatusUploaded, CreatedAt: model.Now()})
+			return h.do(t, http.MethodGet, "/v1/captures/"+c.ID, "user1", nil).Code
+		},
+		"GET /v1/captures/{captureId} -> 401": get("/v1/captures/c_1", ""),
+		"GET /v1/captures/{captureId} -> 404": get("/v1/captures/missing", "user1"),
+
+		"POST /v1/captures/{captureId}/target -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Destination", nil)
+			c := h.putCapture(t, model.CaptureIndex{ID: "c_t", UserID: "user1", Status: model.StatusNeedsTarget, CreatedAt: model.Now()})
+			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/target", "user1",
+				map[string]any{"note_id": note.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/target -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			c := h.putCapture(t, model.CaptureIndex{ID: "c_t", UserID: "user1", Status: model.StatusNeedsTarget, CreatedAt: model.Now()})
+			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/target", "user1", map[string]any{}).Code
+		},
+		"POST /v1/captures/{captureId}/target -> 401": send(http.MethodPost, "/v1/captures/c_1/target", "", map[string]any{}),
+		"POST /v1/captures/{captureId}/target -> 404": send(http.MethodPost, "/v1/captures/missing/target", "user1", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/target -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Taken", nil)
+			c := h.putCapture(t, model.CaptureIndex{
+				ID: "c_t", UserID: "user1", NoteID: note.ID, Status: model.StatusCleaned, CreatedAt: model.Now(),
+			})
+			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/target", "user1",
+				map[string]any{"note_id": note.ID}).Code
+		},
+
+		"POST /v1/captures/{captureId}/retry -> 202": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Retryable", nil)
+			c := h.putCapture(t, model.CaptureIndex{
+				ID: "c_retry", UserID: "user1", NoteID: note.ID,
+				Status: model.StatusFailed, CreatedAt: model.Now(),
+			})
+			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/retry", "user1", nil).Code
+		},
+		"POST /v1/captures/{captureId}/retry -> 401": send(http.MethodPost, "/v1/captures/c_1/retry", "", nil),
+		"POST /v1/captures/{captureId}/retry -> 404": send(http.MethodPost, "/v1/captures/missing/retry", "user1", nil),
+		"POST /v1/captures/{captureId}/retry -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			c := h.putCapture(t, model.CaptureIndex{
+				ID: "c_done", UserID: "user1", Status: model.StatusAppended, CreatedAt: model.Now(),
+			})
+			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/retry", "user1", nil).Code
+		},
+		"POST /v1/captures/{captureId}/retry -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/retry", "user1", nil).Code
+		},
+
+		"GET /v1/captures/{captureId}/download -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			c := h.putCapture(t, model.CaptureIndex{
+				ID: "c_dl", UserID: "user1", Status: model.StatusAppended, CreatedAt: model.Now(),
+				AudioKey: "tenants/user1/captures/c_dl/audio.webm",
+			})
+			return h.do(t, http.MethodGet, "/v1/captures/"+c.ID+"/download?kind=audio", "user1", nil).Code
+		},
+		"GET /v1/captures/{captureId}/download -> 401": get("/v1/captures/c_1/download?kind=audio", ""),
+		"GET /v1/captures/{captureId}/download -> 404": get("/v1/captures/missing/download?kind=audio", "user1"),
+
+		// ---- export
+		"POST /v1/export -> 202":           send(http.MethodPost, "/v1/export", "user1", nil),
+		"POST /v1/export -> 401":           send(http.MethodPost, "/v1/export", "", nil),
+		"GET /v1/export/{exportId} -> 401": get("/v1/export/e_1", ""),
+		"GET /v1/export/{exportId} -> 404": get("/v1/export/e_neverissued", "user1"),
+		"GET /v1/export/{exportId} -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			w := h.do(t, http.MethodPost, "/v1/export", "user1", nil)
+			var job struct {
+				ID string `json:"id"`
+			}
+			decodeInto(t, w, &job)
+			return h.do(t, http.MethodGet, "/v1/export/"+job.ID, "user1", nil).Code
+		},
+
+		// ---- biometrics
+		"POST /v1/auth/webauthn/login/options -> 200": send(http.MethodPost, "/v1/auth/webauthn/login/options", "", nil),
+		"POST /v1/auth/webauthn/login/options -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			var code int
+			for i := 0; i < 30; i++ {
+				code = h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil,
+					[2]string{"X-Forwarded-For", "203.0.113.1"}).Code
+				if code == http.StatusTooManyRequests {
+					break
+				}
+			}
+			return code
+		},
+		"POST /v1/auth/webauthn/login/options -> 503": func(t *testing.T) int {
+			return newHarness(t, withoutWebAuthn()).
+				do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil).Code
+		},
+
+		"POST /v1/auth/webauthn/login -> 200": send(http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()),
+		"POST /v1/auth/webauthn/login -> 401": func(t *testing.T) int {
+			h := newHarness(t)
+			h.webauthn.finishLogErr = service.ErrWebAuthnVerification
+			return h.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()).Code
+		},
+		"POST /v1/auth/webauthn/login -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			var code int
+			for i := 0; i < 30; i++ {
+				code = h.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody(),
+					[2]string{"X-Forwarded-For", "203.0.113.2"}).Code
+				if code == http.StatusTooManyRequests {
+					break
+				}
+			}
+			return code
+		},
+		"POST /v1/auth/webauthn/login -> 503": func(t *testing.T) int {
+			return newHarness(t, withoutWebAuthn()).
+				do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()).Code
+		},
+
+		"POST /v1/auth/webauthn/register/options -> 200": send(http.MethodPost, "/v1/auth/webauthn/register/options", "user1", nil),
+		"POST /v1/auth/webauthn/register/options -> 401": send(http.MethodPost, "/v1/auth/webauthn/register/options", "", nil),
+		"POST /v1/auth/webauthn/register/options -> 503": func(t *testing.T) int {
+			return newHarness(t, withoutWebAuthn()).
+				do(t, http.MethodPost, "/v1/auth/webauthn/register/options", "user1", nil).Code
+		},
+
+		"POST /v1/auth/webauthn/register -> 204": send(http.MethodPost, "/v1/auth/webauthn/register", "user1", verifyBody()),
+		"POST /v1/auth/webauthn/register -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			h.webauthn.finishRegErr = service.ErrWebAuthnMissingRefresh
+			return h.do(t, http.MethodPost, "/v1/auth/webauthn/register", "user1", verifyBody()).Code
+		},
+		"POST /v1/auth/webauthn/register -> 401": send(http.MethodPost, "/v1/auth/webauthn/register", "", verifyBody()),
+		"POST /v1/auth/webauthn/register -> 503": func(t *testing.T) int {
+			return newHarness(t, withoutWebAuthn()).
+				do(t, http.MethodPost, "/v1/auth/webauthn/register", "user1", verifyBody()).Code
+		},
+
+		"GET /v1/auth/webauthn/status -> 200": get("/v1/auth/webauthn/status", "user1"),
+		"GET /v1/auth/webauthn/status -> 401": get("/v1/auth/webauthn/status", ""),
+		"DELETE /v1/auth/webauthn -> 204":     send(http.MethodDelete, "/v1/auth/webauthn", "user1", nil),
+		"DELETE /v1/auth/webauthn -> 401":     send(http.MethodDelete, "/v1/auth/webauthn", "", nil),
+	}
+}
+
+func containsInt(values []int, want int) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
