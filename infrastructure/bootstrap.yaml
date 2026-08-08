@@ -138,11 +138,44 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Cognito cannot be prefix-scoped: pool IDs are service-generated,
-              # so there is no ARN to match before the pool exists.
+              # CreateUserPool alone genuinely cannot be scoped: the pool does
+              # not exist yet, so there is no ARN and no tag to match on. The
+              # justification stops there.
+              #
+              # It used to cover this whole block, which meant the deploy role
+              # could Delete, Update or SetMfaConfig on EVERY user pool in the
+              # account: add a permissive callback URL or enable implicit grant
+              # on another app's client, or turn its MFA off. The boundary does
+              # not stop it — its Cognito deny carries
+              # Null aws:ResourceTag/Project = "false", so it only applies to
+              # pools that ALREADY carry a Project tag, and an untagged foreign
+              # pool falls straight through. DeleteUserPool is additionally
+              # permitted when aws:CalledVia is cloudformation, which is exactly
+              # how a deploy runs.
               - Effect: Allow
                 Action:
                   - cognito-idp:CreateUserPool
+                Resource: '*'
+
+              # Read and tag on any pool: CloudFormation describes a pool before
+              # it can know whether it is ours, and TagResource is how a
+              # just-created pool acquires the tag every statement below keys on.
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPool
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:DescribeUserPoolDomain
+                  - cognito-idp:GetUserPoolMfaConfig
+                  - cognito-idp:ListTagsForResource
+                  - cognito-idp:TagResource
+                  - cognito-idp:UntagResource
+                Resource: '*'
+
+              # Everything that MUTATES a pool is confined to pools this project
+              # tagged. template.yaml tags the pool Project=chintan at creation,
+              # so the stack's own updates are unaffected.
+              - Effect: Allow
+                Action:
                   - cognito-idp:DeleteUserPool
                   - cognito-idp:UpdateUserPool
                   - cognito-idp:CreateUserPoolClient
@@ -151,14 +184,10 @@ Resources:
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
                   - cognito-idp:SetUserPoolMfaConfig
-                  - cognito-idp:GetUserPoolMfaConfig
-                  - cognito-idp:DescribeUserPool
-                  - cognito-idp:DescribeUserPoolClient
-                  - cognito-idp:DescribeUserPoolDomain
-                  - cognito-idp:ListTagsForResource
-                  - cognito-idp:TagResource
-                  - cognito-idp:UntagResource
                 Resource: '*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceTag/Project': chintan
 
               - Effect: Allow
                 Action:
@@ -204,27 +233,70 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::chintan-lambda-${AWS::AccountId}-${AWS::Region}/*'
 
-              # CreateKey takes no resource. Everything after it is the key this
-              # stack made, which the account root policy already governs.
+              # "Everything after CreateKey is the key this stack made, which the
+              # account root policy already governs" was wrong, and it was the
+              # widest grant in this file. kms:PutKeyPolicy, ScheduleKeyDeletion,
+              # DisableKeyRotation and DeleteAlias on Resource: '*' meant anyone
+              # who could trigger a deploy — a push to the deploy branch, a
+              # compromised runner, a stolen OIDC subject — could rewrite ANOTHER
+              # project's CMK policy to grant itself kms:Decrypt (a same-account
+              # key policy naming the principal is sufficient authorization) or
+              # schedule that key for deletion.
+              #
+              # The permissions boundary does not contain it either: its ceiling
+              # allows kms:*, its name-prefix deny lists no KMS ARNs, and its
+              # tag-based deny lists no kms:* action. The template header's
+              # "passbook-* is out of reach" holds for every service whose ARNs
+              # are name-prefixed and does NOT hold for KMS, because a CMK ARN is
+              # a UUID.
+              #
+              # So: create and read on '*' — a key that does not exist yet has no
+              # ARN and no tag — and every mutation conditioned on the Project
+              # tag. AWS::KMS::Key passes the template's Tags to CreateKey, so
+              # the key is born tagged and the stack's own updates satisfy this.
               - Effect: Allow
                 Action:
                   - kms:CreateKey
+                  - kms:ListAliases
+                Resource: '*'
+
+              # Read-only. Describing a key is how CloudFormation finds out
+              # whether it is ours in the first place.
+              - Effect: Allow
+                Action:
                   - kms:DescribeKey
                   - kms:GetKeyPolicy
-                  - kms:PutKeyPolicy
                   - kms:GetKeyRotationStatus
+                  - kms:ListResourceTags
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - kms:PutKeyPolicy
                   - kms:EnableKeyRotation
                   - kms:DisableKeyRotation
                   - kms:ScheduleKeyDeletion
                   - kms:CancelKeyDeletion
-                  - kms:ListResourceTags
                   - kms:TagResource
                   - kms:UntagResource
                   - kms:CreateAlias
                   - kms:UpdateAlias
                   - kms:DeleteAlias
-                  - kms:ListAliases
                 Resource: '*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceTag/Project': chintan
+
+              # The alias half of Create/Update/DeleteAlias. Those three
+              # authorize against BOTH the key and the alias, and an alias ARN
+              # carries its name — so unlike the key, it can be prefix-scoped.
+              - Effect: Allow
+                Action:
+                  - kms:CreateAlias
+                  - kms:UpdateAlias
+                  - kms:DeleteAlias
+                Resource:
+                  - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/chintan-*'
 
               - Effect: Allow
                 Action:
@@ -552,6 +624,30 @@ Resources:
                   - cloudformation:GetTemplateSummary
                   - cloudformation:ValidateTemplate
                 Resource: '*'
+
+              # Read-only, so that scripts/check-boundary-drift.sh can compare
+              # the deployed permissions boundary against the repository from a
+              # credentialed job. The boundary is the one guardrail
+              # CloudFormation does not own — bootstrap-agent.sh applies it, and
+              # no deploy runs bootstrap-agent.sh — so the deployed ceiling can
+              # fall behind the template's needs with nothing reporting it. When
+              # that happened, template.yaml's sqs:ReceiveMessage grant was void
+              # and Lambda reported a role that "does not have permissions" for
+              # a grant it visibly held.
+              #
+              # Read only, and it must stay that way: this role carries the
+              # boundary itself, whose DenyModifyingTheGuardrailPoliciesThemselves
+              # statement withholds iam:CreatePolicyVersion and
+              # iam:SetDefaultPolicyVersion on chintan-agent-*. A principal that
+              # can rewrite its own ceiling has no ceiling. The check therefore
+              # reports drift and prints the command a human runs; it cannot
+              # repair it.
+              - Effect: Allow
+                Action:
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-*'
 
               - Effect: Allow
                 Action:
