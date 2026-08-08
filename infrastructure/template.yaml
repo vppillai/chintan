@@ -474,7 +474,24 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub 'Chintan ${InstanceName} Cognito refresh-token vault'
-      EnableKeyRotation: true
+      # Rotation is off by an explicit cost decision, not an oversight.
+      #
+      # KMS bills per key version, so annual rotation adds ~$1/month per retained
+      # version (capped after two). On a single-user instance whose entire idle
+      # bill is this one key, that is the difference between $1 and $3/month by
+      # year three -- see docs/cost-analysis.md.
+      #
+      # What it costs: this key wraps one Cognito refresh token per enrolled
+      # device. Without rotation, a compromise of the key material exposes every
+      # token ever sealed under it rather than only those sealed since the last
+      # rotation. The mitigations that remain are that the key never leaves KMS,
+      # access is restricted to the Lambda execution role, and revoking a
+      # credential (DELETE /v1/auth/webauthn) destroys the vault entry outright.
+      #
+      # Turn this back on before a second real user exists: the blast radius
+      # scales with the number of sealed tokens, and re-enabling is a one-line
+      # in-place update with no re-encryption.
+      EnableKeyRotation: false
       KeyPolicy:
         Version: '2012-10-17'
         Statement:
