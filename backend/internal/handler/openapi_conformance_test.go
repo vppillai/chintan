@@ -689,6 +689,11 @@ func statusScenarios() map[string]scenario {
 			}
 			return code
 		},
+		"POST /v1/auth/webauthn/login/options -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			h.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
+			return h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil).Code
+		},
 		"POST /v1/auth/webauthn/login/options -> 503": func(t *testing.T) int {
 			return newHarness(t, withoutWebAuthn()).
 				do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil).Code

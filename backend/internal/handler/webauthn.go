@@ -36,7 +36,9 @@ var _ WebAuthnAPI = (*service.WebAuthnService)(nil)
 // and saying so is better than a 500 that looks like a fault.
 func (rt *router) available(w http.ResponseWriter, r *http.Request) bool {
 	if rt.WebAuthn == nil {
-		httperr.ServiceUnavailable(w, r, "biometric unlock is not configured on this instance")
+		p := httperr.New(http.StatusServiceUnavailable, "biometric unlock is not configured on this instance")
+		p.Type = httperr.TypeBiometricUnavailable
+		httperr.Write(w, r, p)
 		return false
 	}
 	return true
@@ -129,9 +131,22 @@ func (rt *router) webauthnLoginOptions(w http.ResponseWriter, r *http.Request) {
 	resp, err := rt.WebAuthn.BeginLogin(r.Context())
 	if err != nil {
 		if errors.Is(err, service.ErrWebAuthnNotEnrolled) {
-			// Not enrolled is not a fault and not a probing oracle: it is the
-			// same answer for every caller of this instance.
-			httperr.ServiceUnavailable(w, r, "biometric unlock is not set up on this account")
+			// Not enrolled is not a fault, and 503 was the wrong way to say so.
+			// 503 means "this instance cannot do biometrics at all", which is a
+			// different thing that needs different handling; it also reads as
+			// transient, so a client retries an answer that cannot change until
+			// somebody enrols. And because signing out revokes the credential by
+			// design, it made a permanent loop: sign in, be offered biometric
+			// unlock, fail, forever.
+			//
+			// 404 is the honest code — there is no credential here to log in
+			// with — and it is not a probing oracle. This route is
+			// unauthenticated and BeginLogin is a discoverable-credential login
+			// that names no account, so the answer is identical for every
+			// caller of this instance whatever accounts exist.
+			p := httperr.New(http.StatusNotFound, "no biometric credential is enrolled here")
+			p.Type = httperr.TypeBiometricNotEnrolled
+			httperr.Write(w, r, p)
 			return
 		}
 		httperr.InternalServerError(w, r, err)
@@ -160,7 +175,12 @@ func (rt *router) webauthnLogin(w http.ResponseWriter, r *http.Request) {
 			// can do — the vault was sealed by the retired KMS key and has just
 			// been discarded, so enrolling again is the entire fix.
 			obs.Log(r.Context()).Info("biometric login refused", slog.String("reason", "vault needs re-enrolment"))
-			httperr.Unauthorized(w, r, "biometric unlock must be set up again on this device")
+			// Typed, because the client has to offer re-enrolment here and a
+			// plain sign-in everywhere else 401 is returned. It was telling the
+			// two apart by matching prose against the detail below.
+			p := httperr.New(http.StatusUnauthorized, "biometric unlock must be set up again on this device")
+			p.Type = httperr.TypeBiometricReEnrolmentRequired
+			httperr.Write(w, r, p)
 		case errors.Is(err, service.ErrWebAuthnChallengeNotFound),
 			errors.Is(err, service.ErrWebAuthnVerification),
 			errors.Is(err, service.ErrWebAuthnSubMismatch):

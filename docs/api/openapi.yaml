@@ -510,8 +510,33 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/WebAuthnOptions' }
+        '404':
+          description: |
+            Nothing is enrolled here, so there is no credential to log in with.
+            `type` is `…#biometric-not-enrolled`.
+
+            This is an account fact, not a server fault, and it is deliberately
+            NOT 503: 503 means the instance cannot do biometrics at all, and it
+            reads as transient, so a client retries an answer that cannot change
+            until somebody enrols. Signing out revokes the enrolled credential
+            by design, so 503 here made a permanent loop.
+
+            The response is identical for every caller. This route is
+            unauthenticated and begins a discoverable-credential login that
+            names no account, so nothing about which accounts exist varies it.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        '503':
+          description: |
+            Biometric unlock is not configured on this instance. `type` is
+            `…#biometric-unavailable`. A property of the deployment: enrolling
+            cannot change it, and a client should hide the control rather than
+            offer enrolment.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/auth/webauthn/login:
     post:
@@ -529,7 +554,20 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TokenSet' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401':
+          description: |
+            The assertion was refused, or it verified but the sealed refresh
+            token behind it can no longer be opened.
+
+            The two are told apart by `type`, never by reading `detail`:
+            `…#biometric-re-enrolment-required` means enrolling again on this
+            device is the whole fix, and a client should offer exactly that.
+            Any other 401 here is an ordinary refusal and the client should fall
+            back to password sign-in. Telling them apart by matching the prose
+            in `detail` is one rewording away from doing the wrong thing.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/Unavailable' }
 

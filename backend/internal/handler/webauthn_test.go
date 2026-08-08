@@ -1,11 +1,16 @@
 package handler_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/service"
+
+	"github.com/vppillai/chintan/backend/internal/httperr"
 )
 
 func verifyBody() map[string]any {
@@ -183,4 +188,138 @@ func TestBiometricEnrollmentAndStatus(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Not enrolled is not unavailable
+// ---------------------------------------------------------------------------
+
+// TestNotEnrolledIsNotFoundNotUnavailable is the loop the owner walked into.
+//
+// Signing out revokes the enrolled credential by design. The app then offers
+// "Unlock with biometrics" on the next sign-in, calls this endpoint, and used
+// to get 503 — a code that means "this instance cannot do biometrics", reads as
+// transient, and invites a retry of an answer that cannot change until somebody
+// enrols. Every user, every time, forever.
+func TestNotEnrolledIsNotFoundNotUnavailable(t *testing.T) {
+	h := newHarness(t)
+	h.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
+
+	w := h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d: 503 claims the instance is broken when the account simply has nothing enrolled",
+			w.Code, http.StatusNotFound)
+	}
+	if got := problemType(t, w.Body.Bytes()); got != httperr.TypeBiometricNotEnrolled {
+		t.Errorf("problem type = %q, want %q", got, httperr.TypeBiometricNotEnrolled)
+	}
+}
+
+// TestAnUnconfiguredInstanceIsStillUnavailable keeps the other meaning of 503
+// intact. The two are different facts — one about the deployment, one about
+// what is enrolled — and a client that cannot tell them apart cannot decide
+// between "offer enrolment" and "hide the button".
+func TestAnUnconfiguredInstanceIsStillUnavailable(t *testing.T) {
+	h := newHarness(t, withoutWebAuthn())
+
+	w := h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+	if got := problemType(t, w.Body.Bytes()); got != httperr.TypeBiometricUnavailable {
+		t.Errorf("problem type = %q, want %q", got, httperr.TypeBiometricUnavailable)
+	}
+}
+
+// TestTheThreeBiometricOutcomesAreDistinguishableWithoutReadingProse is the
+// point of typing them. The frontend was telling the re-enrolment case apart by
+// matching /set up again/i against `detail`, which is one rewording — or one
+// translation — away from silently doing the wrong thing.
+func TestTheThreeBiometricOutcomesAreDistinguishableWithoutReadingProse(t *testing.T) {
+	unavailable := newHarness(t, withoutWebAuthn()).
+		do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil)
+
+	notEnrolledHarness := newHarness(t)
+	notEnrolledHarness.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
+	notEnrolled := notEnrolledHarness.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil)
+
+	reEnrolHarness := newHarness(t)
+	reEnrolHarness.webauthn.finishLogErr = service.ErrWebAuthnReEnrolRequired
+	reEnrol := reEnrolHarness.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody())
+
+	seen := map[string]int{}
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"unavailable": unavailable, "not enrolled": notEnrolled, "re-enrolment": reEnrol,
+	} {
+		typ := problemType(t, w.Body.Bytes())
+		if typ == "" || typ == "about:blank" {
+			t.Errorf("%s carries no problem type (%q); a client can only tell it apart by reading English", name, typ)
+		}
+		seen[typ]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("the three outcomes produced %d distinct problem types, want 3: %v", len(seen), seen)
+	}
+	if got := problemType(t, reEnrol.Body.Bytes()); got != httperr.TypeBiometricReEnrolmentRequired {
+		t.Errorf("re-enrolment type = %q, want %q", got, httperr.TypeBiometricReEnrolmentRequired)
+	}
+	if reEnrol.Code != http.StatusUnauthorized {
+		t.Errorf("re-enrolment status = %d, want 401", reEnrol.Code)
+	}
+}
+
+// TestTheNotEnrolledAnswerIsIdenticalForEveryCaller keeps the endpoint from
+// becoming a probing oracle. BeginLogin is a discoverable-credential login on
+// an unauthenticated route: it names no account, so nothing about which
+// accounts exist may vary the response.
+func TestTheNotEnrolledAnswerIsIdenticalForEveryCaller(t *testing.T) {
+	body := func(withAccounts bool) []byte {
+		h := newHarness(t)
+		h.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
+		if withAccounts {
+			// A tenant with data, and therefore an account that plainly exists.
+			h.createNote(t, "user1", "Roof repair", nil)
+		}
+		w := h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", w.Code)
+		}
+		return normaliseProblem(t, w.Body.Bytes())
+	}
+
+	withAccount, withoutAccount := body(true), body(false)
+	if !bytes.Equal(withAccount, withoutAccount) {
+		t.Fatalf("the response differs by whether an account exists:\n with: %s\n none: %s",
+			withAccount, withoutAccount)
+	}
+}
+
+// problemType reads `type` out of a problem+json body.
+func problemType(t *testing.T, raw []byte) string {
+	t.Helper()
+	var p struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("response is not problem+json: %v (%s)", err, raw)
+	}
+	return p.Type
+}
+
+// normaliseProblem drops the one field that legitimately varies between two
+// otherwise identical responses.
+func normaliseProblem(t *testing.T, raw []byte) []byte {
+	t.Helper()
+	var p map[string]any
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("response is not problem+json: %v (%s)", err, raw)
+	}
+	delete(p, "correlation_id")
+	out, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

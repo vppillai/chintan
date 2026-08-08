@@ -73,6 +73,41 @@ const TypeURI = "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.
 // behaviour, and the contract fixtures are what make that visible.
 const TypeSpendCapped = TypeURI + "spend-capped"
 
+// The three biometric-unlock outcomes a client has to tell apart, and cannot
+// tell apart from a status code alone.
+//
+// They exist because the frontend was distinguishing one of them by matching
+// English prose against `detail` — a rewording away from breaking, and unable
+// to survive translation. RFC 9457 makes `type` the machine-readable
+// discriminator for exactly this, and the spend cap above already relies on it.
+//
+// The frontend matches these exact strings. Changing one changes the
+// frontend's behaviour, and the contract fixtures are what make that visible.
+const (
+	// TypeBiometricUnavailable means this INSTANCE has no biometric support
+	// configured. It is a property of the deployment, it is the same for every
+	// caller, and enrolling cannot change it. 503.
+	TypeBiometricUnavailable = TypeURI + "biometric-unavailable"
+
+	// TypeBiometricNotEnrolled means the instance is configured and nothing is
+	// enrolled yet. 404 — there is no credential here to log in with.
+	//
+	// It used to be 503, which was wrong in three ways: it claimed a server
+	// capability problem for what is an account fact, it reads as transient so
+	// generic retry logic hammers an endpoint whose answer cannot change
+	// without a human enrolling, and it made a guaranteed loop — signing out
+	// revokes the credential by design, so every sign-in offered biometric
+	// unlock and every attempt failed, forever.
+	TypeBiometricNotEnrolled = TypeURI + "biometric-not-enrolled"
+
+	// TypeBiometricReEnrolmentRequired means a credential exists and verified,
+	// but the sealed refresh token behind it cannot be opened — it was sealed
+	// by the retired KMS key and has been discarded. Enrolling again is the
+	// entire fix, and it is the one case where telling the caller more is safe,
+	// because reaching it required holding the credential. 401.
+	TypeBiometricReEnrolmentRequired = TypeURI + "biometric-re-enrolment-required"
+)
+
 // Write emits a problem response. It is the only writer of a non-2xx body.
 func Write(w http.ResponseWriter, r *http.Request, p Problem) {
 	if p.Type == "" {

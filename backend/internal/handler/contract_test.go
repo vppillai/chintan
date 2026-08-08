@@ -318,6 +318,26 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"POST /v1/captures → 429 for the daily spend cap, which the client must not treat as a retryable 429.",
 		capped.do(t, http.MethodPost, "/v1/captures", contractUser, map[string]any{"content_type": "audio/webm"}))
 
+	// The three biometric outcomes, as fixtures, because the frontend has to
+	// branch on all three and was branching on English prose. Recording each
+	// response is what stops a `type` string being changed on one side only.
+	notEnrolled := newHarness(t)
+	notEnrolled.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
+	add("problemBiometricNotEnrolled", "ProblemWire",
+		"POST /v1/auth/webauthn/login/options → 404 when nothing is enrolled. Offer enrolment; do not retry.",
+		notEnrolled.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil))
+
+	add("problemBiometricUnavailable", "ProblemWire",
+		"POST /v1/auth/webauthn/login/options → 503 when the instance has no biometric support at all. Hide the control.",
+		newHarness(t, withoutWebAuthn()).
+			do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil))
+
+	reEnrol := newHarness(t)
+	reEnrol.webauthn.finishLogErr = service.ErrWebAuthnReEnrolRequired
+	add("problemBiometricReEnrolment", "ProblemWire",
+		"POST /v1/auth/webauthn/login → 401 when the credential verified but its sealed token cannot be opened. Offer enrolment again, do not fall back to a plain sign-in.",
+		reEnrol.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()))
+
 	return out
 }
 
