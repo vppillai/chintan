@@ -47,10 +47,10 @@ func (q *stubQueue) EnqueueCapture(_ context.Context, tenantID, captureID, reaso
 	return nil
 }
 
-func TestCaptureService_CreateCapture(t *testing.T) {
+func TestCaptureService_BeginCapture(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
-	svc := NewCaptureService(store, objects, nil, nil)
+	svc := NewCaptureService(store, objects)
 
 	note := model.NoteIndex{ID: "note1", Title: "Test Note"}
 	if _, err := store.PutNote(context.Background(), "user1", note); err != nil {
@@ -58,10 +58,11 @@ func TestCaptureService_CreateCapture(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	capture, uploadURL, err := svc.CreateCapture(ctx, "user1", "note1", "audio/wav")
+	created, err := svc.BeginCapture(ctx, "user1", CaptureRequest{NoteID: "note1", ContentType: "audio/wav"})
 	if err != nil {
-		t.Fatalf("CreateCapture failed: %v", err)
+		t.Fatalf("BeginCapture failed: %v", err)
 	}
+	capture, uploadURL := created.Capture, created.Audio.URL
 	if capture.ID == "" {
 		t.Error("Expected capture ID to be set")
 	}
@@ -85,7 +86,7 @@ func TestCaptureService_CreateCapture(t *testing.T) {
 // cannot be expressed and the rule matches this tag instead.
 func TestBeginCaptureRequiresTheRetentionTagOnTheAudioUpload(t *testing.T) {
 	presigner := &recordingPresigner{}
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects(), nil, nil).WithUploads(presigner)
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects()).WithUploads(presigner)
 
 	created, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{
 		ContentType: "audio/webm",
@@ -125,7 +126,7 @@ func TestBeginCaptureRequiresTheRetentionTagOnTheAudioUpload(t *testing.T) {
 }
 
 func TestBeginCaptureRejectsUnsupportedAudio(t *testing.T) {
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects(), nil, nil)
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
 
 	_, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{ContentType: "application/pdf"})
 	if !errors.Is(err, ErrUnsupportedContentType) {
@@ -134,7 +135,7 @@ func TestBeginCaptureRejectsUnsupportedAudio(t *testing.T) {
 }
 
 func TestBeginCaptureRejectsAnOversizeUpload(t *testing.T) {
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects(), nil, nil)
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
 
 	_, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{
 		ContentType: "audio/webm",
@@ -148,7 +149,7 @@ func TestBeginCaptureRejectsAnOversizeUpload(t *testing.T) {
 // The extension decides whether the bucket ever tells the worker the object
 // exists: the notification filters are a fixed list of suffixes.
 func TestBeginCaptureWritesAKeyTheBucketNotifiesOn(t *testing.T) {
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects(), nil, nil)
+	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
 
 	for contentType, wantSuffix := range map[string]string{
 		"audio/webm;codecs=opus": "/audio.webm",
@@ -173,7 +174,7 @@ func TestRetryCaptureEnqueuesRatherThanRunningTheWorkInline(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
 	queue := &stubQueue{}
-	svc := NewCaptureService(store, objects, nil, nil).WithQueue(queue)
+	svc := NewCaptureService(store, objects).WithQueue(queue)
 
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{
@@ -201,7 +202,7 @@ func TestRetryCaptureEnqueuesRatherThanRunningTheWorkInline(t *testing.T) {
 func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
 	store := memory.NewStore()
 	queue := &stubQueue{}
-	svc := NewCaptureService(store, memory.NewObjects(), nil, nil).WithQueue(queue)
+	svc := NewCaptureService(store, memory.NewObjects()).WithQueue(queue)
 
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{
@@ -223,7 +224,7 @@ func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
 // phase removes.
 func TestRetryCaptureFailsLoudlyWithNoQueue(t *testing.T) {
 	store := memory.NewStore()
-	svc := NewCaptureService(store, memory.NewObjects(), nil, nil)
+	svc := NewCaptureService(store, memory.NewObjects())
 
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{
@@ -240,7 +241,7 @@ func TestRetryCaptureFailsLoudlyWithNoQueue(t *testing.T) {
 func TestGetDownloadURLServesTimestampsAndPeaks(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
-	svc := NewCaptureService(store, objects, nil, nil)
+	svc := NewCaptureService(store, objects)
 
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{

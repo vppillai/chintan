@@ -45,7 +45,7 @@ func Auth(v auth.Verifier) func(http.Handler) http.Handler {
 
 			raw, ok := bearerToken(r.Header.Get("Authorization"))
 			if !ok || v == nil {
-				httperr.Unauthorized(w, "authentication required")
+				httperr.Unauthorized(w, r, "authentication required")
 				return
 			}
 
@@ -53,7 +53,7 @@ func Auth(v auth.Verifier) func(http.Handler) http.Handler {
 			if err != nil {
 				// The specific claim that failed goes to logs, never to the
 				// caller: a precise error is a probing oracle.
-				httperr.Unauthorized(w, "authentication required")
+				httperr.Unauthorized(w, r, "authentication required")
 				return
 			}
 

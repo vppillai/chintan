@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
@@ -10,60 +9,65 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// SettingsHandler handles settings requests
-type SettingsHandler struct {
-	settingsService *service.SettingsService
-}
-
-// NewSettingsHandler creates a new settings handler
-func NewSettingsHandler(settingsService *service.SettingsService) *SettingsHandler {
-	return &SettingsHandler{
-		settingsService: settingsService,
-	}
-}
-
-// ServeHTTP handles settings requests
-func (h *SettingsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (rt *router) getSettings(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
-
-	switch r.Method {
-	case "GET":
-		h.getSettings(w, r, userID)
-	case "PUT":
-		h.putSettings(w, r, userID)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	stored, err := rt.Settings.GetSettings(r.Context(), userID)
+	if err != nil {
+		fail(w, r, err)
+		return
 	}
+	writeJSON(w, http.StatusOK, settingsOf(rt.withDefaults(stored)))
 }
 
-func (h *SettingsHandler) getSettings(w http.ResponseWriter, r *http.Request, userID string) {
-	settings, err := h.settingsService.GetSettings(r.Context(), userID)
-	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+// putSettings validates, stores, and returns what was stored.
+//
+// v1 stored whatever it was sent and echoed the request body straight back, so
+// every coercion was invisible: a theme the server did not recognise came back
+// looking accepted, and a negative retention was persisted. Returning the
+// stored record is the only way a client can tell what actually happened.
+func (rt *router) putSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(settings)
+	var req model.Settings
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+		return
+	}
+
+	validated, err := service.ValidateSettings(req)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	if err := rt.Settings.UpdateSettings(r.Context(), userID, validated); err != nil {
+		fail(w, r, err)
+		return
+	}
+
+	// Read back rather than trusting the write: what a later GET will report is
+	// the only honest answer to "what did you store".
+	stored, err := rt.Settings.GetSettings(r.Context(), userID)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, settingsOf(rt.withDefaults(stored)))
 }
 
-func (h *SettingsHandler) putSettings(w http.ResponseWriter, r *http.Request, userID string) {
-	var settings model.Settings
-	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
-		httperr.BadRequest(w, "invalid JSON")
-		return
+// withDefaults fills the fields a pre-v2 record does not carry and substitutes
+// the instance-wide spend cap for a tenant that has not set its own, so the UI
+// can show the budget that will actually be enforced.
+func (rt *router) withDefaults(s model.Settings) model.Settings {
+	s = service.NormalizeSettings(s)
+	if s.DailySpendCapMicros == 0 {
+		s.DailySpendCapMicros = rt.DefaultSpendCapMicros
 	}
-
-	err := h.settingsService.UpdateSettings(r.Context(), userID, settings)
-	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(settings)
+	return s
 }

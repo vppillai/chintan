@@ -10,10 +10,10 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-func TestCreateCaptureRejectsArchivedNote(t *testing.T) {
+func TestBeginCaptureRejectsArchivedNote(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
-	svc := NewCaptureService(store, objects, nil, nil)
+	svc := NewCaptureService(store, objects)
 
 	archivedNote := model.NoteIndex{
 		ID:        "archived-note",
@@ -25,9 +25,9 @@ func TestCreateCaptureRejectsArchivedNote(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, _, err := svc.CreateCapture(ctx, "user1", "archived-note", "audio/wav")
+	_, err := svc.BeginCapture(ctx, "user1", CaptureRequest{NoteID: "archived-note", ContentType: "audio/wav"})
 	if err == nil {
-		t.Fatal("Expected CreateCapture to fail for archived note")
+		t.Fatal("Expected BeginCapture to fail for archived note")
 	}
 	if !errors.Is(err, ErrNoteArchived) {
 		t.Errorf("Expected ErrNoteArchived, got %v", err)
@@ -37,7 +37,7 @@ func TestCreateCaptureRejectsArchivedNote(t *testing.T) {
 func TestSetCaptureTargetRejectsArchivedNote(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
-	svc := NewCaptureService(store, objects, nil, nil).WithQueue(&stubQueue{})
+	svc := NewCaptureService(store, objects).WithQueue(&stubQueue{})
 
 	archivedNote := model.NoteIndex{
 		ID:        "archived-note",

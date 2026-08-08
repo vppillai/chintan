@@ -1,0 +1,79 @@
+package service
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/vppillai/chintan/backend/internal/model"
+)
+
+var (
+	// ErrInvalidCleanupMode rejects a cleanup mode outside the known set.
+	ErrInvalidCleanupMode = errors.New("cleanup_mode must be faithful or polished")
+	// ErrInvalidRetentionDays rejects a retention that is negative or absurd.
+	ErrInvalidRetentionDays = errors.New("retention_days must be between 0 and 3650")
+	// ErrInvalidTheme rejects an unknown theme.
+	ErrInvalidTheme = errors.New("theme must be ink, nocturne or system")
+	// ErrInvalidSpendCap rejects a negative spend cap.
+	ErrInvalidSpendCap = errors.New("daily_spend_cap_micros must not be negative")
+)
+
+// ValidateSettings checks a settings record and returns the canonical form that
+// will be stored.
+//
+// The caller stores and returns this value, not the request body. v1 echoed the
+// request straight back, which hid every coercion from the client: a retention
+// of "30" that was stored as 30 and a theme of "purple" that was stored as
+// nothing both came back looking accepted.
+func ValidateSettings(s model.Settings) (model.Settings, error) {
+	out := model.Settings{}
+
+	switch s.CleanupMode {
+	case "":
+		out.CleanupMode = model.CleanupFaithful
+	case model.CleanupFaithful, model.CleanupPolished:
+		out.CleanupMode = s.CleanupMode
+	default:
+		return model.Settings{}, fmt.Errorf("%w", ErrInvalidCleanupMode)
+	}
+
+	switch {
+	case s.RetentionDays < 0:
+		return model.Settings{}, fmt.Errorf("%w", ErrInvalidRetentionDays)
+	case s.RetentionDays > model.MaxRetentionDays:
+		return model.Settings{}, fmt.Errorf("%w", ErrInvalidRetentionDays)
+	default:
+		out.RetentionDays = s.RetentionDays
+	}
+
+	switch s.Theme {
+	case "":
+		out.Theme = model.ThemeInk
+	case model.ThemeInk, model.ThemeNocturne, model.ThemeSystem:
+		out.Theme = s.Theme
+	default:
+		return model.Settings{}, fmt.Errorf("%w", ErrInvalidTheme)
+	}
+
+	if s.DailySpendCapMicros < 0 {
+		return model.Settings{}, fmt.Errorf("%w", ErrInvalidSpendCap)
+	}
+	out.DailySpendCapMicros = s.DailySpendCapMicros
+
+	return out, nil
+}
+
+// NormalizeSettings fills in the fields a record written before v2 does not
+// carry, so a GET always answers the shape the contract declares.
+func NormalizeSettings(s model.Settings) model.Settings {
+	if s.CleanupMode == "" {
+		s.CleanupMode = model.CleanupFaithful
+	}
+	if s.Theme == "" {
+		s.Theme = model.ThemeInk
+	}
+	if s.RetentionDays < 0 {
+		s.RetentionDays = 0
+	}
+	return s
+}

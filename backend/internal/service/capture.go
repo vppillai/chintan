@@ -13,7 +13,6 @@ import (
 	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
-	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/upload"
 )
@@ -23,8 +22,10 @@ import (
 // not a standing grant.
 const uploadTTL = 30 * time.Minute
 
-// downloadTTL bounds a presigned GET handed to the client.
-const downloadTTL = 15 * time.Minute
+// DownloadTTL bounds a presigned GET handed to the client. It is exported so
+// the handler can report the same expiry it signed, rather than a second
+// constant that can drift from this one.
+const DownloadTTL = 15 * time.Minute
 
 // MaxCaptureBytes bounds an audio upload. Twenty minutes of 16 kHz mono WAV is
 // about 38 MB; this leaves headroom for an uncompressed container without
@@ -59,6 +60,8 @@ var (
 	ErrUnsupportedContentType = errors.New("unsupported audio content type")
 	// ErrCaptureTooLarge rejects a declared upload size past MaxCaptureBytes.
 	ErrCaptureTooLarge = errors.New("capture exceeds the maximum upload size")
+	// ErrDownloadKindUnknown rejects a download kind outside the fixed set.
+	ErrDownloadKindUnknown = errors.New("unknown download kind")
 )
 
 // NoteCreator creates the destination note for a capture that has none.
@@ -114,23 +117,14 @@ type CaptureService struct {
 
 // NewCaptureService creates a new capture service.
 //
-// stt and llm are accepted and ignored: the providers moved to the worker with
-// the pipeline. The parameters remain so the handler and cmd/api keep compiling
-// across the phase boundary; Phase 6 drops them.
-func NewCaptureService(store repository.Store, objects repository.Objects, stt provider.STT, llm provider.LLM) *CaptureService {
+// It takes no providers. Nothing here contacts one: transcribe, route and clean
+// all belong to the worker.
+func NewCaptureService(store repository.Store, objects repository.Objects) *CaptureService {
 	return &CaptureService{
 		store:   store,
 		objects: objects,
 		uploads: upload.NewObjects(objects),
 	}
-}
-
-// WithRouting keeps the constructor shape cmd/api already uses. Routing itself
-// is the worker's now; only the note creator is still needed here, for a user
-// who resolves a needs_target capture by naming a new note.
-func (s *CaptureService) WithRouting(router provider.Router, notes NoteCreator) *CaptureService {
-	s.notes = notes
-	return s
 }
 
 // WithNoteCreator sets the note creator.
@@ -241,16 +235,6 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 	return CaptureCreated{Capture: stored, Audio: audioUpload, Peaks: peaksUpload}, nil
 }
 
-// CreateCapture is the pre-Phase-6 shape of BeginCapture, kept so the current
-// handler compiles. It drops the peaks URL, which the new handler must return.
-func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, contentType string) (*model.CaptureIndex, string, error) {
-	created, err := s.BeginCapture(ctx, userID, CaptureRequest{NoteID: noteID, ContentType: contentType})
-	if err != nil {
-		return nil, "", err
-	}
-	return &created.Capture, created.Audio.URL, nil
-}
-
 // RetryCapture re-enqueues a capture so the worker resumes it from its last good
 // stage. It does no work inline: v1's retry ran the whole pipeline on the
 // request path, which is what turned a gateway timeout into duplicated note
@@ -283,17 +267,6 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 		return nil, err
 	}
 	return &capture, nil
-}
-
-// CompleteCapture is retained only so the current handler compiles. It is an
-// enqueue, not a pipeline run: the synchronous completion path is gone.
-func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
-	capture, err := s.RetryCapture(ctx, userID, captureID)
-	if errors.Is(err, ErrCaptureTerminal) {
-		// A poll of a finished capture is not an error to the caller.
-		return capture, nil
-	}
-	return capture, err
 }
 
 // resumeStatusFor picks the stage a failed capture restarts from, so a retry
@@ -410,14 +383,16 @@ func (s *CaptureService) GetDownloadURL(ctx context.Context, userID, captureID, 
 	case "peaks":
 		key = capture.PeaksKey
 	default:
-		return "", fmt.Errorf("invalid download kind: %s", kind)
+		return "", fmt.Errorf("%w: %q", ErrDownloadKindUnknown, kind)
 	}
 
 	if key == "" {
-		return "", fmt.Errorf("no %s file available for capture", kind)
+		// Captures recorded before v2 have no segments and no peaks. The artifact
+		// genuinely does not exist, which is a 404 and not a fault.
+		return "", fmt.Errorf("%w: %s", repository.ErrNotFound, kind)
 	}
 
-	url, err := s.objects.PresignGet(ctx, key, downloadTTL)
+	url, err := s.objects.PresignGet(ctx, key, DownloadTTL)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate download URL: %w", err)
 	}

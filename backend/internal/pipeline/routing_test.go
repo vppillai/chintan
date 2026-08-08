@@ -71,7 +71,7 @@ func (f *routingFixture) run(ctx context.Context, captureID string) (model.Captu
 func (f *routingFixture) setTarget(t *testing.T, captureID, noteID, newTitle string) model.CaptureIndex {
 	t.Helper()
 	ctx := context.Background()
-	svc := service.NewCaptureService(f.store, f.objects, nil, nil).
+	svc := service.NewCaptureService(f.store, f.objects).
 		WithNoteCreator(f.h.creator).
 		WithQueue(directQueue{f.h.pipeline})
 
@@ -247,7 +247,7 @@ func TestSetCaptureTargetRejectsAlreadyRoutedCapture(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 
-	svc := service.NewCaptureService(f.store, f.objects, nil, nil).
+	svc := service.NewCaptureService(f.store, f.objects).
 		WithNoteCreator(f.h.creator).
 		WithQueue(directQueue{f.h.pipeline})
 	if _, err := svc.SetCaptureTarget(ctx, f.userID, "c_1", "n1", ""); err == nil {

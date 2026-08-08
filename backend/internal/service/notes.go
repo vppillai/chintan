@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -54,17 +55,60 @@ func NoteIsActive(n model.NoteIndex) bool {
 	return strings.TrimSpace(n.DeletedAt) == ""
 }
 
+// maxTagLen bounds one tag. Tags are rendered into list filters and into the
+// routing prompt, so an unbounded tag is a stored cost amplifier.
+const maxTagLen = 40
+
+// normalizeTags folds tags to a canonical form: trimmed, lowercased, collapsed
+// whitespace, deduplicated, ordered. Without this "Roof", "roof " and "roof"
+// are three tags in the index and one tag to the person who said them.
+func normalizeTags(tags []string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(tags))
+	out := make([]string, 0, len(tags))
+	for _, raw := range tags {
+		t := strings.ToLower(strings.Join(strings.Fields(raw), " "))
+		if t == "" {
+			continue
+		}
+		if runes := []rune(t); len(runes) > maxTagLen {
+			t = strings.TrimSpace(string(runes[:maxTagLen]))
+		}
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // NotesService handles note operations
 type NotesService struct {
 	store   repository.Store
 	objects repository.Objects
 }
 
-// NoteUpdates represents partial updates to a note
+// NoteUpdates represents partial updates to a note.
+//
+// ExpectedVersion is the version the client read. It is compared before
+// anything is written, so a voice append landing while the editor is open
+// surfaces as a conflict the client reconciles rather than one of the two
+// writes vanishing. A nil ExpectedVersion skips the check and is for in-process
+// callers only — every HTTP caller supplies one.
 type NoteUpdates struct {
-	Title   *string
-	Aliases *[]string
-	Body    *string
+	Title           *string
+	Aliases         *[]string
+	Tags            *[]string
+	Body            *string
+	Verbatim        *bool
+	ExpectedVersion *int64
 }
 
 // MatchResult represents the result of a note matching operation
@@ -81,8 +125,16 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 	}
 }
 
-// CreateNote creates a new note
+// CreateNote creates a new note.
+//
+// The signature is what the worker's NoteCreator expects; CreateNoteWithTags is
+// the fuller form the API uses.
 func (s *NotesService) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
+	return s.CreateNoteWithTags(ctx, userID, title, aliases, nil)
+}
+
+// CreateNoteWithTags creates a note carrying tags.
+func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title string, aliases, tags []string) (model.NoteIndex, error) {
 	title = sanitizeNoteTitle(title)
 	if title == "" {
 		return model.NoteIndex{}, ErrEmptyNoteTitle
@@ -106,12 +158,15 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 		aliases = []string{}
 	}
 
+	now := model.Now()
 	note := model.NoteIndex{
 		ID:            noteID,
 		Title:         title,
 		Aliases:       aliases,
+		Tags:          normalizeTags(tags),
 		Snippet:       "", // No content initially
-		UpdatedAt:     model.Now(),
+		CreatedAt:     now,
+		UpdatedAt:     now,
 		S3MarkdownKey: markdownKey,
 		S3MetaKey:     metaKey,
 	}
@@ -126,7 +181,8 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 	metaData := map[string]interface{}{
 		"title":      title,
 		"aliases":    aliases,
-		"created_at": note.UpdatedAt,
+		"tags":       note.Tags,
+		"created_at": note.CreatedAt,
 		"updated_at": note.UpdatedAt,
 	}
 	metaBytes, _ := json.Marshal(metaData)
@@ -187,6 +243,12 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		return model.NoteIndex{}, ErrNoteArchived
 	}
 
+	// The version the client read is checked before any object is written, so a
+	// losing writer does not leave a rewritten body behind with the index intact.
+	if updates.ExpectedVersion != nil && *updates.ExpectedVersion != note.Version {
+		return note, repository.ErrVersionConflict
+	}
+
 	// Apply updates
 	if updates.Title != nil {
 		title := sanitizeNoteTitle(*updates.Title)
@@ -197,6 +259,12 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	}
 	if updates.Aliases != nil {
 		note.Aliases = *updates.Aliases
+	}
+	if updates.Tags != nil {
+		note.Tags = normalizeTags(*updates.Tags)
+	}
+	if updates.Verbatim != nil {
+		note.Verbatim = *updates.Verbatim
 	}
 
 	// Update timestamp
@@ -218,6 +286,8 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	metaData := map[string]interface{}{
 		"title":      note.Title,
 		"aliases":    note.Aliases,
+		"tags":       note.Tags,
+		"verbatim":   note.Verbatim,
 		"updated_at": note.UpdatedAt,
 	}
 	metaBytes, _ := json.Marshal(metaData)

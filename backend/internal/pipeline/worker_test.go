@@ -194,7 +194,7 @@ func TestACaptureLongerThanTheGatewayCeilingStillCompletes(t *testing.T) {
 	seedUploadedCapture(t, h, "")
 
 	// The request path: creating the capture must touch no provider at all.
-	svc := service.NewCaptureService(h.store, h.objects, nil, nil).
+	svc := service.NewCaptureService(h.store, h.objects).
 		WithQueue(recordingQueue{})
 	if _, err := svc.BeginCapture(context.Background(), "user1", service.CaptureRequest{ContentType: "audio/webm"}); err != nil {
 		t.Fatalf("BeginCapture: %v", err)
@@ -308,7 +308,7 @@ func TestRetryResumesFromTheLastGoodStageWithoutRetranscribing(t *testing.T) {
 
 	// The API's retry: reset to the last good stage and re-enqueue. It runs no
 	// pipeline of its own.
-	svc := service.NewCaptureService(h.store, h.objects, nil, nil).WithQueue(recordingQueue{})
+	svc := service.NewCaptureService(h.store, h.objects).WithQueue(recordingQueue{})
 	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); err != nil {
 		t.Fatalf("RetryCapture: %v", err)
 	}

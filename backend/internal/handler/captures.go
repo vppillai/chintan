@@ -1,264 +1,242 @@
 package handler
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
-	"strings"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
+	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// CapturesHandler handles capture-related HTTP requests
-type CapturesHandler struct {
-	captureService *service.CaptureService
-}
-
-// NewCapturesHandler creates a new captures handler
-func NewCapturesHandler(captureService *service.CaptureService) *CapturesHandler {
-	return &CapturesHandler{
-		captureService: captureService,
-	}
-}
-
-// CreateCaptureRequest represents the request body for creating a capture.
-// NoteID is optional: when omitted, the destination note is decided from what
-// the speaker said once the audio has been transcribed.
-type CreateCaptureRequest struct {
-	NoteID      string `json:"note_id"`
+// captureCreateRequest is the OpenAPI CaptureCreate schema.
+type captureCreateRequest struct {
 	ContentType string `json:"content_type"`
+	NoteID      string `json:"note_id"`
+	DurationMS  int64  `json:"duration_ms"`
+	SizeBytes   int64  `json:"size_bytes"`
 }
 
-// SetCaptureTargetRequest chooses the destination for a capture awaiting one.
-type SetCaptureTargetRequest struct {
+// captureTargetRequest is the OpenAPI CaptureTarget schema.
+type captureTargetRequest struct {
 	NoteID       string `json:"note_id"`
 	NewNoteTitle string `json:"new_note_title"`
 }
 
-// CreateCaptureResponse represents the response for creating a capture
-type CreateCaptureResponse struct {
-	CaptureID string `json:"capture_id"`
-	UploadURL string `json:"upload_url"`
+// downloadResponse is the presigned GET a client plays or reads from.
+type downloadResponse struct {
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
 }
 
-// DownloadResponse represents a download URL response
-type DownloadResponse struct {
-	URL string `json:"url"`
-}
-
-func (h *CapturesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (rt *router) listCaptures(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	opts, err := listOptions(r)
+	if answerValidation(w, r, err) {
 		return
 	}
 
-	switch r.Method {
-	case http.MethodPost:
-		h.handlePost(w, r, userID)
-	case http.MethodGet:
-		h.handleGet(w, r, userID)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func (h *CapturesHandler) handlePost(w http.ResponseWriter, r *http.Request, userID string) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/captures")
-
-	if path == "" || path == "/" {
-		// POST /v1/captures - create capture
-		h.createCapture(w, r, userID)
+	filter, valid := service.ParseCaptureFilter(r.URL.Query().Get("status"))
+	if !valid {
+		httperr.BadRequest(w, r, "status must be one of pending, failed, needs_target, all")
 		return
 	}
 
-	// POST /v1/captures/{id}/complete or /v1/captures/{id}/retry
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) != 2 {
-		w.WriteHeader(http.StatusNotFound)
+	// note_id is not in the contract but the note detail view uses it, and a
+	// note's captures are a genuinely cheaper query than the tenant's.
+	if noteID := r.URL.Query().Get("note_id"); noteID != "" {
+		got, err := rt.Captures.ListCapturesForNote(r.Context(), userID, noteID, opts)
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page(capturesOf(got.Items), got.Cursor))
 		return
 	}
 
-	captureID := parts[0]
-	action := parts[1]
-
-	switch action {
-	case "complete":
-		h.completeCapture(w, r, userID, captureID)
-	case "retry":
-		// Retry is the same as complete for now (idempotent)
-		h.completeCapture(w, r, userID, captureID)
-	case "target":
-		h.setCaptureTarget(w, r, userID, captureID)
-	default:
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-func (h *CapturesHandler) setCaptureTarget(w http.ResponseWriter, r *http.Request, userID, captureID string) {
-	var req SetCaptureTargetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid request body")
-		return
-	}
-
-	capture, err := h.captureService.SetCaptureTarget(r.Context(), userID, captureID, req.NoteID, req.NewNoteTitle)
+	got, err := rt.Captures.ListCaptures(r.Context(), userID, filter, opts)
 	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrNoteArchived):
-			httperr.WriteJSON(w, err, http.StatusConflict)
-		case strings.Contains(err.Error(), "not found"):
-			w.WriteHeader(http.StatusNotFound)
-		case strings.Contains(err.Error(), "already targets"):
-			httperr.WriteJSON(w, err, http.StatusConflict)
-		case strings.Contains(err.Error(), "is required"):
-			httperr.BadRequest(w, err.Error())
-		default:
-			httperr.InternalServerError(w, err)
-		}
+		fail(w, r, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(capture)
+	writeJSON(w, http.StatusOK, page(capturesOf(got.Items), got.Cursor))
 }
 
-func (h *CapturesHandler) handleGet(w http.ResponseWriter, r *http.Request, userID string) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/captures")
-	path = strings.Trim(path, "/")
-
-	// GET /v1/captures?note_id=...
-	if path == "" {
-		noteID := r.URL.Query().Get("note_id")
-		if noteID == "" {
-			httperr.BadRequest(w, "note_id query parameter is required")
-			return
-		}
-		page, err := h.captureService.ListCapturesForNote(r.Context(), userID, noteID, listOptionsFrom(r))
-		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
-				httperr.WriteJSON(w, err, http.StatusNotFound)
-				return
-			}
-			httperr.InternalServerError(w, err)
-			return
-		}
-		setNextCursor(w, page.Cursor)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(page.Items)
+// beginCapture writes the capture row and returns presigned PUTs. It contacts no
+// provider and reads no object: the upload event drives the pipeline
+// asynchronously in the worker, because API Gateway caps an integration at 30
+// seconds and a speech-to-text plus LLM run does not fit inside that.
+func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
 
-	parts := strings.Split(path, "/")
-
-	// GET /v1/captures/{id}
-	if len(parts) == 1 {
-		capture, err := h.captureService.GetCapture(r.Context(), userID, parts[0])
-		if err != nil {
-			httperr.WriteJSON(w, err, http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(capture)
+	var req captureCreateRequest
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
 		return
 	}
-
-	// GET /v1/captures/{id}/download?kind=audio|raw|clean
-	if len(parts) != 2 || parts[1] != "download" {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
-	captureID := parts[0]
-	kind := r.URL.Query().Get("kind")
-
-	if kind == "" {
-		httperr.BadRequest(w, "missing kind parameter")
-		return
-	}
-
-	if kind != "audio" && kind != "raw" && kind != "clean" {
-		httperr.BadRequest(w, "invalid kind, must be audio, raw, or clean")
-		return
-	}
-
-	h.getDownload(w, r, userID, captureID, kind)
-}
-
-func (h *CapturesHandler) createCapture(w http.ResponseWriter, r *http.Request, userID string) {
-	var req CreateCaptureRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid request body")
-		return
-	}
-
 	if req.ContentType == "" {
-		httperr.BadRequest(w, "content_type is required")
+		httperr.BadRequest(w, r, "content_type is required")
+		return
+	}
+	if req.SizeBytes < 0 || req.DurationMS < 0 {
+		httperr.BadRequest(w, r, "size_bytes and duration_ms must not be negative")
 		return
 	}
 
-	capture, uploadURL, err := h.captureService.CreateCapture(r.Context(), userID, req.NoteID, req.ContentType)
+	// The budget is checked before the URL is issued. Without this a capped
+	// tenant uploads a recording, watches the capture sit at spend_capped, and
+	// is told nothing about why.
+	if rt.Spend != nil {
+		capped, err := rt.Spend.Capped(r.Context(), userID)
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		if capped {
+			fail(w, r, service.ErrSpendCapped)
+			return
+		}
+	}
+
+	created, err := rt.Captures.BeginCapture(r.Context(), userID, service.CaptureRequest{
+		NoteID:      req.NoteID,
+		ContentType: req.ContentType,
+		SizeBytes:   req.SizeBytes,
+		DurationMS:  req.DurationMS,
+	})
 	if err != nil {
-		if errors.Is(err, service.ErrNoteArchived) {
-			httperr.WriteJSON(w, err, http.StatusConflict)
-			return
-		}
-		if strings.Contains(err.Error(), "not found") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		httperr.InternalServerError(w, err)
+		fail(w, r, err)
 		return
 	}
 
-	resp := CreateCaptureResponse{
-		CaptureID: capture.ID,
-		UploadURL: uploadURL,
+	// The upload headers reach the client verbatim. x-amz-tagging is inside the
+	// signature, so dropping or rewriting it turns every upload into a 403 —
+	// and signing it is the only thing that stops an uploader omitting the
+	// retention tag and escaping the lifecycle rule.
+	out := CaptureCreated{
+		Capture: captureOf(created.Capture),
+		Upload:  uploadOf(created.Audio),
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
+	if created.Peaks.URL != "" {
+		peaks := uploadOf(created.Peaks)
+		out.PeaksUpload = &peaks
+	}
+	writeJSON(w, http.StatusCreated, out)
 }
 
-func (h *CapturesHandler) completeCapture(w http.ResponseWriter, r *http.Request, userID, captureID string) {
-	capture, err := h.captureService.CompleteCapture(r.Context(), userID, captureID)
-	if err != nil {
-		if errors.Is(err, service.ErrNoteArchived) {
-			httperr.WriteJSON(w, err, http.StatusConflict)
-			return
-		}
-		if strings.Contains(err.Error(), "not found") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		httperr.InternalServerError(w, err)
+func (rt *router) getCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(capture)
+	capture, err := rt.Captures.GetCapture(r.Context(), userID, r.PathValue("captureId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, captureOf(*capture))
 }
 
-func (h *CapturesHandler) getDownload(w http.ResponseWriter, r *http.Request, userID, captureID, kind string) {
-	url, err := h.captureService.GetDownloadURL(r.Context(), userID, captureID, kind)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if strings.Contains(err.Error(), "no "+kind+" file available") {
-			httperr.BadRequest(w, fmt.Sprintf("no %s file available", kind))
-			return
-		}
-		httperr.InternalServerError(w, err)
+func (rt *router) setCaptureTarget(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
 
-	resp := DownloadResponse{URL: url}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	var req captureTargetRequest
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+		return
+	}
+	if req.NoteID != "" && req.NewNoteTitle != "" {
+		httperr.BadRequest(w, r, "supply either note_id or new_note_title, not both")
+		return
+	}
+	if req.NewNoteTitle != "" {
+		if err := checkTitle(req.NewNoteTitle); answerValidation(w, r, err) {
+			return
+		}
+	}
+
+	capture, err := rt.Captures.SetCaptureTarget(r.Context(), userID, r.PathValue("captureId"), req.NoteID, req.NewNoteTitle)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, captureOf(*capture))
+}
+
+// retryCapture hands a failed capture back to the worker and returns 202.
+//
+// It does no work inline. v1 ran the whole pipeline on the request path here,
+// which is exactly how a gateway timeout turned into duplicated note content:
+// the Lambda kept going, the client retried, and the append ran twice.
+func (rt *router) retryCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+
+	if rt.Spend != nil {
+		capped, err := rt.Spend.Capped(r.Context(), userID)
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		if capped {
+			fail(w, r, service.ErrSpendCapped)
+			return
+		}
+	}
+
+	capture, err := rt.Captures.RetryCapture(r.Context(), userID, r.PathValue("captureId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, captureOf(*capture))
+}
+
+// downloadKinds is the fixed set. segments is the timestamped raw transcript
+// that drives tap-to-seek; peaks is the precomputed amplitude envelope, so
+// drawing a waveform does not mean downloading the whole recording.
+var downloadKinds = map[string]bool{
+	"audio": true, "raw": true, "clean": true, "segments": true, "peaks": true,
+}
+
+func (rt *router) downloadCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind == "" {
+		httperr.BadRequest(w, r, "kind is required")
+		return
+	}
+	if !downloadKinds[kind] {
+		httperr.BadRequest(w, r, "kind must be one of audio, raw, clean, segments, peaks")
+		return
+	}
+
+	url, err := rt.Captures.GetDownloadURL(r.Context(), userID, r.PathValue("captureId"), kind)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, downloadResponse{
+		URL:       url,
+		ExpiresAt: model.FormatTime(time.Now().Add(service.DownloadTTL)),
+	})
 }

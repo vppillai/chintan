@@ -1,77 +1,23 @@
 package handler_test
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
-	"github.com/vppillai/chintan/backend/internal/middleware"
-	"github.com/vppillai/chintan/backend/internal/repository/memory"
-	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 // The v1 defect was reachable over HTTP, so the isolation property is asserted
 // here as well as in the repository. Two distinct authenticated identities, one
 // router, no shared visibility.
 
-func isolationRouter(t *testing.T) http.Handler {
-	t.Helper()
-	store := memory.NewStore()
-	objects := memory.NewObjects()
-	notesService := service.NewNotesService(store, objects)
-	settingsService := service.NewSettingsService(store)
-	captureService := service.NewCaptureService(store, objects, nil, nil)
-	return handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
-}
-
-func createNoteAs(t *testing.T, router http.Handler, userID, title string) string {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{"title": title})
-	req := httptest.NewRequest("POST", "/v1/notes", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(middleware.WithUserID(req.Context(), userID))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != 200 && w.Code != 201 {
-		t.Fatalf("create note as %s: status=%d body=%s", userID, w.Code, w.Body.String())
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode created note: %v (body=%s)", err, w.Body.String())
-	}
-	if created.ID == "" {
-		t.Fatalf("created note has no id: %s", w.Body.String())
-	}
-	return created.ID
-}
-
-func requestAs(t *testing.T, router http.Handler, method, path, userID string, body []byte) *httptest.ResponseRecorder {
-	t.Helper()
-	var req *http.Request
-	if body == nil {
-		req = httptest.NewRequest(method, path, nil)
-	} else {
-		req = httptest.NewRequest(method, path, bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-	}
-	req = req.WithContext(middleware.WithUserID(req.Context(), userID))
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	return w
-}
-
 func TestHTTPCrossTenantNoteIsNotReadable(t *testing.T) {
-	router := isolationRouter(t)
-	noteID := createNoteAs(t, router, "alice", "Alice private")
+	h := newHarness(t)
+	note := h.createNote(t, "alice", "Alice private", nil)
 
-	w := requestAs(t, router, "GET", "/v1/notes/"+noteID, "bob", nil)
-	if w.Code != 404 {
+	w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "bob", nil)
+	if w.Code != http.StatusNotFound {
 		t.Fatalf("bob read alice's note: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "Alice private") {
@@ -80,11 +26,11 @@ func TestHTTPCrossTenantNoteIsNotReadable(t *testing.T) {
 }
 
 func TestHTTPCrossTenantNoteIsNotListed(t *testing.T) {
-	router := isolationRouter(t)
-	createNoteAs(t, router, "alice", "Alice private")
+	h := newHarness(t)
+	h.createNote(t, "alice", "Alice private", nil)
 
-	w := requestAs(t, router, "GET", "/v1/notes", "bob", nil)
-	if w.Code != 200 {
+	w := h.do(t, http.MethodGet, "/v1/notes", "bob", nil)
+	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "Alice private") {
@@ -93,26 +39,31 @@ func TestHTTPCrossTenantNoteIsNotListed(t *testing.T) {
 }
 
 func TestHTTPCrossTenantNoteIsNotDeletable(t *testing.T) {
-	router := isolationRouter(t)
-	noteID := createNoteAs(t, router, "alice", "Alice private")
+	h := newHarness(t)
+	note := h.createNote(t, "alice", "Alice private", nil)
 
-	_ = requestAs(t, router, "DELETE", "/v1/notes/"+noteID, "bob", nil)
+	_ = h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "bob", nil)
 
-	w := requestAs(t, router, "GET", "/v1/notes/"+noteID, "alice", nil)
-	if w.Code != 200 {
+	w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "alice", nil)
+	if w.Code != http.StatusOK {
 		t.Fatalf("alice's note was destroyed by bob: status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
 func TestHTTPCrossTenantNoteIsNotEditable(t *testing.T) {
-	router := isolationRouter(t)
-	noteID := createNoteAs(t, router, "alice", "Alice private")
+	h := newHarness(t)
+	note := h.createNote(t, "alice", "Alice private", nil)
 
-	patch, _ := json.Marshal(map[string]any{"title": "Bob was here"})
-	_ = requestAs(t, router, "PATCH", "/v1/notes/"+noteID, "bob", patch)
+	// The version alice actually holds, so the write is refused for being
+	// bob's rather than for being stale — the isolation property, not the
+	// concurrency one.
+	_ = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "bob", map[string]any{
+		"version": note.Version,
+		"title":   "Bob was here",
+	})
 
-	w := requestAs(t, router, "GET", "/v1/notes/"+noteID, "alice", nil)
-	if w.Code != 200 {
+	w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "alice", nil)
+	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "Bob was here") {
@@ -120,14 +71,44 @@ func TestHTTPCrossTenantNoteIsNotEditable(t *testing.T) {
 	}
 }
 
+// A capture is addressed by id alone, so it is the other way a tenant boundary
+// could be crossed.
+func TestHTTPCrossTenantCaptureIsNotReachable(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "alice", "Alice private", nil)
+
+	w := h.do(t, http.MethodPost, "/v1/captures", "alice", map[string]any{
+		"content_type": "audio/webm",
+		"note_id":      note.ID,
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("alice could not begin a capture: status=%d body=%s", w.Code, w.Body.String())
+	}
+	var created handler.CaptureCreated
+	decodeInto(t, w, &created)
+
+	for _, path := range []string{
+		"/v1/captures/" + created.Capture.ID,
+		"/v1/captures/" + created.Capture.ID + "/download?kind=audio",
+	} {
+		got := h.do(t, http.MethodGet, path, "bob", nil)
+		if got.Code != http.StatusNotFound {
+			t.Errorf("bob reached %s: status=%d body=%s", path, got.Code, got.Body.String())
+		}
+	}
+	if got := h.do(t, http.MethodPost, "/v1/captures/"+created.Capture.ID+"/retry", "bob", nil); got.Code != http.StatusNotFound {
+		t.Errorf("bob retried alice's capture: status=%d", got.Code)
+	}
+}
+
 // Unauthenticated requests must not reach data handlers at all.
 func TestHTTPDataRoutesRequireAuthentication(t *testing.T) {
-	router := isolationRouter(t)
-	for _, path := range []string{"/v1/notes", "/v1/settings", "/v1/captures"} {
-		req := httptest.NewRequest("GET", path, nil)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-		if w.Code != 401 {
+	h := newHarness(t)
+	for _, path := range []string{
+		"/v1/notes", "/v1/settings", "/v1/captures", "/v1/tags", "/v1/search?q=x",
+	} {
+		w := h.do(t, http.MethodGet, path, "", nil)
+		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("%s without credentials: status=%d", path, w.Code)
 		}
 	}

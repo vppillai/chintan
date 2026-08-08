@@ -1,10 +1,8 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
@@ -13,232 +11,348 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// NotesHandler handles notes requests
-type NotesHandler struct {
-	notesService *service.NotesService
+// noteCreateRequest is the OpenAPI NoteCreate schema.
+type noteCreateRequest struct {
+	Title   string   `json:"title"`
+	Body    string   `json:"body"`
+	Aliases []string `json:"aliases"`
+	Tags    []string `json:"tags"`
 }
 
-// NewNotesHandler creates a new notes handler
-func NewNotesHandler(notesService *service.NotesService) *NotesHandler {
-	return &NotesHandler{
-		notesService: notesService,
-	}
+// noteUpdateRequest is the OpenAPI NoteUpdate schema.
+//
+// Version is a value, not a pointer, and it is required: optimistic concurrency
+// that a client can opt out of by omitting a field is optimistic concurrency
+// that does not exist.
+type noteUpdateRequest struct {
+	Version  *int64    `json:"version"`
+	Title    *string   `json:"title"`
+	Body     *string   `json:"body"`
+	Aliases  *[]string `json:"aliases"`
+	Tags     *[]string `json:"tags"`
+	Verbatim *bool     `json:"verbatim"`
 }
 
-// ServeHTTP handles notes requests
-func (h *NotesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
-		httperr.Unauthorized(w, "authentication required")
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	opts, err := listOptions(r)
+	if answerValidation(w, r, err) {
 		return
 	}
 
-	path := strings.TrimPrefix(r.URL.Path, "/v1/notes")
+	state := r.URL.Query().Get("state")
+	var got repository.Page[model.NoteIndex]
+	switch state {
+	case "", "active":
+		got, err = rt.Notes.ListNotes(r.Context(), userID, opts)
+	case "archived":
+		got, err = rt.Notes.ListArchivedNotes(r.Context(), userID, opts)
+	default:
+		httperr.BadRequest(w, r, "state must be active or archived")
+		return
+	}
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
 
-	switch {
-	case path == "" || path == "/":
-		h.handleNotesList(w, r, userID)
-	case path == "/match":
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	items := got.Items
+	// The tag filter is applied after the page, exactly as a DynamoDB
+	// FilterExpression would be: a page can legitimately come back short with a
+	// cursor still set, and the client keeps paging.
+	if tag := r.URL.Query().Get("tag"); tag != "" {
+		if len([]rune(tag)) > MaxTagRunes {
+			httperr.BadRequest(w, r, "tag is longer than this API stores")
 			return
 		}
-		h.handleNotesMatch(w, r, userID)
-	case strings.HasPrefix(path, "/") && len(path) > 1:
-		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) == 2 && parts[1] == "restore" {
-			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
+		filtered := items[:0:0]
+		for _, n := range items {
+			for _, t := range n.Tags {
+				if t == tag {
+					filtered = append(filtered, n)
+					break
+				}
 			}
-			h.restoreNote(w, r, userID, parts[0])
-			return
 		}
-		if len(parts) == 1 {
-			h.handleNoteDetail(w, r, userID, parts[0])
-			return
-		}
-		http.NotFound(w, r)
-	default:
-		http.NotFound(w, r)
+		items = filtered
 	}
+
+	writeJSON(w, http.StatusOK, page(notesOf(items), got.Cursor))
 }
 
-func (h *NotesHandler) handleNotesList(w http.ResponseWriter, r *http.Request, userID string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.listNotes(w, r, userID)
-	case http.MethodPost:
-		h.createNote(w, r, userID)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
 	}
-}
 
-func (h *NotesHandler) handleNoteDetail(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	switch r.Method {
-	case http.MethodGet:
-		h.getNote(w, r, userID, noteID)
-	case http.MethodPatch:
-		h.updateNote(w, r, userID, noteID)
-	case http.MethodDelete:
-		h.deleteNote(w, r, userID, noteID)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	var req noteCreateRequest
+	if !decodeJSON(w, r, MaxNoteRequestBytes, &req) {
+		return
 	}
-}
-
-func (h *NotesHandler) listNotes(w http.ResponseWriter, r *http.Request, userID string) {
-	opts := listOptionsFrom(r)
-
-	var (
-		page repository.Page[model.NoteIndex]
-		err  error
-	)
-	if r.URL.Query().Get("status") == "archived" {
-		page, err = h.notesService.ListArchivedNotes(r.Context(), userID, opts)
-	} else {
-		page, err = h.notesService.ListNotes(r.Context(), userID, opts)
+	if answerValidation(w, r, validateNoteFields(&req.Title, &req.Body, &req.Aliases, &req.Tags)) {
+		return
 	}
+
+	note, err := rt.Notes.CreateNoteWithTags(r.Context(), userID, req.Title, req.Aliases, req.Tags)
 	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+		fail(w, r, err)
 		return
 	}
 
-	setNextCursor(w, page.Cursor)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(page.Items)
-}
-
-func (h *NotesHandler) createNote(w http.ResponseWriter, r *http.Request, userID string) {
-	var req struct {
-		Title   string   `json:"title"`
-		Aliases []string `json:"aliases"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid JSON")
-		return
-	}
-
-	if req.Title == "" {
-		httperr.BadRequest(w, "title is required")
-		return
-	}
-
-	note, err := h.notesService.CreateNote(r.Context(), userID, req.Title, req.Aliases)
-	if err != nil {
-		if errors.Is(err, service.ErrEmptyNoteTitle) {
-			httperr.BadRequest(w, "title is required")
+	// A body supplied at creation is written through the same path an edit
+	// takes, so there is one place that maintains the snippet and the meta
+	// mirror.
+	if req.Body != "" {
+		version := note.Version
+		updated, err := rt.Notes.UpdateNote(r.Context(), userID, note.ID, service.NoteUpdates{
+			Body:            &req.Body,
+			ExpectedVersion: &version,
+		})
+		if err != nil {
+			fail(w, r, err)
 			return
 		}
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
-		return
+		note = updated
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(note)
+	writeJSON(w, http.StatusCreated, noteOf(note))
 }
 
-func (h *NotesHandler) getNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	note, err := h.notesService.GetNoteDetail(r.Context(), userID, noteID)
+func (rt *router) getNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	noteID := r.PathValue("noteId")
+
+	detail, err := rt.Notes.GetNoteDetail(r.Context(), userID, noteID)
 	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+		fail(w, r, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(note)
+	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: []Capture{}}
+	if rt.Captures != nil {
+		captures, err := rt.Captures.ListCapturesForNote(r.Context(), userID, noteID, repository.ListOptions{})
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		out.Captures = capturesOf(captures.Items)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
-func (h *NotesHandler) updateNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	var req struct {
-		Title   *string   `json:"title"`
-		Aliases *[]string `json:"aliases"`
-		Body    *string   `json:"body"`
+func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
 	}
+	noteID := r.PathValue("noteId")
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid JSON")
+	var req noteUpdateRequest
+	if !decodeJSON(w, r, MaxNoteRequestBytes, &req) {
+		return
+	}
+	if req.Version == nil {
+		httperr.BadRequest(w, r, "version is required; read the note first and send the version you saw")
+		return
+	}
+	if answerValidation(w, r, validateNoteFields(req.Title, req.Body, req.Aliases, req.Tags)) {
 		return
 	}
 
-	updates := service.NoteUpdates{
-		Title:   req.Title,
-		Aliases: req.Aliases,
-		Body:    req.Body,
-	}
-
-	note, err := h.notesService.UpdateNote(r.Context(), userID, noteID, updates)
+	updated, err := rt.Notes.UpdateNote(r.Context(), userID, noteID, service.NoteUpdates{
+		Title:           req.Title,
+		Body:            req.Body,
+		Aliases:         req.Aliases,
+		Tags:            req.Tags,
+		Verbatim:        req.Verbatim,
+		ExpectedVersion: req.Version,
+	})
 	if err != nil {
-		if errors.Is(err, service.ErrNoteArchived) {
-			httperr.WriteJSON(w, err, http.StatusConflict)
+		// A conflict carries the version the client should reconcile against,
+		// so the editor does not have to re-read to find out what it lost to.
+		if errors.Is(err, repository.ErrVersionConflict) {
+			failConflictAt(w, r, err, updated.Version)
 			return
 		}
-		if errors.Is(err, service.ErrEmptyNoteTitle) {
-			httperr.BadRequest(w, "title is required")
-			return
-		}
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+		fail(w, r, err)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(note)
+	writeJSON(w, http.StatusOK, noteOf(updated))
 }
 
-func (h *NotesHandler) deleteNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	var err error
-	if r.URL.Query().Get("permanent") == "true" {
-		err = h.notesService.PermanentlyDeleteNote(r.Context(), userID, noteID)
-		if errors.Is(err, service.ErrNoteNotArchived) {
-			httperr.BadRequest(w, err.Error())
-			return
-		}
-	} else {
-		err = h.notesService.DeleteNote(r.Context(), userID, noteID)
-	}
-	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+func (rt *router) archiveNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
-
+	if _, err := rt.Notes.ArchiveNote(r.Context(), userID, r.PathValue("noteId")); err != nil {
+		fail(w, r, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *NotesHandler) restoreNote(w http.ResponseWriter, r *http.Request, userID, noteID string) {
-	note, err := h.notesService.RestoreNote(r.Context(), userID, noteID)
+// archiveNotePost is the POST spelling of the same action, for a client that
+// cannot send a DELETE.
+func (rt *router) archiveNotePost(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	note, err := rt.Notes.ArchiveNote(r.Context(), userID, r.PathValue("noteId"))
 	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, noteOf(note))
+}
+
+func (rt *router) restoreNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	note, err := rt.Notes.RestoreNote(r.Context(), userID, r.PathValue("noteId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, noteOf(note))
+}
+
+// purgeNote deletes a note and every artifact it owns, irreversibly.
+//
+// A partial cascade returns 500 and leaves the note index in place so the
+// delete can be retried. v1 logged each cascade failure, ignored it, and
+// deleted the index anyway — reporting "purged" over audio that survived in S3
+// with nothing left pointing at it.
+func (rt *router) purgeNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	if err := rt.Notes.PermanentlyDeleteNote(r.Context(), userID, r.PathValue("noteId")); err != nil {
+		fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (rt *router) matchNotes(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(note)
-}
-
-func (h *NotesHandler) handleNotesMatch(w http.ResponseWriter, r *http.Request, userID string) {
 	var req struct {
 		Query string `json:"query"`
 	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httperr.BadRequest(w, "invalid JSON")
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
 		return
 	}
-
 	if req.Query == "" {
-		httperr.BadRequest(w, "query is required")
+		httperr.BadRequest(w, r, "query is required")
+		return
+	}
+	if n := len([]rune(req.Query)); n > MaxMatchQuery {
+		httperr.BadRequest(w, r, "query is longer than this API accepts")
 		return
 	}
 
-	result, err := h.notesService.MatchNotes(r.Context(), userID, req.Query)
+	result, err := rt.Notes.MatchNotes(r.Context(), userID, req.Query)
 	if err != nil {
-		httperr.WriteJSON(w, err, http.StatusInternalServerError)
+		fail(w, r, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, matchResponseOf(result))
+}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+// matchResponse is the OpenAPI MatchResponse schema.
+type matchResponse struct {
+	Confidence   float64          `json:"confidence"`
+	AutoSelected bool             `json:"auto_selected"`
+	Candidates   []matchCandidate `json:"candidates"`
+	// AutoSelectID is retained alongside auto_selected because the routing
+	// worker reads it. Dropping it would be a silent break for a caller the
+	// OpenAPI does not describe.
+	AutoSelectID *string `json:"auto_select_id,omitempty"`
+}
+
+type matchCandidate struct {
+	NoteID string  `json:"note_id"`
+	Title  string  `json:"title"`
+	Score  float64 `json:"score"`
+	Reason string  `json:"reason,omitempty"`
+}
+
+func matchResponseOf(result service.MatchResult) matchResponse {
+	out := matchResponse{
+		Candidates:   make([]matchCandidate, 0, len(result.Candidates)),
+		AutoSelected: result.AutoSelectID != nil,
+		AutoSelectID: result.AutoSelectID,
+	}
+	for _, c := range result.Candidates {
+		out.Candidates = append(out.Candidates, matchCandidate{
+			NoteID: c.NoteID,
+			Title:  c.Title,
+			Score:  c.Score,
+		})
+	}
+	if len(out.Candidates) > 0 {
+		out.Confidence = clamp01(out.Candidates[0].Score)
+	}
+	return out
+}
+
+func clamp01(v float64) float64 {
+	switch {
+	case v < 0:
+		return 0
+	case v > 1:
+		return 1
+	default:
+		return v
+	}
+}
+
+// validateNoteFields applies the field caps. Every argument is optional, so one
+// function serves both create and update.
+func validateNoteFields(title, body *string, aliases, tags *[]string) error {
+	if title != nil {
+		if err := checkTitle(*title); err != nil {
+			return err
+		}
+	}
+	if body != nil {
+		if err := checkBody(*body); err != nil {
+			return err
+		}
+	}
+	if aliases != nil {
+		if err := checkStrings("aliases", *aliases, MaxAliases, MaxAliasRunes); err != nil {
+			return err
+		}
+	}
+	if tags != nil {
+		if err := checkStrings("tags", *tags, MaxTags, MaxTagRunes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
