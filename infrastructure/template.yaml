@@ -912,12 +912,25 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowCredentials: true
+        # API Gateway answers the preflight itself, before the Lambda's own CORS
+        # middleware ever runs, so this list — not the one in internal/middleware
+        # — is what a browser is told. They must agree: the client sends
+        # Idempotency-Key on every POST, and with it missing here the browser
+        # refuses the request before it is ever sent, reporting only
+        #   "Response to preflight request doesn't pass access control check"
+        # with no clue which header was the problem.
         AllowHeaders:
           - Authorization
           - Content-Type
+          - Idempotency-Key
+          - X-Correlation-Id
           - X-Amz-Date
           - X-Api-Key
           - X-Amz-Security-Token
+        # Correlation ids are only useful to a caller that can read them back;
+        # a cross-origin response hides every header not named here.
+        ExposeHeaders:
+          - X-Correlation-Id
         AllowMethods:
           - GET
           - POST
