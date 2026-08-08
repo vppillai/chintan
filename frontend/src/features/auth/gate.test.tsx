@@ -97,11 +97,77 @@ describe('an unconfigured build says so rather than offering a dead button', () 
     // bundle that compiles and cannot sign anyone in. `check-vite-env.sh`
     // guards the contract; this is what the user sees if it ever slips.
     render(
-      <SignedOutScreen phase="signed-out" error={null} signIn={vi.fn()} configured={false} />,
+      <SignedOutScreen
+        phase="signed-out"
+        error={null}
+        signIn={vi.fn()}
+        unlock={vi.fn()}
+        needsReEnrolment={false}
+        configured={false}
+      />,
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent(/no sign-in configured/i);
     expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
+    // Neither way in works without the configuration, and offering the shortcut
+    // alone would be a button that reaches an API this bundle has no URL for.
+    expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
+  });
+});
+
+describe('the signed-out screen offers the unlock beside the sign-in', () => {
+  it('renders it when the browser can assert a credential', () => {
+    render(
+      <SignedOutScreen
+        phase="signed-out"
+        error={null}
+        signIn={vi.fn()}
+        unlock={vi.fn()}
+        needsReEnrolment={false}
+        configured
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Unlock with biometrics' }),
+    ).toBeInTheDocument();
+  });
+
+  it('omits it when the browser cannot', () => {
+    render(
+      <SignedOutScreen
+        phase="signed-out"
+        error={null}
+        signIn={vi.fn()}
+        unlock={null}
+        needsReEnrolment={false}
+        configured
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
+  });
+
+  it('asks for re-enrolment instead of reporting a failure', () => {
+    // The assertion verified; the vault behind it was sealed by a retired key
+    // and has been discarded. Nothing is wrong with the user's finger, so
+    // "biometric verification failed" would send them to try it again forever.
+    render(
+      <SignedOutScreen
+        phase="signed-out"
+        error={null}
+        signIn={vi.fn()}
+        unlock={vi.fn()}
+        needsReEnrolment
+        configured
+      />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent(/set up again on this device/i);
+    expect(screen.queryByRole('alert')).toBeNull();
+    // And the way out of it is still on screen.
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 });
 

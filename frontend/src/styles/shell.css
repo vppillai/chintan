@@ -1802,3 +1802,43 @@
   color: var(--color-faint);
   cursor: default;
 }
+
+/*
+ * The second way in.
+ *
+ * Quiet on purpose: unlocking is the faster path for someone already enrolled,
+ * but two solid buttons of equal weight make the signed-out screen a choice
+ * where there should be one obvious action and one shortcut.
+ */
+.signed-out__action--quiet {
+  margin-block-start: var(--space-3);
+  background-color: transparent;
+  border-color: var(--color-line-strong);
+  color: var(--color-ink);
+}
+
+.signed-out__action[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   The router's answer, offered rather than buried
+   -------------------------------------------------------------------------- */
+
+/* The suggestion is the one action the card wants taken, so it reads as such
+   against the "choose another note" beside it. */
+.progress-card__action--primary {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.target-picker__back {
+  align-self: flex-start;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-decoration: underline;
+}

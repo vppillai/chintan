@@ -8,10 +8,12 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import { useSession } from '@/api/ApiProvider.tsx';
+import { useApi, useSession } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import type { Session } from '@/api/session.ts';
+import { tokenSetFromWire } from '@/api/tokens.ts';
 import { config } from '@/config/env.ts';
+import { canAssertWebAuthn, performAssertion } from '@/features/settings/webauthn.ts';
 
 import {
   authorizeUrl,
@@ -39,18 +41,55 @@ export type AuthPhase =
   | 'redirecting'
   /** A code came back and is being redeemed. */
   | 'exchanging'
+  /** A biometric assertion is in flight. */
+  | 'unlocking'
   | 'signed-in';
 
 /** The part of the flow React owns. Whether a token exists is the session's. */
-type Flow = 'idle' | 'redirecting' | 'exchanging';
+type Flow = 'idle' | 'redirecting' | 'exchanging' | 'unlocking';
 
 export interface AuthGateState {
   phase: AuthPhase;
-  /** Set when the hosted UI refused, or the exchange failed. */
+  /** Set when the hosted UI refused, the exchange failed, or unlock did. */
   error: string | null;
   signIn: () => void;
+  /**
+   * Signs in with the enrolled authenticator, skipping the hosted UI entirely.
+   *
+   * Null when this browser cannot assert a credential, which is what stops the
+   * signed-out screen offering an unlock it cannot perform.
+   */
+  unlock: (() => void) | null;
+  /**
+   * Set when the server accepted the assertion but could not open the vault.
+   *
+   * A distinct state, not an error: nothing is wrong with the user, their
+   * finger or their device, and the only thing that fixes it is enrolling
+   * again. Showing "biometric verification failed" here would send them to try
+   * the same finger a second time, forever.
+   */
+  needsReEnrolment: boolean;
   /** True when the build has no Cognito configuration to sign in against. */
   configured: boolean;
+}
+
+/**
+ * How the server says "the assertion was fine, the vault was not".
+ *
+ * The other end of this string is `service.ErrWebAuthnReEnrolRequired`, surfaced
+ * by `handler/webauthn.go` as the `detail` of a 401. Matching on prose is not
+ * how this client classifies anything else — see `SPEND_CAP_PROBLEM_TYPE`, which
+ * is a machine-readable `type` precisely because two 429s share a title — and
+ * this should become one too. Until it does, the match is deliberately narrow
+ * and deliberately fails *safe*: an unrecognised 401 is reported as a failed
+ * verification, which is the more conservative of the two answers.
+ */
+const RE_ENROL_DETAIL = /set up again/i;
+
+function isReEnrolmentRequired(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (error.status !== 401) return false;
+  return RE_ENROL_DETAIL.test(`${error.detail ?? ''} ${error.title}`);
 }
 
 /** A flow failure with a sentence already fit to show someone. */
@@ -66,7 +105,13 @@ class AuthFlowError extends Error {}
  */
 export function useAuthGate(): AuthGateState {
   const session = useSession();
+  const api = useApi();
   const authenticated = useAuthenticated();
+  const [needsReEnrolment, setNeedsReEnrolment] = useState(false);
+  // Read once: whether the browser has `credentials.get` does not change while
+  // the page is open, and reading it in render would make the first paint
+  // depend on a global.
+  const [assertable] = useState(() => canAssertWebAuthn());
 
   // Read once, synchronously, before the first paint: landing with `?code=`
   // must never flash the signed-out screen on the way in.
@@ -160,6 +205,44 @@ export function useAuthGate(): AuthGateState {
     })();
   }, []);
 
+  /**
+   * Unlock: `POST login/options` → `navigator.credentials.get` → `POST login`.
+   *
+   * This is the path that did not exist. `BiometricSetting` performed a real
+   * registration and the backend sealed a real refresh token, and there was no
+   * `webauthn/login` wrapper, no assertion helper and no control anywhere in the
+   * client — so an enrolled credential could never be used for anything, and
+   * `useAuth` always redirected to Cognito regardless.
+   */
+  const unlock = useCallback(() => {
+    setError(null);
+    setNeedsReEnrolment(false);
+    setFlow('unlocking');
+
+    void (async () => {
+      try {
+        const options = await api.webauthnLoginOptions();
+        const credential = await performAssertion(options.options);
+        const tokens = await api.webauthnLogin({
+          challenge_id: options.challenge_id,
+          credential,
+        });
+        // Straight into the session: the vault held a Cognito refresh token and
+        // the server has already exchanged it, so this is the same token set
+        // the hosted UI would have produced.
+        session.set(tokenSetFromWire(tokens));
+        setFlow('idle');
+      } catch (cause) {
+        setFlow('idle');
+        if (isReEnrolmentRequired(cause)) {
+          setNeedsReEnrolment(true);
+          return;
+        }
+        setError(describeUnlockFailure(cause));
+      }
+    })();
+  }, [api, session]);
+
   /*
    * Derived, never mirrored. Whether a token exists is the session's answer and
    * is read through `useSyncExternalStore`; `flow` only says what this
@@ -173,14 +256,37 @@ export function useAuthGate(): AuthGateState {
         ? 'signed-in'
         : flow === 'redirecting'
           ? 'redirecting'
-          : 'signed-out';
+          : flow === 'unlocking'
+            ? 'unlocking'
+            : 'signed-out';
 
   return {
     phase,
     error,
     signIn,
+    unlock: assertable ? unlock : null,
+    needsReEnrolment,
     configured: config.cognitoDomain.length > 0 && config.clientId.length > 0,
   };
+}
+
+/**
+ * An unlock failure, said in words.
+ *
+ * The DOM throws `NotAllowedError` both when the user dismissed the prompt and
+ * when the authenticator timed out, and they are the same thing to the person
+ * looking at the screen: nothing happened, try again or use the other button.
+ */
+function describeUnlockFailure(cause: unknown): string {
+  const name = (cause as { name?: string } | null)?.name;
+  if (name === 'NotAllowedError' || name === 'AbortError') {
+    return 'That unlock was cancelled.';
+  }
+  if (cause instanceof ApiError && cause.status === 503) {
+    return 'Biometric unlock is not set up on this account.';
+  }
+  if (cause instanceof ApiError) return cause.userMessage;
+  return 'That did not unlock. You can sign in instead.';
 }
 
 function describeFailure(cause: unknown): string {

@@ -29,6 +29,7 @@ import type {
   SearchHitWire,
   SettingsWire,
   TagWire,
+  TokenSetWire,
   WebAuthnOptionsWire,
   WebAuthnVerifyWire,
 } from './schema.ts';
@@ -202,6 +203,32 @@ export class ChintanApi {
 
   webauthnStatus(): Promise<{ enrolled: boolean }> {
     return this.client.request('/v1/auth/webauthn/status');
+  }
+
+  /**
+   * Begins an unlock. Anonymous by contract — the whole point is that there is
+   * no session yet, which is what `security: []` says in `openapi.yaml`.
+   *
+   * `NO_RETRY` because a challenge is single-use and someone is standing in
+   * front of a fingerprint reader waiting: a silent retry would mint a second
+   * challenge and invalidate the one the authenticator is about to answer.
+   */
+  webauthnLoginOptions(): Promise<WebAuthnOptionsWire> {
+    return this.client.request('/v1/auth/webauthn/login/options', {
+      method: 'POST',
+      anonymous: true,
+      retry: NO_RETRY,
+    });
+  }
+
+  /** Completes an unlock, returning the Cognito token set from the vault. */
+  webauthnLogin(body: WebAuthnVerifyWire): Promise<TokenSetWire> {
+    return this.client.request('/v1/auth/webauthn/login', {
+      method: 'POST',
+      body,
+      anonymous: true,
+      retry: NO_RETRY,
+    });
   }
 
   webauthnRegisterOptions(): Promise<WebAuthnOptionsWire> {

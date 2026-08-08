@@ -14,8 +14,15 @@ import type { AuthGateState } from './useAuth.ts';
  * be reasoned about from the address bar, and turns Back into a redirect loop.
  * One button, pressed on purpose.
  */
-export function SignedOutScreen({ phase, error, signIn, configured }: AuthGateState) {
-  const busy = phase === 'redirecting' || phase === 'exchanging';
+export function SignedOutScreen({
+  phase,
+  error,
+  signIn,
+  unlock,
+  needsReEnrolment,
+  configured,
+}: AuthGateState) {
+  const busy = phase === 'redirecting' || phase === 'exchanging' || phase === 'unlocking';
 
   return (
     <div className="signed-out">
@@ -28,15 +35,54 @@ export function SignedOutScreen({ phase, error, signIn, configured }: AuthGateSt
         </p>
       )}
 
+      {/*
+        Not an error, and deliberately not worded as one. The assertion was
+        good; the vault it should have opened was sealed by a key that has since
+        been retired, and the server discarded it. Nothing is wrong with the
+        user's finger, so telling them verification failed would send them to
+        try it again forever. Signing in once re-enrols them.
+      */}
+      {needsReEnrolment && (
+        <p className="signed-out__error" role="status">
+          Biometric unlock has to be set up again on this device. Sign in once, then turn
+          it back on in Settings.
+        </p>
+      )}
+
       {configured ? (
-        <button
-          type="button"
-          className="signed-out__action"
-          onClick={signIn}
-          disabled={busy}
-        >
-          {phase === 'exchanging' ? 'Signing you in…' : busy ? 'Opening sign-in…' : 'Sign in'}
-        </button>
+        <>
+          <button
+            type="button"
+            className="signed-out__action"
+            onClick={signIn}
+            disabled={busy}
+          >
+            {phase === 'exchanging'
+              ? 'Signing you in…'
+              : phase === 'redirecting'
+                ? 'Opening sign-in…'
+                : 'Sign in'}
+          </button>
+
+          {/*
+            Beside Sign in, which is its entire purpose: an enrolled user should
+            not have to take the hosted-UI round trip. Offered unconditionally
+            rather than gated on an enrolment check, because asking the server
+            "is this device enrolled?" before anyone has authenticated is a
+            question with no session to answer it for — the server answers 503
+            if nothing is enrolled and the button says so.
+          */}
+          {unlock && (
+            <button
+              type="button"
+              className="signed-out__action signed-out__action--quiet"
+              onClick={unlock}
+              disabled={busy}
+            >
+              {phase === 'unlocking' ? 'Unlocking…' : 'Unlock with biometrics'}
+            </button>
+          )}
+        </>
       ) : (
         /*
          * An unconfigured bundle is a broken deploy, not a runtime state to
