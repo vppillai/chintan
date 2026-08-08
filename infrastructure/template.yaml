@@ -522,7 +522,12 @@ Resources:
   TokenVaultKeyAlias:
     Type: AWS::KMS::Alias
     Properties:
-      AliasName: !Sub 'alias/chintan-${InstanceName}/token-vault'
+      # KMS aliases are unique per account+region, so this needs ${Environment}
+      # for the same reason ContentBucket and the Cognito domain do. Renaming it
+      # replaces only the alias -- the key, its ARN and its key material are
+      # untouched, and nothing resolves the vault key by alias (the Lambda gets
+      # TOKEN_VAULT_KMS_KEY_ID).
+      AliasName: !Sub 'alias/chintan-${InstanceName}-${Environment}/token-vault'
       TargetKeyId: !Ref TokenVaultKey
 
   # Lambda Execution Role
