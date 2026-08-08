@@ -122,5 +122,16 @@ determine state without re-reading the whole diff.
   needs a sentinel-entry loop that Android users experience as a broken Back
   button. Back reaches the collapsed record surface in one step from anywhere
   else, including a cold deep link.
+- **Retention lifecycle needs a backend change to become live.** S3 lifecycle
+  filters take one prefix and one suffix with no wildcards, so `tenants/*/captures/`
+  is inexpressible. The rule is therefore `Prefix: tenants/` AND tag
+  `chintan-artifact=capture-audio`. **It is inert until the presigned PUT sets
+  `x-amz-tagging` accordingly** — fail-safe (untagged objects never expire), but
+  Phase 4 or 6 must set the tag or `RetentionDays` silently does nothing again,
+  which is the exact v1 defect this was meant to close.
+- **`permissions.json` was 6192 bytes — over the 6144 IAM limit** once the SQS,
+  SNS, CloudWatch and Budgets grants were added. Nothing in CI would have caught
+  it before a failed deploy. Recovered to 5464 by folding eight identical
+  wildcard statements into one; the generator now size-checks both policy files.
 - **`accent` is a fill, never body text** in Ink & Paper — as text it is 4.47:1,
   which misses AA. `accent-strong` is the text-safe variant.
