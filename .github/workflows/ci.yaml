@@ -285,6 +285,7 @@ jobs:
             git checkout -- backend/internal/handler/wire.go frontend/src/api/__fixtures__/
           }
           trap restore EXIT
+          # shellcheck disable=SC2016 # the backticks are Go struct-tag syntax, not command substitution: they must reach sed literally.
           sed -i 's/`json:"items"`/`json:"entries"`/' backend/internal/handler/wire.go
           (cd backend && CHINTAN_UPDATE_FIXTURES=1 go test -count=1 ./internal/handler/ \
             -run TestContractResponsesAreWhatTheFrontendTypesDeclare)
