@@ -9,7 +9,11 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { useApi, useSession } from '@/api/ApiProvider.tsx';
-import { ApiError } from '@/api/problem.ts';
+import {
+  ApiError,
+  BIOMETRIC_NOT_ENROLLED_TYPE,
+  BIOMETRIC_RE_ENROLMENT_TYPE,
+} from '@/api/problem.ts';
 import type { Session } from '@/api/session.ts';
 import { tokenSetFromWire } from '@/api/tokens.ts';
 import { config } from '@/config/env.ts';
@@ -78,18 +82,18 @@ export interface AuthGateState {
 /**
  * How the server says "the assertion was fine, the vault was not".
  *
- * The other end of this string is `service.ErrWebAuthnReEnrolRequired`, surfaced
- * by `handler/webauthn.go` as the `detail` of a 401. Matching on prose is not
- * how this client classifies anything else — see `SPEND_CAP_PROBLEM_TYPE`, which
- * is a machine-readable `type` precisely because two 429s share a title — and
- * this should become one too. Until it does, the match is deliberately narrow
- * and deliberately fails *safe*: an unrecognised 401 is reported as a failed
+ * The problem `type` is the authority now that the backend emits one. The prose
+ * match stays as a fallback so a client running against an instance that has
+ * not been redeployed still behaves; it can go once nothing old is serving.
+ *
+ * Either way it fails *safe*: an unrecognised 401 is reported as a failed
  * verification, which is the more conservative of the two answers.
  */
 const RE_ENROL_DETAIL = /set up again/i;
 
 function isReEnrolmentRequired(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
+  if (error.problemType === BIOMETRIC_RE_ENROLMENT_TYPE) return true;
   if (error.status !== 401) return false;
   return RE_ENROL_DETAIL.test(`${error.detail ?? ''} ${error.title}`);
 }
@@ -303,14 +307,18 @@ export function useAuthGate(): AuthGateState {
 /**
  * The server saying this account has no enrolled credential.
  *
- * 503 today, which is the code `openapi.yaml` reserves for "not configured on
- * this instance" and reads as transient — the backend is giving it a proper
- * status and a machine-readable problem `type`. Both are matched so nothing
- * regresses in between, and the `type` should replace the status check as soon
- * as the exact string is known.
+ * Now a 404 carrying `#biometric-not-enrolled`: an account fact, not a server
+ * fault, and deliberately not the 503 it used to be — 503 means the instance
+ * cannot do biometrics at all and reads as transient, so a client retried an
+ * answer that could not change until somebody enrolled.
+ *
+ * The old 503 and the prose are still accepted, so a client that has updated
+ * ahead of its backend keeps working. Both fallbacks can go once nothing old is
+ * serving.
  */
 function isNotEnrolled(cause: unknown): boolean {
   if (!(cause instanceof ApiError)) return false;
+  if (cause.problemType === BIOMETRIC_NOT_ENROLLED_TYPE) return true;
   if (cause.status === 503) return true;
   return /not set up on this account/i.test(`${cause.detail ?? ''} ${cause.title}`);
 }

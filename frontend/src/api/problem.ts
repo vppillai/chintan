@@ -22,6 +22,25 @@ export const CORRELATION_HEADER = 'X-Correlation-Id';
 export const SPEND_CAP_PROBLEM_TYPE =
   'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#spend-capped';
 
+/**
+ * The two biometric outcomes the client has to tell apart, machine-readably.
+ *
+ * Both were matched on prose until the backend gave them types — `httperr.go`
+ * is the other end of these strings, exactly as it is for the spend cap, and
+ * for the same reason: the alternative is behaviour that changes when somebody
+ * rewords a sentence.
+ *
+ *   not-enrolled           this account has no credential, so there is nothing
+ *                          to offer. An account fact, not a server fault.
+ *   re-enrolment-required  the assertion verified and the vault behind it could
+ *                          not be opened. Enrolling again is the entire fix.
+ */
+export const BIOMETRIC_NOT_ENROLLED_TYPE =
+  'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-not-enrolled';
+
+export const BIOMETRIC_RE_ENROLMENT_TYPE =
+  'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-re-enrolment-required';
+
 export type ApiErrorKind =
   /** Non-2xx carrying (or presumed to carry) a problem document. */
   | 'http'

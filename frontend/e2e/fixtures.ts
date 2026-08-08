@@ -482,7 +482,14 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       if (!state.auth.webauthnEnrolled) {
         // Not enrolled is the same answer for every caller, so it is not an
         // oracle: 503, as `handler/webauthn.go` returns.
-        await problem(route, 503, { title: 'Service Unavailable', detail: 'biometric unlock is not set up on this account' });
+        // 404 with a machine-readable `type`, as `handler/webauthn.go` now
+        // answers. It was a 503, which reads as transient and made a permanent
+        // loop out of an account fact.
+        await problem(route, 404, {
+          type: 'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-not-enrolled',
+          title: 'Not found',
+          detail: 'nothing is enrolled on this account',
+        });
         return;
       }
       await json(route, {
@@ -504,6 +511,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
 
       if (state.auth.vaultNeedsReEnrolment) {
         await problem(route, 401, {
+          type: 'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-re-enrolment-required',
           title: 'Unauthorized',
           detail: 'biometric unlock must be set up again on this device',
         });
