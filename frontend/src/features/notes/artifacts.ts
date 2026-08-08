@@ -73,10 +73,27 @@ async function fetchJson(url: string, signal?: AbortSignal): Promise<unknown> {
   return response.json();
 }
 
+/** The cleaned transcript is `text/plain`, not JSON. */
+async function fetchText(url: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(url, signal ? { signal } : {});
+  if (!response.ok) throw new Error(`Artifact fetch failed: ${response.status}`);
+  return response.text();
+}
+
 export interface CaptureArtifacts {
   audioUrl: string | null;
   peaks: number[];
   segments: TranscriptSegment[];
+  /**
+   * The text cleanup produced, which is what became the note.
+   *
+   * Empty when the capture has no `clean` artifact — a capture that stopped at
+   * `no_content`, or one recorded before cleanup existed. The panel hides the
+   * Cleaned view in that case rather than offering a control whose only
+   * possible outcome is an empty tab, which is what it did while this was
+   * hard-coded to `''` for every capture in the app.
+   */
+  cleanedText: string;
 }
 
 /**
@@ -100,7 +117,7 @@ export async function loadCaptureArtifacts(
       throw error;
     });
 
-  const [peaks, segments] = await Promise.all([
+  const [peaks, segments, cleanedText] = await Promise.all([
     options.hasPeaks === false
       ? Promise.resolve([])
       : api
@@ -115,9 +132,16 @@ export async function loadCaptureArtifacts(
           .then((link) => fetchJson(link.url, options.signal))
           .then(parseSegments)
           .catch(() => []),
+    // No `has_clean` flag exists on the contract, so this is asked for and
+    // allowed to 404 like the other optional artifacts.
+    api
+      .downloadUrl(captureId, 'clean')
+      .then((link) => fetchText(link.url, options.signal))
+      .then((text) => text.trim())
+      .catch(() => ''),
   ]);
 
-  return { audioUrl: audio?.url ?? null, peaks, segments };
+  return { audioUrl: audio?.url ?? null, peaks, segments, cleanedText };
 }
 
 /** The segment covering `time`, or the last one before it. Binary search. */

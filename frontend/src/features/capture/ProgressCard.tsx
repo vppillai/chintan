@@ -1,7 +1,13 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 
-import { useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
-import type { CaptureStatus, CaptureWire } from '@/api/schema.ts';
+import {
+  useNotes,
+  useRetryCapture,
+  useSetCaptureTarget,
+  usePendingCaptures,
+} from '@/api/queries.ts';
+import { isTerminalStatus, type CaptureStatus, type CaptureWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 
@@ -48,12 +54,24 @@ function describe(capture: CaptureWire): string {
   }
 }
 
+/**
+ * Cards the user has closed.
+ *
+ * Module-level on purpose: the card is rendered by the shell and remounts every
+ * time the sheet locks and unlocks, so component state would resurrect a card
+ * the user had just dismissed. There is no server-side "seen" flag to sync
+ * with — `no_content` and `failed` stay in the pending list by contract — so
+ * this is a per-session client decision and nothing more.
+ */
+const dismissed = new Set<string>();
+
 export function ProgressCard() {
   const navigate = useNavigate();
   const { data } = usePendingCaptures();
   const retry = useRetryCapture();
+  const [, forceRender] = useState(0);
 
-  const captures = data?.items ?? [];
+  const captures = (data?.items ?? []).filter((capture) => !dismissed.has(capture.id));
   if (captures.length === 0) return null;
 
   return (
@@ -67,6 +85,10 @@ export function ProgressCard() {
           }}
           onRetry={() => retry.mutate(capture.id)}
           retrying={retry.isPending && retry.variables === capture.id}
+          onDismiss={() => {
+            dismissed.add(capture.id);
+            forceRender((tick) => tick + 1);
+          }}
         />
       ))}
     </section>
@@ -78,12 +100,23 @@ interface CaptureCardProps {
   onOpen: () => void;
   onRetry: () => void;
   retrying: boolean;
+  onDismiss: () => void;
 }
 
-function CaptureCard({ capture, onOpen, onRetry, retrying }: CaptureCardProps) {
+function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureCardProps) {
+  const [picking, setPicking] = useState(false);
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const done = capture.status === 'appended';
+  const needsTarget = capture.status === 'needs_target';
   const current = stageIndex(capture.status);
+
+  /*
+   * The stage strip is for a capture that is still moving. It used to render
+   * for every status the two explicit branches above did not name, which meant
+   * `needs_target` and `no_content` showed all five stages *complete* while the
+   * capture had in fact stopped and was waiting for the user.
+   */
+  const running = !isTerminalStatus(capture.status);
 
   return (
     <article className="progress-card" data-status={capture.status}>
@@ -92,7 +125,7 @@ function CaptureCard({ capture, onOpen, onRetry, retrying }: CaptureCardProps) {
           {describe(capture)}
         </p>
 
-        {!failed && !done && (
+        {running && (
           <ol className="progress-card__stages" aria-label="Pipeline stage">
             {STAGES.map((stage, index) => (
               <li
@@ -119,6 +152,25 @@ function CaptureCard({ capture, onOpen, onRetry, retrying }: CaptureCardProps) {
         )}
 
         {/*
+          The card asked "Which note should this go in?" and rendered no way to
+          answer it. `useSetCaptureTarget` wrapped the contract's target
+          endpoint and was called from nowhere, so the capture — and the thought
+          in it — was stuck permanently.
+        */}
+        {needsTarget && (
+          <button
+            type="button"
+            className="progress-card__action"
+            aria-expanded={picking}
+            onClick={() => {
+              setPicking((open) => !open);
+            }}
+          >
+            <span>{picking ? 'Cancel' : 'Choose a note'}</span>
+          </button>
+        )}
+
+        {/*
           A real Retry, wired to POST /v1/captures/{id}/retry. In v1 the client
           method existed and was called from nowhere, so a failed capture was a
           dead end with a toast.
@@ -133,7 +185,102 @@ function CaptureCard({ capture, onOpen, onRetry, retrying }: CaptureCardProps) {
             <span>{retrying ? 'Retrying…' : 'Retry'}</span>
           </button>
         )}
+
+        {/*
+          Terminal and unactionable statuses need a way off the screen. Without
+          one the card sat over the record surface for the rest of the session.
+        */}
+        {(failed || capture.status === 'no_content') && (
+          <button type="button" className="progress-card__action" onClick={onDismiss}>
+            <span>Dismiss</span>
+          </button>
+        )}
       </div>
+
+      {needsTarget && picking && (
+        <TargetPicker
+          captureId={capture.id}
+          onDone={() => {
+            setPicking(false);
+          }}
+        />
+      )}
     </article>
+  );
+}
+
+/**
+ * Answers "which note should this go in?".
+ *
+ * Both spellings the contract accepts are offered — an existing note, or a new
+ * one by title — because the router asks this question precisely when it could
+ * not tell whether the thought belonged to something the user already has.
+ */
+function TargetPicker({ captureId, onDone }: { captureId: string; onDone: () => void }) {
+  const setTarget = useSetCaptureTarget();
+  const { data } = useNotes({ state: 'active' });
+  const [title, setTitle] = useState('');
+
+  const notes = data?.pages.flatMap((page) => page.items) ?? [];
+
+  const choose = (target: { note_id: string } | { new_note_title: string }): void => {
+    setTarget.mutate({ captureId, target }, { onSuccess: onDone });
+  };
+
+  return (
+    <div className="target-picker">
+      <ul className="target-picker__list" role="list">
+        {notes.map((note) => (
+          <li key={note.id}>
+            <button
+              type="button"
+              className="target-picker__option"
+              disabled={setTarget.isPending}
+              onClick={() => {
+                choose({ note_id: note.id });
+              }}
+            >
+              {note.title}
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      <form
+        className="target-picker__new"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const trimmed = title.trim();
+          if (!trimmed) return;
+          choose({ new_note_title: trimmed });
+        }}
+      >
+        <label className="visually-hidden" htmlFor={`new-note-${captureId}`}>
+          New note title
+        </label>
+        <input
+          id={`new-note-${captureId}`}
+          className="target-picker__input"
+          value={title}
+          placeholder="Or start a new note"
+          onChange={(event) => {
+            setTitle(event.target.value);
+          }}
+        />
+        <button
+          type="submit"
+          className="target-picker__option"
+          disabled={setTarget.isPending || title.trim().length === 0}
+        >
+          Create
+        </button>
+      </form>
+
+      {setTarget.isError && (
+        <p className="target-picker__error" role="alert">
+          That did not go through. Try again.
+        </p>
+      )}
+    </div>
   );
 }

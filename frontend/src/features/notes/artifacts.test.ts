@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+import type { ChintanApi } from '@/api/endpoints.ts';
+import { ApiError } from '@/api/problem.ts';
 
 import {
   activeSegmentIndex,
   formatTime,
+  loadCaptureArtifacts,
   parsePeaks,
   parseSegments,
   type TranscriptSegment,
@@ -81,6 +85,51 @@ describe('activeSegmentIndex', () => {
 
   it('is empty-safe', () => {
     expect(activeSegmentIndex([], 5)).toBe(-1);
+  });
+});
+
+describe('loadCaptureArtifacts fetches the cleaned transcript', () => {
+  function api(available: Record<string, string>): ChintanApi {
+    return {
+      downloadUrl: vi.fn(async (_captureId: string, kind: string) => {
+        if (!(kind in available)) {
+          throw new ApiError({ kind: 'http', status: 404, title: 'Not found' });
+        }
+        return { url: `https://objects.test/${kind}`, expires_at: '2026-08-08T00:00:00Z' };
+      }),
+    } as unknown as ChintanApi;
+  }
+
+  it('returns the cleaned text so the panel has something to show', async () => {
+    // The screen passed a hard-coded `''`, so the Cleaned tab was permanently
+    // empty on every capture the pipeline had cleaned successfully.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) =>
+        input.endsWith('/clean')
+          ? new Response('Ridge tiles have slipped. Ellis quoted nine hundred pounds.\n')
+          : new Response('{}', { headers: { 'content-type': 'application/json' } }),
+      ),
+    );
+
+    const artifacts = await loadCaptureArtifacts(
+      api({ audio: '', clean: '' }),
+      'cap-1',
+      { hasPeaks: false, hasSegments: false },
+    );
+
+    expect(artifacts.cleanedText).toBe(
+      'Ridge tiles have slipped. Ellis quoted nine hundred pounds.',
+    );
+    expect(artifacts.audioUrl).toBe('https://objects.test/audio');
+  });
+
+  it('is empty, not broken, for a capture with no clean artifact', async () => {
+    const artifacts = await loadCaptureArtifacts(api({ audio: '' }), 'cap-2', {
+      hasPeaks: false,
+      hasSegments: false,
+    });
+    expect(artifacts.cleanedText).toBe('');
   });
 });
 

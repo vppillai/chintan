@@ -37,8 +37,24 @@ function mount(items: CaptureWire[]) {
     if (url.includes('/v1/captures/') && url.endsWith('/retry')) {
       return json(capture({ status: 'transcribing' }));
     }
+    if (url.includes('/v1/captures/') && url.endsWith('/target')) {
+      return json(capture({ status: 'appending' }));
+    }
     if (url.includes('/v1/captures')) {
       return json({ items });
+    }
+    if (url.includes('/v1/notes')) {
+      return json({
+        items: [
+          {
+            id: 'roof-repair',
+            title: 'Roof repair',
+            updated_at: '2026-08-06T09:14:00.000Z',
+            version: 3,
+            archived: false,
+          },
+        ],
+      });
     }
     return json({});
   });
@@ -124,5 +140,76 @@ describe('a failed capture has a Retry that is actually wired', () => {
   it('offers Open once the capture has been filed', async () => {
     mount([capture({ status: 'appended', note_id: 'roof-repair' })]);
     expect(await screen.findByRole('button', { name: /open/i })).toBeInTheDocument();
+  });
+});
+
+describe('a terminal capture is something the user can act on', () => {
+  it('lets the user answer "which note should this go in?"', async () => {
+    /*
+     * The card asked the question, marked all five pipeline stages complete,
+     * and rendered zero buttons. `useSetCaptureTarget` wrapped the contract's
+     * target endpoint and was called from nowhere in the app, and the schema
+     * lists `needs_target` as terminal pending user action — so the capture,
+     * and the thought in it, was stuck permanently.
+     */
+    const user = userEvent.setup();
+    const { calls } = mount([capture({ id: 'srv-7', status: 'needs_target' })]);
+
+    await screen.findByText(/which note should this go in/i);
+    await user.click(screen.getByRole('button', { name: /choose a note/i }));
+
+    await user.click(await screen.findByRole('button', { name: 'Roof repair' }));
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-7/target'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('can file the recording into a brand new note', async () => {
+    const user = userEvent.setup();
+    const { calls, fetchImpl } = mount([capture({ id: 'srv-8', status: 'needs_target' })]);
+
+    await user.click(await screen.findByRole('button', { name: /choose a note/i }));
+    await user.type(await screen.findByLabelText(/new note title/i), 'Loft insulation');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-8/target'),
+        ),
+      ).toBe(true);
+    });
+
+    const target = fetchImpl.mock.calls.find(
+      ([input]) => String(input).endsWith('/v1/captures/srv-8/target'),
+    );
+    expect(JSON.parse(String(target?.[1]?.body))).toEqual({ new_note_title: 'Loft insulation' });
+  });
+
+  it('does not mark every stage complete for a capture that stopped', async () => {
+    // Five filled stage pips over "Which note should this go in?" says the
+    // pipeline finished. It did not — it is waiting for the user.
+    mount([capture({ status: 'needs_target' })]);
+    await screen.findByText(/which note should this go in/i);
+    expect(screen.queryByRole('list', { name: /pipeline stage/i })).toBeNull();
+  });
+
+  it('lets an unactionable capture be dismissed', async () => {
+    // `no_content` has no retry, no target, and nothing to open, so without a
+    // dismiss the card sat on the record surface indefinitely.
+    const user = userEvent.setup();
+    mount([capture({ id: 'srv-quiet', status: 'no_content' })]);
+
+    await screen.findByText(/nothing to save from that recording/i);
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/nothing to save from that recording/i)).toBeNull();
+    });
   });
 });

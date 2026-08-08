@@ -1,13 +1,36 @@
 import { useNotes } from '@/api/queries.ts';
+import { ApiError } from '@/api/problem.ts';
 import { NoteRow } from '@/components/NoteRow.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 export function NotesScreen() {
-  const { data, isLoading, isError, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    useNotes({ state: 'active' });
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    fetchStatus,
+    refetch,
+    isFetching,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useNotes({ state: 'active' });
   const online = useOnline();
 
   const notes = data?.pages.flatMap((page) => page.items) ?? [];
+
+  /*
+   * TanStack *pauses* a query when the browser reports no connection: it does
+   * not run and it does not fail, so neither `isLoading` nor `isError` is ever
+   * true. The screen used to fall through both and render the brand-new-user
+   * empty state — "Nothing here yet. Tap the record button and say something." —
+   * directly under a banner saying "Offline — showing saved notes.". To someone
+   * with a full library walking into a tunnel, their whole library had been
+   * deleted.
+   */
+  const paused = fetchStatus === 'paused';
+  const nothingToShow = notes.length === 0;
 
   return (
     <div className="screen">
@@ -21,21 +44,43 @@ export function NotesScreen() {
         )}
       </header>
 
-      {isLoading && (
+      {isLoading && !paused && (
         <p className="screen__count" role="status">
           Loading…
         </p>
       )}
 
-      {isError && notes.length === 0 && (
+      {(!online || paused) && nothingToShow && (
         <p className="screen__empty" role="status">
-          {online
-            ? 'Your notes could not be loaded. Pull down to try again.'
-            : 'You are offline and no notes are cached on this device yet.'}
+          You are offline and no notes are cached on this device yet. They will appear when
+          you reconnect.
         </p>
       )}
 
-      {!isLoading && !isError && notes.length === 0 && (
+      {/*
+        A real control, not an instruction for a gesture the app does not
+        implement. The previous copy said "Pull down to try again." — there is
+        no pull-to-refresh anywhere in the codebase, and this region rendered
+        zero buttons, so the only escapes were switching tabs to force a
+        remount or reloading.
+      */}
+      {isError && online && !paused && nothingToShow && (
+        <div className="screen__empty" role="alert">
+          <p>{failureMessage(error)}</p>
+          <div className="screen__actions">
+            <button
+              type="button"
+              className="screen__action"
+              onClick={() => void refetch()}
+              disabled={isFetching}
+            >
+              {isFetching ? 'Trying…' : 'Try again'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {online && !paused && !isLoading && !isError && nothingToShow && (
         <p className="screen__empty">
           Nothing here yet. Tap the record button and say something.
         </p>
@@ -65,4 +110,13 @@ export function NotesScreen() {
       )}
     </div>
   );
+}
+
+/**
+ * The server's own wording where there is one, so a 401 reads as "sign in
+ * again" rather than as a generic fault the user cannot act on.
+ */
+function failureMessage(error: unknown): string {
+  if (error instanceof ApiError) return error.userMessage;
+  return 'Your notes could not be loaded.';
 }

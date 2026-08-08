@@ -284,7 +284,7 @@ function Player({ capture }: { capture: CaptureWire }) {
 
       <TranscriptPanel
         segments={segments}
-        cleanedText=""
+        cleanedText={data.cleanedText}
         view={hasSegments ? view : 'raw'}
         onViewChange={setView}
         currentTime={player.currentTime}

@@ -99,6 +99,27 @@ test('the cleaned view drops timestamps and says why', async ({ page }) => {
   // The constraint is stated, not hidden — and there is nothing to tap.
   await expect(page.getByText(/no reliable timestamps/i)).toBeVisible();
   await expect(page.getByRole('button', { name: /Ellis quoted nine hundred/ })).toHaveCount(0);
+
+  /*
+   * The cleaned text is actually there. It used to be hard-coded to `''` at the
+   * call site, so this tab read "No cleaned text for this capture." on every
+   * capture in the app — including ones the pipeline had cleaned perfectly
+   * well, which reads as "cleanup failed" or "my text was lost".
+   */
+  await expect(page.getByText(/Get two quotes before the autumn rain/)).toBeVisible();
+  await expect(page.getByText(/no cleaned text for this capture/i)).toHaveCount(0);
+});
+
+test('the Cleaned toggle is not offered when there is no cleaned text', async ({ page }) => {
+  // The presigned URL is still minted; the object behind it is gone, which is
+  // what a capture that stopped at `no_content` looks like.
+  await page.route('**/artifact/*/clean', (route) => route.fulfill({ status: 404, body: '' }));
+
+  await page.goto('/notes/roof-repair');
+
+  await expect(page.getByRole('button', { name: /Ellis quoted nine hundred/ })).toBeVisible();
+  // No control whose only possible outcome is an empty panel.
+  await expect(page.getByRole('button', { name: 'Cleaned' })).toHaveCount(0);
 });
 
 test('a capture with no artifacts falls back to a plain player', async ({ page, api }) => {

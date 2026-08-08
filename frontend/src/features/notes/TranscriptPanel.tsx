@@ -42,7 +42,18 @@ export function TranscriptPanel({
   hasSegments,
 }: TranscriptPanelProps) {
   const headingId = useId();
-  const activeIndex = view === 'raw' ? activeSegmentIndex(segments, currentTime) : -1;
+  /*
+   * The toggle is only offered when both views exist.
+   *
+   * `cleanedText` was hard-coded to `''` at the only call site, so the Cleaned
+   * tab was offered on every capture with segments and always answered "No
+   * cleaned text for this capture." — including captures the pipeline had
+   * cleaned perfectly well. The user's reasonable conclusion was that cleanup
+   * had failed or their text had been lost.
+   */
+  const hasCleaned = cleanedText.trim().length > 0;
+  const effectiveView: TranscriptView = view === 'cleaned' && !hasCleaned ? 'raw' : view;
+  const activeIndex = effectiveView === 'raw' ? activeSegmentIndex(segments, currentTime) : -1;
   const activeRef = useRef<HTMLLIElement>(null);
 
   // Follow playback, but only within the panel — `block: 'nearest'` so the page
@@ -58,12 +69,12 @@ export function TranscriptPanel({
           Transcript
         </h2>
 
-        {hasSegments && (
+        {hasSegments && hasCleaned && (
           <div className="transcript__toggle" role="group" aria-label="Transcript view">
             <button
               type="button"
               className="transcript__toggle-option"
-              aria-pressed={view === 'raw'}
+              aria-pressed={effectiveView === 'raw'}
               onClick={() => {
                 onViewChange('raw');
               }}
@@ -73,7 +84,7 @@ export function TranscriptPanel({
             <button
               type="button"
               className="transcript__toggle-option"
-              aria-pressed={view === 'cleaned'}
+              aria-pressed={effectiveView === 'cleaned'}
               onClick={() => {
                 onViewChange('cleaned');
               }}
@@ -89,12 +100,12 @@ export function TranscriptPanel({
         "Cleaned" and finds the timestamps gone deserves to know why.
       */}
       <p className="transcript__note">
-        {view === 'raw'
+        {effectiveView === 'raw'
           ? 'What was said, as recorded. Tap any line to jump there.'
           : 'Rewritten for the note. Cleanup changes the wording, so these lines have no reliable timestamps — there is nothing to jump to.'}
       </p>
 
-      {view === 'raw' ? (
+      {effectiveView === 'raw' ? (
         hasSegments && segments.length > 0 ? (
           <ol className="transcript__list">
             {segments.map((segment, index) => {

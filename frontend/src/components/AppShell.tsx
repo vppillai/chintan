@@ -12,6 +12,7 @@ import { useRouteFocus } from '@/app/useRouteFocus.ts';
 
 import { BottomBar } from './BottomBar.tsx';
 import { LibraryStrip } from './LibraryStrip.tsx';
+import { RecordingIndicator } from './RecordingIndicator.tsx';
 import { StatusRegion } from './StatusRegion.tsx';
 
 const SCREEN_TITLES: Record<string, string> = {
@@ -81,6 +82,11 @@ export function AppShell() {
         */}
         {sheet.state !== 'locked' && (
           <>
+            {/*
+              The microphone being open is the one fact that outranks everything
+              else on the screen, so it is stated above them all.
+            */}
+            <RecordingIndicator />
             {/*
               Offered before anything else: a recording stranded by a killed tab
               is the only artifact in the app that exists in exactly one place.

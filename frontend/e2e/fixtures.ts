@@ -105,6 +105,10 @@ const SEGMENTS = {
   ],
 };
 
+/** What cleanup produced, and what became the note body. */
+const CLEANED =
+  'Ridge tiles on the south slope have slipped.\n\nGet two quotes before the autumn rain; Ellis quoted nine hundred.';
+
 /**
  * A thirteen-second silent WAV.
  *
@@ -351,6 +355,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         contentType: 'application/json',
         body: JSON.stringify(SEGMENTS),
       });
+      return;
+    }
+    if (url.endsWith('/clean')) {
+      // text/plain, matching what the pipeline writes to `clean.txt`.
+      await route.fulfill({ status: 200, contentType: 'text/plain', body: CLEANED });
       return;
     }
     /*
