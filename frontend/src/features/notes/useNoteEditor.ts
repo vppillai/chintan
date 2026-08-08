@@ -121,8 +121,28 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
   const saveNow = useCallback(async () => {
     if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
     await save();
   }, [save]);
+
+  /**
+   * A stable handle on the current `save`, so the unmount flush below can stay
+   * a mount-only effect. Keying that effect on `save` would make it fire its
+   * cleanup on every note change, which is not what "the screen went away"
+   * means.
+   */
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
+
+  /** Flushes a pending debounce, if one is armed. */
+  const flush = useCallback(() => {
+    if (!timer.current) return;
+    clearTimeout(timer.current);
+    timer.current = null;
+    void saveRef.current();
+  }, []);
 
   // The safety net v1 had no equivalent of. It only fires when work is
   // genuinely unsaved, so it never nags on a clean note.
@@ -138,12 +158,38 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     };
   }, []);
 
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
+  /*
+   * App-switching is not a page unload, so `beforeunload` never sees it. On
+   * mobile "hidden" is routinely the last event a document gets before it is
+   * frozen or discarded, which makes it the right place to flush.
+   */
+  useEffect(() => {
+    const onHidden = (): void => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [flush]);
+
+  /*
+   * The debounce is FLUSHED on unmount, not dropped.
+   *
+   * Dropping it silently discarded every edit made in the 1.2 seconds before
+   * the user left the screen — and the system Back gesture, the primary
+   * one-handed way to leave, is a client-side navigation, so `beforeunload`
+   * never fired either. The indicator said "Unsaved changes" and then the
+   * screen was gone. The in-app back arrow only worked by accident: tapping it
+   * blurs the textarea and `onBlur` calls `saveNow()`; removing an element from
+   * the DOM fires no blur.
+   *
+   * `save` reads the draft from the `latest` mirror and the request outlives
+   * the component, so a flush started here still completes.
+   */
+  useEffect(() => () => {
+    flush();
+  }, [flush]);
 
   return {
     model,
