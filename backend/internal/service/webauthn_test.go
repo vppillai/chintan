@@ -2,16 +2,18 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/vppillai/chintan/backend/internal/auth"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
 func TestWebAuthnStatusAndDisable(t *testing.T) {
 	store := repository.NewMemoryStore()
-	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{Sub: "user-1"}, PlainBox{})
+	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{Sub: "user-1"}, PlainBox{}, stubIDVerifier{sub: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +46,7 @@ func TestWebAuthnStatusAndDisable(t *testing.T) {
 
 func TestWebAuthnBeginLoginNotEnrolled(t *testing.T) {
 	store := repository.NewMemoryStore()
-	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{}, PlainBox{})
+	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{}, PlainBox{}, stubIDVerifier{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestWebAuthnBeginLoginNotEnrolled(t *testing.T) {
 
 func TestFinishRegistrationRequiresRefresh(t *testing.T) {
 	store := repository.NewMemoryStore()
-	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{Sub: "user-1"}, PlainBox{})
+	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{Sub: "user-1"}, PlainBox{}, stubIDVerifier{sub: "user-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,9 +70,22 @@ func TestFinishRegistrationRequiresRefresh(t *testing.T) {
 	}
 }
 
-func TestSubFromIDToken(t *testing.T) {
-	sub, err := subFromIDToken("a.eyJzdWIiOiJ1c2VyLTEifQ.b")
-	if err != nil || sub != "user-1" {
-		t.Fatalf("sub=%q err=%v", sub, err)
+// stubIDVerifier stands in for the Cognito verifier. FakeRefresher mints
+// synthetic, unsigned ID tokens, which a real verifier correctly rejects.
+type stubIDVerifier struct{ sub string }
+
+func (s stubIDVerifier) Verify(context.Context, string) (auth.Identity, error) {
+	if s.sub == "" {
+		return auth.Identity{}, errors.New("no subject")
+	}
+	return auth.Identity{UserID: s.sub, TenantID: s.sub}, nil
+}
+
+// A service with no verifier must refuse to bind a vault rather than trusting
+// the token's payload, which is what v1 did.
+func TestVerifiedSubFailsClosedWithoutVerifier(t *testing.T) {
+	svc := &WebAuthnService{}
+	if _, err := svc.verifiedSub(context.Background(), "a.eyJzdWIiOiJ1c2VyLTEifQ.b"); err == nil {
+		t.Fatal("expected failure with no verifier configured")
 	}
 }

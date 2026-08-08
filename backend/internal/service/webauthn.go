@@ -13,6 +13,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
+	"github.com/vppillai/chintan/backend/internal/auth"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
@@ -57,10 +58,14 @@ type WebAuthnService struct {
 	refresher   TokenRefresher
 	box         SealBox
 	displayName string
+	// verifier validates the ID token Cognito returns from a refresh before its
+	// subject is used to bind the KMS-sealed vault. v1 read that subject from
+	// an unverified base64 parse.
+	verifier auth.Verifier
 }
 
 // NewWebAuthnService builds the service. allowedOrigin is e.g. https://vppillai.github.io.
-func NewWebAuthnService(store repository.Store, allowedOrigin, displayName string, refresher TokenRefresher, box SealBox) (*WebAuthnService, error) {
+func NewWebAuthnService(store repository.Store, allowedOrigin, displayName string, refresher TokenRefresher, box SealBox, verifier auth.Verifier) (*WebAuthnService, error) {
 	if displayName == "" {
 		displayName = "Chintan"
 	}
@@ -82,6 +87,7 @@ func NewWebAuthnService(store repository.Store, allowedOrigin, displayName strin
 		refresher:   refresher,
 		box:         box,
 		displayName: displayName,
+		verifier:    verifier,
 	}, nil
 }
 
@@ -162,7 +168,7 @@ func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID string,
 		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
 		return fmt.Errorf("refresh token rejected: %w", err)
 	}
-	sub, err := subFromIDToken(tokens.IDToken)
+	sub, err := s.verifiedSub(ctx, tokens.IDToken)
 	if err != nil || sub != userID {
 		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
 		return ErrWebAuthnSubMismatch
@@ -248,7 +254,7 @@ func (s *WebAuthnService) FinishLogin(ctx context.Context, req *model.WebAuthnVe
 	if err != nil {
 		return nil, fmt.Errorf("cognito refresh: %w", err)
 	}
-	sub, err := subFromIDToken(tokens.IDToken)
+	sub, err := s.verifiedSub(ctx, tokens.IDToken)
 	if err != nil || sub != userID {
 		return nil, ErrWebAuthnSubMismatch
 	}
@@ -343,26 +349,23 @@ func (s *WebAuthnService) loadChallenge(ctx context.Context, challengeID string)
 	return &session, nil
 }
 
-func subFromIDToken(idToken string) (string, error) {
-	parts := strings.Split(idToken, ".")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid id token")
+// verifiedSub returns the subject of a Cognito ID token after full signature
+// and claim verification.
+//
+// This guards the most sensitive binding in the system: which user a KMS-sealed
+// refresh token belongs to. v1 base64-decoded the payload and read `sub` with no
+// signature check at all. A missing verifier fails closed rather than falling
+// back to that parse.
+func (s *WebAuthnService) verifiedSub(ctx context.Context, idToken string) (string, error) {
+	if s.verifier == nil {
+		return "", fmt.Errorf("webauthn: no token verifier configured")
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	id, err := s.verifier.Verify(ctx, idToken)
 	if err != nil {
-		payload, err = base64.URLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return "", err
-		}
-	}
-	var claims struct {
-		Sub string `json:"sub"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
 		return "", err
 	}
-	if claims.Sub == "" {
-		return "", fmt.Errorf("missing sub")
+	if id.UserID == "" {
+		return "", fmt.Errorf("webauthn: verified token has no subject")
 	}
-	return claims.Sub, nil
+	return id.UserID, nil
 }

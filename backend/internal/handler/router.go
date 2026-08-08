@@ -4,16 +4,29 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/vppillai/chintan/backend/internal/auth"
 	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// NewRouter creates a new HTTP router with all handlers configured.
-// webauthn may be nil; biometric routes then return 503.
-func NewRouter(notesService *service.NotesService, settingsService *service.SettingsService, captureService *service.CaptureService, webauthn *service.WebAuthnService, allowedOrigin string) http.Handler {
+// NewRouter wires the HTTP surface.
+//
+// webauthn may be nil; biometric routes then return 503. verifier may be nil
+// only in tests that inject an identity directly — middleware.Auth fails closed
+// without it.
+func NewRouter(
+	notesService *service.NotesService,
+	settingsService *service.SettingsService,
+	captureService *service.CaptureService,
+	webauthn *service.WebAuthnService,
+	allowedOrigin string,
+	verifier auth.Verifier,
+) http.Handler {
 	if allowedOrigin == "" {
 		allowedOrigin = os.Getenv("ALLOWED_ORIGIN")
 	}
+
+	authenticated := middleware.Auth(verifier)
 
 	mux := http.NewServeMux()
 
@@ -24,21 +37,22 @@ func NewRouter(notesService *service.NotesService, settingsService *service.Sett
 
 	mux.HandleFunc("/v1/health", HealthHandler)
 
-	// Public biometric login (API Gateway also marks these Auth NONE)
+	// Public biometric login. These are the only unauthenticated data routes,
+	// and API Gateway marks them AuthorizationType: NONE to match.
 	mux.Handle("/v1/auth/webauthn/login/options", webauthnHandler)
 	mux.Handle("/v1/auth/webauthn/login", webauthnHandler)
 
 	// Authenticated biometric management
-	mux.Handle("/v1/auth/webauthn/register/options", middleware.Auth(webauthnHandler))
-	mux.Handle("/v1/auth/webauthn/register", middleware.Auth(webauthnHandler))
-	mux.Handle("/v1/auth/webauthn/status", middleware.Auth(webauthnHandler))
-	mux.Handle("/v1/auth/webauthn", middleware.Auth(webauthnHandler))
+	mux.Handle("/v1/auth/webauthn/register/options", authenticated(webauthnHandler))
+	mux.Handle("/v1/auth/webauthn/register", authenticated(webauthnHandler))
+	mux.Handle("/v1/auth/webauthn/status", authenticated(webauthnHandler))
+	mux.Handle("/v1/auth/webauthn", authenticated(webauthnHandler))
 
-	mux.Handle("/v1/settings", middleware.Auth(settingsHandler))
-	mux.Handle("/v1/notes/", middleware.Auth(notesHandler))
-	mux.Handle("/v1/notes", middleware.Auth(notesHandler))
-	mux.Handle("/v1/captures/", middleware.Auth(capturesHandler))
-	mux.Handle("/v1/captures", middleware.Auth(capturesHandler))
+	mux.Handle("/v1/settings", authenticated(settingsHandler))
+	mux.Handle("/v1/notes/", authenticated(notesHandler))
+	mux.Handle("/v1/notes", authenticated(notesHandler))
+	mux.Handle("/v1/captures/", authenticated(capturesHandler))
+	mux.Handle("/v1/captures", authenticated(capturesHandler))
 
 	return middleware.CORS(allowedOrigin)(mux)
 }

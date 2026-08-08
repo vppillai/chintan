@@ -127,7 +127,7 @@ An OpenAPI 3.1 document is generated from the handler definitions and checked in
 
 1. Transcribes by handing Groq a **presigned GET URL**, not audio bytes pulled through Lambda memory. Recording length stops being bounded by the heap.
 2. Requests `verbose_json` with segment and word timestamp granularity; writes `raw.txt` and `segments.json`.
-3. Computes and writes `peaks.json` — a downsampled amplitude envelope for waveform rendering.
+3. Records `duration_ms` from the transcription result.
 4. Routes (existing `provider/openai_router.go` and its verifier, unchanged).
 5. Cleans (existing `internal/cleanup`, unchanged).
 6. Appends to the note under the idempotency guard in §4.5.
@@ -267,6 +267,8 @@ The **progress card** appears on stop, showing transcribe → clean → file. It
 Playback is inline. There is no navigation to a presigned S3 URL.
 
 The player renders `peaks.json` as a scrubbable waveform with a playhead and tabular elapsed/total time. Below it, the transcript panel renders `segments.json`: tapping any line seeks the audio, and the active segment highlights as it plays.
+
+`peaks.json` is uploaded by the client, not produced here. The browser holds the decoded signal from its `AnalyserNode` while recording, so computing the envelope there costs nothing; doing it in the worker would mean shipping an Opus decoder or an ffmpeg layer into Lambda to recover a signal the client already had. `POST /v1/captures` therefore returns a second presigned URL for it.
 
 **A deliberate constraint, stated plainly:** timestamps belong to the raw transcript. Cleanup rewrites the text, so cleaned prose carries no reliable time mapping. The note body therefore shows cleaned text, and the tap-to-seek transcript panel shows timestamped raw segments, with a toggle to view the cleaned version without sync. Aligning cleaned text back onto raw timings would seek to plausible-looking wrong places.
 

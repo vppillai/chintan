@@ -21,7 +21,7 @@ func TestHealthHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
 
 	req := httptest.NewRequest("GET", "/v1/health", nil)
 	w := httptest.NewRecorder()
@@ -48,7 +48,7 @@ func TestSettingsHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
 
 	t.Run("GET settings returns defaults", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/v1/settings", nil)
@@ -126,7 +126,7 @@ func TestNotesHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
 
 	t.Run("POST creates note", func(t *testing.T) {
 		createReq := map[string]interface{}{
@@ -378,7 +378,7 @@ func TestNotesMatchHandler(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
 
 	// Create some test notes
 	testNotes := []map[string]interface{}{
@@ -493,7 +493,7 @@ func TestCORSHandling(t *testing.T) {
 	settingsService := service.NewSettingsService(store)
 
 	captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
 
 	t.Run("preflight request", func(t *testing.T) {
 		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
@@ -502,8 +502,8 @@ func TestCORSHandling(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		if w.Code != 200 {
-			t.Errorf("expected 200 for preflight, got %d", w.Code)
+		if w.Code != 204 {
+			t.Errorf("expected 204 for preflight, got %d", w.Code)
 		}
 
 		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
@@ -527,7 +527,7 @@ func TestCORSHandling(t *testing.T) {
 	t.Run("uses ALLOWED_ORIGIN env when parameter empty", func(t *testing.T) {
 		t.Setenv("ALLOWED_ORIGIN", "https://app.example.com")
 		captureService := service.NewCaptureService(store, objects, nil, nil) // nil providers for handler tests
-		envRouter := handler.NewRouter(notesService, settingsService, captureService, nil, "")
+		envRouter := handler.NewRouter(notesService, settingsService, captureService, nil, "", nil)
 
 		req := httptest.NewRequest("OPTIONS", "/v1/notes", nil)
 		req.Header.Set("Origin", "https://app.example.com")
@@ -535,8 +535,8 @@ func TestCORSHandling(t *testing.T) {
 		w := httptest.NewRecorder()
 		envRouter.ServeHTTP(w, req)
 
-		if w.Code != 200 {
-			t.Errorf("expected 200 for preflight, got %d", w.Code)
+		if w.Code != 204 {
+			t.Errorf("expected 204 for preflight, got %d", w.Code)
 		}
 
 		corsOrigin := w.Header().Get("Access-Control-Allow-Origin")
@@ -552,7 +552,7 @@ func TestNotesArchiveHTTP(t *testing.T) {
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 	captureService := service.NewCaptureService(store, objects, nil, nil)
-	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000")
+	router := handler.NewRouter(notesService, settingsService, captureService, nil, "http://localhost:3000", nil)
 
 	create := func(title string) model.NoteIndex {
 		t.Helper()

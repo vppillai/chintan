@@ -1,0 +1,981 @@
+openapi: 3.1.0
+
+info:
+  title: Chintan API
+  version: 2.0.0
+  summary: Voice brain-dump capture, routing, and notes.
+  description: |
+    v2 of the Chintan API.
+
+    Three rules hold across every endpoint and are not repeated per-operation:
+
+    1. **Authentication.** Every route except `/v1/health` and the two WebAuthn
+       login routes requires a verified Cognito bearer token. The service
+       verifies signature, issuer, audience, expiry, and `token_use` itself; it
+       does not rely on the API Gateway authorizer alone. There is no header-based
+       identity path.
+    2. **Errors.** Every non-2xx response is `application/problem+json`
+       (RFC 9457). Infrastructure error text is logged, never serialised.
+    3. **Pagination.** Every collection is cursor-paginated. There is no
+       unbounded list.
+
+    Breaking changes from v1: the `X-User-ID` header is rejected and ignored;
+    capture completion is asynchronous; list endpoints return an envelope rather
+    than a bare array.
+  license:
+    name: MIT
+    url: https://github.com/vppillai/chintan/blob/main/LICENSE
+
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com
+    description: Per-instance API Gateway stage
+    variables:
+      apiId:
+        default: example
+      region:
+        default: us-west-2
+
+tags:
+  - name: health
+  - name: settings
+  - name: notes
+  - name: captures
+  - name: search
+  - name: auth
+  - name: export
+
+security:
+  - cognitoBearer: []
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+
+  /v1/health/ready:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      description: |
+        Probes DynamoDB and S3. Distinct from liveness: v1 returned a static
+        `{"status":"ok"}` that was useful as liveness and misleading as readiness.
+      security: []
+      responses:
+        '200':
+          description: Dependencies reachable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: A dependency is unreachable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/settings:
+    get:
+      tags: [settings]
+      summary: Read settings
+      responses:
+        '200':
+          description: Current settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Settings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [settings]
+      summary: Replace settings
+      description: |
+        Returns what was stored, not what was sent. v1 echoed the request body
+        back, which hid validation coercion from the client.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Settings' }
+      responses:
+        '200':
+          description: Stored settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Settings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/notes:
+    get:
+      tags: [notes]
+      summary: List notes
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: state
+          in: query
+          description: Which shelf to list.
+          schema:
+            type: string
+            enum: [active, archived]
+            default: active
+        - name: tag
+          in: query
+          description: Restrict to notes carrying this tag.
+          schema: { type: string, maxLength: 40 }
+      responses:
+        '200':
+          description: A page of notes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [notes]
+      summary: Create a note
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteCreate' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+
+  /v1/notes/{noteId}:
+    parameters:
+      - $ref: '#/components/parameters/NoteId'
+    get:
+      tags: [notes]
+      summary: Read a note
+      description: |
+        A note belonging to another tenant returns 404, never 403 — a 403 would
+        confirm the identifier exists.
+      responses:
+        '200':
+          description: The note, with body and captures.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [notes]
+      summary: Update a note
+      description: |
+        Optimistic concurrency. `version` is required and must match the stored
+        version; a mismatch returns 409 with the current state so the client can
+        reconcile. v1 had no version, so a voice append landing while the editor
+        was open silently discarded one of the two writes.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NoteUpdate' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+    delete:
+      tags: [notes]
+      summary: Archive a note
+      description: Soft delete. Retained 30 days, then purged by TTL.
+      responses:
+        '204': { description: Archived. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/notes/{noteId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/NoteId'
+    post:
+      tags: [notes]
+      summary: Restore an archived note
+      responses:
+        '200':
+          description: Restored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Note' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/notes/{noteId}/permanent:
+    parameters:
+      - $ref: '#/components/parameters/NoteId'
+    delete:
+      tags: [notes]
+      summary: Delete a note and all its artifacts, irreversibly
+      description: |
+        Cascades to every capture, audio file, and transcript. A partial cascade
+        failure returns 500 and leaves the note marked for retry — it does not
+        report success while orphaning audio, which is what v1 did.
+      responses:
+        '204': { description: Purged. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /v1/notes/match:
+    post:
+      tags: [notes]
+      summary: Rank notes against a vague description
+      responses:
+        '200':
+          description: Ranked candidates with a confidence score.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MatchResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 2000 }
+
+  /v1/tags:
+    get:
+      tags: [notes]
+      summary: List tags in use, with counts
+      responses:
+        '200':
+          description: Tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, count]
+                      properties:
+                        name: { type: string }
+                        count: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/search:
+    get:
+      tags: [search]
+      summary: Full-text search across titles, aliases, tags, bodies, and transcripts
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 500 }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of results with match context.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/captures:
+    get:
+      tags: [captures]
+      summary: List captures
+      description: |
+        `status=pending` backs the progress card, which must survive navigation
+        and reload. v1 held the in-flight capture id in a JavaScript variable, so
+        a refresh stranded the audio with no UI anywhere to recover it.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, failed, needs_target, all]
+            default: all
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of captures.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapturePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [captures]
+      summary: Begin a capture
+      description: |
+        Synchronous and fast: it writes the capture row and returns a presigned
+        upload URL. The upload event drives the pipeline asynchronously. Nothing
+        slow happens on this request — API Gateway caps integrations at 30s and
+        an STT plus LLM pipeline does not fit inside that.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaptureCreate' }
+      responses:
+        '201':
+          description: Capture created; upload the audio to `upload.url`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaptureCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
+  /v1/captures/{captureId}:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+    get:
+      tags: [captures]
+      summary: Read capture state
+      responses:
+        '200':
+          description: The capture.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capture' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/captures/{captureId}/target:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+    post:
+      tags: [captures]
+      summary: Resolve a needs_target capture
+      description: |
+        Supply either an existing `note_id` or a `new_note_title`. A low-confidence
+        match never silently creates or overwrites a note.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaptureTarget' }
+      responses:
+        '200':
+          description: Target accepted; the pipeline resumes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capture' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /v1/captures/{captureId}/retry:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+    post:
+      tags: [captures]
+      summary: Retry a failed capture from its last good stage
+      description: |
+        Genuinely idempotent. The append is guarded by a token written in the
+        same conditional update that marks the capture appended, so a retry that
+        finds a matching token skips the append rather than duplicating the text.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Retry accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capture' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The capture is already in a terminal state.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
+  /v1/captures/{captureId}/download:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+      - name: kind
+        in: query
+        required: true
+        schema:
+          type: string
+          enum: [audio, raw, clean, segments, peaks]
+    get:
+      tags: [captures]
+      summary: Get a short-lived presigned URL for a capture artifact
+      description: |
+        `segments` is the timestamped raw transcript that drives tap-to-seek.
+        `peaks` is a precomputed amplitude envelope so drawing a waveform does
+        not require downloading the whole audio file.
+
+        Captures created before v2 have neither and return 404 for those kinds.
+      responses:
+        '200':
+          description: A presigned URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_at]
+                properties:
+                  url: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/export:
+    post:
+      tags: [export]
+      summary: Start a full export
+      description: |
+        Enumerates by S3 prefix and DynamoDB partition rather than by entity
+        type, so a future schema addition cannot silently fall out of the export.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Export started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/export/{exportId}:
+    parameters:
+      - name: exportId
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    get:
+      tags: [export]
+      summary: Poll an export
+      responses:
+        '200':
+          description: Export state, with a download URL once ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportJob' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/auth/webauthn/login/options:
+    post:
+      tags: [auth]
+      summary: Begin biometric login
+      security: []
+      responses:
+        '200':
+          description: WebAuthn assertion options.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/auth/webauthn/login:
+    post:
+      tags: [auth]
+      summary: Complete biometric login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebAuthnVerify' }
+      responses:
+        '200':
+          description: Cognito token set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenSet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/auth/webauthn/register/options:
+    post:
+      tags: [auth]
+      summary: Begin biometric enrollment
+      responses:
+        '200':
+          description: WebAuthn creation options.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/auth/webauthn/register:
+    post:
+      tags: [auth]
+      summary: Complete biometric enrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebAuthnVerify' }
+      responses:
+        '204': { description: Enrolled. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
+  /v1/auth/webauthn/status:
+    get:
+      tags: [auth]
+      summary: Whether this account has biometric unlock enrolled
+      responses:
+        '200':
+          description: Enrollment state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrolled]
+                properties:
+                  enrolled: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/auth/webauthn:
+    delete:
+      tags: [auth]
+      summary: Disable biometric unlock and destroy the token vault
+      responses:
+        '204': { description: Disabled. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    cognitoBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        A Cognito ID or access token. Verified in-process: signature against the
+        pool's JWKS, plus issuer, audience, expiry, and `token_use`.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque continuation token from the previous page.
+      schema: { type: string, maxLength: 2048 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    NoteId:
+      name: noteId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    CaptureId:
+      name: captureId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: |
+        Replaying a key returns the original response. A double-tap on a flaky
+        mobile link must not create two notes.
+      schema: { type: string, minLength: 8, maxLength: 128 }
+
+  responses:
+    BadRequest:
+      description: Malformed or invalid request.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    NotFound:
+      description: No such resource for this tenant.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Conflict:
+      description: Version conflict; the current state is included.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    PayloadTooLarge:
+      description: Body or field exceeded its limit.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    RateLimited:
+      description: Too many attempts.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    SpendCapped:
+      description: |
+        The daily provider spend cap was reached. Distinct from a generic
+        failure so the UI can explain it.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Unavailable:
+      description: Feature not configured on this instance.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    ServerError:
+      description: Unexpected failure. Correlate via `correlation_id`.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem detail.
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri, default: 'about:blank' }
+        title: { type: string }
+        status: { type: integer }
+        detail:
+          type: string
+          description: |
+            Safe to show a user. Never contains wrapped infrastructure errors —
+            v1 serialised DynamoDB and S3 messages, including table names.
+        instance: { type: string }
+        correlation_id:
+          type: string
+          description: Matches the `X-Correlation-Id` response header and the server logs.
+        current_version:
+          type: integer
+          description: Present on 409 so the client can reconcile.
+
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ok: { type: boolean }
+              latency_ms: { type: integer }
+
+    Settings:
+      type: object
+      required: [cleanup_mode, retention_days, theme]
+      properties:
+        cleanup_mode:
+          type: string
+          enum: [faithful, polished]
+          default: faithful
+        retention_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+          default: 0
+          description: |
+            Days to retain source audio. 0 means indefinite and installs no
+            lifecycle rule. In v1 this field was stored, returned, shown in the
+            UI, and read by nothing.
+        theme:
+          type: string
+          enum: [ink, nocturne, system]
+          default: ink
+        daily_spend_cap_micros:
+          type: integer
+          minimum: 0
+          description: 0 disables enforcement while still metering.
+
+    Note:
+      type: object
+      required: [id, title, updated_at, version, archived]
+      properties:
+        id: { type: string }
+        title: { type: string, maxLength: 200 }
+        aliases:
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 120 }
+        tags:
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 40 }
+        snippet: { type: string }
+        updated_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        version: { type: integer }
+        archived: { type: boolean }
+        purge_after: { type: string, format: date-time, nullable: true }
+
+    NoteDetail:
+      allOf:
+        - $ref: '#/components/schemas/Note'
+        - type: object
+          required: [body]
+          properties:
+            body: { type: string }
+            captures:
+              type: array
+              items: { $ref: '#/components/schemas/Capture' }
+
+    NoteCreate:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, maxLength: 1048576 }
+        aliases:
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 120 }
+        tags:
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 40 }
+
+    NoteUpdate:
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        body: { type: string, maxLength: 1048576 }
+        aliases:
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 120 }
+        tags:
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 40 }
+        verbatim:
+          type: boolean
+          description: |
+            Bypass cleanup entirely for this note. Dictated content that must not
+            be reworded — a spec, a quote, a prompt — would otherwise be silently
+            rewritten by `polished` mode.
+
+    NotePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Note' }
+        cursor:
+          type: string
+          description: Absent or empty when the collection is exhausted.
+
+    CaptureStatus:
+      type: string
+      enum:
+        - uploaded
+        - transcribing
+        - routing
+        - cleaning
+        - appending
+        - appended
+        - needs_target
+        - no_content
+        - failed
+        - spend_capped
+
+    Capture:
+      type: object
+      required: [id, status, created_at, version]
+      properties:
+        id: { type: string }
+        note_id: { type: string, nullable: true }
+        status: { $ref: '#/components/schemas/CaptureStatus' }
+        error:
+          type: string
+          nullable: true
+          description: Safe to display. Never contains provider or AWS internals.
+        created_at: { type: string, format: date-time }
+        appended_at: { type: string, format: date-time, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+        has_segments: { type: boolean }
+        has_peaks: { type: boolean }
+        version: { type: integer }
+
+    CapturePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Capture' }
+        cursor: { type: string }
+
+    CaptureCreate:
+      type: object
+      required: [content_type]
+      properties:
+        content_type:
+          type: string
+          enum: [audio/webm, audio/mp4, audio/ogg, audio/wav]
+        note_id:
+          type: string
+          nullable: true
+          description: Target note when already known. Omit to let routing decide.
+        duration_ms: { type: integer, minimum: 0 }
+        size_bytes:
+          type: integer
+          minimum: 1
+          description: Used to bound the presigned upload's content-length range.
+
+    CaptureCreated:
+      type: object
+      required: [capture, upload]
+      properties:
+        capture: { $ref: '#/components/schemas/Capture' }
+        upload:
+          type: object
+          required: [url, expires_at, max_bytes]
+          properties:
+            url: { type: string, format: uri }
+            expires_at: { type: string, format: date-time }
+            max_bytes: { type: integer }
+            headers:
+              type: object
+              additionalProperties: { type: string }
+        peaks_upload:
+          type: object
+          description: |
+            Presigned PUT for the client-computed waveform envelope. The browser
+            already holds the decoded signal from its AnalyserNode while
+            recording, so computing peaks there is free; doing it server-side
+            would require an audio decoder in Lambda for a compressed Opus
+            stream. Optional -- a capture without peaks renders a plain player.
+          required: [url, expires_at]
+          properties:
+            url: { type: string, format: uri }
+            expires_at: { type: string, format: date-time }
+            max_bytes: { type: integer }
+
+    CaptureTarget:
+      type: object
+      properties:
+        note_id: { type: string }
+        new_note_title: { type: string, minLength: 1, maxLength: 200 }
+      oneOf:
+        - required: [note_id]
+        - required: [new_note_title]
+
+    MatchResponse:
+      type: object
+      required: [candidates, confidence]
+      properties:
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        auto_selected: { type: boolean }
+        candidates:
+          type: array
+          items:
+            type: object
+            required: [note_id, title, score]
+            properties:
+              note_id: { type: string }
+              title: { type: string }
+              score: { type: number }
+              reason: { type: string }
+
+    SearchPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [note_id, title]
+            properties:
+              note_id: { type: string }
+              title: { type: string }
+              excerpt:
+                type: string
+                description: Match context with the hit in situ.
+              matched_in:
+                type: array
+                items: { type: string, enum: [title, alias, tag, body, transcript] }
+        cursor: { type: string }
+
+    ExportJob:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending, running, ready, failed] }
+        url: { type: string, format: uri, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        bytes: { type: integer, nullable: true }
+
+    WebAuthnOptions:
+      type: object
+      required: [challenge_id, options]
+      properties:
+        challenge_id: { type: string }
+        options: { type: object, additionalProperties: true }
+
+    WebAuthnVerify:
+      type: object
+      required: [challenge_id, credential]
+      properties:
+        challenge_id: { type: string }
+        credential: { type: object, additionalProperties: true }
+        refresh_token:
+          type: string
+          description: Required on enrollment only. Sealed with KMS and vaulted.
+
+    TokenSet:
+      type: object
+      required: [id_token, access_token, expires_in, token_type]
+      properties:
+        id_token: { type: string }
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+        token_type: { type: string }
