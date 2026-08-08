@@ -137,7 +137,7 @@ func (h *CapturesHandler) handleGet(w http.ResponseWriter, r *http.Request, user
 			httperr.BadRequest(w, "note_id query parameter is required")
 			return
 		}
-		captures, err := h.captureService.ListCapturesForNote(r.Context(), userID, noteID)
+		page, err := h.captureService.ListCapturesForNote(r.Context(), userID, noteID, listOptionsFrom(r))
 		if err != nil {
 			if strings.Contains(err.Error(), "not found") {
 				httperr.WriteJSON(w, err, http.StatusNotFound)
@@ -146,8 +146,9 @@ func (h *CapturesHandler) handleGet(w http.ResponseWriter, r *http.Request, user
 			httperr.InternalServerError(w, err)
 			return
 		}
+		setNextCursor(w, page.Cursor)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(captures)
+		json.NewEncoder(w).Encode(page.Items)
 		return
 	}
 

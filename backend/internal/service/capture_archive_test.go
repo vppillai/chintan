@@ -8,13 +8,15 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
+	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
 func TestCreateCaptureRejectsArchivedNote(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{}
-	llm := &provider.FakeLLM{}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{}
+	llm := &fake.LLM{}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -39,10 +41,10 @@ func TestCreateCaptureRejectsArchivedNote(t *testing.T) {
 }
 
 func TestCompleteCaptureRejectsArchivedNote(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{Response: "Clean: Hello world"}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{Response: "Hello world"}
+	llm := &fake.LLM{Response: "Clean: Hello world"}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -52,7 +54,12 @@ func TestCompleteCaptureRejectsArchivedNote(t *testing.T) {
 		Title:         "Test Note",
 		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
 	}
-	store.PutNote(context.Background(), "user1", note)
+	// Keep the stored version: writes are conditional now, so a second write
+	// carrying a stale version is rejected rather than silently applied.
+	note, err := store.PutNote(context.Background(), "user1", note)
+	if err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
 
 	capture := model.CaptureIndex{
 		ID:       "capture1",
@@ -68,11 +75,13 @@ func TestCompleteCaptureRejectsArchivedNote(t *testing.T) {
 	objects.Put(context.Background(), capture.AudioKey, []byte("fake audio data"), "audio/wav")
 
 	// Now archive the note
-	note.DeletedAt = time.Now().UTC().Format(time.RFC3339)
-	store.PutNote(context.Background(), "user1", note)
+	note.DeletedAt = model.Now()
+	if _, err := store.PutNote(context.Background(), "user1", note); err != nil {
+		t.Fatalf("archive note: %v", err)
+	}
 
 	ctx := context.Background()
-	_, err := service.CompleteCapture(ctx, "user1", "capture1")
+	_, err = service.CompleteCapture(ctx, "user1", "capture1")
 
 	if err == nil {
 		t.Fatal("Expected CompleteCapture to fail for archived note")
@@ -84,10 +93,10 @@ func TestCompleteCaptureRejectsArchivedNote(t *testing.T) {
 }
 
 func TestSetCaptureTargetRejectsArchivedNote(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{Response: "Clean: Hello world"}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{Response: "Hello world"}
+	llm := &fake.LLM{Response: "Clean: Hello world"}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -120,13 +129,13 @@ func TestSetCaptureTargetRejectsArchivedNote(t *testing.T) {
 }
 
 func TestDecideTargetSkipsArchivedNotes(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{Response: "Clean: Hello world"}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{Response: "Hello world"}
+	llm := &fake.LLM{Response: "Clean: Hello world"}
 
 	// Use FakeRouter that records candidates
-	fakeRouter := &provider.FakeRouter{
+	fakeRouter := &fake.Router{
 		Decision: provider.RouteDecision{
 			Action:     provider.RouteNew,
 			Title:      "New Note",
@@ -198,7 +207,7 @@ func TestDecideTargetSkipsArchivedNotes(t *testing.T) {
 
 // mockNoteCreator for testing
 type mockNoteCreator struct {
-	store *mockStore
+	store *memory.Store
 }
 
 func (m *mockNoteCreator) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
@@ -210,5 +219,6 @@ func (m *mockNoteCreator) CreateNote(ctx context.Context, userID, title string, 
 		S3MarkdownKey: "tenants/" + userID + "/notes/new-note-id/note.md",
 		S3MetaKey:     "tenants/" + userID + "/notes/new-note-id/meta.json",
 	}
-	return note, m.store.PutNote(ctx, userID, note)
+	stored, err := m.store.PutNote(ctx, userID, note)
+	return stored, err
 }

@@ -9,10 +9,11 @@ import (
 	"github.com/vppillai/chintan/backend/internal/auth"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
 func TestWebAuthnStatusAndDisable(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{Sub: "user-1"}, PlainBox{}, stubIDVerifier{sub: "user-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +46,7 @@ func TestWebAuthnStatusAndDisable(t *testing.T) {
 }
 
 func TestWebAuthnBeginLoginNotEnrolled(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{}, PlainBox{}, stubIDVerifier{})
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +58,7 @@ func TestWebAuthnBeginLoginNotEnrolled(t *testing.T) {
 }
 
 func TestFinishRegistrationRequiresRefresh(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	svc, err := NewWebAuthnService(store, "https://vppillai.github.io", "Chintan", &FakeRefresher{Sub: "user-1"}, PlainBox{}, stubIDVerifier{sub: "user-1"})
 	if err != nil {
 		t.Fatal(err)

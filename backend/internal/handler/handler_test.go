@@ -10,13 +10,13 @@ import (
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/model"
-	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 func TestHealthHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 
@@ -42,8 +42,8 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestSettingsHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 
@@ -120,8 +120,8 @@ func TestSettingsHandler(t *testing.T) {
 }
 
 func TestNotesHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 
@@ -372,8 +372,8 @@ func TestNotesHandler(t *testing.T) {
 }
 
 func TestNotesMatchHandler(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 
@@ -487,8 +487,8 @@ func TestNotesMatchHandler(t *testing.T) {
 }
 
 func TestCORSHandling(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 
@@ -547,8 +547,8 @@ func TestCORSHandling(t *testing.T) {
 }
 
 func TestNotesArchiveHTTP(t *testing.T) {
-	store := repository.NewMemoryStore()
-	objects := repository.NewMemoryObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 	settingsService := service.NewSettingsService(store)
 	captureService := service.NewCaptureService(store, objects, nil, nil)

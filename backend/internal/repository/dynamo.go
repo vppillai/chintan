@@ -2,10 +2,12 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -15,24 +17,53 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
-// DynamoStore implements the Store interface using DynamoDB with a single table design.
-// Single-table keys: PK=USER#<userID>, SK=SETTINGS | NOTE#<id> | CAPTURE#<id>
-type DynamoStore struct {
-	client    *dynamodb.Client
-	tableName string
+// DynamoAPI is the seam that makes DynamoStore testable. The v1 store held a
+// concrete *dynamodb.Client, which made the whole type untestable by
+// construction.
+type DynamoAPI interface {
+	GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
+	PutItem(ctx context.Context, in *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
+	Query(ctx context.Context, in *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 }
 
+// DynamoStore implements Store using DynamoDB with a single-table design.
+//
+// Keys: pk = USER#<tenantId>, sk = SETTINGS | NOTE#<id> | CAPTURE#<id> |
+// IDEM#<key> | WACRED#<id> | WAREFRESH.
+//
+// GSI1 (gsi1pk = TENANT#<tenantId>#NOTE#<noteId>, gsi1sk = CAPTURE#<createdAt>)
+// turns note -> captures into a direct query.
+//
+// Attributes that a list renders or filters on are stored top-level so queries
+// can use a ProjectionExpression. The `data` blob is retained as the full
+// record, but it is never transferred by a list.
+type DynamoStore struct {
+	client    DynamoAPI
+	tableName string
+	indexName string
+}
+
+// gsi1Name is the index the template creates.
+const gsi1Name = "gsi1"
+
 // NewDynamoStore creates a new DynamoDB-backed store.
-func NewDynamoStore(client *dynamodb.Client, tableName string) *DynamoStore {
+func NewDynamoStore(client DynamoAPI, tableName string) *DynamoStore {
 	return &DynamoStore{
 		client:    client,
 		tableName: tableName,
+		indexName: gsi1Name,
 	}
 }
 
+// maxFilterRounds bounds how many Query round trips one page may cost when a
+// FilterExpression discards most items, so a list can never run unbounded.
+const maxFilterRounds = 10
+
 // Key mapping helpers for single-table design
-func userPK(userID string) string {
-	return fmt.Sprintf("USER#%s", userID)
+func userPK(tenantID string) string {
+	return fmt.Sprintf("USER#%s", tenantID)
 }
 
 func settingsSK() string {
@@ -45,6 +76,20 @@ func noteSK(noteID string) string {
 
 func captureSK(captureID string) string {
 	return fmt.Sprintf("CAPTURE#%s", captureID)
+}
+
+func idemSK(key string) string {
+	return "IDEM#" + key
+}
+
+// noteCapturesGSI1PK is the GSI1 partition holding one note's captures. The
+// prefix is TENANT#, matching the CloudFormation template exactly.
+func noteCapturesGSI1PK(tenantID, noteID string) string {
+	return fmt.Sprintf("TENANT#%s#NOTE#%s", tenantID, noteID)
+}
+
+func captureGSI1SK(createdAt string) string {
+	return "CAPTURE#" + createdAt
 }
 
 func webAuthnChallengePK(challengeID string) string {
@@ -61,7 +106,8 @@ func refreshVaultSK() string {
 
 const pkWebAuthnCredList = "WACREDLIST"
 
-// dynamoItem represents the structure stored in DynamoDB
+// dynamoItem represents the generic JSON-blob item used by records that have no
+// queryable attributes of their own (settings, challenges, credentials, vault).
 type dynamoItem struct {
 	PK   string `dynamodbav:"pk"`
 	SK   string `dynamodbav:"sk"`
@@ -70,108 +116,261 @@ type dynamoItem struct {
 	TTL  int64  `dynamodbav:"ttl,omitempty"`
 }
 
-func (s *DynamoStore) GetSettings(ctx context.Context, userID string) (model.Settings, error) {
+// noteListProjection is what a note list transfers. It deliberately omits
+// `data`: the blob duplicates every field below and made listing notes to
+// render titles pay for the full record.
+//
+// `snippet` is kept because note matching scores against it; dropping it to
+// save bytes would silently degrade routing, which is a worse defect than the
+// one being fixed.
+const noteListProjection = "pk, sk, note_id, title, aliases, tags, snippet, updated_at, s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, version"
+
+func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
+
+func numAttr(v int64) types.AttributeValue {
+	return &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", v)}
+}
+
+func strListAttr(v []string) types.AttributeValue {
+	list := make([]types.AttributeValue, 0, len(v))
+	for _, s := range v {
+		list = append(list, strAttr(s))
+	}
+	return &types.AttributeValueMemberL{Value: list}
+}
+
+func readString(m map[string]types.AttributeValue, name string) string {
+	if v, ok := m[name].(*types.AttributeValueMemberS); ok {
+		return v.Value
+	}
+	return ""
+}
+
+func readInt(m map[string]types.AttributeValue, name string) int64 {
+	v, ok := m[name].(*types.AttributeValueMemberN)
+	if !ok {
+		return 0
+	}
+	var out int64
+	if _, err := fmt.Sscanf(v.Value, "%d", &out); err != nil {
+		return 0
+	}
+	return out
+}
+
+func readStrings(m map[string]types.AttributeValue, name string) []string {
+	switch v := m[name].(type) {
+	case *types.AttributeValueMemberL:
+		out := make([]string, 0, len(v.Value))
+		for _, item := range v.Value {
+			if s, ok := item.(*types.AttributeValueMemberS); ok {
+				out = append(out, s.Value)
+			}
+		}
+		return out
+	case *types.AttributeValueMemberSS:
+		return append([]string(nil), v.Value...)
+	}
+	return nil
+}
+
+func isConditionalCheckFailed(err error) bool {
+	var condErr *types.ConditionalCheckFailedException
+	return errors.As(err, &condErr)
+}
+
+// conditionFailureItem returns the item DynamoDB echoed back with a failed
+// condition, when the request asked for it.
+func conditionFailureItem(err error) map[string]types.AttributeValue {
+	var condErr *types.ConditionalCheckFailedException
+	if errors.As(err, &condErr) {
+		return condErr.Item
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------- settings
+
+func (s *DynamoStore) GetSettings(ctx context.Context, tenantID string) (model.Settings, error) {
 	if err := ctx.Err(); err != nil {
 		return model.Settings{}, err
 	}
 
-	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(s.tableName),
-		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-			"sk": &types.AttributeValueMemberS{Value: settingsSK()},
-		},
-	})
+	item, err := s.getJSONItem(ctx, userPK(tenantID), settingsSK())
+	if errors.Is(err, ErrNotFound) {
+		return DefaultSettings(), nil
+	}
 	if err != nil {
 		return model.Settings{}, fmt.Errorf("dynamo get settings: %w", err)
-	}
-
-	if result.Item == nil {
-		return defaultSettings(), nil
-	}
-
-	var item dynamoItem
-	if err := attributevalue.UnmarshalMap(result.Item, &item); err != nil {
-		return model.Settings{}, fmt.Errorf("dynamo unmarshal settings: %w", err)
 	}
 
 	var settings model.Settings
 	if err := json.Unmarshal([]byte(item.Data), &settings); err != nil {
 		return model.Settings{}, fmt.Errorf("dynamo decode settings: %w", err)
 	}
-
 	return settings, nil
 }
 
-func (s *DynamoStore) PutSettings(ctx context.Context, userID string, settings model.Settings) error {
+func (s *DynamoStore) PutSettings(ctx context.Context, tenantID string, settings model.Settings) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
 	data, err := json.Marshal(settings)
 	if err != nil {
 		return fmt.Errorf("dynamo encode settings: %w", err)
 	}
-
-	item := dynamoItem{
-		PK:   userPK(userID),
-		SK:   settingsSK(),
-		Type: "settings",
-		Data: string(data),
-	}
-
-	itemMap, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		return fmt.Errorf("dynamo marshal settings: %w", err)
-	}
-
-	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(s.tableName),
-		Item:      itemMap,
-	})
-	if err != nil {
-		return fmt.Errorf("dynamo put settings: %w", err)
-	}
-
-	return nil
+	return s.putJSONItem(ctx, userPK(tenantID), settingsSK(), "settings", string(data), 0)
 }
 
-func (s *DynamoStore) ListNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
+// ---------------------------------------------------------------- notes
+
+func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.AttributeValue, error) {
+	blob, err := json.Marshal(n)
+	if err != nil {
+		return nil, fmt.Errorf("dynamo encode note: %w", err)
+	}
+	item := map[string]types.AttributeValue{
+		"pk":              strAttr(userPK(tenantID)),
+		"sk":              strAttr(noteSK(n.ID)),
+		"type":            strAttr("note"),
+		"note_id":         strAttr(n.ID),
+		"title":           strAttr(n.Title),
+		"aliases":         strListAttr(n.Aliases),
+		"tags":            strListAttr(n.Tags),
+		"snippet":         strAttr(n.Snippet),
+		"updated_at":      strAttr(n.UpdatedAt),
+		"s3_markdown_key": strAttr(n.S3MarkdownKey),
+		"s3_meta_key":     strAttr(n.S3MetaKey),
+		"deleted_at":      strAttr(n.DeletedAt),
+		"purge_after":     strAttr(n.PurgeAfter),
+		"version":         numAttr(n.Version),
+		"data":            strAttr(string(blob)),
+	}
+	if n.PurgeAfterEpoch > 0 {
+		item["purge_after_epoch"] = numAttr(n.PurgeAfterEpoch)
+		// The table has one TTL attribute, `ttl`, shared with challenges and
+		// idempotency records. purge_after_epoch is the projected, queryable
+		// copy; ttl is what DynamoDB expires on.
+		item["ttl"] = numAttr(n.PurgeAfterEpoch)
+	}
+	return item, nil
+}
+
+func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
+	if _, ok := m["note_id"]; !ok {
+		// Item written before attributes were promoted: the blob is all there is.
+		var n model.NoteIndex
+		if err := json.Unmarshal([]byte(readString(m, "data")), &n); err != nil {
+			return model.NoteIndex{}, fmt.Errorf("dynamo decode note: %w", err)
+		}
+		return n, nil
+	}
+	n := model.NoteIndex{
+		ID:              readString(m, "note_id"),
+		Title:           readString(m, "title"),
+		Aliases:         readStrings(m, "aliases"),
+		Tags:            readStrings(m, "tags"),
+		Snippet:         readString(m, "snippet"),
+		UpdatedAt:       readString(m, "updated_at"),
+		S3MarkdownKey:   readString(m, "s3_markdown_key"),
+		S3MetaKey:       readString(m, "s3_meta_key"),
+		DeletedAt:       readString(m, "deleted_at"),
+		PurgeAfter:      readString(m, "purge_after"),
+		PurgeAfterEpoch: readInt(m, "purge_after_epoch"),
+		Version:         readInt(m, "version"),
+	}
+	if n.Aliases == nil {
+		n.Aliases = []string{}
+	}
+	return n, nil
+}
+
+// listNotes runs the shared paginated note query. filter is applied server-side.
+func (s *DynamoStore) listNotes(ctx context.Context, tenantID, filter string, extraValues map[string]types.AttributeValue, opts ListOptions) (Page[model.NoteIndex], error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Page[model.NoteIndex]{}, err
 	}
 
-	result, err := s.client.Query(ctx, &dynamodb.QueryInput{
-		TableName:              aws.String(s.tableName),
-		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk":        &types.AttributeValueMemberS{Value: userPK(userID)},
-			":sk_prefix": &types.AttributeValueMemberS{Value: "NOTE#"},
-		},
-	})
+	pk := userPK(tenantID)
+	start, err := decodeCursor(opts.Cursor, "pk", pk)
 	if err != nil {
-		return nil, fmt.Errorf("dynamo query notes: %w", err)
+		return Page[model.NoteIndex]{}, err
 	}
 
-	notes := make([]model.NoteIndex, 0, len(result.Items))
-	for _, item := range result.Items {
-		var dynamoItem dynamoItem
-		if err := attributevalue.UnmarshalMap(item, &dynamoItem); err != nil {
-			return nil, fmt.Errorf("dynamo unmarshal note item: %w", err)
+	limit := opts.limit()
+	items := make([]model.NoteIndex, 0, limit)
+
+	// DynamoDB applies Limit before FilterExpression, so a page can come back
+	// short while more matching items exist. Keep querying until the page is
+	// full or the partition is exhausted; bound the rounds so a filter that
+	// matches almost nothing cannot turn one request into an unbounded scan.
+	for round := 0; round < maxFilterRounds && int32(len(items)) < limit; round++ {
+		values := map[string]types.AttributeValue{
+			":pk":        strAttr(pk),
+			":sk_prefix": strAttr("NOTE#"),
+		}
+		for k, v := range extraValues {
+			values[k] = v
 		}
 
-		var note model.NoteIndex
-		if err := json.Unmarshal([]byte(dynamoItem.Data), &note); err != nil {
-			return nil, fmt.Errorf("dynamo decode note: %w", err)
+		in := &dynamodb.QueryInput{
+			TableName:                 aws.String(s.tableName),
+			KeyConditionExpression:    aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+			ExpressionAttributeValues: values,
+			ProjectionExpression:      aws.String(noteListProjection),
+			ExclusiveStartKey:         start,
+			Limit:                     aws.Int32(limit - int32(len(items))),
+		}
+		if filter != "" {
+			in.FilterExpression = aws.String(filter)
 		}
 
-		notes = append(notes, note)
+		out, err := s.client.Query(ctx, in)
+		if err != nil {
+			return Page[model.NoteIndex]{}, fmt.Errorf("dynamo query notes: %w", err)
+		}
+
+		for _, raw := range out.Items {
+			n, err := noteFromItem(raw)
+			if err != nil {
+				return Page[model.NoteIndex]{}, err
+			}
+			items = append(items, n)
+		}
+
+		start = out.LastEvaluatedKey
+		if len(start) == 0 {
+			return Page[model.NoteIndex]{Items: items}, nil
+		}
 	}
 
-	return notes, nil
+	cursor, err := encodeCursor(start)
+	if err != nil {
+		return Page[model.NoteIndex]{}, err
+	}
+	return Page[model.NoteIndex]{Items: items, Cursor: cursor}, nil
 }
 
-func (s *DynamoStore) GetNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
+// activeNoteFilter keeps notes that were never archived. Items written before
+// deleted_at was promoted carry no such attribute, so absence counts as active.
+const activeNoteFilter = "attribute_not_exists(deleted_at) OR deleted_at = :empty"
+
+const archivedNoteFilter = "attribute_exists(deleted_at) AND deleted_at <> :empty AND purge_after_epoch > :now"
+
+func (s *DynamoStore) ListNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
+	return s.listNotes(ctx, tenantID, activeNoteFilter, map[string]types.AttributeValue{
+		":empty": strAttr(""),
+	}, opts)
+}
+
+func (s *DynamoStore) ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
+	return s.listNotes(ctx, tenantID, archivedNoteFilter, map[string]types.AttributeValue{
+		":empty": strAttr(""),
+		":now":   numAttr(time.Now().Unix()),
+	}, opts)
+}
+
+func (s *DynamoStore) GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
 	if err := ctx.Err(); err != nil {
 		return model.NoteIndex{}, err
 	}
@@ -179,65 +378,67 @@ func (s *DynamoStore) GetNote(ctx context.Context, userID, noteID string) (model
 	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-			"sk": &types.AttributeValueMemberS{Value: noteSK(noteID)},
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
 		},
 	})
 	if err != nil {
 		return model.NoteIndex{}, fmt.Errorf("dynamo get note: %w", err)
 	}
-
 	if result.Item == nil {
 		return model.NoteIndex{}, ErrNotFound
 	}
-
-	var item dynamoItem
-	if err := attributevalue.UnmarshalMap(result.Item, &item); err != nil {
-		return model.NoteIndex{}, fmt.Errorf("dynamo unmarshal note: %w", err)
-	}
-
-	var note model.NoteIndex
-	if err := json.Unmarshal([]byte(item.Data), &note); err != nil {
-		return model.NoteIndex{}, fmt.Errorf("dynamo decode note: %w", err)
-	}
-
-	return note, nil
+	return noteFromItem(result.Item)
 }
 
-func (s *DynamoStore) PutNote(ctx context.Context, userID string, note model.NoteIndex) error {
+// PutNote writes conditionally on the version the caller read. An unconditional
+// PutItem is how v1 lost a voice append that landed while the editor was open.
+func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.NoteIndex) (model.NoteIndex, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return model.NoteIndex{}, err
 	}
 
-	data, err := json.Marshal(note)
+	expected := note.Version
+	next := note
+	next.Version = expected + 1
+
+	item, err := noteItemAttrs(tenantID, next)
 	if err != nil {
-		return fmt.Errorf("dynamo encode note: %w", err)
+		return model.NoteIndex{}, err
 	}
-
-	item := dynamoItem{
-		PK:   userPK(userID),
-		SK:   noteSK(note.ID),
-		Type: "note",
-		Data: string(data),
-	}
-
-	itemMap, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		return fmt.Errorf("dynamo marshal note: %w", err)
+	if next.PurgeAfterEpoch == 0 {
+		// Restoring a note must clear the expiry, not leave the table poised to
+		// delete it.
+		delete(item, "purge_after_epoch")
+		delete(item, "ttl")
 	}
 
 	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(s.tableName),
-		Item:      itemMap,
+		TableName:                 aws.String(s.tableName),
+		Item:                      item,
+		ConditionExpression:       aws.String(versionCondition(expected)),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":expected": numAttr(expected)},
 	})
 	if err != nil {
-		return fmt.Errorf("dynamo put note: %w", err)
+		if isConditionalCheckFailed(err) {
+			return model.NoteIndex{}, ErrVersionConflict
+		}
+		return model.NoteIndex{}, fmt.Errorf("dynamo put note: %w", err)
 	}
-
-	return nil
+	return next, nil
 }
 
-func (s *DynamoStore) DeleteNote(ctx context.Context, userID, noteID string) error {
+// versionCondition guards a write on the version the caller read. Expected 0
+// also admits an item written before versioning existed, which carries no
+// version attribute; one write later it does.
+func versionCondition(expected int64) string {
+	if expected == 0 {
+		return "attribute_not_exists(pk) OR attribute_not_exists(version) OR version = :expected"
+	}
+	return "version = :expected"
+}
+
+func (s *DynamoStore) DeleteNote(ctx context.Context, tenantID, noteID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -245,56 +446,105 @@ func (s *DynamoStore) DeleteNote(ctx context.Context, userID, noteID string) err
 	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-			"sk": &types.AttributeValueMemberS{Value: noteSK(noteID)},
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
 		},
 		ConditionExpression: aws.String("attribute_exists(pk)"),
 	})
 	if err != nil {
-		var condErr *types.ConditionalCheckFailedException
-		if errors.As(err, &condErr) {
+		if isConditionalCheckFailed(err) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("dynamo delete note: %w", err)
 	}
-
 	return nil
 }
 
-func (s *DynamoStore) PutCapture(ctx context.Context, capture model.CaptureIndex) error {
+// ---------------------------------------------------------------- captures
+
+func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, error) {
+	blob, err := json.Marshal(c)
+	if err != nil {
+		return nil, fmt.Errorf("dynamo encode capture: %w", err)
+	}
+	item := map[string]types.AttributeValue{
+		"pk":                strAttr(userPK(c.UserID)),
+		"sk":                strAttr(captureSK(c.ID)),
+		"type":              strAttr("capture"),
+		"capture_id":        strAttr(c.ID),
+		"note_id":           strAttr(c.NoteID),
+		"status":            strAttr(string(c.Status)),
+		"created_at":        strAttr(c.CreatedAt),
+		"version":           numAttr(c.Version),
+		"append_token":      strAttr(c.AppendToken),
+		"append_claimed_at": numAttr(c.AppendClaimedAt),
+		"appended_at":       numAttr(c.AppendedAt),
+		"duration_ms":       numAttr(c.DurationMS),
+		"segments_key":      strAttr(c.SegmentsKey),
+		"peaks_key":         strAttr(c.PeaksKey),
+		"data":              strAttr(string(blob)),
+	}
+	if c.NoteID != "" {
+		item["gsi1pk"] = strAttr(noteCapturesGSI1PK(c.UserID, c.NoteID))
+		item["gsi1sk"] = strAttr(captureGSI1SK(c.CreatedAt))
+	}
+	return item, nil
+}
+
+func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, error) {
+	var c model.CaptureIndex
+	if blob := readString(m, "data"); blob != "" {
+		if err := json.Unmarshal([]byte(blob), &c); err != nil {
+			return model.CaptureIndex{}, fmt.Errorf("dynamo decode capture: %w", err)
+		}
+	}
+	if _, ok := m["capture_id"]; !ok {
+		return c, nil
+	}
+	c.ID = readString(m, "capture_id")
+	c.NoteID = readString(m, "note_id")
+	c.Status = model.CaptureStatus(readString(m, "status"))
+	c.CreatedAt = readString(m, "created_at")
+	c.Version = readInt(m, "version")
+	c.AppendToken = readString(m, "append_token")
+	c.AppendClaimedAt = readInt(m, "append_claimed_at")
+	c.AppendedAt = readInt(m, "appended_at")
+	c.DurationMS = readInt(m, "duration_ms")
+	c.SegmentsKey = readString(m, "segments_key")
+	c.PeaksKey = readString(m, "peaks_key")
+	return c, nil
+}
+
+func (s *DynamoStore) PutCapture(ctx context.Context, capture model.CaptureIndex) (model.CaptureIndex, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return model.CaptureIndex{}, err
 	}
 
-	data, err := json.Marshal(capture)
+	expected := capture.Version
+	next := capture
+	next.Version = expected + 1
+
+	item, err := captureItemAttrs(next)
 	if err != nil {
-		return fmt.Errorf("dynamo encode capture: %w", err)
-	}
-
-	item := dynamoItem{
-		PK:   userPK(capture.UserID),
-		SK:   captureSK(capture.ID),
-		Type: "capture",
-		Data: string(data),
-	}
-
-	itemMap, err := attributevalue.MarshalMap(item)
-	if err != nil {
-		return fmt.Errorf("dynamo marshal capture: %w", err)
+		return model.CaptureIndex{}, err
 	}
 
 	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(s.tableName),
-		Item:      itemMap,
+		TableName:                 aws.String(s.tableName),
+		Item:                      item,
+		ConditionExpression:       aws.String(versionCondition(expected)),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":expected": numAttr(expected)},
 	})
 	if err != nil {
-		return fmt.Errorf("dynamo put capture: %w", err)
+		if isConditionalCheckFailed(err) {
+			return model.CaptureIndex{}, ErrVersionConflict
+		}
+		return model.CaptureIndex{}, fmt.Errorf("dynamo put capture: %w", err)
 	}
-
-	return nil
+	return next, nil
 }
 
-func (s *DynamoStore) GetCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error) {
+func (s *DynamoStore) GetCapture(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
 	if err := ctx.Err(); err != nil {
 		return model.CaptureIndex{}, err
 	}
@@ -302,89 +552,108 @@ func (s *DynamoStore) GetCapture(ctx context.Context, userID, captureID string) 
 	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-			"sk": &types.AttributeValueMemberS{Value: captureSK(captureID)},
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(captureSK(captureID)),
 		},
 	})
 	if err != nil {
 		return model.CaptureIndex{}, fmt.Errorf("dynamo get capture: %w", err)
 	}
-
 	if result.Item == nil {
 		return model.CaptureIndex{}, ErrNotFound
 	}
-
-	var item dynamoItem
-	if err := attributevalue.UnmarshalMap(result.Item, &item); err != nil {
-		return model.CaptureIndex{}, fmt.Errorf("dynamo unmarshal capture: %w", err)
+	c, err := captureFromItem(result.Item)
+	if err != nil {
+		return model.CaptureIndex{}, err
 	}
-
-	var capture model.CaptureIndex
-	if err := json.Unmarshal([]byte(item.Data), &capture); err != nil {
-		return model.CaptureIndex{}, fmt.Errorf("dynamo decode capture: %w", err)
-	}
-
-	return capture, nil
+	c.UserID = tenantID
+	return c, nil
 }
 
-func (s *DynamoStore) ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
+// ListCapturesByNote queries GSI1 for exactly this note's captures. v1 read the
+// tenant's entire capture partition and filtered in Go, so cost grew with total
+// captures rather than captures for this note.
+//
+// GSI1 is an INCLUDE projection carrying what a capture list renders; it does
+// not carry the S3 keys a cascade delete needs, so each key found in the index
+// is hydrated from the base table.
+func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID string, opts ListOptions) (Page[model.CaptureIndex], error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Page[model.CaptureIndex]{}, err
 	}
 
-	result, err := s.client.Query(ctx, &dynamodb.QueryInput{
+	gsiPK := noteCapturesGSI1PK(tenantID, noteID)
+	start, err := decodeCursor(opts.Cursor, "gsi1pk", gsiPK)
+	if err != nil {
+		return Page[model.CaptureIndex]{}, err
+	}
+
+	limit := opts.limit()
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(s.tableName),
-		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+		IndexName:              aws.String(s.indexName),
+		KeyConditionExpression: aws.String("gsi1pk = :pk AND begins_with(gsi1sk, :sk_prefix)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk":        &types.AttributeValueMemberS{Value: userPK(userID)},
-			":sk_prefix": &types.AttributeValueMemberS{Value: "CAPTURE#"},
+			":pk":        strAttr(gsiPK),
+			":sk_prefix": strAttr("CAPTURE#"),
 		},
+		// Newest first: gsi1sk is CAPTURE#<createdAt> with a fixed-width
+		// timestamp, so descending index order is reverse chronological order.
+		ScanIndexForward:  aws.Bool(false),
+		ExclusiveStartKey: start,
+		Limit:             aws.Int32(limit),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("dynamo query captures: %w", err)
+		return Page[model.CaptureIndex]{}, fmt.Errorf("dynamo query captures by note: %w", err)
 	}
 
-	captures := make([]model.CaptureIndex, 0, len(result.Items))
-	for _, item := range result.Items {
-		var dynamoItem dynamoItem
-		if err := attributevalue.UnmarshalMap(item, &dynamoItem); err != nil {
-			return nil, fmt.Errorf("dynamo unmarshal capture item: %w", err)
+	captures := make([]model.CaptureIndex, 0, len(out.Items))
+	for _, raw := range out.Items {
+		captureID := readString(raw, "capture_id")
+		if captureID == "" {
+			// GSI1 always projects the table keys, so the id is recoverable
+			// even when the index entry predates capture_id.
+			captureID = trimPrefix(readString(raw, "sk"), "CAPTURE#")
 		}
-		var capture model.CaptureIndex
-		if err := json.Unmarshal([]byte(dynamoItem.Data), &capture); err != nil {
-			return nil, fmt.Errorf("dynamo decode capture: %w", err)
+		full, err := s.GetCapture(ctx, tenantID, captureID)
+		if errors.Is(err, ErrNotFound) {
+			continue // index entry outliving its item
 		}
-		if capture.NoteID == noteID {
-			captures = append(captures, capture)
+		if err != nil {
+			return Page[model.CaptureIndex]{}, err
 		}
+		captures = append(captures, full)
 	}
 
-	sort.Slice(captures, func(i, j int) bool {
-		return captures[i].CreatedAt > captures[j].CreatedAt
-	})
-	return captures, nil
+	cursor, err := encodeCursor(out.LastEvaluatedKey)
+	if err != nil {
+		return Page[model.CaptureIndex]{}, err
+	}
+	return Page[model.CaptureIndex]{Items: captures, Cursor: cursor}, nil
 }
 
-func (s *DynamoStore) UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error {
+func trimPrefix(s, prefix string) string {
+	if len(s) >= len(prefix) && s[:len(prefix)] == prefix {
+		return s[len(prefix):]
+	}
+	return s
+}
+
+func (s *DynamoStore) UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	// First get the current capture to preserve other fields
-	capture, err := s.GetCapture(ctx, userID, captureID)
+	capture, err := s.GetCapture(ctx, tenantID, captureID)
 	if err != nil {
 		return err
 	}
-
-	// Update the status and error fields
 	capture.Status = status
 	capture.Error = errMsg
-
-	// Save the updated capture
-	return s.PutCapture(ctx, capture)
+	_, err = s.PutCapture(ctx, capture)
+	return err
 }
 
-func (s *DynamoStore) DeleteCapture(ctx context.Context, userID, captureID string) error {
+func (s *DynamoStore) DeleteCapture(ctx context.Context, tenantID, captureID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -392,21 +661,261 @@ func (s *DynamoStore) DeleteCapture(ctx context.Context, userID, captureID strin
 	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-			"sk": &types.AttributeValueMemberS{Value: captureSK(captureID)},
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(captureSK(captureID)),
 		},
 		ConditionExpression: aws.String("attribute_exists(pk)"),
 	})
 	if err != nil {
-		var condErr *types.ConditionalCheckFailedException
-		if errors.As(err, &condErr) {
+		if isConditionalCheckFailed(err) {
 			return ErrNotFound
 		}
 		return fmt.Errorf("dynamo delete capture: %w", err)
 	}
-
 	return nil
 }
+
+// ---------------------------------------------------------- append guard
+
+// appendClaimCondition admits a claim when nobody holds one, or when the holder
+// abandoned it: an unfinished claim older than the lease is taken over so a
+// worker that died mid-append cannot strand the capture forever.
+const appendClaimCondition = "attribute_exists(pk) AND " +
+	"(attribute_not_exists(append_token) OR append_token = :empty OR " +
+	"(append_claimed_at < :stale AND (attribute_not_exists(appended_at) OR appended_at = :zero)))"
+
+func (s *DynamoStore) ClaimCaptureAppend(ctx context.Context, tenantID, captureID, token string) (bool, model.CaptureIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return false, model.CaptureIndex{}, err
+	}
+	if token == "" {
+		return false, model.CaptureIndex{}, errors.New("repository: empty append token")
+	}
+
+	current, err := s.GetCapture(ctx, tenantID, captureID)
+	if err != nil {
+		return false, model.CaptureIndex{}, err
+	}
+
+	now := time.Now()
+	stale := now.Add(-AppendClaimLease).Unix()
+	if current.AppendToken != "" && !(current.AppendedAt == 0 && current.AppendClaimedAt < stale) {
+		return false, current, nil
+	}
+
+	claimed := current
+	claimed.AppendToken = token
+	claimed.AppendClaimedAt = now.Unix()
+	claimed.Version = current.Version + 1
+
+	item, err := captureItemAttrs(claimed)
+	if err != nil {
+		return false, model.CaptureIndex{}, err
+	}
+
+	condition := appendClaimCondition + " AND (" + versionCondition(current.Version) + ")"
+	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(s.tableName),
+		Item:                item,
+		ConditionExpression: aws.String(condition),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":empty":    strAttr(""),
+			":zero":     numAttr(0),
+			":stale":    numAttr(stale),
+			":expected": numAttr(current.Version),
+		},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			latest, getErr := s.GetCapture(ctx, tenantID, captureID)
+			if getErr != nil {
+				return false, model.CaptureIndex{}, getErr
+			}
+			return false, latest, nil
+		}
+		return false, model.CaptureIndex{}, fmt.Errorf("dynamo claim capture append: %w", err)
+	}
+	return true, claimed, nil
+}
+
+func (s *DynamoStore) CompleteCaptureAppend(ctx context.Context, tenantID, captureID, token string) (model.CaptureIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return model.CaptureIndex{}, err
+	}
+
+	current, err := s.GetCapture(ctx, tenantID, captureID)
+	if err != nil {
+		return model.CaptureIndex{}, err
+	}
+	if current.AppendToken != token {
+		return model.CaptureIndex{}, ErrVersionConflict
+	}
+	if current.AppendedAt > 0 {
+		return current, nil
+	}
+
+	done := current
+	done.Status = model.StatusAppended
+	done.Error = ""
+	done.AppendedAt = time.Now().Unix()
+	done.Version = current.Version + 1
+
+	item, err := captureItemAttrs(done)
+	if err != nil {
+		return model.CaptureIndex{}, err
+	}
+
+	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(s.tableName),
+		Item:                item,
+		ConditionExpression: aws.String("append_token = :token AND (" + versionCondition(current.Version) + ")"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":token":    strAttr(token),
+			":expected": numAttr(current.Version),
+		},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return model.CaptureIndex{}, ErrVersionConflict
+		}
+		return model.CaptureIndex{}, fmt.Errorf("dynamo complete capture append: %w", err)
+	}
+	return done, nil
+}
+
+// ------------------------------------------------------------- idempotency
+
+func (s *DynamoStore) BeginIdempotent(ctx context.Context, tenantID, key, fingerprint string) (*IdemRecord, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if key == "" {
+		return nil, errors.New("repository: empty idempotency key")
+	}
+
+	// The attempt token is generated once, before the SDK's own retries. If a
+	// PutItem is committed but its response is lost, the SDK retry gets
+	// ConditionalCheckFailed against an item this caller wrote — the token is
+	// what tells that apart from a genuine duplicate, so a caller cannot lock
+	// itself out of its own key for the whole TTL.
+	tokenBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, fmt.Errorf("repository: attempt token: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	now := time.Now().Unix()
+	expires := time.Now().Add(IdemTTL).Unix()
+
+	item := map[string]types.AttributeValue{
+		"pk":                strAttr(userPK(tenantID)),
+		"sk":                strAttr(idemSK(key)),
+		"type":              strAttr("idem"),
+		"idem_key":          strAttr(key),
+		"idem_fingerprint":  strAttr(fingerprint),
+		"idem_attempt":      strAttr(token),
+		"idem_done":         &types.AttributeValueMemberBOOL{Value: false},
+		"idem_status":       numAttr(0),
+		"idem_response":     &types.AttributeValueMemberB{Value: nil},
+		"idem_claimed_at":   numAttr(now),
+		"ttl":               numAttr(expires),
+		"idem_expires_at":   numAttr(expires),
+		"idem_tenant_scope": strAttr(tenantID),
+	}
+
+	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:                           aws.String(s.tableName),
+		Item:                                item,
+		ConditionExpression:                 aws.String("attribute_not_exists(pk) OR idem_expires_at < :now"),
+		ExpressionAttributeValues:           map[string]types.AttributeValue{":now": numAttr(now)},
+		ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
+	})
+	if err == nil {
+		return nil, nil // caller owns the key
+	}
+	if !isConditionalCheckFailed(err) {
+		return nil, fmt.Errorf("dynamo begin idempotent: %w", err)
+	}
+
+	existing := conditionFailureItem(err)
+	if existing == nil {
+		got, getErr := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName: aws.String(s.tableName),
+			Key: map[string]types.AttributeValue{
+				"pk": strAttr(userPK(tenantID)),
+				"sk": strAttr(idemSK(key)),
+			},
+			ConsistentRead: aws.Bool(true),
+		})
+		if getErr != nil {
+			return nil, fmt.Errorf("dynamo begin idempotent: %w", getErr)
+		}
+		if got.Item == nil {
+			// The holder's record vanished between the failed condition and the
+			// read. Treat as in-flight rather than guessing.
+			return nil, ErrIdempotencyInFlight
+		}
+		existing = got.Item
+	}
+
+	rec := idemFromItem(existing)
+	if rec.Fingerprint != fingerprint {
+		return nil, ErrIdempotencyKeyReused
+	}
+	if readString(existing, "idem_attempt") == token {
+		return nil, nil // our own committed write; we own the key
+	}
+	if rec.Done {
+		return &rec, nil
+	}
+	return nil, ErrIdempotencyInFlight
+}
+
+func idemFromItem(m map[string]types.AttributeValue) IdemRecord {
+	rec := IdemRecord{
+		Key:         readString(m, "idem_key"),
+		TenantID:    readString(m, "idem_tenant_scope"),
+		Fingerprint: readString(m, "idem_fingerprint"),
+		Status:      int(readInt(m, "idem_status")),
+		ExpiresAt:   readInt(m, "idem_expires_at"),
+	}
+	if v, ok := m["idem_done"].(*types.AttributeValueMemberBOOL); ok {
+		rec.Done = v.Value
+	}
+	if v, ok := m["idem_response"].(*types.AttributeValueMemberB); ok {
+		rec.Response = v.Value
+	}
+	return rec
+}
+
+func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(idemSK(key)),
+		},
+		UpdateExpression:    aws.String("SET idem_done = :done, idem_status = :status, idem_response = :response"),
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":done":     &types.AttributeValueMemberBOOL{Value: true},
+			":status":   numAttr(int64(status)),
+			":response": &types.AttributeValueMemberB{Value: response},
+		},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("dynamo complete idempotent: %w", err)
+	}
+	return nil
+}
+
+// --------------------------------------------------------------- generic
 
 func (s *DynamoStore) putJSONItem(ctx context.Context, pk, sk, typ, data string, ttl int64) error {
 	item := dynamoItem{PK: pk, SK: sk, Type: typ, Data: data, TTL: ttl}
@@ -428,8 +937,8 @@ func (s *DynamoStore) getJSONItem(ctx context.Context, pk, sk string) (dynamoIte
 	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: pk},
-			"sk": &types.AttributeValueMemberS{Value: sk},
+			"pk": strAttr(pk),
+			"sk": strAttr(sk),
 		},
 	})
 	if err != nil {
@@ -444,6 +953,8 @@ func (s *DynamoStore) getJSONItem(ctx context.Context, pk, sk string) (dynamoIte
 	}
 	return item, nil
 }
+
+// --------------------------------------------------------------- webauthn
 
 func (s *DynamoStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
 	if err := ctx.Err(); err != nil {
@@ -481,8 +992,8 @@ func (s *DynamoStore) DeleteWebAuthnChallenge(ctx context.Context, challengeID s
 	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: pk},
-			"sk": &types.AttributeValueMemberS{Value: pk},
+			"pk": strAttr(pk),
+			"sk": strAttr(pk),
 		},
 	})
 	return err
@@ -519,68 +1030,63 @@ func (s *DynamoStore) GetWebAuthnCredential(ctx context.Context, credentialID st
 	return c, nil
 }
 
-func (s *DynamoStore) ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error) {
+// listCredentials is the shared paginated credential query.
+func (s *DynamoStore) listCredentials(ctx context.Context, pk string, opts ListOptions) (Page[model.WebAuthnCredential], error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return Page[model.WebAuthnCredential]{}, err
 	}
-	result, err := s.client.Query(ctx, &dynamodb.QueryInput{
+
+	start, err := decodeCursor(opts.Cursor, "pk", pk)
+	if err != nil {
+		return Page[model.WebAuthnCredential]{}, err
+	}
+
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String(s.tableName),
 		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk":        &types.AttributeValueMemberS{Value: pkWebAuthnCredList},
-			":sk_prefix": &types.AttributeValueMemberS{Value: "WACRED#"},
+			":pk":        strAttr(pk),
+			":sk_prefix": strAttr("WACRED#"),
 		},
+		ExclusiveStartKey: start,
+		Limit:             aws.Int32(opts.limit()),
 	})
 	if err != nil {
-		return nil, err
+		return Page[model.WebAuthnCredential]{}, err
 	}
-	out := make([]model.WebAuthnCredential, 0, len(result.Items))
-	for _, raw := range result.Items {
+
+	creds := make([]model.WebAuthnCredential, 0, len(out.Items))
+	for _, raw := range out.Items {
 		var item dynamoItem
 		if err := attributevalue.UnmarshalMap(raw, &item); err != nil {
-			return nil, err
+			return Page[model.WebAuthnCredential]{}, err
 		}
 		var c model.WebAuthnCredential
 		if err := json.Unmarshal([]byte(item.Data), &c); err != nil {
-			return nil, err
+			return Page[model.WebAuthnCredential]{}, err
 		}
-		out = append(out, c)
+		creds = append(creds, c)
 	}
-	return out, nil
-}
 
-func (s *DynamoStore) ListWebAuthnCredentialsByUser(ctx context.Context, userID string) ([]model.WebAuthnCredential, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	result, err := s.client.Query(ctx, &dynamodb.QueryInput{
-		TableName:              aws.String(s.tableName),
-		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk":        &types.AttributeValueMemberS{Value: userPK(userID)},
-			":sk_prefix": &types.AttributeValueMemberS{Value: "WACRED#"},
-		},
-	})
+	cursor, err := encodeCursor(out.LastEvaluatedKey)
 	if err != nil {
-		return nil, err
+		return Page[model.WebAuthnCredential]{}, err
 	}
-	out := make([]model.WebAuthnCredential, 0, len(result.Items))
-	for _, raw := range result.Items {
-		var item dynamoItem
-		if err := attributevalue.UnmarshalMap(raw, &item); err != nil {
-			return nil, err
-		}
-		var c model.WebAuthnCredential
-		if err := json.Unmarshal([]byte(item.Data), &c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, nil
+	return Page[model.WebAuthnCredential]{Items: creds, Cursor: cursor}, nil
 }
 
-func (s *DynamoStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID string) error {
-	creds, err := s.ListWebAuthnCredentialsByUser(ctx, userID)
+func (s *DynamoStore) ListWebAuthnCredentials(ctx context.Context, opts ListOptions) (Page[model.WebAuthnCredential], error) {
+	return s.listCredentials(ctx, pkWebAuthnCredList, opts)
+}
+
+func (s *DynamoStore) ListWebAuthnCredentialsByUser(ctx context.Context, tenantID string, opts ListOptions) (Page[model.WebAuthnCredential], error) {
+	return s.listCredentials(ctx, userPK(tenantID), opts)
+}
+
+func (s *DynamoStore) DeleteAllWebAuthnCredentials(ctx context.Context, tenantID string) error {
+	creds, err := DrainPages(ctx, 0, func(ctx context.Context, opts ListOptions) (Page[model.WebAuthnCredential], error) {
+		return s.ListWebAuthnCredentialsByUser(ctx, tenantID, opts)
+	})
 	if err != nil {
 		return err
 	}
@@ -589,8 +1095,8 @@ func (s *DynamoStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID s
 		_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 			TableName: aws.String(s.tableName),
 			Key: map[string]types.AttributeValue{
-				"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-				"sk": &types.AttributeValueMemberS{Value: sk},
+				"pk": strAttr(userPK(tenantID)),
+				"sk": strAttr(sk),
 			},
 		})
 		if err != nil {
@@ -599,8 +1105,8 @@ func (s *DynamoStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID s
 		_, err = s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 			TableName: aws.String(s.tableName),
 			Key: map[string]types.AttributeValue{
-				"pk": &types.AttributeValueMemberS{Value: pkWebAuthnCredList},
-				"sk": &types.AttributeValueMemberS{Value: sk},
+				"pk": strAttr(pkWebAuthnCredList),
+				"sk": strAttr(sk),
 			},
 		})
 		if err != nil {
@@ -609,6 +1115,8 @@ func (s *DynamoStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID s
 	}
 	return nil
 }
+
+// ------------------------------------------------------------ refresh vault
 
 func (s *DynamoStore) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
 	if err := ctx.Err(); err != nil {
@@ -621,11 +1129,11 @@ func (s *DynamoStore) PutRefreshVault(ctx context.Context, v model.RefreshVault)
 	return s.putJSONItem(ctx, userPK(v.UserID), refreshVaultSK(), "warefresh", string(data), 0)
 }
 
-func (s *DynamoStore) GetRefreshVault(ctx context.Context, userID string) (model.RefreshVault, error) {
+func (s *DynamoStore) GetRefreshVault(ctx context.Context, tenantID string) (model.RefreshVault, error) {
 	if err := ctx.Err(); err != nil {
 		return model.RefreshVault{}, err
 	}
-	item, err := s.getJSONItem(ctx, userPK(userID), refreshVaultSK())
+	item, err := s.getJSONItem(ctx, userPK(tenantID), refreshVaultSK())
 	if err != nil {
 		return model.RefreshVault{}, err
 	}
@@ -636,15 +1144,15 @@ func (s *DynamoStore) GetRefreshVault(ctx context.Context, userID string) (model
 	return v, nil
 }
 
-func (s *DynamoStore) DeleteRefreshVault(ctx context.Context, userID string) error {
+func (s *DynamoStore) DeleteRefreshVault(ctx context.Context, tenantID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: userPK(userID)},
-			"sk": &types.AttributeValueMemberS{Value: refreshVaultSK()},
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(refreshVaultSK()),
 		},
 	})
 	return err

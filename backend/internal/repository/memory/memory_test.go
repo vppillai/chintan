@@ -1,4 +1,4 @@
-package repository_test
+package memory_test
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
 func TestGetSettingsDefault(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 
 	got, err := store.GetSettings(ctx, "user1")
@@ -25,7 +26,7 @@ func TestGetSettingsDefault(t *testing.T) {
 }
 
 func TestPutGetSettings(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 
 	want := model.Settings{CleanupMode: model.CleanupPolished, RetentionDays: 30}
@@ -42,7 +43,7 @@ func TestPutGetSettings(t *testing.T) {
 }
 
 func TestNoteCRUD(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 	userID := "user1"
 
@@ -55,7 +56,7 @@ func TestNoteCRUD(t *testing.T) {
 		S3MarkdownKey: "tenants/user1/notes/n1/note.md",
 		S3MetaKey:     "tenants/user1/notes/n1/meta.json",
 	}
-	if err := store.PutNote(ctx, userID, note); err != nil {
+	if _, err := store.PutNote(ctx, userID, note); err != nil {
 		t.Fatalf("PutNote: %v", err)
 	}
 
@@ -74,7 +75,8 @@ func TestNoteCRUD(t *testing.T) {
 		}
 	}
 
-	notes, err := store.ListNotes(ctx, userID)
+	notesPage, err := store.ListNotes(ctx, userID, repository.ListOptions{})
+	notes := notesPage.Items
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
@@ -92,7 +94,7 @@ func TestNoteCRUD(t *testing.T) {
 }
 
 func TestGetNoteNotFound(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	_, err := store.GetNote(context.Background(), "user1", "missing")
 	if !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -100,8 +102,9 @@ func TestGetNoteNotFound(t *testing.T) {
 }
 
 func TestListNotesEmpty(t *testing.T) {
-	store := repository.NewMemoryStore()
-	notes, err := store.ListNotes(context.Background(), "user1")
+	store := memory.NewStore()
+	notesPage, err := store.ListNotes(context.Background(), "user1", repository.ListOptions{})
+	notes := notesPage.Items
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
@@ -111,7 +114,7 @@ func TestListNotesEmpty(t *testing.T) {
 }
 
 func TestDeleteNoteNotFound(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	err := store.DeleteNote(context.Background(), "user1", "missing")
 	if !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -119,10 +122,10 @@ func TestDeleteNoteNotFound(t *testing.T) {
 }
 
 func TestNotesScopedByUser(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 	note := model.NoteIndex{ID: "n1", Title: "Shared title"}
-	if err := store.PutNote(ctx, "user1", note); err != nil {
+	if _, err := store.PutNote(ctx, "user1", note); err != nil {
 		t.Fatalf("PutNote: %v", err)
 	}
 	_, err := store.GetNote(ctx, "user2", "n1")
@@ -132,7 +135,7 @@ func TestNotesScopedByUser(t *testing.T) {
 }
 
 func TestCaptureCRUD(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 
 	capture := model.CaptureIndex{
@@ -146,21 +149,27 @@ func TestCaptureCRUD(t *testing.T) {
 		CleanKey:  "tenants/user1/captures/c1/clean.txt",
 		CreatedAt: "2026-08-06T12:00:00Z",
 	}
-	if err := store.PutCapture(ctx, capture); err != nil {
+	// The store stamps the next version on write, so compare against what it
+	// returned rather than against the pre-write value.
+	stored, err := store.PutCapture(ctx, capture)
+	if err != nil {
 		t.Fatalf("PutCapture: %v", err)
+	}
+	if stored.Version != capture.Version+1 {
+		t.Fatalf("stored version = %d, want %d", stored.Version, capture.Version+1)
 	}
 
 	got, err := store.GetCapture(ctx, "user1", "c1")
 	if err != nil {
 		t.Fatalf("GetCapture: %v", err)
 	}
-	if got != capture {
-		t.Fatalf("got capture %+v, want %+v", got, capture)
+	if got != stored {
+		t.Fatalf("got capture %+v, want %+v", got, stored)
 	}
 }
 
 func TestUpdateCaptureStatus(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 
 	capture := model.CaptureIndex{
@@ -168,7 +177,7 @@ func TestUpdateCaptureStatus(t *testing.T) {
 		UserID: "user1",
 		Status: model.StatusUploaded,
 	}
-	if err := store.PutCapture(ctx, capture); err != nil {
+	if _, err := store.PutCapture(ctx, capture); err != nil {
 		t.Fatalf("PutCapture: %v", err)
 	}
 	if err := store.UpdateCaptureStatus(ctx, "user1", "c1", model.StatusFailed, "stt timeout"); err != nil {
@@ -188,7 +197,7 @@ func TestUpdateCaptureStatus(t *testing.T) {
 }
 
 func TestGetCaptureNotFound(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	_, err := store.GetCapture(context.Background(), "user1", "missing")
 	if !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -196,10 +205,10 @@ func TestGetCaptureNotFound(t *testing.T) {
 }
 
 func TestDeleteCapture(t *testing.T) {
-	store := repository.NewMemoryStore()
+	store := memory.NewStore()
 	ctx := context.Background()
 	c := model.CaptureIndex{ID: "c1", UserID: "user1", NoteID: "n1", Status: model.StatusUploaded}
-	if err := store.PutCapture(ctx, c); err != nil {
+	if _, err := store.PutCapture(ctx, c); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.DeleteCapture(ctx, "user1", "c1"); err != nil {
@@ -214,7 +223,7 @@ func TestDeleteCapture(t *testing.T) {
 }
 
 func TestObjectsPutGetDelete(t *testing.T) {
-	objs := repository.NewMemoryObjects()
+	objs := memory.NewObjects()
 	ctx := context.Background()
 	key := "tenants/user1/notes/n1/note.md"
 	body := []byte("# Hello")
@@ -239,7 +248,7 @@ func TestObjectsPutGetDelete(t *testing.T) {
 }
 
 func TestObjectsGetNotFound(t *testing.T) {
-	objs := repository.NewMemoryObjects()
+	objs := memory.NewObjects()
 	_, err := objs.Get(context.Background(), "missing")
 	if !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
@@ -247,7 +256,7 @@ func TestObjectsGetNotFound(t *testing.T) {
 }
 
 func TestObjectsPresignPutGet(t *testing.T) {
-	objs := repository.NewMemoryObjects()
+	objs := memory.NewObjects()
 	ctx := context.Background()
 	key := "tenants/user1/captures/c1/audio.webm"
 	ttl := 15 * time.Minute

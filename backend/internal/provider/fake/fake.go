@@ -1,4 +1,8 @@
-package provider
+// Package fake holds test doubles for the provider interfaces.
+//
+// It is a separate package so it is never linked into the API binary: nothing
+// under cmd/ imports it, and a guard test asserts that stays true.
+package fake
 
 import (
 	"context"
@@ -6,16 +10,17 @@ import (
 	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
-// FakeSTT is a fake STT implementation for testing
-type FakeSTT struct {
+// STT is a fake STT implementation for testing
+type STT struct {
 	ShouldFail bool
 	Response   string
 }
 
-func (f *FakeSTT) Transcribe(ctx context.Context, audio []byte, contentType string) (text string, err error) {
+func (f *STT) Transcribe(ctx context.Context, audio []byte, contentType string) (text string, err error) {
 	if f.ShouldFail {
 		return "", fmt.Errorf("fake STT failed")
 	}
@@ -25,13 +30,13 @@ func (f *FakeSTT) Transcribe(ctx context.Context, audio []byte, contentType stri
 	return fmt.Sprintf("transcribed audio: %d bytes of %s", len(audio), contentType), nil
 }
 
-// FakeLLM is a fake LLM implementation for testing
-type FakeLLM struct {
+// LLM is a fake LLM implementation for testing
+type LLM struct {
 	ShouldFail bool
 	Response   string
 }
 
-func (f *FakeLLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (cleaned string, err error) {
+func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (cleaned string, err error) {
 	if f.ShouldFail {
 		return "", fmt.Errorf("fake LLM failed")
 	}
@@ -50,10 +55,10 @@ func (f *FakeLLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw strin
 	}
 }
 
-// FakeRouter is a fake Router implementation for testing.
-type FakeRouter struct {
+// Router is a fake Router implementation for testing.
+type Router struct {
 	ShouldFail bool
-	Decision   RouteDecision
+	Decision   provider.RouteDecision
 	// NoContent means the recording held nothing but an app instruction, so an empty
 	// Decision.Content is deliberate rather than a test that did not set it.
 	NoContent bool
@@ -63,18 +68,18 @@ type FakeRouter struct {
 	LastCandidates []routing.Candidate
 }
 
-func (f *FakeRouter) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error) {
+func (f *Router) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
 	f.Calls = append(f.Calls, transcript)
 	f.LastCandidates = make([]routing.Candidate, len(candidates))
 	copy(f.LastCandidates, candidates)
 
 	if f.ShouldFail {
-		return RouteDecision{}, fmt.Errorf("fake router failed")
+		return provider.RouteDecision{}, fmt.Errorf("fake router failed")
 	}
 
 	decision := f.Decision
 	if decision.Action == "" {
-		decision.Action = RouteNew
+		decision.Action = provider.RouteNew
 		decision.Title = "Fake routed note"
 		decision.Confidence = 1
 	}

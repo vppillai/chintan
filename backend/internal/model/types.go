@@ -1,6 +1,33 @@
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
+
+// TimeLayout stores timestamps with fixed-width fractional seconds.
+//
+// time.RFC3339Nano trims trailing zeros from the fraction, so "…:00Z" sorts
+// above "…:00.1Z" ('Z' > '.') and lexicographic order stops being chronological
+// order. Every timestamp written by the backend uses this layout instead, so a
+// plain string comparison is a valid ordering.
+const TimeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+
+// FormatTime renders t in UTC using TimeLayout.
+func FormatTime(t time.Time) string {
+	return t.UTC().Format(TimeLayout)
+}
+
+// Now is FormatTime(time.Now()).
+func Now() string {
+	return FormatTime(time.Now())
+}
+
+// ParseTime parses a timestamp written by FormatTime, and also the RFC3339 and
+// RFC3339Nano values written by earlier versions.
+func ParseTime(s string) (time.Time, error) {
+	return time.Parse(time.RFC3339Nano, s)
+}
 
 type CleanupMode string
 
@@ -18,12 +45,20 @@ type NoteIndex struct {
 	ID            string   `json:"id"`
 	Title         string   `json:"title"`
 	Aliases       []string `json:"aliases"`
-	Snippet       string   `json:"snippet,omitempty"` // first ~500 chars of note for light match
+	Tags          []string `json:"tags,omitempty"`
+	Snippet       string   `json:"snippet,omitempty"` // first ~500 runes of note for light match
 	UpdatedAt     string   `json:"updated_at"`
 	S3MarkdownKey string   `json:"s3_markdown_key"`
 	S3MetaKey     string   `json:"s3_meta_key"`
 	DeletedAt     string   `json:"deleted_at,omitempty"`
 	PurgeAfter    string   `json:"purge_after,omitempty"`
+	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
+	// It is the DynamoDB TTL attribute, so expiry is performed by the table
+	// rather than by a synchronous sweep on the read path.
+	PurgeAfterEpoch int64 `json:"purge_after_epoch,omitempty"`
+	// Version is the optimistic-concurrency counter. A write carries the version
+	// it read; the store rejects it if the stored version has moved on.
+	Version int64 `json:"version"`
 }
 
 type CaptureStatus string
@@ -59,6 +94,23 @@ type CaptureIndex struct {
 	SuggestedNoteID string  `json:"suggested_note_id,omitempty"`
 	SuggestedTitle  string  `json:"suggested_title,omitempty"`
 	RouteConfidence float64 `json:"route_confidence,omitempty"`
+
+	// Version is the optimistic-concurrency counter.
+	Version int64 `json:"version"`
+	// AppendToken is claimed before the capture's text is written into the note
+	// and is what makes the append idempotent: a retry that finds its own token
+	// already recorded must not append again.
+	AppendToken string `json:"append_token,omitempty"`
+	// AppendClaimedAt is when AppendToken was claimed. A claim older than
+	// AppendClaimLease is assumed abandoned so a dead worker cannot strand the
+	// capture forever.
+	AppendClaimedAt int64 `json:"append_claimed_at,omitempty"`
+	// AppendedAt is set only once the text is durably in the note body.
+	AppendedAt int64 `json:"appended_at,omitempty"`
+
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	SegmentsKey string `json:"segments_key,omitempty"`
+	PeaksKey    string `json:"peaks_key,omitempty"`
 }
 
 // WebAuthnChallenge is an in-flight ceremony (go-webauthn SessionData JSON).

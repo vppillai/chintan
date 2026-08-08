@@ -8,6 +8,8 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
+	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -87,22 +89,25 @@ func (h *NotesHandler) handleNoteDetail(w http.ResponseWriter, r *http.Request, 
 }
 
 func (h *NotesHandler) listNotes(w http.ResponseWriter, r *http.Request, userID string) {
+	opts := listOptionsFrom(r)
+
 	var (
-		notes interface{}
-		err   error
+		page repository.Page[model.NoteIndex]
+		err  error
 	)
 	if r.URL.Query().Get("status") == "archived" {
-		notes, err = h.notesService.ListArchivedNotes(r.Context(), userID)
+		page, err = h.notesService.ListArchivedNotes(r.Context(), userID, opts)
 	} else {
-		notes, err = h.notesService.ListNotes(r.Context(), userID)
+		page, err = h.notesService.ListNotes(r.Context(), userID, opts)
 	}
 	if err != nil {
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)
 		return
 	}
 
+	setNextCursor(w, page.Cursor)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(notes)
+	json.NewEncoder(w).Encode(page.Items)
 }
 
 func (h *NotesHandler) createNote(w http.ResponseWriter, r *http.Request, userID string) {

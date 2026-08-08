@@ -1,0 +1,691 @@
+// Package memory holds in-memory implementations of the repository interfaces
+// for tests and local development.
+//
+// It is a separate package so it is never linked into the API binary: nothing
+// under cmd/ imports it, and a guard test asserts that stays true. In v1 these
+// doubles lived in the production package alongside the real DynamoDB and S3
+// implementations.
+package memory
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
+)
+
+type memoryObject struct {
+	body        []byte
+	contentType string
+	etag        string
+}
+
+type idemEntry struct {
+	record  repository.IdemRecord
+	attempt string
+}
+
+// Store is an in-memory repository.Store for tests and local development.
+type Store struct {
+	mu          sync.RWMutex
+	settings    map[string]model.Settings
+	notes       map[string]map[string]model.NoteIndex
+	captures    map[string]map[string]model.CaptureIndex
+	challenges  map[string]model.WebAuthnChallenge
+	credentials map[string]model.WebAuthnCredential
+	vaults      map[string]model.RefreshVault
+	idem        map[string]map[string]idemEntry
+}
+
+var _ repository.Store = (*Store)(nil)
+
+// NewStore returns an empty in-memory store.
+func NewStore() *Store {
+	return &Store{
+		settings:    make(map[string]model.Settings),
+		notes:       make(map[string]map[string]model.NoteIndex),
+		captures:    make(map[string]map[string]model.CaptureIndex),
+		challenges:  make(map[string]model.WebAuthnChallenge),
+		credentials: make(map[string]model.WebAuthnCredential),
+		vaults:      make(map[string]model.RefreshVault),
+		idem:        make(map[string]map[string]idemEntry),
+	}
+}
+
+func (s *Store) checkCtx(ctx context.Context) error {
+	return ctx.Err()
+}
+
+// paginate applies the cursor and limit to an already-ordered list of keys.
+// The cursor is the last key of the previous page, so it survives insertions
+// the same way a DynamoDB LastEvaluatedKey does. It is namespaced by partition
+// so one tenant's cursor cannot address another tenant's page.
+func paginate[T any](partition string, keys []string, opts repository.ListOptions, load func(string) T) (repository.Page[T], error) {
+	limit := int(opts.Limit)
+	switch {
+	case limit <= 0:
+		limit = int(repository.DefaultListLimit)
+	case limit > int(repository.MaxListLimit):
+		limit = int(repository.MaxListLimit)
+	}
+
+	start := 0
+	if opts.Cursor != "" {
+		raw, err := base64.RawURLEncoding.DecodeString(opts.Cursor)
+		if err != nil {
+			return repository.Page[T]{}, fmt.Errorf("cursor: not valid base64: %w", err)
+		}
+		gotPartition, last, ok := strings.Cut(string(raw), "\x00")
+		if !ok {
+			return repository.Page[T]{}, fmt.Errorf("cursor: unexpected key shape")
+		}
+		if gotPartition != partition {
+			return repository.Page[T]{}, fmt.Errorf("cursor: does not belong to this partition")
+		}
+		start = sort.SearchStrings(keys, last)
+		if start < len(keys) && keys[start] == last {
+			start++
+		}
+	}
+
+	end := start + limit
+	if end > len(keys) {
+		end = len(keys)
+	}
+	if start > len(keys) {
+		start = len(keys)
+	}
+
+	items := make([]T, 0, end-start)
+	for _, k := range keys[start:end] {
+		items = append(items, load(k))
+	}
+
+	cursor := ""
+	if end < len(keys) && end > start {
+		cursor = base64.RawURLEncoding.EncodeToString([]byte(partition + "\x00" + keys[end-1]))
+	}
+	return repository.Page[T]{Items: items, Cursor: cursor}, nil
+}
+
+func (s *Store) GetSettings(ctx context.Context, tenantID string) (model.Settings, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.Settings{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if found, ok := s.settings[tenantID]; ok {
+		return found, nil
+	}
+	return repository.DefaultSettings(), nil
+}
+
+func (s *Store) PutSettings(ctx context.Context, tenantID string, settings model.Settings) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.settings[tenantID] = settings
+	return nil
+}
+
+func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.ListOptions, keep func(model.NoteIndex) bool) (repository.Page[model.NoteIndex], error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return repository.Page[model.NoteIndex]{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	keys := make([]string, 0, len(s.notes[tenantID]))
+	for id, n := range s.notes[tenantID] {
+		if keep(n) {
+			keys = append(keys, id)
+		}
+	}
+	sort.Strings(keys)
+	return paginate(tenantID, keys, opts, func(id string) model.NoteIndex {
+		return copyNote(s.notes[tenantID][id])
+	})
+}
+
+func (s *Store) ListNotes(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	return s.listNotes(ctx, tenantID, opts, func(n model.NoteIndex) bool {
+		return strings.TrimSpace(n.DeletedAt) == ""
+	})
+}
+
+func (s *Store) ListArchivedNotes(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	now := time.Now().Unix()
+	return s.listNotes(ctx, tenantID, opts, func(n model.NoteIndex) bool {
+		return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
+	})
+}
+
+func (s *Store) GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.NoteIndex{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n, ok := s.notes[tenantID][noteID]
+	if !ok {
+		return model.NoteIndex{}, repository.ErrNotFound
+	}
+	return copyNote(n), nil
+}
+
+func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.NoteIndex{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.notes[tenantID] == nil {
+		s.notes[tenantID] = make(map[string]model.NoteIndex)
+	}
+	if existing, ok := s.notes[tenantID][n.ID]; ok && existing.Version != n.Version {
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	next := copyNote(n)
+	next.Version = n.Version + 1
+	s.notes[tenantID][n.ID] = next
+	return copyNote(next), nil
+}
+
+func (s *Store) DeleteNote(ctx context.Context, tenantID, noteID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tenantNotes, ok := s.notes[tenantID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	if _, ok := tenantNotes[noteID]; !ok {
+		return repository.ErrNotFound
+	}
+	delete(tenantNotes, noteID)
+	return nil
+}
+
+func (s *Store) PutCapture(ctx context.Context, c model.CaptureIndex) (model.CaptureIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.CaptureIndex{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.captures[c.UserID] == nil {
+		s.captures[c.UserID] = make(map[string]model.CaptureIndex)
+	}
+	if existing, ok := s.captures[c.UserID][c.ID]; ok && existing.Version != c.Version {
+		return model.CaptureIndex{}, repository.ErrVersionConflict
+	}
+	next := c
+	next.Version = c.Version + 1
+	s.captures[c.UserID][c.ID] = next
+	return next, nil
+}
+
+func (s *Store) GetCapture(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.CaptureIndex{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.captures[tenantID][captureID]
+	if !ok {
+		return model.CaptureIndex{}, repository.ErrNotFound
+	}
+	return c, nil
+}
+
+func (s *Store) ListCapturesByNote(ctx context.Context, tenantID, noteID string, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return repository.Page[model.CaptureIndex]{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Sort key mirrors GSI1: CAPTURE#<createdAt> descending, so the page order
+	// matches what DynamoDB returns.
+	type entry struct{ sortKey, id string }
+	entries := make([]entry, 0)
+	for id, c := range s.captures[tenantID] {
+		if c.NoteID == noteID {
+			entries = append(entries, entry{sortKey: c.CreatedAt + "\x00" + id, id: id})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].sortKey > entries[j].sortKey })
+
+	keys := make([]string, 0, len(entries))
+	byKey := make(map[string]string, len(entries))
+	for i, e := range entries {
+		// paginate assumes ascending keys, so index the descending order.
+		k := fmt.Sprintf("%08d", i)
+		keys = append(keys, k)
+		byKey[k] = e.id
+	}
+
+	return paginate(tenantID+"#"+noteID, keys, opts, func(k string) model.CaptureIndex {
+		return s.captures[tenantID][byKey[k]]
+	})
+}
+
+func (s *Store) UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tenantCaptures, ok := s.captures[tenantID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	c, ok := tenantCaptures[captureID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	c.Status = status
+	c.Error = errMsg
+	c.Version++
+	tenantCaptures[captureID] = c
+	return nil
+}
+
+func (s *Store) DeleteCapture(ctx context.Context, tenantID, captureID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tenantCaptures, ok := s.captures[tenantID]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	if _, ok := tenantCaptures[captureID]; !ok {
+		return repository.ErrNotFound
+	}
+	delete(tenantCaptures, captureID)
+	return nil
+}
+
+func (s *Store) ClaimCaptureAppend(ctx context.Context, tenantID, captureID, token string) (bool, model.CaptureIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return false, model.CaptureIndex{}, err
+	}
+	if token == "" {
+		return false, model.CaptureIndex{}, fmt.Errorf("repository: empty append token")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.captures[tenantID][captureID]
+	if !ok {
+		return false, model.CaptureIndex{}, repository.ErrNotFound
+	}
+
+	now := time.Now()
+	stale := now.Add(-repository.AppendClaimLease).Unix()
+	if c.AppendToken != "" && !(c.AppendedAt == 0 && c.AppendClaimedAt < stale) {
+		return false, c, nil
+	}
+
+	c.AppendToken = token
+	c.AppendClaimedAt = now.Unix()
+	c.Version++
+	s.captures[tenantID][captureID] = c
+	return true, c, nil
+}
+
+func (s *Store) CompleteCaptureAppend(ctx context.Context, tenantID, captureID, token string) (model.CaptureIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.CaptureIndex{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, ok := s.captures[tenantID][captureID]
+	if !ok {
+		return model.CaptureIndex{}, repository.ErrNotFound
+	}
+	if c.AppendToken != token {
+		return model.CaptureIndex{}, repository.ErrVersionConflict
+	}
+	if c.AppendedAt > 0 {
+		return c, nil
+	}
+	c.Status = model.StatusAppended
+	c.Error = ""
+	c.AppendedAt = time.Now().Unix()
+	c.Version++
+	s.captures[tenantID][captureID] = c
+	return c, nil
+}
+
+func (s *Store) BeginIdempotent(ctx context.Context, tenantID, key, fingerprint string) (*repository.IdemRecord, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	if key == "" {
+		return nil, fmt.Errorf("repository: empty idempotency key")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.idem[tenantID] == nil {
+		s.idem[tenantID] = make(map[string]idemEntry)
+	}
+	now := time.Now()
+	if existing, ok := s.idem[tenantID][key]; ok && existing.record.ExpiresAt > now.Unix() {
+		if existing.record.Fingerprint != fingerprint {
+			return nil, repository.ErrIdempotencyKeyReused
+		}
+		if existing.record.Done {
+			rec := existing.record
+			rec.Response = append([]byte(nil), existing.record.Response...)
+			return &rec, nil
+		}
+		return nil, repository.ErrIdempotencyInFlight
+	}
+
+	tokenBytes := make([]byte, 16)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return nil, err
+	}
+	s.idem[tenantID][key] = idemEntry{
+		attempt: hex.EncodeToString(tokenBytes),
+		record: repository.IdemRecord{
+			Key:         key,
+			TenantID:    tenantID,
+			Fingerprint: fingerprint,
+			ExpiresAt:   now.Add(repository.IdemTTL).Unix(),
+		},
+	}
+	return nil, nil
+}
+
+func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.idem[tenantID][key]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	entry.record.Done = true
+	entry.record.Status = status
+	entry.record.Response = append([]byte(nil), response...)
+	s.idem[tenantID][key] = entry
+	return nil
+}
+
+func (s *Store) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.challenges[c.ChallengeID] = c
+	return nil
+}
+
+func (s *Store) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.WebAuthnChallenge{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.challenges[challengeID]
+	if !ok {
+		return model.WebAuthnChallenge{}, repository.ErrNotFound
+	}
+	if c.ExpiresAt > 0 && time.Now().Unix() > c.ExpiresAt {
+		return model.WebAuthnChallenge{}, repository.ErrNotFound
+	}
+	return c, nil
+}
+
+func (s *Store) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.challenges, challengeID)
+	return nil
+}
+
+func (s *Store) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.credentials[c.CredentialID] = c
+	return nil
+}
+
+func (s *Store) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.WebAuthnCredential{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.credentials[credentialID]
+	if !ok {
+		return model.WebAuthnCredential{}, repository.ErrNotFound
+	}
+	return c, nil
+}
+
+func (s *Store) listCredentials(ctx context.Context, partition string, opts repository.ListOptions, keep func(model.WebAuthnCredential) bool) (repository.Page[model.WebAuthnCredential], error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return repository.Page[model.WebAuthnCredential]{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([]string, 0, len(s.credentials))
+	for id, c := range s.credentials {
+		if keep(c) {
+			keys = append(keys, id)
+		}
+	}
+	sort.Strings(keys)
+	return paginate(partition, keys, opts, func(id string) model.WebAuthnCredential {
+		return s.credentials[id]
+	})
+}
+
+func (s *Store) ListWebAuthnCredentials(ctx context.Context, opts repository.ListOptions) (repository.Page[model.WebAuthnCredential], error) {
+	return s.listCredentials(ctx, "WACREDLIST", opts, func(model.WebAuthnCredential) bool { return true })
+}
+
+func (s *Store) ListWebAuthnCredentialsByUser(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.WebAuthnCredential], error) {
+	return s.listCredentials(ctx, tenantID, opts, func(c model.WebAuthnCredential) bool {
+		return c.UserID == tenantID
+	})
+}
+
+func (s *Store) DeleteAllWebAuthnCredentials(ctx context.Context, tenantID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, c := range s.credentials {
+		if c.UserID == tenantID {
+			delete(s.credentials, id)
+		}
+	}
+	return nil
+}
+
+func (s *Store) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := v
+	if v.Ciphertext != nil {
+		cp.Ciphertext = append([]byte(nil), v.Ciphertext...)
+	}
+	s.vaults[v.UserID] = cp
+	return nil
+}
+
+func (s *Store) GetRefreshVault(ctx context.Context, tenantID string) (model.RefreshVault, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.RefreshVault{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	v, ok := s.vaults[tenantID]
+	if !ok {
+		return model.RefreshVault{}, repository.ErrNotFound
+	}
+	cp := v
+	if v.Ciphertext != nil {
+		cp.Ciphertext = append([]byte(nil), v.Ciphertext...)
+	}
+	return cp, nil
+}
+
+func (s *Store) DeleteRefreshVault(ctx context.Context, tenantID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.vaults, tenantID)
+	return nil
+}
+
+func copyNote(n model.NoteIndex) model.NoteIndex {
+	out := n
+	if n.Aliases != nil {
+		out.Aliases = append([]string(nil), n.Aliases...)
+	}
+	if n.Tags != nil {
+		out.Tags = append([]string(nil), n.Tags...)
+	}
+	return out
+}
+
+// Objects is an in-memory repository.Objects implementation for tests.
+type Objects struct {
+	mu      sync.RWMutex
+	objects map[string]memoryObject
+}
+
+var _ repository.Objects = (*Objects)(nil)
+
+// NewObjects returns an empty in-memory object store.
+func NewObjects() *Objects {
+	return &Objects{objects: make(map[string]memoryObject)}
+}
+
+func (o *Objects) checkCtx(ctx context.Context) error {
+	return ctx.Err()
+}
+
+func etagOf(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+func (o *Objects) Put(ctx context.Context, key string, body []byte, contentType string) error {
+	if err := o.checkCtx(ctx); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	stored := append([]byte(nil), body...)
+	o.objects[key] = memoryObject{body: stored, contentType: contentType, etag: etagOf(stored)}
+	return nil
+}
+
+func (o *Objects) Get(ctx context.Context, key string) ([]byte, error) {
+	body, _, err := o.GetWithETag(ctx, key)
+	return body, err
+}
+
+func (o *Objects) GetWithETag(ctx context.Context, key string) ([]byte, string, error) {
+	if err := o.checkCtx(ctx); err != nil {
+		return nil, "", err
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	obj, ok := o.objects[key]
+	if !ok {
+		return nil, "", repository.ErrNotFound
+	}
+	return append([]byte(nil), obj.body...), obj.etag, nil
+}
+
+func (o *Objects) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	if err := o.checkCtx(ctx); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	obj, exists := o.objects[key]
+	if etag == "" {
+		if exists {
+			return repository.ErrPreconditionFailed
+		}
+	} else if !exists || obj.etag != etag {
+		return repository.ErrPreconditionFailed
+	}
+	stored := append([]byte(nil), body...)
+	o.objects[key] = memoryObject{body: stored, contentType: contentType, etag: etagOf(stored)}
+	return nil
+}
+
+func (o *Objects) Delete(ctx context.Context, key string) error {
+	if err := o.checkCtx(ctx); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.objects[key]; !ok {
+		return repository.ErrNotFound
+	}
+	delete(o.objects, key)
+	return nil
+}
+
+func (o *Objects) PresignPut(ctx context.Context, key string, contentType string, ttl time.Duration) (string, error) {
+	if err := o.checkCtx(ctx); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("memory://put/%s?contentType=%s&ttl=%s",
+		url.PathEscape(key),
+		url.QueryEscape(contentType),
+		url.QueryEscape(ttl.String()),
+	), nil
+}
+
+func (o *Objects) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if err := o.checkCtx(ctx); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("memory://get/%s?ttl=%s",
+		url.PathEscape(key),
+		url.QueryEscape(ttl.String()),
+	), nil
+}

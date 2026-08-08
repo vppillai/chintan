@@ -8,11 +8,13 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
+	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
 // fakeNoteCreator stands in for NotesService.
 type fakeNoteCreator struct {
-	store  *mockStore
+	store  *memory.Store
 	seq    int
 	titles []string
 }
@@ -26,7 +28,7 @@ func (f *fakeNoteCreator) CreateNote(ctx context.Context, userID, title string, 
 		Title:         title,
 		S3MarkdownKey: fmt.Sprintf("tenants/%s/notes/%s/note.md", userID, id),
 	}
-	if err := f.store.PutNote(ctx, userID, note); err != nil {
+	if _, err := f.store.PutNote(ctx, userID, note); err != nil {
 		return model.NoteIndex{}, err
 	}
 	return note, nil
@@ -35,30 +37,30 @@ func (f *fakeNoteCreator) CreateNote(ctx context.Context, userID, title string, 
 // routingFixture builds a service with one existing note and an unrouted capture.
 type routingFixture struct {
 	svc     *CaptureService
-	store   *mockStore
-	objects *mockObjects
+	store   *memory.Store
+	objects *memory.Objects
 	creator *fakeNoteCreator
-	router  *provider.FakeRouter
+	router  *fake.Router
 	userID  string
 }
 
 func newRoutingFixture(t *testing.T, transcript string, decision provider.RouteDecision, routerFails bool) *routingFixture {
 	t.Helper()
 
-	store := newMockStore()
-	objects := newMockObjects()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
 	creator := &fakeNoteCreator{store: store}
-	router := &provider.FakeRouter{Decision: decision, ShouldFail: routerFails}
+	router := &fake.Router{Decision: decision, ShouldFail: routerFails}
 
 	svc := NewCaptureService(store, objects,
-		&provider.FakeSTT{Response: transcript},
-		&provider.FakeLLM{},
+		&fake.STT{Response: transcript},
+		&fake.LLM{},
 	).WithRouting(router, creator)
 
 	ctx := context.Background()
 	userID := "user1"
 
-	if err := store.PutNote(ctx, userID, model.NoteIndex{
+	if _, err := store.PutNote(ctx, userID, model.NoteIndex{
 		ID:            "n1",
 		Title:         "Roof repair",
 		Aliases:       []string{"roof"},
@@ -74,7 +76,7 @@ func newRoutingFixture(t *testing.T, transcript string, decision provider.RouteD
 		t.Fatalf("Put audio: %v", err)
 	}
 	// NoteID is deliberately empty: the destination comes from routing.
-	if err := store.PutCapture(ctx, model.CaptureIndex{
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_1", UserID: userID, Status: model.StatusUploaded,
 		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
 	}); err != nil {
@@ -298,7 +300,7 @@ func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T
 		t.Fatalf("created titles = %v, want [test123]", f.creator.titles)
 	}
 
-	note := f.store.notes[f.userID+"/"+capture.NoteID]
+	note := mustGetNote(t, f.store, f.userID, capture.NoteID)
 	body, err := f.objects.Get(ctx, note.S3MarkdownKey)
 	if err == nil && strings.TrimSpace(string(body)) != "" {
 		t.Errorf("note body = %q, want empty", body)
@@ -385,7 +387,7 @@ func TestCompleteCaptureSavesNoteWhenRouterFails(t *testing.T) {
 		t.Errorf("fallback title = %q, want a timestamped voice note", f.creator.titles[0])
 	}
 
-	body, _ := f.objects.Get(ctx, f.store.notes[f.userID+"/"+capture.NoteID].S3MarkdownKey)
+	body, _ := f.objects.Get(ctx, mustGetNote(t, f.store, f.userID, capture.NoteID).S3MarkdownKey)
 	if !strings.Contains(string(body), "some dictated words") {
 		t.Errorf("note body missing dictated text: %q", body)
 	}
@@ -397,7 +399,7 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 
 	ctx := context.Background()
 	// A capture created against a note keeps that note; routing is skipped.
-	if err := f.store.PutCapture(ctx, model.CaptureIndex{
+	if _, err := f.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_2", UserID: f.userID, NoteID: "n1", Status: model.StatusUploaded,
 		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
 	}); err != nil {
@@ -414,4 +416,15 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 	if len(f.router.Calls) != 0 {
 		t.Errorf("router was consulted %d times, want 0", len(f.router.Calls))
 	}
+}
+
+// mustGetNote reads a note through the store rather than reaching into it, so
+// the fixtures work against any repository.Store implementation.
+func mustGetNote(t *testing.T, store *memory.Store, userID, noteID string) model.NoteIndex {
+	t.Helper()
+	note, err := store.GetNote(context.Background(), userID, noteID)
+	if err != nil {
+		t.Fatalf("GetNote(%s): %v", noteID, err)
+	}
+	return note
 }

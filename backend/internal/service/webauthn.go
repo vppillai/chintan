@@ -100,11 +100,12 @@ func rpIDFromOrigin(allowedOrigin string) (string, error) {
 }
 
 func (s *WebAuthnService) Status(ctx context.Context, userID string) (bool, error) {
-	creds, err := s.store.ListWebAuthnCredentialsByUser(ctx, userID)
+	// One credential is enough to answer "is biometrics enrolled".
+	creds, err := s.store.ListWebAuthnCredentialsByUser(ctx, userID, repository.ListOptions{Limit: 1})
 	if err != nil {
 		return false, err
 	}
-	return len(creds) > 0, nil
+	return len(creds.Items) > 0, nil
 }
 
 func (s *WebAuthnService) BeginRegistration(ctx context.Context, userID string) (*model.WebAuthnOptionsResponse, error) {
@@ -186,11 +187,13 @@ func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID string,
 }
 
 func (s *WebAuthnService) BeginLogin(ctx context.Context) (*model.WebAuthnOptionsResponse, error) {
-	creds, err := s.store.ListWebAuthnCredentials(ctx)
+	// This route is unauthenticated, so it reads one item rather than every
+	// credential of every user just to test emptiness.
+	creds, err := s.store.ListWebAuthnCredentials(ctx, repository.ListOptions{Limit: 1})
 	if err != nil {
 		return nil, err
 	}
-	if len(creds) == 0 {
+	if len(creds.Items) == 0 {
 		return nil, ErrWebAuthnNotEnrolled
 	}
 	assertion, session, err := s.wa.BeginDiscoverableLogin(
@@ -277,7 +280,9 @@ func (s *WebAuthnService) Disable(ctx context.Context, userID string) error {
 }
 
 func (s *WebAuthnService) user(ctx context.Context, userID string) (*webAuthnUser, error) {
-	stored, err := s.store.ListWebAuthnCredentialsByUser(ctx, userID)
+	stored, err := repository.DrainPages(ctx, 0, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.WebAuthnCredential], error) {
+		return s.store.ListWebAuthnCredentialsByUser(ctx, userID, opts)
+	})
 	if err != nil {
 		return nil, err
 	}

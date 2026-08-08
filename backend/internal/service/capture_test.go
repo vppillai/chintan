@@ -4,189 +4,18 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
-	"github.com/vppillai/chintan/backend/internal/provider"
+	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-// mockStore implements repository.Store for testing
-type mockStore struct {
-	settings map[string]model.Settings
-	notes    map[string]model.NoteIndex
-	captures map[string]model.CaptureIndex
-}
-
-func newMockStore() *mockStore {
-	return &mockStore{
-		settings: make(map[string]model.Settings),
-		notes:    make(map[string]model.NoteIndex),
-		captures: make(map[string]model.CaptureIndex),
-	}
-}
-
-func (m *mockStore) GetSettings(ctx context.Context, userID string) (model.Settings, error) {
-	if s, ok := m.settings[userID]; ok {
-		return s, nil
-	}
-	return model.Settings{CleanupMode: model.CleanupFaithful, RetentionDays: 0}, nil
-}
-
-func (m *mockStore) PutSettings(ctx context.Context, userID string, s model.Settings) error {
-	m.settings[userID] = s
-	return nil
-}
-
-func (m *mockStore) ListNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
-	var notes []model.NoteIndex
-	for key, n := range m.notes {
-		if strings.HasPrefix(key, userID+"/") {
-			notes = append(notes, n)
-		}
-	}
-	return notes, nil
-}
-
-func (m *mockStore) GetNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
-	key := userID + "/" + noteID
-	if n, ok := m.notes[key]; ok {
-		return n, nil
-	}
-	return model.NoteIndex{}, repository.ErrNotFound
-}
-
-func (m *mockStore) PutNote(ctx context.Context, userID string, n model.NoteIndex) error {
-	key := userID + "/" + n.ID
-	m.notes[key] = n
-	return nil
-}
-
-func (m *mockStore) DeleteNote(ctx context.Context, userID, noteID string) error {
-	key := userID + "/" + noteID
-	delete(m.notes, key)
-	return nil
-}
-
-func (m *mockStore) PutCapture(ctx context.Context, c model.CaptureIndex) error {
-	key := c.UserID + "/" + c.ID
-	m.captures[key] = c
-	return nil
-}
-
-func (m *mockStore) GetCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error) {
-	key := userID + "/" + captureID
-	if c, ok := m.captures[key]; ok {
-		return c, nil
-	}
-	return model.CaptureIndex{}, repository.ErrNotFound
-}
-
-func (m *mockStore) ListCapturesByNote(ctx context.Context, userID, noteID string) ([]model.CaptureIndex, error) {
-	var out []model.CaptureIndex
-	for _, c := range m.captures {
-		if c.UserID == userID && c.NoteID == noteID {
-			out = append(out, c)
-		}
-	}
-	return out, nil
-}
-
-func (m *mockStore) UpdateCaptureStatus(ctx context.Context, userID, captureID string, status model.CaptureStatus, errMsg string) error {
-	key := userID + "/" + captureID
-	if c, ok := m.captures[key]; ok {
-		c.Status = status
-		c.Error = errMsg
-		m.captures[key] = c
-		return nil
-	}
-	return repository.ErrNotFound
-}
-
-func (m *mockStore) DeleteCapture(ctx context.Context, userID, captureID string) error {
-	key := userID + "/" + captureID
-	if _, ok := m.captures[key]; !ok {
-		return repository.ErrNotFound
-	}
-	delete(m.captures, key)
-	return nil
-}
-
-func (m *mockStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
-	return nil
-}
-func (m *mockStore) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
-	return model.WebAuthnChallenge{}, repository.ErrNotFound
-}
-func (m *mockStore) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
-	return nil
-}
-func (m *mockStore) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
-	return nil
-}
-func (m *mockStore) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
-	return model.WebAuthnCredential{}, repository.ErrNotFound
-}
-func (m *mockStore) ListWebAuthnCredentials(ctx context.Context) ([]model.WebAuthnCredential, error) {
-	return nil, nil
-}
-func (m *mockStore) ListWebAuthnCredentialsByUser(ctx context.Context, userID string) ([]model.WebAuthnCredential, error) {
-	return nil, nil
-}
-func (m *mockStore) DeleteAllWebAuthnCredentials(ctx context.Context, userID string) error {
-	return nil
-}
-func (m *mockStore) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
-	return nil
-}
-func (m *mockStore) GetRefreshVault(ctx context.Context, userID string) (model.RefreshVault, error) {
-	return model.RefreshVault{}, repository.ErrNotFound
-}
-func (m *mockStore) DeleteRefreshVault(ctx context.Context, userID string) error {
-	return nil
-}
-
-// mockObjects implements repository.Objects for testing
-type mockObjects struct {
-	objects map[string][]byte
-}
-
-func newMockObjects() *mockObjects {
-	return &mockObjects{
-		objects: make(map[string][]byte),
-	}
-}
-
-func (m *mockObjects) Put(ctx context.Context, key string, body []byte, contentType string) error {
-	m.objects[key] = body
-	return nil
-}
-
-func (m *mockObjects) Get(ctx context.Context, key string) ([]byte, error) {
-	if data, ok := m.objects[key]; ok {
-		return data, nil
-	}
-	return nil, repository.ErrNotFound
-}
-
-func (m *mockObjects) Delete(ctx context.Context, key string) error {
-	delete(m.objects, key)
-	return nil
-}
-
-func (m *mockObjects) PresignPut(ctx context.Context, key string, contentType string, ttl time.Duration) (url string, err error) {
-	return "https://presigned.upload.url/" + key, nil
-}
-
-func (m *mockObjects) PresignGet(ctx context.Context, key string, ttl time.Duration) (url string, err error) {
-	return "https://presigned.download.url/" + key, nil
-}
-
 func TestCaptureService_CreateCapture(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{}
-	llm := &provider.FakeLLM{}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{}
+	llm := &fake.LLM{}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -226,10 +55,10 @@ func TestCaptureService_CreateCapture(t *testing.T) {
 }
 
 func TestCaptureService_CompleteCapture_HappyPath(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{Response: "Clean: Hello world"}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{Response: "Hello world"}
+	llm := &fake.LLM{Response: "Clean: Hello world"}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -299,10 +128,10 @@ func TestCaptureService_CompleteCapture_HappyPath(t *testing.T) {
 }
 
 func TestCaptureService_CompleteCapture_STTFailure(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{ShouldFail: true}
-	llm := &provider.FakeLLM{}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{ShouldFail: true}
+	llm := &fake.LLM{}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -365,10 +194,10 @@ func TestCaptureService_CompleteCapture_STTFailure(t *testing.T) {
 }
 
 func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "Hello world"}
-	llm := &provider.FakeLLM{ShouldFail: true}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{Response: "Hello world"}
+	llm := &fake.LLM{ShouldFail: true}
 
 	service := NewCaptureService(store, objects, stt, llm)
 
@@ -434,10 +263,10 @@ func TestCaptureService_CompleteCapture_CleanupFailure(t *testing.T) {
 }
 
 func TestCompleteCaptureIdempotent(t *testing.T) {
-	store := newMockStore()
-	objects := newMockObjects()
-	stt := &provider.FakeSTT{Response: "raw words"}
-	llm := &provider.FakeLLM{Response: "cleaned words"}
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	stt := &fake.STT{Response: "raw words"}
+	llm := &fake.LLM{Response: "cleaned words"}
 	svc := NewCaptureService(store, objects, stt, llm)
 
 	ctx := context.Background()
