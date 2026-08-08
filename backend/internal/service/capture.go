@@ -20,6 +20,11 @@ import (
 // uploadTTL bounds how long a presigned PUT stays usable. Long enough to absorb
 // a bad cellular handover on the drive home, short enough that a leaked URL is
 // not a standing grant.
+//
+// It is a bound on time, not on writes. Anyone holding the URL — from browser
+// history, a HAR file, a proxy log — can PUT to it repeatedly until it expires,
+// and the bucket keeps every version. See MaxCaptureBytes for what does and
+// does not bound the size of each of those writes.
 const uploadTTL = 30 * time.Minute
 
 // DownloadTTL bounds a presigned GET handed to the client. It is exported so
@@ -28,9 +33,23 @@ const uploadTTL = 30 * time.Minute
 const DownloadTTL = 15 * time.Minute
 
 // MaxCaptureBytes bounds an audio upload. Twenty minutes of 16 kHz mono WAV is
-// about 38 MB; this leaves headroom for an uncompressed container without
-// leaving the URL open to an unbounded upload, which is what v1's untyped
-// PresignPut did.
+// about 38 MB; this leaves headroom for an uncompressed container.
+//
+// Where it is actually enforced, and where it is not:
+//
+//   - Here, against req.SizeBytes, it rejects a client that declares an
+//     oversized upload. That is a courtesy: the number is the client's claim.
+//   - The presigned PUT enforces nothing. SigV4 cannot sign Content-Length on a
+//     PUT, so a URL issued for a one-kilobyte clip accepts five gigabytes, and
+//     with bucket versioning it accepts five gigabytes again on every replay
+//     inside the URL's lifetime. max_bytes in the response is advice.
+//   - pipeline.Worker.Handle is the real bound. The S3 notification carries the
+//     size that was written, and an object over this limit is deleted and its
+//     capture failed before any provider sees it.
+//
+// The only construction that refuses the bytes at the edge is a presigned POST
+// carrying a Content-Length-Range policy condition, which changes the upload
+// contract for every client. That trade has not been made.
 const MaxCaptureBytes int64 = 256 << 20
 
 // MaxPeaksBytes bounds the client-computed waveform envelope. It is a few
@@ -215,6 +234,9 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 		return CaptureCreated{}, fmt.Errorf("failed to store capture: %w", err)
 	}
 
+	// Advisory: it is echoed to the client so a recorder can stop before it
+	// wastes an upload, and it constrains nothing on the wire. The enforcement
+	// is in the worker, on the size S3 reports after the fact.
 	maxBytes := req.SizeBytes
 	if maxBytes <= 0 {
 		maxBytes = MaxCaptureBytes

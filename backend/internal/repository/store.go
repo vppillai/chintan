@@ -79,7 +79,23 @@ const IdemTTL = 24 * time.Hour
 
 // AppendClaimLease bounds how long one worker may hold an unfinished append
 // claim before another attempt is allowed to take it over.
-const AppendClaimLease = 15 * time.Minute
+//
+// It MUST stay strictly longer than CaptureQueue.VisibilityTimeout in
+// infrastructure/template.yaml:330, currently 960 seconds. SQS returns an
+// unfinished message at exactly that point; if the claim taken at T0 has
+// already expired by T0+960s, the redelivery takes the claim over and appends
+// the same paragraph again — three times over, at maxReceiveCount 3. Twenty
+// minutes leaves four minutes of margin over the 960 s timeout while staying
+// well inside Lambda's own 900 s ceiling on the work it protects.
+//
+// The inequality is checked by TestAppendClaimLeaseOutlastsTheQueueVisibilityTimeout
+// in internal/pipeline, which restates the template's number. Go cannot read
+// the template, so that test is the only thing tying the two together — but it
+// is not what makes the append safe. Pipeline.append recognises its own
+// interrupted attempt from the deterministic claim token and the note body, so
+// a lease that is nonetheless too short costs a redelivery, not a duplicate
+// paragraph.
+const AppendClaimLease = 20 * time.Minute
 
 // Store persists per-tenant settings, note indexes, and capture indexes.
 //

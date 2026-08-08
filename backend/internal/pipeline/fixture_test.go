@@ -38,10 +38,19 @@ type nullSink struct{}
 
 func (nullSink) Record(context.Context, meter.Usage) error { return nil }
 
-// newBreaker builds a breaker with the given cap in microdollars. A cap of 0
-// meters without enforcing, which is the default for a fresh install.
-func newBreaker(capMicros int64) *breaker.Breaker {
-	return breaker.New(newMemCounter(), nullSink{}, meter.DefaultPrices, capMicros)
+// newBreaker builds a breaker with the given instance-wide cap in
+// microdollars. A cap of 0 meters without enforcing, which is the default for a
+// fresh install.
+func newBreaker(capMicros int64, opts ...breaker.Option) *breaker.Breaker {
+	return breaker.New(newMemCounter(), nullSink{}, meter.DefaultPrices, capMicros, opts...)
+}
+
+// tenantCaps is the per-tenant cap lookup the worker backs with the settings
+// record. Keyed by tenant id, in microdollars; a missing tenant has set none.
+type tenantCaps map[string]int64
+
+func (c tenantCaps) DailyCapMicros(_ context.Context, tenantID string) (int64, error) {
+	return c[tenantID], nil
 }
 
 // testClock is advanced explicitly so a test can prove a pipeline consumed more
@@ -123,6 +132,8 @@ type harnessOpts struct {
 	router  *fake.Router
 	// capMicros of 0 meters without enforcing.
 	capMicros int64
+	// caps are the per-tenant daily caps the breaker must resolve for itself.
+	caps tenantCaps
 	// noNotes builds the pipeline without a note creator, so an unroutable
 	// capture parks at needs_target instead of inventing a note.
 	noNotes bool
@@ -156,13 +167,18 @@ func newHarness(t *testing.T, opts harnessOpts) *harness {
 		seen = opts.store
 	}
 
+	var breakerOpts []breaker.Option
+	if opts.caps != nil {
+		breakerOpts = append(breakerOpts, breaker.WithCapResolver(opts.caps))
+	}
+
 	cfg := Config{
 		Store:       seen,
 		Objects:     objects,
 		STT:         stt,
 		LLM:         llm,
 		Router:      router,
-		Breaker:     newBreaker(opts.capMicros),
+		Breaker:     newBreaker(opts.capMicros, breakerOpts...),
 		STTProvider: "groq",
 		STTModel:    "whisper-large-v3-turbo",
 		LLMProvider: "openai",

@@ -417,9 +417,9 @@ func TestCaptureFromAudioKey(t *testing.T) {
 		want CaptureRef
 		ok   bool
 	}{
-		"webm":      {"tenants/u1/captures/c_1/audio.webm", CaptureRef{"u1", "c_1"}, true},
-		"m4a":       {"tenants/u1/captures/c_1/audio.m4a", CaptureRef{"u1", "c_1"}, true},
-		"encoded":   {"tenants%2Fu1%2Fcaptures%2Fc_1%2Faudio.wav", CaptureRef{"u1", "c_1"}, true},
+		"webm":      {"tenants/u1/captures/c_1/audio.webm", CaptureRef{TenantID: "u1", CaptureID: "c_1"}, true},
+		"m4a":       {"tenants/u1/captures/c_1/audio.m4a", CaptureRef{TenantID: "u1", CaptureID: "c_1"}, true},
+		"encoded":   {"tenants%2Fu1%2Fcaptures%2Fc_1%2Faudio.wav", CaptureRef{TenantID: "u1", CaptureID: "c_1"}, true},
 		"raw text":  {"tenants/u1/captures/c_1/raw.txt", CaptureRef{}, false},
 		"peaks":     {"tenants/u1/captures/c_1/peaks.json", CaptureRef{}, false},
 		"note body": {"tenants/u1/notes/n1/note.md", CaptureRef{}, false},

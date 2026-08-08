@@ -117,19 +117,26 @@ func runErase(ctx context.Context, e *env, tenantID string, apply bool, confirm 
 	ctx = obs.WithTenant(ctx, tenantID)
 	res := &eraseResult{Target: e.Target, TenantID: tenantID, Apply: apply}
 
+	// The index is built rather than raw-scanned so the S3 keys the rows
+	// reference are known here. Without them, a zero object count is
+	// indistinguishable from a tenant who never recorded anything — and this
+	// command reported exactly that, "objects deleted: 0", exit 0, while every
+	// recording stayed in the live bucket, unreferenced by any index and so
+	// invisible to any later erase or export. A deletion request that reports
+	// completion and deletes none of the recordings is the worst outcome this
+	// tool has.
 	credentialSKs := map[string]bool{}
-	err := e.Part.Scan(ctx, tenantPK(tenantID), "", func(it Item) error {
-		sk := it.SK()
-		res.SortKeys = append(res.SortKeys, sk)
-		res.ItemsPlanned++
-		if strings.HasPrefix(sk, credentialSKPrefix) {
-			credentialSKs[sk] = true
+	idx, err := buildIndex(ctx, e.Part, tenantID, func(it Item) error {
+		if strings.HasPrefix(it.SK(), credentialSKPrefix) {
+			credentialSKs[it.SK()] = true
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	res.SortKeys = idx.SortKeys
+	res.ItemsPlanned = idx.ItemCount
 
 	// repository dual-writes WebAuthn credentials into a global partition, so
 	// erasing the tenant partition alone would leave a usable passkey behind
@@ -156,6 +163,13 @@ func runErase(ctx context.Context, e *env, tenantID string, apply bool, confirm 
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	// Loud, not silent. Index rows naming S3 keys with no objects behind them
+	// means this command is pointed at the wrong bucket — which is what
+	// happened while it derived the bucket name without the environment.
+	if err := requireObjectsForReferencedKeys(e.Target, tenantID, res.ObjectsPlanned, referencedKeys(idx)); err != nil {
 		return nil, err
 	}
 

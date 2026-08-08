@@ -11,7 +11,9 @@
 // Two properties hold throughout and are worth stating before the code:
 //
 //   - Every provider call goes through breaker.Do. There is no path to a
-//     provider that skips the spend check or the metering record.
+//     provider that skips the spend check or the metering record — and, since
+//     the worker builds the breaker with a tenant cap resolver, the check is
+//     against the cap the tenant set rather than only the instance-wide one.
 //   - Every stage persists its status and its artifact before the next begins,
 //     so a failure resumes from the last good stage instead of re-transcribing
 //     twenty minutes of audio.
@@ -188,6 +190,67 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 		slog.String("status", string(final.Status)),
 		slog.Int64("elapsed_ms", elapsed.Milliseconds()))
 	return final, nil
+}
+
+// RejectOversizedCapture fails a capture whose uploaded object is larger than
+// service.MaxCaptureBytes, and deletes the object.
+//
+// Both halves matter. Failing the capture keeps the bytes away from a provider
+// billed by the audio second; deleting the object keeps them out of a versioned
+// bucket whose only expiry rule, ExpireCaptureAudio, exists solely when the
+// stack was deployed with a retention setting. An oversized upload that is
+// merely refused is still an oversized upload being paid for every month.
+//
+// The delete comes first and is not conditional on the capture row existing: an
+// object can outlive its row, and an object with no row is reachable by nothing
+// else in this system.
+//
+// A nil return means the verdict is recorded and the queue message is done. An
+// error means the *recording* failed, so the message should come back.
+func (p *Pipeline) RejectOversizedCapture(ctx context.Context, ref CaptureRef) error {
+	ctx = obs.WithTenant(ctx, ref.TenantID)
+	log := obs.Log(ctx).With(slog.String("capture_id", ref.CaptureID))
+
+	log.Warn("refusing a recording larger than the capture limit",
+		slog.Int64("size_bytes", ref.SizeBytes),
+		slog.Int64("limit_bytes", service.MaxCaptureBytes))
+	obs.Count(ctx, "CaptureRejectedOversize", map[string]string{"Stage": string(model.StatusUploaded)})
+
+	capture, getErr := p.cfg.Store.GetCapture(ctx, ref.TenantID, ref.CaptureID)
+
+	audioKey := ref.ObjectKey
+	if getErr == nil && capture.AudioKey != "" {
+		audioKey = capture.AudioKey
+	}
+	if audioKey != "" {
+		if err := p.cfg.Objects.Delete(ctx, audioKey); err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return fmt.Errorf("pipeline: delete oversized audio: %w", err)
+		}
+	}
+
+	if errors.Is(getErr, repository.ErrNotFound) {
+		// No row to mark. The object is gone, which is the part that costs money.
+		log.Warn("oversized object had no capture row; deleted the object only")
+		return nil
+	}
+	if getErr != nil {
+		return fmt.Errorf("pipeline: get capture: %w", getErr)
+	}
+	if service.CaptureIsTerminal(capture.Status) {
+		return nil
+	}
+
+	capture.Status = model.StatusFailed
+	capture.Error = fmt.Sprintf("recording is too large: %d bytes, limit %d bytes",
+		ref.SizeBytes, service.MaxCaptureBytes)
+	if err := p.persist(ctx, &capture); err != nil {
+		if errors.Is(err, errDeliveryConceded) {
+			// Another delivery owns the row. The object is deleted either way.
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.CaptureIndex, error) {
@@ -413,8 +476,17 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.RoutedKey = routedKey
 	capture.RouteConfidence = decision.Confidence
 
-	if decision.Action == provider.RouteAppend {
-		if note, err := p.cfg.Store.GetNote(ctx, tenantID, decision.NoteID); err == nil && service.NoteIsActive(note) {
+	if decision.Action == provider.RouteAppend && decision.NoteID != "" {
+		// Falling through to "make a new note" is only correct for an answer, not
+		// for a failure to get one. A throttle or a 5xx on this read used to be
+		// indistinguishable from ErrNotFound, so a transient DynamoDB fault
+		// started a second note on the subject the user has been dictating into
+		// all week — silently, unretried, and with the two halves of the thought
+		// now in different notes. The message is worth redelivering; a duplicate
+		// note is not worth creating.
+		note, err := p.cfg.Store.GetNote(ctx, tenantID, decision.NoteID)
+		switch {
+		case err == nil && service.NoteIsActive(note):
 			if decision.Confidence >= routeConfidenceThreshold {
 				capture.NoteID = decision.NoteID
 				capture.Status = model.StatusTranscribed
@@ -424,6 +496,16 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 				capture.Status = model.StatusNeedsTarget
 			}
 			return p.persist(ctx, capture)
+		case err == nil:
+			obs.Log(ctx).Info("routed note is archived; keeping the dictation in a new note",
+				slog.String("capture_id", capture.ID),
+				slog.String("note_id", decision.NoteID))
+		case errors.Is(err, repository.ErrNotFound):
+			obs.Log(ctx).Info("routed note no longer exists; keeping the dictation in a new note",
+				slog.String("capture_id", capture.ID),
+				slog.String("note_id", decision.NoteID))
+		default:
+			return fmt.Errorf("pipeline: get routed note %s: %w", decision.NoteID, err)
 		}
 	}
 
@@ -591,6 +673,19 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	// same value and can recognise its own earlier claim.
 	token := appendToken(capture.ID, capture.CleanKey)
 
+	// Read before claiming, because claiming overwrites it with our own token.
+	//
+	// A recorded token equal to the one we just computed cannot belong to
+	// another writer: it is derived from this capture and this cleaned artefact,
+	// so it is this same work, interrupted. Once the claim's lease expires that
+	// interrupted attempt becomes takeable — legitimately, since the worker
+	// holding it really is gone — and the takeover is where a claim-only guard
+	// writes the paragraph a second time. Knowing the takeover is our own is
+	// what lets the append below check the note body instead of trusting the
+	// lease, so exactly-once no longer rests on AppendClaimLease being kept
+	// above the queue's visibility timeout by hand.
+	resumingOwnAttempt := capture.AppendToken == token && capture.AppendedAt == 0
+
 	claimed, current, err := p.cfg.Store.ClaimCaptureAppend(ctx, tenantID, capture.ID, token)
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: claim capture append: %w", err)
@@ -604,7 +699,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	}
 	*capture = current
 
-	if err := p.appendToNote(ctx, note.S3MarkdownKey, cleanedText); err != nil {
+	if err := p.appendToNote(ctx, note.S3MarkdownKey, cleanedText, resumingOwnAttempt); err != nil {
 		// Hand the claim back so a transient object-store failure does not park
 		// the capture until the claim lease expires.
 		p.releaseAppendClaim(ctx, capture)
@@ -645,7 +740,13 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 // landing while the editor was saving silently discarded one of the two. Here
 // the write carries the ETag that was read; a lost race re-reads and retries so
 // both edits survive.
-func (p *Pipeline) appendToNote(ctx context.Context, noteKey, text string) error {
+//
+// resuming says this call is a redelivery of an attempt that already held the
+// claim for this exact capture and cleaned artefact. Only then is the body
+// inspected for the text, and only then is finding it a reason to do nothing:
+// the alternative — a plain "is this text already here?" — would swallow a
+// second capture in which the user said the same short sentence twice.
+func (p *Pipeline) appendToNote(ctx context.Context, noteKey, text string, resuming bool) error {
 	var lastErr error
 	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
 		existingContent, etag, err := p.cfg.Objects.GetWithETag(ctx, noteKey)
@@ -654,6 +755,15 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, text string) error
 			existingContent, etag = nil, ""
 		case err != nil:
 			return fmt.Errorf("pipeline: get existing note: %w", err)
+		}
+
+		if resuming && text != "" && strings.Contains(string(existingContent), text) {
+			// The interrupted attempt got as far as the body. Nothing to write;
+			// the caller goes on to finish the bookkeeping it never reached.
+			obs.Log(ctx).Info("append already in the note body; finishing the interrupted attempt instead of repeating it",
+				slog.String("note_key", noteKey))
+			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
+			return nil
 		}
 
 		newContent := text

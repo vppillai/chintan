@@ -23,6 +23,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // ArtifactTagKey is the tag the S3 lifecycle rule filters on.
@@ -40,6 +42,13 @@ const TaggingHeader = "x-amz-tagging"
 // Presigned is one upload the client must perform verbatim. Every entry in
 // Headers is part of the signature; omitting one produces a 403, not an
 // untagged object.
+//
+// MaxBytes is the exception and is advisory. A presigned PUT cannot carry a
+// length condition — SigV4 has nowhere to put one — so the URL accepts an
+// object of any size, and the bucket's versioning accepts another on every
+// replay until the URL expires. The size is enforced afterwards, by the worker,
+// from what S3 reports it actually wrote. Only a presigned POST with a
+// Content-Length-Range policy would refuse the bytes at the edge.
 type Presigned struct {
 	URL       string            `json:"url"`
 	ExpiresAt time.Time         `json:"expires_at"`
@@ -86,6 +95,11 @@ func (p *S3Presigner) PresignPut(ctx context.Context, key, contentType string, t
 
 	out, err := p.presign.PresignPutObject(ctx, in, func(opts *s3.PresignOptions) {
 		opts.Expires = ttl
+		if contentType != "" {
+			opts.ClientOptions = append(opts.ClientOptions, func(o *s3.Options) {
+				o.APIOptions = append(o.APIOptions, signContentType(contentType))
+			})
+		}
 	})
 	if err != nil {
 		return Presigned{}, fmt.Errorf("upload: presign put: %w", err)
@@ -105,6 +119,41 @@ func (p *S3Presigner) PresignPut(ctx context.Context, key, contentType string, t
 		MaxBytes:  maxBytes,
 		Headers:   headers,
 	}, nil
+}
+
+// signContentType puts Content-Type back on the request immediately before it
+// is signed.
+//
+// PutObjectInput.ContentType alone is not enough. A presign carries no payload,
+// so the SDK's RemoveDefaultContentType middleware strips the header during
+// serialization and the signature covers only host and x-amz-tagging — leaving
+// the content type as advice in the response body that the client is free to
+// ignore. Restoring it in the Finalize step, after that middleware and before
+// signing, is what puts it in X-Amz-SignedHeaders and makes the declared
+// container binding. TestPresignedAudioPutSignsTheContentType pins it, because
+// this depends on SDK middleware ordering and would fail silently if that
+// changed.
+//
+// This bounds the *type*, never the *length*. SigV4 cannot sign Content-Length
+// on a PUT at all: only a presigned POST with a Content-Length-Range policy
+// condition can bound the size at the edge. Until that trade is made, the
+// worker's after-the-fact size check is the enforcement.
+func signContentType(contentType string) func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		// Added at the head of Finalize rather than relative to "Signing": the
+		// presign stack swaps the signing middleware out for its own, so naming
+		// it here would bind this to an id the SDK does not promise to keep.
+		return stack.Finalize.Add(
+			middleware.FinalizeMiddlewareFunc("ChintanSignContentType", func(
+				ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler,
+			) (middleware.FinalizeOutput, middleware.Metadata, error) {
+				if req, ok := in.Request.(*smithyhttp.Request); ok {
+					req.Header.Set("Content-Type", contentType)
+				}
+				return next.HandleFinalize(ctx, in)
+			}),
+			middleware.Before)
+	}
 }
 
 // EncodeTags renders a tag set the way S3 expects it in x-amz-tagging: a

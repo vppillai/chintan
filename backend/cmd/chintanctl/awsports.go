@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamotypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -279,14 +282,111 @@ type target struct {
 	Bucket      string `json:"bucket"`
 }
 
+// contentBucketOutput is the CloudFormation output carrying the real bucket
+// name. It is declared in infrastructure/template.yaml, which is where the
+// bucket is created and therefore the only thing that cannot be wrong about it.
+const contentBucketOutput = "ContentBucketName"
+
+// stackNameFor is the stack the deploy scripts create for an instance:
+// scripts/lib stack_name, chintan-<instance>-<environment>. It happens to
+// coincide with the table name, which is why the two are written separately —
+// they are two different facts that agree today.
+func stackNameFor(instance, environment string) string {
+	return fmt.Sprintf("chintan-%s-%s", instance, environment)
+}
+
+// bucketSources are the two lookups the bucket can come from. They are function
+// fields rather than AWS clients so the resolution order can be tested without
+// AWS, and so this file is the only place that knows which client answers which
+// question.
+type bucketSources struct {
+	stackOutput func(ctx context.Context, stackName, outputKey string) (string, error)
+	accountID   func(ctx context.Context) (string, error)
+}
+
+// resolveContentBucket decides which bucket a command acts on, in order:
+// explicit --bucket, then the stack's own ContentBucketName output, then the
+// naming convention with a warning.
+//
+// The convention is last on purpose. It was previously the only source and it
+// was wrong — it left the environment out, so `erase --apply` walked a bucket
+// that either did not exist or belonged to another environment, reported
+// "objects deleted: 0" and exited 0 while every recording stayed where it was.
+// The stack is the one place that knows the name because it is the place that
+// creates it; a fourth copy of the convention is a fourth chance to be wrong.
+func resolveContentBucket(ctx context.Context, g globalFlags, src bucketSources, warn io.Writer) (string, error) {
+	if g.bucket != "" {
+		return g.bucket, nil
+	}
+
+	stack := stackNameFor(g.instance, g.environment)
+	bucket, err := src.stackOutput(ctx, stack, contentBucketOutput)
+	if err == nil && bucket != "" {
+		return bucket, nil
+	}
+	reason := fmt.Sprintf("output %s is missing", contentBucketOutput)
+	if err != nil {
+		reason = err.Error()
+	}
+
+	account := g.account
+	if account == "" {
+		id, aerr := src.accountID(ctx)
+		if aerr != nil {
+			return "", fmt.Errorf("could not describe stack %s (%s) and could not resolve the account id "+
+				"to fall back on the naming convention (pass --bucket or --account): %w", stack, reason, aerr)
+		}
+		account = id
+	}
+
+	// Environment included. Leaving it out is the defect.
+	derived := fmt.Sprintf("chintan-content-%s-%s-%s", g.instance, g.environment, account)
+	// A failed write to the warning stream must not fail the command: the
+	// bucket was resolved, and losing the diagnostic is not worth aborting an
+	// export or a backup over.
+	_, _ = fmt.Fprintf(warn, "warning: could not read %s from stack %s (%s); "+
+		"falling back to the naming convention and using bucket %s. "+
+		"If that is not the right bucket, pass --bucket.\n",
+		contentBucketOutput, stack, reason, derived)
+	return derived, nil
+}
+
+// requireObjectsForReferencedKeys refuses to report success when a tenant's
+// index rows point at objects and the object listing came back empty.
+//
+// This is the shape the wrong-bucket defect took: every read succeeded, the
+// count was zero, and the command exited 0. A deletion request that reports
+// completion and deletes nothing, and a backup whose file says "finished" and
+// holds no recordings, are both worse than a failure — a failure gets looked
+// at. Zero objects is only believable when nothing claims one exists.
+func requireObjectsForReferencedKeys(t target, tenantID string, objectsFound int, referenced map[string]string) error {
+	if objectsFound > 0 || len(referenced) == 0 {
+		return nil
+	}
+	examples := make([]string, 0, len(referenced))
+	for key := range referenced {
+		examples = append(examples, key)
+	}
+	sort.Strings(examples)
+	if len(examples) > 3 {
+		examples = examples[:3]
+	}
+	return fmt.Errorf("tenant %s has %d index rows referencing S3 objects but bucket %s contains none under %s "+
+		"(for example %s): the bucket is empty, wrong, or unreadable. "+
+		"Re-run against the right bucket, or pass --bucket explicitly",
+		tenantID, len(referenced), t.Bucket, tenantPrefix(tenantID), strings.Join(examples, ", "))
+}
+
 // resolveTarget derives the physical resource names for an instance.
 //
-// The names come from infrastructure/template.yaml, which builds them as
-// chintan-<instance>-<environment> for the table and
-// chintan-content-<instance>-<accountId> for the bucket. The account is read
-// from STS rather than asked for, and either name can be overridden when
-// chintanctl is pointed somewhere the naming convention does not reach — a
-// restore into a scratch bucket, for instance.
+// The table name follows infrastructure/template.yaml's convention,
+// chintan-<instance>-<environment>. The bucket does not: it is read from the
+// stack's ContentBucketName output, because the template builds it as
+// chintan-content-<instance>-<environment>-<accountId> and a copy of that
+// expression here is a copy that can drift — as it did, silently, for every
+// erase and every backup. The convention is only a fallback, and a loud one.
+// Either name can still be overridden when chintanctl is pointed somewhere the
+// stack does not reach — a restore into a scratch bucket, for instance.
 func resolveTarget(ctx context.Context, g globalFlags) (target, *dynamodb.Client, *s3.Client, error) {
 	t := target{
 		Instance:    g.instance,
@@ -309,17 +409,47 @@ func resolveTarget(ctx context.Context, g globalFlags) (target, *dynamodb.Client
 	if t.Table == "" {
 		t.Table = fmt.Sprintf("chintan-%s-%s", g.instance, g.environment)
 	}
-	if t.Bucket == "" {
-		account := g.account
-		if account == "" {
-			id, err := sts.NewFromConfig(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+
+	cfn := cloudformation.NewFromConfig(cfg)
+	stsClient := sts.NewFromConfig(cfg)
+	// os.Stderr rather than the subcommand's writer: this runs before the env
+	// that carries one exists, and it is the same stream every other diagnostic
+	// in this tool goes to.
+	bucket, err := resolveContentBucket(ctx, g, bucketSources{
+		stackOutput: func(ctx context.Context, stackName, outputKey string) (string, error) {
+			return describeStackOutput(ctx, cfn, stackName, outputKey)
+		},
+		accountID: func(ctx context.Context) (string, error) {
+			id, err := stsClient.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 			if err != nil {
-				return t, nil, nil, fmt.Errorf("resolve account id (pass --bucket or --account to skip): %w", err)
+				return "", err
 			}
-			account = aws.ToString(id.Account)
-		}
-		t.Bucket = fmt.Sprintf("chintan-content-%s-%s", g.instance, account)
+			return aws.ToString(id.Account), nil
+		},
+	}, os.Stderr)
+	if err != nil {
+		return t, nil, nil, err
 	}
+	t.Bucket = bucket
 
 	return t, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg), nil
+}
+
+// describeStackOutput reads one output value from a CloudFormation stack.
+func describeStackOutput(ctx context.Context, client *cloudformation.Client, stackName, outputKey string) (string, error) {
+	out, err := client.DescribeStacks(ctx, &cloudformation.DescribeStacksInput{
+		StackName: aws.String(stackName),
+	})
+	if err != nil {
+		return "", fmt.Errorf("describe stack %s: %w", stackName, err)
+	}
+	if len(out.Stacks) == 0 {
+		return "", fmt.Errorf("stack %s does not exist", stackName)
+	}
+	for _, o := range out.Stacks[0].Outputs {
+		if aws.ToString(o.OutputKey) == outputKey {
+			return aws.ToString(o.OutputValue), nil
+		}
+	}
+	return "", fmt.Errorf("stack %s has no %s output", stackName, outputKey)
 }

@@ -239,6 +239,13 @@ func exportTenant(ctx context.Context, e *env, sink exportSink, tenantID string,
 		return tr, err
 	}
 
+	// A backup whose presence README documents as "the backup finished" must
+	// not contain zero S3 artifacts while the index rows point at S3 keys. That
+	// combination means the bucket is wrong, not that the tenant is empty.
+	if err := requireObjectsForReferencedKeys(e.Target, tenantID, tr.Objects, referencedKeys(idx)); err != nil {
+		return tr, err
+	}
+
 	// A note whose body object is missing still gets a file. The front matter
 	// is the only remaining record of its title and tags, and an export that
 	// silently omits it would look complete.

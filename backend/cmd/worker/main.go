@@ -87,11 +87,18 @@ func init() {
 	// The breaker owns every provider call. It is built here, once, and passed in
 	// — the pipeline refuses to start without it, so there is no build of this
 	// binary in which a paid API is reachable unmetered.
+	//
+	// It is given the tenant cap resolver as well as the instance-wide cap.
+	// Without the resolver the breaker enforces only DAILY_SPEND_CAP_MICROS,
+	// which defaults to 0 and therefore enforces nothing: a tenant's own cap
+	// would be honoured solely by service.SpendGate, once, at POST /v1/captures,
+	// leaving the transcription and both LLM calls that follow it unbounded.
 	spend := breaker.New(
 		pipeline.NewDynamoCounter(dynamoClient, tableName),
 		meter.SlogSink{},
 		meter.DefaultPrices,
 		envInt64("DAILY_SPEND_CAP_MICROS", 0),
+		breaker.WithCapResolver(tenantSpendCaps{store: store}),
 	)
 
 	notes := service.NewNotesService(store, objects)
@@ -114,6 +121,23 @@ func init() {
 	}
 
 	worker = pipeline.NewWorker(p)
+}
+
+// tenantSpendCaps answers the one question breaker.CapResolver asks, from the
+// tenant's settings record.
+//
+// The adapter lives here rather than in the breaker so the breaker keeps
+// knowing nothing about storage: it asks for a number, this reads it. A tenant
+// who has saved no settings gets DefaultSettings, whose cap is 0 — "no cap of
+// my own" — and the instance-wide ceiling applies.
+type tenantSpendCaps struct{ store repository.Store }
+
+func (c tenantSpendCaps) DailyCapMicros(ctx context.Context, tenantID string) (int64, error) {
+	settings, err := c.store.GetSettings(ctx, tenantID)
+	if err != nil {
+		return 0, fmt.Errorf("read tenant spend cap: %w", err)
+	}
+	return settings.DailySpendCapMicros, nil
 }
 
 func logLevel() slog.Level {

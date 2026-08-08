@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 
 	"github.com/vppillai/chintan/backend/internal/obs"
+	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 // CorrelationAttribute is the SQS message attribute carrying the id that ties
@@ -66,6 +67,27 @@ func (w *Worker) Handle(ctx context.Context, event events.SQSEvent) (events.SQSE
 		}
 
 		for _, ref := range refs {
+			// The size check comes before anything that costs money.
+			//
+			// The presigned PUT bounds nothing: max_bytes is advice in the
+			// response body, and the signature covers no length at all, so a URL
+			// issued for a one-kilobyte clip accepts five gigabytes. This is the
+			// first moment the truth is available and the last moment before the
+			// object is handed to a provider that bills by the audio second.
+			if ref.SizeBytes > service.MaxCaptureBytes {
+				if err := w.pipeline.RejectOversizedCapture(recCtx, ref); err != nil {
+					// Recording the verdict failed, not the verdict itself: retry.
+					obs.Log(recCtx).Error("could not record an oversized capture; it will be retried",
+						slog.String("message_id", record.MessageId),
+						slog.String("capture_id", ref.CaptureID),
+						slog.String("error", err.Error()))
+					resp.BatchItemFailures = append(resp.BatchItemFailures,
+						events.SQSBatchItemFailure{ItemIdentifier: record.MessageId})
+					break
+				}
+				continue
+			}
+
 			if _, err := w.pipeline.Run(recCtx, ref.TenantID, ref.CaptureID); err != nil {
 				obs.Log(recCtx).Error("capture will be retried",
 					slog.String("message_id", record.MessageId),
@@ -100,6 +122,13 @@ func correlationFrom(record events.SQSMessage) string {
 type CaptureRef struct {
 	TenantID  string
 	CaptureID string
+	// ObjectKey and SizeBytes are carried only by an S3 notification, which is
+	// the first and only place the system learns how many bytes were actually
+	// written. A presigned PUT signs neither Content-Length nor a size policy,
+	// so the request-time size_bytes is the client's claim and this is the fact.
+	// Zero means "this message did not come with a measurement".
+	ObjectKey string
+	SizeBytes int64
 }
 
 // parseRecord resolves a queue message to the captures it refers to. It accepts
@@ -141,6 +170,8 @@ func parseRecord(record events.SQSMessage) ([]CaptureRef, error) {
 		if !ok {
 			continue
 		}
+		ref.ObjectKey = r.S3.Object.Key
+		ref.SizeBytes = r.S3.Object.Size
 		refs = append(refs, ref)
 	}
 	return refs, nil

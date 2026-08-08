@@ -31,6 +31,14 @@ type SpendCounter interface {
 // is the courtesy check that turns a silent dead end — audio uploaded, capture
 // stuck at spend_capped, nothing explaining why — into a 429 the client can
 // show before the user speaks.
+//
+// It is a courtesy and nothing more, and for a while it was the only place the
+// tenant's own cap was read at all: the breaker enforced the instance-wide cap,
+// which defaults to unlimited, so a capture accepted here at $0.99 spent went
+// on to run an unbounded transcription and two LLM calls, and anything already
+// queued never passed this check in the first place. The breaker now resolves
+// the same tenant cap itself (breaker.WithCapResolver, wired in cmd/worker),
+// so the number checked here and the number enforced there are the same one.
 type SpendGate struct {
 	counter          SpendCounter
 	defaultCapMicros int64

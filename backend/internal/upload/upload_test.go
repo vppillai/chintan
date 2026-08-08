@@ -62,6 +62,34 @@ func TestPresignedAudioPutSignsTheRetentionTag(t *testing.T) {
 	}
 }
 
+// The declared container has to be binding, not advisory.
+//
+// The SDK drops Content-Type from a presigned PUT because the presign has no
+// payload, so the header travels in the response as guidance the client is free
+// to ignore: a URL issued for audio/webm accepts any bytes at all under any
+// type. Signing it is what makes the declaration mean something.
+//
+// This does not bound the *size* — SigV4 cannot sign Content-Length on a PUT.
+// Only a presigned POST with a Content-Length-Range policy can, and the worker's
+// after-the-fact check is what stands in for it today.
+func TestPresignedAudioPutSignsTheContentType(t *testing.T) {
+	got, err := testPresigner(t).PresignPut(context.Background(),
+		"tenants/user1/captures/c_1/audio.webm", "audio/webm",
+		CaptureAudioTags(), 4<<20, 30*time.Minute)
+	if err != nil {
+		t.Fatalf("PresignPut: %v", err)
+	}
+	parsed, err := url.Parse(got.URL)
+	if err != nil {
+		t.Fatalf("parse presigned URL: %v", err)
+	}
+	signed := parsed.Query().Get("X-Amz-SignedHeaders")
+	if !strings.Contains(signed, "content-type") {
+		t.Fatalf("X-Amz-SignedHeaders = %q; Content-Type is not signed, so the URL accepts any container "+
+			"and the declared one is decoration", signed)
+	}
+}
+
 // The peaks object is the client's waveform envelope. It is derived data, not
 // source audio, and retention must not take it with the recording.
 func TestPresignedPeaksPutCarriesNoRetentionTag(t *testing.T) {
