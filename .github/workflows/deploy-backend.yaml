@@ -118,7 +118,6 @@ jobs:
     outputs:
       artifact_key: ${{ steps.upload.outputs.key }}
       worker_key: ${{ steps.upload.outputs.worker_key }}
-      artifact_bucket: ${{ steps.upload.outputs.bucket }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -148,10 +147,13 @@ jobs:
           WORKER_KEY="worker-${GITHUB_SHA}.zip"
           aws s3 cp "$KEY" "s3://${BUCKET}/${KEY}"
           aws s3 cp "$WORKER_KEY" "s3://${BUCKET}/${WORKER_KEY}"
+          # The bucket name is deliberately NOT a job output. It embeds the
+          # account id, and GitHub scrubs any job output containing a secret --
+          # silently, to empty, with no error. Consumers rebuild it from the
+          # same secret instead.
           {
             printf 'key=%s\n' "$KEY"
             printf 'worker_key=%s\n' "$WORKER_KEY"
-            printf 'bucket=%s\n' "$BUCKET"
           } >> "$GITHUB_OUTPUT"
 
   deploy-staging:
@@ -178,7 +180,7 @@ jobs:
           INSTANCE: ${{ matrix.entry.instance }}
           ENVIRONMENT: ${{ matrix.entry.environment }}
           EXTRA_PARAMETERS: ${{ toJSON(matrix.entry.parameters) }}
-          LAMBDA_BUCKET: ${{ needs.build.outputs.artifact_bucket }}
+          LAMBDA_BUCKET: chintan-lambda-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
           LAMBDA_KEY: ${{ needs.build.outputs.artifact_key }}
           WORKER_KEY: ${{ needs.build.outputs.worker_key }}
           PAGES_HOST: ${{ github.repository_owner }}.github.io
@@ -215,7 +217,7 @@ jobs:
           INSTANCE: ${{ matrix.entry.instance }}
           ENVIRONMENT: ${{ matrix.entry.environment }}
           EXTRA_PARAMETERS: ${{ toJSON(matrix.entry.parameters) }}
-          LAMBDA_BUCKET: ${{ needs.build.outputs.artifact_bucket }}
+          LAMBDA_BUCKET: chintan-lambda-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}
           LAMBDA_KEY: ${{ needs.build.outputs.artifact_key }}
           WORKER_KEY: ${{ needs.build.outputs.worker_key }}
           PAGES_HOST: ${{ github.repository_owner }}.github.io
