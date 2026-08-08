@@ -26,6 +26,11 @@ var (
 	ErrWebAuthnNotEnrolled       = errors.New("no webauthn credentials enrolled")
 	ErrWebAuthnSubMismatch       = errors.New("cognito subject does not match webauthn user")
 	ErrWebAuthnMissingRefresh    = errors.New("refresh_token is required to enroll biometric unlock")
+	// ErrWebAuthnReEnrolRequired means the assertion was good but the vault
+	// behind it was sealed by a key this instance no longer holds — the
+	// retired KMS CMK, or a key version that has gone. The entry has been
+	// discarded, so enrolling again is the whole fix and it is needed once.
+	ErrWebAuthnReEnrolRequired = errors.New("biometric unlock must be set up again on this device")
 )
 
 // TokenRefresher exchanges a Cognito refresh token for a new token set.
@@ -267,6 +272,18 @@ func (s *WebAuthnService) FinishLogin(ctx context.Context, req *model.WebAuthnVe
 	}
 	plain, err := s.box.Open(ctx, vault.Ciphertext)
 	if err != nil {
+		// A blob this key can never open — sealed by the retired KMS CMK, or
+		// by a key version that is gone. Leaving it in place makes every later
+		// unlock fail identically with nothing the user can do about it, so
+		// the entry goes and they enrol once more. Only ErrVaultUnreadable:
+		// an AccessDenied or a throttle might not recur, and destroying the
+		// vault on one of those turns a blip into a forced re-enrolment.
+		if errors.Is(err, ErrVaultUnreadable) {
+			if delErr := s.store.DeleteRefreshVault(ctx, userID); delErr != nil {
+				return nil, fmt.Errorf("discard unreadable vault: %w", delErr)
+			}
+			return nil, fmt.Errorf("%w: %v", ErrWebAuthnReEnrolRequired, err)
+		}
 		return nil, fmt.Errorf("open vault: %w", err)
 	}
 	tokens, err := s.refresher.Refresh(ctx, string(plain))

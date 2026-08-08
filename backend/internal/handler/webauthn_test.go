@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -96,6 +97,24 @@ func TestBiometricLoginFailureIsAlways401(t *testing.T) {
 		if p["detail"] != "biometric verification failed" {
 			t.Errorf("%v: detail = %v; every cause must read the same", cause, p["detail"])
 		}
+	}
+}
+
+// The one biometric failure that must NOT read like the others. It is reached
+// only after the assertion has verified, so it tells an attacker nothing — and
+// without it the user meets an identical, permanent 401 with no way to act on
+// it, because the vault was sealed by the retired KMS key and is now gone.
+func TestAVaultNeedingReEnrolmentSaysSoRatherThanFailingOpaquely(t *testing.T) {
+	h := newHarness(t)
+	h.webauthn.finishLogErr = fmt.Errorf("%w: not a CVK1 blob", service.ErrWebAuthnReEnrolRequired)
+
+	w := h.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody())
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Code)
+	}
+	p := problemOf(t, w)
+	if p["detail"] != "biometric unlock must be set up again on this device" {
+		t.Fatalf("detail = %v; the user is given nothing to act on", p["detail"])
 	}
 }
 

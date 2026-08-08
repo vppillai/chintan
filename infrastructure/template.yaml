@@ -527,60 +527,6 @@ Resources:
         - Key: Application
           Value: Chintan
 
-  TokenVaultKey:
-    Type: AWS::KMS::Key
-    # Without this, deleting the stack schedules the CMK for deletion and every
-    # enrolled biometric credential is silently unrecoverable seven days later.
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      Description: !Sub 'Chintan ${InstanceName} Cognito refresh-token vault'
-      # Rotation is off by an explicit cost decision, not an oversight.
-      #
-      # KMS bills per key version, so annual rotation adds ~$1/month per retained
-      # version (capped after two). On a single-user instance whose entire idle
-      # bill is this one key, that is the difference between $1 and $3/month by
-      # year three -- see docs/cost-analysis.md.
-      #
-      # What it costs: this key wraps one Cognito refresh token per enrolled
-      # device. Without rotation, a compromise of the key material exposes every
-      # token ever sealed under it rather than only those sealed since the last
-      # rotation. The mitigations that remain are that the key never leaves KMS,
-      # access is restricted to the Lambda execution role, and revoking a
-      # credential (DELETE /v1/auth/webauthn) destroys the vault entry outright.
-      #
-      # Turn this back on before a second real user exists: the blast radius
-      # scales with the number of sealed tokens, and re-enabling is a one-line
-      # in-place update with no re-encryption.
-      EnableKeyRotation: false
-      KeyPolicy:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: EnableRootAccountPermissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
-            Action: 'kms:*'
-            Resource: '*'
-      Tags:
-        - Key: Project
-          Value: chintan
-        - Key: Instance
-          Value: !Ref InstanceName
-        - Key: Application
-          Value: Chintan
-
-  TokenVaultKeyAlias:
-    Type: AWS::KMS::Alias
-    Properties:
-      # KMS aliases are unique per account+region, so this needs ${Environment}
-      # for the same reason ContentBucket and the Cognito domain do. Renaming it
-      # replaces only the alias -- the key, its ARN and its key material are
-      # untouched, and nothing resolves the vault key by alias (the Lambda gets
-      # TOKEN_VAULT_KMS_KEY_ID).
-      AliasName: !Sub 'alias/chintan-${InstanceName}-${Environment}/token-vault'
-      TargetKeyId: !Ref TokenVaultKey
-
   # Lambda Execution Role
   LambdaExecutionRole:
     Type: AWS::IAM::Role
@@ -639,17 +585,18 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/groq_api_key'
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/llm_api_key'
+                  # The refresh-token vault key. A SecureString like the two
+                  # above, and created out of band for the same reason:
+                  # AWS::SSM::Parameter cannot declare type SecureString.
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/token_vault_key'
+              # Still needed, and nothing to do with the retired CMK: reading
+              # any SecureString decrypts it under the AWS-managed aws/ssm key.
+              # That key is free; only customer-managed keys carry the
+              # $1/month/version charge that the vault CMK was costing.
               - Effect: Allow
                 Action:
                   - kms:Decrypt
                 Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
-              - Effect: Allow
-                Action:
-                  - kms:Encrypt
-                  - kms:Decrypt
-                  - kms:GenerateDataKey
-                  - kms:DescribeKey
-                Resource: !GetAtt TokenVaultKey.Arn
         - PolicyName: CognitoRefresh
           PolicyDocument:
             Version: '2012-10-17'
@@ -743,7 +690,7 @@ Resources:
           # not.
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
+          TOKEN_VAULT_KEY_PATH: !Sub '/chintan/${InstanceName}/token_vault_key'
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
@@ -793,7 +740,6 @@ Resources:
           # not.
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros

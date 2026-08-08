@@ -17,7 +17,7 @@ These are **not** implemented. Each is a real trade-off, not an oversight.
 
 | # | Change | Saves | What you lose |
 |---|---|---|---|
-| 1 | `TokenVaultKey: EnableKeyRotation: false` | **$2.00/mo** at steady state | Automatic annual re-keying of the refresh-token CMK. This is the single biggest lever on the bill — it is **two thirds of the idle cost** — but it is a security control, so a bot should not switch it off on cost grounds. See [§5.1](#51-kms-key-rotation--tradeoff). |
+| 1 | ~~`TokenVaultKey: EnableKeyRotation: false`~~ — **taken**, and superseded | **$1.00/mo, the whole idle bill** | The customer-managed KMS key is gone entirely; the refresh-token vault is now AES-256-GCM under an SSM SecureString. Rotation is no longer a $1/month/version question. See [§5.1](#51-kms-key-rotation--taken-and-superseded). |
 | 2 | Worker `MemorySize: 2048` → `512` | **$0.00 today** | Nothing measurable. The saving is genuinely zero because Lambda stays inside the free tier in every modelled scenario. See [§5.2](#52-worker-memory--tradeoff). |
 | 3 | Replace the `SpendCapRejections` Metrics Insights alarm with a plain alarm | $0.30/mo **only when `DailySpendCapMicros ≠ 0`** | Nothing, if a dimensionless companion metric is emitted. Costs a code change. See [§5.3](#53-spend-cap-alarm--tradeoff). |
 | 4 | Drop `Status` from the `ApiLatency` dimension set | $0.00 today | Latency broken down by status class. Reduces the ceiling by 90 metric identities but needs a second `Emit` call. See [§5.4](#54-apilatency-dimensions--tradeoff). |
@@ -29,25 +29,29 @@ These are **not** implemented. Each is a real trade-off, not an oversight.
 
 ## 1. Headline
 
-> **Idle monthly cost: $1.00.**
-> Of which **$1.00 is the KMS customer-managed key.** Everything else in the
-> stack — every alarm, every metric, every log group, every table, bucket,
-> queue, topic, API and budget — costs **$0.00** when the app is idle.
+> **Idle monthly cost: $0.00.**
+> It was $1.00, all of it one customer-managed KMS key. That key has been
+> removed: the refresh-token vault is now sealed with AES-256-GCM under a key
+> held as an SSM SecureString, which is encrypted by the AWS-managed `aws/ssm`
+> key and is free. Everything else in the stack — every alarm, every metric,
+> every log group, every table, bucket, queue, topic, API and budget — was
+> already **$0.00** when idle, and still is.
 
 Light and heavy use barely move it, because AWS's always-free tiers absorb
 essentially all of a single user's consumption:
 
 | Scenario | AWS/month | Third-party/month | Total |
 |---|---|---|---|
-| **Idle** (0 captures) | **$1.00** | $0.00 | **$1.00** |
-| **Light** (30 captures × 2 min) | **$1.04** | $0.69 | **$1.73** |
-| **Heavy** (300 captures × 5 min) | **$1.16** | $16.80 | **$17.96** |
+| **Idle** (0 captures) | **$0.00** | $0.00 | **$0.00** |
+| **Light** (30 captures × 2 min) | **$0.04** | $0.69 | **$0.73** |
+| **Heavy** (300 captures × 5 min) | **$0.16** | $16.80 | **$16.96** |
 
 The README's claim of **$1–10/month** is *numerically* right at the bottom of
 its range and *structurally* wrong. It says "nearly all of the cost is
 per-recording" and itemises Lambda $0.20–2, DynamoDB $0.25–1, S3 $0.50–5.
-In reality **Lambda, DynamoDB and S3 are all $0.00** at this scale, and the
-entire idle bill is one fixed charge the README does not mention at all.
+In reality **Lambda, DynamoDB and S3 are all $0.00** at this scale. The entire
+idle bill used to be one fixed charge the README did not mention at all — the
+vault CMK — and removing it takes the idle figure to zero.
 
 At heavy use the AWS bill is **6% of total spend**. The providers are the cost
 story; the infrastructure is not.
@@ -97,8 +101,8 @@ Verified against the deployed account (`338186951935`) where possible.
 
 | Resource | Bills on | Idle cost |
 |---|---|---|
-| `TokenVaultKey` (KMS CMK) | **$1/key-version-month**, no free tier | **$1.00** |
-| `TokenVaultKeyAlias` | aliases are free | $0.00 |
+| *(removed)* `TokenVaultKey` (KMS CMK) | was **$1/key-version-month**, no free tier | **$0.00** |
+| `/chintan/<instance>/token_vault_key` (SSM SecureString) | Standard parameters and their `aws/ssm` decrypts are free | $0.00 |
 | `UserPool` + `AdvancedSecurityMode: ENFORCED` | → **Plus tier**, $0.020/MAU, **zero free MAU** | $0.00 (0 MAU) |
 | `UserPoolDomain` | no SKU exists in the price list | $0.00 |
 | `DynamoDBTable` (on-demand) | $0.25/GB-mo, first 25 GB free; measured **27,405 bytes** | $0.00 |
@@ -204,8 +208,9 @@ for a 5-min one); user active in ~40 distinct hours/month (light) and ~150
 
 | Line item | Idle | Light (30 × 2 min) | Heavy (300 × 5 min) |
 |---|---|---|---|
-| **KMS** — 1 CMK @ $1/key-version-mo | **$1.000** | **$1.000** | **$1.000** |
-| KMS requests (20,000/mo free) | $0.000 | $0.000 | $0.000 |
+| **KMS** — no customer-managed key | **$0.000** | **$0.000** | **$0.000** |
+| KMS requests via `aws/ssm` (20,000/mo free) | $0.000 | $0.000 | $0.000 |
+| **SSM** Standard parameters (free, no SKU) | $0.000 | $0.000 | $0.000 |
 | **Cognito** — Plus, $0.020/MAU, no free tier | $0.000 | $0.020 | $0.020 |
 | **Lambda** — 400,000 GB-s + 1M req free | $0.000 | $0.000 | $0.000 |
 | ↳ *(GB-s consumed)* | *0* | *~1,860* | *~42,000* |
@@ -223,7 +228,7 @@ for a 5-min one); user active in ~40 distinct hours/month (light) and ~150
 | **CloudWatch** logs ingest + storage (5 GB free) | $0.000 | $0.000 | $0.000 |
 | **Budgets** — monitoring free | $0.000 | $0.000 | $0.000 |
 | **CloudTrail** — 1st mgmt-event copy free | $0.000 | $0.000 | $0.000 |
-| **AWS total** | **$1.00** | **$1.04** | **$1.16** |
+| **AWS total** | **$0.00** | **$0.04** | **$0.16** |
 
 ### Third-party spend
 
@@ -325,39 +330,40 @@ with a rounding-error cost benefit, listed for completeness.
 
 ### Left for the owner (TRADEOFF)
 
-#### 5.1 KMS key rotation — TRADEOFF
+#### 5.1 KMS key rotation — TAKEN, and superseded
 
-**The largest single lever in the entire analysis: $2.00/month, two thirds of
-the idle bill.**
+This was the largest single lever in the analysis, and the answer turned out not
+to be "how often do we rotate" but "why is there a customer-managed key at all".
 
 KMS bills **per key *version***, not per key: *"$1 per customer managed KMS key
-version in US West (Oregon)"*. With `EnableKeyRotation: true`, the AWS KMS
-pricing page states *"the first and second rotation of the key adds $1/month
-(prorated hourly) in cost. This price increase is capped at the second
-rotation, and any subsequent rotations will not be billed."*
+version in US West (Oregon)"*, with rotation adding a further $1/month for each
+of the first two rotations and capping there. On a single-user instance whose
+entire idle bill was that one key, the schedule ran $1.00 → $2.00 → $3.00/month.
 
-So the idle bill is on a schedule:
+**What the CMK actually bought.** Not encryption at rest: DynamoDB already
+encrypts the table with an AWS-owned key, free. It bought *separation* — a
+principal that can read the table still cannot use a refresh token without a
+distinct `kms:Decrypt`. That is real, though narrower than it looks, because the
+Lambda role holds both `dynamodb:GetItem` and the decrypt right, so compromising
+that role defeats it either way. What it genuinely protects is a `chintanctl
+backup`, a PITR restore, and someone reading the table in the console.
 
-| | Monthly |
-|---|---|
-| Year 1 (today) | $1.00 |
-| Year 2 (after 1st rotation) | $2.00 |
-| Year 3 onward (capped) | **$3.00** |
+**What replaced it.** A 32-byte key in an SSM SecureString, with the token
+sealed by AES-256-GCM. The separation is preserved exactly: reading the vault
+needs `ssm:GetParameter` on one path plus `kms:Decrypt` on `alias/aws/ssm`, and
+neither of those comes with `dynamodb:GetItem`. A SecureString is encrypted
+under the AWS-managed `aws/ssm` key, and only *customer-managed* keys carry the
+$1/month/version charge — so the same property now costs nothing.
 
-The good news is that it is **capped** — it does not compound indefinitely. The
-bad news is that $3.00/month is 30% of the top of the README's stated budget,
-for a single-user app, forever.
+**What it cost to do.** Rotation is no longer automatic; it is `put-parameter`
+at the same path, and every sealed blob records the parameter version that
+sealed it so an old entry is identifiable rather than indistinguishable from
+corruption. And the migration is a one-way break: blobs sealed by the CMK
+cannot be opened by the new box. The service detects exactly that case, discards
+the entry, and asks the user to enrol again — once.
 
-*What removing it costs you:* automatic annual re-keying of the CMK that seals
-Cognito refresh tokens for biometric unlock. Note what KMS rotation does and
-does not do: it generates new key material for **new** encryptions and retains
-old material to decrypt existing ciphertext. It does not re-encrypt the vault.
-For a single-user token vault whose contents turn over every
-`RefreshTokenValidityDays` (default 7) anyway, the marginal security value of
-annual rotation is modest.
-
-**This is left to the owner deliberately.** It is a security control, and
-disabling a security control to save $2 is the owner's call to make, not a
+*Historic note, left because the reasoning is still the right shape for the next
+version of this question:* disabling a security control to save money is the
 change to slip into a cost-reduction commit. If the answer is "the tokens roll
 over weekly, rotation buys me nothing", the saving is real and immediate.
 
@@ -506,11 +512,20 @@ Lambda, SNS, SQS and KMS all billed **$0.00**.
 | `/aws/lambda/chintan-api-dev-prod` | **46,813 bytes**, 14-day retention |
 | Custom metrics in namespace `Chintan` | **0** (v2 not deployed) |
 | CloudWatch alarms in us-west-2 | **0** (v2 adds 6) |
-| Customer-managed KMS keys | 1 — `alias/chintan-dev/token-vault`, created **2026-08-07** |
+| Customer-managed KMS keys | **0 in the template as of this revision** — the vault CMK was removed |
 
-The KMS key is one day old, which is why no KMS charge appears in the June or
-July figures. **It is the one line item that will be materially different in the
-August bill**, and it is the entire idle cost.
+The vault CMK was one day old when this was first measured, which is why no KMS
+charge appears in the June or July figures. It would have been the one line item
+materially different in the August bill, and it was the entire idle cost — which
+is why it was removed rather than tuned.
+
+**Retained keys still bill.** `TokenVaultKey` carried `DeletionPolicy: Retain`,
+so deleting it from the template orphans the live key rather than destroying it,
+and an orphaned CMK bills the same $1/month as an attached one. Removing the
+resource is therefore only half the saving; the key must also be scheduled for
+deletion by hand. `scripts/teardown.sh` now finds keys in this state by their
+`Project` tag and prints the command, because an unaliased CMK has no name to
+search for.
 
 ---
 

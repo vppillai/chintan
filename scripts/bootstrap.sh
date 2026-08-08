@@ -143,6 +143,43 @@ run aws_cli s3 cp "$ZIP" "s3://${BUCKET}/${S3_KEY}"
 run aws_cli s3 cp "$WORKER_ZIP" "s3://${BUCKET}/${WORKER_S3_KEY}"
 
 # ---------------------------------------------------------------------------
+# Refresh-token vault key
+# ---------------------------------------------------------------------------
+#
+# Biometric unlock seals one Cognito refresh token per device with AES-256-GCM
+# under this key. It is an SSM SecureString, encrypted by the AWS-managed
+# aws/ssm key, and it replaced a customer-managed KMS key that cost $1/month —
+# the entire idle bill of an instance.
+#
+# It is created here rather than in the template because CloudFormation cannot
+# declare a SecureString parameter at all, the same reason the two provider keys
+# are created out of band. Generated rather than asked for, because "invent 32
+# secure bytes and base64 them" is not a thing to leave in a README step.
+#
+# Created BEFORE the stack, so the API Lambda finds it on its first init rather
+# than starting with biometric unlock disabled until something forces a cold
+# start.
+VAULT_KEY_PATH="/chintan/${INSTANCE}/token_vault_key"
+if aws_cli ssm get-parameter --name "$VAULT_KEY_PATH" >/dev/null 2>&1; then
+    ok "refresh-token vault key already exists at $VAULT_KEY_PATH"
+    dim "  left alone: replacing it makes every enrolled device re-enrol"
+else
+    info "creating the refresh-token vault key at $VAULT_KEY_PATH"
+    if is_apply; then
+        # 32 bytes from the kernel CSPRNG, base64 for transport. Never echoed.
+        vault_key="$(head -c 32 /dev/urandom | base64)"
+        aws_cli ssm put-parameter --name "$VAULT_KEY_PATH" --type SecureString \
+            --description "Chintan ${INSTANCE} refresh-token vault key (AES-256)" \
+            --value "$vault_key" >/dev/null ||
+            die "could not create $VAULT_KEY_PATH"
+        unset vault_key
+        ok "vault key created"
+    else
+        dim "  would generate 32 random bytes and store them as a SecureString"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Deploy
 # ---------------------------------------------------------------------------
 

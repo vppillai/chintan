@@ -18,7 +18,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudformation v1.62.0
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.67.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.63.1
-	github.com/aws/aws-sdk-go-v2/service/kms v1.55.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.46.4
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4

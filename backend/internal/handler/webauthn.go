@@ -152,6 +152,15 @@ func (rt *router) webauthnLogin(w http.ResponseWriter, r *http.Request) {
 	tokens, err := rt.WebAuthn.FinishLogin(r.Context(), &req)
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrWebAuthnReEnrolRequired):
+			// Deliberately distinguishable, and it does not make this endpoint
+			// an oracle: reaching here means the assertion already verified, so
+			// only someone who holds the credential is told anything. The
+			// alternative is a permanent, identical 401 with nothing the user
+			// can do — the vault was sealed by the retired KMS key and has just
+			// been discarded, so enrolling again is the entire fix.
+			obs.Log(r.Context()).Info("biometric login refused", slog.String("reason", "vault needs re-enrolment"))
+			httperr.Unauthorized(w, r, "biometric unlock must be set up again on this device")
 		case errors.Is(err, service.ErrWebAuthnChallengeNotFound),
 			errors.Is(err, service.ErrWebAuthnVerification),
 			errors.Is(err, service.ErrWebAuthnSubMismatch):

@@ -90,12 +90,16 @@ func TestPlainBoxDoesNotAliasTheCallersBuffer(t *testing.T) {
 }
 
 // SealBox and TokenRefresher are the seams the API binary depends on instead of
-// depending on KMS and Cognito directly. These assertions fail at compile time
-// if a production implementation stops satisfying them.
+// depending on the crypto and on Cognito directly. These assertions fail at
+// compile time if a production implementation stops satisfying them.
+//
+// AESVaultBox is the only production SealBox. PlainBox is asserted here too,
+// but it is defined in plainbox_test.go and exists only in the test binary —
+// see the comment there for why that placement is load-bearing.
 func TestProductionSealBoxAndRefresherSatisfyTheirSeams(t *testing.T) {
 	var (
 		_ SealBox        = PlainBox{}
-		_ SealBox        = (*KMSBox)(nil)
+		_ SealBox        = (*AESVaultBox)(nil)
 		_ TokenRefresher = (*FakeRefresher)(nil)
 		_ TokenRefresher = (*CognitoRefresher)(nil)
 	)

@@ -66,6 +66,18 @@ aws ssm put-parameter --type SecureString \
   --name "/chintan/dev/llm_api_key"  --value "..."
 ```
 
+A third SecureString holds the **refresh-token vault key** — 32 random bytes, base64 — which seals the one Cognito refresh token biometric unlock keeps per device. `scripts/bootstrap.sh` generates it if it is absent, so you only need this if you are setting an instance up by hand:
+
+```bash
+aws ssm put-parameter --type SecureString \
+  --name "/chintan/dev/token_vault_key" \
+  --value "$(head -c 32 /dev/urandom | base64)"
+```
+
+All three are SecureStrings created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type. **Replacing the vault key makes every enrolled device enrol again**; the sealed blob records which parameter version sealed it, so a rotation is detectable rather than silent.
+
+Biometric unlock fails closed: no vault key, no biometric unlock, and the API says so in its startup log. There is no plaintext fallback — the identity `SealBox` exists only in the test binary.
+
 ### 3. Declare your instances
 
 `config/instances/*.yaml` is read by `scripts/list-instances.sh`, which produces the deploy matrix for both workflows. This is the real schema — every field except `name` has a default:
@@ -277,4 +289,6 @@ This is a **public repository**.
 
 All resources carry `Project=chintan`, `Instance=<instance>` and `Environment=<prod|staging|dev>`, and the budget is defined in `infrastructure/template.yaml` rather than clicked into the console — set `monthly_budget_usd` and `alarm_email` in the instance config.
 
-Typical monthly cost per instance, light to moderate use: **$1–10** (Lambda $0.20–2, DynamoDB $0.25–1, S3 $0.50–5, Cognito $0–0.55). A staging instance roughly doubles the fixed portion, which is small; nearly all of the cost is per-recording.
+Typical monthly cost per instance: **$0.00 idle, and cents under use** on the AWS side — Lambda, DynamoDB, S3, SQS, SNS and CloudWatch all sit inside always-free tiers at single-user volume. The transcription and cleanup providers are the real bill (~$0.70/month light, ~$17 heavy). A staging instance adds nothing fixed.
+
+This was $1.00/month idle until the customer-managed KMS key was removed — it was the entire idle cost, and it bought separation that an SSM SecureString provides for free. `docs/cost-analysis.md` has the itemised figures against the AWS Price List, and the earlier README claim of "$1–10, nearly all of it per-recording" was structurally wrong: the per-recording AWS cost is approximately zero and the fixed cost was everything.
