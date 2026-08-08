@@ -102,7 +102,9 @@ export default defineConfig(({ mode }) => ({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: false,
+    // e2e/ is Playwright's; vitest must not try to run it.
     include: ['src/**/*.test.{ts,tsx}'],
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
     restoreMocks: true,
   },
 }));

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * The single update strategy.
@@ -11,14 +11,24 @@ import { useEffect, useState } from 'react';
  */
 export function UpdatePrompt() {
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
+  /**
+   * Only an update the user asked for may reload the page.
+   *
+   * `controllerchange` also fires on the very first visit, when the freshly
+   * installed worker calls `clients.claim()`. Reloading on that reloads the app
+   * out from under someone who has just opened it — mid-recording, if they were
+   * quick. Gating on this flag makes the reload a consequence of pressing
+   * Update and nothing else.
+   */
+  const requested = useRef(false);
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
 
     let reloading = false;
     const onControllerChange = (): void => {
-      // Guarded: `controllerchange` can fire more than once, and an unguarded
-      // reload here is a refresh loop.
+      if (!requested.current) return;
+      // Also guarded against firing twice, which would be a refresh loop.
       if (reloading) return;
       reloading = true;
       window.location.reload();
@@ -58,6 +68,7 @@ export function UpdatePrompt() {
         type="button"
         className="update-prompt__action"
         onClick={() => {
+          requested.current = true;
           waiting.postMessage({ type: 'SKIP_WAITING' });
         }}
       >

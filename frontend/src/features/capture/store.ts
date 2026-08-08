@@ -10,7 +10,7 @@ import { create } from 'zustand';
 
 import type { ChintanApi } from '@/api/endpoints.ts';
 
-import { discardCapture } from './buffer.ts';
+import { discardCapture, saveCaptureRecord } from './buffer.ts';
 import { errorFeedback, startFeedback, stopFeedback } from './feedback.ts';
 import {
   INITIAL_CAPTURE,
@@ -66,6 +66,33 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
     }
     if (after.state === 'failed' && before.state !== 'failed') {
       errorFeedback();
+    }
+
+    /*
+     * The capture record is written the moment a recording exists, not when the
+     * server first acknowledges it.
+     *
+     * Writing it in the uploader — after `POST /v1/captures` returns — left a
+     * window where the chunks were safely on disk but nothing indexed them, so
+     * a recording stranded by going offline before the create, or by the tab
+     * dying during it, could never be offered back. The audio was durable and
+     * unreachable, which is indistinguishable from lost.
+     */
+    if (after.state === 'review' && before.state !== 'review') {
+      void saveCaptureRecord({
+        localId: after.localId,
+        serverCaptureId: null,
+        noteId: after.noteId,
+        contentType: controller?.current()?.encoder.contentType ?? 'audio/webm',
+        durationMs: after.elapsedMs,
+        bytes: after.bytes,
+        chunkCount: after.chunks,
+        createdAt: Date.now(),
+        uploadedAt: null,
+        peaks: controller?.envelope() ?? null,
+      }).catch(() => {
+        /* Storage denied. The chunks are still on disk. */
+      });
     }
   };
 

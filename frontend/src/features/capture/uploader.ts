@@ -24,6 +24,14 @@ import { assembleBlob, confirmUploaded, saveCaptureRecord } from './buffer.ts';
 import { peaksDocument } from './peaks.ts';
 import type { CaptureEvent } from './machine.ts';
 
+/**
+ * One sentence for every "it did not reach the server" outcome. The user does
+ * not care whether the create or the PUT failed; they care where the recording
+ * is.
+ */
+export const OFFLINE_MESSAGE =
+  'The upload did not finish. Your recording is safe on this device.';
+
 export interface UploadRequest {
   localId: string;
   contentType: CaptureContentType;
@@ -104,9 +112,13 @@ export async function uploadCapture(
       emit({ type: 'spendCapped', message: error.userMessage });
       return;
     }
+    // The same reassurance the PUT path gives, because from the user's side
+    // these are one event: the recording did not reach the server. Deferring to
+    // the generic network message here would tell them something subtly
+    // different depending on which call happened to fail first.
     emit({
       type: 'uploadFailed',
-      message: error instanceof ApiError ? error.userMessage : 'Could not reach the server.',
+      message: OFFLINE_MESSAGE,
       recoverable: true,
     });
     return;
@@ -144,11 +156,7 @@ export async function uploadCapture(
     });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') return;
-    emit({
-      type: 'uploadFailed',
-      message: 'The upload did not finish. Your recording is safe on this device.',
-      recoverable: true,
-    });
+    emit({ type: 'uploadFailed', message: OFFLINE_MESSAGE, recoverable: true });
     return;
   }
 
