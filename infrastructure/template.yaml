@@ -620,6 +620,18 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:DeleteObject
+                  # A PUT that carries x-amz-tagging needs PutObjectTagging on
+                  # the principal that SIGNED the presigned URL, not on the
+                  # browser using it. Without it S3 answers 403 to an upload
+                  # whose signature is perfectly valid, and the client sees only
+                  # "Forbidden" with nothing naming the missing permission.
+                  #
+                  # The tag is not decorative: the lifecycle rule selects on
+                  # chintan-artifact=capture-audio, so it is what makes
+                  # RetentionDays expire audio and nothing else. Adding the tag
+                  # without this grant made every upload fail.
+                  - s3:PutObjectTagging
+                  - s3:GetObjectTagging
                 Resource: !Sub '${ContentBucket.Arn}/*'
               - Effect: Allow
                 Action:
