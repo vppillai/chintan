@@ -186,6 +186,15 @@ Resources:
       # stack output.
       Domain: !Sub 'chintan-${InstanceName}-${Environment}-${AWS::AccountId}'
       UserPoolId: !Ref UserPool
+      # 2 = managed login; 1 = the classic hosted UI. This is the switch that
+      # makes ManagedLoginBranding below visible at all — the branding resource
+      # applies cleanly against a version 1 domain and then renders nothing,
+      # which looks like a broken deploy rather than a missing setting.
+      #
+      # It changes how the sign-in page is drawn, not what it does: the domain
+      # name, the OAuth endpoints, the callback URLs and the app client are all
+      # untouched, and the frontend goes on calling /oauth2/authorize.
+      ManagedLoginVersion: 2
 
   # Cognito User Pool Client (public, no secret)
   UserPoolClient:
@@ -222,6 +231,364 @@ Resources:
       AccessTokenValidity: 60
       IdTokenValidity: 60
       RefreshTokenValidity: !Ref RefreshTokenValidityDays
+
+
+  # Managed login branding — the hosted sign-in page, in the app's own palette.
+  #
+  # The sign-in page is the first screen a user sees and, unbranded, it was the
+  # only screen in the product that was not Chintan: AWS blue on grey, Helvetica,
+  # square corners. Classic hosted-UI CSS customisation cannot fix that — it
+  # exposes a fixed handful of properties and no dark variant — so this uses
+  # managed login, which is included at the ESSENTIALS tier the pool already
+  # runs on (see UserPoolTier above) and costs nothing extra.
+  #
+  # Every colour below is a token from frontend/src/styles/tokens.css, whose
+  # contrast ratios were computed rather than estimated after v1 shipped four
+  # tokens that failed AA. Nothing here invents a hue. In particular:
+  #
+  #   * The primary button is --color-ink, not --color-accent. shell.css says
+  #     the record button is "the only element permitted to use --color-accent",
+  #     and every .*__action--primary in the app is an ink fill on ground.
+  #   * Links are --color-ink, because base.css sets `a { color: inherit }` —
+  #     the app distinguishes links by underline, never by hue.
+  #   * The error alert IS the accent. The palette defines no red; the accent is
+  #     the app's one "consequential" signal and already carries the destructive
+  #     dialog.
+  #
+  # colorSchemeMode DYNAMIC follows prefers-color-scheme, exactly as the app's
+  # "system" theme does. Without it a Nocturne user gets a white flash at night,
+  # which is the case the dark theme exists for. LIGHT is Ink & Paper, DARK is
+  # Nocturne.
+  #
+  # The logo is the shipped app icon (frontend/public/icon-192.png), not a new
+  # mark. The shipped PNG has an opaque --color-ground square baked in, which
+  # would read as a cream tile on Nocturne, so each variant carries the same
+  # artwork with the ground recovered to transparency and the foreground mapped
+  # to that theme's --color-ink / --color-accent.
+  ManagedLoginBranding:
+    Type: AWS::Cognito::ManagedLoginBranding
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientId: !Ref UserPoolClient
+      # Cognito merges its defaults under these, so only what differs is stated.
+      UseCognitoProvidedValues: false
+      Settings:
+        components:
+          pageBackground:
+            image:
+              enabled: false
+            lightMode:
+              color: fbf9f4ff
+            darkMode:
+              color: 0a0c0bff
+          pageHeader:
+            backgroundImage:
+              enabled: false
+            logo:
+              location: START
+              enabled: false
+            lightMode:
+              borderColor: e4dfd2ff
+              background:
+                color: f2eee4ff
+            darkMode:
+              borderColor: 242a27ff
+              background:
+                color: 141816ff
+          pageFooter:
+            backgroundImage:
+              enabled: false
+            logo:
+              location: START
+              enabled: false
+            lightMode:
+              borderColor: e4dfd2ff
+              background:
+                color: f2eee4ff
+            darkMode:
+              borderColor: 242a27ff
+              background:
+                color: 141816ff
+          pageText:
+            lightMode:
+              headingColor: 1a1917ff
+              bodyColor: 534f48ff
+              descriptionColor: 716a5bff
+            darkMode:
+              headingColor: f2f5f3ff
+              bodyColor: a4aca8ff
+              descriptionColor: 7c8c82ff
+          form:
+            borderRadius: 20.0
+            backgroundImage:
+              enabled: false
+            logo:
+              location: CENTER
+              position: TOP
+              enabled: true
+              formInclusion: IN
+            lightMode:
+              backgroundColor: f5f1e8ff
+              borderColor: 8a8478ff
+            darkMode:
+              backgroundColor: 1c211fff
+              borderColor: 5e6e66ff
+          primaryButton:
+            lightMode:
+              defaults:
+                backgroundColor: 1a1917ff
+                textColor: fbf9f4ff
+              hover:
+                backgroundColor: 534f48ff
+                textColor: fbf9f4ff
+              active:
+                backgroundColor: 534f48ff
+                textColor: fbf9f4ff
+              disabled:
+                backgroundColor: e4dfd2ff
+                borderColor: e4dfd2ff
+            darkMode:
+              defaults:
+                backgroundColor: f2f5f3ff
+                textColor: 0a0c0bff
+              hover:
+                backgroundColor: a4aca8ff
+                textColor: 0a0c0bff
+              active:
+                backgroundColor: a4aca8ff
+                textColor: 0a0c0bff
+              disabled:
+                backgroundColor: 242a27ff
+                borderColor: 242a27ff
+          secondaryButton:
+            lightMode:
+              defaults:
+                backgroundColor: fbf9f4ff
+                borderColor: 8a8478ff
+                textColor: 1a1917ff
+              hover:
+                backgroundColor: f2eee4ff
+                borderColor: 1a1917ff
+                textColor: 1a1917ff
+              active:
+                backgroundColor: e4dfd2ff
+                borderColor: 1a1917ff
+                textColor: 1a1917ff
+            darkMode:
+              defaults:
+                backgroundColor: 0a0c0bff
+                borderColor: 5e6e66ff
+                textColor: f2f5f3ff
+              hover:
+                backgroundColor: 141816ff
+                borderColor: f2f5f3ff
+                textColor: f2f5f3ff
+              active:
+                backgroundColor: 242a27ff
+                borderColor: f2f5f3ff
+                textColor: f2f5f3ff
+          alert:
+            borderRadius: 14.0
+            lightMode:
+              error:
+                backgroundColor: f2eee4ff
+                borderColor: c2410cff
+            darkMode:
+              error:
+                backgroundColor: 141816ff
+                borderColor: b8f135ff
+          idpButton:
+            standard:
+              lightMode:
+                defaults:
+                  backgroundColor: fbf9f4ff
+                  borderColor: 8a8478ff
+                  textColor: 1a1917ff
+                hover:
+                  backgroundColor: f2eee4ff
+                  borderColor: 1a1917ff
+                  textColor: 1a1917ff
+                active:
+                  backgroundColor: e4dfd2ff
+                  borderColor: 1a1917ff
+                  textColor: 1a1917ff
+              darkMode:
+                defaults:
+                  backgroundColor: 0a0c0bff
+                  borderColor: 5e6e66ff
+                  textColor: f2f5f3ff
+                hover:
+                  backgroundColor: 141816ff
+                  borderColor: f2f5f3ff
+                  textColor: f2f5f3ff
+                active:
+                  backgroundColor: 242a27ff
+                  borderColor: f2f5f3ff
+                  textColor: f2f5f3ff
+            custom: {}
+          favicon:
+            enabledTypes:
+            - ICO
+          phoneNumberSelector:
+            displayType: TEXT
+        componentClasses:
+          buttons:
+            borderRadius: 22.0
+          input:
+            borderRadius: 8.0
+            lightMode:
+              defaults:
+                backgroundColor: fbf9f4ff
+                borderColor: 8a8478ff
+              placeholderColor: 716a5bff
+            darkMode:
+              defaults:
+                backgroundColor: 0a0c0bff
+                borderColor: 5e6e66ff
+              placeholderColor: 7c8c82ff
+          inputDescription:
+            lightMode:
+              textColor: 716a5bff
+            darkMode:
+              textColor: 7c8c82ff
+          dropDown:
+            borderRadius: 8.0
+            lightMode:
+              defaults:
+                itemBackgroundColor: f5f1e8ff
+              hover:
+                itemBackgroundColor: f2eee4ff
+                itemBorderColor: 8a8478ff
+                itemTextColor: 1a1917ff
+              match:
+                itemBackgroundColor: e4dfd2ff
+                itemTextColor: 1a1917ff
+            darkMode:
+              defaults:
+                itemBackgroundColor: 1c211fff
+              hover:
+                itemBackgroundColor: 141816ff
+                itemBorderColor: 5e6e66ff
+                itemTextColor: f2f5f3ff
+              match:
+                itemBackgroundColor: 242a27ff
+                itemTextColor: f2f5f3ff
+          optionControls:
+            lightMode:
+              defaults:
+                backgroundColor: fbf9f4ff
+                borderColor: 8a8478ff
+              selected:
+                backgroundColor: 1a1917ff
+                foregroundColor: fbf9f4ff
+            darkMode:
+              defaults:
+                backgroundColor: 0a0c0bff
+                borderColor: 5e6e66ff
+              selected:
+                backgroundColor: f2f5f3ff
+                foregroundColor: 0a0c0bff
+          link:
+            lightMode:
+              defaults:
+                textColor: 1a1917ff
+              hover:
+                textColor: 534f48ff
+            darkMode:
+              defaults:
+                textColor: f2f5f3ff
+              hover:
+                textColor: a4aca8ff
+          focusState:
+            lightMode:
+              borderColor: 1a1917ff
+            darkMode:
+              borderColor: f2f5f3ff
+          divider:
+            lightMode:
+              borderColor: e4dfd2ff
+            darkMode:
+              borderColor: 242a27ff
+          statusIndicator:
+            lightMode:
+              success:
+                backgroundColor: f2eee4ff
+                borderColor: 534f48ff
+                indicatorColor: 534f48ff
+              pending:
+                indicatorColor: 8a8478ff
+              warning:
+                backgroundColor: f2eee4ff
+                borderColor: c2410cff
+                indicatorColor: c2410cff
+              error:
+                backgroundColor: f2eee4ff
+                borderColor: c2410cff
+                indicatorColor: c2410cff
+            darkMode:
+              success:
+                backgroundColor: 141816ff
+                borderColor: a4aca8ff
+                indicatorColor: a4aca8ff
+              pending:
+                indicatorColor: 5e6e66ff
+              warning:
+                backgroundColor: 141816ff
+                borderColor: b8f135ff
+                indicatorColor: b8f135ff
+              error:
+                backgroundColor: 141816ff
+                borderColor: b8f135ff
+                indicatorColor: b8f135ff
+          idpButtons:
+            icons:
+              enabled: true
+        categories:
+          global:
+            colorSchemeMode: DYNAMIC
+            pageHeader:
+              enabled: false
+            pageFooter:
+              enabled: false
+            spacingDensity: REGULAR
+          form:
+            sessionTimerDisplay: NONE
+            instructions:
+              enabled: false
+            languageSelector:
+              enabled: false
+            displayGraphics: false
+            location:
+              horizontal: CENTER
+              vertical: CENTER
+          auth:
+            federation:
+              interfaceStyle: BUTTON_LIST
+              order: []
+            authMethodOrder:
+            - - display: INPUT
+                type: USERNAME_PASSWORD
+          signUp:
+            acceptanceElements:
+            - enforcement: NONE
+              textKey: en
+      Assets:
+        - Category: FORM_LOGO
+          ColorMode: LIGHT
+          Extension: PNG
+          Bytes: iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAC8klEQVR42u3cwZXiQBBEQRnAnQfe4DqOgQVwEC1UVRmHf17ozkC83Znd7rfrJqXmEASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEQJteO3JuAMSNHgYADB8EAIwfAgAMHwQAjB8CAIwfAgCMHwIAAAAAAOOHAADjhwAAAAAAwPghAAAAAACIHz8EAADgrgAAQAAAIADyxg8BAAC4MwAAEAAACAAABAAAAgAAAQCAAAAAAIcAAAACAAABAIAAAEAAACAAABAAAAgAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABweM/H5fUpAFqeMwAAAAAAAAAAAAAAAAAAAAB7LgeAdmcMAAAAAFDz8RwLYOrXHwAAAAAAAAAAAAAAIBiGwPgBAAAAAAAAIBtAIIJuZwqAp4BPfwD8XJCf/wHA1yBffwDwFPDpD0CDT6648QPgKRANwC/FewpURODTH4BYBMYPQInLbP///gAAQRcIm/ED8POlNkUw6ZwAGPoUOALC1DMCYDiCXzCknA0AQ78KORcAXLbzAMClOwcAXL73D0CTEUwbQuJ7BsAgjB+A7GEYPwBLBtJtJFPfFwAnj6X6YCa9FwAKD6faeLq/fgCajujsIXV8zQAMhfCvYVV/fQCEIzhibNVeDwAgLB/jP/8sAVACwpG5NwBiEbgvAKr+7cvXjB6A6f+IthyAewCg048aLwHgvAFoiWIPAOcIwKRO/0V4AQCAAABADgEAAAQAAAIAAAEAgAAAQAAAIAAAEAAACAAABAAAAgAAAQCAAABAAACQO9ZOuU8AABAAAAgAAAQAAAA4BAAAEAAACAAABAAAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgDS0t6cRtkJNyh3BAAAAABJRU5ErkJggg==
+        - Category: FORM_LOGO
+          ColorMode: DARK
+          Extension: PNG
+          Bytes: iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAC8UlEQVR42u3cMZbiQBBEQV2Ku3Mt4GHDCcAQLVRVGca3F7ozEG93Zrf787FJqTkEASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAHQpteOnBsAcaOHAQDDBwEA44cAAMMHAQDjhwAA44cAAOOHAAAAAADA+CEAwPghAAAAAAAwfggAAAAAAOLHDwEAALgrAAAQAAAIgLzxQwAAAO4MAAAEAAACAAABAIAAAEAAACAAAADAIQAAgAAAQAAAIAAAEAAACAAABAAAAgAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABze9XZ5fQqAlucMAAAAAAAAAAAAAAAAAAAAwJ7LAaDdGQMAAAAA1Hw8xwKY+vUHAAAAAAAAAAAAAAAIhiEwfgAAAAAAAADIBhCIoNuZAuAp4NMfAD8X5Od/APA1yNcfADwFfPoD0OCTK278AHgKRAPwS/GeAhUR+PQHIBaB8QNQ4jLb/78/AEDQBcJm/AD8fKlNEUw6JwCGPgWOgDD1jAAYjuAXDClnA8DQr0LOBQCX7TwAcOnOAQCX7/0D0GQE04aQ+J4BMAjjByB7GMYPwJKBdBvJ1PcFwMljqT6YSe8FgMLDqTae7q8fgKYjOntIHV8zAEMh/GtY1V8fAOEIjhhbtdcDAAjLx/jPP0sAlIBwZO4NgFgE7guAqn/78jWjB2D6P6ItB+AeAOj0o8ZLADhvAFqi2APAOQIwqdN/EV4AACAAAJBDAAAAAQCAAABAAAAgAAAQAAAIAAAEAAACAAABAIAAAEAAACAAABAAAOSOtVPuEwAABAAAAgAAAQAAAA4BAAAEAAACAAABAIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgLS0N/ycoLbYmVCxAAAAAElFTkSuQmCC
+        - Category: FAVICON_ICO
+          ColorMode: LIGHT
+          Extension: ICO
+          Bytes: AAABAAEAwMAAAAEAIAArAwAAFgAAAIlQTkcNChoKAAAADUlIRFIAAADAAAAAwAgGAAAAUtxsBwAAAvJJREFUeNrt3MGV4kAQREEZwJ0H3uA6joEFcBAtVFUZh39e6M5AvN2Z3e636yal5hAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABECbXjtybgDEjR4GAAwfBACMHwIADB8EAIwfAgCMHwIAjB8CAAAAAADjhwAA44cAAAAAAMD4IQAAAAAAiB8/BAAA4K4AAEAAACAA8sYPAQAAuDMAABAAAAgAAAQAAAIAAAEAgAAAAACHAAAAAgAAAQCAAABAAAAgAAAQAAAIAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcHjPx+X1KQBanjMAAAAAAAAAAAAAAAAAAAAAey4HgHZnDAAAAABQ8/EcC2Dq1x8AAAAAAAAAAAAAACAYhsD4AQAAAAAAACAbQCCCbmcKgKeAT38A/FyQn/8BwNcgX38A8BTw6Q9Ag0+uuPED4CkQDcAvxXsKVETg0x+AWATGD0CJy2z///4AAEEXCJvxA/DzpTZFMOmcABj6FDgCwtQzAmA4gl8wpJwNAEO/CjkXAFy28wDApTsHAFy+9w9AkxFMG0LiewbAIIwfgOxhGD8ASwbSbSRT3xcAJ4+l+mAmvRcACg+n2ni6v34Amo7o7CF1fM0ADIXwr2FVf30AhCM4YmzVXg8AICwf4z//LAFQAsKRuTcAYhG4LwCq/u3L14wegOn/iLYcgHsAoNOPGi8B4LwBaIliDwDnCMCkTv9FeAEAgAAAQA4BAAAEAAACAAABAIAAAEAAACAAABAAAAgAAAQAAAIAAAEAgAAAQAAAkDvWTrlPAAAQAAAIAAAEAAAAOAQAABAAAAgAAAQAABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIA0tLenEbZCTcodwQAAAAASUVORK5CYII=
+        - Category: FAVICON_ICO
+          ColorMode: DARK
+          Extension: ICO
+          Bytes: AAABAAEAwMAAAAEAIAAqAwAAFgAAAIlQTkcNChoKAAAADUlIRFIAAADAAAAAwAgGAAAAUtxsBwAAAvFJREFUeNrt3DGW4kAQREFdirtzLeBhwwnAEC1UVRnGtxe6MxBvd2a3+/OxSak5BAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASAB0KbXjpwbAHGjhwEAwwcBAOOHAADDBwEA44cAAOOHAADjhwAAAAAAwPghAMD4IQAAAAAAMH4IAAAAAADixw8BAAC4KwAAEAAACIC88UMAAADuDAAABAAAAgAAAQCAAABAAAAgAAAAwCEAAIAAAEAAACAAABAAAAgAAAQAAAIAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAc3vV2eX0KgJbnDAAAAAAAAAAAAAAAAAAAAMCeywGg3RkDAAAAANR8PMcCmPr1BwAAAAAAAAAAAAAACIYhMH4AAAAAAAAAyAYQiKDbmQLgKeDTHwA/F+TnfwDwNcjXHwA8BXz6A9Dgkytu/AB4CkQD8EvxngIVEfj0ByAWgfEDUOIy2/+/PwBA0AXCZvwA/HypTRFMOicAhj4FjoAw9YwAGI7gFwwpZwPA0K9CzgUAl+08AHDpzgEAl+/9A9BkBNOGkPieATAI4wcgexjGD8CSgXQbydT3BcDJY6k+mEnvBYDCw6k2nu6vH4CmIzp7SB1fMwBDIfxrWNVfHwDhCI4YW7XXAwAIy8f4zz9LAJSAcGTuDYBYBO4LgKp/+/I1owdg+j+iLQfgHgDo9KPGSwA4bwBaotgDwDkCMKnTfxFeAAAgAACQQwAAAAEAgAAAQAAAIAAAEAAACAAABAAAAgAAAQCAAABAAAAgAAAQAADkjrVT7hMAAAQAAAIAAAEAAAAOAQAABAAAAgAAAQCABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgASABIC0tDf8nKC22JlQsQAAAABJRU5ErkJggg==
 
   # DynamoDB Table
   DynamoDBTable:

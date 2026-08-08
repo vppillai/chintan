@@ -153,6 +153,23 @@ Delete the file once you have signed in.
 | Delete one instance | `scripts/cleanup-aws.sh --instance dev --environment staging --apply` |
 | Delete everything | `scripts/teardown.sh --apply` |
 
+### The sign-in page
+
+The hosted sign-in page is branded to match the app, and the branding deploys with the stack — there is nothing to click in the console, and a fresh clone gets the same page.
+
+Two resources in `infrastructure/template.yaml` do it:
+
+- `UserPoolDomain` sets `ManagedLoginVersion: 2`, which selects **managed login** over the classic hosted UI. Without it the branding below applies cleanly and then renders nothing.
+- `ManagedLoginBranding` carries the palette and the logo.
+
+Every colour is a token from `frontend/src/styles/tokens.css`, so the sign-in page and the app cannot drift apart without someone editing both. `colorSchemeMode: DYNAMIC` follows `prefers-color-scheme`, so **Ink & Paper** and **Nocturne** are both covered and a dark-theme user does not get a white flash at night.
+
+Managed login is included at the `ESSENTIALS` tier the pool already runs on, so this costs nothing. It styles the page; it does not change how sign-in works. The domain name, the OAuth endpoints, the callback URLs and the app client are all untouched.
+
+What it cannot do: the page's typeface is fixed, so headings render in the managed-login sans rather than the app's serif. That is the one visible difference from the app's own screens.
+
+The `Assets` blobs are the shipped app icon (`frontend/public/icon-192.png`), not a separate mark. The icon has an opaque `--color-ground` square baked in, so each variant carries the same artwork with that ground recovered to transparency and the foreground remapped to its theme's `--color-ink` and `--color-accent`. Changing the app icon does **not** regenerate them; that is a manual step, and the derivation is described above the resource.
+
 ### Rollback
 
 Every successful deploy publishes an immutable Lambda version and moves the `live` alias to it. The exact command that puts the previous version back is printed in the deploy log and in the job summary:
@@ -196,6 +213,18 @@ cd backend && go build -o chintanctl ./cmd/chintanctl
 | `reconcile --instance <i> [--apply]` | Reports every disagreement between the table and the bucket in both directions: index rows whose objects are gone, objects whose owning row is gone, objects nothing references, and captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row — never a row, never an object it does not understand. |
 | `usage --instance <i> [--since <date>]` | Metered provider spend per tenant, provider, model, operation and unit, from the `USAGE#` records. |
 | `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere and reports every key it removed. `--apply` requires the tenant id typed exactly, interactively or via `--confirm`. |
+| `reindex --instance <i> [--apply]` | Writes the `gsi2` key attributes onto notes that lack them. Idempotent, and it touches only those two attributes so no `version` moves under an open editor. Dry run by default. **Required after any deploy that adds a secondary index — see below.** |
+
+### Adding a secondary index is a two-step deploy
+
+DynamoDB backfills a new global secondary index only from items that **already carry its key attributes**. Every row written before the index existed carries none, so it is absent from the index — and a list that reads through the index comes back empty. The stack update is therefore only the first half of the change:
+
+```bash
+scripts/deploy.sh ...                             # 1. the index exists but is empty of old rows
+chintanctl reindex --instance dev --environment prod --apply   # 2. the old rows enter it
+```
+
+Between the two the affected list reads empty to the user, so run them back to back. `gsi2` (notes ordered by `updated_at`) was the first index to need this; anything added later needs the same pair of steps, and its own reason to be in `reindex`.
 
 Every subcommand takes `--json` for machine-readable results on stdout, with diagnostics on stderr. The table name is derived from the instance (`chintan-<i>-<env>`); the **bucket is read from the stack's `ContentBucketName` output**, not re-derived, because a fourth hand-written copy of a naming convention is a fourth place for it to go stale. Both can be overridden with `--table` / `--bucket`. The principal running `chintanctl` therefore needs `cloudformation:DescribeStacks` on `chintan-*`; without it the tool warns and falls back to the convention.
 
