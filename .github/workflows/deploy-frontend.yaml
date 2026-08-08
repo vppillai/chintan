@@ -23,6 +23,8 @@ on:
       - 'frontend/**'
       - 'config/**'
       - 'scripts/ci-build-site.sh'
+      - 'scripts/lib/common.sh'
+      - 'scripts/list-instances.sh'
       - '.github/workflows/deploy-frontend.yaml'
   workflow_dispatch:
 

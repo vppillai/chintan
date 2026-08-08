@@ -57,7 +57,9 @@ while IFS= read -r entry; do
     site_path="$(printf '%s' "$entry" | jq -r .site_path)"
     environment="$(printf '%s' "$entry" | jq -r .environment)"
     instance="$(printf '%s' "$entry" | jq -r .instance)"
-    display_name="$(printf '%s' "$entry" | jq -r .display_name)"
+    # display_name is deliberately not exported. Nothing in the bundle reads it —
+    # the app name is in the PWA manifest in vite.config.ts — and a VITE_ variable
+    # nobody consumes advertises a contract that does not exist.
 
     if ! stack_exists "$stack"; then
         warn "skipping $site_path: stack $stack does not exist yet"
@@ -73,6 +75,14 @@ while IFS= read -r entry; do
     client_id="$(value UserPoolClientId)"
     cognito_domain="$(value UserPoolDomainName)"
 
+    # The CloudFormation output is UserPoolClientId; the variable the bundle
+    # reads is VITE_CLIENT_ID. They are deliberately not the same name and the
+    # mismatch is the whole risk here: frontend/src/config/env.ts treats a
+    # missing variable as an empty string and only warns in dev, so exporting the
+    # wrong name produces a bundle that builds green, deploys green, and cannot
+    # sign in. The authority is frontend/src/config/env.ts — read it before
+    # changing anything below.
+
     # A missing output means the stack is half-deployed. Building against it would
     # ship a bundle that cannot sign in, and the failure would only appear on a
     # phone.
@@ -87,11 +97,9 @@ while IFS= read -r entry; do
         VITE_BASE="${PAGES_BASE}/${site_path}/" \
             VITE_API_URL="$api_endpoint" \
             VITE_USER_POOL_ID="$user_pool_id" \
-            VITE_USER_POOL_CLIENT_ID="$client_id" \
+            VITE_CLIENT_ID="$client_id" \
             VITE_COGNITO_DOMAIN="$cognito_domain" \
             VITE_INSTANCE="$instance" \
-            VITE_ENVIRONMENT="$environment" \
-            VITE_DISPLAY_NAME="$display_name" \
             bun run build
     )
 

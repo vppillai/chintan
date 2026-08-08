@@ -240,9 +240,11 @@ The frontend reads its per-instance configuration from build-time `VITE_*` varia
 | `VITE_BASE` | `/<repo>/<site_path>/` |
 | `VITE_API_URL` | stack output `ApiEndpoint` |
 | `VITE_USER_POOL_ID` | stack output `UserPoolId` |
-| `VITE_USER_POOL_CLIENT_ID` | stack output `UserPoolClientId` |
+| `VITE_CLIENT_ID` | stack output `UserPoolClientId` — note the names differ |
 | `VITE_COGNITO_DOMAIN` | stack output `UserPoolDomainName` |
-| `VITE_INSTANCE`, `VITE_ENVIRONMENT`, `VITE_DISPLAY_NAME` | the instance config |
+| `VITE_INSTANCE` | the instance config |
+
+`frontend/src/config/env.ts` is the authority on that list. A missing variable becomes an empty string there and only warns in dev, so a wrong name produces a bundle that builds green, deploys green, and cannot sign in.
 
 Nothing is written into the bundle at deploy time, so a service worker cannot pin an installed client to a stale endpoint.
 

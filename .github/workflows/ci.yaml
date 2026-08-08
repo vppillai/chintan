@@ -67,9 +67,10 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh |
             sh -s -- -b "$(go env GOPATH)/bin"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: golangci-lint
         working-directory: backend
-        run: "$(go env GOPATH)/bin/golangci-lint run --timeout=5m ./..."
+        run: golangci-lint run --timeout=5m ./...
 
   backend-vuln:
     name: govulncheck
@@ -156,6 +157,19 @@ jobs:
       - name: Prove the check can fail
         run: scripts/check-log-hygiene.sh --self-test
 
+  vite-env:
+    name: Frontend env contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The deploy pipeline exports VITE_* variables the bundle reads. A name
+      # mismatch produces a bundle that builds and deploys green and cannot sign
+      # in, because a missing variable is an empty string rather than an error.
+      - name: Exports match reads
+        run: scripts/check-vite-env.sh
+      - name: Prove the check can fail
+        run: scripts/check-vite-env.sh --self-test
+
   instance-configs:
     name: Instance configs resolve
     runs-on: ubuntu-latest
@@ -186,9 +200,54 @@ jobs:
       - name: Typecheck
         working-directory: frontend
         run: bun run typecheck
+      # `lint` is eslint plus scripts/check-tokens.mjs, which is what enforces
+      # "no literal colour or font-size outside design tokens". Skipping it would
+      # leave that rule to code review.
+      - name: Lint
+        working-directory: frontend
+        run: bun run lint
       - name: Test
         working-directory: frontend
         run: bun run test
+      # No VITE_* variables: config/env.ts treats them as optional at build time
+      # and only the deploy pipeline supplies them, so this proves the bundle
+      # compiles, not that it is configured.
       - name: Build
         working-directory: frontend
         run: bun run build
+
+  e2e:
+    name: Playwright
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+      # Chromium only — playwright.config.ts defines exactly one project, and
+      # installing the other two engines triples the setup time for browsers no
+      # spec runs in.
+      - name: Install Chromium
+        working-directory: frontend
+        run: bunx playwright install --with-deps chromium
+      # playwright.config.ts's webServer runs `bun run build && bun run preview`
+      # itself, because three of the specs need the service worker and the hashed
+      # asset paths that only exist in a real build. There is no separate build
+      # step here on purpose.
+      #
+      # This job runs on every pull request rather than behind a label. It is the
+      # gate that caught two bugs the unit tests could not, and a gate that only
+      # runs when someone remembers to ask for it is not a gate.
+      - name: e2e
+        working-directory: frontend
+        run: bun run e2e
+      - name: Upload the report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7
