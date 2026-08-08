@@ -127,56 +127,48 @@ show_failure_events() {
         head -n 10 >&2 || true
 }
 
-# Resources carrying DeletionPolicy: Retain survive a stack delete. That is
-# correct in production -- deleting the stack must not brick a KMS key that
-# every enrolled biometric credential depends on -- but in a non-production
-# environment whose create has NEVER succeeded, those survivors are debris, and
-# they are debris that blocks the retry: S3 bucket names, Cognito domains and
-# KMS aliases are all globally or account unique, so the next create collides
-# with its own wreckage and fails validation before it starts.
+# Resources carrying DeletionPolicy: Retain survive a stack delete. In production
+# that is the point -- deleting the stack must not brick the KMS key every
+# enrolled biometric credential depends on. But when a create has NEVER
+# succeeded, those survivors are debris, and they block the retry: bucket names,
+# Cognito domains and KMS aliases are globally or account unique, so the next
+# create collides with its own wreckage.
 #
-# DeletionPolicy cannot be made conditional -- it takes no intrinsic functions --
-# so the environment check lives here instead. Production is never touched: it
-# only reports, and a human decides.
-#
-# The set is enumerated by name rather than discovered, so this can only ever
-# remove resources this instance+environment would itself have created.
-clear_retained_orphans() {
-    if [ "$ENVIRONMENT" = "prod" ]; then
-        warn "leaving retained resources in place: refusing to delete production data automatically"
-        return 0
-    fi
-
-    local account
+# This deliberately does NOT delete them. The permissions boundary denies
+# irreversible deletes to any principal not acting through CloudFormation
+# (DenyIrreversibleDeletesOutsideCloudFormation), so a cleanup here is denied by
+# design -- and an earlier version of this function swallowed those denials and
+# reported success, which is worse than not trying. Destroying data is a human
+# action with elevated credentials, same as scripts/bootstrap-agent.sh.
+report_retained_orphans() {
+    local account bucket table pool_name found=0
     account="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null || echo '')"
-    if [ -z "$account" ]; then
-        warn "could not resolve the account id; skipping orphan cleanup"
-        return 0
-    fi
+    [ -n "$account" ] || return 0
 
-    local bucket="chintan-content-${INSTANCE}-${ENVIRONMENT}-${account}"
-    local table="chintan-${INSTANCE}-${ENVIRONMENT}"
-    local pool_name="chintan-${INSTANCE}-${ENVIRONMENT}"
-    local alias_name="alias/chintan-${INSTANCE}-${ENVIRONMENT}/token-vault"
+    bucket="chintan-content-${INSTANCE}-${ENVIRONMENT}-${account}"
+    table="chintan-${INSTANCE}-${ENVIRONMENT}"
+    pool_name="chintan-${INSTANCE}-${ENVIRONMENT}"
 
-    warn "clearing resources retained by the failed create of $STACK (non-production only)"
-
-    aws_cli s3 rb "s3://${bucket}" --force >/dev/null 2>&1 || true
-    aws_cli dynamodb delete-table --table-name "$table" >/dev/null 2>&1 || true
-    aws_cli kms delete-alias --alias-name "$alias_name" >/dev/null 2>&1 || true
-
+    aws_cli s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 && {
+        warn "  retained: s3://${bucket}"
+        found=1
+    }
+    aws_cli dynamodb describe-table --table-name "$table" >/dev/null 2>&1 && {
+        warn "  retained: dynamodb table ${table}"
+        found=1
+    }
     local pool_id
     pool_id="$(aws_cli cognito-idp list-user-pools --max-results 60 \
         --query "UserPools[?Name=='${pool_name}'].Id | [0]" --output text 2>/dev/null || echo None)"
     if [ -n "$pool_id" ] && [ "$pool_id" != "None" ]; then
-        # Deletion protection is on by design; it has to come off explicitly, and
-        # UpdateUserPool replaces the whole configuration rather than patching it,
-        # so the verification attributes must be restated or the call is rejected.
-        aws_cli cognito-idp update-user-pool --user-pool-id "$pool_id" \
-            --deletion-protection INACTIVE \
-            --auto-verified-attributes email \
-            --user-attribute-update-settings AttributesRequireVerificationBeforeUpdate=email >/dev/null 2>&1 || true
-        aws_cli cognito-idp delete-user-pool --user-pool-id "$pool_id" >/dev/null 2>&1 || true
+        warn "  retained: cognito user pool ${pool_id} (${pool_name})"
+        found=1
+    fi
+
+    if [ "$found" = 1 ]; then
+        warn "these survived a failed create and will collide with the next one."
+        warn "clear them with elevated credentials, then re-run:"
+        warn "  scripts/clean-instance-orphans.sh --instance ${INSTANCE} --environment ${ENVIRONMENT} --apply"
     fi
 }
 
@@ -190,7 +182,7 @@ clear_failed_create() {
             warn "any resource with DeletionPolicy: Retain survives that delete — check for orphans if a create keeps colliding"
             aws_cli cloudformation delete-stack --stack-name "$STACK" >/dev/null 2>&1 || true
             aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK" >/dev/null 2>&1 || true
-            clear_retained_orphans
+            report_retained_orphans
             ;;
     esac
 }
