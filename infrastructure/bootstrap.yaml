@@ -190,6 +190,20 @@ Resources:
                 Resource:
                   - 'arn:aws:s3:::chintan-content-*'
 
+              # Lambda fetches the deployment package as the deploying principal,
+              # so the service role needs to read the artifact bucket as well as
+              # manage the content bucket. Without this the functions fail with
+              # "Your access has been denied by S3 ... not authorized to perform:
+              # s3:GetObject" -- which reads like a bucket policy problem and is
+              # actually a missing grant on the role doing the deploy.
+              # Read-only, and only the artifact bucket's objects.
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource:
+                  - !Sub 'arn:aws:s3:::chintan-lambda-${AWS::AccountId}-${AWS::Region}/*'
+
               # CreateKey takes no resource. Everything after it is the key this
               # stack made, which the account root policy already governs.
               - Effect: Allow
