@@ -167,20 +167,26 @@ Provider secrets under `/chintan/<instance>/` are removed only when no other sta
 
 **⚠️ This deletes every note and audio recording. It cannot be undone.**
 
-### `chintanctl` — planned, not yet built
+### `chintanctl` — the operator CLI
 
-A Go CLI under `backend/cmd/chintanctl`, planned for a later phase. Recorded here so the intent is reviewable before the code exists. It closes the audit finding that **nothing currently backs up S3 content at all** — DynamoDB has point-in-time recovery; the notes, transcripts and audio in S3 have nothing.
+A Go CLI under `backend/cmd/chintanctl`. It closes the audit finding that **nothing backed up S3 content at all** — DynamoDB has point-in-time recovery; the notes, transcripts and audio in S3 had nothing.
 
-| Subcommand | Intent |
+```bash
+cd backend && go build -o chintanctl ./cmd/chintanctl
+```
+
+| Subcommand | What it does |
 |---|---|
-| `export --instance <i> --out <dir>` | Every note, transcript, capture and audio file as plain files plus a manifest. Enumerates by **S3 prefix and DynamoDB partition**, not by entity type, so a future schema addition cannot silently fall out of the export. |
-| `backup --instance <i> --to <s3-uri>` | Consistent point-in-time copy of the S3 content and the DynamoDB partition to a bucket outside the instance stack. |
-| `restore --instance <i> --from <s3-uri>` | Inverse of `backup`, into an empty or explicitly overwritten instance. |
-| `reconcile --instance <i>` | Report every disagreement between DynamoDB and S3: index entries with no object, objects no index references, captures stuck in a non-terminal state. |
-| `usage --instance <i> --since <date>` | Metered provider spend per tenant, per provider, per operation, from the `meter` records. |
-| `erase --instance <i> --tenant <t>` | Delete one tenant's data everywhere, and prove it. |
+| `export --instance <i> --out <dir\|tar.gz>` | Every note as markdown with YAML front matter (title, aliases, tags, timestamps, capture list), beside each capture's `audio.*`, `raw.txt`, `clean.txt`, `segments.json` and `peaks.json`, in a layout Obsidian opens as a vault. Re-running into the same directory skips objects whose ETag has not moved. |
+| `backup --instance <i> --out <dir>` | Full fidelity: `items.jsonl` with the DynamoDB items verbatim, `objects/<key>` with the S3 bodies, `objects.jsonl` with a sha256 per object, and `backup.json` — written last, so its presence means the backup finished. |
+| `restore --instance <i> --in <dir> [--apply]` | Inverse of `backup`. Verifies both manifests and re-hashes every object body **before** writing anything, and refuses on any mismatch. Dry run by default. |
+| `reconcile --instance <i> [--apply]` | Reports every disagreement between the table and the bucket in both directions: index rows whose objects are gone, objects whose owning row is gone, objects nothing references, and captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row — never a row, never an object it does not understand. |
+| `usage --instance <i> [--since <date>]` | Metered provider spend per tenant, provider, model, operation and unit, from the `USAGE#` records. |
+| `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere and reports every key it removed. `--apply` requires the tenant id typed exactly, interactively or via `--confirm`. |
 
-Design constraints already fixed: it must be usable with the bounded agent role, it never prints note content to stdout unless asked, and `export` must satisfy the definition of done — "`chintanctl export` recovers every note, transcript, and audio file."
+Every subcommand takes `--json` for machine-readable results on stdout, with diagnostics on stderr. Table and bucket names are derived from the instance (`chintan-<i>-<env>`, `chintan-content-<i>-<account>`) and can be overridden with `--table` / `--bucket`.
+
+Design constraints it holds to: enumeration is by **S3 prefix and DynamoDB partition**, never by entity type, so a future schema addition cannot silently fall out of the export; no object body is ever held in memory; dry run is the default for everything destructive; and no note body, title or transcript ever reaches a log line.
 
 ---
 
