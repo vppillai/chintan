@@ -91,25 +91,6 @@ func New(deps Deps) http.Handler {
 	return obs.Correlate(middleware.CORS(deps.AllowedOrigin)(problemFallback(rt.mux)))
 }
 
-// NewRouter is the positional constructor kept for callers that predate Deps.
-func NewRouter(
-	notes *service.NotesService,
-	settings *service.SettingsService,
-	captures *service.CaptureService,
-	webauthn WebAuthnAPI,
-	allowedOrigin string,
-	verifier auth.Verifier,
-) http.Handler {
-	return New(Deps{
-		Notes:         notes,
-		Settings:      settings,
-		Captures:      captures,
-		WebAuthn:      webauthn,
-		AllowedOrigin: allowedOrigin,
-		Verifier:      verifier,
-	})
-}
-
 // routeOption configures one registration.
 type routeOption func(*routeConfig)
 

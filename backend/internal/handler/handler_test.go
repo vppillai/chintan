@@ -481,6 +481,22 @@ func TestUnknownRoutesUseTheOneErrorEnvelope(t *testing.T) {
 	}
 }
 
+// The 404 fallback rewrites net/http's plain-text body. It must not stomp a
+// 404 one of our own handlers wrote, which says something more specific.
+func TestAHandlerNotFoundKeepsItsOwnDetail(t *testing.T) {
+	h := newHarness(t)
+
+	routed := problemOf(t, h.do(t, http.MethodGet, "/v1/notes/missing", "user1", nil))
+	unrouted := problemOf(t, h.do(t, http.MethodGet, "/v1/no-such-collection", "user1", nil))
+
+	if routed["detail"] == unrouted["detail"] {
+		t.Fatalf("a missing note and a missing route read the same: %v", routed["detail"])
+	}
+	if routed["detail"] != "no such resource" {
+		t.Errorf("detail = %v", routed["detail"])
+	}
+}
+
 func TestEveryProblemCarriesTheCorrelationID(t *testing.T) {
 	h := newHarness(t)
 	w := h.do(t, http.MethodGet, "/v1/notes/missing", "user1", nil)
