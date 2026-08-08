@@ -926,7 +926,18 @@ Resources:
         Format: >-
           {"requestId":"$context.requestId","correlationId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","responseLatency":"$context.responseLatency","integrationStatus":"$context.integrationStatus","integrationErrorMessage":"$context.integrationErrorMessage","authorizerError":"$context.authorizer.error"}
       DefaultRouteSettings:
-        DetailedMetricsEnabled: true
+        # Off, because it is billed as custom metrics and buys almost nothing
+        # here. Detailed metrics add the (ApiId, Method, Resource, Stage)
+        # dimension set; the gateway only knows five routes, and every one of
+        # the application's other twenty-five arrives as $default because the
+        # routing happens inside the Lambda. The per-route breakdown being paid
+        # for is therefore mostly one bucket labelled $default, while the EMF
+        # ApiRequests/ApiLatency metrics already carry the real registered-route
+        # breakdown.
+        #
+        # Api5xxRateAlarm is unaffected: it dimensions on ApiId alone, and the
+        # ApiId and (ApiId, Stage) sets are published by default at no charge.
+        DetailedMetricsEnabled: false
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
       Tags:

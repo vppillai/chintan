@@ -57,9 +57,19 @@ func (s *statusWriter) Flush() {
 // instrument emits one EMF record per request: an outcome counter and a
 // latency.
 //
-// The dimensions are the registered route, the method, and the status class.
-// Class rather than exact status keeps the metric count bounded while still
-// letting an alarm fire on 5xx.
+// The dimensions are the registered route and the status class. Class rather
+// than exact status keeps the metric count bounded while still letting an alarm
+// fire on 5xx.
+//
+// There is deliberately no Method dimension. The registered pattern already
+// begins with the method — "GET /v1/notes" — so Method is a function of Route,
+// never an independent axis. It cost bytes on every record and implied a
+// breakdown that does not exist.
+//
+// There is likewise no separate 5xx counter. CloudWatch bills one metric per
+// unique name and dimension-set combination, and a counter carrying these same
+// dimensions filtered to Status="5xx" is ApiRequests with a filter applied —
+// something the query side does for free.
 func instrument(pattern string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), routeKey{}, pattern)
@@ -73,18 +83,13 @@ func instrument(pattern string, next http.Handler) http.Handler {
 		if rec.status == 0 {
 			rec.status = http.StatusOK
 		}
-		dims := map[string]string{
+		obs.Emit(ctx, map[string]string{
 			"Route":  pattern,
-			"Method": r.Method,
 			"Status": statusClass(rec.status),
-		}
-		obs.Emit(ctx, dims,
+		},
 			obs.Metric{Name: "ApiRequests", Value: 1, Unit: obs.UnitCount},
 			obs.Metric{Name: "ApiLatency", Value: float64(elapsed.Milliseconds()), Unit: obs.UnitMilliseconds},
 		)
-		if rec.status >= 500 {
-			obs.Count(ctx, "ApiServerErrors", dims)
-		}
 	})
 }
 

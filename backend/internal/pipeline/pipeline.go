@@ -163,6 +163,10 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	final, err := p.run(ctx, &capture)
 	elapsed := p.now().Sub(started)
 
+	// This carries the count as well as the timing: CloudWatch's SampleCount on
+	// a duration metric is how many captures ended in that outcome. A separate
+	// outcome counter alongside it would be a second billable metric per
+	// dimension value telling us a number this one already holds.
 	obs.Duration(ctx, "CapturePipelineDuration", elapsed, map[string]string{"Outcome": string(final.Status)})
 	if errors.Is(err, errDeliveryConceded) {
 		// The other delivery is either finished or still running. Either way this
@@ -183,7 +187,6 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	log.Info("capture pipeline finished",
 		slog.String("status", string(final.Status)),
 		slog.Int64("elapsed_ms", elapsed.Milliseconds()))
-	obs.Count(ctx, "CapturePipelineOutcomes", map[string]string{"Outcome": string(final.Status)})
 	return final, nil
 }
 
