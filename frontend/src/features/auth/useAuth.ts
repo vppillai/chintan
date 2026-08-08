@@ -15,6 +15,8 @@ import { tokenSetFromWire } from '@/api/tokens.ts';
 import { config } from '@/config/env.ts';
 import { canAssertWebAuthn, performAssertion } from '@/features/settings/webauthn.ts';
 
+import { deviceMayBeEnrolled, forgetEnrolment } from './enrolment.ts';
+
 import {
   authorizeUrl,
   exchangeCode,
@@ -108,10 +110,21 @@ export function useAuthGate(): AuthGateState {
   const api = useApi();
   const authenticated = useAuthenticated();
   const [needsReEnrolment, setNeedsReEnrolment] = useState(false);
-  // Read once: whether the browser has `credentials.get` does not change while
-  // the page is open, and reading it in render would make the first paint
-  // depend on a global.
-  const [assertable] = useState(() => canAssertWebAuthn());
+  /*
+   * Whether to offer an unlock at all.
+   *
+   * Two conditions, and the second is the one that was missing. The browser
+   * must be able to assert a credential, and this device must have seen one
+   * enrolled — because signing out revokes the credential on purpose, so
+   * offering the button unconditionally meant every sign-out was followed by
+   * sign in, tap unlock, `login/options → 503`, every time.
+   *
+   * State rather than a constant: the hint is only a hint, and the first
+   * authoritative "there is nothing enrolled" withdraws the offer for good.
+   */
+  const [mayUnlock, setMayUnlock] = useState(
+    () => canAssertWebAuthn() && deviceMayBeEnrolled(),
+  );
 
   // Read once, synchronously, before the first paint: landing with `?code=`
   // must never flash the signed-out screen on the way in.
@@ -238,6 +251,16 @@ export function useAuthGate(): AuthGateState {
           setNeedsReEnrolment(true);
           return;
         }
+        /*
+         * The server is the authority and it says there is nothing to unlock.
+         * The hint this device was going on is wrong — the account was changed
+         * elsewhere, or a revoke was missed — so it is erased and the offer
+         * withdrawn rather than left to fail again on the next tap.
+         */
+        if (isNotEnrolled(cause)) {
+          forgetEnrolment();
+          setMayUnlock(false);
+        }
         setError(describeUnlockFailure(cause));
       }
     })();
@@ -264,7 +287,7 @@ export function useAuthGate(): AuthGateState {
     phase,
     error,
     signIn,
-    unlock: assertable ? unlock : null,
+    unlock: mayUnlock ? unlock : null,
     needsReEnrolment,
     configured: config.cognitoDomain.length > 0 && config.clientId.length > 0,
   };
@@ -277,13 +300,28 @@ export function useAuthGate(): AuthGateState {
  * when the authenticator timed out, and they are the same thing to the person
  * looking at the screen: nothing happened, try again or use the other button.
  */
+/**
+ * The server saying this account has no enrolled credential.
+ *
+ * 503 today, which is the code `openapi.yaml` reserves for "not configured on
+ * this instance" and reads as transient — the backend is giving it a proper
+ * status and a machine-readable problem `type`. Both are matched so nothing
+ * regresses in between, and the `type` should replace the status check as soon
+ * as the exact string is known.
+ */
+function isNotEnrolled(cause: unknown): boolean {
+  if (!(cause instanceof ApiError)) return false;
+  if (cause.status === 503) return true;
+  return /not set up on this account/i.test(`${cause.detail ?? ''} ${cause.title}`);
+}
+
 function describeUnlockFailure(cause: unknown): string {
   const name = (cause as { name?: string } | null)?.name;
   if (name === 'NotAllowedError' || name === 'AbortError') {
     return 'That unlock was cancelled.';
   }
-  if (cause instanceof ApiError && cause.status === 503) {
-    return 'Biometric unlock is not set up on this account.';
+  if (isNotEnrolled(cause)) {
+    return 'Biometric unlock is not set up on this account. Sign in, then turn it on in Settings.';
   }
   if (cause instanceof ApiError) return cause.userMessage;
   return 'That did not unlock. You can sign in instead.';

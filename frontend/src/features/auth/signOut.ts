@@ -26,6 +26,7 @@ import { clearAllLocalData } from '@/offline/db.ts';
 import { count as queuedCount } from '@/offline/queue.ts';
 import { config } from '@/config/env.ts';
 
+import { forgetEnrolment, rememberEnrolment } from './enrolment.ts';
 import { logoutUrl, redirectUri } from './oauth.ts';
 import { clearPending } from './pending.ts';
 
@@ -104,8 +105,16 @@ export async function performSignOut({
     // handed over. The user is told instead.
     try {
       await api.webauthnDisable();
+      // The credential is gone, so the offer to use it must go with it. Left
+      // behind, it produced the same loop after every sign-out: sign in, see
+      // "Unlock with biometrics", tap it, `login/options → 503`.
+      forgetEnrolment();
     } catch {
       biometricLeftBehind = true;
+      // The revoke did not land, so the credential may well still be live and
+      // the offer is still the right one to make. Saying otherwise would hide a
+      // working unlock; the user is told about the failure separately.
+      rememberEnrolment(true);
     }
   }
 

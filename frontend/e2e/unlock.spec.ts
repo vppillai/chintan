@@ -19,6 +19,30 @@ import { COGNITO_ORIGIN, expect, startSignedOut, storedTokens, test } from './fi
  * assertion, the token set, and the session it produces.
  */
 
+/**
+ * Marks this device as having enrolled while it was signed in.
+ *
+ * The signed-out screen cannot ask the server whether an account is enrolled —
+ * `GET /v1/auth/webauthn/status` is authenticated — so it goes on what the
+ * device recorded. Enrolling is the only thing that sets this, which is why
+ * every unlock case here has to.
+ */
+async function withEnrolledDevice(page: Page): Promise<void> {
+  /*
+   * Seeded ONCE per tab, not on every document — the same trap `installApi`
+   * documents for the token seed. An init script runs on every navigation, so
+   * an unconditional write re-enrols the device the moment anything navigates,
+   * which would make the sign-out case below silently untestable: the revoke
+   * would land, the hint would be cleared, and the redirect back from the
+   * hosted UI would put it straight back.
+   */
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('e2e.webauthn.seeded')) return;
+    sessionStorage.setItem('e2e.webauthn.seeded', '1');
+    localStorage.setItem('chintan.webauthn.enrolled', '1');
+  });
+}
+
 /** A stand-in for the platform authenticator, returning real ArrayBuffers. */
 async function withStubbedAuthenticator(
   page: Page,
@@ -73,6 +97,7 @@ async function withStubbedAuthenticator(
 test('an enrolled user unlocks without the hosted UI', async ({ page, api }) => {
   api.auth.webauthnEnrolled = true;
   await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
   await startSignedOut(page);
 
   await page.goto('/');
@@ -116,6 +141,7 @@ test('the unlock requests carry no bearer, because there is no session yet', asy
 }) => {
   api.auth.webauthnEnrolled = true;
   await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
   await startSignedOut(page);
 
   await page.goto('/');
@@ -140,6 +166,7 @@ test('the challenge survives the base64url round trip into the ceremony', async 
 }) => {
   api.auth.webauthnEnrolled = true;
   await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
   await startSignedOut(page);
 
   await page.goto('/');
@@ -164,6 +191,7 @@ test('a vault that cannot be opened asks for re-enrolment, not for another finge
   api.auth.webauthnEnrolled = true;
   api.auth.vaultNeedsReEnrolment = true;
   await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
   await startSignedOut(page);
 
   await page.goto('/');
@@ -179,6 +207,7 @@ test('a vault that cannot be opened asks for re-enrolment, not for another finge
 test('a cancelled unlock says so and leaves sign-in available', async ({ page, api }) => {
   api.auth.webauthnEnrolled = true;
   await withStubbedAuthenticator(page, 'cancel');
+  await withEnrolledDevice(page);
   await startSignedOut(page);
 
   await page.goto('/');
@@ -193,6 +222,7 @@ test('an account with nothing enrolled is told so, and can still sign in', async
   page,
 }) => {
   await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
   await startSignedOut(page);
 
   await page.goto('/');
@@ -204,4 +234,62 @@ test('an account with nothing enrolled is told so, and can still sign in', async
   await page.getByRole('button', { name: 'Sign in' }).click();
   await page.waitForURL((url) => !url.href.startsWith(COGNITO_ORIGIN), { timeout: 15_000 });
   await expect(page.getByRole('button', { name: /record/i })).toBeVisible();
+});
+
+/**
+ * Offering an unlock that cannot work.
+ *
+ * Reported from the live app: `POST /v1/auth/webauthn/login/options → 503` on a
+ * healthy service, with the real sequence being status 2xx, then
+ * `DELETE /v1/auth/webauthn` 2xx, then the 503. The credential had been revoked
+ * — by sign-out, which revokes it on purpose — and the app offered the button
+ * anyway. That is a guaranteed loop, not an edge case: it happens after every
+ * single sign-out.
+ */
+test('a device with nothing enrolled is not offered an unlock at all', async ({ page }) => {
+  await withStubbedAuthenticator(page);
+  await startSignedOut(page);
+
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  // Not merely disabled: an action that cannot work does not belong on the one
+  // screen whose job is to offer the action that can.
+  await expect(page.getByRole('button', { name: /unlock/i })).toHaveCount(0);
+});
+
+test('signing out takes the unlock offer with the credential it revokes', async ({
+  page,
+  api,
+}) => {
+  api.auth.webauthnEnrolled = true;
+  await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
+
+  await page.goto('/settings');
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('button', { name: /sign out/i }).last().click();
+
+  await page.waitForURL((url) => !url.href.includes('/settings'), { timeout: 15_000 });
+
+  // The credential is gone from the server, so the offer must be gone from here.
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /unlock/i })).toHaveCount(0);
+  expect(api.auth.webauthnDisabled).toBeGreaterThan(0);
+});
+
+test('a stale enrolment hint is believed once, then corrected', async ({ page, api }) => {
+  // The account was un-enrolled on another device. This one cannot know until
+  // it asks, so it may offer the button once — and must never offer it again.
+  api.auth.webauthnEnrolled = false;
+  await withStubbedAuthenticator(page);
+  await withEnrolledDevice(page);
+  await startSignedOut(page);
+
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Unlock with biometrics' }).click();
+
+  await expect(page.getByText(/not set up on this account/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: /unlock/i })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeEnabled();
 });

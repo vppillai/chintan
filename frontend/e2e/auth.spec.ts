@@ -147,7 +147,19 @@ test.describe('signing out', () => {
 
     // Back to the signed-out surface.
     await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible({ timeout: 15_000 });
-    expect(await storedTokens(page)).toBeNull();
+
+    /*
+     * Polled, and tolerant of the read itself being interrupted.
+     *
+     * Sign-out re-renders this screen and *then* hands the browser to Cognito's
+     * `/logout`, which the stub bounces straight back — so there is a window in
+     * which evaluating anything in the page throws "execution context was
+     * destroyed". The assertion is unchanged: the token set must be gone. Only
+     * the reading of it now survives the navigation it is racing.
+     */
+    await expect
+      .poll(() => storedTokens(page).catch(() => 'unreadable'), { timeout: 15_000 })
+      .toBeNull();
 
     // The hosted UI's own session is ended, so the next sign-in prompts rather
     // than silently signing the same person back in. Polled, because clearing

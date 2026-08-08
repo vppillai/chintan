@@ -5,6 +5,8 @@ import { useApi, useSession } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 
+import { rememberEnrolment } from '@/features/auth/enrolment.ts';
+
 import { performRegistration, isWebAuthnAvailable } from './webauthn.ts';
 
 /**
@@ -25,7 +27,16 @@ export function BiometricSetting() {
 
   const status = useQuery({
     queryKey: ['webauthn', 'status'],
-    queryFn: () => api.webauthnStatus(),
+    queryFn: async () => {
+      const answer = await api.webauthnStatus();
+      /*
+       * The only moment the app can learn this. The status route is
+       * authenticated, so the signed-out screen — which is where the unlock is
+       * offered — has no way to ask; it goes on what this device recorded here.
+       */
+      rememberEnrolment(answer.enrolled);
+      return answer;
+    },
     enabled: available,
     retry: false,
   });
@@ -57,6 +68,7 @@ export function BiometricSetting() {
       });
     },
     onSuccess: () => {
+      rememberEnrolment(true);
       setMessage('Biometric unlock is on.');
       invalidate();
     },
@@ -72,6 +84,7 @@ export function BiometricSetting() {
   const disable = useMutation({
     mutationFn: () => api.webauthnDisable(),
     onSuccess: () => {
+      rememberEnrolment(false);
       setMessage('Biometric unlock is off.');
       invalidate();
     },
