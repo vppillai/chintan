@@ -309,7 +309,7 @@ func TestNotesHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("DELETE removes note", func(t *testing.T) {
+	t.Run("DELETE archives note", func(t *testing.T) {
 		// First create a note
 		createReq := map[string]interface{}{
 			"title": "To Be Deleted",
@@ -325,7 +325,7 @@ func TestNotesHandler(t *testing.T) {
 		var created model.NoteIndex
 		json.Unmarshal(w.Body.Bytes(), &created)
 
-		// Now delete the note
+		// Now delete (archive) the note
 		req = httptest.NewRequest("DELETE", "/v1/notes/"+created.ID, nil)
 		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
 		w = httptest.NewRecorder()
@@ -335,14 +335,38 @@ func TestNotesHandler(t *testing.T) {
 			t.Errorf("expected 204, got %d", w.Code)
 		}
 
-		// Verify it's gone
+		// Verify note is still accessible but archived
 		req = httptest.NewRequest("GET", "/v1/notes/"+created.ID, nil)
 		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
 		w = httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		if w.Code != 404 {
-			t.Errorf("expected 404 after delete, got %d", w.Code)
+		if w.Code != 200 {
+			t.Errorf("expected 200 for archived note, got %d", w.Code)
+		}
+
+		// Verify note has archive fields set
+		var noteDetail map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &noteDetail)
+		if noteDetail["deleted_at"] == nil || noteDetail["deleted_at"] == "" {
+			t.Errorf("expected archived note to have deleted_at set")
+		}
+		if noteDetail["purge_after"] == nil || noteDetail["purge_after"] == "" {
+			t.Errorf("expected archived note to have purge_after set")
+		}
+
+		// Verify it's not in the active notes list
+		req = httptest.NewRequest("GET", "/v1/notes", nil)
+		req = req.WithContext(middleware.WithUserID(req.Context(), "user1"))
+		w = httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		var notes []model.NoteIndex
+		json.Unmarshal(w.Body.Bytes(), &notes)
+		for _, note := range notes {
+			if note.ID == created.ID {
+				t.Errorf("archived note should not appear in active notes list")
+			}
 		}
 	})
 }
