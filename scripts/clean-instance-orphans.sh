@@ -100,34 +100,68 @@ if [ "$ENVIRONMENT" = "prod" ] && [ "$APPLY" = 1 ] && [ "$PROD_ACK" != 1 ]; then
 fi
 
 found=0
+blind=0
 
-bucket_exists() { aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; }
-table_exists() { aws dynamodb describe-table --table-name "$TABLE" >/dev/null 2>&1; }
-pool_id() {
-    aws cognito-idp list-user-pools --max-results 60 \
-        --query "UserPools[?Name=='${POOL_NAME}'].Id | [0]" --output text 2>/dev/null || echo None
-}
-alias_exists() {
-    [ -n "$(aws kms list-aliases --query "Aliases[?AliasName=='${KEY_ALIAS}'].AliasName" --output text 2>/dev/null)" ]
+# Every probe answers present / absent / unknown (see scripts/lib/common.sh).
+# The three-way answer is the point: `aws s3api head-bucket >/dev/null 2>&1`
+# reports failure both for a bucket that is not there and for one this caller
+# may not look at — head-bucket answers 403, not 404, when access is denied —
+# and collapsing those two into "absent" makes this script print "no orphans"
+# and exit 0 over resources that are about to collide with the next create.
+# This script has only ever been run in dry-run against a clean instance, where
+# a denied probe and a genuinely clean account are indistinguishable.
+BUCKET_PROBE="$(probe_bucket "$BUCKET")"
+TABLE_PROBE="$(probe_table "$TABLE")"
+POOL_PROBE="$(probe_user_pool "$POOL_NAME")"
+ALIAS_PROBE="$(probe_kms_alias "$KEY_ALIAS")"
+
+note_probe() {
+    local probe="$1" label="$2"
+    case "$(probe_state "$probe")" in
+        present)
+            warn "${label} $(probe_detail "$probe")"
+            found=1
+            ;;
+        unknown)
+            err "${label} could not be checked: $(probe_detail "$probe")"
+            blind=1
+            ;;
+    esac
 }
 
-if bucket_exists; then
-    n="$(aws s3 ls "s3://${BUCKET}" --recursive --summarize 2>/dev/null | awk '/Total Objects/ {print $3}')"
-    warn "bucket   s3://${BUCKET} (${n:-0} objects)"
+if [ "$(probe_state "$BUCKET_PROBE")" = present ]; then
+    # Not silenced and not defaulted to 0: "(0 objects)" on a bucket whose
+    # listing was denied invites deleting it as empty debris.
+    if n="$(aws s3 ls "s3://${BUCKET}" --recursive --summarize 2>&1 | awk '/Total Objects/ {print $3}')" && [ -n "$n" ]; then
+        warn "bucket   s3://${BUCKET} (${n} objects)"
+    else
+        warn "bucket   s3://${BUCKET} (object count unavailable — listing denied or failed)"
+    fi
     found=1
+elif [ "$(probe_state "$BUCKET_PROBE")" = unknown ]; then
+    err "bucket   could not be checked: $(probe_detail "$BUCKET_PROBE")"
+    blind=1
 fi
-if table_exists; then
-    warn "table    ${TABLE}"
-    found=1
-fi
-POOL="$(pool_id)"
-if [ -n "$POOL" ] && [ "$POOL" != "None" ]; then
-    warn "userpool ${POOL} (${POOL_NAME})"
-    found=1
-fi
-if alias_exists; then
-    warn "kmsalias ${KEY_ALIAS}"
-    found=1
+
+note_probe "$TABLE_PROBE" "table   "
+note_probe "$POOL_PROBE" "userpool"
+note_probe "$ALIAS_PROBE" "kmsalias"
+
+POOL=""
+[ "$(probe_state "$POOL_PROBE")" = present ] && POOL="$(probe_detail "$POOL_PROBE")"
+
+# Captured BEFORE the alias is deleted. The alias is the only human-readable
+# handle on the CMK: delete it first and the key becomes one UUID among many,
+# still billing, with nothing naming it. That is exactly how this account came
+# to hold three keys described "Chintan dev Cognito refresh-token vault" behind
+# a single alias.
+KEY_ID=""
+[ "$(probe_state "$ALIAS_PROBE")" = present ] && KEY_ID="$(probe_detail "$ALIAS_PROBE")"
+
+if [ "$blind" = 1 ]; then
+    printf '\n'
+    err "one or more probes could not be answered, so this is not a complete picture."
+    die "re-run with credentials that can read the resources above"
 fi
 
 if [ "$found" = 0 ]; then
@@ -143,12 +177,12 @@ fi
 
 confirm_destructive "delete the resources listed above for ${STACK}" || exit 2
 
-if bucket_exists; then
+if [ "$(probe_state "$BUCKET_PROBE")" = present ]; then
     info "emptying and removing s3://${BUCKET}"
     aws s3 rb "s3://${BUCKET}" --force
 fi
 
-if table_exists; then
+if [ "$(probe_state "$TABLE_PROBE")" = present ]; then
     info "deleting table ${TABLE}"
     aws dynamodb delete-table --table-name "$TABLE" >/dev/null
     # delete-table returns immediately; the name stays taken until it is gone,
@@ -157,8 +191,7 @@ if table_exists; then
     aws dynamodb wait table-not-exists --table-name "$TABLE"
 fi
 
-POOL="$(pool_id)"
-if [ -n "$POOL" ] && [ "$POOL" != "None" ]; then
+if [ -n "$POOL" ]; then
     info "deleting user pool ${POOL}"
     # Deletion protection is on by design and must come off first. UpdateUserPool
     # replaces the whole configuration rather than patching it, so the
@@ -172,16 +205,27 @@ if [ -n "$POOL" ] && [ "$POOL" != "None" ]; then
     aws cognito-idp delete-user-pool --user-pool-id "$POOL" >/dev/null
 fi
 
-if alias_exists; then
-    info "deleting kms alias ${KEY_ALIAS}"
+if [ -n "$KEY_ID" ]; then
+    info "deleting kms alias ${KEY_ALIAS} (target key ${KEY_ID})"
     aws kms delete-alias --alias-name "$KEY_ALIAS"
 fi
 
 # The CMK itself is left alone on purpose. It is the one retained resource that
 # might still hold something irreplaceable, it does not block a create (keys have
 # no unique name), and deletion is reversible only inside its pending window.
-# Schedule it deliberately if you want it gone:
-#   aws kms schedule-key-deletion --key-id <id> --pending-window-in-days 7
-warn "the KMS CMK was left in place; it does not block a create. Schedule its deletion separately if you want it gone."
+#
+# But the alias this script just deleted was the only thing naming it, so the
+# command is printed WITH THE KEY ID rather than with a <id> placeholder. Told
+# to "schedule it separately", an operator now has to match an unaliased UUID
+# against a description — which is the state that left two unreferenced keys
+# billing $1/month each in this account, and the reason teardown.sh's orphan
+# report cannot see them.
+if [ -n "$KEY_ID" ]; then
+    printf '\n'
+    warn "the KMS CMK ${KEY_ID} was left in place; it does not block a create."
+    warn "its alias is now gone, so this is the only remaining handle on it. To bill nothing:"
+    warn "  aws kms schedule-key-deletion --key-id ${KEY_ID} --pending-window-in-days 7 --region ${REGION}"
+    warn "that is reversible until the window expires (aws kms cancel-key-deletion --key-id ${KEY_ID})"
+fi
 
 ok "orphans cleared for ${STACK}"

@@ -117,7 +117,20 @@ for g in $LOG_GROUPS; do dim "  log group     $g"; done
 # Whether the provider secrets may go depends on what else still uses them. They
 # live at /chintan/<instance>/, one level above the environment, so a staging
 # teardown must not take prod's keys with it.
-SIBLINGS="$(list_chintan_stacks | grep -E "^${CHINTAN_PREFIX}${INSTANCE}-" | grep -v "^${STACK}\$" || true)"
+# Fail CLOSED. This guard decides whether prod's provider API keys are deleted,
+# so "the enumeration failed" and "there are no siblings" must not look alike.
+# An empty answer from a failed list-stacks call previously read as "nothing
+# else uses these secrets, delete them".
+if ! ALL_STACKS="$(list_chintan_stacks)"; then
+    die "could not enumerate stacks, so it is not known whether /chintan/${INSTANCE}/* is still in use — refusing to delete the provider secrets"
+fi
+if [ -z "$ALL_STACKS" ]; then
+    # Not even $STACK came back, and this script only runs against a stack that
+    # existed a moment ago. Something is wrong with the enumeration, not with
+    # the account.
+    die "stack enumeration returned nothing at all, not even ${STACK} — refusing to act on that"
+fi
+SIBLINGS="$(printf '%s\n' "$ALL_STACKS" | grep -E "^${CHINTAN_PREFIX}${INSTANCE}-" | grep -v "^${STACK}\$" || true)"
 if [ -n "$SIBLINGS" ]; then
     log ""
     warn "other stacks still use /chintan/${INSTANCE}/*, so the provider secrets stay:"
