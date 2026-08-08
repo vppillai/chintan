@@ -1,35 +1,35 @@
 {
   "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "CeilingServicesThisProjectUses",
-      "Effect": "Allow",
-      "Action": [
-        "access-analyzer:*",
-        "apigateway:*",
-        "budgets:*",
-        "ce:*",
-        "cloudformation:*",
-        "cloudtrail:*",
-        "cloudwatch:*",
-        "cognito-idp:*",
-        "dynamodb:*",
-        "events:*",
-        "iam:*",
-        "kms:*",
-        "lambda:*",
-        "logs:*",
-        "resource-groups:*",
-        "s3:*",
-        "sns:*",
-        "sqs:*",
-        "ssm:*",
-        "sts:*",
-        "tag:*",
-        "xray:*"
-      ],
-      "Resource": "*"
-    },
+  "Ceiling": {
+    "Sid": "CeilingServicesThisProjectUses",
+    "Effect": "Allow",
+    "Action": [
+      "access-analyzer:*",
+      "apigateway:*",
+      "budgets:*",
+      "ce:*",
+      "cloudformation:*",
+      "cloudtrail:*",
+      "cloudwatch:*",
+      "cognito-idp:*",
+      "dynamodb:*",
+      "events:*",
+      "iam:*",
+      "kms:*",
+      "lambda:*",
+      "logs:*",
+      "resource-groups:*",
+      "s3:*",
+      "sns:*",
+      "sqs:*",
+      "ssm:*",
+      "sts:*",
+      "tag:*",
+      "xray:*"
+    ],
+    "Resource": "*"
+  },
+  "Shared": [
     {
       "Sid": "DenyOtherProjectsByNamePrefix",
       "Effect": "Deny",

@@ -17,10 +17,26 @@ Parameters:
 
   ExistingOIDCProviderArn:
     Type: String
-    Default: arn:aws:iam::338186951935:oidc-provider/token.actions.githubusercontent.com
+    Default: ''
     Description: >
-      Existing account OIDC provider for token.actions.githubusercontent.com.
-      Shared with other projects (e.g. passbook); this stack must not create another.
+      Existing OIDC provider for token.actions.githubusercontent.com. Leave empty
+      to use the deploying account's own provider, which is what a clone wants;
+      set it explicitly only to point at a provider in another account. This
+      stack never creates one — the provider is shared with other projects.
+
+  ArtifactRetentionDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 3650
+    Description: >
+      Days a Lambda deployment package stays in the artifact bucket. Every build
+      writes a new current key, so without this the bucket grows without bound.
+
+Conditions:
+  # Empty means "this account", spelled out rather than hardcoded to whichever
+  # account the template was first written in.
+  UseOwnAccountOIDCProvider: !Equals [!Ref ExistingOIDCProviderArn, '']
 
 Resources:
   LambdaDeploymentBucket:
@@ -40,10 +56,18 @@ Resources:
         Status: Enabled
       LifecycleConfiguration:
         Rules:
-          - Id: CleanupOldVersions
+          # Expiring only noncurrent versions left every build's current key in
+          # place forever. The current object now expires too; it becomes
+          # noncurrent, the next rule removes it a day later, and the third
+          # sweeps the delete marker. S3 rejects ExpiredObjectDeleteMarker in
+          # the same rule as a day count, hence the split.
+          - Id: ExpireOldArtifacts
             Status: Enabled
+            ExpirationInDays: !Ref ArtifactRetentionDays
             NoncurrentVersionExpiration:
               NoncurrentDays: 1
+          - Id: CleanupExpiredDeleteMarkers
+            Status: Enabled
             ExpiredObjectDeleteMarker: true
           - Id: AbortStaleMultipartUploads
             Status: Enabled
@@ -65,7 +89,10 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              Federated: !Ref ExistingOIDCProviderArn
+              Federated: !If
+                - UseOwnAccountOIDCProvider
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+                - !Ref ExistingOIDCProviderArn
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
@@ -141,6 +168,111 @@ Resources:
                   - lambda:DeleteFunctionConcurrency
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # Event source mappings are named by service-generated UUID, so the
+              # scope has to come from the function they attach to.
+              - Effect: Allow
+                Action:
+                  - lambda:GetEventSourceMapping
+                  - lambda:ListEventSourceMappings
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - lambda:CreateEventSourceMapping
+                  - lambda:UpdateEventSourceMapping
+                  - lambda:DeleteEventSourceMapping
+                Resource: '*'
+                Condition:
+                  ArnLike:
+                    lambda:FunctionArn: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:ListQueueTags
+                Resource:
+                  - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - sqs:CreateQueue
+                  - sqs:DeleteQueue
+                  - sqs:SetQueueAttributes
+                  - sqs:TagQueue
+                  - sqs:UntagQueue
+                Resource:
+                  - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              - Effect: Allow
+                Action:
+                  - sns:GetTopicAttributes
+                  - sns:ListTagsForResource
+                  - sns:ListSubscriptionsByTopic
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - sns:CreateTopic
+                  - sns:DeleteTopic
+                  - sns:SetTopicAttributes
+                  - sns:Subscribe
+                  - sns:Unsubscribe
+                  - sns:TagResource
+                  - sns:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # Alarm ARNs are name-scoped, so chintan-* holds.
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListTagsForResource
+                Resource: '*'
+
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # The budget the README used to ask a human to click. Budgets is a
+              # global service; its ARNs carry no region.
+              # Budgets has no per-verb actions: ViewBudget reads and
+              # ModifyBudget covers create, update and delete alike.
+              - Effect: Allow
+                Action:
+                  - budgets:ViewBudget
+                  - budgets:ListTagsForResource
+                Resource:
+                  - !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/*'
+
+              - Effect: Allow
+                Action:
+                  - budgets:ModifyBudget
+                  - budgets:TagResource
+                  - budgets:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/*'
                 Condition:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
@@ -227,6 +359,8 @@ Resources:
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
+                  # Hardened pool config: MFA and advanced security.
+                  - cognito-idp:SetUserPoolMfaConfig
                   - cognito-idp:TagResource
                   - cognito-idp:UntagResource
                 Resource: '*'
@@ -344,5 +478,8 @@ Outputs:
       Name: ChintanGitHubActionsRole
 
   OIDCProviderArn:
-    Description: Existing GitHub OIDC Provider ARN (shared, not created by this stack)
-    Value: !Ref ExistingOIDCProviderArn
+    Description: GitHub OIDC Provider ARN the deploy role trusts (shared, not created by this stack)
+    Value: !If
+      - UseOwnAccountOIDCProvider
+      - !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+      - !Ref ExistingOIDCProviderArn

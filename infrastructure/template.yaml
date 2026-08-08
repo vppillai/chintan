@@ -43,12 +43,70 @@ Parameters:
     Description: Repository name for Cognito callback URLs
     MinLength: 1
 
+  WorkerCodeKey:
+    Type: String
+    Default: ''
+    Description: >
+      S3 key for the worker Lambda deployment package. Empty means the worker
+      shares LambdaCodeKey with the API function, which is correct while both
+      handlers ship in one binary.
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: >
+      Email address subscribed to the alarm topic and the budget notifications.
+      Empty installs the topic with no subscription, so a clone deploys clean.
+    AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+  MonthlyBudgetUSD:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 100000
+    Description: Monthly cost budget, in USD, defined here rather than clicked into the console.
+
+  RetentionDays:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 3650
+    Description: >
+      Days after which capture audio expires. 0 means indefinite and installs no
+      lifecycle rule at all (see §4.9). Note bodies and cleaned text are never
+      expired by this setting.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch log retention, set explicitly so groups never default to never-expire.
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
+
+  RefreshTokenValidityDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 3650
+    Description: >
+      Cognito refresh token lifetime. Explicit rather than the 30-day default,
+      because the app vaults these tokens under a CMK for biometric unlock.
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+  HasWorkerCodeKey: !Not [!Equals [!Ref WorkerCodeKey, '']]
+  HasRetention: !Not [!Equals [!Ref RetentionDays, 0]]
+
 Resources:
   # Cognito User Pool
   UserPool:
     Type: AWS::Cognito::UserPool
+    # The pool is the identity of every enrolled user. Losing it is not recoverable
+    # by redeploying, so the stack never takes it with it.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub 'chintan-${InstanceName}-${Environment}'
+      DeletionProtection: ACTIVE
       AutoVerifiedAttributes:
         - email
       UsernameConfiguration:
@@ -56,13 +114,24 @@ Resources:
       UserAttributeUpdateSettings:
         AttributesRequireVerificationBeforeUpdate:
           - email
+      # Compromised-credential detection and adaptive authentication.
+      UserPoolAddOns:
+        AdvancedSecurityMode: ENFORCED
+      MfaConfiguration: OPTIONAL
+      EnabledMfas:
+        - SOFTWARE_TOKEN_MFA
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
       Policies:
         PasswordPolicy:
-          MinimumLength: 8
+          MinimumLength: 12
           RequireUppercase: true
           RequireLowercase: true
           RequireNumbers: true
-          RequireSymbols: false
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 3
       Schema:
         - AttributeDataType: String
           Name: email
@@ -103,6 +172,17 @@ Resources:
       SupportedIdentityProviders:
         - COGNITO
       PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AuthSessionValidity: 3
+      # Explicit, because the defaults (1 hour / 30 days) are invisible in the
+      # console diff and the refresh token is the thing sealed in the CMK vault.
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: !Ref RefreshTokenValidityDays
 
   # DynamoDB Table
   DynamoDBTable:
@@ -117,11 +197,36 @@ Resources:
           AttributeType: S
         - AttributeName: sk
           AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
         - AttributeName: sk
           KeyType: RANGE
+      # gsi1pk = TENANT#<id>#NOTE#<noteId>, gsi1sk = CAPTURE#<createdAt>.
+      # Turns note -> captures into a Query instead of a partition scan with
+      # client-side filtering. INCLUDE, not ALL: the projection carries exactly
+      # what the capture list renders, so the index does not duplicate bodies.
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - status
+              - created_at
+              - appended_at
+              - duration_ms
+              - segments_key
+              - peaks_key
+              - version
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       TimeToLiveSpecification:
@@ -135,11 +240,161 @@ Resources:
         - Key: Application
           Value: Chintan
 
+  # Capture pipeline queue. S3 ObjectCreated on an audio object lands here and
+  # the worker drains it out-of-band, so nothing slow is bound by the gateway's
+  # fixed 30-second integration ceiling.
+  CaptureDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'chintan-captures-dlq-${InstanceName}-${Environment}'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  CaptureQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'chintan-captures-${InstanceName}-${Environment}'
+      # Must exceed the worker Timeout (900s) or Lambda refuses the mapping.
+      VisibilityTimeout: 960
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CaptureDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # The bucket ARN is written out rather than !GetAtt'd: ContentBucket already
+  # points at the queue through its notification config, and referencing the
+  # bucket here would close the cycle. The name is deterministic, so this is
+  # exact, not approximate.
+  CaptureQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref CaptureQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowContentBucketToPublishObjectCreated
+            Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt CaptureQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${AWS::AccountId}'
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
   # S3 Content Bucket
   ContentBucket:
     Type: AWS::S3::Bucket
+    # Deleting the stack must not delete the recordings.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    # S3 validates the notification destination at create time, so the queue
+    # policy has to be in place first.
+    DependsOn: CaptureQueuePolicy
     Properties:
       BucketName: !Sub 'chintan-content-${InstanceName}-${AWS::AccountId}'
+      # S3 filters take one prefix and one suffix, and cannot express
+      # tenants/*/captures/. Matching on the audio filename instead is exact:
+      # it fires for the uploaded recording and for nothing the worker writes
+      # afterwards, which would otherwise re-trigger the worker on its own output.
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt CaptureQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'tenants/'
+                  - Name: suffix
+                    Value: '/audio.webm'
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt CaptureQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'tenants/'
+                  - Name: suffix
+                    Value: '/audio.m4a'
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt CaptureQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'tenants/'
+                  - Name: suffix
+                    Value: '/audio.mp3'
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt CaptureQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'tenants/'
+                  - Name: suffix
+                    Value: '/audio.ogg'
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt CaptureQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'tenants/'
+                  - Name: suffix
+                    Value: '/audio.wav'
+          - Event: 's3:ObjectCreated:*'
+            Queue: !GetAtt CaptureQueue.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: 'tenants/'
+                  - Name: suffix
+                    Value: '/audio.bin'
+      # §4.9. Retention expires source audio only. The prefix cannot isolate
+      # captures either, so the rule is keyed on the object tag the presigned
+      # PUT carries; an untagged object is never expired, which fails safe.
+      LifecycleConfiguration:
+        Rules:
+          - !If
+            - HasRetention
+            - Id: ExpireCaptureAudio
+              Status: Enabled
+              Prefix: 'tenants/'
+              TagFilters:
+                - Key: chintan-artifact
+                  Value: capture-audio
+              ExpirationInDays: !Ref RetentionDays
+              NoncurrentVersionExpiration:
+                NoncurrentDays: !Ref RetentionDays
+            - !Ref AWS::NoValue
+          - Id: AbortStaleMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: ExpireDeleteMarkers
+            Status: Enabled
+            ExpiredObjectDeleteMarker: true
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -175,6 +430,10 @@ Resources:
 
   TokenVaultKey:
     Type: AWS::KMS::Key
+    # Without this, deleting the stack schedules the CMK for deletion and every
+    # enrolled biometric credential is silently unrecoverable seven days later.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Description: !Sub 'Chintan ${InstanceName} Cognito refresh-token vault'
       EnableKeyRotation: true
@@ -229,8 +488,12 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:DeleteItem
                   - dynamodb:Query
-                  - dynamodb:Scan
-                Resource: !GetAtt DynamoDBTable.Arn
+                # dynamodb:Scan is deliberately absent. Every access path is a
+                # keyed Query; a Scan here would only ever be a bug that reads
+                # across tenants.
+                Resource:
+                  - !GetAtt DynamoDBTable.Arn
+                  - !Sub '${DynamoDBTable.Arn}/index/gsi1'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
@@ -270,9 +533,45 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # InitiateAuth takes no resource, so the scope has to come from a
+              # condition. Unconditioned, this role could initiate auth against
+              # every user pool in the account.
               - Effect: Allow
                 Action:
                   - cognito-idp:InitiateAuth
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cognito-idp:userPoolArn: !GetAtt UserPool.Arn
+        - PolicyName: CaptureQueueAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Receive/Delete for the worker's event source mapping; Send so the
+              # API can requeue a capture on POST /v1/captures/{id}/retry.
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:ChangeMessageVisibility
+                  - sqs:GetQueueAttributes
+                  - sqs:GetQueueUrl
+                  - sqs:SendMessage
+                Resource: !GetAtt CaptureQueue.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt CaptureDLQ.Arn
+        - PolicyName: XRayTracing
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # AWSLambdaBasicExecutionRole does not carry these, and the
+              # bootstrap role may only attach that one managed policy.
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
                 Resource: '*'
       Tags:
         - Key: Project
@@ -285,6 +584,9 @@ Resources:
   # Lambda Function
   ApiLambdaFunction:
     Type: AWS::Lambda::Function
+    # Create the log group first, or Lambda auto-creates one on first invoke and
+    # the stack's group then conflicts with it.
+    DependsOn: ApiLogGroup
     Properties:
       FunctionName: !Sub 'chintan-api-${InstanceName}-${Environment}'
       Runtime: provided.al2023
@@ -296,8 +598,13 @@ Resources:
       Architectures:
         - arm64
       MemorySize: 512
-      Timeout: 120
+      # HTTP API integrations are capped at 30 seconds and the cap is not
+      # adjustable. Anything above that is unreachable: the client already has
+      # its 504 and the account is still paying for the running invocation.
+      Timeout: 29
       ReservedConcurrentExecutions: 5
+      TracingConfig:
+        Mode: Active
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
@@ -310,6 +617,7 @@ Resources:
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
           TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
           WEBAUTHN_RP_DISPLAY_NAME: Chintan
+          CAPTURE_QUEUE_URL: !Ref CaptureQueue
       Tags:
         - Key: Project
           Value: chintan
@@ -318,12 +626,94 @@ Resources:
         - Key: Application
           Value: Chintan
 
+  # Worker Lambda — the slow half of the pipeline. Transcribe, route, clean,
+  # append. Invoked out-of-band from SQS, so its ceiling is Lambda's 900s rather
+  # than the gateway's 30.
+  WorkerLambdaFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: WorkerLogGroup
+    Properties:
+      FunctionName: !Sub 'chintan-worker-${InstanceName}-${Environment}'
+      Runtime: provided.al2023
+      Handler: bootstrap
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !If [HasWorkerCodeKey, !Ref WorkerCodeKey, !Ref LambdaCodeKey]
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Architectures:
+        - arm64
+      MemorySize: 2048
+      Timeout: 900
+      ReservedConcurrentExecutions: 5
+      TracingConfig:
+        Mode: Active
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DynamoDBTable
+          CONTENT_BUCKET: !Ref ContentBucket
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+          LLM_BASE_URL: https://api.minimax.io/v1
+          LLM_MODEL: MiniMax-M3
+          GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
+          LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          TOKEN_VAULT_KMS_KEY_ID: !Ref TokenVaultKey
+          WEBAUTHN_RP_DISPLAY_NAME: Chintan
+          CAPTURE_QUEUE_URL: !Ref CaptureQueue
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  CaptureQueueEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt CaptureQueue.Arn
+      FunctionName: !GetAtt WorkerLambdaFunction.Arn
+      Enabled: true
+      # One capture per invocation: a batch failure must not redeliver captures
+      # that already appended.
+      BatchSize: 1
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      ScalingConfig:
+        MaximumConcurrency: 5
+
   # CloudWatch Log Group
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/chintan-api-${InstanceName}-${Environment}'
-      RetentionInDays: 14
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/chintan-worker-${InstanceName}-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/chintan-${InstanceName}-${Environment}'
+      RetentionInDays: !Ref LogRetentionDays
       Tags:
         - Key: Project
           Value: chintan
@@ -436,7 +826,14 @@ Resources:
       StageName: $default
       ApiId: !Ref HttpApi
       AutoDeploy: true
+      # Route key and status only. No query string, no body, no header beyond
+      # the correlation id — nothing here may carry transcript content.
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","correlationId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","responseLatency":"$context.responseLatency","integrationStatus":"$context.integrationStatus","integrationErrorMessage":"$context.integrationErrorMessage","authorizerError":"$context.authorizer.error"}
       DefaultRouteSettings:
+        DetailedMetricsEnabled: true
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
       Tags:
@@ -452,6 +849,239 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*'
+
+  # ---------------------------------------------------------------------------
+  # Alerting. An unattended pipeline that fails silently is worse than no
+  # pipeline: the user believes the recording was filed.
+  # ---------------------------------------------------------------------------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'chintan-alarms-${InstanceName}-${Environment}'
+      DisplayName: !Sub 'Chintan ${InstanceName} alarms'
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  # No AlarmEmail means no subscription, so a third-party clone deploys without
+  # editing anything. The alarms still fire and are still visible in the console.
+  AlarmTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # Budgets publishes as a service principal, which the default topic policy
+  # does not cover.
+  AlarmTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref AlarmTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # A TopicPolicy replaces the default policy outright, so the owner
+          # statement has to be restated or the account loses its own topic.
+          - Sid: AllowOwningAccountFullControl
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - sns:GetTopicAttributes
+              - sns:SetTopicAttributes
+              - sns:AddPermission
+              - sns:RemovePermission
+              - sns:DeleteTopic
+              - sns:Subscribe
+              - sns:ListSubscriptionsByTopic
+              - sns:Publish
+            Resource: !Ref AlarmTopic
+          - Sid: AllowCloudWatchAlarmsToPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: AllowBudgetsToPublish
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  ApiFunctionErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-errors'
+      AlarmDescription: API Lambda returned an unhandled error.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  ApiFunctionThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-throttles'
+      AlarmDescription: API Lambda hit its reserved concurrency ceiling.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiLambdaFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  WorkerFunctionErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-errors'
+      AlarmDescription: Worker Lambda failed a capture. Fires before the DLQ does.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WorkerLambdaFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  WorkerFunctionThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-throttles'
+      AlarmDescription: Worker Lambda hit its reserved concurrency ceiling; captures are queueing.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WorkerLambdaFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # A single message here is one recording the user believes was filed and was not.
+  CaptureDLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-dlq'
+      AlarmDescription: A capture exhausted its retries and is sitting in the dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt CaptureDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # Average of the 5xx metric is the 5xx rate: 0.05 is five percent of requests.
+  Api5xxRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-5xx-rate'
+      AlarmDescription: More than five percent of API requests are failing server-side.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0.05
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # ---------------------------------------------------------------------------
+  # Cost ceiling, in the template rather than in a README copy-paste step that
+  # nobody performs. Account-scoped on purpose: a tag-filtered budget silently
+  # reports zero until Project is activated as a cost allocation tag, and a
+  # budget that reads zero is worse than one that reads slightly high.
+  # ---------------------------------------------------------------------------
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'chintan-${InstanceName}-${Environment}'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUSD
+          Unit: USD
+      NotificationsWithSubscribers: !If
+        - HasAlarmEmail
+        - - Notification:
+              NotificationType: ACTUAL
+              ComparisonOperator: GREATER_THAN
+              Threshold: 80
+              ThresholdType: PERCENTAGE
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref AlarmEmail
+          - Notification:
+              NotificationType: FORECASTED
+              ComparisonOperator: GREATER_THAN
+              Threshold: 100
+              ThresholdType: PERCENTAGE
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref AlarmEmail
+        - !Ref AWS::NoValue
 
 Outputs:
   ApiEndpoint:
@@ -489,3 +1119,33 @@ Outputs:
     Value: !Ref DynamoDBTable
     Export:
       Name: !Sub '${AWS::StackName}-TableName'
+
+  CaptureQueueUrl:
+    Description: Capture pipeline SQS queue URL (CAPTURE_QUEUE_URL)
+    Value: !Ref CaptureQueue
+    Export:
+      Name: !Sub '${AWS::StackName}-CaptureQueueUrl'
+
+  CaptureQueueArn:
+    Description: Capture pipeline SQS queue ARN (CAPTURE_QUEUE_ARN)
+    Value: !GetAtt CaptureQueue.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-CaptureQueueArn'
+
+  CaptureDLQUrl:
+    Description: Capture pipeline dead-letter queue URL
+    Value: !Ref CaptureDLQ
+    Export:
+      Name: !Sub '${AWS::StackName}-CaptureDLQUrl'
+
+  WorkerFunctionName:
+    Description: Worker Lambda function name
+    Value: !Ref WorkerLambdaFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-WorkerFunctionName'
+
+  AlarmTopicArn:
+    Description: SNS topic every alarm publishes to
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-AlarmTopicArn'
