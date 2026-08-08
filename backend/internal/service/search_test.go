@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -197,6 +198,103 @@ func TestSearchExcerptCutsOnRuneBoundaries(t *testing.T) {
 	}
 }
 
+// The offset of the term has to be found in the same string the excerpt is cut
+// from. Locating it in strings.ToLower(text) and then slicing text is only
+// correct while lowercasing preserves byte length, which it does not: U+023A Ⱥ
+// is two bytes and lowercases to three, so the offset runs past the end of the
+// original and the slice panics. GET /v1/search has no recover() above it, so
+// that is a 5xx for every query this tenant makes — over text they dictated.
+//
+// unicode.ToLower is a rune-for-rune map, so a rune offset is stable across the
+// fold even when the byte offset is not.
+func TestSearchExcerptLocatesTheTermByRuneNotByLoweredByteOffset(t *testing.T) {
+	const kelvin = "K" // KELVIN SIGN, 3 bytes, lowercases to "k", 1 byte.
+	const dotted = "İ" // LATIN CAPITAL LETTER I WITH DOT ABOVE, 2 bytes -> "i".
+	const alveolar = "Ⱥ"
+
+	cases := []struct {
+		name string
+		text string
+		term string
+		want string
+	}{
+		{
+			name: "plain ascii is unchanged",
+			text: "the roof leaks over the bench",
+			term: "roof",
+			want: "the roof leaks over the bench",
+		},
+		{
+			// 7 bytes of text; the lowered form is 10, so the byte offset of
+			// "x" is 9 and text[:9] is out of range.
+			name: "lowercase longer in utf8 than the original",
+			text: alveolar + alveolar + alveolar + "x",
+			term: "x",
+			want: alveolar + alveolar + alveolar + "x",
+		},
+		{
+			name: "dotted capital i",
+			text: dotted + dotted + "needle",
+			term: "needle",
+			want: dotted + dotted + "needle",
+		},
+		{
+			name: "lowercase shorter in utf8 than the original",
+			text: kelvin + kelvin + kelvin + "needle",
+			term: "needle",
+			want: kelvin + kelvin + kelvin + "needle",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := excerpt(tc.text, tc.term)
+			if got != tc.want {
+				t.Fatalf("excerpt(%q, %q) = %q, want %q", tc.text, tc.term, got, tc.want)
+			}
+		})
+	}
+}
+
+// Below the panic threshold the same byte/rune confusion still moves the window,
+// and it moves it far enough to cut the term out of its own excerpt.
+func TestSearchExcerptWindowsAMultiByteHitAroundTheTerm(t *testing.T) {
+	const kelvin = "K"
+	text := strings.Repeat(kelvin, 100) + "needle" + strings.Repeat("z", 100)
+
+	got := excerpt(text, "needle")
+
+	if !strings.Contains(got, "needle") {
+		t.Fatalf("excerpt = %q, want it to contain the term it is context for", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Fatalf("excerpt = %q contains the replacement rune, so a character was cut in half", got)
+	}
+	runes := []rune(text)
+	want := "…" + strings.TrimSpace(string(runes[100-excerptRadius:100+len([]rune("needle"))+excerptRadius])) + "…"
+	if got != want {
+		t.Fatalf("excerpt = %q, want %q", got, want)
+	}
+}
+
+// The panic is reachable from the endpoint, not only from the helper: snippets
+// are dictated or typed note text.
+func TestSearchSurvivesASnippetWhoseLowercaseIsLonger(t *testing.T) {
+	svc := searchFixture(t, model.NoteIndex{
+		ID:      "n_alveolar",
+		Title:   "Fold",
+		Snippet: "ȺȺȺ x",
+	})
+
+	page, err := svc.Search(context.Background(), "user1", "x", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if got := hitIDs(page); len(got) != 1 || got[0] != "n_alveolar" {
+		t.Fatalf("results = %v, want the note whose snippet holds the term", got)
+	}
+}
+
 // An empty query returning every note is an unbounded list with a filter's
 // name on it.
 func TestSearchRejectsAQueryWithNothingToSearchFor(t *testing.T) {
@@ -271,6 +369,187 @@ func TestSearchHonoursTheRequestedLimitAndPagesWithTheStoresCursor(t *testing.T)
 			t.Fatalf("%s appears on both pages; the cursor was not consumed (first=%v second=%v)",
 				id, hitIDs(first), hitIDs(second))
 		}
+	}
+}
+
+// Every match has to be reachable. Collecting hits across store pages,
+// truncating to the requested limit and then handing back the store's cursor
+// from past every note scanned throws away the surplus: the cursor resumes
+// after the notes those hits came from, so no later request can ever return
+// them. With 120 matching notes and limit=50 the first page returns 50, the
+// store is exhausted so the cursor is empty, and 70 notes the user can see in
+// their own list are unfindable by search forever.
+func TestSearchPagingToExhaustionReturnsEveryMatchExactlyOnce(t *testing.T) {
+	store := memory.NewStore()
+	ctx := context.Background()
+	const total = 120
+	for i := range total {
+		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
+			ID:    fmt.Sprintf("note_%03d", i),
+			Title: fmt.Sprintf("Widget %03d", i),
+		}); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+	}
+	svc := NewSearchService(NewNotesService(store, memory.NewObjects()))
+
+	seen := map[string]int{}
+	order := []string{}
+	cursor := ""
+	for request := 0; ; request++ {
+		if request > total {
+			t.Fatalf("paging did not terminate after %d requests", request)
+		}
+		page, err := svc.Search(ctx, "user1", "widget", repository.ListOptions{Limit: 50, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("Search(request %d): %v", request, err)
+		}
+		if len(page.Items) > 50 {
+			t.Fatalf("request %d returned %d hits, more than the requested limit", request, len(page.Items))
+		}
+		for _, id := range hitIDs(page) {
+			seen[id]++
+			order = append(order, id)
+		}
+		cursor = page.Cursor
+		if cursor == "" {
+			break
+		}
+	}
+
+	missing := []string{}
+	duplicated := []string{}
+	for i := range total {
+		id := fmt.Sprintf("note_%03d", i)
+		switch seen[id] {
+		case 1:
+		case 0:
+			missing = append(missing, id)
+		default:
+			duplicated = append(duplicated, id)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%d of %d matching notes were never returned by any page, e.g. %v",
+			len(missing), total, missing[:min(len(missing), 5)])
+	}
+	if len(duplicated) > 0 {
+		t.Errorf("%d notes were returned by more than one page, e.g. %v",
+			len(duplicated), duplicated[:min(len(duplicated), 5)])
+	}
+	if len(order) != total {
+		t.Errorf("paging returned %d hits in total, want %d", len(order), total)
+	}
+}
+
+// Paging has to be repeatable: the same corpus and the same cursors produce the
+// same pages, or a client that re-requests a page sees a different one.
+func TestSearchPagingIsDeterministicAcrossRuns(t *testing.T) {
+	store := memory.NewStore()
+	ctx := context.Background()
+	for i := range 120 {
+		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
+			ID:    fmt.Sprintf("note_%03d", i),
+			Title: fmt.Sprintf("Widget %03d", i),
+		}); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+	}
+	svc := NewSearchService(NewNotesService(store, memory.NewObjects()))
+
+	drain := func() []string {
+		var out []string
+		cursor := ""
+		for {
+			page, err := svc.Search(ctx, "user1", "widget", repository.ListOptions{Limit: 37, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("Search: %v", err)
+			}
+			out = append(out, hitIDs(page)...)
+			cursor = page.Cursor
+			if cursor == "" {
+				return out
+			}
+		}
+	}
+
+	first, second := drain(), drain()
+	if !slices.Equal(first, second) {
+		t.Fatalf("two identical traversals returned different orders:\n%v\n%v", first, second)
+	}
+}
+
+func TestSearchCursorRoundTripsTheWindowItNames(t *testing.T) {
+	for _, want := range []searchCursor{
+		{},
+		{Start: "c1"},
+		{Start: "c1", End: "c2", Skip: 50},
+		{End: "c2", Skip: 7},
+	} {
+		encoded, err := encodeSearchCursor(want)
+		if err != nil {
+			t.Fatalf("encodeSearchCursor(%+v): %v", want, err)
+		}
+		if err := ValidateCursor(encoded); err != nil {
+			t.Errorf("the cursor search issues is rejected by the API's own cursor check: %v", err)
+		}
+		got, err := decodeSearchCursor(encoded)
+		if err != nil {
+			t.Fatalf("decodeSearchCursor(%q): %v", encoded, err)
+		}
+		if got != want {
+			t.Errorf("cursor round-tripped to %+v, want %+v", got, want)
+		}
+	}
+}
+
+// A malformed cursor is a client mistake. Typing it as ErrInvalidCursor is what
+// lets the handler answer 400 rather than 500.
+func TestSearchCursorRejectsAMalformedToken(t *testing.T) {
+	cases := map[string]string{
+		"not base64":    "!!!not base64!!!",
+		"bad json":      base64.RawURLEncoding.EncodeToString([]byte(searchCursorPrefix + "{nope")),
+		"negative skip": base64.RawURLEncoding.EncodeToString([]byte(searchCursorPrefix + `{"skip":-1}`)),
+	}
+	for name, cursor := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decodeSearchCursor(cursor); !errors.Is(err, ErrInvalidCursor) {
+				t.Fatalf("decodeSearchCursor(%q) err = %v, want ErrInvalidCursor", cursor, err)
+			}
+		})
+	}
+}
+
+// Search used to hand out the store's own continuation token. One held across a
+// deploy — in a client's in-flight request, or in a bookmark — still has to
+// resume rather than 400.
+func TestSearchAcceptsAStoreCursorIssuedBeforeThisEncodingExisted(t *testing.T) {
+	store := memory.NewStore()
+	ctx := context.Background()
+	for i := range 5 {
+		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
+			ID:    fmt.Sprintf("note_%03d", i),
+			Title: fmt.Sprintf("Widget %03d", i),
+		}); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+	}
+	svc := NewSearchService(NewNotesService(store, memory.NewObjects()))
+
+	notes, err := store.ListNotes(ctx, "user1", repository.ListOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if notes.Cursor == "" {
+		t.Fatal("the store issued no cursor, so this test has nothing to hand back")
+	}
+
+	page, err := svc.Search(ctx, "user1", "widget", repository.ListOptions{Cursor: notes.Cursor})
+	if err != nil {
+		t.Fatalf("Search(store cursor): %v", err)
+	}
+	if got := hitIDs(page); !slices.Equal(got, []string{"note_002", "note_003", "note_004"}) {
+		t.Fatalf("results = %v, want the three notes after the store cursor", got)
 	}
 }
 

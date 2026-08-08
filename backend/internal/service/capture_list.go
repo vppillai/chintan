@@ -77,22 +77,59 @@ type TenantCaptureLister interface {
 // maxCaptureWalkNotes bounds the fallback walk.
 const maxCaptureWalkNotes = 500
 
+// maxCaptureFilterRounds bounds how many store queries one filtered page may
+// cost, matching the bound the DynamoDB store already applies to its own
+// server-side filters (repository.maxFilterRounds). Without it, a filter that
+// matches almost nothing turns one request into a scan of the whole partition.
+const maxCaptureFilterRounds = 10
+
 // ListCaptures returns one page of the tenant's captures, newest first.
+//
+// The status filter runs here rather than in the store query, so the store
+// paginates before the filter is applied and a page can come back with nothing
+// kept. Keep querying until the page is full or the partition is exhausted:
+// otherwise one needs_target capture behind a page of newer ones answers
+// GET /v1/captures?status=needs_target with an empty list and a cursor, and the
+// screen whose whole job is to ask about that capture shows nothing.
+//
+// Each round asks the store for only what is still missing, so a round can
+// never return more kept captures than the page has room for. Discarding the
+// overflow would put it behind a cursor that already points past it, which is
+// the same defect one layer along.
 func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter CaptureFilter, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
-	if lister, ok := s.store.(TenantCaptureLister); ok {
-		page, err := lister.ListCaptures(ctx, userID, opts)
+	lister, ok := s.store.(TenantCaptureLister)
+	if !ok {
+		return s.listCapturesByWalk(ctx, userID, filter, opts)
+	}
+
+	limit := int(opts.Limit)
+	if limit <= 0 {
+		limit = int(repository.DefaultListLimit)
+	}
+	if limit > int(repository.MaxListLimit) {
+		limit = int(repository.MaxListLimit)
+	}
+	kept := make([]model.CaptureIndex, 0, limit)
+	cursor := opts.Cursor
+	for round := 0; round < maxCaptureFilterRounds && len(kept) < limit; round++ {
+		page, err := lister.ListCaptures(ctx, userID, repository.ListOptions{
+			Limit:  int32(limit - len(kept)),
+			Cursor: cursor,
+		})
 		if err != nil {
 			return repository.Page[model.CaptureIndex]{}, err
 		}
-		kept := make([]model.CaptureIndex, 0, len(page.Items))
 		for _, c := range page.Items {
 			if filter.keep(c) {
 				kept = append(kept, c)
 			}
 		}
-		return repository.Page[model.CaptureIndex]{Items: kept, Cursor: page.Cursor}, nil
+		cursor = page.Cursor
+		if cursor == "" {
+			break
+		}
 	}
-	return s.listCapturesByWalk(ctx, userID, filter, opts)
+	return repository.Page[model.CaptureIndex]{Items: kept, Cursor: cursor}, nil
 }
 
 // ListUnroutedCaptures returns captures that have no destination note yet.

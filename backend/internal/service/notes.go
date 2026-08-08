@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,8 +149,17 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 		return model.NoteIndex{}, ErrEmptyNoteTitle
 	}
 
-	// Generate a simple ID (in production, use UUID or similar)
-	noteID := fmt.Sprintf("note_%d", time.Now().UnixNano())
+	noteIDBytes := make([]byte, 8)
+	if _, err := rand.Read(noteIDBytes); err != nil {
+		return model.NoteIndex{}, fmt.Errorf("failed to generate note ID: %w", err)
+	}
+	// Same shape as a capture id: a fixed-width creation instant so ids sort
+	// chronologically — the note index is keyed NOTE#<id>, so the id is what
+	// decides list order — followed by random bytes. The clock alone is both
+	// guessable from the creation time and collision-prone, and a collision
+	// surfaces to the user as an unexplained 409 on a note they just made.
+	noteID := fmt.Sprintf("note_%016x_%s",
+		uint64(time.Now().UTC().UnixNano()), hex.EncodeToString(noteIDBytes))
 
 	// Generate S3 keys
 	markdownKey, err := keys.NoteMarkdown(userID, noteID)
@@ -250,8 +261,22 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		return model.NoteIndex{}, ErrNoteArchived
 	}
 
-	// The version the client read is checked before any object is written, so a
-	// losing writer does not leave a rewritten body behind with the index intact.
+	// Read the body's ETag before the version check, so the conditional write
+	// below covers the whole of this call. The pipeline's append writes the
+	// object first and refreshes the index afterwards, so an append that lands
+	// after the version check is invisible to it — only the ETag catches it.
+	bodyETag := ""
+	if updates.Body != nil {
+		_, bodyETag, err = s.objects.GetWithETag(ctx, note.S3MarkdownKey)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return model.NoteIndex{}, fmt.Errorf("failed to read note body: %w", err)
+		}
+	}
+
+	// The version the client read is checked before anything is written, which
+	// rejects the common conflict cheaply. It cannot close the window on its
+	// own: an append landing after this line and before the write below is
+	// caught by the ETag, not by this.
 	if updates.ExpectedVersion != nil && *updates.ExpectedVersion != note.Version {
 		return note, repository.ErrVersionConflict
 	}
@@ -279,8 +304,17 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 
 	// Handle body update
 	if updates.Body != nil {
-		// Write to markdown file
-		err = s.objects.Put(ctx, note.S3MarkdownKey, []byte(*updates.Body), "text/markdown")
+		// Write to markdown file, conditional on the object still carrying the
+		// ETag read above. An unconditional Put here destroys a voice append
+		// that landed in the meantime and only then reports the conflict — the
+		// client is told to re-read text that no longer exists anywhere.
+		err = s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(*updates.Body), "text/markdown", bodyETag)
+		if errors.Is(err, repository.ErrPreconditionFailed) {
+			// Somebody else wrote the body between the read and this write.
+			// That is the same 409 the version check answers, and the client
+			// reconciles it the same way.
+			return note, repository.ErrVersionConflict
+		}
 		if err != nil {
 			return model.NoteIndex{}, fmt.Errorf("failed to update markdown: %w", err)
 		}

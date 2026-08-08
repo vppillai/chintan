@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -129,6 +130,92 @@ func TestListCapturesFiltersToWhatEachStatusGroupMeans(t *testing.T) {
 				t.Fatalf("ListCaptures(%s) = %v, want %v", tc.filter, got, tc.want)
 			}
 		})
+	}
+}
+
+// The status filter runs in Go, after the store has already paginated, and the
+// store query carries no FilterExpression. One needs_target capture sitting
+// behind a page of newer ones therefore answers
+// GET /v1/captures?status=needs_target with an empty list and a cursor — the
+// screen that exists to ask "which note should this go in?" shows nothing at
+// all, and the capture is stuck.
+func TestListCapturesFillsThePageFromBehindAFullPageOfNonMatches(t *testing.T) {
+	const ahead = 60
+	captures := make([]model.CaptureIndex, 0, ahead+1)
+	captures = append(captures, model.CaptureIndex{
+		ID: "c_0000000000000000_match", UserID: "user1", Status: model.StatusNeedsTarget,
+		CreatedAt: "2026-08-08T09:00:00.000000000Z",
+	})
+	for i := 1; i <= ahead; i++ {
+		captures = append(captures, model.CaptureIndex{
+			ID: fmt.Sprintf("c_%016d_x", i), UserID: "user1", Status: model.StatusAppended,
+			CreatedAt: fmt.Sprintf("2026-08-08T10:%02d:00.000000000Z", i%60),
+		})
+	}
+	_, svc := captureFixture(t, captures...)
+
+	page, err := svc.ListCaptures(context.Background(), "user1", CaptureFilterNeedsTarget, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCaptures(needs_target): %v", err)
+	}
+	if got := captureIDs(page); !slices.Equal(got, []string{"c_0000000000000000_match"}) {
+		t.Fatalf("first page = %v (cursor %q), want the one needs_target capture: it is %d captures deep, which is behind the store's first page",
+			got, page.Cursor, ahead)
+	}
+	if page.Cursor != "" {
+		t.Errorf("first page returned cursor %q with nothing left behind it", page.Cursor)
+	}
+}
+
+// Filling the page must not go the other way and over-read: a kept capture that
+// does not fit is only reachable if the cursor resumes before it.
+func TestListCapturesPagesAFilterToExhaustionExactlyOnce(t *testing.T) {
+	const total = 120
+	captures := make([]model.CaptureIndex, 0, total)
+	wantIDs := map[string]int{}
+	for i := range total {
+		c := model.CaptureIndex{
+			ID: fmt.Sprintf("c_%016d_x", i), UserID: "user1", Status: model.StatusAppended,
+			CreatedAt: fmt.Sprintf("2026-08-08T10:%02d:00.000000000Z", i%60),
+		}
+		if i%3 == 0 {
+			c.Status = model.StatusNeedsTarget
+			wantIDs[c.ID] = 0
+		}
+		captures = append(captures, c)
+	}
+	_, svc := captureFixture(t, captures...)
+	ctx := context.Background()
+
+	const limit = 25
+	cursor := ""
+	for request := 0; ; request++ {
+		if request > total {
+			t.Fatalf("paging did not terminate after %d requests", request)
+		}
+		page, err := svc.ListCaptures(ctx, "user1", CaptureFilterNeedsTarget, repository.ListOptions{Limit: limit, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("ListCaptures(request %d): %v", request, err)
+		}
+		if len(page.Items) > limit {
+			t.Fatalf("request %d returned %d captures, more than the requested limit %d", request, len(page.Items), limit)
+		}
+		for _, c := range page.Items {
+			if c.Status != model.StatusNeedsTarget {
+				t.Fatalf("capture %s has status %s, which the needs_target filter must not return", c.ID, c.Status)
+			}
+			wantIDs[c.ID]++
+		}
+		cursor = page.Cursor
+		if cursor == "" {
+			break
+		}
+	}
+
+	for id, seen := range wantIDs {
+		if seen != 1 {
+			t.Errorf("needs_target capture %s was returned %d times across the whole traversal, want exactly 1", id, seen)
+		}
 	}
 }
 

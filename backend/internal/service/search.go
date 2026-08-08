@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -73,11 +76,77 @@ func NewSearchService(notes *NotesService) *SearchService {
 	return &SearchService{notes: notes}
 }
 
+// searchCursorPrefix tags a cursor this service issued, so a store
+// continuation token — which is base64 of a JSON object in the DynamoDB store —
+// is never mistaken for one.
+const searchCursorPrefix = "srch1:"
+
+// searchCursor resumes a search inside a *window*: the run of store pages one
+// request scanned.
+//
+// Ranking happens over the whole window, so a window can hold more hits than
+// one page returns. The surplus has to stay reachable, which means the cursor
+// has to name the window as well as the offset into it — the store's own
+// continuation token points past every note scanned, so on its own it skips
+// exactly the hits that did not fit.
+//
+// Start and End bound the window in the store's own terms rather than in hits,
+// so a resumed request rebuilds the identical window and the identical order
+// even if the client changes its limit mid-traversal.
+type searchCursor struct {
+	// Start is the store cursor the window began at. Empty is the first page
+	// of the partition.
+	Start string `json:"start,omitempty"`
+	// End is the store cursor the window ended at. Empty means the window ran
+	// to the end of the partition. It is only meaningful when Skip is set.
+	End string `json:"end,omitempty"`
+	// Skip is how many of the window's ranked hits earlier pages returned. Zero
+	// means "begin a fresh window at Start".
+	Skip int `json:"skip,omitempty"`
+}
+
+func encodeSearchCursor(c searchCursor) (string, error) {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", fmt.Errorf("search: encode cursor: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(append([]byte(searchCursorPrefix), raw...)), nil
+}
+
+// decodeSearchCursor reads a cursor this service issued. Anything else is
+// treated as a store continuation token — that is what search used to hand out,
+// so a cursor held across a deploy still resumes — and the store rejects it if
+// it belongs to another partition.
+func decodeSearchCursor(cursor string) (searchCursor, error) {
+	if cursor == "" {
+		return searchCursor{}, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return searchCursor{}, fmt.Errorf("%w: not base64url", ErrInvalidCursor)
+	}
+	body, ok := strings.CutPrefix(string(raw), searchCursorPrefix)
+	if !ok {
+		return searchCursor{Start: cursor}, nil
+	}
+	var c searchCursor
+	if err := json.Unmarshal([]byte(body), &c); err != nil {
+		return searchCursor{}, fmt.Errorf("%w: malformed search cursor", ErrInvalidCursor)
+	}
+	if c.Skip < 0 {
+		return searchCursor{}, fmt.Errorf("%w: malformed search cursor", ErrInvalidCursor)
+	}
+	return c, nil
+}
+
 // Search returns one page of matches for q.
 //
-// The returned cursor is the store's own continuation token, so paging is
-// stable across requests and a page may legitimately be short — or empty — with
-// a cursor still set.
+// It scans store pages until it has enough hits to fill the page, ranks what it
+// found, and returns a cursor that resumes either inside that window — when
+// ranking produced more hits than fitted — or at the store position the window
+// stopped at. Nothing matched is ever dropped: paging to exhaustion returns
+// every matching note exactly once. A page may still legitimately be short, or
+// empty, with a cursor set, because a scanned page can match nothing.
 func (s *SearchService) Search(ctx context.Context, userID, q string, opts repository.ListOptions) (repository.Page[SearchHit], error) {
 	terms := searchTerms(q)
 	if len(terms) == 0 {
@@ -89,8 +158,13 @@ func (s *SearchService) Search(ctx context.Context, userID, q string, opts repos
 		want = int(repository.DefaultListLimit)
 	}
 
+	from, err := decodeSearchCursor(opts.Cursor)
+	if err != nil {
+		return repository.Page[SearchHit]{}, err
+	}
+
 	hits := make([]SearchHit, 0, want)
-	cursor := opts.Cursor
+	cursor := from.Start
 	for page := 0; page < searchScanPages; page++ {
 		got, err := s.notes.ListNotes(ctx, userID, repository.ListOptions{
 			Limit:  repository.MaxListLimit,
@@ -105,24 +179,53 @@ func (s *SearchService) Search(ctx context.Context, userID, q string, opts repos
 			}
 		}
 		cursor = got.Cursor
-		if cursor == "" || len(hits) >= want {
+		if cursor == "" {
+			break
+		}
+		if from.Skip > 0 {
+			// Resuming: rebuild the window the earlier request scanned, so the
+			// ranked order this offset indexes into is the same one.
+			if cursor == from.End {
+				break
+			}
+			continue
+		}
+		if len(hits) >= want {
 			break
 		}
 	}
 
-	// Stable order: score first, then title, so two runs of the same query over
-	// an unchanged corpus return the same page.
+	// Stable order: score first, then title, then id, so two runs of the same
+	// query over an unchanged corpus return the same page — and so an offset
+	// into the window means the same thing on the request that issued it and on
+	// the request that redeems it.
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].score != hits[j].score {
 			return hits[i].score > hits[j].score
 		}
-		return hits[i].Title < hits[j].Title
+		if hits[i].Title != hits[j].Title {
+			return hits[i].Title < hits[j].Title
+		}
+		return hits[i].NoteID < hits[j].NoteID
 	})
-	if len(hits) > want {
-		hits = hits[:want]
+
+	start := min(from.Skip, len(hits))
+	end := min(start+want, len(hits))
+	page := repository.Page[SearchHit]{Items: hits[start:end]}
+
+	switch {
+	case end < len(hits):
+		// Ranking found more than this page carries. The rest of the window is
+		// only reachable through a cursor that names the window.
+		page.Cursor, err = encodeSearchCursor(searchCursor{Start: from.Start, End: cursor, Skip: end})
+	case cursor != "":
+		page.Cursor, err = encodeSearchCursor(searchCursor{Start: cursor})
+	}
+	if err != nil {
+		return repository.Page[SearchHit]{}, err
 	}
 
-	return repository.Page[SearchHit]{Items: hits, Cursor: cursor}, nil
+	return page, nil
 }
 
 // searchTerms splits a query into lowercase terms, bounded in length.
@@ -207,19 +310,34 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 // excerpt returns the text around the first occurrence of term, cut on rune
 // boundaries. A byte slice here would cut a multi-byte rune in half and put
 // invalid UTF-8 on the wire.
+//
+// The term is located by rune offset, not by byte offset. Lowercasing does not
+// preserve byte length — U+023A `Ⱥ` is two bytes and folds to a three-byte
+// U+2C65 `ⱥ`, KELVIN SIGN folds three bytes down to one — so a byte offset
+// found in the lowered text does not address the same character in the
+// original. Used against the original it cuts the window loose by whole runes,
+// and once the fold has grown the text past its original length it runs off the
+// end and panics, which is a 5xx on GET /v1/search for text the user dictated.
+//
+// strings.ToLower maps rune for rune, so rune offsets do survive the fold even
+// where byte offsets do not.
 func excerpt(text, term string) string {
-	idx := strings.Index(strings.ToLower(text), term)
+	lowered := strings.ToLower(text)
+	loweredTerm := strings.ToLower(term)
+	idx := strings.Index(lowered, loweredTerm)
 	if idx < 0 {
 		return ""
 	}
 	runes := []rune(text)
-	// Convert the byte offset to a rune offset.
-	start := len([]rune(text[:idx]))
+	// Both offsets below are taken in the lowered text, which is where the
+	// match was found; the result is a rune offset, and that one addresses the
+	// original too.
+	start := len([]rune(lowered[:idx]))
 	from := start - excerptRadius
 	if from < 0 {
 		from = 0
 	}
-	to := start + len([]rune(term)) + excerptRadius
+	to := start + len([]rune(loweredTerm)) + excerptRadius
 	if to > len(runes) {
 		to = len(runes)
 	}
