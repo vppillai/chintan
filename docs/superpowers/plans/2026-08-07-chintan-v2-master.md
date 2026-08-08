@@ -103,11 +103,24 @@ determine state without re-reading the whole diff.
 
 - [x] Phase 0 — audit, design spec, rollback tag, branch `feat/v2`
 - [x] Phase 1 — auth (JWKS verification, tenant identity, X-User-ID removed, isolation tests at both layers)
-- [ ] Phase 2 — repository
-- [ ] Phase 3 — idempotency
-- [ ] Phase 4 — pipeline
-- [ ] Phase 5 — spend
-- [ ] Phase 6 — api
-- [ ] Phase 7 — frontend
-- [ ] Phase 8 — infra
-- [ ] Phase 9 — ops
+- [~] Phase 2 — repository (in flight)
+- [~] Phase 3 — idempotency (in flight, with Phase 2)
+- [ ] Phase 4 — pipeline (blocked on 2/3)
+- [x] Phase 5 — spend (`internal/meter`, `internal/breaker`: reservation, reconciliation, per-tenant daily cap)
+- [~] Phase 6 — api (contract fixed and validated at `docs/api/openapi.yaml`; `internal/obs` done; handler rewrite blocked on 2/3)
+- [~] Phase 7 — frontend (shell, routing, two themes, AA-verified tokens, 42 tests; capture + API client in flight)
+- [~] Phase 8 — infra (in flight)
+- [~] Phase 9 — ops (in flight)
+
+### Decisions taken during execution
+
+- **Waveform peaks moved from the worker to the client.** The browser holds the
+  decoded signal from its `AnalyserNode` while recording; regenerating it in the
+  worker would mean an Opus decoder or an ffmpeg layer in Lambda. `POST /v1/captures`
+  returns a second presigned URL for it. Spec and OpenAPI updated.
+- **Back from `/` still exits the app.** Trapping the user on the home screen
+  needs a sentinel-entry loop that Android users experience as a broken Back
+  button. Back reaches the collapsed record surface in one step from anywhere
+  else, including a cold deep link.
+- **`accent` is a fill, never body text** in Ink & Paper — as text it is 4.47:1,
+  which misses AA. `accent-strong` is the text-safe variant.
