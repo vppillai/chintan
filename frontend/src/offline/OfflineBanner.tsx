@@ -57,8 +57,10 @@ function useHasCachedNotes(): boolean {
 }
 
 /**
- * Exported for the test: both note query shapes count, because the library is
- * an infinite query (`{ pages: [...] }`) and Search's corpus is a flat page.
+ * Exported for the test: all three note query shapes count, because the library
+ * is an infinite query (`{ pages: [...] }`), Search's corpus is a flat page, and
+ * the device's own copy is a bare array. All three live under the `notes` key
+ * prefix precisely so this one lookup sees every one of them.
  */
 export function hasCachedNotes(client: QueryClient): boolean {
   return client
@@ -68,11 +70,21 @@ export function hasCachedNotes(client: QueryClient): boolean {
 }
 
 function countItems(data: unknown): number {
+  // The IndexedDB corpus, read straight back as a list of notes.
+  if (Array.isArray(data)) return data.length;
   if (typeof data !== 'object' || data === null) return 0;
   const candidate = data as { items?: unknown; pages?: unknown };
   if (Array.isArray(candidate.items)) return candidate.items.length;
   if (Array.isArray(candidate.pages)) {
     return candidate.pages.reduce<number>((total, page) => total + countItems(page), 0);
   }
+  /*
+   * One cached note, from `useCachedNote`. It counts: a user reading a note off
+   * the device under a banner reading "nothing is saved on this device yet" is
+   * the same untruth as the one this banner exists to stop, pointing the other
+   * way.
+   */
+  const note = data as { id?: unknown; title?: unknown };
+  if (typeof note.id === 'string' && typeof note.title === 'string') return 1;
   return 0;
 }

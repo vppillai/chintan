@@ -7,6 +7,7 @@ import { queryKeys } from '@/api/queries.ts';
 import type { SearchHitWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
+import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { rankLocal, type MergedHit } from './localSearch.ts';
 
@@ -40,9 +41,21 @@ export function SearchScreen() {
     staleTime: 60_000,
   });
 
+  /*
+   * The device's own corpus, which is what makes search work with no
+   * connection at all.
+   *
+   * This query is paused offline — that is TanStack doing the right thing with
+   * server state — so offline it never runs and `corpus` is undefined. Search
+   * then ranked an empty array and told the user, authoritatively, that a note
+   * they were looking at one screen earlier did not exist. Spec §5.5 promised
+   * "instant search" over a cached corpus; this is that corpus.
+   */
+  const cached = useCachedNotes('active');
+
   const local = useMemo(
-    () => rankLocal(corpus?.items ?? [], trimmed),
-    [corpus, trimmed],
+    () => rankLocal(corpus?.items ?? cached.data ?? [], trimmed),
+    [corpus, cached.data, trimmed],
   );
 
   const server = useQuery({

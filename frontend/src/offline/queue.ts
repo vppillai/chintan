@@ -57,6 +57,46 @@ export async function enqueue(input: EnqueueInput): Promise<QueuedMutation> {
   return mutation;
 }
 
+/**
+ * Queues a mutation under a caller-chosen id, replacing whatever was there.
+ *
+ * For a write that carries the whole of its subject rather than a delta. A note
+ * PATCH sends title, body, aliases and tags together, so three offline edits to
+ * one note are not three writes — they are one write, made three times, and
+ * queueing all three would replay two supersedes against the server and burn two
+ * attempt budgets for a result nobody can observe.
+ *
+ * `createdAt` survives the replacement, so an edit made before some other
+ * queued mutation still flushes before it: the user's order of intent is not
+ * rewritten by them going back to fix a typo.
+ *
+ * The idempotency key does NOT survive it. The key is a promise that a replay
+ * is the *same* logical write; a different payload under the same key would
+ * either be rejected or, worse, replay the earlier response and report success
+ * for text the server never received.
+ */
+export async function enqueueReplacing(
+  input: EnqueueInput & { id: string },
+): Promise<QueuedMutation> {
+  const db = await openChintanDB();
+  const existing = await db.get('mutations', input.id);
+
+  const mutation: QueuedMutation = {
+    id: input.id,
+    kind: input.kind,
+    idempotencyKey: input.idempotencyKey ?? newId(),
+    payload: input.payload,
+    createdAt: existing?.createdAt ?? Date.now(),
+    // Reset: this is new content, and it should not inherit the failures of the
+    // text it replaced.
+    attempts: 0,
+    lastAttemptAt: null,
+    lastError: null,
+  };
+  await db.put('mutations', mutation);
+  return mutation;
+}
+
 /** Oldest first: order of intent is preserved across a flush. */
 export async function pending(): Promise<QueuedMutation[]> {
   const db = await openChintanDB();

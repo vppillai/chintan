@@ -10,8 +10,11 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type UseMutationResult,
 } from '@tanstack/react-query';
+
+import { cacheNoteDetail, cacheNoteList, forgetNote } from '@/offline/notesCache.ts';
 
 import { useApi } from './ApiProvider.tsx';
 import type { ChintanApi } from './endpoints.ts';
@@ -54,12 +57,45 @@ export const queryKeys = {
    Notes
    --------------------------------------------------------------------------- */
 
+/**
+ * Writes a note or a page of notes to the device, and never lets that failure
+ * become the request's failure.
+ *
+ * Caching is a side effect of reading. A browser in private mode, a full quota
+ * or a blocked-storage policy must degrade to "no offline copy", not to "your
+ * notes would not load".
+ */
+function remember(write: () => Promise<void>, queryClient?: QueryClient): void {
+  void write()
+    .then(() => {
+      /*
+       * Tell any screen already reading the device that it has more to read.
+       *
+       * Scoped to `['notes', 'offline']` and never to `['notes']`: invalidating
+       * the wider prefix from inside a notes query's own success handler would
+       * refetch the query that just wrote, forever.
+       */
+      void queryClient?.invalidateQueries({ queryKey: ['notes', 'offline'] });
+    })
+    .catch(() => {
+      /* No offline copy this time. The screen is unaffected. */
+    });
+}
+
 export function useNotes(query: NoteListQuery = {}) {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useInfiniteQuery({
     queryKey: queryKeys.notes(query),
-    queryFn: ({ pageParam }) =>
-      api.listNotes({ ...query, ...(pageParam ? { cursor: pageParam } : {}) }),
+    queryFn: async ({ pageParam }) => {
+      const page = await api.listNotes({
+        ...query,
+        ...(pageParam ? { cursor: pageParam } : {}),
+      });
+      // Every list the user sees is a list they can see again offline.
+      remember(() => cacheNoteList(page.items), queryClient);
+      return page;
+    },
     initialPageParam: undefined as string | undefined,
     // An absent or empty cursor means the collection is exhausted. Returning
     // `undefined` is what stops TanStack asking for another page forever.
@@ -69,9 +105,15 @@ export function useNotes(query: NoteListQuery = {}) {
 
 export function useNote(noteId: string | undefined) {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.note(noteId ?? ''),
-    queryFn: () => api.getNote(noteId as string),
+    queryFn: async () => {
+      const note = await api.getNote(noteId as string);
+      // The only place a full note — body and captures — enters the device.
+      remember(() => cacheNoteDetail(note), queryClient);
+      return note;
+    },
     enabled: Boolean(noteId),
   });
 }
@@ -130,6 +172,10 @@ export function useDeleteNoteForever() {
   return useMutation({
     mutationFn: (noteId: string) => api.deleteNoteForever(noteId),
     onSuccess: (_result, noteId) => {
+      // The device forgets it too. An offline library that still lists a note
+      // the user deliberately destroyed is the one disagreement between the two
+      // copies that is not tolerable.
+      remember(() => forgetNote(noteId), queryClient);
       // Removed, not invalidated: there is nothing left on the server to
       // refetch, and a refetch would 404 into an error the user cannot act on.
       queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });

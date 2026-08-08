@@ -75,11 +75,22 @@ export class ApiError extends Error {
     this.currentVersion = init.currentVersion;
   }
 
-  /** Safe to put in front of a user. Problem `detail` is specified as such. */
+  /**
+   * Safe to put in front of a user. Problem `detail` is specified as such.
+   *
+   * The offline sentence used to be "No connection. Your work is saved on this
+   * device and will sync." — asserted by *every* failed request, including
+   * reads, and true of none of them, because at the time nothing wrote to the
+   * mutation queue at all. What is saved and what will sync is a fact only the
+   * caller knows, so the caller says it: the note editor renders
+   * `SAVE_LABELS.queued` once the edit is genuinely in IndexedDB, and the
+   * offline banner counts what is actually waiting. This sentence now says only
+   * what is true of any request that did not leave the device.
+   */
   get userMessage(): string {
     switch (this.kind) {
       case 'network':
-        return 'No connection. Your work is saved on this device and will sync.';
+        return 'No connection, so that did not reach the server.';
       case 'timeout':
         return 'That took too long. It will be retried.';
       case 'cancelled':

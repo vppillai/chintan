@@ -1,8 +1,11 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
+import { enqueueReplacing } from '@/offline/queue.ts';
+import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
 
 import {
   AUTOSAVE_DELAY_MS,
@@ -39,6 +42,7 @@ export interface NoteEditor {
  */
 export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
   const api = useApi();
+  const queryClient = useQueryClient();
   const [model, dispatch] = useReducer(
     editorReducer,
     initialEditor({ title: '', body: '', aliases: [], tags: [] }, 0),
@@ -73,16 +77,17 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (current.state !== 'dirty' && current.state !== 'error') return;
 
     const attempted = current.draft;
+    const body = {
+      version: current.version,
+      title: attempted.title,
+      body: attempted.body,
+      aliases: attempted.aliases,
+      tags: attempted.tags,
+    };
     dispatch({ type: 'saveStart' });
 
     try {
-      await api.updateNote(note.id, {
-        version: current.version,
-        title: attempted.title,
-        body: attempted.body,
-        aliases: attempted.aliases,
-        tags: attempted.tags,
-      });
+      await api.updateNote(note.id, body);
       // The PATCH response carries the note, but re-reading the version from
       // it is enough: the text we sent is the text now stored.
       dispatch({
@@ -91,6 +96,37 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         draft: attempted,
       });
     } catch (error) {
+      /*
+       * Offline is not a failure to report — it is a write to make somewhere
+       * else. The edit goes into the IndexedDB queue that `useOfflineQueue`
+       * drains on reconnect, keyed by the note so that a paragraph typed in
+       * three bursts is one queued PATCH rather than three racing ones.
+       *
+       * This is the caller `offline/queue.ts` never had. Until it existed, the
+       * client told the user "your work is saved on this device and will sync"
+       * on every offline failure, and nothing was saved and nothing synced.
+       */
+      if (error instanceof ApiError && error.isOffline) {
+        try {
+          await enqueueReplacing({
+            id: `updateNote:${note.id}`,
+            kind: 'updateNote',
+            payload: { noteId: note.id, body },
+          });
+          // The banner counts what is waiting, and nothing else tells it the
+          // depth changed: its query polls slowly and only reacts to reconnect
+          // and focus, so without this the user is told "nothing is saved on
+          // this device" over an edit that is.
+          void queryClient.invalidateQueries({ queryKey: OFFLINE_QUEUE_KEY });
+          dispatch({ type: 'saveQueued', draft: attempted });
+          return;
+        } catch {
+          // Storage refused — private mode, quota, a blocked-storage policy.
+          // Falling through to `saveError` is the honest answer: the edit is
+          // genuinely only in this tab, and the user should be told so.
+        }
+      }
+
       if (error instanceof ApiError && error.isConflict) {
         const theirs = await api.getNote(note.id).catch(() => null);
         dispatch({
@@ -106,7 +142,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         message: error instanceof ApiError ? error.userMessage : 'Could not save.',
       });
     }
-  }, [api, note]);
+  }, [api, note, queryClient]);
 
   const edit = useCallback(
     (patch: Partial<NoteDraft>) => {

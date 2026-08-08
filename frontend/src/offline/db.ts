@@ -1,7 +1,7 @@
 /**
  * The app's IndexedDB schema, in one place.
  *
- * Three stores, three jobs:
+ * Four stores, four jobs:
  *
  *   captureChunks  audio as it is produced, so a crash or a killed tab does not
  *                  lose the recording. v1 accumulated chunks in a JS array,
@@ -9,12 +9,20 @@
  *   captures       per-recording metadata, so the progress card can be rebuilt
  *                  from disk on a cold start.
  *   mutations      the offline mutation queue.
+ *   notes          the note corpus, for reading and searching with no
+ *                  connection. Spec §5.5 promised this from the start; without
+ *                  it, opening a note in a tunnel reported that it "may have
+ *                  been archived or purged" — about a note the user had been
+ *                  looking at one screen earlier.
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
+import type { NoteDetailWire, NoteWire } from '@/api/schema.ts';
+
 export const DB_NAME = 'chintan';
-export const DB_VERSION = 1;
+/** 2 added `notes`. The upgrade is additive; no capture data is touched. */
+export const DB_VERSION = 2;
 
 export type QueuedMutationKind =
   | 'createCapture'
@@ -64,6 +72,24 @@ export interface CaptureChunkRecord {
   bytes: number;
 }
 
+/**
+ * A note as last seen from the server.
+ *
+ * `detail` says whether `body` and `captures` are present: a list response
+ * carries neither, and a cached list row must not be served to the note screen
+ * as though it were a full note with an empty body. `archived` is lifted out of
+ * the record so the archive and the library can be read back separately without
+ * deserialising every note.
+ */
+export interface CachedNote {
+  id: string;
+  note: NoteWire | NoteDetailWire;
+  detail: boolean;
+  archived: boolean;
+  updatedAt: string;
+  cachedAt: number;
+}
+
 interface ChintanDB extends DBSchema {
   captureChunks: {
     key: string;
@@ -78,6 +104,11 @@ interface ChintanDB extends DBSchema {
     key: string;
     value: QueuedMutation;
     indexes: { byCreatedAt: number };
+  };
+  notes: {
+    key: string;
+    value: CachedNote;
+    indexes: { byUpdatedAt: string };
   };
 }
 
@@ -99,6 +130,12 @@ export function openChintanDB(): Promise<ChintanDatabase> {
         const mutations = db.createObjectStore('mutations', { keyPath: 'id' });
         mutations.createIndex('byCreatedAt', 'createdAt');
       }
+      if (!db.objectStoreNames.contains('notes')) {
+        const notes = db.createObjectStore('notes', { keyPath: 'id' });
+        // Most-recent-first is the library's own order, so the offline list
+        // does not have to sort the whole corpus in memory to match it.
+        notes.createIndex('byUpdatedAt', 'updatedAt');
+      }
     },
   });
   return dbPromise;
@@ -112,18 +149,23 @@ export function resetDatabaseHandle(): void {
 /**
  * Empties every store. Used by sign-out, and by nothing else.
  *
- * All three stores hold one person's data: audio they recorded, the index over
- * it, and mutations queued against their notes. Leaving any of it behind after
- * a sign-out would at best show the next person a previous user's recording,
- * and at worst flush their queued edits under the new session's token.
+ * All four stores hold one person's data: audio they recorded, the index over
+ * it, mutations queued against their notes, and the notes themselves. Leaving
+ * any of it behind after a sign-out would at best show the next person a
+ * previous user's notes, and at worst flush their queued edits under the new
+ * session's token.
  */
 export async function clearAllLocalData(): Promise<void> {
   const db = await openChintanDB();
-  const tx = db.transaction(['captureChunks', 'captures', 'mutations'], 'readwrite');
+  const tx = db.transaction(
+    ['captureChunks', 'captures', 'mutations', 'notes'],
+    'readwrite',
+  );
   await Promise.all([
     tx.objectStore('captureChunks').clear(),
     tx.objectStore('captures').clear(),
     tx.objectStore('mutations').clear(),
+    tx.objectStore('notes').clear(),
     tx.done,
   ]);
 }

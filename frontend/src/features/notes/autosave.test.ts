@@ -161,3 +161,51 @@ describe('reset', () => {
     expect(model.version).toBe(1);
   });
 });
+
+/**
+ * An edit made with no connection.
+ *
+ * The client used to answer every offline failure with "No connection. Your
+ * work is saved on this device and will sync." while writing nothing anywhere.
+ * `queued` is the state that makes the sentence true, and these are the
+ * properties that distinguish it from both `saved` and `error`.
+ */
+describe('queued', () => {
+  it('is not an error, and not a claim that the server has it', () => {
+    const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'Ellis quoted.' } });
+
+    const queued = editorReducer(dirty, { type: 'saveQueued', draft: dirty.draft });
+
+    expect(queued.state).toBe('queued');
+    expect(queued.error).toBeNull();
+    expect(queued.saved).toEqual(dirty.draft);
+  });
+
+  it('does not advance the version, so the queued PATCH still gets a real check', () => {
+    const dirty = editorReducer(start(3), { type: 'edit', patch: { body: 'Ellis quoted.' } });
+
+    const queued = editorReducer(dirty, { type: 'saveQueued', draft: dirty.draft });
+
+    // Incrementing here would send an edit claiming to be based on a revision
+    // that does not exist yet, turning a clean 409 into a silent overwrite.
+    expect(queued.version).toBe(3);
+  });
+
+  it('stays dirty when the user typed on while it was being written', () => {
+    const first = editorReducer(start(), { type: 'edit', patch: { body: 'One.' } });
+    const second = editorReducer(first, { type: 'edit', patch: { body: 'One. Two.' } });
+
+    const queued = editorReducer(second, { type: 'saveQueued', draft: first.draft });
+
+    expect(queued.state).toBe('dirty');
+  });
+
+  it('does not warn on the way out, because the edit survives the document', () => {
+    const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'Ellis quoted.' } });
+    const queued = editorReducer(dirty, { type: 'saveQueued', draft: dirty.draft });
+
+    // It is in IndexedDB and flushes on reconnect. Warning about it would train
+    // the user to dismiss the one warning that means something.
+    expect(hasUnsavedWork(queued)).toBe(false);
+  });
+});

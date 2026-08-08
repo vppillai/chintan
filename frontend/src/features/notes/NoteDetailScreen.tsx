@@ -3,11 +3,14 @@ import { useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
+import { ApiError } from '@/api/problem.ts';
 import { useNote } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
+import { useOnline } from '@/hooks/useOnline.ts';
+import { useCachedNote } from '@/offline/useNotesCache.ts';
 
 import { NoteActions } from './NoteActions.tsx';
 import { TranscriptPanel, type TranscriptView } from './TranscriptPanel.tsx';
@@ -20,14 +23,29 @@ import { useNoteEditor } from './useNoteEditor.ts';
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: note, isLoading, error } = useNote(id);
+  const online = useOnline();
+  const { data: served, isLoading, fetchStatus, error } = useNote(id);
+  const cached = useCachedNote(id);
+
+  /*
+   * The device's copy stands in when the server has not answered. Only a full
+   * note qualifies — `useCachedNote` refuses a list row — because rendering a
+   * real title over an empty body invites the user to type into a note whose
+   * text is merely missing, and the next PATCH would erase it.
+   */
+  const note = served ?? cached.data ?? undefined;
+  const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
 
   const captures = note?.captures ?? [];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const capture = captures.find((item) => item.id === selectedId) ?? captures[0];
 
-  if (isLoading) {
+  // Paused means offline, not slow: TanStack never runs the query at all, so
+  // waiting for it would be waiting forever.
+  const paused = fetchStatus === 'paused';
+
+  if ((isLoading || cached.isLoading) && !paused && !note) {
     return (
       <div className="screen">
         <p className="screen__empty" role="status">
@@ -37,15 +55,26 @@ export function NoteDetailScreen() {
     );
   }
 
-  if (error || !note) {
+  if (!note) {
+    /*
+     * Two different sentences, because they are two different situations and
+     * the screen used to say the first one for both. A note that is simply not
+     * on this device was reported as one that "may have been archived or
+     * purged" — describing a deletion that never happened, to a user who could
+     * see the note one screen earlier.
+     */
+    const unreachable = paused || !online || (error instanceof ApiError && error.isOffline);
+
     return (
       <div className="screen">
         <header className="screen__header screen__header--detail">
           <BackButton onClick={() => void navigate(ROUTES.notes)} />
-          <h1>Note not found</h1>
+          <h1>{unreachable ? 'Not on this device' : 'Note not found'}</h1>
         </header>
         <p className="screen__empty">
-          No note with that identifier. It may have been archived or purged.
+          {unreachable
+            ? 'This note has not been opened on this device, so there is no copy here to read. It will be here once you have a connection.'
+            : 'No note with that identifier. It may have been archived or purged.'}
         </p>
       </div>
     );
@@ -53,6 +82,11 @@ export function NoteDetailScreen() {
 
   return (
     <div className="screen">
+      {offlineCopy && (
+        <p className="screen__count" role="status">
+          Saved on this device. Edits are kept here and sent when you reconnect.
+        </p>
+      )}
       <header className="screen__header screen__header--detail">
         <BackButton onClick={() => void navigate(ROUTES.notes)} />
         <label className="visually-hidden" htmlFor="note-title">
@@ -209,7 +243,7 @@ function Player({ capture }: { capture: CaptureWire }) {
   const api = useApi();
   const [view, setView] = useState<TranscriptView>('raw');
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, fetchStatus } = useQuery({
     queryKey: ['capture-artifacts', capture.id],
     queryFn: () =>
       loadCaptureArtifacts(api, capture.id, {
@@ -219,6 +253,15 @@ function Player({ capture }: { capture: CaptureWire }) {
     staleTime: 5 * 60_000,
     retry: false,
   });
+
+  /*
+   * Audio is never cached: a presigned URL expires and the file is megabytes.
+   * So offline this query is either paused or a network failure, and both used
+   * to render as "The audio for this capture is no longer stored" — telling the
+   * user their recording had been deleted because they walked into a tunnel.
+   */
+  const unreachable =
+    fetchStatus === 'paused' || (isError && error instanceof ApiError && error.isOffline);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const player = usePlayer(data?.audioUrl ?? null, audioRef);
@@ -230,6 +273,15 @@ function Player({ capture }: { capture: CaptureWire }) {
 
   const duration =
     player.duration || (capture.duration_ms ? capture.duration_ms / 1000 : 0);
+
+  if (unreachable) {
+    return (
+      <p className="screen__count" role="status">
+        The recording and its transcript need a connection. The text below is on this
+        device.
+      </p>
+    );
+  }
 
   if (isLoading) {
     return (

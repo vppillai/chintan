@@ -96,6 +96,16 @@ export function useOfflineQueue(): OfflineQueueState {
       await flush((mutation) => runMutation(api, mutation));
       return count();
     },
+    /*
+     * Always, never paused. The queue lives in IndexedDB, so reading its depth
+     * is a local read that works exactly as well with no connection — and
+     * offline is precisely when the user needs to be told how much is waiting.
+     * Under the default `online` mode TanStack paused this query the moment the
+     * connection dropped, so `queued` stayed 0 and the banner said nothing
+     * about the edits sitting on the device. The queryFn's own
+     * `navigator.onLine` guard is what stops it attempting a flush.
+     */
+    networkMode: 'always',
     refetchOnReconnect: true,
     refetchOnWindowFocus: true,
     // A slow safety net for the case where neither event fires — a captive

@@ -5,7 +5,10 @@ import '@testing-library/jest-dom/vitest';
 import 'fake-indexeddb/auto';
 
 import { cleanup } from '@testing-library/react';
+import { IDBFactory } from 'fake-indexeddb';
 import { afterEach, beforeEach, vi } from 'vitest';
+
+import { resetDatabaseHandle } from '@/offline/db.ts';
 
 /**
  * jsdom supplies its own `AbortController`/`AbortSignal` but no `Request`, so
@@ -96,6 +99,20 @@ function installMatchMedia(): void {
 }
 
 beforeEach(() => {
+  /*
+   * A fresh device store per test, for the same reason `localStorage` is
+   * cleared below: it is durable, and once the app started caching the note
+   * corpus on every successful read, one test's library became the next test's
+   * starting state. A paused query resuming after `cleanup()` is enough to do
+   * it — which is precisely the kind of leak that makes a suite pass in one
+   * order and fail in another.
+   *
+   * Swapping the factory rather than calling `deleteDatabase`, because delete
+   * blocks on any handle still open and the app holds one.
+   */
+  globalThis.indexedDB = new IDBFactory();
+  resetDatabaseHandle();
+
   listeners.clear();
   prefersDark = false;
   window.localStorage.clear();

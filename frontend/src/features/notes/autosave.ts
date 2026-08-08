@@ -19,6 +19,15 @@ export type SaveState =
   | 'dirty'
   | 'saving'
   | 'saved'
+  /**
+   * Written to this device and waiting for a connection.
+   *
+   * Distinct from `saved` because the server has not seen it, and distinct from
+   * `error` because nothing has gone wrong and nothing needs the user's
+   * attention. This is the state that makes "your work is saved on this device
+   * and will sync" a true sentence rather than a reassuring one.
+   */
+  | 'queued'
   /** The save failed for a reason a retry might fix. */
   | 'error'
   /** Someone else wrote first. Requires a decision. */
@@ -46,6 +55,8 @@ export type EditorEvent =
   | { type: 'edit'; patch: Partial<NoteDraft> }
   | { type: 'saveStart' }
   | { type: 'saveSuccess'; version: number; draft?: NoteDraft }
+  /** Written to the device's queue instead of to the server. */
+  | { type: 'saveQueued'; draft: NoteDraft }
   | { type: 'saveError'; message: string }
   | { type: 'conflict'; theirs: NoteDraft; version: number; message: string }
   /** Discard my edit and take the server's copy. */
@@ -118,6 +129,23 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       };
     }
 
+    case 'saveQueued': {
+      /*
+       * `version` is deliberately NOT advanced. The queued PATCH still carries
+       * the version the note was loaded at, and that is what the server will
+       * check when the queue flushes. Incrementing it here would send an edit
+       * claiming to be based on a revision that does not exist yet, which turns
+       * a clean conflict into a silent overwrite.
+       */
+      const stillDirty = !draftsEqual(model.draft, event.draft);
+      return {
+        ...model,
+        saved: event.draft,
+        state: stillDirty ? 'dirty' : 'queued',
+        error: null,
+      };
+    }
+
     case 'saveError':
       return { ...model, state: 'error', error: event.message };
 
@@ -167,7 +195,13 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
   }
 }
 
-/** True when there is an edit that is not safely on the server. */
+/**
+ * True when there is an edit that would be lost if the document went away.
+ *
+ * `queued` is NOT one of them. A queued edit is in IndexedDB, survives a reload
+ * and a cold start, and flushes on reconnect — warning about it would train the
+ * user to dismiss the one warning that means something.
+ */
 export function hasUnsavedWork(model: EditorModel): boolean {
   return model.state === 'dirty' || model.state === 'saving' || model.state === 'error' || model.state === 'conflict';
 }
@@ -177,6 +211,7 @@ export const SAVE_LABELS: Record<SaveState, string> = {
   dirty: 'Unsaved changes',
   saving: 'Saving…',
   saved: 'Saved',
+  queued: 'Saved on this device — will sync',
   error: "Couldn't save",
   conflict: 'This note changed elsewhere',
 };

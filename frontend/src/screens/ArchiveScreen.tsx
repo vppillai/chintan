@@ -7,6 +7,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
+import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 /**
  * Archived notes.
@@ -35,12 +36,15 @@ export function ArchiveScreen() {
     hasNextPage,
     isFetchingNextPage,
   } = useNotes({ state: 'archived' });
+  const cached = useCachedNotes('archived');
 
-  const notes = data?.pages.flatMap((page) => page.items) ?? [];
   // TanStack pauses rather than fails when the browser reports no connection,
   // so neither isLoading nor isError is ever true offline. Same trap as the
-  // notes list; same explicit branch.
+  // notes list; same explicit branch, and the same fallback to what the device
+  // has stored.
   const paused = fetchStatus === 'paused';
+  const serverNotes = data?.pages.flatMap((page) => page.items);
+  const notes = serverNotes ?? cached.data ?? [];
   const nothingToShow = notes.length === 0;
 
   return (

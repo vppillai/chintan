@@ -5,6 +5,7 @@ import { ApiError } from '@/api/problem.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { NoteRow } from '@/components/NoteRow.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
+import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 export function NotesScreen() {
   const {
@@ -20,8 +21,7 @@ export function NotesScreen() {
     isFetchingNextPage,
   } = useNotes({ state: 'active' });
   const online = useOnline();
-
-  const notes = data?.pages.flatMap((page) => page.items) ?? [];
+  const cached = useCachedNotes('active');
 
   /*
    * TanStack *pauses* a query when the browser reports no connection: it does
@@ -33,6 +33,25 @@ export function NotesScreen() {
    * deleted.
    */
   const paused = fetchStatus === 'paused';
+
+  /*
+   * The device's copy, shown only when the server has answered nothing at all.
+   *
+   * The condition is `data === undefined`, not "offline": a server that has
+   * answered is the authority even when it answered with an empty list, and
+   * falling back on an empty *response* would resurrect notes the user had just
+   * archived on another device.
+   */
+  const serverNotes = data?.pages.flatMap((page) => page.items);
+  const notes = serverNotes ?? cached.data ?? [];
+  const fromCache = serverNotes === undefined && notes.length > 0;
+  /*
+   * Labelled only once it is clear the server is not going to answer. While a
+   * fetch is still in flight the cached list is simply *shown* — instantly,
+   * which is the whole point of holding it — and saying "saved on this device"
+   * over a list about to be replaced would be noise.
+   */
+  const showingCached = fromCache && (!online || paused || isError);
   const nothingToShow = notes.length === 0;
 
   return (
@@ -47,9 +66,15 @@ export function NotesScreen() {
         )}
       </header>
 
-      {isLoading && !paused && (
+      {isLoading && !paused && !fromCache && (
         <p className="screen__count" role="status">
           Loading…
+        </p>
+      )}
+
+      {showingCached && (
+        <p className="screen__count" role="status">
+          Saved on this device. Recordings and transcripts need a connection.
         </p>
       )}
 
