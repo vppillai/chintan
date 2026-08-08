@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 )
 
 // fakeDynamo is a small in-process DynamoDB good enough to exercise the parts
@@ -101,6 +102,9 @@ func av(v types.AttributeValue) string {
 func (f *fakeDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := validateItem(in.Key); err != nil {
+		return nil, err
+	}
 	f.gets++
 	item := f.items[av(in.Key["pk"])][av(in.Key["sk"])]
 	if item == nil {
@@ -112,6 +116,12 @@ func (f *fakeDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ .
 func (f *fakeDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := validateItem(in.Item); err != nil {
+		return nil, err
+	}
+	if err := validateValues(in.ExpressionAttributeValues); err != nil {
+		return nil, err
+	}
 	pk, sk := av(in.Item["pk"]), av(in.Item["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
@@ -134,6 +144,12 @@ func (f *fakeDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ .
 func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := validateItem(in.Key); err != nil {
+		return nil, err
+	}
+	if err := validateValues(in.ExpressionAttributeValues); err != nil {
+		return nil, err
+	}
 	pk, sk := av(in.Key["pk"]), av(in.Key["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
@@ -170,6 +186,12 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 func (f *fakeDynamo) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := validateItem(in.Key); err != nil {
+		return nil, err
+	}
+	if err := validateValues(in.ExpressionAttributeValues); err != nil {
+		return nil, err
+	}
 	pk, sk := av(in.Key["pk"]), av(in.Key["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
@@ -188,6 +210,9 @@ func (f *fakeDynamo) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInpu
 func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := validateValues(in.ExpressionAttributeValues); err != nil {
+		return nil, err
+	}
 	f.queries = append(f.queries, in)
 
 	pkAttr, skAttr := "pk", "sk"
@@ -481,4 +506,134 @@ func (p *exprParser) parseTerm() (bool, error) {
 		return l > r, nil
 	}
 	return false, fmt.Errorf("fakeDynamo: unsupported operator %q", op)
+}
+
+// ---------------------------------------------------------------------------
+// What DynamoDB refuses, and why this fake has to refuse it too
+//
+// This fake used to store whatever it was handed. That made it agree with the
+// store by construction: every repository test passed against an item real
+// DynamoDB rejects on sight, and the first request to reach production —
+// every POST carrying an Idempotency-Key, which is every capture — returned
+// 500 with
+//
+//	ValidationException: Supplied AttributeValue is empty, must contain
+//	exactly one of the supported datatypes
+//
+// The item held "idem_response": &types.AttributeValueMemberB{Value: nil}. A
+// nil Binary is not an empty response; it is an AttributeValue carrying no
+// datatype, and the service refuses the whole write rather than the attribute.
+//
+// A test double that only encodes our own assumptions cannot contradict us, so
+// the checks below are the ones the service performs and we did not. They are
+// deliberately about SHAPE — what an AttributeValue may contain — rather than
+// about this one attribute, because the class is what produced the outage.
+// ---------------------------------------------------------------------------
+
+// validationError is shaped like the service's own refusal, so a failure here
+// reads the way the production log did.
+func validationError(format string, args ...any) error {
+	return &smithy.GenericAPIError{
+		Code:    "ValidationException",
+		Message: fmt.Sprintf(format, args...),
+	}
+}
+
+// validateItem checks an item or a key map.
+func validateItem(item map[string]types.AttributeValue) error {
+	for name, value := range item {
+		if err := validateAttribute(name, value); err != nil {
+			return err
+		}
+	}
+	// A key attribute may not be an empty string. Non-key strings may be —
+	// DynamoDB has allowed those since 2020 — so this is checked here rather
+	// than in validateAttribute, which cannot tell the difference.
+	for _, key := range []string{"pk", "sk"} {
+		if v, ok := item[key].(*types.AttributeValueMemberS); ok && v.Value == "" {
+			return validationError("One or more parameter values are not valid. "+
+				"The AttributeValue for a key attribute cannot contain an empty string value. Key: %s", key)
+		}
+	}
+	return nil
+}
+
+// validateValues checks an ExpressionAttributeValues map. An empty binary in a
+// SET is refused exactly like one in an item.
+func validateValues(values map[string]types.AttributeValue) error {
+	for name, value := range values {
+		if err := validateAttribute(name, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAttribute is the shape check, applied recursively.
+func validateAttribute(name string, value types.AttributeValue) error {
+	switch v := value.(type) {
+	case nil:
+		return validationError("Supplied AttributeValue is empty, must contain exactly one of the supported datatypes (attribute %s)", name)
+
+	case *types.AttributeValueMemberB:
+		// The one that took the product down. Both nil and empty are refused:
+		// an AttributeValue may not contain an empty binary value.
+		if len(v.Value) == 0 {
+			return validationError("Supplied AttributeValue is empty, must contain exactly one of the supported datatypes (attribute %s)", name)
+		}
+
+	case *types.AttributeValueMemberN:
+		if v.Value == "" {
+			return validationError("The parameter cannot be converted to a numeric value (attribute %s)", name)
+		}
+
+	case *types.AttributeValueMemberSS:
+		if len(v.Value) == 0 {
+			return validationError("One or more parameter values were invalid: An string set may not be empty (attribute %s)", name)
+		}
+		for _, s := range v.Value {
+			if s == "" {
+				return validationError("One or more parameter values were invalid: An string set may not have a empty string as a member (attribute %s)", name)
+			}
+		}
+
+	case *types.AttributeValueMemberNS:
+		if len(v.Value) == 0 {
+			return validationError("One or more parameter values were invalid: An number set may not be empty (attribute %s)", name)
+		}
+
+	case *types.AttributeValueMemberBS:
+		if len(v.Value) == 0 {
+			return validationError("One or more parameter values were invalid: An binary set may not be empty (attribute %s)", name)
+		}
+		for _, b := range v.Value {
+			if len(b) == 0 {
+				return validationError("One or more parameter values were invalid: Binary sets may not contain null or empty values (attribute %s)", name)
+			}
+		}
+
+	case *types.AttributeValueMemberM:
+		for k, inner := range v.Value {
+			if err := validateAttribute(name+"."+k, inner); err != nil {
+				return err
+			}
+		}
+
+	case *types.AttributeValueMemberL:
+		for i, inner := range v.Value {
+			if err := validateAttribute(fmt.Sprintf("%s[%d]", name, i), inner); err != nil {
+				return err
+			}
+		}
+
+	case *types.AttributeValueMemberS, *types.AttributeValueMemberBOOL, *types.AttributeValueMemberNULL:
+		// Valid whatever they hold. An empty non-key string is legal.
+
+	default:
+		// Includes *types.UnknownUnionMember and any member type added later:
+		// a shape this fake does not understand is one it must not silently
+		// accept on the service's behalf.
+		return validationError("Supplied AttributeValue is empty, must contain exactly one of the supported datatypes (attribute %s)", name)
+	}
+	return nil
 }

@@ -884,3 +884,213 @@ func TestUpdatingANoteDoesNotErasePreviouslyStoredFields(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Shapes DynamoDB refuses
+// ---------------------------------------------------------------------------
+
+// tableNameValue is tableName as an addressable copy, for the inputs below that
+// are built by hand rather than by the store.
+var tableNameValue = tableName
+
+// TestEveryWriteIsAnItemDynamoDBWouldAccept walks the store's write paths
+// through a fake that applies the service's own AttributeValue shape rules.
+//
+// It exists because the absence of this check was itself the defect. Every
+// repository test passed while BeginIdempotent wrote
+// "idem_response": &types.AttributeValueMemberB{Value: nil} — an AttributeValue
+// carrying no datatype — and real DynamoDB answered
+//
+//	ValidationException: Supplied AttributeValue is empty, must contain
+//	exactly one of the supported datatypes
+//
+// to the whole PutItem. Since every POST that carries an Idempotency-Key begins
+// with that write, and every capture carries one, nothing could be recorded at
+// all. The fake stored what it was handed, so it agreed with the bug.
+//
+// The subtests below are the writes on the request path. A shape violation in
+// any of them now fails here, with the message production produced.
+func TestEveryWriteIsAnItemDynamoDBWouldAccept(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("claiming an idempotency key", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.BeginIdempotent(ctx, "tenant-a", "key-1", "fp-1"); err != nil {
+			t.Fatalf("BeginIdempotent: %v", err)
+		}
+	})
+
+	t.Run("completing one with a body", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.BeginIdempotent(ctx, "tenant-a", "key-1", "fp-1"); err != nil {
+			t.Fatalf("BeginIdempotent: %v", err)
+		}
+		if err := store.CompleteIdempotent(ctx, "tenant-a", "key-1", 201, []byte(`{"id":"n1"}`)); err != nil {
+			t.Fatalf("CompleteIdempotent: %v", err)
+		}
+	})
+
+	// A 204, or any handler that writes no body. The response attribute cannot
+	// be written empty, so it must not be written at all.
+	t.Run("completing one with no body", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.BeginIdempotent(ctx, "tenant-a", "key-2", "fp-2"); err != nil {
+			t.Fatalf("BeginIdempotent: %v", err)
+		}
+		if err := store.CompleteIdempotent(ctx, "tenant-a", "key-2", 204, nil); err != nil {
+			t.Fatalf("CompleteIdempotent with no body: %v", err)
+		}
+		replay, err := store.BeginIdempotent(ctx, "tenant-a", "key-2", "fp-2")
+		if err != nil {
+			t.Fatalf("replay: %v", err)
+		}
+		if replay == nil || !replay.Done {
+			t.Fatal("a bodyless completion did not read back as done")
+		}
+		if len(replay.Response) != 0 {
+			t.Errorf("replayed response = %q, want empty", replay.Response)
+		}
+	})
+
+	// A note and a capture carrying nothing but their required fields: every
+	// optional string empty and every list nil, which is the shape most likely
+	// to produce an attribute the service will not take.
+	t.Run("a note with every optional field empty", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID: "note_1", Title: "t", UpdatedAt: model.Now(),
+		}); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+	})
+
+	t.Run("a capture with every optional field empty", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.PutCapture(ctx, model.CaptureIndex{
+			ID: "c_1", UserID: "tenant-a", Status: model.StatusUploaded, CreatedAt: model.Now(),
+		}); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+	})
+
+	t.Run("settings", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if err := store.PutSettings(ctx, "tenant-a", model.Settings{}); err != nil {
+			t.Fatalf("PutSettings: %v", err)
+		}
+	})
+
+	t.Run("an append claim and its completion", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.PutCapture(ctx, model.CaptureIndex{
+			ID: "c_1", UserID: "tenant-a", Status: model.StatusCleaned, CreatedAt: model.Now(),
+			CleanKey: "tenants/tenant-a/captures/c_1/clean.txt",
+		}); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+		claimed, _, err := store.ClaimCaptureAppend(ctx, "tenant-a", "c_1", "token-1")
+		if err != nil {
+			t.Fatalf("ClaimCaptureAppend: %v", err)
+		}
+		if !claimed {
+			t.Fatal("claim was refused")
+		}
+		if _, err := store.CompleteCaptureAppend(ctx, "tenant-a", "c_1", "token-1"); err != nil {
+			t.Fatalf("CompleteCaptureAppend: %v", err)
+		}
+	})
+
+	// The expiry cascade's writes. internal/purge is new code driving these
+	// against a table it has never met.
+	t.Run("the deletes the expiry cascade performs", func(t *testing.T) {
+		store, _ := newTestStore(t)
+		if _, err := store.PutCapture(ctx, model.CaptureIndex{
+			ID: "c_1", UserID: "tenant-a", Status: model.StatusAppended, CreatedAt: model.Now(),
+		}); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID: "note_1", Title: "t", UpdatedAt: model.Now(),
+		}); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		if err := store.DeleteCapture(ctx, "tenant-a", "c_1"); err != nil {
+			t.Fatalf("DeleteCapture: %v", err)
+		}
+		if err := store.DeleteNote(ctx, "tenant-a", "note_1"); err != nil {
+			t.Fatalf("DeleteNote: %v", err)
+		}
+	})
+}
+
+// TestTheFakeRefusesTheShapesTheServiceRefuses is the check on the check. A
+// validator nobody has watched reject anything is a validator nobody should
+// trust — and this one exists precisely because the previous fake accepted
+// everything.
+func TestTheFakeRefusesTheShapesTheServiceRefuses(t *testing.T) {
+	bad := map[string]types.AttributeValue{
+		"a nil binary":                 &types.AttributeValueMemberB{Value: nil},
+		"an empty binary":              &types.AttributeValueMemberB{Value: []byte{}},
+		"a nil attribute":              nil,
+		"an empty number":              &types.AttributeValueMemberN{Value: ""},
+		"an empty string set":          &types.AttributeValueMemberSS{Value: []string{}},
+		"a nil binary inside a list":   &types.AttributeValueMemberL{Value: []types.AttributeValue{&types.AttributeValueMemberB{}}},
+		"a nil binary inside a map":    &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"x": &types.AttributeValueMemberB{}}},
+		"a member type nobody defined": &types.UnknownUnionMember{Tag: "Q"},
+	}
+
+	for name, value := range bad {
+		t.Run(name, func(t *testing.T) {
+			api := newFakeDynamo()
+			_, err := api.PutItem(context.Background(), &dynamodb.PutItemInput{
+				TableName: &tableNameValue,
+				Item: map[string]types.AttributeValue{
+					"pk":    &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+					"sk":    &types.AttributeValueMemberS{Value: "THING#1"},
+					"thing": value,
+				},
+			})
+			if err == nil {
+				t.Fatal("the fake accepted an attribute DynamoDB refuses")
+			}
+			if !strings.Contains(err.Error(), "ValidationException") {
+				t.Errorf("error = %v, want a ValidationException", err)
+			}
+		})
+	}
+
+	t.Run("an empty key attribute", func(t *testing.T) {
+		api := newFakeDynamo()
+		_, err := api.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: &tableNameValue,
+			Item: map[string]types.AttributeValue{
+				"pk": &types.AttributeValueMemberS{Value: ""},
+				"sk": &types.AttributeValueMemberS{Value: "THING#1"},
+			},
+		})
+		if err == nil {
+			t.Fatal("the fake accepted an empty partition key")
+		}
+	})
+
+	// The legal shapes must still be legal, or the validator would fail every
+	// write and prove nothing.
+	t.Run("shapes the service accepts", func(t *testing.T) {
+		api := newFakeDynamo()
+		if _, err := api.PutItem(context.Background(), &dynamodb.PutItemInput{
+			TableName: &tableNameValue,
+			Item: map[string]types.AttributeValue{
+				"pk":            &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+				"sk":            &types.AttributeValueMemberS{Value: "THING#1"},
+				"an empty text": &types.AttributeValueMemberS{Value: ""},
+				"an empty list": &types.AttributeValueMemberL{Value: nil},
+				"an empty map":  &types.AttributeValueMemberM{Value: nil},
+				"a null":        &types.AttributeValueMemberNULL{Value: true},
+				"a bool":        &types.AttributeValueMemberBOOL{Value: false},
+				"some bytes":    &types.AttributeValueMemberB{Value: []byte{0}},
+			},
+		}); err != nil {
+			t.Fatalf("the fake refused a legal item: %v", err)
+		}
+	})
+}

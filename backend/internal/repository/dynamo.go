@@ -974,6 +974,18 @@ func (s *DynamoStore) BeginIdempotent(ctx context.Context, tenantID, key, finger
 	now := time.Now().Unix()
 	expires := time.Now().Add(IdemTTL).Unix()
 
+	// There is deliberately no idem_response here. A claimed key has no response
+	// yet, and absence is how that is spelled: an AttributeValue must carry
+	// exactly one datatype, so a Binary member holding a nil slice is not "an
+	// empty response", it is an attribute with no type at all, and DynamoDB
+	// answers
+	//   ValidationException: Supplied AttributeValue is empty, must contain
+	//   exactly one of the supported datatypes
+	// and refuses the whole PutItem. Every POST that carries an
+	// Idempotency-Key — which is every capture — then 500s, so this one
+	// attribute took the product down. idemFromItem already type-asserts the
+	// read, so a missing attribute reads back as a nil response, which is what
+	// it means.
 	item := map[string]types.AttributeValue{
 		"pk":                strAttr(userPK(tenantID)),
 		"sk":                strAttr(idemSK(key)),
@@ -983,7 +995,6 @@ func (s *DynamoStore) BeginIdempotent(ctx context.Context, tenantID, key, finger
 		"idem_attempt":      strAttr(token),
 		"idem_done":         &types.AttributeValueMemberBOOL{Value: false},
 		"idem_status":       numAttr(0),
-		"idem_response":     &types.AttributeValueMemberB{Value: nil},
 		"idem_claimed_at":   numAttr(now),
 		"ttl":               numAttr(expires),
 		"idem_expires_at":   numAttr(expires),
@@ -1059,19 +1070,31 @@ func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key stri
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// Same rule as BeginIdempotent: a Binary attribute may not be empty, and an
+	// empty one is rejected rather than stored. A completed response with no
+	// body is a real case — a 204, or a handler that writes nothing — so the
+	// attribute is left out of the SET instead of written empty. idem_done is
+	// what records completion; idem_response only carries a body when there is
+	// one.
+	update := "SET idem_done = :done, idem_status = :status"
+	values := map[string]types.AttributeValue{
+		":done":   &types.AttributeValueMemberBOOL{Value: true},
+		":status": numAttr(int64(status)),
+	}
+	if len(response) > 0 {
+		update += ", idem_response = :response"
+		values[":response"] = &types.AttributeValueMemberB{Value: response}
+	}
+
 	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
 			"pk": strAttr(userPK(tenantID)),
 			"sk": strAttr(idemSK(key)),
 		},
-		UpdateExpression:    aws.String("SET idem_done = :done, idem_status = :status, idem_response = :response"),
-		ConditionExpression: aws.String("attribute_exists(pk)"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":done":     &types.AttributeValueMemberBOOL{Value: true},
-			":status":   numAttr(int64(status)),
-			":response": &types.AttributeValueMemberB{Value: response},
-		},
+		UpdateExpression:          aws.String(update),
+		ConditionExpression:       aws.String("attribute_exists(pk)"),
+		ExpressionAttributeValues: values,
 	})
 	if err != nil {
 		if isConditionalCheckFailed(err) {
