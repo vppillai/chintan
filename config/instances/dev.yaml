@@ -6,4 +6,11 @@ pwa:
   description: Voice brain-dump notes
   theme_color: "#1B4332"
   background_color: "#F7F3EB"
+
+# Per-tenant, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1, so
+# this is $5/day. Without a non-zero value here the template's HasSpendCap is
+# false and the chintan-dev-prod-spend-cap-tripped alarm is never created, which
+# leaves a runaway provider loop bounded only by the monthly Budgets email.
+daily_spend_cap_micros: 5000000
+
 # Cognito app client is created by CFN; invite first user via AWS console or scripts later

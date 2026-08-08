@@ -115,15 +115,32 @@ ok "artifact bucket: $BUCKET"
 # Build and upload
 # ---------------------------------------------------------------------------
 
-info "building the Lambda package"
-run "$REPO_ROOT/scripts/build-lambda.sh"
-
+# Two packages, not one. cmd/api serves HTTP and cmd/worker drains the capture
+# queue; they are separate main packages and must be separate artifacts.
+#
+# This script used to build and upload one zip and pass only LambdaCodeKey,
+# which the template reads as "the worker shares the API zip". The API
+# entrypoint is Handler(ctx, events.APIGatewayV2HTTPRequest): fed a real SQS
+# event it returns {"statusCode":404} with a nil error, and because the event
+# source mapping declares FunctionResponseTypes: [ReportBatchItemFailures],
+# Lambda reads a success with no batchItemFailures key as "the whole batch
+# succeeded" and deletes every uploaded recording from the queue on first
+# receive. No retry, no DLQ message, no Errors datapoint, no alarm — and the
+# GET /v1/health smoke test below still passes, so the deploy reports success
+# while every recording is silently discarded.
+info "building the Lambda packages (api and worker)"
 ZIP="$REPO_ROOT/backend/lambda-function.zip"
+WORKER_ZIP="$REPO_ROOT/backend/worker-function.zip"
+run "$REPO_ROOT/scripts/build-lambda.sh" --output "$ZIP" --worker-output "$WORKER_ZIP"
+
 S3_KEY="${INSTANCE}/${ENVIRONMENT}/lambda-function.zip"
+WORKER_S3_KEY="${INSTANCE}/${ENVIRONMENT}/worker-function.zip"
 if is_apply; then
     [ -f "$ZIP" ] || die "Lambda zip not found after build: $ZIP"
+    [ -f "$WORKER_ZIP" ] || die "worker zip not found after build: $WORKER_ZIP"
 fi
 run aws_cli s3 cp "$ZIP" "s3://${BUCKET}/${S3_KEY}"
+run aws_cli s3 cp "$WORKER_ZIP" "s3://${BUCKET}/${WORKER_S3_KEY}"
 
 # ---------------------------------------------------------------------------
 # Deploy
@@ -135,6 +152,7 @@ dim "  Environment=$ENVIRONMENT"
 dim "  AllowedOrigin=$ALLOWED_ORIGIN"
 dim "  LambdaCodeBucket=$BUCKET"
 dim "  LambdaCodeKey=$S3_KEY"
+dim "  WorkerCodeKey=$WORKER_S3_KEY"
 dim "  PagesHost=$PAGES_HOST"
 dim "  RepoName=$REPO_NAME"
 
@@ -158,6 +176,7 @@ aws_cli cloudformation deploy \
     "AllowedOrigin=$ALLOWED_ORIGIN" \
     "LambdaCodeBucket=$BUCKET" \
     "LambdaCodeKey=$S3_KEY" \
+    "WorkerCodeKey=$WORKER_S3_KEY" \
     "PagesHost=$PAGES_HOST" \
     "RepoName=$REPO_NAME" \
     "${ROLE_ARGS[@]}" \

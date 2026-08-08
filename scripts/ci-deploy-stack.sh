@@ -18,9 +18,26 @@
 #   ALLOWED_ORIGIN        default: https://$PAGES_HOST
 #   CFN_DEPLOY_ROLE_ARN   passed through to deploy.sh
 #   TEMPLATE              default: infrastructure/template.yaml
+#
+# Unlike every other script in scripts/, this one always applies. It is the CI
+# wrapper for a job that has already been gated, so it passes --apply to
+# deploy.sh unconditionally; there is no dry-run mode to ask for.
+#
+# Usage: ci-deploy-stack.sh   (no flags; every input is an environment variable)
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
+
+# README claims every script has --help. It did not: `--help` fell through to
+# the required-environment loop below and printed "INSTANCE is required".
+case "${1:-}" in
+    -h | --help)
+        usage_from_header "${BASH_SOURCE[0]}"
+        exit 0
+        ;;
+    '') ;;
+    *) die "ci-deploy-stack.sh takes no arguments; every input is an environment variable (see --help)" ;;
+esac
 
 for v in INSTANCE ENVIRONMENT LAMBDA_BUCKET LAMBDA_KEY PAGES_HOST REPO_NAME; do
     [ -n "${!v:-}" ] || die "$v is required"
@@ -28,6 +45,15 @@ done
 
 TEMPLATE="${TEMPLATE:-infrastructure/template.yaml}"
 ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://${PAGES_HOST}}"
+
+# The worker is a SEPARATE main package (backend/cmd/worker) and needs its own
+# artifact. An empty WorkerCodeKey used to mean "share the API zip", and the API
+# entrypoint fed an SQS event returns {"statusCode":404} with a nil error, which
+# Lambda reads as a successful batch and deletes every queued recording. That
+# failure is silent all the way through — the health smoke test still passes.
+# So it is required here, by name, before anything is deployed.
+[ -n "${WORKER_KEY:-}" ] ||
+    die "WORKER_KEY is required: the worker Lambda must get backend/cmd/worker, not the API zip"
 
 args=(
     --instance "$INSTANCE"
@@ -38,7 +64,7 @@ args=(
     --parameter "AllowedOrigin=${ALLOWED_ORIGIN}"
     --parameter "LambdaCodeBucket=${LAMBDA_BUCKET}"
     --parameter "LambdaCodeKey=${LAMBDA_KEY}"
-    --parameter "WorkerCodeKey=${WORKER_KEY:-}"
+    --parameter "WorkerCodeKey=${WORKER_KEY}"
     --parameter "PagesHost=${PAGES_HOST}"
     --parameter "RepoName=${REPO_NAME}"
     --tag Application=Chintan
@@ -47,11 +73,6 @@ args=(
     --tag "Environment=${ENVIRONMENT}"
     --apply
 )
-
-# WorkerCodeKey is passed when the caller supplies WORKER_KEY. Empty means the
-# template shares LambdaCodeKey, which was correct only while both
-# handlers ship in one binary built from backend/cmd/api. Pass it here the day
-# the worker gets its own main package.
 
 # Optional parameters declared in the instance config: AlarmEmail,
 # MonthlyBudgetUSD, RetentionDays and the rest. Absent means "keep the template

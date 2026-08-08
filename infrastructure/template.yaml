@@ -45,11 +45,21 @@ Parameters:
 
   WorkerCodeKey:
     Type: String
-    Default: ''
+    MinLength: 1
     Description: >
-      S3 key for the worker Lambda deployment package. Empty means the worker
-      shares LambdaCodeKey with the API function, which is correct while both
-      handlers ship in one binary.
+      S3 key for the worker Lambda deployment package, built from
+      backend/cmd/worker. Required, and deliberately without a default.
+
+      It used to default to '' and be read as "share LambdaCodeKey with the API
+      function". The API entrypoint is Handler(ctx,
+      events.APIGatewayV2HTTPRequest): fed a real SQS event it returns
+      {"statusCode":404} with a nil error, and because CaptureEventSourceMapping
+      declares FunctionResponseTypes: [ReportBatchItemFailures], Lambda reads a
+      success carrying no batchItemFailures key as "the whole batch succeeded"
+      and deletes every uploaded recording from the queue on first receive. No
+      retry, no DLQ message, no Errors datapoint, no alarm, and GET /v1/health
+      still answers — so the deploy reports success while every recording is
+      discarded. Failing here, at deploy time, is the cheapest place to catch it.
 
   AlarmEmail:
     Type: String
@@ -120,7 +130,6 @@ Parameters:
 Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
-  HasWorkerCodeKey: !Not [!Equals [!Ref WorkerCodeKey, '']]
   HasRetention: !Not [!Equals [!Ref RetentionDays, 0]]
   HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
 
@@ -465,6 +474,19 @@ Resources:
               NoncurrentVersionExpiration:
                 NoncurrentDays: !Ref RetentionDays
             - !Ref AWS::NoValue
+          # Versioning is on unconditionally, so every delete and every rewrite
+          # of an artifact leaves a noncurrent version behind that is billed and
+          # invisible to `aws s3 ls`. This rule is deliberately outside the
+          # HasRetention !If above: RetentionDays defaults to 0 and no shipped
+          # config sets it, so a conditional rule would mean the default deploy
+          # never frees a byte. It expires the superseded copy only; the current
+          # object is untouched, which is a different concern and belongs to
+          # ExpireCaptureAudio. ExpireDeleteMarkers below cannot do this job
+          # either — a delete marker only expires once nothing is behind it.
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
           - Id: AbortStaleMultipartUploads
             Status: Enabled
             AbortIncompleteMultipartUpload:
@@ -745,7 +767,7 @@ Resources:
       Handler: bootstrap
       Code:
         S3Bucket: !Ref LambdaCodeBucket
-        S3Key: !If [HasWorkerCodeKey, !Ref WorkerCodeKey, !Ref LambdaCodeKey]
+        S3Key: !Ref WorkerCodeKey
       Role: !GetAtt LambdaExecutionRole.Arn
       Architectures:
         - arm64
@@ -972,12 +994,32 @@ Resources:
       IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiLambdaLiveAlias}/invocations'
       PayloadFormatVersion: '2.0'
 
-  # Route for health check (no auth)
+  # Liveness. Declared NONE explicitly: it is the gateway default for a route
+  # that omits the property, but the two health routes and the WebAuthn login
+  # pair are the entire unauthenticated surface, and that is worth stating
+  # rather than inheriting.
   HealthRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'GET /v1/health'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # Readiness. docs/api/openapi.yaml declares this operation `security: []` and
+  # handler/routes.go registers it public(); without this route it fell through
+  # $default to the JWT authorizer and answered the gateway's own
+  # 401 {"message":"Unauthorized"} — never reaching Lambda, so an uptime probe
+  # written from the document alarmed permanently. The response carries
+  # dependency names and latencies only; the probe error text is logged, never
+  # serialised (service/readiness.go), so there is nothing here to authenticate.
+  # openapi_conformance_test.go asserts this set matches the document.
+  HealthReadyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /v1/health/ready'
+      AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 
   # $default JWT authorizer does not auto-answer CORS preflight; keep OPTIONS open.

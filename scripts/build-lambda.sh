@@ -2,12 +2,8 @@
 #
 # Build the Lambda deployment package.
 #
-# One arm64 binary named `bootstrap`, which is what the provided.al2023 runtime
-# executes. Both the API function and the worker function in
-# infrastructure/template.yaml point at this same object: WorkerCodeKey defaults
-# to empty, which the template reads as "share LambdaCodeKey", and there is only
-# one main package (backend/cmd/api). When the worker gets its own main package,
-# build it here and set WorkerCodeKey.
+# Each package builds to one arm64 binary named `bootstrap`, which is what the
+# provided.al2023 runtime executes, zipped at the archive root.
 #
 # Two binaries, not one. cmd/api serves HTTP; cmd/worker drains the capture
 # queue. They are separate main packages and must be separate artifacts: the

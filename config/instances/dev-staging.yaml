@@ -19,3 +19,9 @@ pwa:
   description: Voice brain-dump notes (staging)
   theme_color: "#1B4332"
   background_color: "#F7F3EB"
+
+# Per-tenant, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1, so
+# this is $2/day — lower than prod because nothing here is user data and a smoke
+# test should never approach it. A zero (or absent) value leaves HasSpendCap
+# false and the chintan-dev-staging-spend-cap-tripped alarm uncreated.
+daily_spend_cap_micros: 2000000
