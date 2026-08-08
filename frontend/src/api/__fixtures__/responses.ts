@@ -89,6 +89,20 @@ export const settingsStored: SettingsWire = {
 export const notesPage: Page<NoteWire> = {
   "items": [
     {
+      "aliases": [],
+      "archived": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
+      "version": 2
+    },
+    {
       "aliases": [
         "kitchen",
         "reno"
@@ -104,20 +118,6 @@ export const notesPage: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "version": 2
-    },
-    {
-      "aliases": [],
-      "archived": false,
-      "created_at": "2026-01-01T00:00:00.000000000Z",
-      "id": "fixture-id",
-      "purge_after": null,
-      "tags": [
-        "house"
-      ],
-      "title": "Reading list",
-      "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "verbatim": true,
       "version": 2
     }
   ]

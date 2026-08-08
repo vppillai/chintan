@@ -240,6 +240,10 @@ Resources:
           AttributeType: S
         - AttributeName: gsi1sk
           AttributeType: S
+        - AttributeName: gsi2pk
+          AttributeType: S
+        - AttributeName: gsi2sk
+          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
@@ -290,6 +294,58 @@ Resources:
               - raw_key
               - routed_key
               - clean_key
+        # gsi2pk = TENANT#<id>#NOTES#{ACTIVE|ARCHIVED}, gsi2sk = the note's
+        # updated_at.
+        #
+        # It exists because the base table cannot answer "most recently
+        # touched". Its sort key is NOTE#<id> and a note id leads with its
+        # CREATION instant, so walking it backwards returns the newest note
+        # MADE — and in a voice app the usual case is a note made months ago
+        # that a capture appended to this morning. Sorting a page after it
+        # arrives is not a substitute: it orders that page and leaves the
+        # collection reversed, so the note you touched last is on the last page.
+        #
+        # gsi2sk is written by the store from model.FormatTime, which pads the
+        # fraction to nine digits. That width is load-bearing: RFC3339Nano trims
+        # trailing zeros, so "…:00Z" sorts above "…:00.1Z" because 'Z' > '.',
+        # and the same bug already handed the capture router the wrong fifty
+        # notes. A sort key cannot be changed without rebuilding the index, so
+        # it is normalised on the way in.
+        #
+        # The shelf is in the partition rather than in a filter because DynamoDB
+        # applies Limit before FilterExpression: a filtered list returns short
+        # pages and has to be re-issued, and active and archived would page each
+        # other out.
+        #
+        # INCLUDE, not ALL, for the same reason as gsi1: ALL projects `data`,
+        # the blob that duplicates every attribute below, which is the transfer
+        # cost this projection exists to avoid. The set is exactly what a note
+        # list renders plus what the archived filter reads, so nothing here
+        # needs a second GetItem. Get it right now — changing a GSI projection
+        # means deleting and rebuilding the index.
+        - IndexName: gsi2
+          KeySchema:
+            - AttributeName: gsi2pk
+              KeyType: HASH
+            - AttributeName: gsi2sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - note_id
+              - title
+              - aliases
+              - tags
+              - snippet
+              - created_at
+              - updated_at
+              - s3_markdown_key
+              - s3_meta_key
+              - deleted_at
+              - purge_after
+              - purge_after_epoch
+              - verbatim
+              - version
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       TimeToLiveSpecification:

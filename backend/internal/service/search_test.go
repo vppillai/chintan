@@ -548,7 +548,14 @@ func TestSearchAcceptsAStoreCursorIssuedBeforeThisEncodingExisted(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Search(store cursor): %v", err)
 	}
-	if got := hitIDs(page); !slices.Equal(got, []string{"note_002", "note_003", "note_004"}) {
+	// The note list is ordered most-recently-touched first. These five carry no
+	// update time at all, so every sort key is equal and the tie is broken by
+	// id, descending — so the page the cursor skipped is note_004 and note_003,
+	// and the three that remain are 000 to 002. Search then ranks what it is
+	// given, so the cursor decides WHICH notes are searched and this order is
+	// search's own. Same three-note assertion as before; the trio changed
+	// because the list order did.
+	if got := hitIDs(page); !slices.Equal(got, []string{"note_000", "note_001", "note_002"}) {
 		t.Fatalf("results = %v, want the three notes after the store cursor", got)
 	}
 }

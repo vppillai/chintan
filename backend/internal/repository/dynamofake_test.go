@@ -33,12 +33,13 @@ type fakeDynamo struct {
 	// tests prove the store follows LastEvaluatedKey.
 	pageSize int
 
-	// gsi1Projected is GSI1's INCLUDE projection, read from the CloudFormation
-	// template. An index query returns only these attributes plus the key
-	// attributes, so a store that reads something the template does not project
-	// fails here rather than in production, where widening the projection means
-	// deleting and rebuilding the index.
-	gsi1Projected map[string]bool
+	// projected holds each index's INCLUDE projection, read from the
+	// CloudFormation template and keyed by index name. An index query returns
+	// only these attributes plus the key attributes, so a store that reads
+	// something the template does not project fails here rather than in
+	// production, where widening a projection means deleting and rebuilding the
+	// index.
+	projected map[string]map[string]bool
 
 	queries []*dynamodb.QueryInput
 	gets    int
@@ -46,23 +47,42 @@ type fakeDynamo struct {
 
 func newFakeDynamo() *fakeDynamo {
 	return &fakeDynamo{
-		items:         make(map[string]map[string]map[string]types.AttributeValue),
-		gsi1Projected: gsi1NonKeyAttributes(),
+		items: make(map[string]map[string]map[string]types.AttributeValue),
+		projected: map[string]map[string]bool{
+			"gsi1": indexNonKeyAttributes("gsi1"),
+			"gsi2": indexNonKeyAttributes("gsi2"),
+		},
 	}
 }
 
-// gsi1NonKeyAttributes parses the NonKeyAttributes of the gsi1 projection out of
+// indexNonKeyAttributes parses one index's NonKeyAttributes out of
 // infrastructure/template.yaml, so the tests are pinned to the index that will
 // actually be deployed rather than to a copy that can drift away from it.
-func gsi1NonKeyAttributes() map[string]bool {
+//
+// It walks from the named IndexName to that index's own NonKeyAttributes block.
+// The previous version took the first block in the file, which was correct
+// while there was one index and silently kept enforcing gsi1's projection
+// against gsi2 the moment a second existed.
+func indexNonKeyAttributes(index string) map[string]bool {
 	raw, err := os.ReadFile(templatePath)
 	if err != nil {
 		return nil // template unavailable; projection is not enforced
 	}
 	out := map[string]bool{}
-	inProjection := false
+	found, inProjection := false, false
 	for _, line := range strings.Split(string(raw), "\n") {
 		trimmed := strings.TrimSpace(line)
+		if trimmed == "- IndexName: "+index {
+			found = true
+			continue
+		}
+		if !found {
+			continue
+		}
+		// The next index begins; this one's block is over.
+		if strings.HasPrefix(trimmed, "- IndexName: ") {
+			break
+		}
 		if trimmed == "NonKeyAttributes:" {
 			inProjection = true
 			continue
@@ -217,7 +237,7 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 
 	pkAttr, skAttr := "pk", "sk"
 	if in.IndexName != nil {
-		pkAttr, skAttr = "gsi1pk", "gsi1sk"
+		pkAttr, skAttr = *in.IndexName+"pk", *in.IndexName+"sk"
 	}
 
 	wantPK := av(in.ExpressionAttributeValues[":pk"])
@@ -276,7 +296,7 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 			}
 		}
 		if in.IndexName != nil {
-			item = applyIndexProjection(item, f.gsi1Projected)
+			item = applyIndexProjection(item, f.projected[*in.IndexName], pkAttr, skAttr)
 		}
 		out.Items = append(out.Items, project(item, in.ProjectionExpression, pkAttr, skAttr))
 	}
@@ -289,8 +309,8 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 			"sk": last["sk"],
 		}
 		if in.IndexName != nil {
-			key["gsi1pk"] = last["gsi1pk"]
-			key["gsi1sk"] = last["gsi1sk"]
+			key[pkAttr] = last[pkAttr]
+			key[skAttr] = last[skAttr]
 		}
 		out.LastEvaluatedKey = key
 	}
@@ -300,12 +320,12 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 // applyIndexProjection drops everything the GSI does not carry. DynamoDB does
 // this silently, which is why a missing attribute shows up as an empty field
 // rather than an error.
-func applyIndexProjection(item map[string]types.AttributeValue, projected map[string]bool) map[string]types.AttributeValue {
+func applyIndexProjection(item map[string]types.AttributeValue, projected map[string]bool, pkAttr, skAttr string) map[string]types.AttributeValue {
 	if projected == nil {
 		return item
 	}
 	// Table and index key attributes are always projected.
-	always := map[string]bool{"pk": true, "sk": true, "gsi1pk": true, "gsi1sk": true}
+	always := map[string]bool{"pk": true, "sk": true, pkAttr: true, skAttr: true}
 	out := make(map[string]types.AttributeValue, len(item))
 	for k, v := range item {
 		if always[k] || projected[k] {

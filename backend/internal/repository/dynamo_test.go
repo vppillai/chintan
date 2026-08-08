@@ -169,7 +169,17 @@ func TestListNotesRejectsGarbageCursor(t *testing.T) {
 	}
 }
 
-func TestListNotesUsesProjectionWithoutTheDataBlob(t *testing.T) {
+// TestListNotesDoesNotTransferTheDataBlob keeps the cost this projection work
+// exists to remove: `data` is the full record as JSON and duplicates every
+// attribute a list renders, so transferring it made listing notes to draw
+// titles pay for the whole corpus.
+//
+// It used to be enforced by a ProjectionExpression on a base-table query. The
+// list now reads GSI2, whose INCLUDE projection does not hold `data` at all, so
+// the guarantee is structural rather than per-query — and this asserts the
+// guarantee rather than the mechanism, which is why it survived the change of
+// mechanism.
+func TestListNotesDoesNotTransferTheDataBlob(t *testing.T) {
 	store, api := newTestStore(t)
 	seedNotes(t, store, "tenant-a", 1)
 	api.queries = nil
@@ -182,17 +192,22 @@ func TestListNotesUsesProjectionWithoutTheDataBlob(t *testing.T) {
 		t.Fatalf("list did not reconstruct the note from projected attributes: %+v", page.Items)
 	}
 
-	projection := api.queries[0].ProjectionExpression
-	if projection == nil {
-		t.Fatal("list query has no ProjectionExpression")
+	if len(api.queries) == 0 {
+		t.Fatal("the list issued no query")
 	}
-	if strings.Contains(*projection, "data") {
-		t.Fatalf("list projection still transfers the full record blob: %q", *projection)
+	q := api.queries[0]
+	if q.IndexName == nil || *q.IndexName != "gsi2" {
+		t.Fatalf("the note list queried %v, want the gsi2 index — the base table can only order by creation",
+			q.IndexName)
 	}
-	for _, want := range []string{"title", "updated_at", "tags", "version", "note_id"} {
-		if !strings.Contains(*projection, want) {
-			t.Fatalf("projection %q is missing %q", *projection, want)
-		}
+	// A ProjectionExpression naming an unprojected attribute on a GSI does not
+	// fetch it, it returns nothing for it. Relying on the index projection is
+	// the only way this can fail loudly rather than silently blank a field.
+	if q.ProjectionExpression != nil && strings.Contains(*q.ProjectionExpression, "data") {
+		t.Fatalf("the list asks for the record blob: %q", *q.ProjectionExpression)
+	}
+	if !*q.ScanIndexForward == false {
+		t.Fatal("the note list is not walking the index backwards")
 	}
 }
 
@@ -682,15 +697,41 @@ func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 		"data": &types.AttributeValueMemberS{Value: legacy},
 	})
 
+	// A note written before GSI2 existed carries none of its key attributes, so
+	// DynamoDB does not index it and the list cannot see it. That is the
+	// migration this index needs, and leaving it implicit would mean shipping a
+	// deploy that empties the notes list.
+	before, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if len(before.Items) != 0 {
+		t.Fatalf("got %d notes before reindexing; if this passes, the migration below is not the thing being tested",
+			len(before.Items))
+	}
+
+	touched, err := store.ReindexNotes(context.Background(), "tenant-a")
+	if err != nil {
+		t.Fatalf("ReindexNotes: %v", err)
+	}
+	if touched != 1 {
+		t.Fatalf("reindexed %d notes, want 1", touched)
+	}
+
 	page, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
 	if len(page.Items) != 1 {
-		t.Fatalf("got %d notes, want the one legacy note", len(page.Items))
+		t.Fatalf("got %d notes after reindexing, want the one legacy note", len(page.Items))
 	}
 	if page.Items[0].Title != "Written by v1" {
 		t.Fatalf("legacy note = %+v, want its title recovered from the blob", page.Items[0])
+	}
+
+	// Idempotent: running it again must not double-count or disturb anything.
+	if touched, err := store.ReindexNotes(context.Background(), "tenant-a"); err != nil || touched != 1 {
+		t.Fatalf("second ReindexNotes = %d, %v; want 1, nil", touched, err)
 	}
 }
 
@@ -699,7 +740,7 @@ func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 // error at runtime, it returns an empty field. Widening it later is not an
 // update — the index is deleted and rebuilt.
 func TestGSI1ProjectionCoversWhatTheCaptureListReads(t *testing.T) {
-	projected := gsi1NonKeyAttributes()
+	projected := indexNonKeyAttributes("gsi1")
 	if len(projected) == 0 {
 		t.Fatalf("could not read the gsi1 projection from %s; the drift check is not running", templatePath)
 	}
@@ -1093,4 +1134,279 @@ func TestTheFakeRefusesTheShapesTheServiceRefuses(t *testing.T) {
 			t.Fatalf("the fake refused a legal item: %v", err)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// List order
+// ---------------------------------------------------------------------------
+
+// pageThroughNotes walks every page of a note list and returns the ids in the
+// order they were served, plus the number of pages it took.
+//
+// It asserts across pages deliberately. A list that is sorted after the fact,
+// per page, passes any single-page assertion and still serves the whole
+// collection in the wrong order — page one holds the oldest notes, correctly
+// sorted among themselves.
+func pageThroughNotes(
+	t *testing.T,
+	list func(context.Context, repository.ListOptions) (repository.Page[model.NoteIndex], error),
+	limit int32,
+) ([]string, int) {
+	t.Helper()
+	ctx := context.Background()
+
+	var order []string
+	seen := map[string]bool{}
+	opts := repository.ListOptions{Limit: limit}
+	pages := 0
+
+	for {
+		page, err := list(ctx, opts)
+		if err != nil {
+			t.Fatalf("page %d: %v", pages+1, err)
+		}
+		pages++
+		for _, n := range page.Items {
+			if seen[n.ID] {
+				t.Fatalf("%s was served twice; pagination is repeating items", n.ID)
+			}
+			seen[n.ID] = true
+			order = append(order, n.ID)
+		}
+		if page.Cursor == "" {
+			break
+		}
+		if pages > 50 {
+			t.Fatal("pagination did not terminate")
+		}
+		opts.Cursor = page.Cursor
+	}
+	return order, pages
+}
+
+// TestNotesComeBackMostRecentlyTouchedFirst is the order the owner asked for,
+// and the reason it needs an index rather than a reversed query.
+//
+// The notes here are created in one order and updated in the opposite one, so
+// creation order and update order disagree about every single note. That is not
+// a contrived case: in a voice app every capture appends to a note, so the note
+// somebody touched last is almost never the note they made last. A query that
+// walks the base table backwards — NOTE#<id>, and a note id leads with its
+// creation instant — passes a test where the two agree and fails this one.
+//
+// The walk spans three pages because a page sorted after it arrives also passes
+// a single-page assertion while leaving the collection in the wrong order.
+func TestNotesComeBackMostRecentlyTouchedFirst(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	const total = 7
+
+	// note_000 is the oldest by creation and the newest by update; note_006 is
+	// the reverse. Every pair disagrees.
+	for i := 0; i < total; i++ {
+		touched := time.Date(2026, 8, 1, 0, 0, total-i, 0, time.UTC)
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID:        fmt.Sprintf("note_%03d", i),
+			Title:     fmt.Sprintf("Note %d", i),
+			UpdatedAt: model.FormatTime(touched),
+		}); err != nil {
+			t.Fatalf("seed note %d: %v", i, err)
+		}
+	}
+
+	order, pages := pageThroughNotes(t, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+		return store.ListNotes(ctx, "tenant-a", opts)
+	}, 3)
+
+	if pages < 2 {
+		t.Fatalf("the walk took %d page(s); this test is meaningless on one page", pages)
+	}
+	if len(order) != total {
+		t.Fatalf("saw %d notes over %d pages, want all %d", len(order), pages, total)
+	}
+
+	// Most recently touched first, which here is creation order forwards.
+	want := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		want = append(want, fmt.Sprintf("note_%03d", i))
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("notes came back %v, want most recently touched first %v.\n"+
+				"Reversing the base table would give the exact opposite, which is newest CREATED.",
+				order, want)
+		}
+	}
+}
+
+// TestTouchingANoteMovesItToTheTop is the same property from the other side: an
+// old note that receives a capture today belongs at the top afterwards, and the
+// index has to be rewritten by the ordinary write path for that to happen.
+func TestTouchingANoteMovesItToTheTop(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID:        fmt.Sprintf("note_%03d", i),
+			Title:     fmt.Sprintf("Note %d", i),
+			UpdatedAt: model.FormatTime(time.Date(2026, 8, 1, 0, 0, i, 0, time.UTC)),
+		}); err != nil {
+			t.Fatalf("seed note %d: %v", i, err)
+		}
+	}
+
+	oldest, err := store.GetNote(ctx, "tenant-a", "note_000")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	oldest.UpdatedAt = model.FormatTime(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	if _, err := store.PutNote(ctx, "tenant-a", oldest); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	page, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if len(page.Items) == 0 || page.Items[0].ID != "note_000" {
+		t.Fatalf("after touching the oldest note the list starts with %v, want note_000",
+			func() string {
+				if len(page.Items) == 0 {
+					return "nothing"
+				}
+				return page.Items[0].ID
+			}())
+	}
+}
+
+// TestArchivedNotesComeBackNewestFirstAcrossPages holds the archive to the same
+// order. It is the same query shape with a different filter, so a fix applied to
+// one and not the other leaves the two lists disagreeing about what "first"
+// means.
+func TestArchivedNotesComeBackNewestFirstAcrossPages(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	const total = 7
+	purge := time.Now().Add(24 * time.Hour)
+
+	for i := 0; i < total; i++ {
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID: fmt.Sprintf("note_%03d", i), Title: fmt.Sprintf("Note %d", i),
+			UpdatedAt: model.Now(), DeletedAt: model.Now(),
+			PurgeAfter: model.FormatTime(purge), PurgeAfterEpoch: purge.Unix(),
+		}); err != nil {
+			t.Fatalf("seed archived note %d: %v", i, err)
+		}
+	}
+
+	order, pages := pageThroughNotes(t, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+		return store.ListArchivedNotes(ctx, "tenant-a", opts)
+	}, 3)
+
+	if pages < 2 {
+		t.Fatalf("the walk took %d page(s); this test is meaningless on one page", pages)
+	}
+	if len(order) != total {
+		t.Fatalf("saw %d archived notes over %d pages, want all %d", len(order), pages, total)
+	}
+	if order[0] != fmt.Sprintf("note_%03d", total-1) {
+		t.Fatalf("archived page one starts at %s, want the newest %s",
+			order[0], fmt.Sprintf("note_%03d", total-1))
+	}
+}
+
+// TestCapturesComeBackNewestFirstAcrossPages pins the order the capture ids
+// were made time-sortable for. The progress card only ever asks for page one,
+// so a capture that lands on page two is a capture the user watches as a stall.
+//
+// Both capture queries are already descending. This is here so that stays true.
+func TestCapturesComeBackNewestFirstAcrossPages(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	const total = 7
+
+	for i := 0; i < total; i++ {
+		if _, err := store.PutCapture(ctx, model.CaptureIndex{
+			ID: fmt.Sprintf("c_%03d", i), UserID: "tenant-a", NoteID: "note_1",
+			Status: model.StatusAppended, CreatedAt: fmt.Sprintf("2026-08-0%dT00:00:00.000000000Z", i+1),
+		}); err != nil {
+			t.Fatalf("seed capture %d: %v", i, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		list func(context.Context, repository.ListOptions) (repository.Page[model.CaptureIndex], error)
+	}{
+		{"the tenant list", func(ctx context.Context, o repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+			return store.ListCaptures(ctx, "tenant-a", o)
+		}},
+		{"one note's captures", func(ctx context.Context, o repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+			return store.ListCapturesByNote(ctx, "tenant-a", "note_1", o)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var order []string
+			opts := repository.ListOptions{Limit: 3}
+			pages := 0
+			for {
+				page, err := tc.list(ctx, opts)
+				if err != nil {
+					t.Fatalf("page %d: %v", pages+1, err)
+				}
+				pages++
+				for _, c := range page.Items {
+					order = append(order, c.ID)
+				}
+				if page.Cursor == "" {
+					break
+				}
+				opts.Cursor = page.Cursor
+			}
+			if pages < 2 {
+				t.Fatalf("the walk took %d page(s)", pages)
+			}
+			if len(order) != total {
+				t.Fatalf("saw %d captures, want %d", len(order), total)
+			}
+			if order[0] != fmt.Sprintf("c_%03d", total-1) {
+				t.Fatalf("captures came back %v, want newest (%s) first",
+					order, fmt.Sprintf("c_%03d", total-1))
+			}
+		})
+	}
+}
+
+// TestGSI2ProjectionCoversWhatTheNoteListReads holds the notes index to the
+// same standard as GSI1, and for the same reason: a projection that is missing
+// an attribute does not error, it returns an empty field — a note with no title
+// rather than a failure. Widening it later is not an update; the index is
+// deleted and rebuilt, which on a populated table is an outage of the notes
+// list.
+func TestGSI2ProjectionCoversWhatTheNoteListReads(t *testing.T) {
+	projected := indexNonKeyAttributes("gsi2")
+	if len(projected) == 0 {
+		t.Fatalf("could not read the gsi2 projection from %s; the drift check is not running", templatePath)
+	}
+
+	required := []string{
+		// Everything a note row renders.
+		"note_id", "title", "snippet", "tags", "aliases", "created_at", "updated_at",
+		// What the editor and the archive need without a second read.
+		"s3_markdown_key", "s3_meta_key", "verbatim", "version",
+		// What marks a note archived, and what the archived list filters on.
+		"deleted_at", "purge_after", "purge_after_epoch",
+	}
+	for _, name := range required {
+		if !projected[name] {
+			t.Errorf("gsi2 does not project %q; the note list would read it back empty", name)
+		}
+	}
+
+	// ALL would project `data`, the blob that duplicates every attribute above.
+	// Carrying it is the transfer cost the projection exists to avoid.
+	if projected["data"] {
+		t.Error("gsi2 projects `data`; that is the cost this index exists to avoid")
+	}
 }

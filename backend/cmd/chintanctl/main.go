@@ -11,6 +11,7 @@
 //	chintanctl backup    --instance <name> --out <dir>
 //	chintanctl restore   --instance <name> --in <dir> [--apply]
 //	chintanctl reconcile --instance <name> [--apply]
+//	chintanctl reindex --instance <name> [--apply]
 //	chintanctl usage     --instance <name> [--since <date>]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //
@@ -44,6 +45,10 @@ Commands:
   backup     Full-fidelity copy: DynamoDB items verbatim alongside the S3
              objects, with a content hash per object.
   restore    Inverse of backup. Verifies every hash before it writes anything.
+  reindex    Write the gsi2 key attributes onto notes that lack them. Adding a
+             global secondary index does not index the rows already in the
+             table, so run this once after the deploy that adds one or the
+             notes list comes back empty. Idempotent.
   reconcile  Report orphans in both directions: objects with no index row, and
              index rows whose objects are gone.
   usage      Aggregate the USAGE# metering records written by internal/meter.
@@ -153,6 +158,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdRestore(ctx, rest, stdout, stderr, stdin)
 	case "reconcile":
 		return cmdReconcile(ctx, rest, stdout, stderr, stdin)
+	case "reindex":
+		return cmdReindex(ctx, rest, stdout, stderr, stdin)
 	case "usage":
 		return cmdUsage(ctx, rest, stdout, stderr, stdin)
 	case "erase":

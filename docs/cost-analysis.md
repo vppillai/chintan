@@ -56,6 +56,39 @@ vault CMK — and removing it takes the idle figure to zero.
 At heavy use the AWS bill is **6% of total spend**. The providers are the cost
 story; the infrastructure is not.
 
+### The second index, and what it costs
+
+`gsi2` orders notes by `updated_at` so the list can answer "most recently
+touched", which the base table cannot: its sort key is `NOTE#<id>` and a note id
+leads with its **creation** instant. It is billed like any GSI — storage for the
+projected attributes, plus a write unit on every note write that changes an
+indexed attribute.
+
+**Idle cost: $0.00, unchanged.** Concretely, on the measured footprint:
+
+- **Storage.** The projection is `INCLUDE`, deliberately without the `data`
+  blob, so an indexed note is its promoted attributes only — roughly 600 bytes
+  for a note with a snippet. The whole table is **27,405 bytes** across 39
+  items; the index adds well under 50 KB against a **25 GB** free allowance.
+- **Writes.** One extra WRU per note write. A note is written on create, on
+  edit, and once per capture appended to it — so the heavy scenario's 300
+  captures add ~300 index writes, or **$0.0002** at $0.625/M WRU, inside the
+  free tier either way.
+- **Reads get cheaper, not dearer.** The active list previously ran a filtered
+  base-table query, and DynamoDB applies `Limit` **before** `FilterExpression`,
+  so a page of active notes could cost several round trips through archived
+  ones. The shelf is now part of the partition key, so each page is one query
+  over exactly the items it wants and the retry loop only runs for the archived
+  list.
+
+The one real cost is operational rather than monetary, and it is not on the rate
+card: **adding a GSI does not index the rows already in the table.** DynamoDB
+backfills a new index only from items that already carry its key attributes, so
+every note written before `gsi2` existed is absent from it, and the notes list
+reads empty until each is rewritten. `chintanctl reindex` is that rewrite and is
+part of the same change; it must be run once per instance immediately after the
+stack update.
+
 ### The custom-metric hypothesis: **refuted**
 
 The brief suspected custom metrics were the single largest recurring cost and
@@ -108,6 +141,7 @@ Verified against the deployed account (`338186951935`) where possible.
 | `DynamoDBTable` (on-demand) | $0.25/GB-mo, first 25 GB free; measured **27,405 bytes** | $0.00 |
 | ↳ `PointInTimeRecoverySpecification` | $0.20/GB-mo, no minimum; 27 KB → $0.0000054 | $0.00 |
 | ↳ `gsi1` GSI | GSI storage + RRU/WRU, same free tier | $0.00 |
+| ↳ `gsi2` GSI (notes by update time) | same; adds a second index write per note write and ~1 KB per note of projected storage | $0.00 |
 | ↳ `StreamSpecification: NEW_AND_OLD_IMAGES` | $0.02/100,000 stream read request units — but **GetRecords calls made by a Lambda trigger are not billed**, and an idle table writes no records at all | $0.00 |
 | `ContentBucket` | $0.023/GB-mo; measured **5.9 MB** | $0.00 |
 | ↳ `VersioningConfiguration: Enabled` | noncurrent versions billed as storage | $0.00 |

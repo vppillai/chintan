@@ -147,16 +147,44 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	keys := make([]string, 0, len(s.notes[tenantID]))
+	// Most recently touched first, matching the GSI2 query the DynamoDB store
+	// issues. Ordering by note id here instead would order by CREATION, and the
+	// double would then quietly disagree with production about the one thing
+	// this list is for — every service and handler test runs against this store.
+	type entry struct{ sortKey, id string }
+	entries := make([]entry, 0, len(s.notes[tenantID]))
 	for id, n := range s.notes[tenantID] {
-		if keep(n) {
-			keys = append(keys, id)
+		if !keep(n) {
+			continue
 		}
+		// Fixed-width instant, then id to break a tie deterministically. The
+		// width matters for the same reason it does in the index: RFC3339Nano
+		// trims trailing zeros and stops sorting chronologically.
+		entries = append(entries, entry{sortKey: noteTouchedSortKey(n) + "\x00" + id, id: id})
 	}
-	sort.Strings(keys)
-	return paginate(tenantID, keys, opts, func(id string) model.NoteIndex {
-		return copyNote(s.notes[tenantID][id])
+	sort.Slice(entries, func(i, j int) bool { return entries[i].sortKey > entries[j].sortKey })
+
+	keys := make([]string, 0, len(entries))
+	byKey := make(map[string]string, len(entries))
+	for i, e := range entries {
+		// paginate walks keys in ascending order, so index the chosen order.
+		k := fmt.Sprintf("%08d", i)
+		keys = append(keys, k)
+		byKey[k] = e.id
+	}
+
+	return paginate(tenantID, keys, opts, func(k string) model.NoteIndex {
+		return copyNote(s.notes[tenantID][byKey[k]])
 	})
+}
+
+// noteTouchedSortKey renders a note's update time the way the GSI2 sort key is
+// written, so the double orders notes the way the table does.
+func noteTouchedSortKey(n model.NoteIndex) string {
+	if t, err := model.ParseTime(n.UpdatedAt); err == nil {
+		return model.FormatTime(t)
+	}
+	return n.UpdatedAt
 }
 
 func (s *Store) ListNotes(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
