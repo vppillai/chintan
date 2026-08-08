@@ -52,8 +52,8 @@ jobs:
       prod: ${{ steps.instances.outputs.prod }}
       has_staging: ${{ steps.instances.outputs.has_staging }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
@@ -96,8 +96,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -119,12 +119,12 @@ jobs:
       artifact_key: ${{ steps.upload.outputs.key }}
       worker_key: ${{ steps.upload.outputs.worker_key }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -170,8 +170,8 @@ jobs:
       matrix:
         entry: ${{ fromJSON(needs.discover.outputs.staging) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -207,8 +207,8 @@ jobs:
       matrix:
         entry: ${{ fromJSON(needs.discover.outputs.prod) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}

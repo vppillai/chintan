@@ -27,8 +27,8 @@ jobs:
     name: Go test (race)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -53,8 +53,8 @@ jobs:
     name: golangci-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -76,8 +76,8 @@ jobs:
     name: govulncheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -94,8 +94,8 @@ jobs:
     name: cfn-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: cfn-lint
@@ -107,8 +107,8 @@ jobs:
     name: shellcheck and shfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -131,8 +131,8 @@ jobs:
     name: Guardrails
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
@@ -151,7 +151,7 @@ jobs:
     name: No user content in logs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Provider adapters must not log response bodies
         run: scripts/check-log-hygiene.sh
       - name: Prove the check can fail
@@ -161,7 +161,7 @@ jobs:
     name: Frontend env contract
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The deploy pipeline exports VITE_* variables the bundle reads. A name
       # mismatch produces a bundle that builds and deploys green and cannot sign
       # in, because a missing variable is an empty string rather than an error.
@@ -174,8 +174,8 @@ jobs:
     name: Instance configs resolve
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
@@ -188,7 +188,7 @@ jobs:
     name: Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Bun, not npm: there is no Node in this project's toolchain and the
       # lockfile is bun.lock.
       - uses: oven-sh/setup-bun@v2
@@ -226,8 +226,8 @@ jobs:
     # against each other, in both directions, and it needs both toolchains at
     # once, which is why it is its own job rather than a step in either.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -285,6 +285,7 @@ jobs:
             git checkout -- backend/internal/handler/wire.go frontend/src/api/__fixtures__/
           }
           trap restore EXIT
+          # shellcheck disable=SC2016 # the backticks are Go struct-tag syntax, not command substitution: they must reach sed literally.
           sed -i 's/`json:"items"`/`json:"entries"`/' backend/internal/handler/wire.go
           (cd backend && CHINTAN_UPDATE_FIXTURES=1 go test -count=1 ./internal/handler/ \
             -run TestContractResponsesAreWhatTheFrontendTypesDeclare)
@@ -298,7 +299,7 @@ jobs:
     name: Playwright
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -324,7 +325,7 @@ jobs:
         run: bun run e2e
       - name: Upload the report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: frontend/playwright-report/
