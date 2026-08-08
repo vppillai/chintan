@@ -251,6 +251,56 @@ func (s *Store) GetCapture(ctx context.Context, tenantID, captureID string) (mod
 	return c, nil
 }
 
+// ListCaptures mirrors DynamoStore.ListCaptures: the tenant's whole capture
+// partition, keyed by capture id, newest first.
+//
+// It must include a capture with no destination note. That is the case the
+// note-walking fallback got wrong, and a double that quietly did the right
+// thing here is how the difference stayed invisible.
+func (s *Store) ListCaptures(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return repository.Page[model.CaptureIndex]{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Descending capture id, matching a base-table query with
+	// ScanIndexForward: false.
+	ids := make([]string, 0, len(s.captures[tenantID]))
+	for id := range s.captures[tenantID] {
+		ids = append(ids, id)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(ids)))
+
+	keys := make([]string, 0, len(ids))
+	byKey := make(map[string]string, len(ids))
+	for i, id := range ids {
+		// paginate walks keys in ascending order, so index the chosen order.
+		k := fmt.Sprintf("%08d", i)
+		keys = append(keys, k)
+		byKey[k] = id
+	}
+
+	page, err := paginate(tenantID+"#captures", keys, opts, func(k string) model.CaptureIndex {
+		return s.captures[tenantID][byKey[k]]
+	})
+	if err != nil {
+		return repository.Page[model.CaptureIndex]{}, err
+	}
+	sortCapturesNewestFirst(page.Items)
+	return page, nil
+}
+
+// sortCapturesNewestFirst matches the ordering DynamoStore applies to a page.
+func sortCapturesNewestFirst(captures []model.CaptureIndex) {
+	sort.SliceStable(captures, func(i, j int) bool {
+		if captures[i].CreatedAt != captures[j].CreatedAt {
+			return captures[i].CreatedAt > captures[j].CreatedAt
+		}
+		return captures[i].ID > captures[j].ID
+	})
+}
+
 func (s *Store) ListCapturesByNote(ctx context.Context, tenantID, noteID string, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return repository.Page[model.CaptureIndex]{}, err

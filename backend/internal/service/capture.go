@@ -180,7 +180,14 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 	if _, err := rand.Read(captureIDBytes); err != nil {
 		return CaptureCreated{}, fmt.Errorf("failed to generate capture ID: %w", err)
 	}
-	captureID := "c_" + hex.EncodeToString(captureIDBytes)
+	// The id leads with a fixed-width creation instant, so capture ids sort
+	// chronologically. The tenant-wide capture list reads the base table, whose
+	// sort key is CAPTURE#<id>, so the id is what decides whether page one holds
+	// the newest captures. A purely random id scatters an in-flight capture
+	// uniformly across every page, and the progress card only ever asks for the
+	// first one. The random suffix keeps ids unguessable and collision-free.
+	captureID := fmt.Sprintf("c_%016x_%s",
+		uint64(time.Now().UTC().UnixNano()), hex.EncodeToString(captureIDBytes))
 
 	audioKey, err := keys.CaptureAudio(userID, captureID, ext)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
@@ -37,8 +38,11 @@ func encodeCursor(key map[string]types.AttributeValue) (string, error) {
 
 // decodeCursor turns an opaque cursor back into an exclusive start key. wantPK
 // is the partition the caller is querying; a cursor from a different partition
-// is rejected.
-func decodeCursor(cursor, pkAttr, wantPK string) (map[string]types.AttributeValue, error) {
+// is rejected. skPrefix, when set, additionally rejects a cursor from a
+// different query over the same partition — notes and captures share one
+// partition, so a note cursor would otherwise be accepted by a capture list and
+// silently return the wrong page.
+func decodeCursor(cursor, pkAttr, wantPK, skAttr, skPrefix string) (map[string]types.AttributeValue, error) {
 	if cursor == "" {
 		return nil, nil
 	}
@@ -55,6 +59,12 @@ func decodeCursor(cursor, pkAttr, wantPK string) (map[string]types.AttributeValu
 	}
 	if got, ok := flat[pkAttr]; !ok || got != wantPK {
 		return nil, fmt.Errorf("cursor: does not belong to this partition")
+	}
+	if skPrefix != "" {
+		got, ok := flat[skAttr]
+		if !ok || !strings.HasPrefix(got, skPrefix) {
+			return nil, fmt.Errorf("cursor: does not belong to this query")
+		}
 	}
 	out := make(map[string]types.AttributeValue, len(flat))
 	for k, v := range flat {

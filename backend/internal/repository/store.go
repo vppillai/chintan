@@ -105,6 +105,14 @@ type Store interface {
 
 	PutCapture(ctx context.Context, c model.CaptureIndex) (model.CaptureIndex, error)
 	GetCapture(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error)
+	// ListCaptures returns every capture the tenant owns, newest first, from the
+	// base table.
+	//
+	// Base table, not GSI1, and that is the whole point: a capture awaiting
+	// disambiguation has no destination note, so it has no note partition to be
+	// indexed under. Reaching the tenant's captures by walking their notes
+	// therefore cannot see exactly the captures the user most needs to find.
+	ListCaptures(ctx context.Context, tenantID string, opts ListOptions) (Page[model.CaptureIndex], error)
 	// ListCapturesByNote queries GSI1 directly instead of scanning the tenant's
 	// whole capture partition and filtering client-side.
 	ListCapturesByNote(ctx context.Context, tenantID, noteID string, opts ListOptions) (Page[model.CaptureIndex], error)

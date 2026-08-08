@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -44,6 +45,14 @@ type DynamoStore struct {
 	tableName string
 	indexName string
 }
+
+// The real store has to satisfy the whole interface, not merely the parts the
+// tests reach. A missing method here is a method the API silently falls back
+// away from at runtime rather than failing to build.
+var (
+	_ Store   = (*DynamoStore)(nil)
+	_ Objects = (*S3Objects)(nil)
+)
 
 // gsi1Name is the index the template creates.
 const gsi1Name = "gsi1"
@@ -292,7 +301,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, filter string, ex
 	}
 
 	pk := userPK(tenantID)
-	start, err := decodeCursor(opts.Cursor, "pk", pk)
+	start, err := decodeCursor(opts.Cursor, "pk", pk, "sk", "NOTE#")
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
@@ -509,10 +518,12 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		"peaks_key":         strAttr(c.PeaksKey),
 		"data":              strAttr(string(blob)),
 	}
-	if c.NoteID != "" {
-		item["gsi1pk"] = strAttr(noteCapturesGSI1PK(c.UserID, c.NoteID))
-		item["gsi1sk"] = strAttr(captureGSI1SK(c.CreatedAt))
-	}
+	// Indexed even when NoteID is empty. A capture awaiting disambiguation has
+	// no destination note, and leaving it out of the index entirely is what made
+	// ListCapturesByNote(tenant, "") — which the export walk relies on — return
+	// nothing on DynamoDB while returning everything on the in-memory store.
+	item["gsi1pk"] = strAttr(noteCapturesGSI1PK(c.UserID, c.NoteID))
+	item["gsi1sk"] = strAttr(captureGSI1SK(c.CreatedAt))
 	return item, nil
 }
 
@@ -626,7 +637,7 @@ func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID s
 	}
 
 	gsiPK := noteCapturesGSI1PK(tenantID, noteID)
-	start, err := decodeCursor(opts.Cursor, "gsi1pk", gsiPK)
+	start, err := decodeCursor(opts.Cursor, "gsi1pk", gsiPK, "gsi1sk", "CAPTURE#")
 	if err != nil {
 		return Page[model.CaptureIndex]{}, err
 	}
@@ -688,6 +699,78 @@ func trimPrefix(s, prefix string) string {
 		return s[len(prefix):]
 	}
 	return s
+}
+
+// ListCaptures returns one page of every capture the tenant owns, newest first.
+//
+// This reads the base table rather than GSI1, and that is the point. GSI1
+// partitions captures by their destination note, so a `needs_target` capture —
+// one the router could not place, which is precisely the capture the user has
+// to be shown in order to act on it — has no note to be indexed under.
+// Assembling a tenant-wide list by walking notes therefore misses exactly the
+// captures that most need to be found: durable, and from the UI's side
+// indistinguishable from lost.
+func (s *DynamoStore) ListCaptures(ctx context.Context, tenantID string, opts ListOptions) (Page[model.CaptureIndex], error) {
+	if err := ctx.Err(); err != nil {
+		return Page[model.CaptureIndex]{}, err
+	}
+
+	pk := userPK(tenantID)
+	start, err := decodeCursor(opts.Cursor, "pk", pk, "sk", "CAPTURE#")
+	if err != nil {
+		return Page[model.CaptureIndex]{}, err
+	}
+
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(s.tableName),
+		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk":        strAttr(pk),
+			":sk_prefix": strAttr("CAPTURE#"),
+		},
+		// Capture ids carry their creation instant as a fixed-width prefix, so
+		// descending sort-key order is reverse chronological order and page one
+		// holds the newest captures — which is what makes a progress card
+		// showing in-flight work find them on the first request.
+		ScanIndexForward:  aws.Bool(false),
+		ExclusiveStartKey: start,
+		Limit:             aws.Int32(opts.limit()),
+	})
+	if err != nil {
+		return Page[model.CaptureIndex]{}, fmt.Errorf("dynamo query captures: %w", err)
+	}
+
+	captures := make([]model.CaptureIndex, 0, len(out.Items))
+	for _, raw := range out.Items {
+		c, err := captureFromItem(raw)
+		if err != nil {
+			return Page[model.CaptureIndex]{}, err
+		}
+		c.UserID = tenantID
+		captures = append(captures, c)
+	}
+	sortCapturesNewestFirst(captures)
+
+	cursor, err := encodeCursor(out.LastEvaluatedKey)
+	if err != nil {
+		return Page[model.CaptureIndex]{}, err
+	}
+	return Page[model.CaptureIndex]{Items: captures, Cursor: cursor}, nil
+}
+
+// sortCapturesNewestFirst orders a page by creation time.
+//
+// Key order already delivers this for any capture created since ids became
+// time-ordered, so in production this is a no-op. It exists so that a page
+// containing an id from before that change is still returned in a sane order
+// rather than in the arbitrary order of a random hex string.
+func sortCapturesNewestFirst(captures []model.CaptureIndex) {
+	sort.SliceStable(captures, func(i, j int) bool {
+		if captures[i].CreatedAt != captures[j].CreatedAt {
+			return captures[i].CreatedAt > captures[j].CreatedAt
+		}
+		return captures[i].ID > captures[j].ID
+	})
 }
 
 func (s *DynamoStore) UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error {
@@ -1087,7 +1170,7 @@ func (s *DynamoStore) listCredentials(ctx context.Context, pk string, opts ListO
 		return Page[model.WebAuthnCredential]{}, err
 	}
 
-	start, err := decodeCursor(opts.Cursor, "pk", pk)
+	start, err := decodeCursor(opts.Cursor, "pk", pk, "sk", "WACRED#")
 	if err != nil {
 		return Page[model.WebAuthnCredential]{}, err
 	}
