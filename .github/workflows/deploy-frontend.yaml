@@ -4,7 +4,7 @@ name: Deploy Frontend
 #
 # Two v1 defects are fixed here.
 #
-#   * The deploy job targeted the `production` environment. actions/deploy-pages@v4
+#   * The deploy job targeted the `production` environment. actions/deploy-pages
 #     requires `github-pages`, so the deployment was rejected by the Pages service
 #     regardless of what the rest of the job did.
 #   * The build copied static files and generated js/config.js at deploy time. The
@@ -54,9 +54,9 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
@@ -72,7 +72,7 @@ jobs:
       # Read-only AWS access: the bundle's API endpoint and Cognito IDs come from
       # the deployed stacks rather than from a checked-in config, so a rebuilt
       # bundle cannot point at a stack that no longer exists.
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -82,9 +82,9 @@ jobs:
           PAGES_BASE: /${{ github.event.repository.name }}
         run: scripts/ci-build-site.sh --out site
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -92,7 +92,7 @@ jobs:
     name: Publish to Pages
     runs-on: ubuntu-latest
     needs: build
-    # actions/deploy-pages@v4 requires this exact environment name. v1 named
+    # actions/deploy-pages requires this exact environment name. v1 named
     # `production` here, which the Pages service does not accept.
     environment:
       name: github-pages
@@ -102,4 +102,4 @@ jobs:
       id-token: write
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
