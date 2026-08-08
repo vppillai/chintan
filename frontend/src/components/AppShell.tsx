@@ -6,6 +6,7 @@ import { sheetForPath } from '@/app/sheet.ts';
 import { ProgressCard } from '@/features/capture/ProgressCard.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
+import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
 
@@ -92,6 +93,7 @@ export function AppShell() {
         {sheet.state === 'collapsed' && <LibraryStrip />}
         {sheet.state === 'expanded' && <BottomBar />}
 
+        <UpdatePrompt />
         <StatusRegion message={announcementFor(location.pathname)} />
       </div>
     </>

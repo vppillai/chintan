@@ -2,6 +2,7 @@ import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
 
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -20,7 +21,66 @@ function resolveBase(raw: string | undefined): string {
 
 export default defineConfig(({ mode }) => ({
   base: resolveBase(process.env['VITE_BASE']),
-  plugins: [react()],
+  plugins: [
+    react(),
+    /*
+     * injectManifest, not generateSW. The app needs a network-first shell, an
+     * update flow that does NOT call skipWaiting on install, and a real
+     * Background Sync handler; the generated recipes fight all three. See
+     * src/sw.ts.
+     */
+    VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      registerType: 'prompt',
+      injectRegister: 'auto',
+      // The dev server does not need a worker, and a stale one during
+      // development is a debugging trap.
+      devOptions: { enabled: false },
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+      },
+      manifest: {
+        name: 'Chintan',
+        short_name: 'Chintan',
+        description: 'Speak a thought. It files itself.',
+        start_url: '.',
+        scope: '.',
+        display: 'standalone',
+        // Unlocked on purpose: a car mount is landscape, and the stated use
+        // case is hands-free. v1 pinned portrait-primary.
+        orientation: 'any',
+        background_color: '#FBF9F4',
+        theme_color: '#FBF9F4',
+        icons: [
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: 'icon-maskable-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+          {
+            src: 'icon-maskable-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+        shortcuts: [
+          {
+            name: 'Record a thought',
+            short_name: 'Record',
+            description: 'Start recording immediately',
+            url: 'capture',
+            icons: [{ src: 'icon-192.png', sizes: '192x192' }],
+          },
+        ],
+      },
+    }),
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

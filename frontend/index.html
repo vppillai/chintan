@@ -8,6 +8,14 @@
     />
     <meta name="description" content="Speak a thought. It files itself." />
     <meta name="color-scheme" content="light dark" />
+    <!-- iOS standalone: without these the app opens in Safari chrome from the
+         home screen, and the status bar sits over the header. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Chintan" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
     <title>Chintan</title>
     <script>
       /*

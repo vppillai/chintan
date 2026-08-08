@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import type { ChintanApi } from '@/api/endpoints.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
+import { listenForFlushRequests, registerBackgroundSync } from './backgroundSync.ts';
 import type { QueuedMutation } from './db.ts';
 import { narrow } from './payloads.ts';
 import { count, flush } from './queue.ts';
@@ -107,6 +108,23 @@ export function useOfflineQueue(): OfflineQueueState {
   const flushNow = useCallback(async () => {
     await queryClient.refetchQueries({ queryKey: OFFLINE_QUEUE_KEY });
   }, [queryClient]);
+
+  // Background Sync is the upgrade path: it flushes even after the tab is
+  // closed, where the browser supports it. Registration is best-effort and the
+  // reconnect refetch above remains the baseline everywhere.
+  useEffect(() => {
+    if ((query.data ?? 0) === 0) return;
+    void registerBackgroundSync();
+  }, [query.data]);
+
+  // Subscription to an external system, so it belongs in an effect.
+  useEffect(
+    () =>
+      listenForFlushRequests(() => {
+        void flushNow();
+      }),
+    [flushNow],
+  );
 
   return {
     online,
