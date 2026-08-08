@@ -205,6 +205,45 @@ describe('CaptureCreated', () => {
     expect(sent?.get('x-amz-tagging')).toBe('chintan-artifact=capture-audio');
   });
 
+  it('stops at a rejection, instead of repeating a request that cannot change', async () => {
+    /*
+     * S3 answers an expired or malformed presigned URL with 403, and no number
+     * of retries will make an expired signature valid — only a new URL will.
+     * The code said exactly that and did the opposite: the `throw` meant to
+     * stop the loop was caught by the `catch` two lines below it, recorded as
+     * `lastError`, and the loop ran the full retry budget. In production that
+     * turned one dead credential into five identical 403s, and the backoff
+     * between them meant the user waited seconds for a failure that was
+     * knowable at once.
+     */
+    let attempts = 0;
+    await expect(
+      putPresigned(captureCreated.upload, 'audio-bytes', {
+        fetchImpl: async () => {
+          attempts += 1;
+          return new Response(null, { status: 403 });
+        },
+      }),
+    ).rejects.toThrow(/403/);
+
+    expect(attempts).toBe(1);
+  });
+
+  it('does keep retrying a failure that a retry can fix', async () => {
+    // The distinction is the point: 5xx and a dropped connection are transient,
+    // and giving up on the first one would lose recordings to a cellular blip.
+    let attempts = 0;
+    await putPresigned(captureCreated.upload, 'audio-bytes', {
+      maxRetries: 3,
+      fetchImpl: async () => {
+        attempts += 1;
+        return new Response(null, { status: attempts < 3 ? 503 : 200 });
+      },
+    });
+
+    expect(attempts).toBe(3);
+  });
+
   it('offers a peaks upload that is not tagged for audio retention', () => {
     // The waveform envelope is the client's own derived data. Expiring it with
     // the source audio would empty every old capture's player.

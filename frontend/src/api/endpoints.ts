@@ -260,6 +260,41 @@ export class ChintanApi {
 }
 
 /**
+ * S3 refused the signature itself: expired, malformed, or tampered with.
+ *
+ * Its own type because it is the one upload failure that a retry can never
+ * fix. Everything else `putPresigned` sees — a 5xx, a dropped connection — is
+ * worth another attempt, and treating them alike is what turned an expired
+ * credential into five identical requests.
+ */
+export class PresignRejected extends Error {
+  constructor(readonly status: number) {
+    super(`Upload rejected with ${status}`);
+    this.name = 'PresignRejected';
+  }
+}
+
+/**
+ * True when a presigned credential is past its expiry, or close enough that
+ * the request would lose the race.
+ *
+ * A presign is a thirty-minute credential. Anything that has been sitting
+ * around — a resumed recording, a replayed idempotent response — has very
+ * likely outlived it, and that is knowable before spending a request and a
+ * backoff on finding out.
+ */
+export function presignExpired(
+  upload: { expires_at?: string },
+  now: number = Date.now(),
+  skewMs = 30_000,
+): boolean {
+  if (!upload.expires_at) return false;
+  const at = Date.parse(upload.expires_at);
+  if (!Number.isFinite(at)) return false;
+  return at - skewMs <= now;
+}
+
+/**
  * Uploads bytes to a presigned URL.
  *
  * Deliberately not routed through `ApiClient`: a presigned PUT is
@@ -296,14 +331,25 @@ export async function putPresigned(
         ...(options.signal ? { signal: options.signal } : {}),
       });
       if (response.ok) return;
-      // A presigned URL that has expired returns 403. Retrying will not fix
-      // it — the caller has to mint a new one.
+      /*
+       * A presigned URL that has expired returns 403. Retrying will not fix
+       * it — the caller has to mint a new one.
+       *
+       * This used to `throw` here, which read as "stop", and the `catch` two
+       * lines below caught its own throw, recorded it as `lastError` and let
+       * the loop run its full budget. One dead credential therefore became
+       * five identical 403s with backoff between them: the user waited seconds
+       * for a failure that was knowable at the first response, and the console
+       * filled with repeated errors that looked like a flaky network rather
+       * than an expired signature. `PresignRejected` is thrown past the catch.
+       */
       if (response.status === 403 || response.status === 400) {
-        throw new Error(`Upload rejected with ${response.status}`);
+        throw new PresignRejected(response.status);
       }
       lastError = new Error(`Upload failed with ${response.status}`);
     } catch (error) {
       if ((error as Error)?.name === 'AbortError') throw error;
+      if (error instanceof PresignRejected) throw error;
       lastError = error;
     }
     if (attempt < maxRetries) {

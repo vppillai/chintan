@@ -17,8 +17,8 @@
 
 import { ApiError } from '@/api/problem.ts';
 import type { ChintanApi } from '@/api/endpoints.ts';
-import { putPresigned } from '@/api/endpoints.ts';
-import type { CaptureContentType } from '@/api/schema.ts';
+import { presignExpired, putPresigned } from '@/api/endpoints.ts';
+import type { CaptureContentType, CaptureCreatedWire } from '@/api/schema.ts';
 
 import { assembleBlob, confirmUploaded, saveCaptureRecord } from './buffer.ts';
 import { peaksDocument } from './peaks.ts';
@@ -32,12 +32,64 @@ import type { CaptureEvent } from './machine.ts';
 export const OFFLINE_MESSAGE =
   'The upload did not finish. Your recording is safe on this device.';
 
+/**
+ * The upload credential died before the bytes could use it.
+ *
+ * Named separately because it is not a network problem and telling the user it
+ * is sends them to tap Send against a URL that can never work. Three attempts
+ * in production went out with an identical signature, an hour after it expired,
+ * and said nothing but "the upload did not finish".
+ */
+export const EXPIRED_MESSAGE =
+  'That could not be sent: the upload link had expired. The recording is still on this device — try again.';
+
 export interface UploadRequest {
   localId: string;
   contentType: CaptureContentType;
   durationMs: number;
   noteId: string | null;
   peaks: number[];
+  /**
+   * The capture the server already minted for these bytes.
+   *
+   * Set only on a resume. Its presence is what tells this function that the
+   * create it is about to make will be answered from the server's idempotency
+   * record rather than done afresh — see `freshUpload` below.
+   */
+  serverCaptureId?: string | null;
+}
+
+/**
+ * A key that is *not* the one the server has already pinned a response to.
+ *
+ * Minted once per call so the HTTP client's own retries still replay within
+ * this attempt; only a new attempt gets a new key.
+ */
+function resumeKey(localId: string): string {
+  return `${localId}-resume-${Date.now().toString(36)}`;
+}
+
+/**
+ * Whether the server already has these bytes.
+ *
+ * A capture sits at `uploaded` from the moment it is created until the object
+ * event fires, so any other status means the audio arrived and the pipeline
+ * moved on — and sending again would append the same dictation to the note
+ * twice. This is only ever asked on a resume whose credential is at least
+ * thirty minutes old, so there is no window where the object has landed and
+ * the status has not caught up.
+ *
+ * An error here is deliberately not fatal: if the server cannot be reached the
+ * upload is not going to succeed either, and the ordinary path reports that
+ * better than this does.
+ */
+async function alreadyLanded(api: ChintanApi, captureId: string): Promise<boolean> {
+  try {
+    const capture = await api.getCapture(captureId);
+    return capture.status !== 'uploaded';
+  } catch {
+    return false;
+  }
 }
 
 export interface UploadDeps {
@@ -92,21 +144,55 @@ export async function uploadCapture(
     return;
   }
 
+  /*
+   * A resume, and the bytes may already be there.
+   *
+   * Only the local confirmation is lost when a tab dies between the PUT
+   * succeeding and the prune; the audio is on the server and the note already
+   * has the dictation. Uploading it again would append it a second time.
+   */
+  if (request.serverCaptureId && (await alreadyLanded(api, request.serverCaptureId))) {
+    await deps.confirm(request.localId);
+    emit({ type: 'uploadDone' });
+    return;
+  }
+
   emit({ type: 'uploadProgress', progress: 0.1 });
 
-  let created;
+  const body = {
+    content_type: request.contentType,
+    note_id: request.noteId,
+    duration_ms: Math.round(request.durationMs),
+    size_bytes: blob.size,
+  };
+
+  let created: CaptureCreatedWire;
   try {
-    created = await api.createCapture(
-      {
-        content_type: request.contentType,
-        note_id: request.noteId,
-        duration_ms: Math.round(request.durationMs),
-        size_bytes: blob.size,
-      },
-      // The local id IS the idempotency key. A resumed upload after a crash
-      // replays the original create rather than making a second capture.
-      request.localId,
-    );
+    // The local id IS the idempotency key. A resumed upload after a crash
+    // replays the original create rather than making a second capture.
+    created = await api.createCapture(body, request.localId);
+
+    /*
+     * …and that replay is verbatim, presigned URL included.
+     *
+     * `handler/idempotency.go` stores the whole response body against the key
+     * and writes it back on any repeat, so the same key that stops a resume
+     * creating a second capture also pins it to a thirty-minute credential
+     * minted whenever the recording was first attempted. In production that
+     * meant three resume attempts an hour later, all carrying
+     * `X-Amz-Date=20260808T204149Z` and the same signature, all 403, with the
+     * object never landing and no number of taps able to change it.
+     *
+     * So: if the credential we were handed is already dead, ask again under a
+     * key the server has nothing stored for. That costs a second capture row
+     * with no object behind it — which the purge sweeper reaps — and it is the
+     * only way to get live credentials without the server re-minting on
+     * replay, which is where this belongs and where it is not yet done. When
+     * that lands, this branch simply stops being taken.
+     */
+    if (request.serverCaptureId && presignExpired(created.upload)) {
+      created = await api.createCapture(body, resumeKey(request.localId));
+    }
   } catch (error) {
     if (error instanceof ApiError && error.isSpendCapped) {
       emit({ type: 'spendCapped', message: error.userMessage });
@@ -121,6 +207,17 @@ export async function uploadCapture(
       message: OFFLINE_MESSAGE,
       recoverable: true,
     });
+    return;
+  }
+
+  /*
+   * Expiry is knowable before the request, so it is not spent finding out.
+   * Reaching here means even a fresh key produced a dead credential — a clock
+   * far out of step, or a server minting expired presigns — and a PUT would be
+   * a guaranteed 403 dressed up as a network failure.
+   */
+  if (presignExpired(created.upload)) {
+    emit({ type: 'uploadFailed', message: EXPIRED_MESSAGE, recoverable: true });
     return;
   }
 
@@ -156,6 +253,13 @@ export async function uploadCapture(
     });
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') return;
+    // S3 refused the signature rather than the connection refusing the
+    // request. Saying "the upload did not finish" here is what made an expired
+    // credential look like a flaky network for three attempts running.
+    if ((error as Error)?.name === 'PresignRejected') {
+      emit({ type: 'uploadFailed', message: EXPIRED_MESSAGE, recoverable: true });
+      return;
+    }
     emit({ type: 'uploadFailed', message: OFFLINE_MESSAGE, recoverable: true });
     return;
   }
