@@ -148,7 +148,7 @@ func TestDecideTargetSkipsArchivedNotes(t *testing.T) {
 	archivedNote := model.NoteIndex{
 		ID:        "archived-note",
 		Title:     "Archived Note",
-		UpdatedAt: time.Now().Add(-1*time.Hour).UTC().Format(time.RFC3339Nano), // older
+		UpdatedAt: time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339Nano), // older
 		DeletedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	store.PutNote(context.Background(), "user1", archivedNote)
