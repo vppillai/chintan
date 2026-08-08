@@ -95,6 +95,19 @@ Parameters:
       ceiling here is $1000/day, high enough never to bind and low enough to
       catch a fat-fingered extra zero.
 
+  CognitoTier:
+    Type: String
+    Default: ESSENTIALS
+    AllowedValues: [LITE, ESSENTIALS, PLUS]
+    Description: >
+      Cognito feature tier. PLUS adds Threat Protection (compromised-credential
+      detection and adaptive auth) and is enabled automatically at that tier.
+      PLUS also has NO free monthly active users, where LITE and ESSENTIALS
+      include 10,000 — so on a single-user instance this is the difference
+      between a free user pool and a billed one, to protect one account that
+      already requires a verified email and can enable MFA. Raise it to PLUS
+      before this serves people who are not you.
+
   RefreshTokenValidityDays:
     Type: Number
     Default: 7
@@ -105,6 +118,7 @@ Parameters:
       because the app vaults these tokens under a CMK for biometric unlock.
 
 Conditions:
+  ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   HasWorkerCodeKey: !Not [!Equals [!Ref WorkerCodeKey, '']]
   HasRetention: !Not [!Equals [!Ref RetentionDays, 0]]
@@ -129,8 +143,17 @@ Resources:
         AttributesRequireVerificationBeforeUpdate:
           - email
       # Compromised-credential detection and adaptive authentication.
-      UserPoolAddOns:
-        AdvancedSecurityMode: ENFORCED
+      # Threat Protection and the pricing tier are one setting, not two.
+      # AdvancedSecurityMode requires PLUS; setting it on an ESSENTIALS pool
+      # fails the stack outright with "The following features need to be
+      # disabled for the ESSENTIALS pricing tier configured: Threat Protection".
+      # Declaring them independently is how that mismatch shipped, so CognitoTier
+      # now drives both and they cannot disagree.
+      UserPoolTier: !Ref CognitoTier
+      UserPoolAddOns: !If
+        - ThreatProtectionAvailable
+        - AdvancedSecurityMode: ENFORCED
+        - !Ref AWS::NoValue
       MfaConfiguration: OPTIONAL
       EnabledMfas:
         - SOFTWARE_TOKEN_MFA
