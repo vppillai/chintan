@@ -19,7 +19,11 @@ import (
 // STT is a fake STT implementation for testing.
 type STT struct {
 	ShouldFail bool
-	Response   string
+	// Err, when set, is returned instead of the generic ShouldFail error. It is
+	// how a test hands the pipeline a typed provider.StatusError, which is what
+	// tells a revoked key from a throttle.
+	Err      error
+	Response string
 	// Result, when set, is returned verbatim and Response is ignored. Use it to
 	// exercise segments, words, and duration.
 	Result *provider.Transcription
@@ -44,6 +48,9 @@ func (f *STT) Transcribe(ctx context.Context, in provider.Audio) (provider.Trans
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if f.Err != nil {
+		return provider.Transcription{}, f.Err
 	}
 	if f.ShouldFail {
 		return provider.Transcription{}, fmt.Errorf("fake STT failed")
@@ -82,8 +89,11 @@ func (f *STT) Calls() int {
 // LLM is a fake LLM implementation for testing.
 type LLM struct {
 	ShouldFail bool
-	Response   string
-	OnCall     func()
+	// Err, when set, is returned instead of the generic ShouldFail error. See
+	// STT.Err.
+	Err      error
+	Response string
+	OnCall   func()
 
 	mu    sync.Mutex
 	calls int
@@ -96,6 +106,9 @@ func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if f.Err != nil {
+		return provider.Cleaned{}, f.Err
 	}
 	if f.ShouldFail {
 		return provider.Cleaned{}, fmt.Errorf("fake LLM failed")

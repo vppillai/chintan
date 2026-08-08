@@ -105,7 +105,9 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not include response body — may contain transcript content.
-		return "", TokenUsage{}, fmt.Errorf("provider: llm request failed: status %d", resp.StatusCode)
+		// Typed, so the pipeline can tell a revoked key from a throttle. The
+		// rendered string is unchanged.
+		return "", TokenUsage{}, &StatusError{Op: "llm request failed", StatusCode: resp.StatusCode}
 	}
 
 	var parsed struct {

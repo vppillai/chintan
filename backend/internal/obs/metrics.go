@@ -60,6 +60,30 @@ func SetMetricOutput(w io.Writer) func() {
 // Never pass a tenant id, capture id, or anything else unbounded — that mints a
 // distinct metric per value and is billed accordingly.
 func Emit(ctx context.Context, dimensions map[string]string, metrics ...Metric) {
+	emit(ctx, dimensions, false, metrics...)
+}
+
+// EmitWithRollup emits the same metrics under two identities: the dimensioned
+// one, and a dimensionless rollup.
+//
+// It exists because a dimensioned metric cannot be alarmed on cheaply. A
+// CloudWatch alarm has to name a dimension set, and Emit declares exactly one —
+// so an alarm on a metric dimensioned by Provider must either name every
+// provider (a template edit per provider, and silence for the one nobody
+// added) or be a Metrics Insights query alarm, which is billed per metric
+// analysed with no free tier. The rollup costs one extra metric identity, which
+// is inside the free ten, and lets an ordinary standard-resolution alarm read
+// it for nothing. The dimensioned copy is still there, and is what says which
+// provider it was once the alarm has fired.
+//
+// Both identities carry the same value, so summing across them double-counts.
+// Nothing does, and nothing should: the dimensionless one is for the alarm and
+// the dimensioned one is for the answer.
+func EmitWithRollup(ctx context.Context, dimensions map[string]string, metrics ...Metric) {
+	emit(ctx, dimensions, true, metrics...)
+}
+
+func emit(ctx context.Context, dimensions map[string]string, rollup bool, metrics ...Metric) {
 	if len(metrics) == 0 {
 		return
 	}
@@ -69,6 +93,14 @@ func Emit(ctx context.Context, dimensions map[string]string, metrics ...Metric) 
 		dimNames = append(dimNames, k)
 	}
 	sort.Strings(dimNames)
+
+	// EMF publishes one metric per dimension set listed here. An empty set is
+	// how a dimensionless metric is declared; asking for a rollup of nothing
+	// would declare the same identity twice.
+	dimensionSets := [][]string{dimNames}
+	if rollup && len(dimNames) > 0 {
+		dimensionSets = append(dimensionSets, []string{})
+	}
 
 	defs := make([]map[string]string, 0, len(metrics))
 	for _, m := range metrics {
@@ -84,7 +116,7 @@ func Emit(ctx context.Context, dimensions map[string]string, metrics ...Metric) 
 			"Timestamp": nowFn().UnixMilli(),
 			"CloudWatchMetrics": []map[string]any{{
 				"Namespace":  Namespace,
-				"Dimensions": [][]string{dimNames},
+				"Dimensions": dimensionSets,
 				"Metrics":    defs,
 			}},
 		},
@@ -118,6 +150,14 @@ func Emit(ctx context.Context, dimensions map[string]string, metrics ...Metric) 
 // Count emits a single counter increment.
 func Count(ctx context.Context, name string, dimensions map[string]string) {
 	Emit(ctx, dimensions, Metric{Name: name, Value: 1, Unit: UnitCount})
+}
+
+// CountWithRollup is Count plus the dimensionless identity an alarm can read.
+// Use it only for counters something actually alarms on; every other counter
+// should stay on Count and cost one identity per dimension value rather than
+// one more.
+func CountWithRollup(ctx context.Context, name string, dimensions map[string]string) {
+	EmitWithRollup(ctx, dimensions, Metric{Name: name, Value: 1, Unit: UnitCount})
 }
 
 // Duration emits an elapsed time in milliseconds.

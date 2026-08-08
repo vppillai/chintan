@@ -173,3 +173,83 @@ func TestCountAndDurationHelpers(t *testing.T) {
 		t.Fatalf("Elapsed=%v", second["Elapsed"])
 	}
 }
+
+// TestEmitWithRollupDeclaresBothIdentities covers what makes a dimensioned
+// counter alarmable without a Metrics Insights query.
+//
+// CloudWatch bills and addresses a metric by name plus dimension set, so a
+// counter that only ever declares ["Provider"] has no identity an alarm can
+// name unless the alarm names every provider value. The empty set is that
+// identity. If it stops being emitted, the alarms pointed at it receive no
+// datapoints and — under TreatMissingData: notBreaching — stay green through
+// exactly the outage they exist to report.
+func TestEmitWithRollupDeclaresBothIdentities(t *testing.T) {
+	var buf bytes.Buffer
+	restore := SetMetricOutput(&buf)
+	defer restore()
+
+	EmitWithRollup(context.Background(), map[string]string{"Provider": "groq"},
+		Metric{Name: "ProviderKeyRejected", Value: 1, Unit: UnitCount})
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("emitted record is not valid JSON: %v (%s)", err, buf.String())
+	}
+	block := rec["_aws"].(map[string]any)["CloudWatchMetrics"].([]any)[0].(map[string]any)
+	sets := block["Dimensions"].([]any)
+	if len(sets) != 2 {
+		t.Fatalf("declared %d dimension sets, want 2: %s", len(sets), buf.String())
+	}
+	if first := sets[0].([]any); len(first) != 1 || first[0] != "Provider" {
+		t.Errorf("first dimension set = %v, want [Provider]", first)
+	}
+	if second := sets[1].([]any); len(second) != 0 {
+		t.Errorf("second dimension set = %v, want the empty set an alarm can read", second)
+	}
+	// The dimension value still has to be a top-level field or CloudWatch drops
+	// the dimensioned copy.
+	if rec["Provider"] != "groq" {
+		t.Errorf("Provider field = %v, want groq", rec["Provider"])
+	}
+}
+
+// TestEmitWithRollupOnADimensionlessMetricDeclaresOneIdentity keeps the rollup
+// from declaring the same empty set twice, which would ask CloudWatch to
+// publish one metric under one identity two times.
+func TestEmitWithRollupOnADimensionlessMetricDeclaresOneIdentity(t *testing.T) {
+	var buf bytes.Buffer
+	restore := SetMetricOutput(&buf)
+	defer restore()
+
+	EmitWithRollup(context.Background(), nil, Metric{Name: "Lonely", Value: 1, Unit: UnitCount})
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	block := rec["_aws"].(map[string]any)["CloudWatchMetrics"].([]any)[0].(map[string]any)
+	if sets := block["Dimensions"].([]any); len(sets) != 1 {
+		t.Fatalf("declared %d dimension sets, want 1: %s", len(sets), buf.String())
+	}
+}
+
+// TestEmitStillDeclaresOneIdentity guards the metrics that must not become
+// more expensive. Every existing counter goes through Emit, and quietly adding
+// a rollup to all of them would add an identity per metric name across the
+// whole surface.
+func TestEmitStillDeclaresOneIdentity(t *testing.T) {
+	var buf bytes.Buffer
+	restore := SetMetricOutput(&buf)
+	defer restore()
+
+	Count(context.Background(), "Widgets", map[string]string{"Instance": "dev"})
+
+	var rec map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatal(err)
+	}
+	block := rec["_aws"].(map[string]any)["CloudWatchMetrics"].([]any)[0].(map[string]any)
+	if sets := block["Dimensions"].([]any); len(sets) != 1 {
+		t.Fatalf("Count declared %d dimension sets, want 1: %s", len(sets), buf.String())
+	}
+}

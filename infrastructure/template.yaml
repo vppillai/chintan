@@ -1454,6 +1454,72 @@ Resources:
       OKActions:
         - !Ref AlarmTopic
 
+  # ---------------------------------------------------------------------------
+  # Provider credentials and provider throttling. Two alarms rather than one,
+  # because the two failures need opposite responses and merging them gives
+  # either false alarms or a missed outage.
+  #
+  # Both read a DIMENSIONLESS metric. obs.EmitWithRollup publishes each counter
+  # under two identities — {Provider} for the answer, and no dimensions for the
+  # alarm — precisely so these can be plain metric alarms. The alternative,
+  # taken by SpendCapRejectionsAlarm below, is a Metrics Insights query, which
+  # is billed per metric analysed with no free tier and grows by $0.10 every
+  # time a provider is added. See docs/cost-analysis.md §5.3.
+  #
+  # Neither the pipeline nor the handler notifies anybody directly. The email is
+  # the alarm's own OK -> ALARM transition, which is what makes a revoked key
+  # one message rather than one per capture: the second, third and hundredth
+  # failure keep the alarm in ALARM and send nothing.
+  # ---------------------------------------------------------------------------
+  ProviderKeyRejectedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-provider-key-rejected'
+      AlarmDescription: >-
+        A provider answered 401 or 403. The API key is revoked, expired or
+        wrong, and every capture will fail the same way until it is replaced.
+      Namespace: Chintan
+      MetricName: ProviderKeyRejected
+      Statistic: Sum
+      Period: 300
+      # One occurrence, immediately. This does not resolve itself, so waiting
+      # for a second datapoint only delays the one action that fixes it.
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      # The metric does not exist until the first rejection, which is the
+      # healthy state.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  ProviderRateLimitedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-provider-rate-limited'
+      AlarmDescription: >-
+        A provider has been answering 429 continuously for fifteen minutes.
+        Ordinary throttling clears long before this fires.
+      Namespace: Chintan
+      MetricName: ProviderRateLimited
+      Statistic: Sum
+      Period: 300
+      # Three consecutive five-minute windows, each containing at least one
+      # rejection. A single 429 — the common case, and self-resolving — produces
+      # one datapoint and two missing periods, and notBreaching means those two
+      # do not count. Only sustained throttling reaches all three.
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 3
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
   # Average of the 5xx metric is the 5xx rate: 0.05 is five percent of requests.
   Api5xxRateAlarm:
     Type: AWS::CloudWatch::Alarm

@@ -60,7 +60,7 @@ story; the infrastructure is not.
 
 The brief suspected custom metrics were the single largest recurring cost and
 "entirely self-inflicted". The metric surface *is* large and self-inflicted —
-**17 metric names expanding to a ceiling of 342 billable metric identities**
+**20 metric names expanding to a ceiling of 317 billable metric identities**
 ([§3](#3-the-custom-metric-surface)) — but it is **not** the largest cost, for
 two reasons that only show up when you read the billing rules rather than the
 rate card:
@@ -76,9 +76,9 @@ rate card:
 
 So the surface is a **latent** risk, not a present cost. It only becomes the
 dominant line item if the app acquires continuous traffic. Concretely: if every
-one of the 342 identities received data every hour, the bill would be
-**$102.60/month** — ten times the entire budget. The gap between $0.00 and
-$102.60 is traffic pattern, not configuration.
+one of the 317 identities received data every hour, the bill would be
+**$95.10/month** — nearly ten times the entire budget. The gap between $0.00
+and $95.10 is traffic pattern, not configuration.
 
 Two things currently keep it at $0.00, and both are worth knowing about because
 either could be undone by accident:
@@ -108,23 +108,43 @@ Verified against the deployed account (`338186951935`) where possible.
 | `DynamoDBTable` (on-demand) | $0.25/GB-mo, first 25 GB free; measured **27,405 bytes** | $0.00 |
 | ↳ `PointInTimeRecoverySpecification` | $0.20/GB-mo, no minimum; 27 KB → $0.0000054 | $0.00 |
 | ↳ `gsi1` GSI | GSI storage + RRU/WRU, same free tier | $0.00 |
+| ↳ `StreamSpecification: NEW_AND_OLD_IMAGES` | $0.02/100,000 stream read request units — but **GetRecords calls made by a Lambda trigger are not billed**, and an idle table writes no records at all | $0.00 |
 | `ContentBucket` | $0.023/GB-mo; measured **5.9 MB** | $0.00 |
 | ↳ `VersioningConfiguration: Enabled` | noncurrent versions billed as storage | $0.00 |
-| `CaptureQueue` + `CaptureDLQ` | $0.40/M requests, first 1M free; idle queues are free | $0.00 |
+| `CaptureQueue` + `CaptureDLQ` + `ExpiryDLQ` | $0.40/M requests, first 1M free; idle queues are free | $0.00 |
 | `ApiLambdaFunction` (512 MB, arm64) | $0.0000133334/GB-s, 400,000 GB-s free | $0.00 |
 | `WorkerLambdaFunction` (2048 MB, arm64) | same | $0.00 |
+| `ExpiryLambdaFunction` (512 MB, arm64) | same; invoked only when TTL expires a record, which on an idle instance is never | $0.00 |
 | ↳ `ReservedConcurrentExecutions: 5` | **free** — only *provisioned* concurrency bills | $0.00 |
-| ↳ `Version` / `Alias` ×2 | code storage $0.0000000309/GB-s | ~$0.00 |
+| ↳ `Version` / `Alias` ×3 | code storage $0.0000000309/GB-s | ~$0.00 |
 | ↳ `TracingConfig: Mode: Active` (X-Ray) | $5.00/M traces, **100,000 free** | $0.00 |
 | `HttpApi` | $1.00/M requests, **no fixed charge** | $0.00 |
 | `ApiStage` → `DetailedMetricsEnabled: true` | **billed as custom metrics**, ~36 identities | $0.00 idle |
-| `ApiLogGroup` / `WorkerLogGroup` | $0.50/GB ingest, $0.03/GB-mo storage, 5 GB free | $0.00 |
+| `ApiLogGroup` / `WorkerLogGroup` / `ExpiryLogGroup` | $0.50/GB ingest, $0.03/GB-mo storage, 5 GB free | $0.00 |
 | `ApiAccessLogGroup` | **vended logs**, same $0.50/GB at this volume | $0.00 |
-| 6 × `AWS::CloudWatch::Alarm` (standard) | $0.10/alarm-month, **10 free** | $0.00 |
+| 9 × `AWS::CloudWatch::Alarm` (standard) | $0.10/alarm-month, **10 free** | $0.00 — but see the note below; this is now the tightest allowance in the stack |
 | `SpendCapRejectionsAlarm` (Metrics Insights) | $0.10 **per metric analyzed**, **no free tier** | **not deployed** — `HasSpendCap` is false at the default `DailySpendCapMicros: 0` |
 | `AlarmTopic` + subscription | $0.50/M requests, 1M free; idle topic free | $0.00 |
 | `MonthlyBudget` | **budget monitoring is free**; only *action-enabled* budgets bill | $0.00 |
 | EMF custom metrics (namespace `Chintan`) | $0.30/metric-month, hourly prorated, 10 free | $0.00 idle |
+
+**The alarm allowance is now the thing to watch.** The stack went from 6
+standard alarms to 9 — `chintan-…-expiry-dlq`, `chintan-…-provider-key-rejected`
+and `chintan-…-provider-rate-limited`. Nine is still inside the free ten, so the
+idle figure does not move, but the headroom is one alarm rather than four, and
+the free tier is **account-wide**. Two consequences follow, and neither is
+hypothetical on this account:
+
+- A **staging instance** deploys the same nine alarms. Two instances is 18
+  alarms, of which 8 are billable: **$0.80/month**. That was $0.20/month at six
+  alarms each, so the second instance now costs four times what it did.
+- Setting `DailySpendCapMicros` adds `SpendCapRejectionsAlarm`, which is a
+  Metrics Insights query alarm and takes **no** part of the free ten (§5.3).
+
+The cheapest way to buy the headroom back, if it is ever wanted, is §5.3: give
+`SpendCapRejections` the same dimensionless rollup these two new metrics carry
+and demote its alarm to a plain one. That is a saving rather than a cost, and
+the code it needs now exists — `obs.EmitWithRollup`.
 
 ### 2.2 `infrastructure/bootstrap.yaml`
 
@@ -160,28 +180,61 @@ generate costs by the number of logs ingested, number of logs archived, and
 number of custom metrics generated"* — so each identity costs ingest **and**
 storage **and** $0.30/metric-month.
 
-**17 metric names → 342 identity ceiling.** Every emitter, enumerated:
+**20 metric names → 317 identity ceiling.** Every emitter, enumerated:
 
 | Metric name | Dimensions | Value domain | Ceiling |
 |---|---|---|---|
-| `ApiRequests` | Route, Method, Status | 30 routes × 4 status classes | 120 |
-| `ApiLatency` | Route, Method, Status | same | 120 |
-| `ApiServerErrors` | Route, Method, Status | 30 routes × {5xx} | 30 |
+| `ApiRequests` | Route, Status | 30 routes × 4 status classes | 120 |
+| `ApiLatency` | Route, Status | same | 120 |
 | `CaptureStageFailures` | Stage | 12 statuses ∪ 3 stage strings | 15 |
 | `CapturePipelineDuration` | Outcome | 12 capture statuses | 12 |
 | `DuplicateDelivery` | Status | 12 capture statuses | 12 |
 | `ProviderLatency` | Provider, Op, Outcome | 3 pairs × {ok, error} | 6 |
-| `CapturePipelineOutcomes` | Outcome | 4 terminal statuses | 4 |
 | `CaptureStageEntered` | Stage | transcribing, routing, cleaning, appending | 4 |
 | `RouterContentDiscarded` | Reason | missing_field, empty_content, not_derived | 3 |
 | `CaptureSpendCapped` | Stage | transcribe, route, cleanup | 3 |
 | `SpendCapRejections` | Provider, Op | groq/transcribe, openai/route, openai/cleanup | 3 |
 | `ProviderCostMicros` | Provider, Op | same 3 pairs | 3 |
 | `ProviderCalls` | Provider, Op | same 3 pairs | 3 |
+| **`ProviderKeyRejected`** | **Provider, and a dimensionless rollup** | **groq, openai, ∅** | **3** |
+| **`ProviderRateLimited`** | **Provider, and a dimensionless rollup** | **groq, openai, ∅** | **3** |
 | `RateLimited` | Route | the 2 `perIP()` webauthn routes | 2 |
 | `CapturesCreated` | Stage | `created` | 1 |
 | `WorkerMessagesDiscarded` | Reason | `unparseable` | 1 |
-| | | **Total ceiling** | **342** |
+| `CaptureRejectedOversize` | Stage | `uploaded` | 1 |
+| `AppendResumedWithoutRewriting` | Stage | `appending` | 1 |
+| `SpendCapLookupFailures` | Reason | `resolver_error` | 1 |
+| | | **Total ceiling** | **317** |
+
+Two corrections to the inventory above, found while adding the two new rows and
+worth stating rather than quietly folding in. `ApiServerErrors` (30) and
+`CapturePipelineOutcomes` (4) were listed as emitters but were removed by S2 and
+S3 in the same commit this document first described, so the table was counting
+34 identities that no longer exist. Three emitters were missing from it:
+`CaptureRejectedOversize`, `AppendResumedWithoutRewriting` and
+`SpendCapLookupFailures`, one identity each. Net of those and of the six added
+below, the ceiling moves **342 → 317** and the name count **17 → 20**.
+
+### The two new metrics, and why each costs three identities rather than two
+
+`ProviderKeyRejected` and `ProviderRateLimited` are emitted by
+`pipeline.handleProviderError` when a provider answers 401/403 or 429. Each is
+published under **two** dimension sets in one EMF record — `["Provider"]` and
+the empty set — which is `obs.EmitWithRollup`.
+
+The empty set is not redundancy, it is what makes the alarms cheap. A
+CloudWatch alarm must name a dimension set, and a metric dimensioned only by
+`Provider` has none an alarm can name without naming every provider value —
+the exact problem §5.3 records for `SpendCapRejections`, which is why that one
+is a Metrics Insights query alarm at **$0.10 per metric analysed with no free
+tier**. The dimensionless rollup costs **one metric identity, inside the free
+ten**, and lets both new alarms be plain standard-resolution alarms at
+**$0.00**. Taking the same trade for `SpendCapRejections` would remove its
+$0.30/month; that is still §5.3's call to make, not this commit's.
+
+`Provider` is the only dimension on purpose. Adding `Op` would triple both
+ceilings to answer a question nobody asks: a revoked key is revoked for every
+op that uses it, and `ProviderLatency` already carries the Op breakdown.
 
 Plus **~36** more from `DetailedMetricsEnabled: true` on the API stage
 (6 HTTP API metrics × ~6 method+resource combinations), which are billed at the
@@ -194,7 +247,7 @@ identities on the happy path).
 The cardinality discipline in `obs.Emit`'s doc comment and in
 `handler/metrics.go`'s `routeOf` is genuinely good — no tenant id, capture id,
 or raw path ever reaches a dimension, and status is bucketed to a class rather
-than an exact code. Without that the ceiling would be unbounded rather than 342.
+than an exact code. Without that the ceiling would be unbounded rather than 317.
 The remaining problem is not cardinality but **redundancy**, addressed in §5.
 
 ---
@@ -222,7 +275,8 @@ for a 5-min one); user active in ~40 distinct hours/month (light) and ~150
 | **SQS** (1M req free) | $0.000 | $0.000 | $0.000 |
 | **SNS** (1M req free) | $0.000 | $0.000 | $0.000 |
 | **X-Ray** (100,000 traces free) | $0.000 | $0.000 | $0.000 |
-| **CloudWatch** alarms — 6 standard, 10 free | $0.000 | $0.000 | $0.000 |
+| **CloudWatch** alarms — 9 standard, 10 free | $0.000 | $0.000 | $0.000 |
+| **DynamoDB Streams** — Lambda-trigger GetRecords not billed | $0.000 | $0.000 | $0.000 |
 | **CloudWatch** custom metrics (10 free, hourly) | $0.000 | $0.000 | $0.000 |
 | ↳ *(metric-months consumed of 10)* | *0* | *~0.7* | *~4.1* |
 | **CloudWatch** logs ingest + storage (5 GB free) | $0.000 | $0.000 | $0.000 |
@@ -450,7 +504,7 @@ to ask CloudWatch later.
 | **X-Ray active tracing** | 100,000 traces/month free; heavy use is ~15,000. Costs **$0.00** and there is no cheaper setting than free. Reducing the sampling rate would save nothing. |
 | **`LogRetentionDays: 14`** | Already explicit and already short — the template comment notes it is set *"so groups never default to never-expire"*, which is the expensive failure mode. Storage is 47 KB. Nothing to win. |
 | **API access logs** | Vended logs at $0.50/GB with 5 GB free; actual volume is ~1 MB/month. The format is already minimised to route key and status with an explicit "nothing here may carry transcript content" constraint. They are the only record of who called what. |
-| **The 6 standard alarms** | $0.10 each with **10 free** → $0.00. |
+| **The 9 standard alarms** | $0.10 each with **10 free** → $0.00. One alarm of headroom remains; see §2.1. |
 | **Consolidating alarms** | Would **increase** cost. A composite alarm is $0.50/month and a Metrics Insights alarm is $0.10/metric with **no** free tier, versus $0.10/alarm **inside a free 10** today. The current design of plain, directly-listed metric alarms is the cheapest option available. |
 | **`DuplicateDelivery`** | Closes a real defect — commit `88b2402` *"Let a duplicate delivery bow out, instead of dead-lettering itself"* — and `TestConcedingEmitsADuplicateDeliveryCounter` asserts it is emitted. It is the evidence the fix works. Up to 12 identities, $0.00. |
 | **`ReservedConcurrentExecutions: 5`** | Reserved concurrency is **free**; only *provisioned* concurrency bills ($0.0000077778/GB-s ARM). It is also the blast-radius cap on a runaway loop, which is itself a cost control. |
@@ -511,7 +565,7 @@ Lambda, SNS, SQS and KMS all billed **$0.00**.
 | `chintan-cloudtrail-…` | 829 objects, **1.4 MB** |
 | `/aws/lambda/chintan-api-dev-prod` | **46,813 bytes**, 14-day retention |
 | Custom metrics in namespace `Chintan` | **0** (v2 not deployed) |
-| CloudWatch alarms in us-west-2 | **0** (v2 adds 6) |
+| CloudWatch alarms in us-west-2 | **0** (v2 adds 9) |
 | Customer-managed KMS keys | **0 in the template as of this revision** — the vault CMK was removed |
 
 The vault CMK was one day old when this was first measured, which is why no KMS

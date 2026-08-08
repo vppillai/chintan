@@ -99,7 +99,9 @@ func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, erro
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not include response body — may echo transcript fragments.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		return Transcription{}, fmt.Errorf("provider: groq transcription failed: status %d", resp.StatusCode)
+		// Typed, so the pipeline can tell a revoked key from a throttle. The
+		// rendered string is unchanged.
+		return Transcription{}, &StatusError{Op: "groq transcription failed", StatusCode: resp.StatusCode}
 	}
 
 	return decodeTranscription(io.LimitReader(resp.Body, maxTranscriptResponseBytes))

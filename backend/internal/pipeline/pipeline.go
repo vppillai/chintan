@@ -877,6 +877,15 @@ func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) err
 	return errDeliveryConceded
 }
 
+// ErrProviderKeyRejected is the verdict recorded on a capture whose provider
+// refused this instance's credential.
+//
+// It is a fixed sentence rather than the provider's own words for two reasons.
+// It reaches the user, and "status 401" tells them nothing they can act on;
+// and it is the only thing distinguishing a revoked key from every other
+// failure on the wire, so it must not drift with a provider's error text.
+var ErrProviderKeyRejected = errors.New("the provider rejected this instance's API key")
+
 // handleProviderError records the capture's verdict and reports whether the
 // invocation itself should be retried.
 //
@@ -885,6 +894,16 @@ func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) err
 // "capture failed" is not. Neither outcome asks SQS to redeliver — the same call
 // would be refused or fail identically, and three of those is a DLQ entry and an
 // alarm for something that is working as designed.
+//
+// The two provider rejections below are classified rather than merged because
+// they need opposite responses. A 401 or 403 will not resolve itself: every
+// capture fails identically until somebody replaces the key, so it is worth an
+// email on the first occurrence. A 429 usually resolves itself within minutes,
+// so alerting on the first one is how an operator learns to ignore the alert
+// that matters. Both emit a counter and neither notifies anybody directly —
+// the alarms in infrastructure/template.yaml notify on their own state
+// transition, which is what makes a dead key one email rather than one per
+// capture.
 func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.CaptureIndex, stage string, cause error) error {
 	if errors.Is(cause, breaker.ErrSpendCapExceeded) {
 		obs.Log(ctx).Warn("capture stopped by the daily spend cap",
@@ -895,12 +914,54 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 		capture.Error = "daily provider spend cap reached"
 		return p.persist(ctx, capture)
 	}
-	obs.Log(ctx).Error("provider call failed",
-		slog.String("capture_id", capture.ID),
-		slog.String("stage", stage),
-		slog.String("error", cause.Error()))
+
+	// Provider, not Provider+Op. The dimension set is the metric's identity and
+	// is billed as such: Provider alone is two values on this instance, where
+	// adding Op would be six for the same answer, since a revoked key is
+	// revoked for every op that uses it.
+	dims := map[string]string{"Provider": p.providerForStage(stage)}
+
+	switch {
+	case provider.IsAuthRejection(cause):
+		obs.Log(ctx).Error("provider rejected this instance's API key",
+			slog.String("capture_id", capture.ID),
+			slog.String("stage", stage),
+			slog.String("error", cause.Error()))
+		obs.CountWithRollup(ctx, "ProviderKeyRejected", dims)
+		obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
+		// The user is told what actually happened. Every capture from here on
+		// fails the same way until the key is replaced, and "capture failed"
+		// would have them re-recording it.
+		return p.markFailed(ctx, capture, ErrProviderKeyRejected)
+
+	case provider.IsRateLimited(cause):
+		// Warn, not error: this is the expected shape of a busy provider.
+		obs.Log(ctx).Warn("provider rate-limited the call",
+			slog.String("capture_id", capture.ID),
+			slog.String("stage", stage),
+			slog.String("error", cause.Error()))
+		obs.CountWithRollup(ctx, "ProviderRateLimited", dims)
+	default:
+		obs.Log(ctx).Error("provider call failed",
+			slog.String("capture_id", capture.ID),
+			slog.String("stage", stage),
+			slog.String("error", cause.Error()))
+	}
+
 	obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
 	return p.markFailed(ctx, capture, cause)
+}
+
+// providerForStage names the provider a stage's call was made against.
+//
+// The names come from the configuration the price table is keyed on, not from
+// a second list here, so a metric can never disagree with the cost record about
+// which provider was called.
+func (p *Pipeline) providerForStage(stage string) string {
+	if stage == "transcribe" {
+		return p.cfg.STTProvider
+	}
+	return p.cfg.LLMProvider
 }
 
 // markFailed records the capture's own verdict. It returns the write's error
