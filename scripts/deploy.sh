@@ -37,6 +37,7 @@ INSTANCE=""
 ENVIRONMENT=""
 TEMPLATE=""
 SMOKE=1
+SELF_TEST=0
 PARAMETERS=()
 TAGS=()
 
@@ -63,6 +64,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --no-smoke) SMOKE=0 ;;
+        --self-test) SELF_TEST=1 ;;
         --apply) APPLY=1 ;;
         --dry-run) APPLY=0 ;;
         -h | --help)
@@ -73,6 +75,104 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# FAILURE_EVENT_JQ selects the failures worth reading out of a full
+# describe-stack-events response. Two corrections to the obvious version:
+#
+# Oldest failure FIRST. Events come back newest-first and a failure cascades, so
+# the newest ten are the rollback and the cancellations while the resource that
+# actually broke has been pushed off the end. The first FAILED event is the
+# cause; everything after it is a consequence.
+#
+# Bounded to the CURRENT operation. Every FAILED event in the stack's whole
+# history is in this response, so an unfiltered list re-reports failures from
+# deploys that were fixed weeks ago as though they were today's.
+#
+# The operation starts at the most recent stack-level CREATE_IN_PROGRESS or
+# UPDATE_IN_PROGRESS — and at those two exactly. Matching any stack-level
+# *_IN_PROGRESS instead picks UPDATE_ROLLBACK_IN_PROGRESS, which CloudFormation
+# emits AFTER the resource failure, so the root cause falls outside the window
+# and the function prints nothing at all.
+FAILURE_EVENT_JQ='
+    (.StackEvents
+     | map(select(.ResourceType == "AWS::CloudFormation::Stack"
+                  and (.ResourceStatus == "CREATE_IN_PROGRESS"
+                       or .ResourceStatus == "UPDATE_IN_PROGRESS")))
+     | max_by(.Timestamp) | .Timestamp // "") as $since
+    | .StackEvents
+    | map(select(.Timestamp >= $since
+                 and (.ResourceStatus | endswith("_FAILED"))
+                 and ((.ResourceStatusReason // "") | test("cancelled") | not)))
+    | sort_by(.Timestamp)
+    | .[0:10]
+    | .[]
+    | "  \(.LogicalResourceId) (\(.ResourceType))\n      \(.ResourceStatusReason // "no reason given")"
+'
+
+# ---------------------------------------------------------------------------
+# Self-test (§0.5A): prove the failure report reports the failure
+# ---------------------------------------------------------------------------
+#
+# This runs before the CI guard because its whole point is to be runnable from a
+# laptop and from a pull request, where no stack and no credentials exist. It
+# exercises FAILURE_EVENT_JQ against a fixture shaped like a real failed update:
+# an old failure from a deploy that was fixed weeks ago, a successful update
+# after it, then today's operation with one root cause, a cancellation cascade,
+# and the rollback events that follow.
+if [ "$SELF_TEST" = "1" ]; then
+    require_cmd jq
+    info "self-test: the failure report names the resource that actually broke"
+    fixture="$(
+        cat <<'JSON'
+{"StackEvents":[
+ {"Timestamp":"2026-08-08T12:00:09Z","LogicalResourceId":"chintan-dev-staging","ResourceType":"AWS::CloudFormation::Stack","ResourceStatus":"UPDATE_ROLLBACK_IN_PROGRESS","ResourceStatusReason":"The following resource(s) failed to update: [ContentBucket]"},
+ {"Timestamp":"2026-08-08T12:00:08Z","LogicalResourceId":"WorkerFunction","ResourceType":"AWS::Lambda::Function","ResourceStatus":"UPDATE_FAILED","ResourceStatusReason":"Resource update cancelled"},
+ {"Timestamp":"2026-08-08T12:00:07Z","LogicalResourceId":"ContentBucket","ResourceType":"AWS::S3::Bucket","ResourceStatus":"UPDATE_FAILED","ResourceStatusReason":"Unable to validate the following destination configurations"},
+ {"Timestamp":"2026-08-08T12:00:00Z","LogicalResourceId":"chintan-dev-staging","ResourceType":"AWS::CloudFormation::Stack","ResourceStatus":"UPDATE_IN_PROGRESS","ResourceStatusReason":"User Initiated"},
+ {"Timestamp":"2026-07-01T09:00:00Z","LogicalResourceId":"chintan-dev-staging","ResourceType":"AWS::CloudFormation::Stack","ResourceStatus":"UPDATE_COMPLETE","ResourceStatusReason":null},
+ {"Timestamp":"2026-06-01T08:00:01Z","LogicalResourceId":"AncientTypo","ResourceType":"AWS::SQS::Queue","ResourceStatus":"CREATE_FAILED","ResourceStatusReason":"a failure from weeks ago that was fixed"},
+ {"Timestamp":"2026-06-01T08:00:00Z","LogicalResourceId":"chintan-dev-staging","ResourceType":"AWS::CloudFormation::Stack","ResourceStatus":"CREATE_IN_PROGRESS","ResourceStatusReason":"User Initiated"}
+]}
+JSON
+    )"
+    selected="$(printf '%s' "$fixture" | jq -r "$FAILURE_EVENT_JQ")"
+
+    printf '%s' "$selected" | head -n 2 >&2
+    case "$selected" in
+        *AncientTypo*)
+            err "self-test FAILED: a failure from a previous, already-fixed deploy was reported as today's"
+            exit 1
+            ;;
+    esac
+    ok "a failure from an earlier operation is not reported"
+
+    case "$selected" in
+        *"Resource update cancelled"*)
+            err "self-test FAILED: a cancellation was reported as a cause"
+            exit 1
+            ;;
+    esac
+    ok "cascade cancellations are not reported as causes"
+
+    case "$(printf '%s' "$selected" | head -n 1)" in
+        *ContentBucket*) ok "the root cause is reported first" ;;
+        *)
+            err "self-test FAILED: the first line is not the resource that broke"
+            err "got: $(printf '%s' "$selected" | head -n 1)"
+            exit 1
+            ;;
+    esac
+
+    # And the premise: a fixture with no failures must produce nothing, or the
+    # assertions above would pass on an empty string.
+    empty="$(printf '%s' '{"StackEvents":[{"Timestamp":"2026-08-08T12:00:00Z","LogicalResourceId":"s","ResourceType":"AWS::CloudFormation::Stack","ResourceStatus":"UPDATE_IN_PROGRESS","ResourceStatusReason":"User Initiated"}]}' | jq -r "$FAILURE_EVENT_JQ")"
+    if [ -n "$empty" ]; then
+        err "self-test inconclusive: a clean operation reported failures"
+        exit 1
+    fi
+    ok "self-test: a clean operation reports nothing"
+    exit 0
+fi
 
 # The CI guard. guardrails-check.sh asserts this line is here, because a deploy
 # path that works from a developer machine is a deploy path that bypasses every
@@ -113,18 +213,32 @@ fi
 # Change set
 # ---------------------------------------------------------------------------
 
-
 # CloudFormation's waiter reports only "the stack reached a failure state". The
 # reason lives in the events, and without printing them every failed deploy costs
 # a round trip into the console or the CLI to learn what actually broke. Six
 # deploys were debugged that way before this existed.
 show_failure_events() {
+    local events
     warn "deploy failed; the failing resources were:"
-    aws_cli cloudformation describe-stack-events --stack-name "$STACK" \
-        --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' \
-        --output text 2>/dev/null |
-        grep -v 'Resource creation cancelled' |
-        head -n 10 >&2 || true
+    # Not silenced. A denied describe-stack-events used to print the heading
+    # above and nothing under it, which reads as "no resource failed" — the
+    # single most misleading thing this function could say, at the exact moment
+    # the operator is trying to find out what broke.
+    if ! events="$(aws_cli cloudformation describe-stack-events --stack-name "$STACK" --output json 2>&1)"; then
+        err "  could not read the stack events: ${events##*$'\n'}"
+        err "  the deploy still failed; look at $STACK in the CloudFormation console"
+        return 0
+    fi
+    local selected
+    selected="$(printf '%s' "$events" | jq -r "$FAILURE_EVENT_JQ")"
+    if [ -z "$selected" ]; then
+        # Also not silent. "Nothing matched" and "the stack failed for a reason
+        # this filter does not model" look identical otherwise.
+        err "  no resource-level failure was recorded for this operation"
+        err "  look at $STACK in the CloudFormation console"
+        return 0
+    fi
+    printf '%s\n' "$selected" >&2
 }
 
 # Resources carrying DeletionPolicy: Retain survive a stack delete. In production
@@ -141,48 +255,107 @@ show_failure_events() {
 # reported success, which is worse than not trying. Destroying data is a human
 # action with elevated credentials, same as scripts/bootstrap-agent.sh.
 report_retained_orphans() {
-    local account bucket table pool_name found=0
-    account="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null || echo '')"
-    [ -n "$account" ] || return 0
-
-    bucket="chintan-content-${INSTANCE}-${ENVIRONMENT}-${account}"
-    table="chintan-${INSTANCE}-${ENVIRONMENT}"
-    pool_name="chintan-${INSTANCE}-${ENVIRONMENT}"
-
-    aws_cli s3api head-bucket --bucket "$bucket" >/dev/null 2>&1 && {
-        warn "  retained: s3://${bucket}"
-        found=1
-    }
-    aws_cli dynamodb describe-table --table-name "$table" >/dev/null 2>&1 && {
-        warn "  retained: dynamodb table ${table}"
-        found=1
-    }
-    local pool_id
-    pool_id="$(aws_cli cognito-idp list-user-pools --max-results 60 \
-        --query "UserPools[?Name=='${pool_name}'].Id | [0]" --output text 2>/dev/null || echo None)"
-    if [ -n "$pool_id" ] && [ "$pool_id" != "None" ]; then
-        warn "  retained: cognito user pool ${pool_id} (${pool_name})"
-        found=1
+    local account name found=0 blind=0 r
+    if ! account="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null)" ||
+        [ -z "$account" ]; then
+        warn "  could not resolve the account id, so retained resources were NOT checked"
+        return 0
     fi
+
+    name="${INSTANCE}-${ENVIRONMENT}"
+
+    # Each probe answers present / absent / unknown. `unknown` is reported as a
+    # blind spot rather than folded into "nothing found": head-bucket answers
+    # 403 rather than 404 when the caller may not look, and treating that as
+    # absent is how a report of "no orphans" gets printed over a bucket that is
+    # about to collide with the next create.
+    for r in \
+        "$(probe_bucket "chintan-content-${name}-${account}")" \
+        "$(probe_table "chintan-${name}")" \
+        "$(probe_user_pool "chintan-${name}")" \
+        "$(probe_kms_alias "alias/chintan-${name}/token-vault")"; do
+        case "$(probe_state "$r")" in
+            present)
+                warn "  retained: $(probe_detail "$r")"
+                found=1
+                ;;
+            unknown)
+                err "  could not check: $(probe_detail "$r")"
+                blind=1
+                ;;
+        esac
+    done
 
     if [ "$found" = 1 ]; then
         warn "these survived a failed create and will collide with the next one."
         warn "clear them with elevated credentials, then re-run:"
         warn "  scripts/clean-instance-orphans.sh --instance ${INSTANCE} --environment ${ENVIRONMENT} --apply"
     fi
+    if [ "$blind" = 1 ]; then
+        warn "one or more probes were denied — 'no orphans' above is NOT a clean bill of health."
+        warn "re-run scripts/clean-instance-orphans.sh with credentials that can read them."
+    fi
 }
 
 clear_failed_create() {
-    local status
+    local status out
     status="$(aws_cli cloudformation describe-stacks --stack-name "$STACK" \
         --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
     case "$status" in
         ROLLBACK_COMPLETE | REVIEW_IN_PROGRESS)
             warn "stack $STACK is in $status from a failed first create; deleting it so this deploy can proceed"
             warn "any resource with DeletionPolicy: Retain survives that delete — check for orphans if a create keeps colliding"
-            aws_cli cloudformation delete-stack --stack-name "$STACK" >/dev/null 2>&1 || true
-            aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK" >/dev/null 2>&1 || true
+
+            # Neither call is silenced, and neither is `|| true`. The first
+            # version of this function was both: a denied delete-stack, or a
+            # delete that ended in DELETE_FAILED, was swallowed, execution fell
+            # through to stack_exists (still true), CHANGE_SET_TYPE became
+            # UPDATE, and CloudFormation refused with the very
+            # "is in ROLLBACK_COMPLETE state and can not be updated" this
+            # function exists to prevent. The deploy then failed for a reason
+            # that pointed at the wrong thing entirely.
+            if ! out="$(aws_cli cloudformation delete-stack --stack-name "$STACK" 2>&1)"; then
+                err "could not delete $STACK: ${out##*$'\n'}"
+                report_retained_orphans
+                die "$STACK is in $status and must be deleted before this deploy can proceed; the delete was refused (see above)"
+            fi
+            if ! out="$(aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK" 2>&1)"; then
+                err "waiting for $STACK to delete failed: ${out##*$'\n'}"
+            fi
+
+            # Verify, rather than assume. `wait` returning 0 is not the same as
+            # the stack being gone, and DELETE_FAILED is the case that matters:
+            # it leaves the stack in place, and the next deploy would inherit
+            # exactly the confusion this function removes.
+            status="$(aws_cli cloudformation describe-stacks --stack-name "$STACK" \
+                --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)"
+            if [ "$status" != "NONE" ]; then
+                report_retained_orphans
+                die "$STACK is still present in status $status after the delete; clear it before deploying"
+            fi
+            ok "$STACK deleted; this deploy will create it fresh"
             report_retained_orphans
+            ;;
+        DELETE_FAILED)
+            # Deleting again without --retain-resources repeats the same
+            # failure. Which resources to retain is a judgement call about data,
+            # so this stops and says so rather than guessing.
+            report_retained_orphans
+            die "$STACK is in DELETE_FAILED. Delete it by hand, retaining whatever must survive:
+  aws cloudformation delete-stack --stack-name $STACK --retain-resources <LogicalId> ...
+The resources that blocked the delete are named in the stack events."
+            ;;
+        UPDATE_ROLLBACK_FAILED)
+            # The only legal move on this state. An update change set against it
+            # is rejected, and the rejection does not say this is why.
+            die "$STACK is in UPDATE_ROLLBACK_FAILED and cannot be updated until its rollback completes. Run:
+  aws cloudformation continue-update-rollback --stack-name $STACK
+adding --resources-to-skip <LogicalId> for any resource whose rollback is what is stuck."
+            ;;
+        *_IN_PROGRESS)
+            # A concurrent deploy, or one that was cancelled mid-flight. Every
+            # call below would fail against it with a less clear message.
+            die "$STACK is in $status — another operation is running against it. Wait for it to finish, or resolve it, then re-run."
             ;;
     esac
 }
@@ -197,10 +370,14 @@ clear_failed_create() {
 # The artifact bucket already exists and already holds the function zips; the
 # deploy role can read it, and CloudFormation reads the template as that role.
 stage_template() {
-    local account bucket key
+    local account bucket key region
     account="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null || echo '')"
     [ -n "$account" ] || die "could not resolve the account id to stage the template"
-    bucket="chintan-lambda-${account}-${AWS_REGION:-us-west-2}"
+    # The same region aws_cli acts in. Built from AWS_REGION alone, this named a
+    # different bucket than the upload went to whenever CHINTAN_REGION was set.
+    region="$(aws_region)"
+    [ -n "$region" ] || die "no region resolved; set AWS_REGION (or CHINTAN_REGION) to the artifact bucket's region"
+    bucket="chintan-lambda-${account}-${region}"
     # Bucket root, not a templates/ prefix: the function zips are written to the
     # root and that path is known to work, whereas a new prefix would be the
     # first thing this role has ever written there. simulate-principal-policy
@@ -211,7 +388,7 @@ stage_template() {
 
     aws_cli s3 cp "$TEMPLATE" "s3://${bucket}/${key}" >/dev/null ||
         die "could not stage the template to s3://${bucket}/${key}"
-    TEMPLATE_URL="https://${bucket}.s3.${AWS_REGION:-us-west-2}.amazonaws.com/${key}"
+    TEMPLATE_URL="https://${bucket}.s3.${region}.amazonaws.com/${key}"
     info "template staged: s3://${bucket}/${key}"
 }
 
