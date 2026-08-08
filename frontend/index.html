@@ -14,8 +14,15 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Chintan" />
-    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png" />
+    <!--
+      Base-absolute, not relative. A bare `icon-192.png` resolves against the
+      *document's* directory, so on a deep link such as /chintan/dev/notes/x it
+      asked for /chintan/dev/notes/icon-192.png and got a 404 — the icons only
+      loaded on paths that happened to sit one level down. Vite substitutes
+      %BASE_URL% with the same value the bundle's own asset URLs use.
+    -->
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="%BASE_URL%icon-192.png" />
     <title>Chintan</title>
     <script>
       /*
