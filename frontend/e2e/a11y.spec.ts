@@ -10,7 +10,14 @@ import { expect, test } from './fixtures.ts';
  * one that would have caught the palette.
  */
 
-const ROUTES = ['/', '/notes', '/search', '/settings', '/notes/roof-repair'] as const;
+const ROUTES = [
+  '/',
+  '/notes',
+  '/search',
+  '/settings',
+  '/notes/roof-repair',
+  '/archive',
+] as const;
 const THEMES = ['ink', 'nocturne'] as const;
 
 for (const theme of THEMES) {

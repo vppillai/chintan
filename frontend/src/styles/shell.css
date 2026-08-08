@@ -1726,3 +1726,79 @@
   border-color: var(--color-accent);
   color: var(--color-on-accent);
 }
+
+/* --------------------------------------------------------------------------
+   Removing a note
+   -------------------------------------------------------------------------- */
+
+/*
+ * Below the editor, and separated by a rule rather than by colour.
+ *
+ * These are the only controls on the screen whose effect is not undone by
+ * typing something else, so they get distance from the body text rather than a
+ * red that the palette has not defined. `--color-accent` is the app's one
+ * "consequential" signal and is already carrying the destructive dialog.
+ */
+.note-actions {
+  margin-block-start: var(--space-8);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.note-actions__state {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.note-actions__error {
+  margin-block-start: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-accent);
+}
+
+.screen__action--destructive {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* The archive row's deadline. Muted like any other row meta, except when the
+   note is already past its purge date and the sweeper has yet to run. */
+.note-row__meta[data-purge='due'] {
+  color: var(--color-accent);
+}
+
+/* --------------------------------------------------------------------------
+   The typed confirmation, for the one action that cannot be undone
+   -------------------------------------------------------------------------- */
+
+.dialog__gate {
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-2);
+}
+
+.dialog__gate-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.dialog__gate-input {
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  color: var(--color-ink);
+}
+
+/* A disabled confirm has to *look* disabled, or the gate reads as a broken
+   button rather than as a lock waiting to be opened. */
+.dialog__action[disabled],
+.dialog__action--destructive[disabled] {
+  background-color: var(--color-raised);
+  border-color: var(--color-line);
+  color: var(--color-faint);
+  cursor: default;
+}

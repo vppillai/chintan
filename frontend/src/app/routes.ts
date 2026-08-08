@@ -4,6 +4,8 @@ export const ROUTES = {
   notes: '/notes',
   note: (id: string) => `/notes/${encodeURIComponent(id)}`,
   notePattern: '/notes/:id',
+  /** Archived notes, awaiting restore or purge. */
+  archive: '/archive',
   search: '/search',
   settings: '/settings',
   capture: '/capture',

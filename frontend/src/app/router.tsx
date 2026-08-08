@@ -6,6 +6,7 @@ import { HomeScreen } from '@/screens/HomeScreen.tsx';
 import { NoteDetailScreen } from '@/features/notes/NoteDetailScreen.tsx';
 import { SearchScreen } from '@/features/search/SearchScreen.tsx';
 import { SettingsScreen } from '@/features/settings/SettingsScreen.tsx';
+import { ArchiveScreen } from '@/screens/ArchiveScreen.tsx';
 import { NotFoundScreen } from '@/screens/NotFoundScreen.tsx';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
 
@@ -30,6 +31,11 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, Component: HomeScreen, ErrorBoundary: RouteError },
       { path: ROUTES.notes.slice(1), Component: NotesScreen, ErrorBoundary: RouteError },
+      {
+        path: ROUTES.archive.slice(1),
+        Component: ArchiveScreen,
+        ErrorBoundary: RouteError,
+      },
       {
         path: ROUTES.notePattern.slice(1),
         Component: NoteDetailScreen,

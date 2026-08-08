@@ -17,6 +17,8 @@ export interface ApiState {
   offline: boolean;
   /** Forces the next PATCH to return 409 once. */
   conflictOnce: boolean;
+  /** Ids passed to DELETE /v1/notes/{id}/permanent, in order. */
+  purged: string[];
   /** The hosted UI, as exercised by the sign-in and sign-out specs. */
   auth: AuthState;
 }
@@ -52,6 +54,8 @@ interface NoteRecord {
   updated_at: string;
   version: number;
   archived: boolean;
+  /** RFC3339, set by the server when a note is archived. */
+  purge_after?: string | null;
   captures?: CaptureRecord[];
 }
 
@@ -105,11 +109,47 @@ export function freshState(): ApiState {
         archived: false,
         captures: [],
       },
+      /*
+       * Already archived, so the archive list has something in it before this
+       * session archives anything. Invisible to every other spec: the notes
+       * endpoint filters on `state`, which defaults to active.
+       */
+      'old-fence': {
+        id: 'old-fence',
+        title: 'Old fence',
+        body: 'Replaced in spring.',
+        snippet: 'Replaced in spring.',
+        tags: [],
+        aliases: [],
+        updated_at: '2026-07-02T11:00:00.000Z',
+        version: 2,
+        archived: true,
+        purge_after: '2026-08-18T11:00:00.000Z',
+        captures: [],
+      },
+      /*
+       * Archived with no purge date. v1 rendered "Deletes in NaN days" for this
+       * exact row — `purge_after` is optional in the contract and a note
+       * archived before retention was configured has none.
+       */
+      'stray-thought': {
+        id: 'stray-thought',
+        title: 'Stray thought',
+        body: 'Nothing came of it.',
+        snippet: 'Nothing came of it.',
+        tags: [],
+        aliases: [],
+        updated_at: '2026-06-11T08:30:00.000Z',
+        version: 1,
+        archived: true,
+        captures: [],
+      },
     },
     captures: [],
     requests: [],
     offline: false,
     conflictOnce: false,
+    purged: [],
     auth: {
       authorize: [],
       token: [],
@@ -300,9 +340,40 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
 
     // ---- Notes ----------------------------------------------------------
     if (path === '/v1/notes' && method === 'GET') {
+      // `state` defaults to active, exactly as `openapi.yaml` declares it.
+      const wanted = url.searchParams.get('state') ?? 'active';
       await json(route, {
-        items: Object.values(state.notes).filter((note) => !note.archived),
+        items: Object.values(state.notes).filter((note) =>
+          wanted === 'archived' ? note.archived : !note.archived,
+        ),
       });
+      return;
+    }
+
+    const restoreMatch = /^\/v1\/notes\/([^/]+)\/restore$/.exec(path);
+    if (restoreMatch && method === 'POST') {
+      const note = state.notes[restoreMatch[1] ?? ''];
+      if (!note) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      note.archived = false;
+      note.purge_after = null;
+      note.version += 1;
+      await json(route, note);
+      return;
+    }
+
+    const purgeMatch = /^\/v1\/notes\/([^/]+)\/permanent$/.exec(path);
+    if (purgeMatch && method === 'DELETE') {
+      const id = purgeMatch[1] ?? '';
+      if (!state.notes[id]) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      state.purged.push(id);
+      delete state.notes[id];
+      await route.fulfill({ status: 204, body: '' });
       return;
     }
 
@@ -315,6 +386,14 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       }
       if (method === 'GET') {
         await json(route, note);
+        return;
+      }
+      if (method === 'DELETE') {
+        note.archived = true;
+        // Thirty days, which is what `archiveNote`'s doc comment promises.
+        note.purge_after = new Date(Date.now() + 30 * 86_400_000).toISOString();
+        note.version += 1;
+        await route.fulfill({ status: 204, body: '' });
         return;
       }
       if (method === 'PATCH') {
@@ -343,6 +422,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     if (path === '/v1/search') {
       const q = (url.searchParams.get('q') ?? '').toLowerCase();
       const items = Object.values(state.notes)
+        .filter((note) => !note.archived)
         .filter((note) => `${note.title} ${note.body}`.toLowerCase().includes(q))
         .map((note) => ({
           note_id: note.id,

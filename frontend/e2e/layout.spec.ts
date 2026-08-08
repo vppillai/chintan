@@ -53,6 +53,7 @@ const ROUTES = [
   { path: '/', label: 'home (sheet collapsed)' },
   { path: '/notes', label: 'notes (sheet expanded)' },
   { path: '/notes/roof-repair', label: 'note detail' },
+  { path: '/archive', label: 'archive' },
   { path: '/search?q=roof', label: 'search with results' },
   { path: '/search?q=nothingmatchesthis', label: 'search empty' },
   { path: '/settings', label: 'settings' },

@@ -9,6 +9,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 
+import { NoteActions } from './NoteActions.tsx';
 import { TranscriptPanel, type TranscriptView } from './TranscriptPanel.tsx';
 import { WaveformScrubber } from './WaveformScrubber.tsx';
 import { loadCaptureArtifacts } from './artifacts.ts';
@@ -126,6 +127,8 @@ export function NoteDetailScreen() {
         }}
         onCommit={() => void editor.saveNow()}
       />
+
+      <NoteActions note={note} />
     </div>
   );
 }

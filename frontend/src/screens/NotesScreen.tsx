@@ -1,5 +1,8 @@
+import { Link } from 'react-router';
+
 import { useNotes } from '@/api/queries.ts';
 import { ApiError } from '@/api/problem.ts';
+import { ROUTES } from '@/app/routes.ts';
 import { NoteRow } from '@/components/NoteRow.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
 
@@ -108,6 +111,18 @@ export function NotesScreen() {
           {isFetchingNextPage ? 'Loading…' : 'Load more'}
         </button>
       )}
+
+      {/*
+        The way into the archive, and the only one. Placed after the list rather
+        than in the header so it never competes with the notes themselves — v1
+        made Archive a tab beside All, which gave a rarely-wanted filter the same
+        weight as the library.
+      */}
+      <div className="screen__actions">
+        <Link className="screen__action" to={ROUTES.archive}>
+          Archive
+        </Link>
+      </div>
     </div>
   );
 }

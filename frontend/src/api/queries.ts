@@ -88,6 +88,56 @@ export function useUpdateNote(noteId: string) {
   });
 }
 
+/* ---------------------------------------------------------------------------
+   Removing a note: archive → restore, or archive → purge
+
+   Three mutations rather than one parameterised one, because they are three
+   different promises. Archive is reversible, restore undoes it, and purge is
+   irreversible and cascades to the audio and the transcripts.
+
+   All three invalidate `['notes']` wholesale — the active list, the archive
+   list and the search corpus all live under that prefix, and a note that moved
+   between two of them must not be left rendered in both.
+   --------------------------------------------------------------------------- */
+
+export function useArchiveNote() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (noteId: string) => api.archiveNote(noteId),
+    onSuccess: (_result, noteId) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
+export function useRestoreNote() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (noteId: string) => api.restoreNote(noteId),
+    onSuccess: (_result, noteId) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
+export function useDeleteNoteForever() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (noteId: string) => api.deleteNoteForever(noteId),
+    onSuccess: (_result, noteId) => {
+      // Removed, not invalidated: there is nothing left on the server to
+      // refetch, and a refetch would 404 into an error the user cannot act on.
+      queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
 export function useSearch(q: string) {
   const api = useApi();
   return useQuery({

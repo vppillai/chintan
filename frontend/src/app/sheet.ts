@@ -117,6 +117,16 @@ export function sheetForPath(pathname: string): SheetModel {
   if (path.startsWith(`${ROUTES.notes}/`)) {
     return { state: 'expanded', tab: 'notes', detail: true };
   }
+  /*
+   * The archive is the library with a different filter, so it keeps the Notes
+   * tab lit and the bottom bar under it. `detail` is true because it is stacked
+   * on top of the notes list and Back should return there — falling through to
+   * INITIAL_SHEET instead would collapse the sheet to the record surface, which
+   * is the one thing Back must not do from inside the library.
+   */
+  if (path === ROUTES.archive) {
+    return { state: 'expanded', tab: 'notes', detail: true };
+  }
   if (path === ROUTES.search) {
     return { state: 'expanded', tab: 'search', detail: false };
   }
