@@ -153,6 +153,19 @@ cleanup_change_set() {
 # have stranded resources carrying DeletionPolicy: Retain (KMS keys, buckets,
 # user pools); those are reported rather than deleted, because deleting retained
 # resources is a decision, not a cleanup.
+# CloudFormation's waiter reports only "the stack reached a failure state". The
+# reason lives in the events, and without printing them every failed deploy costs
+# a round trip into the console or the CLI to learn what actually broke. Six
+# deploys were debugged that way before this existed.
+show_failure_events() {
+    warn "deploy failed; the failing resources were:"
+    aws_cli cloudformation describe-stack-events --stack-name "$STACK" \
+        --query 'StackEvents[?contains(ResourceStatus, `FAILED`)].[LogicalResourceId,ResourceStatusReason]' \
+        --output text 2>/dev/null |
+        grep -v 'Resource creation cancelled' |
+        head -n 10 >&2 || true
+}
+
 clear_failed_create() {
     local status
     status="$(aws_cli cloudformation describe-stacks --stack-name "$STACK" \
@@ -250,9 +263,15 @@ if [ "${NO_CHANGES:-0}" != "1" ]; then
         --stack-name "$STACK" --change-set-name "$CHANGE_SET" >/dev/null
 
     if [ "$CHANGE_SET_TYPE" = "CREATE" ]; then
-        aws_cli cloudformation wait stack-create-complete --stack-name "$STACK"
+        aws_cli cloudformation wait stack-create-complete --stack-name "$STACK" || {
+            show_failure_events
+            die "$STACK failed to create"
+        }
     else
-        aws_cli cloudformation wait stack-update-complete --stack-name "$STACK"
+        aws_cli cloudformation wait stack-update-complete --stack-name "$STACK" || {
+            show_failure_events
+            die "$STACK failed to update"
+        }
     fi
     ok "$STACK deployed"
 elif ! is_apply; then

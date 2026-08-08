@@ -271,6 +271,23 @@ Resources:
                   ArnLike:
                     lambda:FunctionArn: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
 
+              # An event-source-mapping has its own ARN namespace, so the
+              # lambda:TagResource granted above on function:chintan-* does not
+              # reach it, and CloudFormation tags every resource it creates:
+              #   not authorized to perform: lambda:TagResource on resource:
+              #   arn:aws:lambda:...:event-source-mapping:*
+              # Mapping UUIDs are service-generated, so there is no name to
+              # prefix-scope on; the account+region namespace is the tightest
+              # scope available. The Create grant above is still conditioned on
+              # the function ARN, so only this stack's functions get mappings at
+              # all.
+              - Effect: Allow
+                Action:
+                  - lambda:TagResource
+                  - lambda:UntagResource
+                  - lambda:ListTags
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*'
+
               - Effect: Allow
                 Action:
                   - logs:DescribeLogGroups
