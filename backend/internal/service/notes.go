@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/match"
@@ -17,10 +18,30 @@ import (
 
 const ArchiveRetention = 30 * 24 * time.Hour
 
+// maxNoteTitleLen bounds a stored title. Titles can be dictated, and they are rendered
+// back into the routing prompt for later recordings.
+const maxNoteTitleLen = 120
+
 var (
 	ErrNoteArchived    = errors.New("note is archived")
 	ErrNoteNotArchived = errors.New("note is not archived")
+	ErrEmptyNoteTitle  = errors.New("note title is empty")
 )
+
+// sanitizeNoteTitle collapses a title to a single bounded line.
+func sanitizeNoteTitle(title string) string {
+	title = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, title)
+	title = strings.Join(strings.Fields(title), " ")
+	if runes := []rune(title); len(runes) > maxNoteTitleLen {
+		title = strings.TrimSpace(string(runes[:maxNoteTitleLen]))
+	}
+	return title
+}
 
 func NoteIsActive(n model.NoteIndex) bool {
 	return strings.TrimSpace(n.DeletedAt) == ""
@@ -55,6 +76,11 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 
 // CreateNote creates a new note
 func (s *NotesService) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
+	title = sanitizeNoteTitle(title)
+	if title == "" {
+		return model.NoteIndex{}, ErrEmptyNoteTitle
+	}
+
 	// Generate a simple ID (in production, use UUID or similar)
 	noteID := fmt.Sprintf("note_%d", time.Now().UnixNano())
 
@@ -166,7 +192,11 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 
 	// Apply updates
 	if updates.Title != nil {
-		note.Title = *updates.Title
+		title := sanitizeNoteTitle(*updates.Title)
+		if title == "" {
+			return model.NoteIndex{}, ErrEmptyNoteTitle
+		}
+		note.Title = title
 	}
 	if updates.Aliases != nil {
 		note.Aliases = *updates.Aliases

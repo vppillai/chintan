@@ -123,6 +123,10 @@ func (h *NotesHandler) createNote(w http.ResponseWriter, r *http.Request, userID
 
 	note, err := h.notesService.CreateNote(r.Context(), userID, req.Title, req.Aliases)
 	if err != nil {
+		if errors.Is(err, service.ErrEmptyNoteTitle) {
+			httperr.BadRequest(w, "title is required")
+			return
+		}
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)
 		return
 	}
@@ -165,6 +169,10 @@ func (h *NotesHandler) updateNote(w http.ResponseWriter, r *http.Request, userID
 	if err != nil {
 		if errors.Is(err, service.ErrNoteArchived) {
 			httperr.WriteJSON(w, err, http.StatusConflict)
+			return
+		}
+		if errors.Is(err, service.ErrEmptyNoteTitle) {
+			httperr.BadRequest(w, "title is required")
 			return
 		}
 		httperr.WriteJSON(w, err, http.StatusInternalServerError)

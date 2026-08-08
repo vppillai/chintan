@@ -201,6 +201,8 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return nil, fmt.Errorf("capture already targets a note")
 	}
 
+	newNoteTitle = sanitizeNoteTitle(newNoteTitle)
+
 	switch {
 	case noteID != "":
 		note, err := s.store.GetNote(ctx, userID, noteID)
@@ -211,11 +213,11 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 			return nil, ErrNoteArchived
 		}
 		capture.NoteID = noteID
-	case strings.TrimSpace(newNoteTitle) != "":
+	case newNoteTitle != "":
 		if s.notes == nil {
 			return nil, fmt.Errorf("note creation is unavailable")
 		}
-		note, err := s.notes.CreateNote(ctx, userID, strings.TrimSpace(newNoteTitle), nil)
+		note, err := s.notes.CreateNote(ctx, userID, newNoteTitle, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create note: %w", err)
 		}
@@ -307,7 +309,7 @@ func (s *CaptureService) routeCapture(ctx context.Context, userID string, captur
 		}
 	}
 
-	title := strings.TrimSpace(decision.Title)
+	title := sanitizeNoteTitle(decision.Title)
 	if title == "" {
 		title = fallbackNoteTitle()
 	}
