@@ -18,9 +18,16 @@ import (
 
 const ArchiveRetention = 30 * 24 * time.Hour
 
-// maxNoteTitleLen bounds a stored title. Titles can be dictated, and they are rendered
-// back into the routing prompt for later recordings.
-const maxNoteTitleLen = 120
+// maxNoteTitleLen bounds a stored title. It matches the OpenAPI document's
+// maxLength for a note title, so a title the API accepts is a title that is
+// stored whole. Two different limits for one field means a request the handler
+// validated is quietly truncated by the service, which is data loss with a
+// receipt.
+//
+// The routing prompt does not depend on this number: it bounds every rendered
+// candidate field itself (routing.maxFieldLen), so a longer stored title cannot
+// grow the prompt.
+const maxNoteTitleLen = 200
 
 var (
 	ErrNoteArchived    = errors.New("note is archived")

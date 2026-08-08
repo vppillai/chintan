@@ -350,8 +350,11 @@ func TestCompleteCaptureBoundsSpokenTitle(t *testing.T) {
 	if strings.ContainsAny(title, "\n\r\t") {
 		t.Errorf("title = %q, want a single line", title)
 	}
-	if n := len([]rune(title)); n > 120 {
-		t.Errorf("title length = %d, want <= 120", n)
+	// Bounded at the one documented note-title maximum, which is the OpenAPI
+	// document's 200 runes. What matters here is that a router-supplied title is
+	// bounded at all; the number is shared with everything else that stores one.
+	if n := len([]rune(title)); n > 200 {
+		t.Errorf("title length = %d, want <= 200", n)
 	}
 }
 

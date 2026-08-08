@@ -38,13 +38,27 @@ func TestCreateNoteBoundsTitle(t *testing.T) {
 		})
 	}
 
-	t.Run("truncates", func(t *testing.T) {
+	t.Run("truncates beyond the documented maximum", func(t *testing.T) {
 		note, err := notesService.CreateNote(ctx, "u1", strings.Repeat("a", 500), nil)
 		if err != nil {
 			t.Fatalf("CreateNote: %v", err)
 		}
-		if n := len([]rune(note.Title)); n > 120 {
-			t.Errorf("title length = %d, want <= 120", n)
+		if n := len([]rune(note.Title)); n > 200 {
+			t.Errorf("title length = %d, want <= 200", n)
+		}
+	})
+
+	// The API accepts 200 runes, so the store must keep 200 runes. A stricter
+	// limit here truncates a title the handler already validated, and the user
+	// only finds out by reading back what they sent.
+	t.Run("keeps a title the API accepts", func(t *testing.T) {
+		title := strings.Repeat("a", 200)
+		note, err := notesService.CreateNote(ctx, "u1", title, nil)
+		if err != nil {
+			t.Fatalf("CreateNote: %v", err)
+		}
+		if note.Title != title {
+			t.Errorf("title length = %d, want the full 200 runes the OpenAPI document allows", len([]rune(note.Title)))
 		}
 	})
 }
