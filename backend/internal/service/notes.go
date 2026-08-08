@@ -312,10 +312,10 @@ func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	
+
 	out := make([]model.NoteIndex, 0)
 	now := time.Now().UTC()
-	
+
 	for _, n := range all {
 		if !NoteIsActive(n) {
 			// Check if not yet expired

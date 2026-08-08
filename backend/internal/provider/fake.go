@@ -64,7 +64,7 @@ func (f *FakeRouter) Route(ctx context.Context, transcript string, candidates []
 	f.Calls = append(f.Calls, transcript)
 	f.LastCandidates = make([]routing.Candidate, len(candidates))
 	copy(f.LastCandidates, candidates)
-	
+
 	if f.ShouldFail {
 		return RouteDecision{}, fmt.Errorf("fake router failed")
 	}
