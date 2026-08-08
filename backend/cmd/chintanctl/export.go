@@ -49,19 +49,19 @@ type exportResult struct {
 	BytesCopied    int64                `json:"bytes_copied"`
 }
 
-func (r *exportResult) human(w io.Writer) {
-	fmt.Fprintf(w, "export %s (%s) -> %s [%s]\n", r.Target.Instance, r.Target.Environment, r.Out, r.Format)
+func (r *exportResult) human(w *lineWriter) {
+	w.printf("export %s (%s) -> %s [%s]\n", r.Target.Instance, r.Target.Environment, r.Out, r.Format)
 	for _, t := range r.Tenants {
-		fmt.Fprintf(w, "  tenant %s: %d notes, %d captures, %d objects", t.TenantID, t.Notes, t.Captures, t.Objects)
+		w.printf("  tenant %s: %d notes, %d captures, %d objects", t.TenantID, t.Notes, t.Captures, t.Objects)
 		if t.UnknownObjects > 0 {
-			fmt.Fprintf(w, ", %d unrecognised objects kept under _raw/", t.UnknownObjects)
+			w.printf(", %d unrecognised objects kept under _raw/", t.UnknownObjects)
 		}
 		if t.UnrenderedItems > 0 {
-			fmt.Fprintf(w, ", %d index items kept under _items/", t.UnrenderedItems)
+			w.printf(", %d index items kept under _items/", t.UnrenderedItems)
 		}
-		fmt.Fprintln(w)
+		w.blank()
 	}
-	fmt.Fprintf(w, "  %d objects written, %d unchanged and skipped, %s transferred\n",
+	w.printf("  %d objects written, %d unchanged and skipped, %s transferred\n",
 		r.ObjectsCopied, r.ObjectsSkipped, humanBytes(r.BytesCopied))
 }
 

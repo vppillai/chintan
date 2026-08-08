@@ -64,7 +64,7 @@ func (o *S3Objects) Get(ctx context.Context, key string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("s3 get object: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	body, err := io.ReadAll(result.Body)
 	if err != nil {
@@ -93,7 +93,7 @@ func (o *S3Objects) GetWithETag(ctx context.Context, key string) ([]byte, string
 		}
 		return nil, "", fmt.Errorf("s3 get object: %w", err)
 	}
-	defer result.Body.Close()
+	defer func() { _ = result.Body.Close() }()
 
 	body, err := io.ReadAll(result.Body)
 	if err != nil {

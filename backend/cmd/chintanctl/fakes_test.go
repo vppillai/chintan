@@ -238,12 +238,6 @@ func (f *fakeBlobs) has(key string) bool {
 	return f.keys[key]
 }
 
-func (f *fakeBlobs) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.keys)
-}
-
 // ---------------------------------------------------------------- fixtures
 
 func newTestEnv(stdin io.Reader) (*env, *fakePartition, *fakeBlobs) {

@@ -94,7 +94,7 @@ func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, erro
 		_ = pr.CloseWithError(err)
 		return Transcription{}, fmt.Errorf("provider: groq request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not include response body — may echo transcript fragments.
@@ -118,10 +118,10 @@ func (g *GroqSTT) openSource(ctx context.Context, in Audio) (io.Reader, func(), 
 			return nil, nil, fmt.Errorf("provider: fetch source: %w", err)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, nil, fmt.Errorf("provider: fetch source: status %d", resp.StatusCode)
 		}
-		return resp.Body, func() { resp.Body.Close() }, nil
+		return resp.Body, func() { _ = resp.Body.Close() }, nil
 	}
 	if in.Body != nil {
 		return in.Body, func() {}, nil

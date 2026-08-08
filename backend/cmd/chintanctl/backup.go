@@ -69,11 +69,11 @@ type backupResult struct {
 	TotalBytes  int64    `json:"total_bytes"`
 }
 
-func (r *backupResult) human(w io.Writer) {
-	fmt.Fprintf(w, "backup %s (%s) -> %s\n", r.Target.Instance, r.Target.Environment, r.Out)
-	fmt.Fprintf(w, "  tenants: %s\n", strings.Join(r.Tenants, ", "))
-	fmt.Fprintf(w, "  %d index items, %d objects, %s\n", r.ItemCount, r.ObjectCount, humanBytes(r.TotalBytes))
-	fmt.Fprintf(w, "  manifest: %s (every object carries a sha256; restore checks all of them)\n",
+func (r *backupResult) human(w *lineWriter) {
+	w.printf("backup %s (%s) -> %s\n", r.Target.Instance, r.Target.Environment, r.Out)
+	w.printf("  tenants: %s\n", strings.Join(r.Tenants, ", "))
+	w.printf("  %d index items, %d objects, %s\n", r.ItemCount, r.ObjectCount, humanBytes(r.TotalBytes))
+	w.printf("  manifest: %s (every object carries a sha256; restore checks all of them)\n",
 		filepath.Join(r.Out, backupHeaderName))
 }
 

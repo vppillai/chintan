@@ -36,6 +36,7 @@ func (s *foreignWriteBeforeFirstPut) PutCapture(ctx context.Context, c model.Cap
 	s.mu.Unlock()
 
 	if first {
+		//nolint:staticcheck // QF1008: s.Store.X is this wrapper's "call the real store" idiom, and the s.Store.PutCapture below it cannot drop the field without recursing.
 		current, err := s.Store.GetCapture(ctx, c.UserID, c.ID)
 		if err != nil {
 			return model.CaptureIndex{}, err

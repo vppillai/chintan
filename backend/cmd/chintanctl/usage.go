@@ -40,25 +40,25 @@ type usageResult struct {
 	CostMicros int64      `json:"cost_micros"`
 }
 
-func (r *usageResult) human(w io.Writer) {
-	fmt.Fprintf(w, "usage %s (%s)", r.Target.Instance, r.Target.Environment)
+func (r *usageResult) human(w *lineWriter) {
+	w.printf("usage %s (%s)", r.Target.Instance, r.Target.Environment)
 	if r.Since != "" {
-		fmt.Fprintf(w, " since %s", r.Since)
+		w.printf(" since %s", r.Since)
 	}
-	fmt.Fprintln(w)
+	w.blank()
 	if r.Records == 0 {
-		fmt.Fprintf(w, "  no USAGE# records in range\n")
+		w.printf("  no USAGE# records in range\n")
 		return
 	}
-	fmt.Fprintf(w, "  %-16s %-8s %-22s %-10s %-14s %8s %14s %12s\n",
+	w.printf("  %-16s %-8s %-22s %-10s %-14s %8s %14s %12s\n",
 		"TENANT", "PROVIDER", "MODEL", "OP", "UNIT", "CALLS", "QUANTITY", "COST (USD)")
 	for _, row := range r.Rows {
-		fmt.Fprintf(w, "  %-16s %-8s %-22s %-10s %-14s %8d %14.3f %12s\n",
+		w.printf("  %-16s %-8s %-22s %-10s %-14s %8d %14.3f %12s\n",
 			truncate(row.TenantID, 16), truncate(row.Provider, 8), truncate(row.Model, 22),
 			truncate(row.Op, 10), truncate(row.Unit, 14), row.Calls, row.Quantity,
 			usd(row.CostMicros))
 	}
-	fmt.Fprintf(w, "  %d records, total %s\n", r.Records, usd(r.CostMicros))
+	w.printf("  %d records, total %s\n", r.Records, usd(r.CostMicros))
 }
 
 func usd(micros int64) string {

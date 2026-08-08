@@ -35,8 +35,8 @@ type eraseResult struct {
 	MirrorSortKeys []string `json:"mirror_sort_keys,omitempty"`
 }
 
-func (r *eraseResult) human(w io.Writer) {
-	fmt.Fprintf(w, "erase tenant %s from %s (%s)\n", r.TenantID, r.Target.Instance, r.Target.Environment)
+func (r *eraseResult) human(w *lineWriter) {
+	w.printf("erase tenant %s from %s (%s)\n", r.TenantID, r.Target.Instance, r.Target.Environment)
 
 	groups := map[string]int{}
 	for _, sk := range r.SortKeys {
@@ -47,18 +47,18 @@ func (r *eraseResult) human(w io.Writer) {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	fmt.Fprintf(w, "  index items (%d):\n", r.ItemsPlanned)
+	w.printf("  index items (%d):\n", r.ItemsPlanned)
 	for _, n := range names {
-		fmt.Fprintf(w, "    %-14s %d\n", n, groups[n])
+		w.printf("    %-14s %d\n", n, groups[n])
 	}
 	if len(r.MirrorSortKeys) > 0 {
-		fmt.Fprintf(w, "    %-14s %d (in the global %s partition)\n",
+		w.printf("    %-14s %d (in the global %s partition)\n",
 			"WACRED#mirror", len(r.MirrorSortKeys), credentialListPK)
 	}
-	fmt.Fprintf(w, "  objects (%d, %s)\n", r.ObjectsPlanned, humanBytes(r.BytesPlanned))
+	w.printf("  objects (%d, %s)\n", r.ObjectsPlanned, humanBytes(r.BytesPlanned))
 
 	if r.Apply {
-		fmt.Fprintf(w, "\n  removed %d index items and %d objects (%s)\n",
+		w.printf("\n  removed %d index items and %d objects (%s)\n",
 			r.ItemsDeleted, r.ObjectsDeleted, humanBytes(r.BytesDeleted))
 	}
 }
@@ -100,10 +100,9 @@ func cmdErase(ctx context.Context, args []string, stdout, stderr io.Writer, stdi
 	if err := report(stdout, g.jsonOut, res); err != nil {
 		return err
 	}
-	dryRunBanner(stdout, g.apply, fmt.Sprintf(
+	return dryRunBanner(stdout, g.apply, fmt.Sprintf(
 		"irreversibly delete %d index items and %d objects belonging to tenant %s",
 		res.ItemsPlanned, res.ObjectsPlanned, tenant))
-	return nil
 }
 
 // runErase deletes one tenant everywhere and reports exactly what went.

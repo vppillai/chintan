@@ -35,27 +35,27 @@ type restoreResult struct {
 	Mismatches []string `json:"mismatches,omitempty"`
 }
 
-func (r *restoreResult) human(w io.Writer) {
-	fmt.Fprintf(w, "restore %s -> %s (%s)\n", r.In, r.Target.Instance, r.Target.Environment)
-	fmt.Fprintf(w, "  backup taken %s from instance %q, table %q, bucket %q\n",
+func (r *restoreResult) human(w *lineWriter) {
+	w.printf("restore %s -> %s (%s)\n", r.In, r.Target.Instance, r.Target.Environment)
+	w.printf("  backup taken %s from instance %q, table %q, bucket %q\n",
 		backupAge(r.CreatedAt), r.SourceInstance, r.SourceTable, r.SourceBucket)
 	if r.SourceTable != r.Target.Table || r.SourceBucket != r.Target.Bucket {
-		fmt.Fprintf(w, "  note: restoring into a different table/bucket than the backup came from\n")
+		w.printf("  note: restoring into a different table/bucket than the backup came from\n")
 	}
 	if len(r.Mismatches) > 0 {
-		fmt.Fprintf(w, "  REFUSED: %d object(s) do not match the manifest hash:\n", len(r.Mismatches))
+		w.printf("  REFUSED: %d object(s) do not match the manifest hash:\n", len(r.Mismatches))
 		for _, m := range r.Mismatches {
-			fmt.Fprintf(w, "    %s\n", m)
+			w.printf("    %s\n", m)
 		}
 		return
 	}
-	fmt.Fprintf(w, "  verified %d objects (%s) against the manifest\n", r.ObjectsPlanned, humanBytes(r.BytesPlanned))
+	w.printf("  verified %d objects (%s) against the manifest\n", r.ObjectsPlanned, humanBytes(r.BytesPlanned))
 	if r.Apply {
-		fmt.Fprintf(w, "  restored %d index items and %d objects (%s)\n",
+		w.printf("  restored %d index items and %d objects (%s)\n",
 			r.ItemsRestored, r.ObjectsRestored, humanBytes(r.BytesRestored))
 		return
 	}
-	fmt.Fprintf(w, "  would restore %d index items and %d objects (%s)\n",
+	w.printf("  would restore %d index items and %d objects (%s)\n",
 		r.ItemsPlanned, r.ObjectsPlanned, humanBytes(r.BytesPlanned))
 }
 
@@ -81,9 +81,11 @@ func cmdRestore(ctx context.Context, args []string, stdout, stderr io.Writer, st
 			return err
 		}
 		if resErr == nil {
-			dryRunBanner(stdout, g.apply,
+			if err := dryRunBanner(stdout, g.apply,
 				fmt.Sprintf("write %d index items and %d objects into %s",
-					res.ItemsPlanned, res.ObjectsPlanned, e.Target.Instance))
+					res.ItemsPlanned, res.ObjectsPlanned, e.Target.Instance)); err != nil {
+				return err
+			}
 		}
 	}
 	return resErr

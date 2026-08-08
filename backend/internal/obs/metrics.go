@@ -108,7 +108,11 @@ func Emit(ctx context.Context, dimensions map[string]string, metrics ...Metric) 
 
 	metricMu.Lock()
 	defer metricMu.Unlock()
-	fmt.Fprintln(metricOut, string(encoded))
+	// Discarded deliberately, for the same reason the encode failure above only
+	// warns: metricOut is the Lambda's stdout, Emit returns nothing, and a
+	// metric must never take down a request. There is nowhere to report a
+	// failed write to that is not the thing that just failed.
+	_, _ = fmt.Fprintln(metricOut, string(encoded))
 }
 
 // Count emits a single counter increment.

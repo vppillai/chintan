@@ -141,7 +141,7 @@ func (k *keySet) refresh(ctx context.Context, seenGen uint64) error {
 	if err != nil {
 		return fmt.Errorf("auth: fetch jwks: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("auth: fetch jwks: status %d", resp.StatusCode)
 	}

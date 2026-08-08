@@ -130,8 +130,12 @@ type env struct {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) error {
+	// Usage printed alongside an error is discarded deliberately: the error
+	// being returned already says what went wrong, and replacing it with "could
+	// not write to stderr" would hide the thing the operator needs to read.
+	// The --help path below is different — there the write is the whole result.
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usageText)
+		_, _ = fmt.Fprint(stderr, usageText)
 		return errors.New("no command given")
 	}
 	cmd := args[0]
@@ -139,8 +143,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 
 	switch cmd {
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usageText)
-		return nil
+		_, err := fmt.Fprint(stdout, usageText)
+		return err
 	case "export":
 		return cmdExport(ctx, rest, stdout, stderr, stdin)
 	case "backup":
@@ -154,7 +158,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 	case "erase":
 		return cmdErase(ctx, rest, stdout, stderr, stdin)
 	default:
-		fmt.Fprint(stderr, usageText)
+		_, _ = fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }

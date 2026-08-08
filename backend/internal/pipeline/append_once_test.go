@@ -270,6 +270,7 @@ func (o *raceOnceObjects) GetWithETag(ctx context.Context, key string) ([]byte, 
 	}
 	o.mu.Unlock()
 	if race {
+		//nolint:staticcheck // QF1008: o.Objects.X is this wrapper's "call the real store" idiom, and the o.Objects.GetWithETag above it cannot drop the field without recursing.
 		_ = o.Objects.Put(ctx, key, []byte("written by somebody else"), "text/markdown")
 	}
 	return body, etag, err
@@ -289,7 +290,7 @@ func TestNoteRecencyOrderingIsChronological(t *testing.T) {
 	older := model.FormatTime(base)                             // exactly on the second
 	newer := model.FormatTime(base.Add(100 * time.Millisecond)) // a tenth later
 
-	if !(older < newer) {
+	if older >= newer {
 		t.Fatalf("stored form does not sort chronologically: %q should sort below %q", older, newer)
 	}
 	// The v1 layout got this backwards, which is the bug being pinned.

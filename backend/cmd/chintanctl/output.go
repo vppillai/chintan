@@ -33,8 +33,35 @@ func setupLogging(verbose bool) {
 // result is what a subcommand produces. Human output and JSON output are the
 // same data, so --json can never drift from what the operator was told.
 type result interface {
-	human(w io.Writer)
+	human(w *lineWriter)
 }
+
+// lineWriter is the writer every human() renderer prints through.
+//
+// A renderer is a run of twenty prints that lay out a report, and checking each
+// one individually would bury the layout the function exists to express. So
+// lineWriter keeps the first write error and skips everything after it: the
+// renderer stays straight-line code, and the failure still reaches the caller
+// through report, which returns it. That matters because stdout is a pipe here
+// — `chintanctl backup | head` closes it early, and a summary that silently
+// stopped half way through must not exit 0 as if it had all been printed.
+//
+// The JSON path needs none of this: json.Encoder already returns its write
+// error.
+type lineWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (l *lineWriter) printf(format string, a ...any) {
+	if l.err != nil {
+		return
+	}
+	_, l.err = fmt.Fprintf(l.w, format, a...)
+}
+
+// blank writes the empty line that separates sections of a report.
+func (l *lineWriter) blank() { l.printf("\n") }
 
 func report(w io.Writer, asJSON bool, r result) error {
 	if asJSON {
@@ -42,20 +69,23 @@ func report(w io.Writer, asJSON bool, r result) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(r)
 	}
-	r.human(w)
-	return nil
+	lw := &lineWriter{w: w}
+	r.human(lw)
+	return lw.err
 }
 
 // dryRunBanner is the last line of every destructive command that did not run
 // with --apply. It matches the wording the shell scripts use, because an
 // operator should not have to learn two vocabularies for the same idea.
-func dryRunBanner(w io.Writer, apply bool, action string) {
+func dryRunBanner(w io.Writer, apply bool, action string) error {
 	if apply {
-		return
+		return nil
 	}
-	fmt.Fprintf(w, "\nDRY RUN — nothing was changed.\n")
-	fmt.Fprintf(w, "  Would: %s\n", action)
-	fmt.Fprintf(w, "  Re-run with --apply to execute.\n")
+	lw := &lineWriter{w: w}
+	lw.printf("\nDRY RUN — nothing was changed.\n")
+	lw.printf("  Would: %s\n", action)
+	lw.printf("  Re-run with --apply to execute.\n")
+	return lw.err
 }
 
 // confirmTyped demands that the operator type an exact string before an
@@ -72,8 +102,14 @@ func confirmTyped(in io.Reader, out io.Writer, supplied, want, action string) er
 		}
 		return nil
 	}
-	fmt.Fprintf(out, "\nAbout to %s. This cannot be undone.\n", action)
-	fmt.Fprintf(out, "Type %q to continue: ", want)
+	prompt := &lineWriter{w: out}
+	prompt.printf("\nAbout to %s. This cannot be undone.\n", action)
+	prompt.printf("Type %q to continue: ", want)
+	// An operator who was never shown the prompt cannot have answered it, so a
+	// failed write is a refusal rather than something to read past.
+	if prompt.err != nil {
+		return fmt.Errorf("could not prompt for confirmation: %w", prompt.err)
+	}
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && !strings.HasSuffix(line, "\n") && line == "" {
 		return fmt.Errorf("confirmation not supplied: %w", err)

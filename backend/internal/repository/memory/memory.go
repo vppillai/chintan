@@ -388,7 +388,12 @@ func (s *Store) ClaimCaptureAppend(ctx context.Context, tenantID, captureID, tok
 
 	now := time.Now()
 	stale := now.Add(-repository.AppendClaimLease).Unix()
-	if c.AppendToken != "" && !(c.AppendedAt == 0 && c.AppendClaimedAt < stale) {
+	// Same claimability test as DynamoStore.ClaimCaptureAppend, stated the same
+	// way round: unclaimed, or claimed by somebody who never finished and whose
+	// lease has run out.
+	claimable := c.AppendToken == "" ||
+		(c.AppendedAt == 0 && c.AppendClaimedAt < stale)
+	if !claimable {
 		return false, c, nil
 	}
 

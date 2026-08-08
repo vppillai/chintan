@@ -833,7 +833,14 @@ func (s *DynamoStore) ClaimCaptureAppend(ctx context.Context, tenantID, captureI
 
 	now := time.Now()
 	stale := now.Add(-AppendClaimLease).Unix()
-	if current.AppendToken != "" && !(current.AppendedAt == 0 && current.AppendClaimedAt < stale) {
+	// Stated the way appendClaimCondition states it: a capture is claimable
+	// when nobody holds it, or when the holder never finished and its lease has
+	// expired. Reading it as "refuse unless not (unfinished and stale)" is the
+	// same test turned inside out, and one negation harder to check against the
+	// condition expression it has to agree with.
+	claimable := current.AppendToken == "" ||
+		(current.AppendedAt == 0 && current.AppendClaimedAt < stale)
+	if !claimable {
 		return false, current, nil
 	}
 

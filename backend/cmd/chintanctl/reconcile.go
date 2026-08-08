@@ -56,12 +56,12 @@ type reconcileResult struct {
 	Repaired int       `json:"repaired"`
 }
 
-func (r *reconcileResult) human(w io.Writer) {
-	fmt.Fprintf(w, "reconcile %s (%s)\n", r.Target.Instance, r.Target.Environment)
-	fmt.Fprintf(w, "  checked %d index items and %d objects across %d tenant(s)\n",
+func (r *reconcileResult) human(w *lineWriter) {
+	w.printf("reconcile %s (%s)\n", r.Target.Instance, r.Target.Environment)
+	w.printf("  checked %d index items and %d objects across %d tenant(s)\n",
 		r.Items, r.Objects, len(r.Tenants))
 	if len(r.Findings) == 0 {
-		fmt.Fprintf(w, "  no disagreement between the table and the bucket\n")
+		w.printf("  no disagreement between the table and the bucket\n")
 		return
 	}
 	counts := map[string]int{}
@@ -74,9 +74,9 @@ func (r *reconcileResult) human(w io.Writer) {
 	}
 	sort.Strings(kinds)
 	for _, k := range kinds {
-		fmt.Fprintf(w, "  %-22s %d\n", k, counts[k])
+		w.printf("  %-22s %d\n", k, counts[k])
 	}
-	fmt.Fprintln(w)
+	w.blank()
 	for _, f := range r.Findings {
 		subject := f.Key
 		if subject == "" {
@@ -88,10 +88,10 @@ func (r *reconcileResult) human(w io.Writer) {
 		} else if f.Repairable {
 			mark = "*"
 		}
-		fmt.Fprintf(w, "  %s %-22s %s  %s\n", mark, f.Kind, subject, f.Detail)
+		w.printf("  %s %-22s %s  %s\n", mark, f.Kind, subject, f.Detail)
 	}
 	if r.Apply {
-		fmt.Fprintf(w, "\n  repaired %d finding(s)\n", r.Repaired)
+		w.printf("\n  repaired %d finding(s)\n", r.Repaired)
 	}
 }
 
@@ -119,8 +119,7 @@ func cmdReconcile(ctx context.Context, args []string, stdout, stderr io.Writer, 
 			repairable++
 		}
 	}
-	dryRunBanner(stdout, g.apply, fmt.Sprintf("delete %d orphaned object(s)", repairable))
-	return nil
+	return dryRunBanner(stdout, g.apply, fmt.Sprintf("delete %d orphaned object(s)", repairable))
 }
 
 // runReconcile is the documented backstop for the dual-write window and for
@@ -162,8 +161,8 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 				return nil
 			}
 			ref := parseObjectKey(info.Key)
-			switch {
-			case ref.Group == "notes":
+			switch ref.Group {
+			case "notes":
 				if _, ok := idx.Notes[ref.EntityID]; !ok {
 					orphans = append(orphans, finding{
 						Kind: findingOrphanObject, TenantID: tenantID, Key: info.Key,
@@ -177,7 +176,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 					Owner:  "NOTE#" + ref.EntityID,
 					Detail: "the note exists but names no such key",
 				})
-			case ref.Group == "captures":
+			case "captures":
 				if _, ok := idx.Captures[ref.EntityID]; !ok {
 					orphans = append(orphans, finding{
 						Kind: findingOrphanObject, TenantID: tenantID, Key: info.Key,

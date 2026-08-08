@@ -43,7 +43,7 @@ func TestKeySetFetchesOnceThenServesFromCache(t *testing.T) {
 		if err != nil {
 			t.Fatalf("iteration %d: %v", i, err)
 		}
-		if got.N.Cmp(key.PublicKey.N) != 0 {
+		if got.N.Cmp(key.N) != 0 {
 			t.Fatal("returned the wrong key")
 		}
 	}

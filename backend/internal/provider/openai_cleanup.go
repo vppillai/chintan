@@ -97,7 +97,7 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 	if err != nil {
 		return "", TokenUsage{}, fmt.Errorf("provider: llm request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {

@@ -1,16 +1,3 @@
-package main
-
-import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"regexp"
-	"sort"
-	"strings"
-
-	"github.com/vppillai/chintan/backend/internal/model"
-)
-
 // Enumeration is by S3 prefix and DynamoDB partition, NEVER by entity type.
 //
 // This is the one property worth copying from the archived implementation, and
@@ -33,7 +20,23 @@ import (
 // copied to a mirrored path, an unknown item is written out verbatim. Losing
 // the pretty rendering of a new kind is a cosmetic regression; losing the data
 // is not. TestExportCapturesUnknownKinds pins this.
-const enumerationContract = "prefix and partition, never entity type"
+//
+// The rule is a property of this whole file, so it is written as a file comment
+// rather than pinned to a declaration. The blank line below keeps it out of the
+// package doc, which main.go owns.
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/vppillai/chintan/backend/internal/model"
+)
 
 // tenantsPrefix is the root every tenant's objects live under. It matches
 // internal/keys, which builds every key as tenants/<tenantId>/...
