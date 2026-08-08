@@ -131,3 +131,64 @@ test('a failed capture offers a retry that reaches the API', async ({ page, api 
     )
     .toBe(true);
 });
+
+/**
+ * Where the app thinks a recording goes.
+ *
+ * The pipeline pays for an LLM routing call and stores its answer on the
+ * capture; `handler/wire.go` dropped `suggested_note_id` and `suggested_title`
+ * before the response left the API, and neither field was in `openapi.yaml`. So
+ * the "where should this go?" prompt could only offer an unranked list of every
+ * note the user owns. v1 led with `Add to "<note>"`.
+ */
+test('leads with the note the router picked, and files into it', async ({ page, api }) => {
+  api.captures.push({
+    id: 'cap-routed',
+    status: 'needs_target',
+    created_at: new Date().toISOString(),
+    version: 1,
+    note_id: null,
+    suggested_note_id: 'roof-repair',
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByText(/which note should this go in/i)).toBeVisible();
+  const add = page.getByRole('button', { name: /add to .*roof repair/i });
+  await expect(add).toBeVisible();
+
+  // Not an unranked list of everything the user owns.
+  await expect(page.getByRole('button', { name: 'Reading list' })).toHaveCount(0);
+
+  await add.click();
+
+  await expect
+    .poll(() =>
+      api.requests.some(
+        (request) =>
+          request.method === 'POST' && request.url === '/v1/captures/cap-routed/target',
+      ),
+    )
+    .toBe(true);
+});
+
+test('a suggested new note is offered by the title the router chose', async ({ page, api }) => {
+  api.captures.push({
+    id: 'cap-new',
+    status: 'needs_target',
+    created_at: new Date().toISOString(),
+    version: 1,
+    note_id: null,
+    suggested_title: 'Kitchen rebuild',
+  });
+
+  await page.goto('/');
+
+  await expect(page.getByRole('button', { name: /start .*kitchen rebuild/i })).toBeVisible();
+
+  // And disagreeing is one tap, so the suggestion is never a trap.
+  await page.getByRole('button', { name: /choose another note/i }).click();
+  await expect(page.getByRole('button', { name: 'Roof repair' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Reading list' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /back to the suggestion/i })).toBeVisible();
+});

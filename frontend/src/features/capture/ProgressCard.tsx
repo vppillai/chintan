@@ -7,7 +7,12 @@ import {
   useSetCaptureTarget,
   usePendingCaptures,
 } from '@/api/queries.ts';
-import { isTerminalStatus, type CaptureStatus, type CaptureWire } from '@/api/schema.ts';
+import {
+  isTerminalStatus,
+  type CaptureStatus,
+  type CaptureTargetWire,
+  type CaptureWire,
+} from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 
@@ -104,7 +109,6 @@ interface CaptureCardProps {
 }
 
 function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureCardProps) {
-  const [picking, setPicking] = useState(false);
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
@@ -152,25 +156,6 @@ function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureC
         )}
 
         {/*
-          The card asked "Which note should this go in?" and rendered no way to
-          answer it. `useSetCaptureTarget` wrapped the contract's target
-          endpoint and was called from nowhere, so the capture — and the thought
-          in it — was stuck permanently.
-        */}
-        {needsTarget && (
-          <button
-            type="button"
-            className="progress-card__action"
-            aria-expanded={picking}
-            onClick={() => {
-              setPicking((open) => !open);
-            }}
-          >
-            <span>{picking ? 'Cancel' : 'Choose a note'}</span>
-          </button>
-        )}
-
-        {/*
           A real Retry, wired to POST /v1/captures/{id}/retry. In v1 the client
           method existed and was called from nowhere, so a failed capture was a
           dead end with a toast.
@@ -197,47 +182,191 @@ function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureC
         )}
       </div>
 
-      {needsTarget && picking && (
-        <TargetPicker
-          captureId={capture.id}
-          onDone={() => {
-            setPicking(false);
-          }}
-        />
-      )}
+      {/*
+        The card asked "Which note should this go in?" and rendered no way to
+        answer it. `useSetCaptureTarget` wrapped the contract's target endpoint
+        and was called from nowhere, so the capture — and the thought in it —
+        was stuck permanently.
+
+        Mounted only for `needs_target`, which is what keeps the notes list off
+        the wire for a capture that is merely still transcribing.
+      */}
+      {needsTarget && <TargetPrompt capture={capture} />}
     </article>
   );
 }
 
 /**
- * Answers "which note should this go in?".
+ * Answers "which note should this go in?", leading with the router's answer.
+ *
+ * The pipeline pays for an LLM call to decide this and stores the result on the
+ * capture; `handler/wire.go` used to strip both fields before the response left
+ * the API, so the only thing this prompt could offer was an unranked list of
+ * every note the user has — with no indication that anything had been computed
+ * at all. v1 led with `Add to "<note>"`.
+ *
+ * Exactly one of the two fields is ever set. `suggested_note_id` names an
+ * existing note the router was confident enough to propose but not confident
+ * enough to append to unasked; `suggested_title` is what it would call a new
+ * note when it found no plausible destination.
+ */
+function TargetPrompt({ capture }: { capture: CaptureWire }) {
+  const setTarget = useSetCaptureTarget();
+  const { data } = useNotes({ state: 'active' });
+  /** The user asked to see the library instead of the router's answer. */
+  const [browsing, setBrowsing] = useState(false);
+  /** The library is open on the path where there was no answer to lead with. */
+  const [picking, setPicking] = useState(false);
+
+  const notes = data?.pages.flatMap((page) => page.items) ?? [];
+
+  /*
+   * Resolved against the loaded library rather than fetched on its own. The
+   * router can name a note beyond the first page, and there is no honest
+   * `Add to ""` — so an unresolvable suggestion falls back to the plain picker
+   * rather than to a button with a hole in it.
+   */
+  const suggestedNote = capture.suggested_note_id
+    ? notes.find((note) => note.id === capture.suggested_note_id)
+    : undefined;
+  const suggestedTitle = capture.suggested_title?.trim() ?? '';
+
+  const suggestion: { label: string; target: CaptureTargetWire } | null = suggestedNote
+    ? { label: `Add to “${suggestedNote.title}”`, target: { note_id: suggestedNote.id } }
+    : suggestedTitle
+      ? { label: `Start “${suggestedTitle}”`, target: { new_note_title: suggestedTitle } }
+      : null;
+
+  const choose = (target: CaptureTargetWire): void => {
+    setTarget.mutate({ captureId: capture.id, target });
+  };
+
+  if (suggestion && !browsing) {
+    return (
+      <div className="progress-card__actions">
+        <button
+          type="button"
+          className="progress-card__action progress-card__action--primary"
+          disabled={setTarget.isPending}
+          onClick={() => {
+            choose(suggestion.target);
+          }}
+        >
+          <span>{setTarget.isPending ? 'Filing…' : suggestion.label}</span>
+        </button>
+
+        {/* Disagreeing has to be one tap, or the suggestion becomes a trap. */}
+        <button
+          type="button"
+          className="progress-card__action"
+          disabled={setTarget.isPending}
+          onClick={() => {
+            setBrowsing(true);
+          }}
+        >
+          <span>Choose another note</span>
+        </button>
+
+        {setTarget.isError && (
+          <p className="target-picker__error" role="alert">
+            That did not go through. Try again.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const open = browsing || picking;
+
+  return (
+    <>
+      {/*
+        With no suggestion the library stays behind a tap, as it has: a list of
+        every note the user owns is not something to unfold over the record
+        surface unprompted.
+      */}
+      {!browsing && (
+        <div className="progress-card__actions">
+          <button
+            type="button"
+            className="progress-card__action"
+            aria-expanded={picking}
+            onClick={() => {
+              setPicking((wasOpen) => !wasOpen);
+            }}
+          >
+            <span>{picking ? 'Cancel' : 'Choose a note'}</span>
+          </button>
+        </div>
+      )}
+
+      {open && (
+        <BrowsePicker
+          captureId={capture.id}
+          notes={notes}
+          onChoose={choose}
+          pending={setTarget.isPending}
+          failed={setTarget.isError}
+          /* Only offered when there is something to go back to. */
+          onBack={
+            suggestion
+              ? () => {
+                  setBrowsing(false);
+                }
+              : null
+          }
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * The whole library, plus a field for a note that does not exist yet.
  *
  * Both spellings the contract accepts are offered — an existing note, or a new
  * one by title — because the router asks this question precisely when it could
  * not tell whether the thought belonged to something the user already has.
  */
-function TargetPicker({ captureId, onDone }: { captureId: string; onDone: () => void }) {
-  const setTarget = useSetCaptureTarget();
-  const { data } = useNotes({ state: 'active' });
+function BrowsePicker({
+  captureId,
+  notes,
+  onChoose,
+  pending,
+  failed,
+  onBack,
+}: {
+  captureId: string;
+  notes: readonly { id: string; title: string }[];
+  onChoose: (target: CaptureTargetWire) => void;
+  pending: boolean;
+  failed: boolean;
+  onBack: (() => void) | null;
+}) {
   const [title, setTitle] = useState('');
-
-  const notes = data?.pages.flatMap((page) => page.items) ?? [];
-
-  const choose = (target: { note_id: string } | { new_note_title: string }): void => {
-    setTarget.mutate({ captureId, target }, { onSuccess: onDone });
-  };
 
   return (
     <div className="target-picker">
+      {onBack && (
+        <button
+          type="button"
+          className="target-picker__back"
+          disabled={pending}
+          onClick={onBack}
+        >
+          Back to the suggestion
+        </button>
+      )}
+
       <ul className="target-picker__list" role="list">
         {notes.map((note) => (
           <li key={note.id}>
             <button
               type="button"
               className="target-picker__option"
-              disabled={setTarget.isPending}
+              disabled={pending}
               onClick={() => {
-                choose({ note_id: note.id });
+                onChoose({ note_id: note.id });
               }}
             >
               {note.title}
@@ -252,7 +381,7 @@ function TargetPicker({ captureId, onDone }: { captureId: string; onDone: () => 
           event.preventDefault();
           const trimmed = title.trim();
           if (!trimmed) return;
-          choose({ new_note_title: trimmed });
+          onChoose({ new_note_title: trimmed });
         }}
       >
         <label className="visually-hidden" htmlFor={`new-note-${captureId}`}>
@@ -270,13 +399,13 @@ function TargetPicker({ captureId, onDone }: { captureId: string; onDone: () => 
         <button
           type="submit"
           className="target-picker__option"
-          disabled={setTarget.isPending || title.trim().length === 0}
+          disabled={pending || title.trim().length === 0}
         >
           Create
         </button>
       </form>
 
-      {setTarget.isError && (
+      {failed && (
         <p className="target-picker__error" role="alert">
           That did not go through. Try again.
         </p>

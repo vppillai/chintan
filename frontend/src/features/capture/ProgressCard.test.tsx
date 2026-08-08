@@ -213,3 +213,89 @@ describe('a terminal capture is something the user can act on', () => {
     });
   });
 });
+
+/**
+ * The routing suggestion the pipeline pays an LLM call for.
+ *
+ * `SuggestedNoteID` and `SuggestedTitle` have always been computed and stored,
+ * and `handler/wire.go` dropped both before the response left the API — so the
+ * "where should this go?" prompt could only offer an unranked list of every
+ * note the user has, with no indication of what the router thought. v1 led with
+ * `Add to "<note>"`.
+ */
+describe('the card says where it thinks the recording goes', () => {
+  it('leads with the note the router proposed', async () => {
+    const user = userEvent.setup();
+    const { calls, fetchImpl } = mount([
+      capture({ id: 'srv-9', status: 'needs_target', suggested_note_id: 'roof-repair' }),
+    ]);
+
+    const add = await screen.findByRole('button', { name: /add to .*roof repair/i });
+
+    // The unranked list is not the first thing on screen any more.
+    expect(screen.queryByRole('button', { name: 'Roof repair' })).toBeNull();
+
+    await user.click(add);
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-9/target'),
+        ),
+      ).toBe(true);
+    });
+
+    const target = fetchImpl.mock.calls.find(([input]) =>
+      String(input).endsWith('/v1/captures/srv-9/target'),
+    );
+    expect(JSON.parse(String(target?.[1]?.body))).toEqual({ note_id: 'roof-repair' });
+  });
+
+  it('leads with the title it would give a new note', async () => {
+    const user = userEvent.setup();
+    const { fetchImpl } = mount([
+      capture({ id: 'srv-10', status: 'needs_target', suggested_title: 'Kitchen rebuild' }),
+    ]);
+
+    await user.click(
+      await screen.findByRole('button', { name: /start .*kitchen rebuild/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        fetchImpl.mock.calls.some(([input]) =>
+          String(input).endsWith('/v1/captures/srv-10/target'),
+        ),
+      ).toBe(true);
+    });
+
+    const target = fetchImpl.mock.calls.find(([input]) =>
+      String(input).endsWith('/v1/captures/srv-10/target'),
+    );
+    expect(JSON.parse(String(target?.[1]?.body))).toEqual({
+      new_note_title: 'Kitchen rebuild',
+    });
+  });
+
+  it('still lets the user disagree with it', async () => {
+    const user = userEvent.setup();
+    mount([capture({ id: 'srv-11', status: 'needs_target', suggested_title: 'Kitchen rebuild' })]);
+
+    await user.click(await screen.findByRole('button', { name: /choose another note/i }));
+
+    // The full library, and the new-note field, exactly as before.
+    expect(await screen.findByRole('button', { name: 'Roof repair' })).toBeInTheDocument();
+    expect(screen.getByLabelText(/new note title/i)).toBeInTheDocument();
+  });
+
+  it('falls back to the plain picker when the suggested note is not loaded', async () => {
+    // The router can name a note beyond the first page of the library. Offering
+    // `Add to ""` would be worse than offering the list.
+    mount([
+      capture({ id: 'srv-12', status: 'needs_target', suggested_note_id: 'page-two-note' }),
+    ]);
+
+    expect(await screen.findByRole('button', { name: /choose a note/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add to/i })).toBeNull();
+  });
+});

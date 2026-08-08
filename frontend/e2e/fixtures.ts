@@ -42,6 +42,14 @@ export interface AuthState {
   webauthnEnrolled: boolean;
   /** Every DELETE /v1/auth/webauthn the app made. */
   webauthnDisabled: number;
+  /** Assertions posted to POST /v1/auth/webauthn/login. */
+  webauthnLogins: Record<string, unknown>[];
+  /**
+   * Makes the unlock fail the way a vault sealed by a retired key does: the
+   * assertion verifies, the vault will not open, and the server says so
+   * distinguishably rather than opaquely.
+   */
+  vaultNeedsReEnrolment: boolean;
 }
 
 interface NoteRecord {
@@ -69,6 +77,9 @@ interface CaptureRecord {
   duration_ms?: number;
   has_peaks?: boolean;
   has_segments?: boolean;
+  /** What the router proposed. Exactly one of the two is ever set. */
+  suggested_note_id?: string | null;
+  suggested_title?: string | null;
 }
 
 export function freshState(): ApiState {
@@ -158,6 +169,8 @@ export function freshState(): ApiState {
       denyLogin: false,
       webauthnEnrolled: false,
       webauthnDisabled: 0,
+      webauthnLogins: [],
+      vaultNeedsReEnrolment: false,
     },
   };
 }
@@ -444,6 +457,55 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       });
       return;
     }
+    /*
+     * The unlock ceremony, both halves.
+     *
+     * `login/options` and `login` carry `security: []` in `openapi.yaml` — they
+     * exist precisely for a client that has no session — so the spec asserts
+     * that the app sends no bearer on either.
+     */
+    if (path === '/v1/auth/webauthn/login/options' && method === 'POST') {
+      if (!state.auth.webauthnEnrolled) {
+        // Not enrolled is the same answer for every caller, so it is not an
+        // oracle: 503, as `handler/webauthn.go` returns.
+        await problem(route, 503, { title: 'Service Unavailable', detail: 'biometric unlock is not set up on this account' });
+        return;
+      }
+      await json(route, {
+        challenge_id: 'e2e-assert-challenge',
+        options: {
+          // base64url, as the contract sends it.
+          challenge: 'ZTJlLWFzc2VydC1jaGFsbGVuZ2U',
+          timeout: 60_000,
+          userVerification: 'required',
+          allowCredentials: [{ id: 'ZTJlLWNyZWQ', type: 'public-key' }],
+        },
+      });
+      return;
+    }
+
+    if (path === '/v1/auth/webauthn/login' && method === 'POST') {
+      const body = request.postDataJSON() as Record<string, unknown>;
+      state.auth.webauthnLogins.push(body);
+
+      if (state.auth.vaultNeedsReEnrolment) {
+        await problem(route, 401, {
+          title: 'Unauthorized',
+          detail: 'biometric unlock must be set up again on this device',
+        });
+        return;
+      }
+
+      await json(route, {
+        id_token: 'e2e-unlocked-id-token',
+        access_token: 'e2e-unlocked-access-token',
+        refresh_token: 'e2e-unlocked-refresh-token',
+        expires_in: 3600,
+        token_type: 'Bearer',
+      });
+      return;
+    }
+
     if (path === '/v1/auth/webauthn/status') {
       await json(route, { enrolled: state.auth.webauthnEnrolled });
       return;
