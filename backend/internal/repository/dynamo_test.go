@@ -1410,3 +1410,93 @@ func TestGSI2ProjectionCoversWhatTheNoteListReads(t *testing.T) {
 		t.Error("gsi2 projects `data`; that is the cost this index exists to avoid")
 	}
 }
+
+// TestNoteIndexKeysAreWhatTheIndexIsBuiltFrom pins the derivation both the
+// write path and chintanctl's backfill use. Two copies of it is how an index
+// quietly disagrees with the table it indexes, and neither disagreement would
+// error — a note would simply stop appearing in a list.
+func TestNoteIndexKeysAreWhatTheIndexIsBuiltFrom(t *testing.T) {
+	cases := []struct {
+		name           string
+		note           model.NoteIndex
+		wantPK, wantSK string
+	}{
+		{
+			name:   "an active note",
+			note:   model.NoteIndex{ID: "note_a", UpdatedAt: "2026-08-01T00:00:00.000000000Z"},
+			wantPK: "TENANT#user1#NOTES#ACTIVE",
+			wantSK: "2026-08-01T00:00:00.000000000Z",
+		},
+		{
+			// The shelf is what keeps the archive out of the active list
+			// without a filter, so a deletion stamp has to move it.
+			name:   "an archived note",
+			note:   model.NoteIndex{ID: "note_b", UpdatedAt: "2026-08-01T00:00:00.000000000Z", DeletedAt: "2026-08-02T00:00:00.000000000Z"},
+			wantPK: "TENANT#user1#NOTES#ARCHIVED",
+			wantSK: "2026-08-01T00:00:00.000000000Z",
+		},
+		{
+			// RFC3339Nano trims trailing zeros, so "…:00Z" sorts above
+			// "…:00.1Z" because 'Z' > '.'. A sort key cannot be changed without
+			// rebuilding the index, so a value written in the older layout is
+			// re-rendered on the way in rather than stored as it arrived.
+			name:   "a timestamp written before the fixed-width layout",
+			note:   model.NoteIndex{ID: "note_c", UpdatedAt: "2026-08-01T00:00:00Z"},
+			wantPK: "TENANT#user1#NOTES#ACTIVE",
+			wantSK: "2026-08-01T00:00:00.000000000Z",
+		},
+		{
+			// Unparseable is carried through rather than dropped: it sorts
+			// oddly, which somebody can see, instead of vanishing from the
+			// index, which nobody can.
+			name:   "a timestamp nothing can parse",
+			note:   model.NoteIndex{ID: "note_d", UpdatedAt: "yesterday"},
+			wantPK: "TENANT#user1#NOTES#ACTIVE",
+			wantSK: "yesterday",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pk, sk := repository.NoteIndexKeys("user1", tc.note)
+			if pk != tc.wantPK {
+				t.Errorf("gsi2pk = %q, want %q", pk, tc.wantPK)
+			}
+			if sk != tc.wantSK {
+				t.Errorf("gsi2sk = %q, want %q", sk, tc.wantSK)
+			}
+		})
+	}
+}
+
+// TestReindexDoesNotDisturbTheRecord is why the backfill is an attribute update
+// rather than a rewrite. A version bump would hand a client holding the
+// previous one a conflict for a change nobody made, and this runs against a
+// live instance while somebody is using it.
+func TestReindexDoesNotDisturbTheRecord(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+
+	stored, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+		ID: "note_a", Title: "Roof repair", UpdatedAt: model.Now(),
+	})
+	if err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	if _, err := store.ReindexNotes(ctx, "tenant-a"); err != nil {
+		t.Fatalf("ReindexNotes: %v", err)
+	}
+
+	after, err := store.GetNote(ctx, "tenant-a", "note_a")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if after.Version != stored.Version {
+		t.Errorf("version moved from %d to %d; an open editor would be told to reconcile a change nobody made",
+			stored.Version, after.Version)
+	}
+	if after.Title != stored.Title || after.UpdatedAt != stored.UpdatedAt {
+		t.Errorf("reindex altered the record: %+v", after)
+	}
+}

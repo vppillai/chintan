@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-
-	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
 // reindexResult is what one run reports.
@@ -41,6 +39,12 @@ func (r *reindexResult) human(w *lineWriter) {
 // against each instance immediately after the stack update that adds the index.
 // It is idempotent, so running it again, or twice at once, costs a write and
 // changes nothing.
+//
+// The write itself is the store's, not this tool's. Partition.Put overwrites an
+// item verbatim, so a Scan-then-Put here would discard any edit made between
+// the two — and this is run against a live instance while somebody is using it.
+// repository.ReindexNotes sets the two key attributes conditionally and leaves
+// `version` alone, so an editor open in another tab is unaffected.
 func cmdReindex(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 	var g globalFlags
 	fs := newFlagSet("reindex", stderr)
@@ -71,40 +75,28 @@ func runReindex(ctx context.Context, e *env, explicitTenants []string, apply boo
 	res := &reindexResult{Target: e.Target, Apply: apply, Tenants: tenants}
 
 	for _, tenantID := range tenants {
-		// Scanned from the base table on purpose. The index is the thing being
-		// repaired, so reading through it would only ever find the notes that
-		// do not need repairing.
-		err := e.Part.Scan(ctx, "USER#"+tenantID, "NOTE#", func(it Item) error {
-			n, err := noteFromItem(it)
-			if err != nil {
-				return err
-			}
+		// Counted from the base table, because the index is the thing being
+		// repaired: reading through it would only ever find the notes that do
+		// not need repairing.
+		if err := e.Part.Scan(ctx, "USER#"+tenantID, "NOTE#", func(Item) error {
 			res.Notes++
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("reindex %s: count notes: %w", tenantID, err)
+		}
 
-			pk, sk := repository.NoteIndexKeys(tenantID, n)
-			if it.Str("gsi2pk") == pk && it.Str("gsi2sk") == sk {
-				// Already indexed, and indexed correctly.
-				return nil
-			}
-			res.Written++
-			if !apply {
-				return nil
-			}
+		if !apply {
+			// Without the writes there is nothing to count but the candidates,
+			// and every note is a candidate until it has been examined.
+			res.Written += res.Notes
+			continue
+		}
 
-			// The two key attributes only. Rewriting the whole record would
-			// bump `version` and hand a client holding the previous one a
-			// conflict for a change nobody made.
-			next := make(Item, len(it)+2)
-			for k, v := range it {
-				next[k] = v
-			}
-			next["gsi2pk"] = AttrValue{S: &pk}
-			next["gsi2sk"] = AttrValue{S: &sk}
-			return e.Part.Put(ctx, next)
-		})
+		written, err := e.Notes.ReindexNotes(ctx, tenantID)
 		if err != nil {
 			return nil, fmt.Errorf("reindex %s: %w", tenantID, err)
 		}
+		res.Written += written
 	}
 
 	return res, nil

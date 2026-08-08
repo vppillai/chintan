@@ -32,6 +32,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
 const usageText = `chintanctl — operator CLI for a Chintan instance
@@ -126,8 +128,15 @@ func (g *globalFlags) validate() error {
 // env is everything a subcommand needs. Tests construct it directly with
 // in-memory ports; main wires the AWS ones.
 type env struct {
-	Part   Partition
-	Blobs  Blobs
+	Part  Partition
+	Blobs Blobs
+	// Notes is the note-index maintenance the repository owns. It is a
+	// narrow interface rather than the Partition port because reindexing has
+	// to be a conditional attribute update: Partition.Put overwrites an item
+	// verbatim, so a Scan-then-Put would silently discard an edit made
+	// between the two — and this tool is run against a live instance while
+	// somebody is using it.
+	Notes  NoteIndexMaintainer
 	Target target
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -170,6 +179,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 	}
 }
 
+// NoteIndexMaintainer repairs the notes index. The store implements it; the
+// command below only decides which tenants to run it for.
+type NoteIndexMaintainer interface {
+	ReindexNotes(ctx context.Context, tenantID string) (int, error)
+}
+
 // dial resolves the instance and returns a live env. Every subcommand goes
 // through it, so there is one place where credentials are picked up.
 func dial(ctx context.Context, g globalFlags, stdout, stderr io.Writer, stdin io.Reader) (*env, error) {
@@ -184,6 +199,7 @@ func dial(ctx context.Context, g globalFlags, stdout, stderr io.Writer, stdin io
 	return &env{
 		Part:   &dynamoPartition{client: dyn, table: t.Table},
 		Blobs:  &s3Blobs{client: s3c, bucket: t.Bucket},
+		Notes:  repository.NewDynamoStore(dyn, t.Table),
 		Target: t,
 		Stdin:  stdin,
 		Stdout: stdout,
