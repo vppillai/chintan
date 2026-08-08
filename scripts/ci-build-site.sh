@@ -86,10 +86,31 @@ while IFS= read -r entry; do
     # A missing output means the stack is half-deployed. Building against it would
     # ship a bundle that cannot sign in, and the failure would only appear on a
     # phone.
-    for name in api_endpoint client_id user_pool_id; do
+    for name in api_endpoint client_id user_pool_id cognito_domain; do
         [ -n "${!name}" ] && [ "${!name}" != "null" ] ||
             die "$stack has no usable ${name} output"
     done
+
+    # The stack outputs the Cognito domain PREFIX ("chintan-dev-prod-1234"), not
+    # a URL. The bundle builds its authorize and logout endpoints with
+    # `new URL(`${domain}/oauth2/authorize`)`, which throws TypeError on a bare
+    # prefix — and the sign-in path catches everything and reports "This browser
+    # could not start a secure sign-in", blaming the browser for a config shape.
+    # Exporting the prefix verbatim shipped a bundle where sign-in could never
+    # work, and no test caught it: the frontend's fixtures use a full URL, and
+    # check-vite-env.sh compares variable NAMES, not their shapes.
+    #
+    # Prefix domains resolve to a fixed host. A custom domain would already be a
+    # hostname, so anything that looks like one is passed through.
+    case "$cognito_domain" in
+        https://*) ;;
+        *.*) cognito_domain="https://${cognito_domain}" ;;
+        *) cognito_domain="https://${cognito_domain}.auth.${AWS_REGION}.amazoncognito.com" ;;
+    esac
+    case "$cognito_domain" in
+        https://*.*) ;;
+        *) die "cognito domain did not resolve to a usable https origin: $cognito_domain" ;;
+    esac
 
     info "building $site_path from $stack"
     (
