@@ -1,5 +1,6 @@
 import { RouterProvider, createBrowserRouter } from 'react-router';
 
+import { ApiProvider } from '@/api/ApiProvider.tsx';
 import { routes } from '@/app/router.tsx';
 import { ThemeProvider } from '@/theme/ThemeProvider.tsx';
 
@@ -15,7 +16,9 @@ const router = createBrowserRouter(routes, {
 export function App() {
   return (
     <ThemeProvider>
-      <RouterProvider router={router} />
+      <ApiProvider>
+        <RouterProvider router={router} />
+      </ApiProvider>
     </ThemeProvider>
   );
 }

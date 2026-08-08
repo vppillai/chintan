@@ -1,7 +1,7 @@
 import type { RouteObject } from 'react-router';
 
 import { AppShell } from '@/components/AppShell.tsx';
-import { CaptureScreen } from '@/screens/CaptureScreen.tsx';
+import { CaptureScreen } from '@/features/capture/CaptureScreen.tsx';
 import { HomeScreen } from '@/screens/HomeScreen.tsx';
 import { NotFoundScreen } from '@/screens/NotFoundScreen.tsx';
 import { NoteDetailScreen } from '@/screens/NoteDetailScreen.tsx';

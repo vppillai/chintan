@@ -1,4 +1,8 @@
 import '@testing-library/jest-dom/vitest';
+// jsdom has no IndexedDB. The capture buffer and the offline queue are storage
+// code, and testing them against a mock of the API rather than a real one would
+// test the mock — fake-indexeddb is a real implementation of the spec.
+import 'fake-indexeddb/auto';
 
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';

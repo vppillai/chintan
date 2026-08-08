@@ -562,3 +562,178 @@
   font-weight: var(--font-weight-medium);
   color: var(--color-ink);
 }
+
+/* --------------------------------------------------------------------------
+   Live waveform
+
+   Real amplitudes on a canvas, coloured from `currentColor` so the drawing
+   code never names a hue. The accent is reserved for the live state, which is
+   exactly what this is.
+   -------------------------------------------------------------------------- */
+
+.waveform {
+  inline-size: 100%;
+  block-size: 100%;
+  color: var(--color-accent);
+}
+
+[data-sheet-state='locked'] .capture__waveform {
+  inline-size: 100%;
+  block-size: 6rem;
+  padding: var(--space-3);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+}
+
+.capture__state {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.capture__warning {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.capture__error {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.capture__progress {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.capture__control--primary {
+  background-color: var(--color-ink);
+  color: var(--color-ground);
+  border-color: var(--color-ink);
+}
+
+/* --------------------------------------------------------------------------
+   Progress card
+
+   Stage pips, not a determinate bar. The client cannot know how long
+   transcription takes, and a bar parked at 100% reads as broken — which is
+   precisely what v1's did.
+   -------------------------------------------------------------------------- */
+
+.progress-stack {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+}
+
+.progress-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.progress-card[data-status='failed'],
+.progress-card[data-status='spend_capped'] {
+  border-color: var(--color-line-strong);
+}
+
+.progress-card__body {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.progress-card__label {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.progress-card__stages {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.progress-card__stage {
+  inline-size: var(--space-6);
+  block-size: var(--space-1);
+  border-radius: var(--radius-full);
+  background-color: var(--color-line);
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.progress-card__stage[data-state='done'] {
+  background-color: var(--color-muted);
+}
+
+.progress-card__stage[data-state='active'] {
+  background-color: var(--color-accent);
+  animation: stage-pulse 1.6s var(--motion-ease-standard) infinite;
+}
+
+@keyframes stage-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.progress-card__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.progress-card__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+.progress-card__action[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.progress-card__open-icon {
+  transform: rotate(180deg);
+}
+
+/* --------------------------------------------------------------------------
+   Offline banner — says plainly when the data on screen is cached.
+   -------------------------------------------------------------------------- */
+
+.offline-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line-strong);
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}

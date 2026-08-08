@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
-import { ThemeProvider } from '@/theme/ThemeProvider.tsx';
+import { TestProviders } from '@/test/providers.tsx';
 
 import { routes } from './router.tsx';
 
@@ -12,9 +12,9 @@ type Router = ReturnType<typeof createMemoryRouter>;
 function mount(initialEntries: string[] = ['/']) {
   const router = createMemoryRouter(routes, { initialEntries });
   const view = render(
-    <ThemeProvider>
+    <TestProviders>
       <RouterProvider router={router} />
-    </ThemeProvider>,
+    </TestProviders>,
   );
   return { router, view };
 }
