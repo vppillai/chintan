@@ -7,7 +7,9 @@
 // and the success criterion it satisfies — "every note, transcript, and audio
 // file is recoverable through chintanctl export without console access".
 //
-//	chintanctl export --instance <name> --out <dir|tar.gz>
+//	chintanctl export  --instance <name> --out <dir|tar.gz>
+//	chintanctl backup  --instance <name> --out <dir>
+//	chintanctl restore --instance <name> --in <dir> [--apply]
 //
 // Three conventions are load-bearing and shared with scripts/:
 //
@@ -36,6 +38,9 @@ Usage:
 Commands:
   export     Write every note as markdown with front matter, plus each
              capture's audio and text artifacts, in an Obsidian-friendly layout.
+  backup     Full-fidelity copy: DynamoDB items verbatim alongside the S3
+             objects, with a content hash per object.
+  restore    Inverse of backup. Verifies every hash before it writes anything.
 
 Run "chintanctl <command> --help" for the flags of one command.
 `
@@ -131,6 +136,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return nil
 	case "export":
 		return cmdExport(ctx, rest, stdout, stderr, stdin)
+	case "backup":
+		return cmdBackup(ctx, rest, stdout, stderr, stdin)
+	case "restore":
+		return cmdRestore(ctx, rest, stdout, stderr, stdin)
 	default:
 		fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)
