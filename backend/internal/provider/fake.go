@@ -56,10 +56,15 @@ type FakeRouter struct {
 	Decision   RouteDecision
 	// Calls records the transcripts the router was asked about.
 	Calls []string
+	// LastCandidates records the candidates from the most recent Route call.
+	LastCandidates []routing.Candidate
 }
 
 func (f *FakeRouter) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error) {
 	f.Calls = append(f.Calls, transcript)
+	f.LastCandidates = make([]routing.Candidate, len(candidates))
+	copy(f.LastCandidates, candidates)
+	
 	if f.ShouldFail {
 		return RouteDecision{}, fmt.Errorf("fake router failed")
 	}

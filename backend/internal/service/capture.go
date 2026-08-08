@@ -61,8 +61,12 @@ func (s *CaptureService) WithRouting(router provider.Router, notes NoteCreator) 
 // An empty noteID defers the destination to routing at completion time.
 func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, contentType string) (*model.CaptureIndex, string, error) {
 	if noteID != "" {
-		if _, err := s.store.GetNote(ctx, userID, noteID); err != nil {
+		note, err := s.store.GetNote(ctx, userID, noteID)
+		if err != nil {
 			return nil, "", fmt.Errorf("failed to get note: %w", err)
+		}
+		if !NoteIsActive(note) {
+			return nil, "", ErrNoteArchived
 		}
 	}
 
@@ -144,6 +148,9 @@ func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get note: %w", err)
 	}
+	if !NoteIsActive(note) {
+		return nil, ErrNoteArchived
+	}
 
 	if capture.CleanKey == "" {
 		if err := s.cleanupCapture(ctx, userID, &capture); err != nil {
@@ -196,8 +203,12 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 
 	switch {
 	case noteID != "":
-		if _, err := s.store.GetNote(ctx, userID, noteID); err != nil {
+		note, err := s.store.GetNote(ctx, userID, noteID)
+		if err != nil {
 			return nil, fmt.Errorf("failed to get note: %w", err)
+		}
+		if !NoteIsActive(note) {
+			return nil, ErrNoteArchived
 		}
 		capture.NoteID = noteID
 	case strings.TrimSpace(newNoteTitle) != "":
@@ -281,7 +292,7 @@ func (s *CaptureService) routeCapture(ctx context.Context, userID string, captur
 	capture.RouteConfidence = decision.Confidence
 
 	if decision.Action == provider.RouteAppend {
-		if _, err := s.store.GetNote(ctx, userID, decision.NoteID); err == nil {
+		if note, err := s.store.GetNote(ctx, userID, decision.NoteID); err == nil && NoteIsActive(note) {
 			if decision.Confidence >= routeConfidenceThreshold {
 				capture.NoteID = decision.NoteID
 			} else {
@@ -338,6 +349,9 @@ func (s *CaptureService) decideTarget(ctx context.Context, userID, transcript st
 
 	candidates := make([]routing.Candidate, 0, len(notes))
 	for _, n := range notes {
+		if !NoteIsActive(n) {
+			continue
+		}
 		candidates = append(candidates, routing.Candidate{
 			NoteID:  n.ID,
 			Title:   n.Title,
