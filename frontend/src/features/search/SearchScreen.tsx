@@ -35,7 +35,7 @@ export function SearchScreen() {
   // The corpus the library already loaded. No extra request, and it is what
   // makes the first keystroke feel instant.
   const { data: corpus } = useQuery({
-    queryKey: queryKeys.notes({ state: 'active' }),
+    queryKey: queryKeys.notesCorpus({ state: 'active' }),
     queryFn: () => api.listNotes({ state: 'active', limit: 200 }),
     staleTime: 60_000,
   });
@@ -58,7 +58,16 @@ export function SearchScreen() {
     [local, server.data],
   );
 
-  const usingCachedOnly = !online || (server.isError && merged.length > 0);
+  /*
+   * The server search did not run, or ran and failed.
+   *
+   * It used to also require `merged.length > 0`, so the one case where the user
+   * most needs to know — a captive portal or a dead API while `navigator.onLine`
+   * is still true, and nothing cached matches — showed a bare
+   * "Nothing matches …" and told them authoritatively that a note they own does
+   * not exist.
+   */
+  const serverUnavailable = !online || server.isError;
 
   return (
     <div className="screen">
@@ -101,17 +110,17 @@ export function SearchScreen() {
             }`}
       </p>
 
-      {trimmed && usingCachedOnly && (
+      {trimmed && serverUnavailable && (
         <p className="search-offline" role="status">
           {online
-            ? 'Showing cached results — the server search did not respond.'
+            ? 'The server search did not respond, so only notes cached on this device were searched.'
             : 'Searching offline — cached notes only. Transcripts are not included.'}
         </p>
       )}
 
       {trimmed && merged.length === 0 && !server.isFetching && (
         <p className="screen__empty">
-          Nothing matches &ldquo;{trimmed}&rdquo;.
+          Nothing matches &ldquo;{trimmed}&rdquo; in the notes searched.
           {!online && ' You are offline, so only cached notes were searched.'}
         </p>
       )}

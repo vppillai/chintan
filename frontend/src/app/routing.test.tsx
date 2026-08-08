@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RouterProvider, createMemoryRouter } from 'react-router';
+import { RouterProvider, createMemoryRouter, type RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
 import { TestProviders } from '@/test/providers.tsx';
@@ -180,6 +180,84 @@ describe('accessibility of the library', () => {
     await waitFor(() => {
       expect(document.activeElement).toBe(screen.getByRole('main'));
     });
+  });
+});
+
+describe('Search and the library do not share a cache entry', () => {
+  /*
+   * One bug with two symptoms depending on visit order. Search's corpus and the
+   * library's infinite query both keyed on `['notes', {state:'active'}]` while
+   * holding incompatible shapes, so whichever screen ran first decided what the
+   * other one found in the cache.
+   */
+
+  it('still finds a cached note after the library has been opened', async () => {
+    // The common path — Notes is first on the strip. `corpus?.items` was
+    // undefined, `rankLocal` got an empty array, and the user was told their
+    // note did not exist.
+    const user = userEvent.setup();
+    mount(['/']);
+
+    await user.click(screen.getByRole('link', { name: 'Notes' }));
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.click(screen.getByRole('link', { name: 'Search' }));
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
+
+    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+  });
+
+  it('renders the library after Search has run, rather than crashing the app', async () => {
+    // The other direction: a plain `Page<NoteWire>` landed in the cache, the
+    // infinite query read `data.pages` as undefined, and the whole app was
+    // replaced by React Router's raw error page — zero links, zero buttons.
+    const user = userEvent.setup();
+    mount(['/search']);
+    await settle();
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.click(screen.getByRole('link', { name: 'Notes' }));
+
+    expect(await screen.findByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+  });
+});
+
+describe('a render fault never leaves the user with no controls', () => {
+  function Boom(): never {
+    throw new Error('the cache held the wrong shape');
+  }
+
+  function crashingRoutes(): RouteObject[] {
+    // The real route config, with the index screen swapped for a thrower.
+    // Everything else — including whatever error handling the config declares,
+    // which is the thing under test — is the shipped one.
+    const root = routes[0];
+    const children = (root?.children ?? []).map((child) =>
+      'index' in child && child.index ? { ...child, Component: Boom } : child,
+    );
+    return [{ ...root, children }] as RouteObject[];
+  }
+
+  it('renders a screen with a way out instead of the raw error page', async () => {
+    // Counted on the real failure: 0 links and 0 buttons survived, and there is
+    // no application error boundary anywhere. On a phone the only escape was OS
+    // Back — which returns to the screen that caused it — or knowing to reload.
+    const router = createMemoryRouter(crashingRoutes(), { initialEntries: ['/'] });
+    render(
+      <TestProviders>
+        <RouterProvider router={router} />
+      </TestProviders>,
+    );
+
+    await screen.findByRole('alert');
+    expect(screen.getAllByRole('button').length + screen.getAllByRole('link').length)
+      .toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /back to recording/i })).toBeInTheDocument();
+    // The message is a sentence, not a stack trace.
+    expect(screen.queryByText(/at Object\.|\.tsx:\d/)).toBeNull();
   });
 });
 

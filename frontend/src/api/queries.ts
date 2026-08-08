@@ -27,6 +27,20 @@ import type {
 
 export const queryKeys = {
   notes: (query: NoteListQuery = {}) => ['notes', query] as const,
+  /**
+   * The flat corpus Search filters locally.
+   *
+   * Deliberately NOT `notes(query)`. Both shapes used to share `['notes', …]`
+   * while one is a `Page<NoteWire>` and the other a `useInfiniteQuery`'s
+   * `{ pages }`, so whichever screen was visited first decided what the other
+   * one found in the cache: Search first crashed the whole app on Notes
+   * (`data.pages` undefined), and Notes first — the common path — silently gave
+   * local search an empty corpus and told the user their note did not exist.
+   *
+   * Still prefixed `notes` so `invalidateQueries({ queryKey: ['notes'] })`
+   * refreshes it along with the library.
+   */
+  notesCorpus: (query: NoteListQuery = {}) => ['notes', 'corpus', query] as const,
   note: (noteId: string) => ['note', noteId] as const,
   captures: (query: CaptureListQuery = {}) => ['captures', query] as const,
   capture: (captureId: string) => ['capture', captureId] as const,
