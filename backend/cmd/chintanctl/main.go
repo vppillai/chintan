@@ -10,6 +10,7 @@
 //	chintanctl export  --instance <name> --out <dir|tar.gz>
 //	chintanctl backup  --instance <name> --out <dir>
 //	chintanctl restore --instance <name> --in <dir> [--apply]
+//	chintanctl reconcile --instance <name> [--apply]
 //
 // Three conventions are load-bearing and shared with scripts/:
 //
@@ -41,6 +42,8 @@ Commands:
   backup     Full-fidelity copy: DynamoDB items verbatim alongside the S3
              objects, with a content hash per object.
   restore    Inverse of backup. Verifies every hash before it writes anything.
+  reconcile  Report orphans in both directions: objects with no index row, and
+             index rows whose objects are gone.
 
 Run "chintanctl <command> --help" for the flags of one command.
 `
@@ -140,6 +143,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdBackup(ctx, rest, stdout, stderr, stdin)
 	case "restore":
 		return cmdRestore(ctx, rest, stdout, stderr, stdin)
+	case "reconcile":
+		return cmdReconcile(ctx, rest, stdout, stderr, stdin)
 	default:
 		fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)
