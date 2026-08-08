@@ -482,6 +482,10 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 	if err != nil {
 		return nil, fmt.Errorf("dynamo encode capture: %w", err)
 	}
+	// The S3 keys are top-level rather than only inside the blob because GSI1
+	// projects them: a cascade delete has to unlink every artefact, and an
+	// attribute that lives only in `data` is invisible to a projection, so the
+	// index would be unable to answer and every list would pay a second read.
 	item := map[string]types.AttributeValue{
 		"pk":                strAttr(userPK(c.UserID)),
 		"sk":                strAttr(captureSK(c.ID)),
@@ -495,6 +499,12 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		"append_claimed_at": numAttr(c.AppendClaimedAt),
 		"appended_at":       numAttr(c.AppendedAt),
 		"duration_ms":       numAttr(c.DurationMS),
+		"mode":              strAttr(string(c.Mode)),
+		"error":             strAttr(c.Error),
+		"audio_key":         strAttr(c.AudioKey),
+		"raw_key":           strAttr(c.RawKey),
+		"routed_key":        strAttr(c.RoutedKey),
+		"clean_key":         strAttr(c.CleanKey),
 		"segments_key":      strAttr(c.SegmentsKey),
 		"peaks_key":         strAttr(c.PeaksKey),
 		"data":              strAttr(string(blob)),
@@ -525,8 +535,20 @@ func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, err
 	c.AppendClaimedAt = readInt(m, "append_claimed_at")
 	c.AppendedAt = readInt(m, "appended_at")
 	c.DurationMS = readInt(m, "duration_ms")
+	c.AudioKey = readString(m, "audio_key")
+	c.RawKey = readString(m, "raw_key")
+	c.RoutedKey = readString(m, "routed_key")
+	c.CleanKey = readString(m, "clean_key")
 	c.SegmentsKey = readString(m, "segments_key")
 	c.PeaksKey = readString(m, "peaks_key")
+	// Only overwrite what the read actually projected, so a partial projection
+	// never blanks a field the blob already supplied.
+	if _, ok := m["mode"]; ok {
+		c.Mode = model.CleanupMode(readString(m, "mode"))
+	}
+	if _, ok := m["error"]; ok {
+		c.Error = readString(m, "error")
+	}
 	return c, nil
 }
 
@@ -589,9 +611,15 @@ func (s *DynamoStore) GetCapture(ctx context.Context, tenantID, captureID string
 // tenant's entire capture partition and filtered in Go, so cost grew with total
 // captures rather than captures for this note.
 //
-// GSI1 is an INCLUDE projection carrying what a capture list renders; it does
-// not carry the S3 keys a cascade delete needs, so each key found in the index
-// is hydrated from the base table.
+// GSI1 is an INCLUDE projection — deliberately not ALL, because ALL would carry
+// the `data` blob, the largest attribute on the item and the whole cost the
+// projection exists to avoid. It carries what a capture list renders plus every
+// S3 key a cascade delete has to unlink, so the query answers on its own and
+// there is no second read per item.
+//
+// A field absent from gsi1NonKeyAttributes is absent from a listed capture. It
+// is not free to add later: changing a GSI projection deletes and rebuilds the
+// index.
 func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID string, opts ListOptions) (Page[model.CaptureIndex], error) {
 	if err := ctx.Err(); err != nil {
 		return Page[model.CaptureIndex]{}, err
@@ -624,20 +652,28 @@ func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID s
 
 	captures := make([]model.CaptureIndex, 0, len(out.Items))
 	for _, raw := range out.Items {
-		captureID := readString(raw, "capture_id")
-		if captureID == "" {
-			// GSI1 always projects the table keys, so the id is recoverable
-			// even when the index entry predates capture_id.
-			captureID = trimPrefix(readString(raw, "sk"), "CAPTURE#")
+		if _, ok := raw["capture_id"]; !ok {
+			// An index entry written before capture_id was projected carries
+			// only the keys. Read it whole rather than returning a capture with
+			// no S3 keys, which a cascade delete would silently skip over.
+			full, err := s.GetCapture(ctx, tenantID, trimPrefix(readString(raw, "sk"), "CAPTURE#"))
+			if errors.Is(err, ErrNotFound) {
+				continue // index entry outliving its item
+			}
+			if err != nil {
+				return Page[model.CaptureIndex]{}, err
+			}
+			captures = append(captures, full)
+			continue
 		}
-		full, err := s.GetCapture(ctx, tenantID, captureID)
-		if errors.Is(err, ErrNotFound) {
-			continue // index entry outliving its item
-		}
+		c, err := captureFromItem(raw)
 		if err != nil {
 			return Page[model.CaptureIndex]{}, err
 		}
-		captures = append(captures, full)
+		// pk is always projected, but the tenant is already known and is the
+		// only value that could be correct here.
+		c.UserID = tenantID
+		captures = append(captures, c)
 	}
 
 	cursor, err := encodeCursor(out.LastEvaluatedKey)

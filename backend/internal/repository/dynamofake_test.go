@@ -3,6 +3,7 @@ package repository_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,12 +32,52 @@ type fakeDynamo struct {
 	// tests prove the store follows LastEvaluatedKey.
 	pageSize int
 
+	// gsi1Projected is GSI1's INCLUDE projection, read from the CloudFormation
+	// template. An index query returns only these attributes plus the key
+	// attributes, so a store that reads something the template does not project
+	// fails here rather than in production, where widening the projection means
+	// deleting and rebuilding the index.
+	gsi1Projected map[string]bool
+
 	queries []*dynamodb.QueryInput
+	gets    int
 }
 
 func newFakeDynamo() *fakeDynamo {
-	return &fakeDynamo{items: make(map[string]map[string]map[string]types.AttributeValue)}
+	return &fakeDynamo{
+		items:         make(map[string]map[string]map[string]types.AttributeValue),
+		gsi1Projected: gsi1NonKeyAttributes(),
+	}
 }
+
+// gsi1NonKeyAttributes parses the NonKeyAttributes of the gsi1 projection out of
+// infrastructure/template.yaml, so the tests are pinned to the index that will
+// actually be deployed rather than to a copy that can drift away from it.
+func gsi1NonKeyAttributes() map[string]bool {
+	raw, err := os.ReadFile(templatePath)
+	if err != nil {
+		return nil // template unavailable; projection is not enforced
+	}
+	out := map[string]bool{}
+	inProjection := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "NonKeyAttributes:" {
+			inProjection = true
+			continue
+		}
+		if !inProjection {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "- ") {
+			break
+		}
+		out[strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))] = true
+	}
+	return out
+}
+
+const templatePath = "../../../infrastructure/template.yaml"
 
 func (f *fakeDynamo) put(item map[string]types.AttributeValue) {
 	pk := av(item["pk"])
@@ -60,6 +101,7 @@ func av(v types.AttributeValue) string {
 func (f *fakeDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.gets++
 	item := f.items[av(in.Key["pk"])][av(in.Key["sk"])]
 	if item == nil {
 		return &dynamodb.GetItemOutput{}, nil
@@ -208,6 +250,9 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 				continue
 			}
 		}
+		if in.IndexName != nil {
+			item = applyIndexProjection(item, f.gsi1Projected)
+		}
 		out.Items = append(out.Items, project(item, in.ProjectionExpression, pkAttr, skAttr))
 	}
 	out.Count = int32(len(out.Items))
@@ -225,6 +270,24 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 		out.LastEvaluatedKey = key
 	}
 	return out, nil
+}
+
+// applyIndexProjection drops everything the GSI does not carry. DynamoDB does
+// this silently, which is why a missing attribute shows up as an empty field
+// rather than an error.
+func applyIndexProjection(item map[string]types.AttributeValue, projected map[string]bool) map[string]types.AttributeValue {
+	if projected == nil {
+		return item
+	}
+	// Table and index key attributes are always projected.
+	always := map[string]bool{"pk": true, "sk": true, "gsi1pk": true, "gsi1sk": true}
+	out := make(map[string]types.AttributeValue, len(item))
+	for k, v := range item {
+		if always[k] || projected[k] {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func project(item map[string]types.AttributeValue, projection *string, pkAttr, skAttr string) map[string]types.AttributeValue {

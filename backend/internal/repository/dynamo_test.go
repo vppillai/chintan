@@ -368,6 +368,119 @@ func TestListCapturesByNoteQueriesGSI1(t *testing.T) {
 	}
 }
 
+// The index has to answer on its own. Hydrating each entry with a GetItem turns
+// one read into N+1 and gives back most of what querying the index bought.
+func TestListCapturesByNoteDoesNotHydratePerItem(t *testing.T) {
+	store, api := newTestStore(t)
+	ctx := context.Background()
+
+	base := time.Now().UTC()
+	for i := 0; i < 5; i++ {
+		if _, err := store.PutCapture(ctx, model.CaptureIndex{
+			ID: fmt.Sprintf("c%d", i), UserID: "tenant-a", NoteID: "n1",
+			CreatedAt: model.FormatTime(base.Add(time.Duration(i) * time.Second)),
+			AudioKey:  fmt.Sprintf("tenants/tenant-a/captures/c%d/audio.webm", i),
+		}); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+	}
+
+	api.gets = 0
+	page, err := store.ListCapturesByNote(ctx, "tenant-a", "n1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCapturesByNote: %v", err)
+	}
+	if len(page.Items) != 5 {
+		t.Fatalf("got %d captures, want 5", len(page.Items))
+	}
+	if api.gets != 0 {
+		t.Fatalf("list issued %d GetItem calls; the index projection should answer without them", api.gets)
+	}
+}
+
+// Every S3 artefact a cascade delete has to unlink must survive the index
+// projection. One missing key here is one orphaned object per capture, and
+// widening the projection later means rebuilding the index.
+func TestListedCaptureCarriesEveryArtefactKeyTheCascadeDeleteNeeds(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+
+	want := model.CaptureIndex{
+		ID: "c1", UserID: "tenant-a", NoteID: "n1", CreatedAt: model.Now(),
+		Status:      model.StatusAppended,
+		AudioKey:    "tenants/tenant-a/captures/c1/audio.webm",
+		RawKey:      "tenants/tenant-a/captures/c1/raw.txt",
+		RoutedKey:   "tenants/tenant-a/captures/c1/routed.txt",
+		CleanKey:    "tenants/tenant-a/captures/c1/clean.txt",
+		SegmentsKey: "tenants/tenant-a/captures/c1/segments.json",
+		PeaksKey:    "tenants/tenant-a/captures/c1/peaks.json",
+		DurationMS:  1234,
+	}
+	if _, err := store.PutCapture(ctx, want); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+
+	page, err := store.ListCapturesByNote(ctx, "tenant-a", "n1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCapturesByNote: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("got %d captures, want 1", len(page.Items))
+	}
+	got := page.Items[0]
+
+	for _, field := range []struct{ name, got, want string }{
+		{"audio_key", got.AudioKey, want.AudioKey},
+		{"raw_key", got.RawKey, want.RawKey},
+		{"routed_key", got.RoutedKey, want.RoutedKey},
+		{"clean_key", got.CleanKey, want.CleanKey},
+		{"segments_key", got.SegmentsKey, want.SegmentsKey},
+		{"peaks_key", got.PeaksKey, want.PeaksKey},
+	} {
+		if field.got != field.want {
+			t.Errorf("%s = %q, want %q — the GSI1 projection does not carry it, so a cascade delete would orphan that object",
+				field.name, field.got, field.want)
+		}
+	}
+
+	// The rest of what a list is expected to render.
+	if got.ID != want.ID || got.NoteID != want.NoteID || got.UserID != "tenant-a" {
+		t.Errorf("identity = %+v, want id/note/tenant of %+v", got, want)
+	}
+	if got.Status != want.Status || got.CreatedAt != want.CreatedAt || got.DurationMS != want.DurationMS {
+		t.Errorf("listed capture = %+v, want status/created_at/duration of %+v", got, want)
+	}
+}
+
+// A capture whose index entry predates capture_id still has to come back whole,
+// because a cascade delete that saw it without its S3 keys would skip them.
+func TestListCapturesByNoteReadsPrePromotionIndexEntriesWhole(t *testing.T) {
+	api := newFakeDynamo()
+	store := repository.NewDynamoStore(api, tableName)
+
+	legacy := `{"id":"c_legacy","note_id":"n1","user_id":"tenant-a","status":"appended",` +
+		`"audio_key":"tenants/tenant-a/captures/c_legacy/audio.webm","created_at":"2026-08-01T00:00:00Z"}`
+	api.put(map[string]types.AttributeValue{
+		"pk":     &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+		"sk":     &types.AttributeValueMemberS{Value: "CAPTURE#c_legacy"},
+		"type":   &types.AttributeValueMemberS{Value: "capture"},
+		"gsi1pk": &types.AttributeValueMemberS{Value: "TENANT#tenant-a#NOTE#n1"},
+		"gsi1sk": &types.AttributeValueMemberS{Value: "CAPTURE#2026-08-01T00:00:00Z"},
+		"data":   &types.AttributeValueMemberS{Value: legacy},
+	})
+
+	page, err := store.ListCapturesByNote(context.Background(), "tenant-a", "n1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCapturesByNote: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("got %d captures, want the one legacy capture", len(page.Items))
+	}
+	if page.Items[0].AudioKey != "tenants/tenant-a/captures/c_legacy/audio.webm" {
+		t.Fatalf("legacy capture = %+v, want its audio key recovered from the blob", page.Items[0])
+	}
+}
+
 func avOf(v types.AttributeValue) string {
 	if s, ok := v.(*types.AttributeValueMemberS); ok {
 		return s.Value
@@ -577,5 +690,35 @@ func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 	}
 	if page.Items[0].Title != "Written by v1" {
 		t.Fatalf("legacy note = %+v, want its title recovered from the blob", page.Items[0])
+	}
+}
+
+// The store and the CloudFormation template have to agree about GSI1, and
+// nothing else checks it: a projection that is missing an attribute does not
+// error at runtime, it returns an empty field. Widening it later is not an
+// update — the index is deleted and rebuilt.
+func TestGSI1ProjectionCoversWhatTheCaptureListReads(t *testing.T) {
+	projected := gsi1NonKeyAttributes()
+	if len(projected) == 0 {
+		t.Fatalf("could not read the gsi1 projection from %s; the drift check is not running", templatePath)
+	}
+
+	// Every attribute ListCapturesByNote builds a capture out of.
+	required := []string{
+		"capture_id", "note_id", "status", "created_at", "version", "duration_ms",
+		// Every artefact a cascade delete unlinks. A missing one orphans an
+		// object that the UI has already reported as purged.
+		"audio_key", "raw_key", "routed_key", "clean_key", "segments_key", "peaks_key",
+	}
+	for _, name := range required {
+		if !projected[name] {
+			t.Errorf("gsi1 does not project %q, so a listed capture cannot carry it", name)
+		}
+	}
+
+	// ALL would carry `data`, which is the transfer cost the projection exists
+	// to remove.
+	if projected["data"] {
+		t.Error("gsi1 projects the `data` blob; the index now duplicates every capture body")
 	}
 }
