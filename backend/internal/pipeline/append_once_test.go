@@ -1,4 +1,4 @@
-package service
+package pipeline
 
 import (
 	"context"
@@ -26,17 +26,23 @@ const (
 type appendFixture struct {
 	store   *memory.Store
 	objects repository.Objects
-	svc     *CaptureService
+	h       *harness
 }
 
 // newAppendFixture builds the fixture. wrap, when non-nil, sits between the
-// service and the store so a test can induce a failure at a chosen step.
+// pipeline and the store so a test can induce a failure at a chosen step.
 func newAppendFixture(t *testing.T, objects repository.Objects, wrap func(repository.Store) repository.Store) *appendFixture {
 	t.Helper()
 	ctx := context.Background()
-	store := memory.NewStore()
 
-	if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
+	var h *harness
+	if wrap == nil {
+		h = newHarness(t, harnessOpts{objects: objects})
+	} else {
+		h = newHarnessWrapping(t, objects, wrap, harnessOpts{})
+	}
+
+	if _, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
 		ID:            "note1",
 		Title:         "Destination",
 		UpdatedAt:     model.Now(),
@@ -44,7 +50,7 @@ func newAppendFixture(t *testing.T, objects repository.Objects, wrap func(reposi
 	}); err != nil {
 		t.Fatalf("seed note: %v", err)
 	}
-	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID:        "capture1",
 		UserID:    "user1",
 		NoteID:    "note1",
@@ -64,15 +70,11 @@ func newAppendFixture(t *testing.T, objects repository.Objects, wrap func(reposi
 		t.Fatalf("seed note body: %v", err)
 	}
 
-	var seen repository.Store = store
-	if wrap != nil {
-		seen = wrap(store)
-	}
-	return &appendFixture{
-		store:   store,
-		objects: objects,
-		svc:     NewCaptureService(seen, objects, &fake.STT{}, &fake.LLM{}),
-	}
+	return &appendFixture{store: h.store, objects: objects, h: h}
+}
+
+func (f *appendFixture) run(ctx context.Context) (model.CaptureIndex, error) {
+	return f.h.pipeline.Run(ctx, "user1", "capture1")
 }
 
 func (f *appendFixture) body(t *testing.T) string {
@@ -88,34 +90,44 @@ func (f *appendFixture) body(t *testing.T) string {
 // flip — the exact window the v1 retry path re-entered and re-appended through.
 type failOnceOnPutNote struct {
 	repository.Store
+	mu     sync.Mutex
 	failed bool
 }
 
 func (s *failOnceOnPutNote) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
-	if !s.failed {
-		s.failed = true
+	s.mu.Lock()
+	first := !s.failed
+	s.failed = true
+	s.mu.Unlock()
+	if first {
 		return model.NoteIndex{}, errors.New("induced index write failure")
 	}
 	return s.Store.PutNote(ctx, tenantID, n)
+}
+
+func (s *failOnceOnPutNote) didFail() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failed
 }
 
 // This is the defect the audit calls B3, and which handler/captures.go called
 // "idempotent". A gateway timeout makes the client retry; without a guard the
 // retry appends the same text a second time.
 func TestRetryAfterAFailedFinishAppendsExactlyOnce(t *testing.T) {
-	var breaker *failOnceOnPutNote
+	var interrupt *failOnceOnPutNote
 	f := newAppendFixture(t, memory.NewObjects(), func(s repository.Store) repository.Store {
-		breaker = &failOnceOnPutNote{Store: s}
-		return breaker
+		interrupt = &failOnceOnPutNote{Store: s}
+		return interrupt
 	})
 	ctx := context.Background()
 
 	// The index write happens after the text is already in the note body but
 	// before the capture is marked appended.
-	if _, err := f.svc.CompleteCapture(ctx, "user1", "capture1"); err == nil {
+	if _, err := f.run(ctx); err == nil {
 		t.Fatal("expected the induced failure to surface")
 	}
-	if !breaker.failed {
+	if !interrupt.didFail() {
 		t.Fatal("the test did not actually interrupt the index write")
 	}
 
@@ -133,7 +145,7 @@ func TestRetryAfterAFailedFinishAppendsExactlyOnce(t *testing.T) {
 	}
 
 	// The retry. It must recognise its own claim and skip the append.
-	if _, err := f.svc.CompleteCapture(ctx, "user1", "capture1"); err != nil {
+	if _, err := f.run(ctx); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 
@@ -142,21 +154,21 @@ func TestRetryAfterAFailedFinishAppendsExactlyOnce(t *testing.T) {
 	}
 }
 
-// A plain second completion — the frontend polling twice — must also be a
-// no-op rather than a second append.
+// A plain second run — a redelivered SQS message, or the frontend polling twice
+// — must also be a no-op rather than a second append.
 func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
 	ctx := context.Background()
 
-	first, err := f.svc.CompleteCapture(ctx, "user1", "capture1")
+	first, err := f.run(ctx)
 	if err != nil {
-		t.Fatalf("first CompleteCapture: %v", err)
+		t.Fatalf("first run: %v", err)
 	}
 	if first.Status != model.StatusAppended {
 		t.Fatalf("status = %s, want appended", first.Status)
 	}
-	if _, err := f.svc.CompleteCapture(ctx, "user1", "capture1"); err != nil {
-		t.Fatalf("second CompleteCapture: %v", err)
+	if _, err := f.run(ctx); err != nil {
+		t.Fatalf("second run: %v", err)
 	}
 
 	if got := strings.Count(f.body(t), appendedText); got != 1 {
@@ -164,7 +176,7 @@ func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 	}
 }
 
-// Two completions racing against one note. Run under -race.
+// Two deliveries racing against one note. Run under -race.
 func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
 	ctx := context.Background()
@@ -177,7 +189,7 @@ func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, errs[i] = f.svc.CompleteCapture(ctx, "user1", "capture1")
+			_, errs[i] = f.run(ctx)
 		}(i)
 	}
 	close(start)
@@ -205,8 +217,8 @@ func TestConcurrentEditAndVoiceAppendBothSurvive(t *testing.T) {
 		t.Fatalf("seed editor text: %v", err)
 	}
 
-	if _, err := f.svc.CompleteCapture(ctx, "user1", "capture1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 
 	body := f.body(t)
@@ -224,10 +236,10 @@ func TestAppendToNoteRetriesOnAConcurrentWrite(t *testing.T) {
 	f := newAppendFixture(t, objects, nil)
 	ctx := context.Background()
 
-	if _, err := f.svc.CompleteCapture(ctx, "user1", "capture1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx); err != nil {
+		t.Fatalf("run: %v", err)
 	}
-	if !objects.raced {
+	if !objects.didRace() {
 		t.Fatal("the test did not actually induce a lost ETag race")
 	}
 
@@ -245,16 +257,28 @@ func TestAppendToNoteRetriesOnAConcurrentWrite(t *testing.T) {
 type raceOnceObjects struct {
 	repository.Objects
 	key   string
+	mu    sync.Mutex
 	raced bool
 }
 
 func (o *raceOnceObjects) GetWithETag(ctx context.Context, key string) ([]byte, string, error) {
 	body, etag, err := o.Objects.GetWithETag(ctx, key)
-	if err == nil && key == o.key && !o.raced {
+	o.mu.Lock()
+	race := err == nil && key == o.key && !o.raced
+	if race {
 		o.raced = true
+	}
+	o.mu.Unlock()
+	if race {
 		_ = o.Objects.Put(ctx, key, []byte("written by somebody else"), "text/markdown")
 	}
 	return body, etag, err
+}
+
+func (o *raceOnceObjects) didRace() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.raced
 }
 
 // Note recency decides which fifty notes the router is shown. v1 compared
@@ -283,8 +307,7 @@ func TestNoteRecencyOrderingIsChronological(t *testing.T) {
 // store returns them in.
 func TestRouterSeesTheMostRecentlyTouchedNotes(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
-	objects := memory.NewObjects()
+	h := newHarness(t, harnessOpts{router: &fake.Router{}})
 
 	base := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
 	// note_a is a whole second; note_b is a fraction later. Under string
@@ -293,7 +316,7 @@ func TestRouterSeesTheMostRecentlyTouchedNotes(t *testing.T) {
 		"note_a": base,
 		"note_b": base.Add(100 * time.Millisecond),
 	} {
-		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
+		if _, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
 			ID: id, Title: id, UpdatedAt: model.FormatTime(at),
 			S3MarkdownKey: fmt.Sprintf("tenants/user1/notes/%s/note.md", id),
 		}); err != nil {
@@ -301,18 +324,14 @@ func TestRouterSeesTheMostRecentlyTouchedNotes(t *testing.T) {
 		}
 	}
 
-	router := &fake.Router{}
-	svc := NewCaptureService(store, objects, &fake.STT{}, &fake.LLM{}).
-		WithRouting(router, nil)
-
-	if _, err := svc.decideTarget(ctx, "user1", "some words"); err != nil {
+	if _, err := h.pipeline.decideTarget(ctx, "user1", "some words"); err != nil {
 		t.Fatalf("decideTarget: %v", err)
 	}
-	if len(router.LastCandidates) != 2 {
-		t.Fatalf("router saw %d candidates, want 2", len(router.LastCandidates))
+	if len(h.router.LastCandidates) != 2 {
+		t.Fatalf("router saw %d candidates, want 2", len(h.router.LastCandidates))
 	}
-	if router.LastCandidates[0].NoteID != "note_b" {
+	if h.router.LastCandidates[0].NoteID != "note_b" {
 		t.Fatalf("router's first candidate = %s, want the most recently touched note_b",
-			router.LastCandidates[0].NoteID)
+			h.router.LastCandidates[0].NoteID)
 	}
 }

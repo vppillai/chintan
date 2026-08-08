@@ -41,7 +41,9 @@ func NewOpenAICleanup(apiKey, baseURL, model string, httpClient *http.Client) (*
 		model = defaultLLMModel
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 120 * time.Second}
+		// Below the worker's 900s Lambda timeout, so a hung provider surfaces as
+		// an error the pipeline can record rather than as a killed invocation.
+		httpClient = &http.Client{Timeout: 840 * time.Second}
 	}
 	return &OpenAICleanup{
 		apiKey:     apiKey,
@@ -51,16 +53,25 @@ func NewOpenAICleanup(apiKey, baseURL, model string, httpClient *http.Client) (*
 	}, nil
 }
 
-func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (string, error) {
+// Model reports the model this client completes with, so a caller can price the
+// call without keeping a second copy of the name.
+func (c *OpenAICleanup) Model() string { return c.model }
+
+func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (Cleaned, error) {
 	userPrompt, err := cleanup.UserPrompt(raw)
 	if err != nil {
-		return "", err
+		return Cleaned{}, err
 	}
-	return c.complete(ctx, cleanup.SystemPrompt(mode), userPrompt)
+	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(mode), userPrompt)
+	if err != nil {
+		return Cleaned{}, err
+	}
+	return Cleaned{Text: text, Usage: usage}, nil
 }
 
-// complete runs a single chat completion and returns the assistant message text.
-func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+// complete runs a single chat completion and returns the assistant message text
+// together with what it consumed.
+func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string) (string, TokenUsage, error) {
 	payload := map[string]any{
 		"model": c.model,
 		"messages": []map[string]string{
@@ -72,29 +83,29 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("provider: marshal llm request: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("provider: marshal llm request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("provider: build llm request: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("provider: build llm request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("provider: llm request: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("provider: llm request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
-		return "", fmt.Errorf("provider: read llm response: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("provider: read llm response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Do not include response body — may contain transcript content.
-		return "", fmt.Errorf("provider: llm request failed: status %d", resp.StatusCode)
+		return "", TokenUsage{}, fmt.Errorf("provider: llm request failed: status %d", resp.StatusCode)
 	}
 
 	var parsed struct {
@@ -103,16 +114,24 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("provider: decode llm response: %w", err)
+		return "", TokenUsage{}, fmt.Errorf("provider: decode llm response: %w", err)
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("provider: llm returned no choices")
+		return "", TokenUsage{}, fmt.Errorf("provider: llm returned no choices")
 	}
 	out := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if out == "" {
-		return "", fmt.Errorf("provider: llm returned empty content")
+		return "", TokenUsage{}, fmt.Errorf("provider: llm returned empty content")
 	}
-	return out, nil
+	usage := TokenUsage{
+		InputTokens:  parsed.Usage.PromptTokens,
+		OutputTokens: parsed.Usage.CompletionTokens,
+	}
+	return out, usage, nil
 }

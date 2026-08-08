@@ -3,279 +3,321 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path"
-	"sort"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
-	"github.com/vppillai/chintan/backend/internal/routing"
+	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
-// routeConfidenceThreshold is how sure the router must be before appending to an
-// existing note without asking. Below it, the user confirms first.
-const routeConfidenceThreshold = 0.75
+// uploadTTL bounds how long a presigned PUT stays usable. Long enough to absorb
+// a bad cellular handover on the drive home, short enough that a leaked URL is
+// not a standing grant.
+const uploadTTL = 30 * time.Minute
 
-// maxRouteCandidates bounds the note list handed to the router.
-const maxRouteCandidates = 50
+// downloadTTL bounds a presigned GET handed to the client.
+const downloadTTL = 15 * time.Minute
 
-// maxRouteCandidatePool bounds how many notes are paged through before the most
-// recent maxRouteCandidates are chosen.
-const maxRouteCandidatePool = 500
+// MaxCaptureBytes bounds an audio upload. Twenty minutes of 16 kHz mono WAV is
+// about 38 MB; this leaves headroom for an uncompressed container without
+// leaving the URL open to an unbounded upload, which is what v1's untyped
+// PresignPut did.
+const MaxCaptureBytes int64 = 256 << 20
 
-// maxAppendAttempts bounds the ETag-conditional retry when a note body is being
-// written concurrently.
-const maxAppendAttempts = 5
+// MaxPeaksBytes bounds the client-computed waveform envelope. It is a few
+// thousand numbers, not a media file.
+const MaxPeaksBytes int64 = 2 << 20
 
-// maxIndexRefreshAttempts bounds the optimistic-concurrency retry on the note
-// index after an append.
-const maxIndexRefreshAttempts = 5
+var (
+	// ErrCaptureTerminal means a capture has finished and cannot be re-run. It is
+	// distinct so a retry of an already-appended capture is a 409 rather than a
+	// second append.
+	ErrCaptureTerminal = errors.New("capture is already complete")
+	// ErrCaptureNotRoutable means a capture already has a destination note, so a
+	// target cannot be chosen for it.
+	ErrCaptureAlreadyTargeted = errors.New("capture already targets a note")
+	// ErrCaptureTargetRequired means neither an existing note nor a new title was
+	// supplied.
+	ErrCaptureTargetRequired = errors.New("note_id or new_note_title is required")
+	// ErrNoteCreationUnavailable means the service was built without a note
+	// creator, so a capture cannot be given a brand new note.
+	ErrNoteCreationUnavailable = errors.New("note creation is unavailable")
+	// ErrCaptureQueueUnavailable means no queue is wired, so the slow half of the
+	// pipeline cannot be reached. It is an error rather than a silent inline run:
+	// running the pipeline on the request path is the defect this phase removes.
+	ErrCaptureQueueUnavailable = errors.New("capture queue is not configured")
+	// ErrUnsupportedContentType rejects a container the pipeline cannot route to
+	// a transcription provider.
+	ErrUnsupportedContentType = errors.New("unsupported audio content type")
+	// ErrCaptureTooLarge rejects a declared upload size past MaxCaptureBytes.
+	ErrCaptureTooLarge = errors.New("capture exceeds the maximum upload size")
+)
 
 // NoteCreator creates the destination note for a capture that has none.
 type NoteCreator interface {
 	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
 }
 
-// CaptureService handles audio capture processing pipeline
+// Enqueuer hands a capture to the worker.
+//
+// The interface is here and the implementation is in internal/pipeline, so the
+// API binary depends on the shape of the queue and not on the pipeline.
+type Enqueuer interface {
+	EnqueueCapture(ctx context.Context, tenantID, captureID, reason string) error
+}
+
+// CaptureRequest is what a client asks for when it begins a capture.
+type CaptureRequest struct {
+	NoteID      string
+	ContentType string
+	// SizeBytes is the recording's declared length, used to bound the upload.
+	SizeBytes int64
+	// DurationMS is what the recorder measured. The worker overwrites it with the
+	// provider's figure once the audio is transcribed.
+	DurationMS int64
+}
+
+// CaptureCreated is the response to beginning a capture: the row, and the two
+// presigned PUTs the client needs.
+type CaptureCreated struct {
+	Capture model.CaptureIndex
+	Audio   upload.Presigned
+	// Peaks is where the client PUTs the amplitude envelope it computed while
+	// recording. The browser already holds the decoded signal from its
+	// AnalyserNode; recovering it in the worker would mean shipping an Opus
+	// decoder into Lambda.
+	Peaks upload.Presigned
+}
+
+// CaptureService owns the fast half of the capture lifecycle.
+//
+// Everything slow — transcribe, route, clean, append — belongs to
+// internal/pipeline and runs in the worker Lambda. API Gateway's HTTP API caps
+// an integration at 30 seconds and the cap is not adjustable, so a request that
+// waits for a provider returns 504 to the user while the Lambda keeps running
+// and billing. Nothing here contacts a provider.
 type CaptureService struct {
 	store   repository.Store
 	objects repository.Objects
-	stt     provider.STT
-	llm     provider.LLM
-	router  provider.Router
+	uploads upload.Presigner
+	queue   Enqueuer
 	notes   NoteCreator
 }
 
-// NewCaptureService creates a new capture service
+// NewCaptureService creates a new capture service.
+//
+// stt and llm are accepted and ignored: the providers moved to the worker with
+// the pipeline. The parameters remain so the handler and cmd/api keep compiling
+// across the phase boundary; Phase 6 drops them.
 func NewCaptureService(store repository.Store, objects repository.Objects, stt provider.STT, llm provider.LLM) *CaptureService {
 	return &CaptureService{
 		store:   store,
 		objects: objects,
-		stt:     stt,
-		llm:     llm,
+		uploads: upload.NewObjects(objects),
 	}
 }
 
-// WithRouting enables voice-directed routing, so a capture can be created with no
-// target note and have its destination decided from what the speaker said.
+// WithRouting keeps the constructor shape cmd/api already uses. Routing itself
+// is the worker's now; only the note creator is still needed here, for a user
+// who resolves a needs_target capture by naming a new note.
 func (s *CaptureService) WithRouting(router provider.Router, notes NoteCreator) *CaptureService {
-	s.router = router
 	s.notes = notes
 	return s
 }
 
-// CreateCapture creates a new capture and returns upload URL.
-// An empty noteID defers the destination to routing at completion time.
-func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, contentType string) (*model.CaptureIndex, string, error) {
-	if noteID != "" {
-		note, err := s.store.GetNote(ctx, userID, noteID)
+// WithNoteCreator sets the note creator.
+func (s *CaptureService) WithNoteCreator(notes NoteCreator) *CaptureService {
+	s.notes = notes
+	return s
+}
+
+// WithUploads installs the presigner that binds the retention tag into the
+// signature. Without it the fallback signs untagged PUTs and the lifecycle rule
+// never sees the object.
+func (s *CaptureService) WithUploads(p upload.Presigner) *CaptureService {
+	if p != nil {
+		s.uploads = p
+	}
+	return s
+}
+
+// WithQueue installs the queue the worker drains.
+func (s *CaptureService) WithQueue(q Enqueuer) *CaptureService {
+	s.queue = q
+	return s
+}
+
+// BeginCapture validates, writes the capture row, and returns the presigned
+// PUTs. It performs no provider call and no object read: this is the whole of
+// what POST /v1/captures does.
+func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req CaptureRequest) (CaptureCreated, error) {
+	contentType, ext, err := normalizeAudioContentType(req.ContentType)
+	if err != nil {
+		return CaptureCreated{}, err
+	}
+	if req.SizeBytes > MaxCaptureBytes {
+		return CaptureCreated{}, ErrCaptureTooLarge
+	}
+
+	if req.NoteID != "" {
+		note, err := s.store.GetNote(ctx, userID, req.NoteID)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to get note: %w", err)
+			return CaptureCreated{}, fmt.Errorf("failed to get note: %w", err)
 		}
 		if !NoteIsActive(note) {
-			return nil, "", ErrNoteArchived
+			return CaptureCreated{}, ErrNoteArchived
 		}
 	}
 
 	settings, err := s.store.GetSettings(ctx, userID)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to get settings: %w", err)
+		return CaptureCreated{}, fmt.Errorf("failed to get settings: %w", err)
 	}
 
 	captureIDBytes := make([]byte, 8)
 	if _, err := rand.Read(captureIDBytes); err != nil {
-		return nil, "", fmt.Errorf("failed to generate capture ID: %w", err)
+		return CaptureCreated{}, fmt.Errorf("failed to generate capture ID: %w", err)
 	}
 	captureID := "c_" + hex.EncodeToString(captureIDBytes)
 
-	ext := extensionForContentType(contentType)
 	audioKey, err := keys.CaptureAudio(userID, captureID, ext)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to generate audio key: %w", err)
+		return CaptureCreated{}, fmt.Errorf("failed to generate audio key: %w", err)
+	}
+	peaksKey, err := keys.CapturePeaks(userID, captureID)
+	if err != nil {
+		return CaptureCreated{}, fmt.Errorf("failed to generate peaks key: %w", err)
 	}
 
 	capture := model.CaptureIndex{
-		ID:        captureID,
-		UserID:    userID,
-		NoteID:    noteID,
-		Status:    model.StatusUploaded,
-		Mode:      settings.CleanupMode,
-		AudioKey:  audioKey,
-		CreatedAt: model.Now(),
+		ID:         captureID,
+		UserID:     userID,
+		NoteID:     req.NoteID,
+		Status:     model.StatusUploaded,
+		Mode:       settings.CleanupMode,
+		AudioKey:   audioKey,
+		PeaksKey:   peaksKey,
+		DurationMS: req.DurationMS,
+		CreatedAt:  model.Now(),
 	}
 
 	stored, err := s.store.PutCapture(ctx, capture)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to store capture: %w", err)
+		return CaptureCreated{}, fmt.Errorf("failed to store capture: %w", err)
 	}
-	capture = stored
 
-	uploadURL, err := s.objects.PresignPut(ctx, audioKey, contentType, 15*time.Minute)
+	maxBytes := req.SizeBytes
+	if maxBytes <= 0 {
+		maxBytes = MaxCaptureBytes
+	}
+
+	// The tag is the whole point: an S3 lifecycle filter takes one prefix and one
+	// suffix with no wildcards, so tenants/*/captures/ cannot be expressed and
+	// the retention rule matches on this tag instead. Signing it means an upload
+	// cannot quietly omit it and escape expiry.
+	audioUpload, err := s.uploads.PresignPut(ctx, audioKey, contentType, upload.CaptureAudioTags(), maxBytes, uploadTTL)
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to generate upload URL: %w", err)
+		return CaptureCreated{}, fmt.Errorf("failed to generate upload URL: %w", err)
+	}
+	peaksUpload, err := s.uploads.PresignPut(ctx, peaksKey, "application/json", nil, MaxPeaksBytes, uploadTTL)
+	if err != nil {
+		return CaptureCreated{}, fmt.Errorf("failed to generate peaks upload URL: %w", err)
 	}
 
-	return &capture, uploadURL, nil
+	obs.Log(ctx).Info("capture created",
+		slog.String("capture_id", stored.ID),
+		slog.String("note_id", stored.NoteID),
+		slog.String("content_type", contentType))
+	obs.Count(ctx, "CapturesCreated", map[string]string{"Stage": "created"})
+
+	return CaptureCreated{Capture: stored, Audio: audioUpload, Peaks: peaksUpload}, nil
 }
 
-// CompleteCapture runs the capture processing pipeline.
-// Already-terminal captures (appended/failed) are returned as-is (idempotent).
-func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
+// CreateCapture is the pre-Phase-6 shape of BeginCapture, kept so the current
+// handler compiles. It drops the peaks URL, which the new handler must return.
+func (s *CaptureService) CreateCapture(ctx context.Context, userID, noteID, contentType string) (*model.CaptureIndex, string, error) {
+	created, err := s.BeginCapture(ctx, userID, CaptureRequest{NoteID: noteID, ContentType: contentType})
+	if err != nil {
+		return nil, "", err
+	}
+	return &created.Capture, created.Audio.URL, nil
+}
+
+// RetryCapture re-enqueues a capture so the worker resumes it from its last good
+// stage. It does no work inline: v1's retry ran the whole pipeline on the
+// request path, which is what turned a gateway timeout into duplicated note
+// content.
+func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
 
 	switch capture.Status {
-	case model.StatusAppended, model.StatusFailed, model.StatusNoContent:
-		return &capture, nil
+	case model.StatusAppended, model.StatusNoContent:
+		return &capture, ErrCaptureTerminal
+	case model.StatusNeedsTarget:
+		// The destination is the user's to choose; re-running would only ask again.
+		return &capture, ErrCaptureTerminal
 	}
 
-	if capture.RawKey == "" {
-		if err := s.transcribeCapture(ctx, userID, &capture); err != nil {
-			return nil, err
-		}
-		if capture.Status == model.StatusFailed {
-			return &capture, nil
-		}
-	}
-
-	if capture.NoteID == "" {
-		// Nothing is written until the user picks a destination.
-		if capture.Status == model.StatusNeedsTarget {
-			return &capture, nil
-		}
-		if err := s.routeCapture(ctx, userID, &capture); err != nil {
-			return nil, err
-		}
-		if capture.NoteID == "" {
-			return &capture, nil
-		}
-	}
-
-	note, err := s.store.GetNote(ctx, userID, capture.NoteID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get note: %w", err)
-	}
-	if !NoteIsActive(note) {
-		return nil, ErrNoteArchived
-	}
-
-	if capture.CleanKey == "" {
-		if err := s.cleanupCapture(ctx, userID, &capture); err != nil {
-			return nil, err
-		}
-		switch capture.Status {
-		case model.StatusFailed, model.StatusNoContent:
-			return &capture, nil
-		}
-	}
-
-	cleanBytes, err := s.objects.Get(ctx, capture.CleanKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get clean text: %w", err)
-	}
-	cleanedText := string(cleanBytes)
-
-	// The append is the one step that must happen exactly once. v1 appended,
-	// then updated the index, then set the status, with nothing tying the three
-	// together: a failure after the append left the capture in `cleaned`, and
-	// the retry path re-appended the same text. The token is derived from the
-	// capture and its cleaned artefact, so every attempt at the same work
-	// computes the same value and can recognise its own earlier claim.
-	token := appendToken(capture.ID, capture.CleanKey)
-
-	claimed, current, err := s.store.ClaimCaptureAppend(ctx, userID, capture.ID, token)
-	if err != nil {
-		return nil, fmt.Errorf("failed to claim capture append: %w", err)
-	}
-	if !claimed {
-		// Somebody owns this append: either an earlier attempt that finished, or
-		// one running right now. Either way this attempt must not write the text
-		// a second time.
-		return &current, nil
-	}
-	capture = current
-
-	if err := s.appendToNote(ctx, note.S3MarkdownKey, cleanedText); err != nil {
-		// Hand the claim back so a transient object-store failure does not park
-		// the capture until the claim lease expires.
-		s.releaseAppendClaim(ctx, userID, &capture)
-		return nil, fmt.Errorf("failed to append to note: %w", err)
-	}
-
-	if err := s.refreshNoteIndex(ctx, userID, note.ID, cleanedText); err != nil {
-		return nil, fmt.Errorf("failed to refresh note index: %w", err)
-	}
-
-	appended, err := s.store.CompleteCaptureAppend(ctx, userID, capture.ID, token)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update capture status: %w", err)
-	}
-
-	return &appended, nil
-}
-
-// appendToken is deterministic so a retry of the same work recognises its own
-// claim rather than treating it as somebody else's.
-func appendToken(captureID, cleanKey string) string {
-	sum := sha256.Sum256([]byte(captureID + "\x00" + cleanKey))
-	return hex.EncodeToString(sum[:16])
-}
-
-func (s *CaptureService) releaseAppendClaim(ctx context.Context, userID string, capture *model.CaptureIndex) {
-	released := *capture
-	released.AppendToken = ""
-	released.AppendClaimedAt = 0
-	if updated, err := s.store.PutCapture(ctx, released); err == nil {
-		*capture = updated
-	}
-}
-
-// refreshNoteIndex re-derives the snippet and touch time from the note body that
-// is now in object storage. The body is authoritative, so a version conflict is
-// resolved by re-reading rather than by overwriting whoever won.
-func (s *CaptureService) refreshNoteIndex(ctx context.Context, userID, noteID, fallbackBody string) error {
-	var lastErr error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
-		note, err := s.store.GetNote(ctx, userID, noteID)
+	if capture.Error != "" || capture.Status == model.StatusFailed || capture.Status == StatusSpendCapped {
+		capture.Error = ""
+		capture.Status = resumeStatusFor(capture)
+		updated, err := s.store.PutCapture(ctx, capture)
 		if err != nil {
-			return err
+			return nil, fmt.Errorf("failed to reset capture: %w", err)
 		}
-		if existing, err := s.objects.Get(ctx, note.S3MarkdownKey); err == nil {
-			note.Snippet = generateSnippet(string(existing))
-		} else {
-			note.Snippet = generateSnippet(fallbackBody)
-		}
-		note.UpdatedAt = model.Now()
-
-		if _, err := s.store.PutNote(ctx, userID, note); err == nil {
-			return nil
-		} else if !errors.Is(err, repository.ErrVersionConflict) {
-			return err
-		} else {
-			lastErr = err
-		}
+		capture = updated
 	}
-	return lastErr
+
+	if err := s.enqueue(ctx, userID, captureID, "retry"); err != nil {
+		return nil, err
+	}
+	return &capture, nil
 }
 
-// SetCaptureTarget records a user-chosen destination and resumes the pipeline.
-// Exactly one of noteID or newNoteTitle must be set.
+// CompleteCapture is retained only so the current handler compiles. It is an
+// enqueue, not a pipeline run: the synchronous completion path is gone.
+func (s *CaptureService) CompleteCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
+	capture, err := s.RetryCapture(ctx, userID, captureID)
+	if errors.Is(err, ErrCaptureTerminal) {
+		// A poll of a finished capture is not an error to the caller.
+		return capture, nil
+	}
+	return capture, err
+}
+
+// resumeStatusFor picks the stage a failed capture restarts from, so a retry
+// never redoes work whose artifact already exists.
+func resumeStatusFor(c model.CaptureIndex) model.CaptureStatus {
+	switch {
+	case c.CleanKey != "":
+		return model.StatusCleaned
+	case c.RawKey != "":
+		return model.StatusTranscribed
+	default:
+		return model.StatusUploaded
+	}
+}
+
+// SetCaptureTarget records a user-chosen destination and hands the capture back
+// to the worker. It writes the row and returns; it does not append.
 func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID, noteID, newNoteTitle string) (*model.CaptureIndex, error) {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
 	if capture.NoteID != "" {
-		return nil, fmt.Errorf("capture already targets a note")
+		return nil, ErrCaptureAlreadyTargeted
 	}
 
 	newNoteTitle = sanitizeNoteTitle(newNoteTitle)
@@ -292,7 +334,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		capture.NoteID = noteID
 	case newNoteTitle != "":
 		if s.notes == nil {
-			return nil, fmt.Errorf("note creation is unavailable")
+			return nil, ErrNoteCreationUnavailable
 		}
 		note, err := s.notes.CreateNote(ctx, userID, newNoteTitle, nil)
 		if err != nil {
@@ -300,271 +342,35 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		}
 		capture.NoteID = note.ID
 	default:
-		return nil, fmt.Errorf("note_id or new_note_title is required")
+		return nil, ErrCaptureTargetRequired
 	}
 
-	capture.Status = model.StatusTranscribed
+	capture.Status = resumeStatusFor(capture)
 	capture.SuggestedNoteID = ""
 	capture.SuggestedTitle = ""
 	capture.Error = ""
-	if _, err := s.store.PutCapture(ctx, capture); err != nil {
+	updated, err := s.store.PutCapture(ctx, capture)
+	if err != nil {
 		return nil, fmt.Errorf("failed to update capture: %w", err)
 	}
 
-	return s.CompleteCapture(ctx, userID, captureID)
+	if err := s.enqueue(ctx, userID, captureID, "target"); err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
-func (s *CaptureService) transcribeCapture(ctx context.Context, userID string, capture *model.CaptureIndex) error {
-	audioData, err := s.objects.Get(ctx, capture.AudioKey)
-	if err != nil {
-		return fmt.Errorf("failed to get audio: %w", err)
+func (s *CaptureService) enqueue(ctx context.Context, userID, captureID, reason string) error {
+	if s.queue == nil {
+		return ErrCaptureQueueUnavailable
 	}
-
-	rawText, err := s.stt.Transcribe(ctx, audioData, contentTypeForAudioKey(capture.AudioKey))
-	if err != nil {
-		s.markFailed(ctx, capture, err)
-		return nil
+	if err := s.queue.EnqueueCapture(ctx, userID, captureID, reason); err != nil {
+		return fmt.Errorf("failed to enqueue capture: %w", err)
 	}
-
-	rawKey, err := keys.CaptureRaw(userID, capture.ID)
-	if err != nil {
-		return fmt.Errorf("failed to generate raw key: %w", err)
-	}
-	if err := s.objects.Put(ctx, rawKey, []byte(rawText), "text/plain"); err != nil {
-		return fmt.Errorf("failed to store raw text: %w", err)
-	}
-
-	capture.RawKey = rawKey
-	capture.Status = model.StatusTranscribed
-	capture.Error = ""
-	updated, err := s.store.PutCapture(ctx, *capture)
-	if err != nil {
-		return fmt.Errorf("failed to update capture: %w", err)
-	}
-	*capture = updated
+	obs.Log(ctx).Info("capture enqueued",
+		slog.String("capture_id", captureID),
+		slog.String("reason", reason))
 	return nil
-}
-
-// routeCapture decides the destination note from what the speaker said. It either
-// sets NoteID, or leaves it empty with StatusNeedsTarget for the user to confirm.
-func (s *CaptureService) routeCapture(ctx context.Context, userID string, capture *model.CaptureIndex) error {
-	rawBytes, err := s.objects.Get(ctx, capture.RawKey)
-	if err != nil {
-		return fmt.Errorf("failed to get raw text: %w", err)
-	}
-	transcript := string(rawBytes)
-
-	decision, err := s.decideTarget(ctx, userID, transcript)
-	if err != nil {
-		// Routing is a convenience; a recording is never lost because of it.
-		decision = provider.RouteDecision{Action: provider.RouteNew, Content: transcript}
-	}
-
-	// Persist the transcript minus any spoken instruction, so cleanup and any
-	// later retry work from the words the user meant to keep.
-	routedKey, err := keys.CaptureRouted(userID, capture.ID)
-	if err != nil {
-		return fmt.Errorf("failed to generate routed key: %w", err)
-	}
-	if err := s.objects.Put(ctx, routedKey, []byte(decision.Content), "text/plain"); err != nil {
-		return fmt.Errorf("failed to store routed text: %w", err)
-	}
-	capture.RoutedKey = routedKey
-	capture.RouteConfidence = decision.Confidence
-
-	if decision.Action == provider.RouteAppend {
-		if note, err := s.store.GetNote(ctx, userID, decision.NoteID); err == nil && NoteIsActive(note) {
-			if decision.Confidence >= routeConfidenceThreshold {
-				capture.NoteID = decision.NoteID
-			} else {
-				// Plausible but unsure: ask before writing into an existing note.
-				capture.SuggestedNoteID = decision.NoteID
-				capture.Status = model.StatusNeedsTarget
-			}
-			updated, err := s.store.PutCapture(ctx, *capture)
-			if err != nil {
-				return fmt.Errorf("failed to update capture: %w", err)
-			}
-			*capture = updated
-			return nil
-		}
-	}
-
-	title := sanitizeNoteTitle(decision.Title)
-	if title == "" {
-		title = fallbackNoteTitle()
-	}
-	if s.notes == nil {
-		capture.SuggestedTitle = title
-		capture.Status = model.StatusNeedsTarget
-		updated, err := s.store.PutCapture(ctx, *capture)
-		if err != nil {
-			return fmt.Errorf("failed to update capture: %w", err)
-		}
-		*capture = updated
-		return nil
-	}
-
-	note, err := s.notes.CreateNote(ctx, userID, title, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create note for capture: %w", err)
-	}
-	capture.NoteID = note.ID
-	updated, err := s.store.PutCapture(ctx, *capture)
-	if err != nil {
-		return fmt.Errorf("failed to update capture: %w", err)
-	}
-	*capture = updated
-	return nil
-}
-
-func (s *CaptureService) decideTarget(ctx context.Context, userID, transcript string) (provider.RouteDecision, error) {
-	if s.router == nil {
-		return provider.RouteDecision{}, fmt.Errorf("routing is not configured")
-	}
-
-	// Notes are paged, and the router only ever sees the most recent
-	// maxRouteCandidates of them, so the pool has to be drained before it can be
-	// ordered.
-	active, err := repository.DrainPages(ctx, maxRouteCandidatePool, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListNotes(ctx, userID, opts)
-	})
-	if err != nil {
-		return provider.RouteDecision{}, fmt.Errorf("failed to list notes: %w", err)
-	}
-
-	// Most recently touched notes are the likeliest destinations. Compare parsed
-	// instants: v1 compared RFC3339Nano strings, and Go trims trailing
-	// fractional zeros, so "…:00Z" sorted above "…:00.1Z" because 'Z' > '.' and
-	// the router was handed the wrong fifty notes.
-	sort.SliceStable(active, func(i, j int) bool {
-		return noteTouchedAt(active[i]).After(noteTouchedAt(active[j]))
-	})
-	if len(active) > maxRouteCandidates {
-		active = active[:maxRouteCandidates]
-	}
-
-	candidates := make([]routing.Candidate, 0, len(active))
-	for _, n := range active {
-		candidates = append(candidates, routing.Candidate{
-			NoteID:  n.ID,
-			Title:   n.Title,
-			Aliases: n.Aliases,
-		})
-	}
-
-	return s.router.Route(ctx, transcript, candidates)
-}
-
-func (s *CaptureService) cleanupCapture(ctx context.Context, userID string, capture *model.CaptureIndex) error {
-	sourceKey := capture.RoutedKey
-	if sourceKey == "" {
-		sourceKey = capture.RawKey
-	}
-
-	sourceBytes, err := s.objects.Get(ctx, sourceKey)
-	if err != nil {
-		return fmt.Errorf("failed to get raw text: %w", err)
-	}
-
-	if strings.TrimSpace(string(sourceBytes)) == "" {
-		// The speaker only told the app what to do, so the note they asked for exists
-		// and there is nothing to clean or append.
-		capture.Status = model.StatusNoContent
-		capture.Error = ""
-		updated, err := s.store.PutCapture(ctx, *capture)
-		if err != nil {
-			return fmt.Errorf("failed to update capture: %w", err)
-		}
-		*capture = updated
-		return nil
-	}
-
-	cleanedText, err := s.llm.Cleanup(ctx, capture.Mode, string(sourceBytes))
-	if err != nil {
-		s.markFailed(ctx, capture, err)
-		return nil
-	}
-
-	cleanKey, err := keys.CaptureClean(userID, capture.ID)
-	if err != nil {
-		return fmt.Errorf("failed to generate clean key: %w", err)
-	}
-	if err := s.objects.Put(ctx, cleanKey, []byte(cleanedText), "text/plain"); err != nil {
-		return fmt.Errorf("failed to store clean text: %w", err)
-	}
-
-	capture.CleanKey = cleanKey
-	capture.Status = model.StatusCleaned
-	capture.Error = ""
-	updated, err := s.store.PutCapture(ctx, *capture)
-	if err != nil {
-		return fmt.Errorf("failed to update capture: %w", err)
-	}
-	*capture = updated
-	return nil
-}
-
-func (s *CaptureService) markFailed(ctx context.Context, capture *model.CaptureIndex, cause error) {
-	capture.Status = model.StatusFailed
-	capture.Error = cause.Error()
-	if updated, err := s.store.PutCapture(ctx, *capture); err == nil {
-		*capture = updated
-	}
-}
-
-func fallbackNoteTitle() string {
-	return "Voice note " + time.Now().UTC().Format("2006-01-02 15:04")
-}
-
-// noteTouchedAt parses a note's update time, tolerating the RFC3339 and
-// RFC3339Nano values written before the fixed-width layout existed.
-func noteTouchedAt(n model.NoteIndex) time.Time {
-	t, err := model.ParseTime(n.UpdatedAt)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
-}
-
-// appendToNote adds text to the end of a note body under a conditional write.
-//
-// v1 did read-concat-write with no concurrency control, so a voice append
-// landing while the editor was saving silently discarded one of the two. Here
-// the write carries the ETag that was read; a lost race re-reads and retries so
-// both edits survive.
-func (s *CaptureService) appendToNote(ctx context.Context, noteKey, text string) error {
-	var lastErr error
-	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
-		existingContent, etag, err := s.objects.GetWithETag(ctx, noteKey)
-		switch {
-		case errors.Is(err, repository.ErrNotFound):
-			existingContent, etag = nil, ""
-		case err != nil:
-			return fmt.Errorf("failed to get existing note: %w", err)
-		}
-
-		newContent := text
-		if len(existingContent) > 0 {
-			newContent = string(existingContent) + "\n\n" + text
-		}
-
-		err = s.objects.PutIfMatch(ctx, noteKey, []byte(newContent), "text/markdown", etag)
-		if err == nil {
-			return nil
-		}
-		if !errors.Is(err, repository.ErrPreconditionFailed) {
-			return fmt.Errorf("failed to update note: %w", err)
-		}
-		lastErr = err
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
-		}
-	}
-	return fmt.Errorf("failed to update note after %d attempts: %w", maxAppendAttempts, lastErr)
 }
 
 // GetCapture returns a capture by ID.
@@ -584,7 +390,7 @@ func (s *CaptureService) ListCapturesForNote(ctx context.Context, userID, noteID
 	return s.store.ListCapturesByNote(ctx, userID, noteID, opts)
 }
 
-// GetDownloadURL returns a presigned download URL for capture artifacts
+// GetDownloadURL returns a presigned download URL for capture artifacts.
 func (s *CaptureService) GetDownloadURL(ctx context.Context, userID, captureID, kind string) (string, error) {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
@@ -599,6 +405,10 @@ func (s *CaptureService) GetDownloadURL(ctx context.Context, userID, captureID, 
 		key = capture.RawKey
 	case "clean":
 		key = capture.CleanKey
+	case "segments":
+		key = capture.SegmentsKey
+	case "peaks":
+		key = capture.PeaksKey
 	default:
 		return "", fmt.Errorf("invalid download kind: %s", kind)
 	}
@@ -607,51 +417,38 @@ func (s *CaptureService) GetDownloadURL(ctx context.Context, userID, captureID, 
 		return "", fmt.Errorf("no %s file available for capture", kind)
 	}
 
-	url, err := s.objects.PresignGet(ctx, key, 15*time.Minute)
+	url, err := s.objects.PresignGet(ctx, key, downloadTTL)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate download URL: %w", err)
 	}
 	return url, nil
 }
 
-func extensionForContentType(contentType string) string {
+// normalizeAudioContentType maps a declared content type to the canonical type
+// and the file extension the S3 event notification filters on.
+//
+// The extension is not cosmetic: the bucket publishes ObjectCreated for a fixed
+// list of suffixes, so an extension outside that list produces an object no
+// worker is ever told about.
+func normalizeAudioContentType(contentType string) (canonical, ext string, err error) {
 	base := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
 	switch base {
 	case "audio/wav", "audio/wave", "audio/x-wav":
-		return "wav"
+		return "audio/wav", "wav", nil
 	case "audio/mp3", "audio/mpeg":
-		return "mp3"
+		return "audio/mpeg", "mp3", nil
 	case "audio/mp4", "audio/m4a", "audio/x-m4a":
-		return "m4a"
-	case "audio/ogg", "audio/ogg;codecs=opus":
-		return "ogg"
-	case "audio/webm", "audio/webm;codecs=opus":
-		return "webm"
-	default:
-		if strings.Contains(base, "webm") {
-			return "webm"
-		}
-		if strings.Contains(base, "ogg") {
-			return "ogg"
-		}
-		return "bin"
+		return "audio/mp4", "m4a", nil
+	case "audio/ogg":
+		return "audio/ogg", "ogg", nil
+	case "audio/webm":
+		return "audio/webm", "webm", nil
 	}
-}
-
-func contentTypeForAudioKey(audioKey string) string {
-	ext := strings.ToLower(strings.TrimPrefix(path.Ext(audioKey), "."))
-	switch ext {
-	case "mp3":
-		return "audio/mpeg"
-	case "m4a":
-		return "audio/mp4"
-	case "ogg":
-		return "audio/ogg"
-	case "webm":
-		return "audio/webm"
-	case "wav":
-		return "audio/wav"
-	default:
-		return "application/octet-stream"
+	switch {
+	case strings.Contains(base, "webm"):
+		return "audio/webm", "webm", nil
+	case strings.Contains(base, "ogg"):
+		return "audio/ogg", "ogg", nil
 	}
+	return "", "", fmt.Errorf("%w: %q", ErrUnsupportedContentType, base)
 }

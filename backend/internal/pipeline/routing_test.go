@@ -1,8 +1,7 @@
-package service
+package pipeline
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -10,36 +9,15 @@ import (
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// fakeNoteCreator stands in for NotesService.
-type fakeNoteCreator struct {
-	store  *memory.Store
-	seq    int
-	titles []string
-}
-
-func (f *fakeNoteCreator) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
-	f.seq++
-	id := fmt.Sprintf("new_%d", f.seq)
-	f.titles = append(f.titles, title)
-	note := model.NoteIndex{
-		ID:            id,
-		Title:         title,
-		S3MarkdownKey: fmt.Sprintf("tenants/%s/notes/%s/note.md", userID, id),
-	}
-	if _, err := f.store.PutNote(ctx, userID, note); err != nil {
-		return model.NoteIndex{}, err
-	}
-	return note, nil
-}
-
-// routingFixture builds a service with one existing note and an unrouted capture.
+// routingFixture builds a pipeline with one existing note and an unrouted
+// capture.
 type routingFixture struct {
-	svc     *CaptureService
+	h       *harness
 	store   *memory.Store
 	objects *memory.Objects
-	creator *fakeNoteCreator
 	router  *fake.Router
 	userID  string
 }
@@ -47,20 +25,18 @@ type routingFixture struct {
 func newRoutingFixture(t *testing.T, transcript string, decision provider.RouteDecision, routerFails bool) *routingFixture {
 	t.Helper()
 
-	store := memory.NewStore()
 	objects := memory.NewObjects()
-	creator := &fakeNoteCreator{store: store}
 	router := &fake.Router{Decision: decision, ShouldFail: routerFails}
-
-	svc := NewCaptureService(store, objects,
-		&fake.STT{Response: transcript},
-		&fake.LLM{},
-	).WithRouting(router, creator)
+	h := newHarness(t, harnessOpts{
+		objects: objects,
+		stt:     &fake.STT{Response: transcript},
+		router:  router,
+	})
 
 	ctx := context.Background()
 	userID := "user1"
 
-	if _, err := store.PutNote(ctx, userID, model.NoteIndex{
+	if _, err := h.store.PutNote(ctx, userID, model.NoteIndex{
 		ID:            "n1",
 		Title:         "Roof repair",
 		Aliases:       []string{"roof"},
@@ -76,14 +52,48 @@ func newRoutingFixture(t *testing.T, transcript string, decision provider.RouteD
 		t.Fatalf("Put audio: %v", err)
 	}
 	// NoteID is deliberately empty: the destination comes from routing.
-	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_1", UserID: userID, Status: model.StatusUploaded,
 		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
 	}); err != nil {
 		t.Fatalf("PutCapture: %v", err)
 	}
 
-	return &routingFixture{svc: svc, store: store, objects: objects, creator: creator, router: router, userID: userID}
+	return &routingFixture{h: h, store: h.store, objects: objects, router: router, userID: userID}
+}
+
+func (f *routingFixture) run(ctx context.Context, captureID string) (model.CaptureIndex, error) {
+	return f.h.pipeline.Run(ctx, f.userID, captureID)
+}
+
+// setTarget mirrors what the API does when the user resolves a needs_target
+// capture, then hands the capture back to the pipeline the way the queue does.
+func (f *routingFixture) setTarget(t *testing.T, captureID, noteID, newTitle string) model.CaptureIndex {
+	t.Helper()
+	ctx := context.Background()
+	svc := service.NewCaptureService(f.store, f.objects, nil, nil).
+		WithNoteCreator(f.h.creator).
+		WithQueue(directQueue{f.h.pipeline})
+
+	capture, err := svc.SetCaptureTarget(ctx, f.userID, captureID, noteID, newTitle)
+	if err != nil {
+		t.Fatalf("SetCaptureTarget: %v", err)
+	}
+	updated, err := f.store.GetCapture(ctx, f.userID, capture.ID)
+	if err != nil {
+		t.Fatalf("GetCapture: %v", err)
+	}
+	return updated
+}
+
+// directQueue stands in for SQS: the API enqueues, the worker runs. Collapsing
+// the two makes the test about the pipeline rather than about the transport,
+// while keeping the boundary the production code has.
+type directQueue struct{ p *Pipeline }
+
+func (q directQueue) EnqueueCapture(ctx context.Context, tenantID, captureID, reason string) error {
+	_, err := q.p.Run(ctx, tenantID, captureID)
+	return err
 }
 
 func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
@@ -97,9 +107,9 @@ func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	capture, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+		t.Fatalf("run: %v", err)
 	}
 
 	if capture.Status != model.StatusAppended {
@@ -108,16 +118,16 @@ func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 	if capture.NoteID != "n1" {
 		t.Fatalf("note_id = %q, want n1", capture.NoteID)
 	}
-	if len(f.creator.titles) != 0 {
-		t.Fatalf("created notes %v, want none", f.creator.titles)
+	if titles := f.h.creator.createdTitles(); len(titles) != 0 {
+		t.Fatalf("created notes %v, want none", titles)
 	}
 
 	body, err := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
 	if err != nil {
 		t.Fatalf("Get note body: %v", err)
 	}
-	// FakeLLM in faithful mode lowercases whatever it is given, so the body shows
-	// which text reached cleanup: the routing instruction must be gone.
+	// The fake LLM in faithful mode lowercases whatever it is given, so the body
+	// shows which text reached cleanup: the routing instruction must be gone.
 	if !strings.Contains(string(body), "the gutter is also leaking") {
 		t.Errorf("note body missing dictated text: %q", body)
 	}
@@ -140,9 +150,9 @@ func TestCompleteCaptureAsksWhenRoutingIsUncertain(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	capture, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+		t.Fatalf("run: %v", err)
 	}
 
 	if capture.Status != model.StatusNeedsTarget {
@@ -160,10 +170,10 @@ func TestCompleteCaptureAsksWhenRoutingIsUncertain(t *testing.T) {
 		t.Errorf("note was modified before confirmation: %q", body)
 	}
 
-	// Completing again must keep waiting rather than guess.
-	again, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	// A redelivered message must keep waiting rather than guess.
+	again, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("second CompleteCapture: %v", err)
+		t.Fatalf("second run: %v", err)
 	}
 	if again.Status != model.StatusNeedsTarget {
 		t.Errorf("status = %s, want needs_target", again.Status)
@@ -181,14 +191,11 @@ func TestSetCaptureTargetConfirmsSuggestion(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	if _, err := f.svc.CompleteCapture(ctx, f.userID, "c_1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx, "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 
-	capture, err := f.svc.SetCaptureTarget(ctx, f.userID, "c_1", "n1", "")
-	if err != nil {
-		t.Fatalf("SetCaptureTarget: %v", err)
-	}
+	capture := f.setTarget(t, "c_1", "n1", "")
 	if capture.Status != model.StatusAppended {
 		t.Fatalf("status = %s, want appended", capture.Status)
 	}
@@ -213,19 +220,16 @@ func TestSetCaptureTargetCanCreateNoteInstead(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	if _, err := f.svc.CompleteCapture(ctx, f.userID, "c_1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx, "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 
-	capture, err := f.svc.SetCaptureTarget(ctx, f.userID, "c_1", "", "Gutter leak")
-	if err != nil {
-		t.Fatalf("SetCaptureTarget: %v", err)
-	}
+	capture := f.setTarget(t, "c_1", "", "Gutter leak")
 	if capture.Status != model.StatusAppended {
 		t.Fatalf("status = %s, want appended", capture.Status)
 	}
-	if len(f.creator.titles) != 1 || f.creator.titles[0] != "Gutter leak" {
-		t.Fatalf("created titles = %v, want [Gutter leak]", f.creator.titles)
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Gutter leak" {
+		t.Fatalf("created titles = %v, want [Gutter leak]", titles)
 	}
 
 	untouched, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
@@ -239,11 +243,14 @@ func TestSetCaptureTargetRejectsAlreadyRoutedCapture(t *testing.T) {
 		provider.RouteDecision{Action: provider.RouteNew, Title: "Hello", Confidence: 1, Content: "hello"}, false)
 
 	ctx := context.Background()
-	if _, err := f.svc.CompleteCapture(ctx, f.userID, "c_1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx, "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 
-	if _, err := f.svc.SetCaptureTarget(ctx, f.userID, "c_1", "n1", ""); err == nil {
+	svc := service.NewCaptureService(f.store, f.objects, nil, nil).
+		WithNoteCreator(f.h.creator).
+		WithQueue(directQueue{f.h.pipeline})
+	if _, err := svc.SetCaptureTarget(ctx, f.userID, "c_1", "n1", ""); err == nil {
 		t.Fatal("expected error when retargeting a routed capture")
 	}
 }
@@ -259,24 +266,24 @@ func TestCompleteCaptureCreatesNoteWithSpokenTitle(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	capture, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+		t.Fatalf("run: %v", err)
 	}
 
 	if capture.Status != model.StatusAppended {
 		t.Fatalf("status = %s, want appended", capture.Status)
 	}
-	if len(f.creator.titles) != 1 || f.creator.titles[0] != "Dentist appointment reminder" {
-		t.Fatalf("created titles = %v, want [Dentist appointment reminder]", f.creator.titles)
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Dentist appointment reminder" {
+		t.Fatalf("created titles = %v, want [Dentist appointment reminder]", titles)
 	}
 	if capture.NoteID == "" {
 		t.Error("capture has no note_id after creating a note")
 	}
 }
 
-// Asking only for a note is not dictation: the note is created and its body stays empty
-// rather than being filled with the instruction the speaker gave.
+// Asking only for a note is not dictation: the note is created and its body
+// stays empty rather than being filled with the instruction the speaker gave.
 func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T) {
 	f := newRoutingFixture(t, "Create a note with the title test123",
 		provider.RouteDecision{
@@ -288,16 +295,16 @@ func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T
 	f.router.NoContent = true
 
 	ctx := context.Background()
-	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	capture, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+		t.Fatalf("run: %v", err)
 	}
 
 	if capture.Status != model.StatusNoContent {
 		t.Fatalf("status = %s, want no_content", capture.Status)
 	}
-	if len(f.creator.titles) != 1 || f.creator.titles[0] != "test123" {
-		t.Fatalf("created titles = %v, want [test123]", f.creator.titles)
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "test123" {
+		t.Fatalf("created titles = %v, want [test123]", titles)
 	}
 
 	note := mustGetNote(t, f.store, f.userID, capture.NoteID)
@@ -306,10 +313,10 @@ func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T
 		t.Errorf("note body = %q, want empty", body)
 	}
 
-	// Completing again must not append the instruction on a second pass.
-	again, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	// A redelivery must not append the instruction on a second pass.
+	again, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("second CompleteCapture: %v", err)
+		t.Fatalf("second run: %v", err)
 	}
 	if again.Status != model.StatusNoContent {
 		t.Errorf("status = %s, want no_content", again.Status)
@@ -319,8 +326,8 @@ func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T
 	}
 }
 
-// A spoken title is honoured, so it must not be able to carry structure into storage
-// or into the candidate list of a later routing prompt.
+// A spoken title is honoured, so it must not be able to carry structure into
+// storage or into the candidate list of a later routing prompt.
 func TestCompleteCaptureBoundsSpokenTitle(t *testing.T) {
 	f := newRoutingFixture(t, "title this whatever and here are my notes",
 		provider.RouteDecision{
@@ -331,19 +338,20 @@ func TestCompleteCaptureBoundsSpokenTitle(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	if _, err := f.svc.CompleteCapture(ctx, f.userID, "c_1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx, "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 
-	if len(f.creator.titles) != 1 {
-		t.Fatalf("created titles = %v, want one note", f.creator.titles)
+	titles := f.h.creator.createdTitles()
+	if len(titles) != 1 {
+		t.Fatalf("created titles = %v, want one note", titles)
 	}
-	title := f.creator.titles[0]
+	title := titles[0]
 	if strings.ContainsAny(title, "\n\r\t") {
 		t.Errorf("title = %q, want a single line", title)
 	}
-	if n := len([]rune(title)); n > maxNoteTitleLen {
-		t.Errorf("title length = %d, want <= %d", n, maxNoteTitleLen)
+	if n := len([]rune(title)); n > 120 {
+		t.Errorf("title length = %d, want <= 120", n)
 	}
 }
 
@@ -355,15 +363,13 @@ func TestSetCaptureTargetBoundsTypedTitle(t *testing.T) {
 		}, false)
 
 	ctx := context.Background()
-	if _, err := f.svc.CompleteCapture(ctx, f.userID, "c_1"); err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+	if _, err := f.run(ctx, "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 
-	if _, err := f.svc.SetCaptureTarget(ctx, f.userID, "c_1", "", "Gutter\nleak"); err != nil {
-		t.Fatalf("SetCaptureTarget: %v", err)
-	}
-	if len(f.creator.titles) != 1 || f.creator.titles[0] != "Gutter leak" {
-		t.Errorf("created titles = %v, want [Gutter leak]", f.creator.titles)
+	f.setTarget(t, "c_1", "", "Gutter\nleak")
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Gutter leak" {
+		t.Errorf("created titles = %v, want [Gutter leak]", titles)
 	}
 }
 
@@ -371,20 +377,21 @@ func TestCompleteCaptureSavesNoteWhenRouterFails(t *testing.T) {
 	f := newRoutingFixture(t, "some dictated words", provider.RouteDecision{}, true)
 
 	ctx := context.Background()
-	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_1")
+	capture, err := f.run(ctx, "c_1")
 	if err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+		t.Fatalf("run: %v", err)
 	}
 
 	// A router outage must not cost the user their recording.
 	if capture.Status != model.StatusAppended {
 		t.Fatalf("status = %s, want appended", capture.Status)
 	}
-	if len(f.creator.titles) != 1 {
-		t.Fatalf("created titles = %v, want one fallback note", f.creator.titles)
+	titles := f.h.creator.createdTitles()
+	if len(titles) != 1 {
+		t.Fatalf("created titles = %v, want one fallback note", titles)
 	}
-	if !strings.HasPrefix(f.creator.titles[0], "Voice note ") {
-		t.Errorf("fallback title = %q, want a timestamped voice note", f.creator.titles[0])
+	if !strings.HasPrefix(titles[0], "Voice note ") {
+		t.Errorf("fallback title = %q, want a timestamped voice note", titles[0])
 	}
 
 	body, _ := f.objects.Get(ctx, mustGetNote(t, f.store, f.userID, capture.NoteID).S3MarkdownKey)
@@ -406,25 +413,14 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 		t.Fatalf("PutCapture: %v", err)
 	}
 
-	capture, err := f.svc.CompleteCapture(ctx, f.userID, "c_2")
+	capture, err := f.run(ctx, "c_2")
 	if err != nil {
-		t.Fatalf("CompleteCapture: %v", err)
+		t.Fatalf("run: %v", err)
 	}
 	if capture.NoteID != "n1" {
 		t.Errorf("note_id = %q, want n1", capture.NoteID)
 	}
-	if len(f.router.Calls) != 0 {
-		t.Errorf("router was consulted %d times, want 0", len(f.router.Calls))
+	if n := f.router.CallCount(); n != 0 {
+		t.Errorf("router was consulted %d times, want 0", n)
 	}
-}
-
-// mustGetNote reads a note through the store rather than reaching into it, so
-// the fixtures work against any repository.Store implementation.
-func mustGetNote(t *testing.T, store *memory.Store, userID, noteID string) model.NoteIndex {
-	t.Helper()
-	note, err := store.GetNote(context.Background(), userID, noteID)
-	if err != nil {
-		t.Fatalf("GetNote(%s): %v", noteID, err)
-	}
-	return note
 }
