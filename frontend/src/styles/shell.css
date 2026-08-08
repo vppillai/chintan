@@ -8,14 +8,36 @@
  * Tokens only — no literal colour or font size lives here.
  */
 
+/*
+ * The shell is exactly one viewport tall, and `.app__main` is the only thing
+ * that scrolls.
+ *
+ * `min-height` alone was not enough, and that was the app's worst layout bug.
+ * With no definite block size on the grid container, the `1fr` row has no free
+ * space to be a fraction *of*, so it sizes to its content: on any screen taller
+ * than the viewport — settings on a phone, a note with a long transcript, the
+ * home surface in landscape — the middle row grew, `overflow-y: auto` never
+ * engaged, the document scrolled instead, and the bottom bar (with the record
+ * button in it) was carried off the bottom of the screen with nothing to bring
+ * it back. `block-size` makes the track definite, so the row is bounded and
+ * main scrolls inside it as designed.
+ *
+ * `100vh` first as the fallback for browsers without `dvh`; `dvh` is what makes
+ * this correct while a mobile URL bar or an on-screen keyboard is changing the
+ * viewport underneath us.
+ */
 .app {
   display: grid;
-  /* banner | main | strip-or-bar */
-  grid-template-rows: auto 1fr auto;
+  /* banner | main | everything the shell stacks below it (auto rows) */
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-auto-rows: auto;
+  min-height: 100vh;
   min-height: 100dvh;
+  block-size: 100vh;
+  block-size: 100dvh;
   background-color: var(--color-ground);
-  padding-block-start: env(safe-area-inset-top, 0);
-  padding-inline: env(safe-area-inset-left, 0) env(safe-area-inset-right, 0);
+  padding-block-start: var(--safe-top);
+  padding-inline: var(--safe-left) var(--safe-right);
 }
 
 /* --------------------------------------------------------------------------
@@ -47,11 +69,18 @@
    locked    : the capture screen, sheet shut.
    -------------------------------------------------------------------------- */
 
+/*
+ * `scroll-padding` is the focus ring's clearance. `scrollIntoView` — which is
+ * what a browser does when Tab lands on something below the fold — aligns the
+ * element's border box, not its outline, so the 3px ring and its 2px offset get
+ * shaved off at the edge of every scroll container in the app.
+ */
 .app__main {
   position: relative;
   min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
   transition:
     background-color var(--motion-duration-base) var(--motion-ease-standard),
     border-radius var(--motion-duration-base) var(--motion-ease-standard),
@@ -59,9 +88,21 @@
     margin var(--motion-duration-base) var(--motion-ease-decelerate);
 }
 
+/*
+ * `safe center`, not `center`. A centred grid item taller than its container
+ * overflows equally in both directions, and the half above the scroll origin
+ * is unreachable — which is what happened to the record surface on a landscape
+ * phone. `safe` falls back to `start` the moment the content stops fitting, so
+ * it scrolls from the top instead of hiding its first line.
+ *
+ * `justify-items: stretch` because the screens inside carry their own
+ * `--layout-content-max`; centring them here as well made them shrink-wrap,
+ * which is why the capture waveform was a ~300px island on a 1920px display.
+ */
 [data-sheet-state='collapsed'] .app__main {
   display: grid;
-  place-items: center;
+  align-content: safe center;
+  justify-items: stretch;
   background-color: var(--color-ground);
 }
 
@@ -77,7 +118,8 @@
 
 [data-sheet-state='locked'] .app__main {
   display: grid;
-  place-items: center;
+  align-content: safe center;
+  justify-items: stretch;
   background-color: var(--color-ground);
 }
 
@@ -142,8 +184,12 @@
 .home {
   display: grid;
   justify-items: center;
+  align-content: center;
   gap: var(--space-8);
-  padding: var(--space-8) var(--space-6);
+  inline-size: 100%;
+  max-inline-size: var(--layout-content-max);
+  margin-inline: auto;
+  padding: var(--space-8) var(--layout-gutter);
 }
 
 .home__hint {
@@ -165,7 +211,7 @@
   border-start-start-radius: var(--radius-2xl);
   border-start-end-radius: var(--radius-2xl);
   box-shadow: var(--shadow-sheet);
-  padding-block: var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  padding-block: var(--space-2) calc(var(--space-2) + var(--safe-bottom));
 }
 
 .strip__grip {
@@ -180,11 +226,17 @@
   opacity: 0.7;
 }
 
+/*
+ * Full-bleed background, content in the same column as the screens above it.
+ * Without the `max()` the three destinations were flung to the corners of an
+ * ultra-wide display while the library sat in a 42rem column in the middle.
+ */
 .strip__list {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   margin: 0;
-  padding: var(--space-4) var(--space-2) 0;
+  padding-block: var(--space-4) 0;
+  padding-inline: max(var(--space-2), (100% - var(--layout-content-max)) / 2);
   list-style: none;
 }
 
@@ -226,8 +278,9 @@
   align-items: center;
   gap: var(--space-2);
   min-block-size: var(--layout-bottom-bar-height);
-  padding: var(--space-2) var(--space-3);
-  padding-block-end: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  padding-block: var(--space-2) calc(var(--space-2) + var(--safe-bottom));
+  /* Same content column as the screens; see `.strip__list`. */
+  padding-inline: max(var(--space-3), (100% - var(--layout-content-max)) / 2);
   background-color: var(--color-raised);
   border-block-start: 1px solid var(--color-line);
 }
@@ -279,7 +332,7 @@
 .screen {
   max-inline-size: var(--layout-content-max);
   margin-inline: auto;
-  padding: var(--space-4) var(--space-5) var(--space-8);
+  padding: var(--space-4) var(--layout-gutter) var(--space-8);
 }
 
 .screen__header {
@@ -381,11 +434,35 @@
 
 .note-row__meta {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-1);
   align-items: baseline;
   padding-block-start: var(--space-1);
   font-size: var(--font-size-xs);
   color: var(--color-faint);
+}
+
+/* The date is one token and must never be broken across lines. Without this it
+   shrank against a long tag list and rendered as "Aug" over "6". */
+.note-row__date {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Twenty tags is a legal note. One line of them is a summary; four lines is the
+   tag list wearing the note row as a hat. */
+.note-row__tags {
+  /* `flex: 1 1 0` rather than `auto`, so a long tag list takes the space left
+     over instead of demanding its own line: date, separator and tags stay on
+     one line and the tags truncate. Twenty tags is a legal note, and four lines
+     of them is the tag list wearing the note row as a hat. */
+  flex: 1 1 0;
+  min-inline-size: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* --------------------------------------------------------------------------
@@ -507,8 +584,11 @@
   display: grid;
   justify-items: center;
   gap: var(--space-6);
+  inline-size: 100%;
+  min-inline-size: 0;
   max-inline-size: var(--layout-content-max);
-  padding: var(--space-8) var(--space-5);
+  margin-inline: auto;
+  padding: var(--space-8) var(--layout-gutter);
   text-align: center;
 }
 
@@ -524,11 +604,19 @@
   color: var(--color-ink);
 }
 
+/*
+ * A single explicitly-sized grid area, and `overflow: hidden` as the backstop.
+ * The canvas inside is a replaced element, and a replaced element is the one
+ * thing that will happily ignore the box you drew for it.
+ */
 .capture__waveform {
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   inline-size: 100%;
   block-size: 6rem;
+  padding: var(--space-3);
+  overflow: hidden;
   background-color: var(--color-surface);
   border-radius: var(--radius-lg);
 }
@@ -545,9 +633,21 @@
   color: var(--color-muted);
 }
 
+/*
+ * Wrapping, and allowed to be narrower than its buttons.
+ *
+ * Three pill buttons side by side have a min-content width of ~281px, and a
+ * grid item's automatic minimum size is that width — so on a 320px phone the
+ * capture surface measured 320.53px and pushed the document half a pixel wide.
+ * At a larger browser text size the same rule pushes Stop off the screen
+ * entirely, which is the version of this bug that actually loses a recording.
+ */
 .capture__controls {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: var(--space-4);
+  min-inline-size: 0;
 }
 
 .capture__control {
@@ -571,18 +671,25 @@
    exactly what this is.
    -------------------------------------------------------------------------- */
 
+/*
+ * Stretched into its grid area, not sized at 100%.
+ *
+ * `block-size: 100%` on a canvas inside a `place-items: center` area does not
+ * resolve in Chrome, so the element fell back to the intrinsic 300×150 of a
+ * bare <canvas>. Inside a 96px panel that is 54px of overspill, and because the
+ * drawing code reads `clientHeight`, the bars were painted to fill all 150px —
+ * straight through the Cancel / Pause / Stop row 42px below. That is the
+ * "partially overlapping" the app was reported for.
+ *
+ * `stretch` needs `auto` sizes to apply, which is why both are reset here.
+ */
 .waveform {
-  inline-size: 100%;
-  block-size: 100%;
+  place-self: stretch;
+  inline-size: auto;
+  block-size: auto;
+  min-inline-size: 0;
+  min-block-size: 0;
   color: var(--color-accent);
-}
-
-[data-sheet-state='locked'] .capture__waveform {
-  inline-size: 100%;
-  block-size: 6rem;
-  padding: var(--space-3);
-  background-color: var(--color-surface);
-  border-radius: var(--radius-lg);
 }
 
 .capture__state {
@@ -624,10 +731,28 @@
    precisely what v1's did.
    -------------------------------------------------------------------------- */
 
+/*
+ * The stack is a shell row, so it shares the screens' content column — before
+ * that it ran the full width of an ultra-wide display while the note list sat
+ * in a 42rem column, parking Retry a thousand pixels from the text it belonged
+ * to.
+ *
+ * The height cap matters more than it looks: the number of pending captures is
+ * unbounded, and the shell is now exactly one viewport tall, so without it a
+ * backlog of cards would squeeze `.app__main` to nothing and then push the
+ * bottom bar out of the box entirely.
+ */
 .progress-stack {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
+  inline-size: 100%;
+  max-inline-size: var(--layout-content-max);
+  margin-inline: auto;
+  padding: var(--space-2) var(--layout-gutter);
+  max-block-size: 38dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
 }
 
 .progress-card {
@@ -876,16 +1001,21 @@
   gap: var(--space-1);
   max-block-size: 22rem;
   overflow-y: auto;
+  scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
+/* Every line is a seek target, so it carries the same 44px floor as every
+   other control — it was 36px, which is a miss on a moving vehicle. */
 .transcript__line {
   display: grid;
   grid-template-columns: auto 1fr;
+  align-items: center;
   gap: var(--space-3);
   inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
   padding: var(--space-2) var(--space-3);
   text-align: start;
   border-radius: var(--radius-md);
@@ -933,6 +1063,11 @@
 
 .note-title-input {
   inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  /* A dictated title can run to a hundred characters. An unfocused input cuts
+     it off mid-word with no sign there is more; the ellipsis at least says so.
+     The field still scrolls its full value once focused. */
+  text-overflow: ellipsis;
   font-family: var(--font-serif);
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-semibold);
@@ -1062,6 +1197,7 @@
 
 .tag-editor__input {
   inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
   padding: var(--space-2) var(--space-3);
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
@@ -1160,6 +1296,7 @@
 
 .settings-input {
   inline-size: 7rem;
+  min-block-size: var(--layout-touch-target-min);
   padding: var(--space-2) var(--space-3);
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
@@ -1189,7 +1326,11 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  margin: var(--space-2) var(--space-4);
+  /* Lines its edges up with the note rows; see `--layout-card-max`. */
+  inline-size: calc(100% - 2 * var(--layout-gutter));
+  max-inline-size: var(--layout-card-max);
+  margin-block: var(--space-2);
+  margin-inline: auto;
   padding: var(--space-3) var(--space-4);
   background-color: var(--color-raised);
   border: 1px solid var(--color-accent);
@@ -1234,15 +1375,25 @@
   color: var(--color-ground);
 }
 
+/*
+ * A shell row, not a floating toast.
+ *
+ * It used to be `position: fixed` against the bottom of the viewport at
+ * `--z-toast`, which put it 68px over the bottom bar and 55px over the record
+ * button — covering the one control the product exists to offer, on every
+ * screen, for as long as an update was pending. The shell already reserves a
+ * row for it, and the same reasoning is written above `.bottom-bar`: content in
+ * flow cannot overlay anything.
+ */
 .update-prompt {
-  position: fixed;
-  inset-inline: var(--space-4);
-  inset-block-end: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
-  z-index: var(--z-toast);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  inline-size: calc(100% - 2 * var(--layout-gutter));
+  max-inline-size: var(--layout-card-max);
+  margin-block-end: var(--space-2);
+  margin-inline: auto;
   padding: var(--space-3) var(--space-4);
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
@@ -1264,17 +1415,38 @@
    Confirm dialog
    -------------------------------------------------------------------------- */
 
+/*
+ * `safe center` plus a scrollable layer, plus the safe-area insets.
+ *
+ * A plain `place-items: center` layer with no overflow centres a dialog taller
+ * than the viewport and then hides both ends of it: on a landscape phone with
+ * the keyboard open (~300px of height) the confirm button sat 56px below the
+ * fold with nothing to scroll, which turns a destructive confirmation into a
+ * dead end. `safe` degrades to `start` the moment it stops fitting, and the
+ * layer scrolls the rest.
+ *
+ * The insets are spelled out because this layer is `position: fixed` and so
+ * escapes the padding `.app` applies — a notch would otherwise cut the title.
+ */
 .dialog-layer {
   position: fixed;
   inset: 0;
   z-index: var(--z-dialog);
   display: grid;
-  place-items: center;
-  padding: var(--space-4);
+  place-items: safe center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
+  padding-block: calc(var(--space-4) + var(--safe-top))
+    calc(var(--space-4) + var(--safe-bottom));
+  padding-inline: calc(var(--space-4) + var(--safe-left))
+    calc(var(--space-4) + var(--safe-right));
 }
 
+/* Fixed, not absolute: the layer scrolls now, and a scrim that scrolls with it
+   uncovers the page at exactly the moment the dialog is longest. */
 .dialog-scrim {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background-color: var(--color-overlay);
 }

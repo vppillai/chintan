@@ -23,13 +23,13 @@ export function NoteRow({ note }: { note: NoteWire }) {
       <span className="note-row__title">{note.title}</span>
       {note.snippet && <span className="note-row__snippet">{note.snippet}</span>}
       <span className="note-row__meta">
-        <time className="numeric" dateTime={note.updated_at}>
+        <time className="note-row__date numeric" dateTime={note.updated_at}>
           {formatUpdated(note.updated_at)}
         </time>
         {tags.length > 0 && (
           <>
             <span aria-hidden="true">·</span>
-            <span>{tags.join(', ')}</span>
+            <span className="note-row__tags">{tags.join(', ')}</span>
           </>
         )}
       </span>

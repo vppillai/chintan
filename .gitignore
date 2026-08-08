@@ -16,6 +16,9 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 frontend/.playwright/
+# The full layout sweep (LAYOUT_SHOTS=1) is ~280 images and is regenerated on
+# demand. The curated before/after pairs docs/ui-audit.md cites are committed.
+frontend/e2e/__screenshots__/sweep/
 
 .superpowers/
 .worktrees/

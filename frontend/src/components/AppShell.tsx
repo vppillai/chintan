@@ -90,10 +90,16 @@ export function AppShell() {
           </>
         )}
 
+        {/*
+          Above the bar, not over it. The update prompt is a shell row like the
+          progress card, so it can never cover the record button — which is what
+          it did while it was a fixed-position toast.
+        */}
+        <UpdatePrompt />
+
         {sheet.state === 'collapsed' && <LibraryStrip />}
         {sheet.state === 'expanded' && <BottomBar />}
 
-        <UpdatePrompt />
         <StatusRegion message={announcementFor(location.pathname)} />
       </div>
     </>
