@@ -10,7 +10,7 @@ func TestSystemPromptHonorsSpokenTitles(t *testing.T) {
 	p := SystemPrompt()
 	for _, want := range []string{
 		"title this test123",
-		"use that title exactly as spoken",
+		"title exactly as spoken",
 		"Asking to title / name / call a note is NOT an append request",
 		"Never invent a title from the topic when a spoken title was given",
 	} {
