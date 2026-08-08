@@ -9,6 +9,7 @@ package obs
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -31,11 +32,21 @@ var (
 	base      *slog.Logger
 )
 
-// Setup installs a JSON handler on the default logger. Safe to call more than
-// once; only the first call takes effect.
+// Setup installs a JSON handler writing to stdout. Safe to call more than once;
+// only the first call takes effect.
+//
+// Stdout is correct in Lambda, where the runtime forwards it to CloudWatch. A
+// CLI should use SetupTo(os.Stderr, ...) instead, because there stdout carries
+// the command's result and interleaving log lines into it makes `--json` output
+// unparseable.
 func Setup(level slog.Level) {
+	SetupTo(os.Stdout, level)
+}
+
+// SetupTo installs a JSON handler writing to w.
+func SetupTo(w io.Writer, level slog.Level) {
 	setupOnce.Do(func() {
-		base = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+		base = slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: level}))
 		slog.SetDefault(base)
 	})
 }
