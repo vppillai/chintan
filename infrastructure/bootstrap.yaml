@@ -444,10 +444,31 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              # GitHub issues immutable subjects (owner@id/repo@id). Accept both
-              # legacy and immutable forms for environment:production only.
+              # GitHub issues immutable subjects (owner@id/repo@id), so both the
+              # legacy and immutable forms are accepted for each environment.
+              #
+              # Scoping is per environment rather than per branch. A `ref:` subject
+              # would let ANY job on main assume this role; an `environment:`
+              # subject only lets a job that declares that environment do so,
+              # which is a property the workflow states out loud and GitHub
+              # enforces.
+              #
+              # Every credentialed job must therefore declare an `environment:`.
+              # A job that omits it gets subject `repo:owner/repo:ref:refs/heads/main`,
+              # matches nothing here, and fails with "Not authorized to perform
+              # sts:AssumeRoleWithWebIdentity" -- which is what happened when the
+              # build step was split out of the deploy jobs and shipped with no
+              # environment. Nothing in CI can catch that; it only fails against
+              # real STS.
               StringLike:
                 token.actions.githubusercontent.com:sub:
+                  # Builds the artifact and uploads it to the artifact bucket.
+                  # Separate from the deploy environments so that gating prod
+                  # does not gate compiling.
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:build'
+                  - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:build'
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:staging'
+                  - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:staging'
                   - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
                   - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:production'
       Tags:

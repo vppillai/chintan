@@ -111,6 +111,9 @@ jobs:
   build:
     name: Build Lambda
     runs-on: ubuntu-latest
+    # Required: the OIDC trust policy scopes by environment, and a job
+    # without one gets a ref: subject that matches nothing.
+    environment: build
     needs: test
     outputs:
       artifact_key: ${{ steps.upload.outputs.key }}

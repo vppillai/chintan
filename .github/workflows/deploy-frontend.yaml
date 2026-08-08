@@ -42,6 +42,9 @@ jobs:
   build:
     name: Build instance bundles
     runs-on: ubuntu-latest
+    # Required: the OIDC trust policy scopes by environment, and a job
+    # without one gets a ref: subject that matches nothing.
+    environment: build
     # Only auto-follow a successful backend deploy; a manual run or a
     # frontend-only push is unconditional.
     if: >-
