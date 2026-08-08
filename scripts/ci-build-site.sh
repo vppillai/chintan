@@ -117,7 +117,8 @@ while IFS= read -r entry; do
     # `--short` because it is read off a phone screen. A shallow CI checkout
     # still has HEAD, and outside a work tree the frontend falls back to
     # LOCAL_VERSION rather than rendering an empty line.
-    local version
+    #
+    # Not `local`: this block is a loop body at top level, not a function.
     version="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
     info "building $site_path from $stack"
