@@ -40,10 +40,19 @@ func TestBiometricRoutesAreUnavailableWhenNotConfigured(t *testing.T) {
 func TestUnauthenticatedLoginRoutesAreRateLimitedPerIP(t *testing.T) {
 	h := newHarness(t)
 
+	// Callers are distinguished by the address they connect from, which the
+	// Lambda adapter writes into RemoteAddr from requestContext.http.sourceIp.
+	// This test used to distinguish them by X-Forwarded-For — the header API
+	// Gateway *appends* to rather than replaces, so it is caller-supplied and
+	// rotating it minted a fresh window per request. Both callers below present
+	// the same forged header, so only the connecting address can separate them.
+	const forged = "203.0.113.9"
+
 	limited := false
 	for i := 0; i < 30; i++ {
+		h.remoteAddr = "198.51.100.7:41234"
 		w := h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil,
-			[2]string{"X-Forwarded-For", "203.0.113.9"})
+			[2]string{"X-Forwarded-For", forged})
 		if w.Code == http.StatusTooManyRequests {
 			limited = true
 			if w.Header().Get("Retry-After") == "" {
@@ -59,8 +68,9 @@ func TestUnauthenticatedLoginRoutesAreRateLimitedPerIP(t *testing.T) {
 
 	// The limit is per address, so one flooding caller does not lock everybody
 	// else out of biometric unlock.
+	h.remoteAddr = "198.51.100.8:41234"
 	w := h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil,
-		[2]string{"X-Forwarded-For", "198.51.100.4"})
+		[2]string{"X-Forwarded-For", forged})
 	if w.Code == http.StatusTooManyRequests {
 		t.Fatal("a second address was refused because of the first")
 	}

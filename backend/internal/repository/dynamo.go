@@ -132,13 +132,15 @@ type dynamoItem struct {
 // `snippet` is kept because note matching scores against it; dropping it to
 // save bytes would silently degrade routing, which is a worse defect than the
 // one being fixed.
-const noteListProjection = "pk, sk, note_id, title, aliases, tags, snippet, updated_at, s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, version"
+const noteListProjection = "pk, sk, note_id, title, aliases, tags, snippet, created_at, updated_at, s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, version"
 
 func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
 
 func numAttr(v int64) types.AttributeValue {
 	return &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", v)}
 }
+
+func boolAttr(v bool) types.AttributeValue { return &types.AttributeValueMemberBOOL{Value: v} }
 
 func strListAttr(v []string) types.AttributeValue {
 	list := make([]types.AttributeValue, 0, len(v))
@@ -165,6 +167,13 @@ func readInt(m map[string]types.AttributeValue, name string) int64 {
 		return 0
 	}
 	return out
+}
+
+func readBool(m map[string]types.AttributeValue, name string) bool {
+	if v, ok := m[name].(*types.AttributeValueMemberBOOL); ok {
+		return v.Value
+	}
+	return false
 }
 
 func readStrings(m map[string]types.AttributeValue, name string) []string {
@@ -247,11 +256,13 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		"aliases":         strListAttr(n.Aliases),
 		"tags":            strListAttr(n.Tags),
 		"snippet":         strAttr(n.Snippet),
+		"created_at":      strAttr(n.CreatedAt),
 		"updated_at":      strAttr(n.UpdatedAt),
 		"s3_markdown_key": strAttr(n.S3MarkdownKey),
 		"s3_meta_key":     strAttr(n.S3MetaKey),
 		"deleted_at":      strAttr(n.DeletedAt),
 		"purge_after":     strAttr(n.PurgeAfter),
+		"verbatim":        boolAttr(n.Verbatim),
 		"version":         numAttr(n.Version),
 		"data":            strAttr(string(blob)),
 	}
@@ -265,28 +276,43 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 	return item, nil
 }
 
+// noteFromItem rebuilds a note from a stored item.
+//
+// The record blob is decoded first and the promoted attributes are overlaid on
+// top, the way captureFromItem does. Rebuilding from the promoted attributes
+// alone is what silently destroyed `verbatim` and `created_at` on every read:
+// a field that exists on the model but was never promoted read back as its zero
+// value, and the next update wrote that zero into the blob permanently. With
+// the overlay, a field nobody remembered to promote degrades to "not carried by
+// a projection-only read" instead of "erased".
 func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
-	if _, ok := m["note_id"]; !ok {
-		// Item written before attributes were promoted: the blob is all there is.
-		var n model.NoteIndex
-		if err := json.Unmarshal([]byte(readString(m, "data")), &n); err != nil {
+	var n model.NoteIndex
+	if blob := readString(m, "data"); blob != "" {
+		if err := json.Unmarshal([]byte(blob), &n); err != nil {
 			return model.NoteIndex{}, fmt.Errorf("dynamo decode note: %w", err)
 		}
+	}
+	if _, ok := m["note_id"]; !ok {
+		// Item written before attributes were promoted: the blob is all there is.
 		return n, nil
 	}
-	n := model.NoteIndex{
-		ID:              readString(m, "note_id"),
-		Title:           readString(m, "title"),
-		Aliases:         readStrings(m, "aliases"),
-		Tags:            readStrings(m, "tags"),
-		Snippet:         readString(m, "snippet"),
-		UpdatedAt:       readString(m, "updated_at"),
-		S3MarkdownKey:   readString(m, "s3_markdown_key"),
-		S3MetaKey:       readString(m, "s3_meta_key"),
-		DeletedAt:       readString(m, "deleted_at"),
-		PurgeAfter:      readString(m, "purge_after"),
-		PurgeAfterEpoch: readInt(m, "purge_after_epoch"),
-		Version:         readInt(m, "version"),
+	n.ID = readString(m, "note_id")
+	n.Title = readString(m, "title")
+	n.Aliases = readStrings(m, "aliases")
+	n.Tags = readStrings(m, "tags")
+	n.Snippet = readString(m, "snippet")
+	n.CreatedAt = readString(m, "created_at")
+	n.UpdatedAt = readString(m, "updated_at")
+	n.S3MarkdownKey = readString(m, "s3_markdown_key")
+	n.S3MetaKey = readString(m, "s3_meta_key")
+	n.DeletedAt = readString(m, "deleted_at")
+	n.PurgeAfter = readString(m, "purge_after")
+	n.PurgeAfterEpoch = readInt(m, "purge_after_epoch")
+	n.Version = readInt(m, "version")
+	// Only overwrite what the read actually projected, so a partial projection
+	// never blanks a field the blob already supplied.
+	if _, ok := m["verbatim"]; ok {
+		n.Verbatim = readBool(m, "verbatim")
 	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}

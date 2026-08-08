@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -721,4 +722,165 @@ func TestGSI1ProjectionCoversWhatTheCaptureListReads(t *testing.T) {
 	if projected["data"] {
 		t.Error("gsi1 projects the `data` blob; the index now duplicates every capture body")
 	}
+}
+
+// ------------------------------------------------------- field round-trips
+
+// populatedNote fills every exported field of model.NoteIndex with a
+// distinctive non-zero value.
+//
+// It walks the struct by reflection rather than listing fields by hand, so a
+// field added to the model later is covered by the round-trip tests without
+// anybody remembering to extend them. An unhandled field kind is a hard failure
+// here rather than a silently unasserted field.
+func populatedNote(t *testing.T) model.NoteIndex {
+	t.Helper()
+	var n model.NoteIndex
+	v := reflect.ValueOf(&n).Elem()
+	typ := v.Type()
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if !f.IsExported() {
+			t.Fatalf("model.NoteIndex.%s is unexported; the round-trip test cannot populate it", f.Name)
+		}
+		fv := v.Field(i)
+		lower := strings.ToLower(f.Name)
+		switch {
+		case f.Type.Kind() == reflect.String:
+			fv.SetString("rt-" + lower)
+		case f.Type.Kind() == reflect.Bool:
+			fv.SetBool(true)
+		case f.Type.Kind() == reflect.Int64:
+			fv.SetInt(int64(1_700_000_000 + i))
+		case f.Type.Kind() == reflect.Slice && f.Type.Elem().Kind() == reflect.String:
+			fv.Set(reflect.ValueOf([]string{lower + "-one", lower + "-two"}))
+		default:
+			t.Fatalf("model.NoteIndex.%s is a %s; teach populatedNote how to fill it", f.Name, f.Type.Kind())
+		}
+	}
+	// Three fields carry store semantics rather than being opaque payload.
+	// Version is the optimistic-concurrency counter the write conditions on, so
+	// a first write has to carry 0; PurgeAfter/PurgeAfterEpoch have to name a
+	// future instant or the archived list filters the note out before it can be
+	// compared.
+	n.Version = 0
+	purge := time.Now().Add(24 * time.Hour).Truncate(time.Second)
+	n.PurgeAfterEpoch = purge.Unix()
+	n.PurgeAfter = model.FormatTime(purge)
+	return n
+}
+
+// noteFieldDiffs names every exported field whose value did not survive.
+func noteFieldDiffs(want, got model.NoteIndex) []string {
+	wv, gv := reflect.ValueOf(want), reflect.ValueOf(got)
+	var diffs []string
+	for i := 0; i < wv.NumField(); i++ {
+		f := wv.Type().Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		a, b := wv.Field(i).Interface(), gv.Field(i).Interface()
+		if !reflect.DeepEqual(a, b) {
+			diffs = append(diffs, fmt.Sprintf("%s: want %#v, got %#v", f.Name, a, b))
+		}
+	}
+	return diffs
+}
+
+// A note read back has to be the note that was written, field for field.
+//
+// The v1 assertions here checked ID, Title and Version only, which is why
+// `verbatim` and `created_at` could be dropped on every single read without a
+// test noticing: the store rebuilt the model from promoted attributes and those
+// two were never promoted. `verbatim` in particular is the flag that says "do
+// not reword this dictation", so losing it silently sends content through
+// cleanup the user explicitly excluded.
+func TestNoteRoundTripPreservesEveryField(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store := newStore()
+		ctx := context.Background()
+		want := populatedNote(t)
+
+		stored, err := store.PutNote(ctx, "tenant-a", want)
+		if err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		want.Version = 1
+		if diffs := noteFieldDiffs(want, stored); len(diffs) > 0 {
+			t.Errorf("PutNote returned a different note:\n\t%s", strings.Join(diffs, "\n\t"))
+		}
+
+		got, err := store.GetNote(ctx, "tenant-a", want.ID)
+		if err != nil {
+			t.Fatalf("GetNote: %v", err)
+		}
+		if diffs := noteFieldDiffs(want, got); len(diffs) > 0 {
+			t.Fatalf("GetNote lost fields on the round trip:\n\t%s", strings.Join(diffs, "\n\t"))
+		}
+	})
+}
+
+// A listed note has to carry every field too. The list reads a projection
+// rather than the record blob, so a field missing from the projection is a
+// field the list renders as empty.
+func TestListedNoteCarriesEveryField(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store := newStore()
+		ctx := context.Background()
+		want := populatedNote(t)
+
+		if _, err := store.PutNote(ctx, "tenant-a", want); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		want.Version = 1
+
+		// populatedNote sets DeletedAt, so the note is archived.
+		page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{})
+		if err != nil {
+			t.Fatalf("ListArchivedNotes: %v", err)
+		}
+		if len(page.Items) != 1 {
+			t.Fatalf("archived list = %v, want the one note just written", ids(page.Items))
+		}
+		if diffs := noteFieldDiffs(want, page.Items[0]); len(diffs) > 0 {
+			t.Fatalf("the listed note lost fields:\n\t%s", strings.Join(diffs, "\n\t"))
+		}
+	})
+}
+
+// An update has to preserve what the previous read did not surface. This is the
+// mechanism that made the dropped fields permanent rather than merely invisible:
+// read a note, write it back, and the fields the read blanked are now blanked in
+// storage as well.
+func TestUpdatingANoteDoesNotErasePreviouslyStoredFields(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store := newStore()
+		ctx := context.Background()
+		want := populatedNote(t)
+
+		if _, err := store.PutNote(ctx, "tenant-a", want); err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		want.Version = 1
+
+		// The read-modify-write every caller performs.
+		read, err := store.GetNote(ctx, "tenant-a", want.ID)
+		if err != nil {
+			t.Fatalf("GetNote: %v", err)
+		}
+		read.Title = "Retitled"
+		if _, err := store.PutNote(ctx, "tenant-a", read); err != nil {
+			t.Fatalf("PutNote(update): %v", err)
+		}
+
+		got, err := store.GetNote(ctx, "tenant-a", want.ID)
+		if err != nil {
+			t.Fatalf("GetNote(after update): %v", err)
+		}
+		want.Title = "Retitled"
+		want.Version = 2
+		if diffs := noteFieldDiffs(want, got); len(diffs) > 0 {
+			t.Fatalf("an unrelated update erased stored fields:\n\t%s", strings.Join(diffs, "\n\t"))
+		}
+	})
 }

@@ -31,6 +31,9 @@ type harness struct {
 	queue    *recordingQueue
 	spend    *fakeSpend
 	webauthn *fakeWebAuthn
+	// remoteAddr overrides the connecting address for subsequent do() calls.
+	// Empty leaves httptest's default in place.
+	remoteAddr string
 }
 
 type harnessOption func(*handler.Deps, *harness)
@@ -112,6 +115,13 @@ func (h *harness) do(t *testing.T, method, path, userID string, body any, header
 	}
 	for _, kv := range headers {
 		req.Header.Set(kv[0], kv[1])
+	}
+	// httptest.NewRequest hardcodes RemoteAddr to 192.0.2.1:1234, so every
+	// request a test makes is the same caller unless it says otherwise. That
+	// matters for anything keyed on the connecting address — the rate limiter
+	// is, deliberately, because X-Forwarded-For is caller-supplied.
+	if addr := h.remoteAddr; addr != "" {
+		req.RemoteAddr = addr
 	}
 	if userID != "" {
 		req = req.WithContext(middleware.WithUserID(req.Context(), userID))

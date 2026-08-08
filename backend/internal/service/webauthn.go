@@ -73,10 +73,26 @@ func NewWebAuthnService(store repository.Store, allowedOrigin, displayName strin
 	if err != nil {
 		return nil, err
 	}
+	// Enforce the ceremony timeout at the relying party as well as advertising
+	// it to the browser. Without Enforce the library records no deadline on the
+	// session and validates a ceremony however old it is, leaving the DynamoDB
+	// TTL sweep — best effort, documented as up to 48 h, and documented as still
+	// returning expired items to reads — as the only bound. Both durations match
+	// webAuthnChallengeTTL so the library's deadline and the stored ExpiresAt
+	// cannot disagree.
+	timeouts := webauthn.TimeoutConfig{
+		Enforce:    true,
+		Timeout:    webAuthnChallengeTTL,
+		TimeoutUVD: webAuthnChallengeTTL,
+	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          rpID,
 		RPDisplayName: displayName,
 		RPOrigins:     []string{allowedOrigin},
+		Timeouts: webauthn.TimeoutsConfig{
+			Login:        timeouts,
+			Registration: timeouts,
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("webauthn init: %w", err)
@@ -346,6 +362,16 @@ func (s *WebAuthnService) loadChallenge(ctx context.Context, challengeID string)
 			return nil, ErrWebAuthnChallengeNotFound
 		}
 		return nil, err
+	}
+	// Expiry is checked here, not only in the store. DynamoDB's TTL is a
+	// best-effort sweep that AWS documents as taking up to 48 hours, and it
+	// explicitly still returns expired items to reads in the meantime — so a
+	// store that answers with the item is not evidence the ceremony is live.
+	// An abandoned challenge_id that stays redeemable is a replay into a live
+	// Cognito token set, or a re-binding of the KMS-sealed refresh vault.
+	// Same semantics as the in-memory store: ExpiresAt of 0 means "unset".
+	if entry.ExpiresAt > 0 && time.Now().Unix() > entry.ExpiresAt {
+		return nil, ErrWebAuthnChallengeNotFound
 	}
 	var session webauthn.SessionData
 	if err := json.Unmarshal([]byte(entry.SessionData), &session); err != nil {

@@ -19,8 +19,10 @@ import (
 const (
 	loginAttemptsPerWindow = 10
 	loginWindow            = time.Minute
-	// limiterCapacity bounds the map so a spray of forged X-Forwarded-For
-	// values cannot turn the limiter itself into the memory leak.
+	// limiterCapacity bounds the map so a spray of distinct keys cannot turn the
+	// limiter itself into the memory leak. At capacity the limiter refuses
+	// untracked callers rather than clearing the table, so filling it is not a
+	// way to forgive a window.
 	limiterCapacity = 4096
 )
 
@@ -60,38 +62,47 @@ func (l *ipLimiter) allow(key string) (bool, int) {
 	defer l.mu.Unlock()
 
 	now := l.now()
-	w, ok := l.windows[key]
-	if !ok || now.Sub(w.start) >= l.window {
-		if len(l.windows) >= limiterCapacity {
-			l.evictExpiredLocked(now)
+	if w, ok := l.windows[key]; ok && now.Sub(w.start) < l.window {
+		w.count++
+		if w.count > l.limit {
+			retry := int((l.window - now.Sub(w.start)).Seconds())
+			if retry < 1 {
+				retry = 1
+			}
+			return false, retry
 		}
-		l.windows[key] = &ipWindow{count: 1, start: now}
+		return true, 0
+	} else if ok {
+		// The key is already tracked and its window has run out. Reusing the
+		// slot costs no capacity, so it never needs an eviction.
+		w.count, w.start = 1, now
 		return true, 0
 	}
-	w.count++
-	if w.count > l.limit {
-		retry := int((l.window - now.Sub(w.start)).Seconds())
-		if retry < 1 {
-			retry = 1
+
+	if len(l.windows) >= limiterCapacity {
+		l.evictExpiredLocked(now)
+		if len(l.windows) >= limiterCapacity {
+			// Still full of live windows: this instance is seeing more distinct
+			// addresses inside one window than it is willing to track. Refuse
+			// the untracked caller rather than emptying the table, which is what
+			// let ~limiterCapacity attacker-chosen keys forgive every counter in
+			// flight — including the attacker's own — and so turned the memory
+			// bound into a way to buy unlimited attempts.
+			return false, int(l.window.Seconds())
 		}
-		return false, retry
 	}
+	l.windows[key] = &ipWindow{count: 1, start: now}
 	return true, 0
 }
 
+// evictExpiredLocked drops windows that have run out. It never drops a live one:
+// forgetting a counter that is still inside its window is forgiving it.
 func (l *ipLimiter) evictExpiredLocked(now time.Time) {
 	for k, w := range l.windows {
 		if now.Sub(w.start) >= l.window {
 			delete(l.windows, k)
 		}
 	}
-	if len(l.windows) < limiterCapacity {
-		return
-	}
-	// Still full of live windows: the instance is genuinely under load. Start
-	// over rather than grow without bound; the worst case is one forgiven
-	// window, not an unbounded map.
-	l.windows = make(map[string]*ipWindow)
 }
 
 // rateLimit refuses a caller that is over the per-IP limit.
@@ -108,21 +119,65 @@ func (l *ipLimiter) rateLimit(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// maxForwardedForEntries bounds how much of an X-Forwarded-For header is
+// examined. The header is caller-supplied and unbounded in length, so the parse
+// itself must not be something a caller can make expensive.
+const maxForwardedForEntries = 8
+
 // clientIP returns the address the limit is keyed on.
 //
-// X-Forwarded-For is only trustworthy because this service is only reachable
-// through API Gateway, which overwrites it. The left-most entry is the client
-// as the gateway saw it. A direct deployment without that guarantee would have
-// to key on RemoteAddr alone, which is why the fallback exists.
+// RemoteAddr first, because it is the only value here the caller cannot choose.
+// The Lambda adapter sets it from requestContext.http.sourceIp
+// (aws-lambda-go-api-proxy, core/requestv2.go), which is the peer address API
+// Gateway observed.
+//
+// X-Forwarded-For is NOT overwritten by API Gateway — the gateway *appends* the
+// source IP to whatever the client sent. Keying on the left-most entry therefore
+// keyed on a value the caller writes, and rotating it minted a fresh window for
+// every request. Only the right-most entry is gateway-written, so that is the
+// one consulted, and only as a fallback for a deployment that terminates
+// somewhere other than the Lambda adapter and leaves RemoteAddr unusable.
 func clientIP(r *http.Request) string {
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		first := strings.TrimSpace(strings.Split(fwd, ",")[0])
-		if first != "" {
-			return first
-		}
-	}
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+	if host := addrHost(r.RemoteAddr); host != "" {
 		return host
 	}
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		if entry := rightmostForwarded(fwd); entry != "" {
+			return entry
+		}
+	}
 	return r.RemoteAddr
+}
+
+// addrHost extracts the host from a RemoteAddr, which may be host:port from a
+// net/http listener or a bare address from the Lambda adapter.
+func addrHost(remoteAddr string) string {
+	remoteAddr = strings.TrimSpace(remoteAddr)
+	if remoteAddr == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		return host
+	}
+	if net.ParseIP(remoteAddr) != nil {
+		return remoteAddr
+	}
+	return ""
+}
+
+// rightmostForwarded returns the last non-empty X-Forwarded-For entry, scanning
+// from the right and giving up after maxForwardedForEntries so the work is
+// bounded however long the header is.
+func rightmostForwarded(fwd string) string {
+	for i := 0; i < maxForwardedForEntries; i++ {
+		comma := strings.LastIndexByte(fwd, ',')
+		if entry := strings.TrimSpace(fwd[comma+1:]); entry != "" {
+			return entry
+		}
+		if comma < 0 {
+			return ""
+		}
+		fwd = fwd[:comma]
+	}
+	return ""
 }
