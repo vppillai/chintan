@@ -1,6 +1,13 @@
 module github.com/vppillai/chintan/backend
 
-go 1.25.0
+// 1.25.12 is not a rounding-up of 1.25.0: it is the first 1.25 patch carrying
+// the fix for GO-2026-5856 (CVE-2026-42505), a crypto/tls Encrypted Client
+// Hello leak that govulncheck reaches through provider.GroqSTT.Transcribe ->
+// http.Client.Do -> tls.Conn.HandshakeContext. Lowering it re-opens that.
+//
+// Every CI and deploy job resolves its Go from this line via setup-go's
+// go-version-file, so this is the only place the version is written down.
+go 1.25.12
 
 require (
 	github.com/aws/aws-lambda-go v1.54.0
