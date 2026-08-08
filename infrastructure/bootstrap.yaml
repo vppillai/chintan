@@ -673,8 +673,11 @@ Resources:
                   - s3:PutEncryptionConfiguration
                   - s3:PutBucketPublicAccessBlock
                   - s3:PutBucketTagging
+                # A bucket ARN carries no region or account, so there is nothing
+                # for Fn::Sub to substitute. Written plain, as CfnDeployRole
+                # already writes the same ARN.
                 Resource:
-                  - !Sub 'arn:aws:s3:::chintan-content-*'
+                  - 'arn:aws:s3:::chintan-content-*'
                 Condition:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
@@ -693,8 +696,10 @@ Resources:
                   - apigateway:PUT
                   - apigateway:DELETE
                   - apigateway:PATCH
-                  - apigateway:TagResource
-                  - apigateway:UntagResource
+                # Tagging is not a separate action here: API Gateway tags through
+                # PUT and DELETE on /tags/*, which the verbs above already cover.
+                # apigateway:TagResource / :UntagResource are not actions the
+                # service defines, so naming them granted nothing.
                 Resource:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis'
