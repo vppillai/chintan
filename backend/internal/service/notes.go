@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/keys"
@@ -11,6 +13,17 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
+
+const ArchiveRetention = 30 * 24 * time.Hour
+
+var (
+	ErrNoteArchived    = errors.New("note is archived")
+	ErrNoteNotArchived = errors.New("note is not archived")
+)
+
+func NoteIsActive(n model.NoteIndex) bool {
+	return strings.TrimSpace(n.DeletedAt) == ""
+}
 
 // NotesService handles note operations
 type NotesService struct {
@@ -97,9 +110,20 @@ func (s *NotesService) CreateNote(ctx context.Context, userID, title string, ali
 	return note, nil
 }
 
-// ListNotes lists all notes for a user
+// ListNotes lists active notes for a user (excludes archived notes)
 func (s *NotesService) ListNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
-	return s.store.ListNotes(ctx, userID)
+	_ = s.purgeExpired(ctx, userID)
+	all, err := s.store.ListNotes(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.NoteIndex, 0, len(all))
+	for _, n := range all {
+		if NoteIsActive(n) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 // GetNote retrieves a specific note
@@ -132,6 +156,11 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	note, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
 		return model.NoteIndex{}, err
+	}
+
+	// Check if note is archived
+	if !NoteIsActive(note) {
+		return model.NoteIndex{}, ErrNoteArchived
 	}
 
 	// Apply updates
@@ -178,26 +207,16 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	return note, nil
 }
 
-// DeleteNote deletes a note
+// DeleteNote archives a note (soft delete)
 func (s *NotesService) DeleteNote(ctx context.Context, userID, noteID string) error {
-	// Get note to get keys
-	note, err := s.store.GetNote(ctx, userID, noteID)
-	if err != nil {
-		return err
-	}
-
-	// Delete from objects storage
-	s.objects.Delete(ctx, note.S3MarkdownKey)
-	s.objects.Delete(ctx, note.S3MetaKey)
-
-	// Delete from store
-	return s.store.DeleteNote(ctx, userID, noteID)
+	_, err := s.ArchiveNote(ctx, userID, noteID)
+	return err
 }
 
-// MatchNotes finds matching notes for a query
+// MatchNotes finds matching notes for a query (only searches active notes)
 func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (MatchResult, error) {
-	// Get all notes
-	notes, err := s.store.ListNotes(ctx, userID)
+	// Get active notes only
+	notes, err := s.ListNotes(ctx, userID)
 	if err != nil {
 		return MatchResult{}, err
 	}
@@ -232,4 +251,140 @@ func generateSnippet(body string) string {
 		return body
 	}
 	return body[:maxLength] + "..."
+}
+
+// ArchiveNote archives a note (soft delete with retention period)
+func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
+	note, err := s.store.GetNote(ctx, userID, noteID)
+	if err != nil {
+		return model.NoteIndex{}, err
+	}
+
+	// If already archived, return as-is (idempotent)
+	if !NoteIsActive(note) {
+		return note, nil
+	}
+
+	// Set archive timestamps
+	now := time.Now().UTC()
+	note.DeletedAt = now.Format(time.RFC3339Nano)
+	note.PurgeAfter = now.Add(ArchiveRetention).Format(time.RFC3339Nano)
+
+	// Save updated note
+	err = s.store.PutNote(ctx, userID, note)
+	if err != nil {
+		return model.NoteIndex{}, err
+	}
+
+	return note, nil
+}
+
+// RestoreNote restores an archived note to active status
+func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
+	_ = s.purgeExpired(ctx, userID)
+	note, err := s.store.GetNote(ctx, userID, noteID)
+	if err != nil {
+		return model.NoteIndex{}, err
+	}
+
+	// If already active, return as-is (idempotent)
+	if NoteIsActive(note) {
+		return note, nil
+	}
+
+	// Clear archive fields
+	note.DeletedAt = ""
+	note.PurgeAfter = ""
+
+	// Save updated note
+	err = s.store.PutNote(ctx, userID, note)
+	if err != nil {
+		return model.NoteIndex{}, err
+	}
+
+	return note, nil
+}
+
+// ListArchivedNotes lists archived notes for a user (excludes expired ones)
+func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string) ([]model.NoteIndex, error) {
+	_ = s.purgeExpired(ctx, userID)
+	all, err := s.store.ListNotes(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	
+	out := make([]model.NoteIndex, 0)
+	now := time.Now().UTC()
+	
+	for _, n := range all {
+		if !NoteIsActive(n) {
+			// Check if not yet expired
+			if n.PurgeAfter != "" {
+				purgeTime, err := time.Parse(time.RFC3339Nano, n.PurgeAfter)
+				if err == nil && now.Before(purgeTime) {
+					out = append(out, n)
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// PermanentlyDeleteNote permanently deletes an archived note and all its captures
+func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID string) error {
+	_ = s.purgeExpired(ctx, userID)
+	note, err := s.store.GetNote(ctx, userID, noteID)
+	if err != nil {
+		return err
+	}
+
+	// Must be archived first
+	if NoteIsActive(note) {
+		return ErrNoteNotArchived
+	}
+
+	return s.hardDeleteNote(ctx, userID, noteID, note)
+}
+
+// hardDeleteNote performs the actual deletion (used by PermanentlyDeleteNote and purgeExpired)
+func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
+	// Delete associated captures and their S3 objects
+	captures, _ := s.store.ListCapturesByNote(ctx, userID, noteID)
+	for _, c := range captures {
+		// Delete capture S3 objects
+		for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey} {
+			if key != "" {
+				_ = s.objects.Delete(ctx, key)
+			}
+		}
+		// Delete capture from store
+		_ = s.store.DeleteCapture(ctx, userID, c.ID)
+	}
+
+	// Delete note S3 objects
+	_ = s.objects.Delete(ctx, note.S3MarkdownKey)
+	_ = s.objects.Delete(ctx, note.S3MetaKey)
+
+	// Delete note from store
+	return s.store.DeleteNote(ctx, userID, noteID)
+}
+
+// purgeExpired removes notes that have passed their purge deadline
+func (s *NotesService) purgeExpired(ctx context.Context, userID string) error {
+	all, err := s.store.ListNotes(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	for _, n := range all {
+		if !NoteIsActive(n) && n.PurgeAfter != "" {
+			purgeTime, err := time.Parse(time.RFC3339Nano, n.PurgeAfter)
+			if err == nil && !now.Before(purgeTime) {
+				// Note has expired, hard delete it
+				_ = s.hardDeleteNote(ctx, userID, n.ID, n)
+			}
+		}
+	}
+	return nil
 }

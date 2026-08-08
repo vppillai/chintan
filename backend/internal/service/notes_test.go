@@ -138,10 +138,27 @@ func TestNotesService(t *testing.T) {
 			t.Fatalf("DeleteNote failed: %v", err)
 		}
 
-		// Verify it's gone
-		_, err = notesService.GetNote(ctx, userID, created.ID)
-		if err != repository.ErrNotFound {
-			t.Errorf("expected ErrNotFound after delete, got %v", err)
+		// Verify it's archived (soft deleted, not hard deleted)
+		note, err := notesService.GetNote(ctx, userID, created.ID)
+		if err != nil {
+			t.Fatalf("expected note to still exist after archive, got %v", err)
+		}
+		if note.DeletedAt == "" {
+			t.Errorf("expected note to have DeletedAt set after delete")
+		}
+		if note.PurgeAfter == "" {
+			t.Errorf("expected note to have PurgeAfter set after delete")
+		}
+
+		// Verify it's not in active list
+		activeNotes, err := notesService.ListNotes(ctx, userID)
+		if err != nil {
+			t.Fatalf("ListNotes failed: %v", err)
+		}
+		for _, n := range activeNotes {
+			if n.ID == created.ID {
+				t.Errorf("archived note should not appear in active list")
+			}
 		}
 	})
 
