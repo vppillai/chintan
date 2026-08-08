@@ -159,7 +159,11 @@ Resources:
   UserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
     Properties:
-      Domain: !Sub 'chintan-${InstanceName}-${AWS::AccountId}'
+      # Globally unique, same reasoning as ContentBucket above. Renaming this
+      # replaces the domain but NOT the user pool, so existing users survive;
+      # only the hosted-UI URL changes, and the frontend reads that from a
+      # stack output.
+      Domain: !Sub 'chintan-${InstanceName}-${Environment}-${AWS::AccountId}'
       UserPoolId: !Ref UserPool
 
   # Cognito User Pool Client (public, no secret)
@@ -348,7 +352,13 @@ Resources:
     # policy has to be in place first.
     DependsOn: CaptureQueuePolicy
     Properties:
-      BucketName: !Sub 'chintan-content-${InstanceName}-${AWS::AccountId}'
+      # ${Environment} is load-bearing. S3 bucket names are globally unique, so
+      # without it a second environment of the same instance cannot be created
+      # at all -- CloudFormation rejects the whole change set with
+      # AWS::EarlyValidation::ResourceExistenceCheck before creating anything.
+      # Every other named resource in this template already includes it; these
+      # two were carried over from when there was only ever one environment.
+      BucketName: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
       # S3 filters take one prefix and one suffix, and cannot express
       # tenants/*/captures/. Matching on the audio filename instead is exact:
       # it fires for the uploaded recording and for nothing the worker writes
