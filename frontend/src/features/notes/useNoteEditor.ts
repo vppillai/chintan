@@ -1,10 +1,17 @@
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
+import {
+  clearQueuedEdit,
+  queuedEditFor,
+  queuedEditId,
+  queuedEditKey,
+  type QueuedEdit,
+} from '@/offline/queuedEdits.ts';
 import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
 
 import {
@@ -12,6 +19,7 @@ import {
   editorReducer,
   hasUnsavedWork,
   initialEditor,
+  reconcileQueued,
   type EditorModel,
   type NoteDraft,
 } from './autosave.ts';
@@ -88,6 +96,14 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
     try {
       await api.updateNote(note.id, body);
+      /*
+       * A direct save supersedes anything the queue was still holding for this
+       * note. Leaving a dead entry behind would let `reconcileQueued` flip the
+       * screen from "Saved" back to the old failure the moment it re-read the
+       * queue.
+       */
+      await clearQueuedEdit(note.id).catch(() => {});
+      queryClient.setQueryData(queuedEditKey(note.id), null);
       // The PATCH response carries the note, but re-reading the version from
       // it is enough: the text we sent is the text now stored.
       dispatch({
@@ -109,10 +125,15 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       if (error instanceof ApiError && error.isOffline) {
         try {
           await enqueueReplacing({
-            id: `updateNote:${note.id}`,
+            id: queuedEditId(note.id),
             kind: 'updateNote',
             payload: { noteId: note.id, body },
           });
+          // Seeded rather than invalidated: between the write and a refetch the
+          // query would still answer "nothing queued", and the screen would
+          // read "Saved" for an edit the server has never seen.
+          const outstanding: QueuedEdit = { pending: true, dead: false, error: null };
+          queryClient.setQueryData(queuedEditKey(note.id), outstanding);
           // The banner counts what is waiting, and nothing else tells it the
           // depth changed: its query polls slowly and only reacts to reconnect
           // and focus, so without this the user is told "nothing is saved on
@@ -227,8 +248,26 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     flush();
   }, [flush]);
 
+  /*
+   * What the device still owes the server for this note.
+   *
+   * `networkMode: 'always'` because it is a local read — the whole question is
+   * what is on this device — and `staleTime: 0` because the flush changes the
+   * answer from outside this component and invalidates this key when it does.
+   */
+  const queued = useQuery({
+    queryKey: queuedEditKey(note?.id ?? ''),
+    queryFn: (): Promise<QueuedEdit | null> => queuedEditFor(note?.id ?? ''),
+    enabled: Boolean(note),
+    networkMode: 'always',
+    staleTime: 0,
+    retry: false,
+  });
+
   return {
-    model,
+    // Derived at the point of use, never copied into the reducer. A second copy
+    // of "is anything outstanding?" is exactly what went stale before.
+    model: reconcileQueued(model, note ? queued.data : undefined),
     edit,
     saveNow,
     takeTheirs: useCallback(() => {

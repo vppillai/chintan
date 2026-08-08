@@ -17,6 +17,12 @@ export interface ApiState {
   offline: boolean;
   /** Forces the next PATCH to return 409 once. */
   conflictOnce: boolean;
+  /**
+   * Makes every PATCH fail on its merits, as a validation error does. Set to
+   * exercise a queued edit the server will never accept, however often it is
+   * replayed.
+   */
+  rejectPatch: { status: number; detail: string } | null;
   /** Ids passed to DELETE /v1/notes/{id}/permanent, in order. */
   purged: string[];
   /** The hosted UI, as exercised by the sign-in and sign-out specs. */
@@ -160,6 +166,7 @@ export function freshState(): ApiState {
     requests: [],
     offline: false,
     conflictOnce: false,
+    rejectPatch: null,
     purged: [],
     auth: {
       authorize: [],
@@ -410,6 +417,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         return;
       }
       if (method === 'PATCH') {
+        if (state.rejectPatch) {
+          await problem(route, state.rejectPatch.status, {
+            title: 'That request was not valid',
+            detail: state.rejectPatch.detail,
+          });
+          return;
+        }
         if (state.conflictOnce) {
           state.conflictOnce = false;
           note.version += 1;

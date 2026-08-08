@@ -196,6 +196,54 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
 }
 
 /**
+ * The queue's answer about this note, folded into the editor's state.
+ *
+ * `queued` was a dead end: the reducer entered it and no event left it, so the
+ * screen kept saying "Saved on this device — will sync" after the sync had
+ * already happened, or after it had permanently failed. Rather than inventing
+ * an event and hoping every flush path remembers to send it, the outstanding
+ * write is *derived* from the queue — which is the only thing that actually
+ * knows.
+ *
+ *   entry absent   the flush removed it, which it does only on success
+ *   entry pending  genuinely still owed to the server
+ *   entry dead     it will not be sent again, and `error` says why
+ *
+ * `undefined` means the queue has not been read yet and nothing is claimed.
+ * Only the states with nothing in flight are reconciled: a `dirty`, `saving` or
+ * `conflict` model is describing something newer than the queue is.
+ */
+export function reconcileQueued(
+  model: EditorModel,
+  entry: { pending: boolean; dead: boolean; error: string | null } | null | undefined,
+): EditorModel {
+  if (entry === undefined) return model;
+
+  if (model.state === 'queued') {
+    if (entry === null) return { ...model, state: 'saved', error: null };
+    if (entry.dead) {
+      return { ...model, state: 'error', error: entry.error ?? 'That edit did not save.' };
+    }
+    return model;
+  }
+
+  /*
+   * Arriving at a note that already had something outstanding — the edit was
+   * made, the screen was left, and the user has come back. Only from a state
+   * with nothing of its own to say, so this can never overwrite a live edit.
+   */
+  if (model.state === 'clean' || model.state === 'saved') {
+    if (entry === null) return model;
+    if (entry.dead) {
+      return { ...model, state: 'error', error: entry.error ?? 'That edit did not save.' };
+    }
+    return { ...model, state: 'queued', error: null };
+  }
+
+  return model;
+}
+
+/**
  * True when there is an edit that would be lost if the document went away.
  *
  * `queued` is NOT one of them. A queued edit is in IndexedDB, survives a reload

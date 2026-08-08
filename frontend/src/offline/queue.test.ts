@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/api/problem.ts';
 
 import { resetDatabaseHandle, type QueuedMutation } from './db.ts';
-import { MAX_ATTEMPTS, count, enqueue, flush, pending, remove } from './queue.ts';
+import { MAX_ATTEMPTS, count, enqueue, flush, isDead, pending, remove } from './queue.ts';
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
@@ -121,7 +121,7 @@ describe('flush', () => {
     expect(queued?.lastError).toBe('Unavailable');
   });
 
-  it('drops a mutation the server rejected on its merits', async () => {
+  it('stops replaying a mutation the server rejected on its merits', async () => {
     // Replaying a 400 forever would block everything behind it.
     await enqueue({ kind: 'updateNote', payload: 'a' });
     await enqueue({ kind: 'updateNote', payload: 'b' });
@@ -131,7 +131,52 @@ describe('flush', () => {
     });
 
     expect(result).toEqual({ applied: 1, failed: 1, stoppedOffline: false });
-    expect(await count()).toBe(0);
+
+    // Nothing queued behind it was held up: that is what "does not block" means,
+    // and it is the property this test was written for.
+    expect((await pending()).map((entry) => entry.payload)).toEqual(['a']);
+
+    // It is retained rather than deleted, and marked as finished with.
+    // Deleting it was how the note screen came to promise a sync forever: the
+    // entry vanished, so nothing could tell "it synced" from "it was thrown
+    // away", and "Saved on this device — will sync" stayed on screen for an
+    // edit that had been discarded.
+    const [dead] = await pending();
+    expect(dead && isDead(dead)).toBe(true);
+    expect(dead?.lastError).toBe('Title too long');
+  });
+
+  it('never attempts a rejected mutation a second time', async () => {
+    await enqueue({ kind: 'updateNote', payload: 'a' });
+    await flush(async () => {
+      throw badRequest();
+    });
+
+    const run = vi.fn(async () => {});
+    await flush(run);
+
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('treats a 409 as settled rather than retrying it to exhaustion', async () => {
+    /*
+     * A queued mutation carries the version the note was loaded at, and that
+     * version never changes — so every replay produces the same conflict. It
+     * used to burn the whole eight-attempt budget proving that. Same shape as
+     * replaying an expired presigned URL: repeating a request whose outcome
+     * cannot change.
+     */
+    await enqueue({ kind: 'updateNote', payload: 'a' });
+
+    const run = vi.fn(async () => {
+      throw new ApiError({ kind: 'http', status: 409, title: 'Conflict' });
+    });
+    await flush(run);
+    await flush(run);
+
+    expect(run).toHaveBeenCalledTimes(1);
+    const [entry] = await pending();
+    expect(entry && isDead(entry)).toBe(true);
   });
 
   it('keeps a mutation that failed with 401, because a refresh will fix it', async () => {

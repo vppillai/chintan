@@ -9,6 +9,7 @@ import { listenForFlushRequests, registerBackgroundSync } from './backgroundSync
 import type { QueuedMutation } from './db.ts';
 import { narrow } from './payloads.ts';
 import { count, flush } from './queue.ts';
+import { QUEUED_EDIT_KEY } from './queuedEdits.ts';
 
 /**
  * Applies one queued mutation against the live API.
@@ -93,7 +94,26 @@ export function useOfflineQueue(): OfflineQueueState {
       // Offline: report the depth without burning attempt budgets against a
       // network that is not there.
       if (typeof navigator !== 'undefined' && !navigator.onLine) return count();
-      await flush((mutation) => runMutation(api, mutation));
+      const result = await flush((mutation) => runMutation(api, mutation));
+
+      /*
+       * Reconcile whatever the flush just changed.
+       *
+       * Without this the queue drained and nothing else in the app noticed: the
+       * note screen went on saying "Saved on this device — will sync" for an
+       * edit the server already had, and the note itself still rendered the
+       * pre-edit text it had fetched. Local state recorded, real outcome never
+       * reported back.
+       *
+       * `queued-edit` is deliberately not under this query's own key, so
+       * refreshing it here cannot re-trigger the flush that is running.
+       */
+      if (result.applied > 0 || result.failed > 0) {
+        void queryClient.invalidateQueries({ queryKey: [QUEUED_EDIT_KEY] });
+        void queryClient.invalidateQueries({ queryKey: ['note'] });
+        void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      }
+
       return count();
     },
     /*

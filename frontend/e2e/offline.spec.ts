@@ -334,3 +334,71 @@ test('the offline banner says the data is cached', async ({ page, context, api }
 
   await context.setOffline(false);
 });
+
+/**
+ * What happens to the "will sync" banner once the sync happens.
+ *
+ * `saveQueued` set `state: 'queued'` and nothing ever transitioned out of it:
+ * there was no event meaning "the queued mutation reached the server", and the
+ * flush path notified the editor of nothing. So the note screen said "Saved on
+ * this device — will sync" until a reload, whether the flush had succeeded,
+ * failed permanently, or lost a conflict.
+ *
+ * That is the same untruth as the blanket offline sentence, one layer up: a
+ * user watching it cannot tell "not yet" from "never".
+ */
+test('the queued banner clears once the edit reaches the server', async ({
+  page,
+  context,
+  api,
+}) => {
+  await withServiceWorker(page);
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  api.offline = true;
+  await context.setOffline(true);
+
+  await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  api.offline = false;
+  await context.setOffline(false);
+
+  await expect
+    .poll(() => api.notes['roof-repair']?.body, { timeout: 20_000 })
+    .toContain('Ellis quoted nine hundred.');
+
+  // The claim is now false, so it must stop being made.
+  await expect(page.getByText(/saved on this device — will sync/i)).toHaveCount(0);
+  await expect(page.getByText('Saved')).toBeVisible();
+  // And nothing is left waiting.
+  await expect(page.getByText(/waiting to sync/i)).toHaveCount(0);
+});
+
+test('a queued edit the server refuses says so, instead of promising a sync', async ({
+  page,
+  context,
+  api,
+}) => {
+  await withServiceWorker(page);
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  api.offline = true;
+  await context.setOffline(true);
+
+  await page.getByRole('textbox', { name: 'Note body' }).fill('Ellis quoted nine hundred.');
+  await expect(page.getByText(/saved on this device — will sync/i)).toBeVisible();
+
+  // The server rejects it on its merits when it finally sees it. Replaying will
+  // never help, and neither will telling the user it is about to sync.
+  api.rejectPatch = { status: 400, detail: 'That title is too long to store.' };
+  api.offline = false;
+  await context.setOffline(false);
+
+  await expect(page.getByText(/saved on this device — will sync/i)).toHaveCount(0, {
+    timeout: 20_000,
+  });
+  await expect(page.getByText(/too long to store/i)).toBeVisible();
+});

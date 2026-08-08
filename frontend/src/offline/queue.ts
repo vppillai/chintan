@@ -116,20 +116,41 @@ export async function remove(id: string): Promise<void> {
 async function recordFailure(mutation: QueuedMutation, error: unknown): Promise<void> {
   const db = await openChintanDB();
   const attempts = mutation.attempts + 1;
-  if (attempts >= MAX_ATTEMPTS) {
-    // Giving up silently would be worse than keeping it: the entry stays, with
-    // its attempt count, so the UI can show it as needing attention.
-    await db.put('mutations', {
-      ...mutation,
-      attempts,
-      lastAttemptAt: Date.now(),
-      lastError: describe(error),
-    });
-    return;
-  }
+  // Giving up silently would be worse than keeping it: the entry stays, with
+  // its attempt count, so the UI can show it as needing attention.
   await db.put('mutations', {
     ...mutation,
     attempts,
+    lastAttemptAt: Date.now(),
+    lastError: describe(error),
+  });
+}
+
+/**
+ * True when this entry will never be attempted again.
+ *
+ * The queue keeps such entries rather than deleting them, which is what lets a
+ * screen say "this edit did not go through, and here is why" instead of an
+ * edit quietly ceasing to exist. `flush` skips them, so a dead entry never
+ * blocks anything queued behind it.
+ */
+export function isDead(mutation: QueuedMutation): boolean {
+  return mutation.attempts >= MAX_ATTEMPTS;
+}
+
+/**
+ * Retires an entry that cannot succeed however often it is replayed.
+ *
+ * Recorded at the attempt ceiling rather than removed. Dropping it left the
+ * screen that queued it saying "Saved on this device — will sync" forever: the
+ * entry was gone, so nothing could distinguish "it synced" from "it was thrown
+ * away", and the app went on promising a sync that would never come.
+ */
+async function markDead(mutation: QueuedMutation, error: unknown): Promise<void> {
+  const db = await openChintanDB();
+  await db.put('mutations', {
+    ...mutation,
+    attempts: MAX_ATTEMPTS,
     lastAttemptAt: Date.now(),
     lastError: describe(error),
   });
@@ -163,7 +184,7 @@ export async function flush(run: MutationRunner): Promise<FlushResult> {
   const result: FlushResult = { applied: 0, failed: 0, stoppedOffline: false };
 
   for (const mutation of await pending()) {
-    if (mutation.attempts >= MAX_ATTEMPTS) {
+    if (isDead(mutation)) {
       result.failed += 1;
       continue;
     }
@@ -177,8 +198,8 @@ export async function flush(run: MutationRunner): Promise<FlushResult> {
         await recordFailure(mutation, error);
         break;
       }
-      if (error instanceof ApiError && isPermanent(error)) {
-        await remove(mutation.id);
+      if (error instanceof ApiError && isTerminal(error)) {
+        await markDead(mutation, error);
         result.failed += 1;
         continue;
       }
@@ -190,10 +211,20 @@ export async function flush(run: MutationRunner): Promise<FlushResult> {
   return result;
 }
 
-function isPermanent(error: ApiError): boolean {
+/**
+ * Errors no replay can get past.
+ *
+ * 401 is not one: the client refreshes and the next flush succeeds.
+ *
+ * 409 **is** one, which it was not. A queued mutation carries the version the
+ * note was loaded at, and that version never changes — so a 409 was retried on
+ * every flush until the attempt budget ran out, eight guaranteed conflicts for
+ * an outcome that was settled at the first. It is the same shape as replaying
+ * an expired presigned URL: repeating a request that cannot change. The edit is
+ * kept and surfaced so the user can reconcile it; it is simply not sent again.
+ */
+function isTerminal(error: ApiError): boolean {
   if (error.kind !== 'http') return false;
-  // 401 is not permanent — the client refreshes and the next flush succeeds.
-  // 409 is not permanent either; it means reconcile, which the caller does.
-  if (error.status === 401 || error.status === 409) return false;
+  if (error.status === 401) return false;
   return error.status >= 400 && error.status < 500;
 }

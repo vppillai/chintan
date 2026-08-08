@@ -4,6 +4,7 @@ import {
   editorReducer,
   hasUnsavedWork,
   initialEditor,
+  reconcileQueued,
   type EditorModel,
   type NoteDraft,
 } from './autosave.ts';
@@ -207,5 +208,82 @@ describe('queued', () => {
     // It is in IndexedDB and flushes on reconnect. Warning about it would train
     // the user to dismiss the one warning that means something.
     expect(hasUnsavedWork(queued)).toBe(false);
+  });
+});
+
+/**
+ * Reconciling `queued` against what the device is actually still holding.
+ *
+ * `saveQueued` set the state and nothing ever left it: no event meant "the
+ * queued mutation reached the server" and the flush notified the editor of
+ * nothing, so the screen said "Saved on this device — will sync" until a
+ * reload — after the sync, and after a permanent failure alike. A user could
+ * not tell "not yet" from "never".
+ */
+describe('reconcileQueued', () => {
+  const queued = (): EditorModel => {
+    const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'Ellis quoted.' } });
+    return editorReducer(dirty, { type: 'saveQueued', draft: dirty.draft });
+  };
+
+  it('claims nothing until the queue has been read', () => {
+    const model = queued();
+    expect(reconcileQueued(model, undefined).state).toBe('queued');
+  });
+
+  it('resolves to saved once the entry is gone, which only success does', () => {
+    expect(reconcileQueued(queued(), null).state).toBe('saved');
+  });
+
+  it('keeps saying "will sync" while it genuinely is still owed', () => {
+    expect(
+      reconcileQueued(queued(), { pending: true, dead: false, error: null }).state,
+    ).toBe('queued');
+  });
+
+  it('turns into an error, with the reason, when it will not be sent again', () => {
+    const model = reconcileQueued(queued(), {
+      pending: false,
+      dead: true,
+      error: 'Title too long',
+    });
+
+    expect(model.state).toBe('error');
+    expect(model.error).toBe('Title too long');
+  });
+
+  it('tells someone returning to the note that an edit is still waiting', () => {
+    // The edit was made, the screen was left, the user has come back. The
+    // reducer is freshly `clean` and knows nothing; the queue does.
+    const model = reconcileQueued(start(), { pending: true, dead: false, error: null });
+    expect(model.state).toBe('queued');
+  });
+
+  it('tells them when the edit they left behind failed', () => {
+    const model = reconcileQueued(start(), {
+      pending: false,
+      dead: true,
+      error: 'Title too long',
+    });
+    expect(model.state).toBe('error');
+  });
+
+  it('never overrides something the screen is in the middle of', () => {
+    // A live edit, an in-flight save and an unresolved conflict all describe
+    // something newer than the queue does.
+    const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'newer' } });
+    const stale = { pending: true, dead: false, error: null };
+
+    expect(reconcileQueued(dirty, stale).state).toBe('dirty');
+    expect(reconcileQueued(editorReducer(dirty, { type: 'saveStart' }), stale).state).toBe(
+      'saving',
+    );
+    const conflicted = editorReducer(dirty, {
+      type: 'conflict',
+      theirs: BASE,
+      version: 4,
+      message: 'changed elsewhere',
+    });
+    expect(reconcileQueued(conflicted, stale).state).toBe('conflict');
   });
 });
