@@ -188,6 +188,15 @@ Resources:
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
+                  # Changing ManagedLoginVersion on an EXISTING domain is an
+                  # update, not a create. Without this the branding below can be
+                  # created and then never served: the template's switch to
+                  # managed login fails with "Access denied for operation
+                  # 'AWS::Cognito::UserPoolDomain'", and because the rollback
+                  # has to move the version back it is denied too, which leaves
+                  # the stack in UPDATE_ROLLBACK_FAILED and blocks every later
+                  # deploy until someone continues the rollback by hand.
+                  - cognito-idp:UpdateUserPoolDomain
                   - cognito-idp:SetUserPoolMfaConfig
                   # Managed login branding, the styling applied to the hosted
                   # sign-in page. The resource these authorize against is the
@@ -931,6 +940,8 @@ Resources:
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
+                  # Selecting managed login on an existing domain updates it.
+                  - cognito-idp:UpdateUserPoolDomain
                   # Hardened pool config: MFA and advanced security.
                   - cognito-idp:SetUserPoolMfaConfig
                   - cognito-idp:TagResource
