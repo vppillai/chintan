@@ -169,6 +169,11 @@ Resources:
                   - cognito-idp:ListTagsForResource
                   - cognito-idp:TagResource
                   - cognito-idp:UntagResource
+                  # Managed login branding: the read half. CloudFormation reads
+                  # the branding back after every write to return its state, and
+                  # a drift check reads it without writing.
+                  - cognito-idp:DescribeManagedLoginBranding
+                  - cognito-idp:DescribeManagedLoginBrandingByClient
                 Resource: '*'
 
               # Everything that MUTATES a pool is confined to pools this project
@@ -184,6 +189,13 @@ Resources:
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
                   - cognito-idp:SetUserPoolMfaConfig
+                  # Managed login branding, the styling applied to the hosted
+                  # sign-in page. The resource these authorize against is the
+                  # USER POOL, not a branding ARN, so the Project tag condition
+                  # below constrains them exactly like the rest of this block.
+                  - cognito-idp:CreateManagedLoginBranding
+                  - cognito-idp:UpdateManagedLoginBranding
+                  - cognito-idp:DeleteManagedLoginBranding
                 Resource: '*'
                 Condition:
                   StringEquals:
@@ -923,6 +935,13 @@ Resources:
                   - cognito-idp:SetUserPoolMfaConfig
                   - cognito-idp:TagResource
                   - cognito-idp:UntagResource
+                  # Managed login branding. Reads are already covered by the
+                  # Describe*/Get* statement above; these are the writes, and
+                  # like every mutation here they are usable only via
+                  # CloudFormation.
+                  - cognito-idp:CreateManagedLoginBranding
+                  - cognito-idp:UpdateManagedLoginBranding
+                  - cognito-idp:DeleteManagedLoginBranding
                 Resource: '*'
                 Condition:
                   ForAnyValue:StringEquals:
