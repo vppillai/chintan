@@ -188,20 +188,13 @@ Resources:
                   - cognito-idp:UpdateUserPoolClient
                   - cognito-idp:CreateUserPoolDomain
                   - cognito-idp:DeleteUserPoolDomain
-                  # Changing ManagedLoginVersion on an EXISTING domain is an
-                  # update, not a create. Without this the branding below can be
-                  # created and then never served: the template's switch to
-                  # managed login fails with "Access denied for operation
-                  # 'AWS::Cognito::UserPoolDomain'", and because the rollback
-                  # has to move the version back it is denied too, which leaves
-                  # the stack in UPDATE_ROLLBACK_FAILED and blocks every later
-                  # deploy until someone continues the rollback by hand.
-                  - cognito-idp:UpdateUserPoolDomain
                   - cognito-idp:SetUserPoolMfaConfig
                   # Managed login branding, the styling applied to the hosted
                   # sign-in page. The resource these authorize against is the
                   # USER POOL, not a branding ARN, so the Project tag condition
                   # below constrains them exactly like the rest of this block.
+                  # Confirmed in CloudTrail: these were denied before the grant
+                  # existed and succeeded after it, WITH this condition in place.
                   - cognito-idp:CreateManagedLoginBranding
                   - cognito-idp:UpdateManagedLoginBranding
                   - cognito-idp:DeleteManagedLoginBranding
@@ -209,6 +202,34 @@ Resources:
                 Condition:
                   StringEquals:
                     'aws:ResourceTag/Project': chintan
+
+              # UpdateUserPoolDomain, alone, cannot carry the tag condition
+              # above. Changing ManagedLoginVersion on an EXISTING domain is an
+              # update rather than a create, so the template's switch to managed
+              # login needs it — but Cognito does not put the pool's tags into
+              # the request context for this action, so a condition on
+              # aws:ResourceTag/Project can never be satisfied and the call is
+              # denied however the pool is tagged.
+              #
+              # That is measured, not assumed. CloudTrail over the whole life of
+              # this role shows UpdateUserPoolDomain denied 4/4 times and never
+              # once allowed, while CreateManagedLoginBranding — same role, same
+              # tagged pool, same condition — succeeded as soon as it was
+              # granted. simulate-principal-policy agrees from the other side:
+              # the action evaluates to `allowed` only when the tag is injected
+              # by hand with --context-entries, which is exactly the value the
+              # real service withholds.
+              #
+              # So the choice is this action unconditioned or managed login not
+              # deployable. It is the narrower of the two: it can only change a
+              # domain's managed-login version and certificate, cannot create or
+              # delete a domain, cannot read or write a user, and every other
+              # Cognito mutation in this role stays tag-scoped. Revisit if
+              # Cognito ever supports ABAC here.
+              - Effect: Allow
+                Action:
+                  - cognito-idp:UpdateUserPoolDomain
+                Resource: '*'
 
               - Effect: Allow
                 Action:
