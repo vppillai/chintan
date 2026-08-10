@@ -190,6 +190,9 @@ jobs:
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
         run: scripts/ci-deploy-stack.sh
 
+  # ALARM_EMAIL is passed to production only, below. The budget is account-scoped,
+  # so subscribing the same address from a second stack sends two emails for one
+  # overspend — and staging creates no alarms to notify about anyway.
   deploy-prod:
     name: Production ${{ matrix.entry.stack }}
     runs-on: ubuntu-latest
@@ -223,4 +226,9 @@ jobs:
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
+          # A secret rather than a field in config/instances/*.yaml, because this
+          # repository is public and that file is not the place to publish an
+          # address to. Unset is a supported state: the topic deploys with no
+          # subscription, which is what a clone gets.
+          ALARM_EMAIL: ${{ secrets.ALARM_EMAIL }}
         run: scripts/ci-deploy-stack.sh

@@ -140,8 +140,25 @@ for path in sorted(config_dir.glob("*.yaml")):
         # 0, which leaves HasSpendCap false and the spend-cap alarm uncreated.
         "DailySpendCapMicros": doc.get("daily_spend_cap_micros"),
         "RefreshTokenValidityDays": doc.get("refresh_token_validity_days"),
+        # CloudWatch bills alarms beyond ten alarm-months, and this template
+        # declares exactly ten, so a second environment doubles into the paid
+        # band. Absent means the template default, true.
+        "EnableAlarms": doc.get("enable_alarms"),
     }
-    parameters = [f"{k}={v}" for k, v in optional.items() if v not in (None, "")]
+
+    def render(v):
+        # YAML `false` parses to Python False, and f"{False}" is "False" —
+        # which the template rejects, because AllowedValues are the lowercase
+        # JSON spellings. Booleans have to be spelled back out deliberately.
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        return str(v)
+
+    # `is None` rather than a falsy test: 0 and False are meaningful values here.
+    # DailySpendCapMicros=0 is "record but never enforce", and EnableAlarms=false
+    # is the whole point of the field; a truthiness check would drop both and
+    # silently restore the template default.
+    parameters = [f"{k}={render(v)}" for k, v in optional.items() if v is not None and v != ""]
 
     out.append(
         {

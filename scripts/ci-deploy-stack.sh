@@ -77,11 +77,28 @@ args=(
 # Optional parameters declared in the instance config: AlarmEmail,
 # MonthlyBudgetUSD, RetentionDays and the rest. Absent means "keep the template
 # default", so an untouched config still deploys.
+have_alarm_email=0
 if [ -n "${EXTRA_PARAMETERS:-}" ]; then
     while IFS= read -r param; do
         [ -n "$param" ] || continue
+        case "$param" in
+            AlarmEmail=*) have_alarm_email=1 ;;
+        esac
         args+=(--parameter "$param")
     done < <(printf '%s' "$EXTRA_PARAMETERS" | jq -r '.[]? // empty')
+fi
+
+# The alarm address comes from a repository secret, because this repository is
+# public and config/instances/*.yaml is committed. An instance config may still
+# set alarm_email — a private fork legitimately would — and when it does it wins,
+# because passing --parameter AlarmEmail twice leaves which one lands up to
+# argument order rather than to intent.
+if [ -n "${ALARM_EMAIL:-}" ]; then
+    if [ "$have_alarm_email" = 1 ]; then
+        warn "ALARM_EMAIL is set but ${INSTANCE}'s config already sets alarm_email; keeping the config's value"
+    else
+        args+=(--parameter "AlarmEmail=${ALARM_EMAIL}")
+    fi
 fi
 
 exec "$REPO_ROOT/scripts/deploy.sh" "${args[@]}"

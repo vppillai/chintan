@@ -57,17 +57,28 @@ func (s *statusWriter) Flush() {
 // instrument emits one EMF record per request: an outcome counter and a
 // latency.
 //
-// The dimensions are the registered route and the status class. Class rather
-// than exact status keeps the metric count bounded while still letting an alarm
-// fire on 5xx.
+// The only dimension is the status class. Class rather than exact status keeps
+// the metric count bounded while still letting an alarm fire on 5xx.
 //
-// There is deliberately no Method dimension. The registered pattern already
-// begins with the method — "GET /v1/notes" — so Method is a function of Route,
-// never an independent axis. It cost bytes on every record and implied a
-// breakdown that does not exist.
+// Route is deliberately NOT a dimension. CloudWatch bills one custom metric per
+// unique name and dimension-set combination, and the free allowance is ten, so
+// dimensioning by route priced this pair at two metrics per route per status
+// class — twenty-eight routes against four classes is over two hundred metric
+// identities, and it grew by four more every time a route was added. Measured
+// on the live instance after a single evening of use: forty-four identities in
+// the Chintan namespace, twenty-eight of them these two metrics.
 //
-// There is likewise no separate 5xx counter. CloudWatch bills one metric per
-// unique name and dimension-set combination, and a counter carrying these same
+// Nothing is lost by dropping it. The request log already records route, status
+// and duration_ms on every request (see obs/middleware.go), so latency by route
+// is a Logs Insights query over data that is already there — and one that can
+// group by the exact status, which the metric never could. What remains here is
+// the cheap always-on signal an alarm reads.
+//
+// There is deliberately no Method dimension either. The registered pattern
+// already begins with the method — "GET /v1/notes" — so Method is a function of
+// Route, never an independent axis.
+//
+// There is likewise no separate 5xx counter. A counter carrying these same
 // dimensions filtered to Status="5xx" is ApiRequests with a filter applied —
 // something the query side does for free.
 func instrument(pattern string, next http.Handler) http.Handler {
@@ -84,7 +95,6 @@ func instrument(pattern string, next http.Handler) http.Handler {
 			rec.status = http.StatusOK
 		}
 		obs.Emit(ctx, map[string]string{
-			"Route":  pattern,
 			"Status": statusClass(rec.status),
 		},
 			obs.Metric{Name: "ApiRequests", Value: 1, Unit: obs.UnitCount},

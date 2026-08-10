@@ -69,6 +69,18 @@ Parameters:
       Empty installs the topic with no subscription, so a clone deploys clean.
     AllowedPattern: '^$|^[^@\s]+@[^@\s]+\.[^@\s]+$'
 
+  EnableAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Create the CloudWatch alarms for this stack. CloudWatch's always-free
+      allowance is ten alarm-months, and this template declares ten alarms, so a
+      single environment fits exactly and a second identical environment puts
+      half of them outside it — a fixed ~$1.00/month for alarms nobody reads.
+      Set false on an environment whose failures are already caught some other
+      way; the deploy's own smoke test is what gates staging.
+
   MonthlyBudgetUSD:
     Type: Number
     Default: 10
@@ -121,6 +133,9 @@ Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
+  AlarmsEnabled: !Equals [!Ref EnableAlarms, 'true']
+  # The spend-cap alarm needs both: a cap to enforce, and alarms turned on.
+  SpendCapAlarmEnabled: !And [!Condition HasSpendCap, !Condition AlarmsEnabled]
 
 Resources:
   # Cognito User Pool
@@ -1814,6 +1829,7 @@ Resources:
 
   ApiFunctionErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-errors'
       AlarmDescription: API Lambda returned an unhandled error.
@@ -1835,6 +1851,7 @@ Resources:
 
   ApiFunctionThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-throttles'
       AlarmDescription: API Lambda hit its reserved concurrency ceiling.
@@ -1854,6 +1871,7 @@ Resources:
 
   WorkerFunctionErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-errors'
       AlarmDescription: Worker Lambda failed a capture. Fires before the DLQ does.
@@ -1875,6 +1893,7 @@ Resources:
 
   WorkerFunctionThrottlesAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-throttles'
       AlarmDescription: Worker Lambda hit its reserved concurrency ceiling; captures are queueing.
@@ -1895,6 +1914,7 @@ Resources:
   # A single message here is one recording the user believes was filed and was not.
   CaptureDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-dlq'
       AlarmDescription: A capture exhausted its retries and is sitting in the dead-letter queue.
@@ -1925,6 +1945,7 @@ Resources:
   # DeleteObject blip would be noise for a job the retries fix on their own.
   ExpiryDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-expiry-dlq'
       AlarmDescription: An expired record exhausted its retries; its S3 objects are still in the bucket.
@@ -1951,10 +1972,10 @@ Resources:
   #
   # Both read a DIMENSIONLESS metric. obs.EmitWithRollup publishes each counter
   # under two identities — {Provider} for the answer, and no dimensions for the
-  # alarm — precisely so these can be plain metric alarms. The alternative,
-  # taken by SpendCapRejectionsAlarm below, is a Metrics Insights query, which
-  # is billed per metric analysed with no free tier and grows by $0.10 every
-  # time a provider is added. See docs/cost-analysis.md §5.3.
+  # alarm — precisely so these can be plain metric alarms. SpendCapRejectionsAlarm
+  # below now does the same; it was the one Metrics Insights query alarm here,
+  # and that form is billed per metric analysed with no free tier. See
+  # docs/cost-analysis.md §5.3.
   #
   # Neither the pipeline nor the handler notifies anybody directly. The email is
   # the alarm's own OK -> ALARM transition, which is what makes a revoked key
@@ -1963,6 +1984,7 @@ Resources:
   # ---------------------------------------------------------------------------
   ProviderKeyRejectedAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-provider-key-rejected'
       AlarmDescription: >-
@@ -1987,6 +2009,7 @@ Resources:
 
   ProviderRateLimitedAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-provider-rate-limited'
       AlarmDescription: >-
@@ -2013,6 +2036,7 @@ Resources:
   # Average of the 5xx metric is the 5xx rate: 0.05 is five percent of requests.
   Api5xxRateAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-5xx-rate'
       AlarmDescription: More than five percent of API requests are failing server-side.
@@ -2039,25 +2063,32 @@ Resources:
   # the breaker never rejects, and an alarm that cannot fire is worse than no
   # alarm, because the console shows it green.
   #
-  # This is a Metrics Insights query rather than a plain metric alarm because
-  # obs.Emit declares exactly one dimension set, ["Provider","Op"], so CloudWatch
-  # holds no dimensionless rollup of SpendCapRejections to alarm on. A
-  # no-dimension alarm would never receive a datapoint and, with notBreaching,
-  # would sit permanently OK. SCHEMA() sums across every provider and op without
-  # naming any of them, so adding a provider needs no template edit.
+  # This was a Metrics Insights query, because SpendCapRejections was emitted
+  # through obs.Count — one dimension set, ["Provider","Op"], and so no
+  # dimensionless identity for an ordinary alarm to read. The query alarm worked,
+  # but Metrics Insights alarms are billed per metric analysed with NO free tier,
+  # and these two (prod and staging) were the only charge on an otherwise idle
+  # instance: a measured $0.0040/day, about $0.12/month, while every standard
+  # alarm here costs nothing.
+  #
+  # The metric now emits through obs.CountWithRollup, exactly like its siblings
+  # ProviderKeyRejected and ProviderRateLimited, which have always been plain
+  # alarms with no Dimensions for this reason. The rollup costs one extra metric
+  # identity — inside the free ten — and buys back the query-alarm charge.
+  # Adding a provider still needs no template edit: the rollup sums across every
+  # provider and op by construction.
   SpendCapRejectionsAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasSpendCap
+    Condition: SpendCapAlarmEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-spend-cap-tripped'
       AlarmDescription: >-
         The daily spend cap rejected a provider call. Captures are being refused
         on cost, not on failure.
-      Metrics:
-        - Id: rejections
-          Expression: 'SELECT SUM(SpendCapRejections) FROM SCHEMA("Chintan", Provider, Op)'
-          Period: 300
-          ReturnData: true
+      Namespace: Chintan
+      MetricName: SpendCapRejections
+      Statistic: Sum
+      Period: 300
       EvaluationPeriods: 1
       Threshold: 0
       ComparisonOperator: GreaterThanThreshold

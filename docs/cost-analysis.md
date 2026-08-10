@@ -29,22 +29,96 @@ These are **not** implemented. Each is a real trade-off, not an oversight.
 
 ## 1. Headline
 
-> **Idle monthly cost: $0.00.**
+> **Idle monthly cost: ~$0.09**, and it was measured, not derived.
 > It was $1.00, all of it one customer-managed KMS key. That key has been
 > removed: the refresh-token vault is now sealed with AES-256-GCM under a key
 > held as an SSM SecureString, which is encrypted by the AWS-managed `aws/ssm`
-> key and is free. Everything else in the stack — every alarm, every metric,
-> every log group, every table, bucket, queue, topic, API and budget — was
-> already **$0.00** when idle, and still is.
+> key and is free. Lambda, DynamoDB, S3 storage, SQS, API Gateway, the topic and
+> the budget really are **$0.00** idle.
+
+### What this section claimed, and what the bill said
+
+This section read **"Idle monthly cost: $0.00"** and was wrong. Two days of a
+genuinely unused deployment billed $0.019, and the run rate hid two charges that
+had not finished accruing:
+
+| Driver | Measured | Why it was missed |
+|---|---|---|
+| `CW:MetricInsightAlarmUsage` | $0.0040/day ≈ **$0.12/mo** | The two spend-cap alarms were Metrics Insights queries, which have **no free tier**. The analysis counted alarms as free without separating the two billing forms. |
+| `CW:AlarmMonitorUsage` | **$0.00 then, ~$1.00/mo projected** | CloudWatch's always-free allowance is **ten alarm-months**. This template declares ten alarms, so prod alone fits *exactly* — and staging's identical ten fall entirely outside it. On a young month only 1.68 alarm-months had accrued, so the meter read zero and looked settled. |
+| S3 `PutObject` | $0.0028/day ≈ **$0.09/mo** | CloudTrail delivering log files. Genuinely unavoidable while the trail exists, and largely proportional to API activity rather than to app usage. |
+
+Both CloudWatch charges are now fixed rather than documented:
+
+- `SpendCapRejections` emits through `obs.CountWithRollup`, so its alarm is an
+  ordinary standard-resolution alarm like `ProviderKeyRejected` and
+  `ProviderRateLimited` always were. No Metrics Insights alarm remains.
+- Alarms are behind the `EnableAlarms` parameter and **off in staging**
+  (`config/instances/dev-staging.yaml`), which puts the alarm count back at ten
+  — the exact free allowance. Staging is still gated by its deploy smoke test.
+
+**The lesson worth keeping:** a free tier that is not yet exhausted reads
+identically to a cost that does not exist. Anything counted as "free" here needs
+the allowance written next to it and the projected full-month consumption
+compared against it — not a spot reading from a partial month.
 
 Light and heavy use barely move it, because AWS's always-free tiers absorb
 essentially all of a single user's consumption:
 
 | Scenario | AWS/month | Third-party/month | Total |
 |---|---|---|---|
-| **Idle** (0 captures) | **$0.00** | $0.00 | **$0.00** |
-| **Light** (30 captures × 2 min) | **$0.04** | $0.69 | **$0.73** |
-| **Heavy** (300 captures × 5 min) | **$0.16** | $16.80 | **$16.96** |
+| **Idle** (0 captures) | **~$0.09** | $0.00 | **~$0.09** |
+| **Light** (30 captures × 2 min) | **$0.13** | $0.69 | **$0.82** |
+| **Heavy** (300 captures × 5 min) | **$0.25** | $16.80 | **$17.05** |
+
+The idle figure is CloudTrail's log delivery and nothing else. The use rows add
+$0.09 to their previous values for the same reason: the earlier table treated
+CloudTrail as free because its *management events* are, which is true, and its S3
+writes are not.
+
+### The one that scales with use: custom metrics
+
+Idle cost is settled. The charge that actually threatens the free tier appears
+only once the app is *used*, which is why two days of idle billing said nothing
+about it.
+
+CloudWatch bills **$0.30 per custom metric per month**, prorated hourly, with an
+always-free allowance of **ten**. A metric's identity is its name *plus its
+dimension set*, so a dimension multiplies metrics — it does not annotate one.
+
+`ApiRequests` and `ApiLatency` were dimensioned by `Route` × `Status`. Measured
+on the live instance after a single evening: **44 identities in the `Chintan`
+namespace, 28 of them these two metrics** — and only twelve of twenty-eight
+routes had been exercised. Fully exercised that is 28 routes × ~4 status classes
+× 2 metrics ≈ **224 identities against an allowance of ten**, growing by four
+more every time a route is added.
+
+`Route` is no longer a dimension. Nothing is lost: `obs/middleware.go` already
+logs `route`, `status` and `duration_ms` on every request, so latency by route is
+a Logs Insights query over data that is already being written — and one that can
+group by exact status, which the metric never could.
+
+That leaves roughly **24 identities**, and — the point — a number bounded by the
+dimension values rather than by the size of the API:
+
+| Metric | Dimensions | Identities |
+|---|---|---|
+| `ApiRequests`, `ApiLatency` | `Status` | ~8 |
+| `ProviderCalls`, `ProviderCostMicros`, `ProviderLatency` | `Provider`, `Op` | ~9 |
+| `CaptureStageEntered` | `Stage` | 4 |
+| `RateLimited` | `Route` — but only two routes take a limiter | 2 |
+| `ProviderKeyRejected`, `ProviderRateLimited`, `SpendCapRejections` | dimensioned + rollup | on failure only |
+| `CapturesCreated`, `CapturePipelineDuration`, `RouterContentDiscarded` | none | 3 |
+
+**Twenty-four is still more than ten**, and pretending otherwise is how the
+previous version of this document went wrong. What saves it is hourly proration:
+the bill is `identities × hours-with-data / 730`, so ten metric-months is reached
+at roughly **300 active hours a month — about ten hours a day** of traffic. A
+single user dictating notes is far below that. Before the change the same
+threshold was ~5.5 hours a day and heading toward half an hour.
+
+If it ever does get close, the next cut is `ApiLatency`: nothing alarms on it and
+`duration_ms` is already in the request log.
 
 The README's claim of **$1–10/month** is *numerically* right at the bottom of
 its range and *structurally* wrong. It says "nearly all of the cost is

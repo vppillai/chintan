@@ -165,7 +165,12 @@ func (b *Breaker) Do(ctx context.Context, tenantID string, est Estimate, fn func
 				slog.String("error", rerr.Error()),
 				slog.Int64("reserved_micros", estimated))
 		}
-		obs.Count(ctx, "SpendCapRejections", map[string]string{"Provider": est.Provider, "Op": string(est.Op)})
+		// WithRollup, like its two siblings ProviderKeyRejected and
+		// ProviderRateLimited: the dimensionless identity is what lets the
+		// spend-cap alarm be an ordinary standard-resolution alarm instead of a
+		// Metrics Insights query, which is billed per metric analysed with no
+		// free tier. The dimensioned copy still says which provider and op.
+		obs.CountWithRollup(ctx, "SpendCapRejections", map[string]string{"Provider": est.Provider, "Op": string(est.Op)})
 		obs.Log(ctx).Warn("daily spend cap reached",
 			slog.Int64("cap_micros", capMicros),
 			slog.Int64("instance_cap_micros", b.capMicro),

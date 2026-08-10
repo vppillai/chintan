@@ -89,7 +89,8 @@ Biometric unlock fails closed: no vault key, no biometric unlock, and the API sa
 | `region` | `us-west-2` | Must match the region of the artifact bucket; CI enforces this. |
 | `site_path` | `<name>` for prod, `<name>-<environment>` otherwise | The GitHub Pages sub-path. |
 | `display_name` | `<name>` | Human label. |
-| `alarm_email` | none | Subscribed to the alarm topic and the budget. |
+| `alarm_email` | none | Subscribed to the alarm topic and the budget. **This repository is public, so the deployed instance sets it from the `ALARM_EMAIL` repository secret instead** (production only — the budget is account-scoped, and two stacks subscribing one address send two emails per overspend). A config value still wins if present, which is what a private fork wants. |
+| `enable_alarms` | `true` | Create this stack's CloudWatch alarms. CloudWatch's always-free allowance is **ten alarm-months** and the template declares exactly ten alarms, so one environment fits precisely and a second identical one costs ~$1.00/month. Shipped `false` for `dev-staging`, whose failures are already caught by the deploy's own smoke test. |
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
 | `log_retention_days` | `14` | CloudWatch retention. |
 | `daily_spend_cap_micros` | `0` (record, never enforce) | Instance-wide daily provider spend ceiling, in **microdollars** — `1000000` = $1. A tenant may set a lower cap of its own; the breaker enforces whichever is lower. Non-zero also creates the `chintan-<i>-<env>-spend-cap-tripped` alarm. |
