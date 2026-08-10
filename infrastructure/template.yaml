@@ -2111,7 +2111,22 @@ Resources:
     Type: AWS::Budgets::Budget
     Properties:
       Budget:
-        BudgetName: !Sub 'chintan-${InstanceName}-${Environment}'
+        # Deliberately unnamed, and this is load-bearing rather than an
+        # oversight. NotificationsWithSubscribers below is Update-requires-
+        # Replacement, so the first deploy that adds, removes or changes a
+        # subscriber makes CloudFormation create the replacement budget BEFORE
+        # deleting the old one. With a fixed BudgetName the two collide and the
+        # deploy fails on
+        #
+        #   A budget or resource with the same name but a different internalId
+        #   already exists.
+        #
+        # which is exactly what happened the first time ALARM_EMAIL was set: the
+        # stack rolled back and the only way forward was deleting the budget by
+        # hand. Letting CloudFormation generate the name — it derives one from
+        # the stack and logical id — makes every future subscriber change an
+        # ordinary replacement. The name is cosmetic; the budget is found by its
+        # stack, and its limit and notifications are declared here.
         BudgetType: COST
         TimeUnit: MONTHLY
         BudgetLimit:
