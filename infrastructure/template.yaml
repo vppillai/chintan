@@ -1085,9 +1085,30 @@ Resources:
                 # dynamodb:Scan is deliberately absent. Every access path is a
                 # keyed Query; a Scan here would only ever be a bug that reads
                 # across tenants.
+                # The table, and every index ON that table.
+                #
+                # This enumerated the indexes one by one and listed only gsi1.
+                # When gsi2 was added so the notes list could order by
+                # updated_at, the table gained the index and this list did not,
+                # so every GET /v1/notes failed with
+                #
+                #   AccessDeniedException: not authorized to perform:
+                #   dynamodb:Query on resource: table/chintan-dev-prod/index/gsi2
+                #
+                # The deploy succeeded, /v1/health stayed 200, and the notes list
+                # was broken for days before anybody looked.
+                #
+                # The wildcard is scoped to this table's own indexes and grants
+                # nothing new: an index holds a projection of rows this role
+                # already reads and writes in full, so being able to Query gsi2
+                # is not more access than Query on the table — it is the same
+                # data by another key. What it removes is a list that has to be
+                # remembered, in a place where forgetting fails at runtime rather
+                # than at deploy. scripts/guardrails-check.sh asserts the
+                # invariant either way.
                 Resource:
                   - !GetAtt DynamoDBTable.Arn
-                  - !Sub '${DynamoDBTable.Arn}/index/gsi1'
+                  - !Sub '${DynamoDBTable.Arn}/index/*'
               # The expiry stream. Lambda checks these four at
               # CreateEventSourceMapping time and refuses the mapping without
               # them, so a missing grant here fails the deploy rather than the

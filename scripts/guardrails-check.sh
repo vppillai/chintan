@@ -209,6 +209,103 @@ PY
     )
 fi
 
+info "every secondary index the table declares is readable by the Lambda role"
+# This check exists because its absence caused a production outage.
+#
+# gsi2 was added to order notes by updated_at. The table gained the index; the
+# execution role's Resource list, which enumerates indexes one by one, did not.
+# Every GET /v1/notes then failed with
+#
+#   AccessDeniedException: ... not authorized to perform: dynamodb:Query on
+#   resource: table/chintan-dev-prod/index/gsi2
+#
+# and nothing caught it. The unit tests use a fake that has no IAM. cfn-lint
+# validates the template's shape, not whether a grant covers a resource the
+# template also declares. The deploy smoke test asks /v1/health, which touches
+# no index. So the notes list was broken from the moment that index shipped and
+# stayed broken for days, silently, because the only signal was a 500 nobody was
+# subscribed to.
+#
+# An IAM grant that enumerates siblings is a grant that goes stale the next time
+# a sibling is added. This asserts the invariant instead of the spelling: every
+# GlobalSecondaryIndex on the table must be covered, whether by an explicit
+# /index/<name> or by a /index/* wildcard over the same table.
+if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+    unverified "dynamodb index grants: python3 with PyYAML is unavailable (pip install pyyaml)"
+else
+    while IFS= read -r missing; do
+        [ -n "$missing" ] || continue
+        violation "template.yaml declares index '$missing' on the table but no dynamodb:Query grant covers it — the query fails at runtime, not at deploy"
+    done < <(
+        python3 - infrastructure/template.yaml <<'PY'
+import pathlib
+import sys
+
+import yaml
+
+
+class Loader(yaml.SafeLoader):
+    """CloudFormation intrinsics reduced to their payload.
+
+    !Sub '${T.Arn}/index/gsi1' becomes that string, which is what the coverage
+    test below reads; !GetAtt T.Arn becomes 'T.Arn'. Nothing here evaluates an
+    intrinsic — it only needs the literal text to look for '/index/'.
+    """
+
+
+def _intrinsic(loader, suffix, node):
+    if isinstance(node, yaml.ScalarNode):
+        return loader.construct_scalar(node)
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    return loader.construct_mapping(node, deep=True)
+
+
+Loader.add_multi_constructor("!", _intrinsic)
+
+doc = yaml.load(pathlib.Path(sys.argv[1]).read_text(), Loader=Loader) or {}
+resources = doc.get("Resources") or {}
+
+
+def as_list(v):
+    if v is None:
+        return []
+    return v if isinstance(v, list) else [v]
+
+
+indexes = []
+for res in resources.values():
+    if (res or {}).get("Type") != "AWS::DynamoDB::Table":
+        continue
+    for gsi in as_list((res.get("Properties") or {}).get("GlobalSecondaryIndexes")):
+        name = (gsi or {}).get("IndexName")
+        if name:
+            indexes.append(str(name))
+
+granted = []
+for res in resources.values():
+    if (res or {}).get("Type") != "AWS::IAM::Role":
+        continue
+    for policy in as_list((res.get("Properties") or {}).get("Policies")):
+        stmts = as_list(((policy or {}).get("PolicyDocument") or {}).get("Statement"))
+        for stmt in stmts:
+            if (stmt or {}).get("Effect") != "Allow":
+                continue
+            actions = [str(a) for a in as_list(stmt.get("Action"))]
+            if not any(a == "dynamodb:Query" or a == "dynamodb:*" for a in actions):
+                continue
+            granted += [str(r) for r in as_list(stmt.get("Resource"))]
+
+for name in indexes:
+    covered = any(
+        r.endswith("/index/*") or r.endswith(f"/index/{name}") for r in granted
+    )
+    if not covered:
+        print(name)
+PY
+    )
+fi
+
 # ---------------------------------------------------------------------------
 # REMOTE: needs AWS or GitHub API access
 # ---------------------------------------------------------------------------
