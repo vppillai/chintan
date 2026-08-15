@@ -16,6 +16,14 @@ import (
 	"github.com/aws/smithy-go"
 )
 
+// ProcessedTagKey and ProcessedTagValue mark an object the pipeline has
+// finished with — reached a terminal capture status, not merely aged since
+// upload. See Objects.MarkProcessed.
+const (
+	ProcessedTagKey   = "chintan-processed"
+	ProcessedTagValue = "true"
+)
+
 // S3Objects implements the Objects interface using AWS S3.
 type S3Objects struct {
 	client *s3.Client
@@ -166,6 +174,50 @@ func (o *S3Objects) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("s3 delete object: %w", err)
 	}
 
+	return nil
+}
+
+// MarkProcessed reads the object's current tags and writes them back with
+// ProcessedTagKey added, since S3's tagging API has no merge operation of its
+// own — a plain PutObjectTagging would silently drop the retention tier tag
+// that PresignPut signed in at upload.
+func (o *S3Objects) MarkProcessed(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	got, err := o.client.GetObjectTagging(ctx, &s3.GetObjectTaggingInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		var noSuchKey *types.NoSuchKey
+		if errors.As(err, &noSuchKey) {
+			return nil
+		}
+		return fmt.Errorf("s3 get object tagging: %w", err)
+	}
+
+	tags := make([]types.Tag, 0, len(got.TagSet)+1)
+	for _, tag := range got.TagSet {
+		if aws.ToString(tag.Key) == ProcessedTagKey {
+			continue
+		}
+		tags = append(tags, tag)
+	}
+	tags = append(tags, types.Tag{Key: aws.String(ProcessedTagKey), Value: aws.String(ProcessedTagValue)})
+
+	if _, err := o.client.PutObjectTagging(ctx, &s3.PutObjectTaggingInput{
+		Bucket:  aws.String(o.bucket),
+		Key:     aws.String(key),
+		Tagging: &types.Tagging{TagSet: tags},
+	}); err != nil {
+		var noSuchKey *types.NoSuchKey
+		if errors.As(err, &noSuchKey) {
+			return nil
+		}
+		return fmt.Errorf("s3 put object tagging: %w", err)
+	}
 	return nil
 }
 

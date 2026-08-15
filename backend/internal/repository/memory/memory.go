@@ -28,6 +28,7 @@ type memoryObject struct {
 	body        []byte
 	contentType string
 	etag        string
+	tags        map[string]string
 }
 
 type idemEntry struct {
@@ -698,7 +699,14 @@ func (o *Objects) Put(ctx context.Context, key string, body []byte, contentType 
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	stored := append([]byte(nil), body...)
-	o.objects[key] = memoryObject{body: stored, contentType: contentType, etag: etagOf(stored)}
+	// Tags survive a rewrite of the same key. Nothing in the real pipeline
+	// re-Puts an object after MarkProcessed, but a test double that silently
+	// dropped them on the next Put would make that assumption load-bearing
+	// rather than merely true.
+	o.objects[key] = memoryObject{
+		body: stored, contentType: contentType, etag: etagOf(stored),
+		tags: o.objects[key].tags,
+	}
 	return nil
 }
 
@@ -735,8 +743,40 @@ func (o *Objects) PutIfMatch(ctx context.Context, key string, body []byte, conte
 		return repository.ErrPreconditionFailed
 	}
 	stored := append([]byte(nil), body...)
-	o.objects[key] = memoryObject{body: stored, contentType: contentType, etag: etagOf(stored)}
+	o.objects[key] = memoryObject{
+		body: stored, contentType: contentType, etag: etagOf(stored),
+		tags: o.objects[key].tags,
+	}
 	return nil
+}
+
+// MarkProcessed sets the tag the retention lifecycle rule requires before it
+// will expire an object. A missing key is not an error: there is nothing left
+// to protect or to expire, matching S3Objects' behaviour on a NoSuchKey.
+func (o *Objects) MarkProcessed(ctx context.Context, key string) error {
+	if err := o.checkCtx(ctx); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	obj, ok := o.objects[key]
+	if !ok {
+		return nil
+	}
+	if obj.tags == nil {
+		obj.tags = make(map[string]string)
+	}
+	obj.tags[repository.ProcessedTagKey] = repository.ProcessedTagValue
+	o.objects[key] = obj
+	return nil
+}
+
+// Tags returns the object's current tags, for tests to assert on. A missing
+// object returns nil.
+func (o *Objects) Tags(key string) map[string]string {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.objects[key].tags
 }
 
 func (o *Objects) Delete(ctx context.Context, key string) error {
