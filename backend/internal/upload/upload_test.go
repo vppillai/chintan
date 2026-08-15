@@ -197,3 +197,41 @@ func TestEveryRetentionTierHasALifecycleRule(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryLifecycleRuleRequiresTheProcessedTag ties the template to
+// internal/pipeline.markAudioProcessedIfSafe, the only place that ever sets
+// ProcessedTagKey.
+//
+// A capture whose upload event never reaches the worker — the S3/SQS
+// notification lost, the worker dead — sits at `uploaded` with no chance to
+// run, and this tag is what keeps its audio out of every rule below until
+// transcription actually succeeds, regardless of how old the object gets. A
+// rule missing this filter would expire that audio on schedule anyway, on a
+// clock that has no idea the pipeline never ran — which is exactly the
+// incident internal/pipeline/audio_retention_test.go exists to close on the
+// Go side. Checked per-rule rather than as one global Contains: four rules
+// share this filter, and a global check would not notice it missing from just
+// one of them.
+func TestEveryLifecycleRuleRequiresTheProcessedTag(t *testing.T) {
+	raw, err := os.ReadFile("../../../infrastructure/template.yaml")
+	if err != nil {
+		t.Fatalf("read the template: %v", err)
+	}
+	template := string(raw)
+
+	for _, tier := range model.RetentionTiers {
+		id := "ExpireCaptureAudio" + strconv.Itoa(tier)
+		start := strings.Index(template, "- Id: "+id)
+		if start == -1 {
+			t.Fatalf("no rule named %s; TestEveryRetentionTierHasALifecycleRule should already have failed", id)
+		}
+		block := template[start:]
+		if next := strings.Index(block[len("- Id: "+id):], "- Id: "); next != -1 {
+			block = block[:len("- Id: "+id)+next]
+		}
+		if !strings.Contains(block, "chintan-processed") {
+			t.Errorf("%s does not filter on chintan-processed; its audio expires on schedule "+
+				"whether or not the pipeline ever got a chance to run", id)
+		}
+	}
+}

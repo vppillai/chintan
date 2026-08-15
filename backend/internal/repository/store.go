@@ -184,6 +184,20 @@ type Objects interface {
 	// empty etag means "the object must not exist" (If-None-Match: *). A lost
 	// race returns ErrPreconditionFailed.
 	PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error
+
+	// MarkProcessed tags the object so the retention lifecycle rule is allowed
+	// to expire it, without disturbing whatever tags it already carries — in
+	// particular the tenant's retention tier, set once at upload and never
+	// touched again. A missing object is not an error: there is nothing left
+	// to protect or to expire.
+	//
+	// This exists because a capture that never gets a chance to run — a lost
+	// upload notification, a dead worker — must not have its audio quietly
+	// expire while it waits for a chance that never comes. The lifecycle rules
+	// in infrastructure/template.yaml require this tag in addition to the
+	// retention tag, so an object nobody has called this on is kept
+	// indefinitely regardless of age.
+	MarkProcessed(ctx context.Context, key string) error
 }
 
 // DrainPages walks every page of a paginated list, up to maxItems. It exists

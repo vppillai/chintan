@@ -170,6 +170,7 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	// outcome counter alongside it would be a second billable metric per
 	// dimension value telling us a number this one already holds.
 	obs.Duration(ctx, "CapturePipelineDuration", elapsed, map[string]string{"Outcome": string(final.Status)})
+	p.markAudioProcessedIfSafe(ctx, &final)
 	if errors.Is(err, errDeliveryConceded) {
 		// The other delivery is either finished or still running. Either way this
 		// one is done and its message must be deleted, not redelivered. If the
@@ -850,6 +851,38 @@ func (p *Pipeline) persist(ctx context.Context, capture *model.CaptureIndex) err
 		return fmt.Errorf("pipeline: persist capture: %w", err)
 	}
 	return p.concede(ctx, capture)
+}
+
+// markAudioProcessedIfSafe lets the retention lifecycle rule see this
+// capture's audio once it is no longer needed for the pipeline to make
+// progress — which is the moment transcription succeeds and RawKey is set,
+// not necessarily the moment the whole capture reaches a terminal status.
+// Every stage after transcription resumes from RawKey (resumeStatusFor prefers
+// it explicitly) and never re-reads the audio object, so protecting it any
+// longer than this buys nothing.
+//
+// Before that point — the capture is still `uploaded`, or transcription
+// itself failed — the audio is the only surviving evidence of what was said,
+// and a retry needs that very object, so it must not expire regardless of
+// age. This is what closes the gap a capture falls into when the upload event
+// that should drive the worker never arrives: with no RawKey, this never
+// tags it, so the lifecycle rule (which now requires the tag) leaves it alone
+// indefinitely instead of deleting it out from under a delivery that has not
+// happened yet.
+//
+// Failing to tag is logged and swallowed rather than propagated: the
+// capture's own status write already succeeded, and erring toward keeping
+// audio longer than necessary is the safe direction, not the one this exists
+// to prevent.
+func (p *Pipeline) markAudioProcessedIfSafe(ctx context.Context, capture *model.CaptureIndex) {
+	if capture.RawKey == "" || capture.AudioKey == "" {
+		return
+	}
+	if err := p.cfg.Objects.MarkProcessed(ctx, capture.AudioKey); err != nil {
+		obs.Log(ctx).Warn("could not tag capture audio as processed",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+	}
 }
 
 // concede reloads the capture after a lost conditional write and stops this

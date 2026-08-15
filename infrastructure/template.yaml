@@ -954,6 +954,18 @@ Resources:
       # level. An object carrying no chintan-retention tag matches none of these
       # and is kept indefinitely, which is what a retention of 0 means and is
       # now the only thing it means.
+      #
+      # chintan-processed is the third, newer condition. A capture whose upload
+      # event never reached the worker — the SQS/S3 notification lost, the
+      # worker dead — sits at `uploaded` with no chance to run, and this tag is
+      # the only one of the three the WORKER sets rather than the upload PUT: it
+      # is applied by internal/pipeline.markAudioProcessedIfSafe once
+      # transcription actually succeeds, not merely once time has passed. Before
+      # that, all three tags being required means an object that never got
+      # processed keeps its audio indefinitely regardless of age, instead of a
+      # clock that has no idea the pipeline stalled deleting the one surviving
+      # copy of what was said. TestEveryLifecycleRuleRequiresTheProcessedTag
+      # pins this on the Go side.
       LifecycleConfiguration:
         Rules:
           - Id: ExpireCaptureAudio7
@@ -964,6 +976,8 @@ Resources:
                 Value: capture-audio
               - Key: chintan-retention
                 Value: '7'
+              - Key: chintan-processed
+                Value: 'true'
             ExpirationInDays: 7
             NoncurrentVersionExpiration:
               NoncurrentDays: 7
@@ -975,6 +989,8 @@ Resources:
                 Value: capture-audio
               - Key: chintan-retention
                 Value: '30'
+              - Key: chintan-processed
+                Value: 'true'
             ExpirationInDays: 30
             NoncurrentVersionExpiration:
               NoncurrentDays: 30
@@ -986,6 +1002,8 @@ Resources:
                 Value: capture-audio
               - Key: chintan-retention
                 Value: '90'
+              - Key: chintan-processed
+                Value: 'true'
             ExpirationInDays: 90
             NoncurrentVersionExpiration:
               NoncurrentDays: 90
@@ -997,6 +1015,8 @@ Resources:
                 Value: capture-audio
               - Key: chintan-retention
                 Value: '365'
+              - Key: chintan-processed
+                Value: 'true'
             ExpirationInDays: 365
             NoncurrentVersionExpiration:
               NoncurrentDays: 365
