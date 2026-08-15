@@ -24,6 +24,26 @@
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="%BASE_URL%icon-192.png" />
     <title>Chintan</title>
+    <script type="text/javascript">
+      // Undoes the redirect public/404.html made for a path GitHub Pages has
+      // no server-side route for, restoring the real URL before the router
+      // ever reads `window.location`. See 404.html for why this exists.
+      //
+      // Adapted from the "spa-github-pages" trick (rafgraph, MIT License,
+      // https://github.com/rafgraph/spa-github-pages).
+      (function (l) {
+        if (l.search[1] === '/') {
+          var decoded = l.search
+            .slice(1)
+            .split('&')
+            .map(function (s) {
+              return s.replace(/~and~/g, '&');
+            })
+            .join('?');
+          window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash);
+        }
+      })(window.location);
+    </script>
     <script>
       /*
        * Theme pre-paint. The stylesheet resolves `system` with a media query,
