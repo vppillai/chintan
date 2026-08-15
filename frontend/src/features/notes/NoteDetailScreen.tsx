@@ -8,6 +8,7 @@ import { useNote } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { CopyButton } from '@/components/CopyButton.tsx';
+import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -162,6 +163,20 @@ export function NoteDetailScreen() {
               .join('\n\n')
           }
         />
+        <DownloadButton
+          label="Download note"
+          filename={() => `${filenameFor(editor.model.draft.title)}.md`}
+          blob={() =>
+            Promise.resolve(
+              new Blob(
+                [
+                  `# ${editor.model.draft.title.trim()}\n\n${editor.model.draft.body.trim()}\n`,
+                ],
+                { type: 'text/markdown' },
+              ),
+            )
+          }
+        />
       </div>
 
       <TagEditor
@@ -187,6 +202,32 @@ export function NoteDetailScreen() {
       <NoteActions note={note} />
     </div>
   );
+}
+
+/**
+ * A dictated title, made safe as a filename.
+ *
+ * The title comes from speech, unbounded — no reserved characters, no length
+ * limit, sometimes not even Latin script. `/` and `\` would nest or break a
+ * path; a title trimmed to nothing (all punctuation, or empty) still needs a
+ * name a save dialog can show.
+ */
+function filenameFor(title: string): string {
+  const cleaned = title.trim().replace(/[/\\:*?"<>|]/g, '').trim();
+  return (cleaned || 'note').slice(0, 120);
+}
+
+/**
+ * The real file extension off a presigned S3 URL's path, not its query
+ * string — `audio.webm?X-Amz-...` should download as `.webm`, not as
+ * whatever came after the `?`. Falls back to `.webm`, the format every
+ * capture in this app is actually recorded in; a bare fallback with no
+ * extension at all is the one outcome a save dialog can't recover from.
+ */
+function audioExtension(url: string): string {
+  const path = url.split('?')[0] ?? '';
+  const match = /\.[a-z0-9]+$/i.exec(path);
+  return match ? match[0] : '.webm';
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {
@@ -332,7 +373,7 @@ function Player({ capture }: { capture: CaptureWire }) {
           onClick={player.toggle}
           aria-label={player.playing ? 'Pause' : 'Play'}
         >
-          <Icon name={player.playing ? 'stop' : 'mic'} size={20} />
+          <Icon name={player.playing ? 'stop' : 'play'} size={20} />
         </button>
 
         {peaks.length > 0 ? (
@@ -351,6 +392,18 @@ function Player({ capture }: { capture: CaptureWire }) {
             onSeek={player.seek}
           />
         )}
+      </div>
+
+      <div className="player__actions">
+        <DownloadButton
+          label="Download audio"
+          filename={() => `chintan-${capture.id}${audioExtension(data.audioUrl ?? '')}`}
+          blob={async () => {
+            const response = await fetch(data.audioUrl as string);
+            if (!response.ok) throw new Error(`audio fetch failed: ${response.status}`);
+            return response.blob();
+          }}
+        />
       </div>
 
       {player.error && (
