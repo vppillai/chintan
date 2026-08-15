@@ -113,13 +113,19 @@ while IFS= read -r entry; do
     esac
 
     # The running build's identity, for the footnote on the You screen and for
-    # whatever a bug report has to name. The SHA is the only honest answer;
-    # `--short` because it is read off a phone screen. A shallow CI checkout
-    # still has HEAD, and outside a work tree the frontend falls back to
+    # whatever a bug report has to name. `git describe` names the nearest tag
+    # ("v0.3.0") when HEAD has one, or "v0.3.0-2-gabc1234" when it is a few
+    # commits ahead of the last release, which is more useful on a phone
+    # screen than a bare SHA nobody can place in the repo's history --
+    # `--always` falls back to just the short SHA when the repo has no tags
+    # yet. Requires the workflow's checkout step to fetch full history and
+    # tags (`fetch-depth: 0`); a shallow default clone has neither, and
+    # `describe` would silently be no improvement over the SHA it replaced.
+    # Outside a work tree (e.g. a bare export) the frontend falls back to
     # LOCAL_VERSION rather than rendering an empty line.
     #
     # Not `local`: this block is a loop body at top level, not a function.
-    version="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    version="$(git describe --tags --always 2>/dev/null || echo unknown)"
 
     info "building $site_path from $stack"
     (
