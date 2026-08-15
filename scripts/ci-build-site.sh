@@ -137,10 +137,6 @@ while IFS= read -r entry; do
     mkdir -p "${OUT}/${site_path}"
     cp -a frontend/dist/. "${OUT}/${site_path}/"
 
-    # Client-side routing on Pages: an unknown path returns 404.html, so serving
-    # the app from it makes a deep link work on a cold load.
-    cp "${OUT}/${site_path}/index.html" "${OUT}/${site_path}/404.html"
-
     built+=("$site_path")
     [ -n "$default_path" ] || [ "$environment" != "prod" ] || default_path="$site_path"
 done < <(scripts/list-instances.sh | jq -c '.[]')
@@ -159,6 +155,57 @@ cat >"${OUT}/index.html" <<HTML
 <body>
 <p>Open <a href="./${default_path}/">Chintan</a>.</p>
 </body>
+</html>
+HTML
+
+# GitHub Pages serves a custom 404 only from the site's actual root — the one
+# this job's own upload-pages-artifact step publishes, which is $OUT, not any
+# instance's subdirectory. A 404.html placed at "${OUT}/${site_path}/404.html"
+# (this script's previous approach: a copy of that instance's index.html) is
+# never invoked by Pages for an unmatched path; it is just an ordinary file
+# reachable only by its own exact URL. A hard refresh, a bookmark, or the PWA
+# manifest's own "Record a thought" shortcut therefore still hit Pages' bare
+# "File not found" page instead of any instance's app.
+#
+# One root 404.html serves every instance without knowing in advance which one
+# a broken deep link belongs to: it is the "spa-github-pages" trick (rafgraph,
+# MIT License, https://github.com/rafgraph/spa-github-pages), redirecting to
+# the site root with the real path encoded as a query string. It reads the
+# first two path segments — the repo name, then whichever instance's
+# site_path the browser actually requested — off the URL itself and preserves
+# them verbatim, so /chintan/dev-staging/notes/x round-trips to
+# dev-staging's own index.html exactly as /chintan/dev/notes/x round-trips to
+# dev's. frontend/index.html's inline script (see its head) decodes the
+# redirect back into the real path before the SPA router ever reads it.
+cat >"${OUT}/404.html" <<'HTML'
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chintan</title>
+    <script type="text/javascript">
+      var pathSegmentsToKeep = 2;
+
+      var l = window.location;
+      l.replace(
+        l.protocol +
+          '//' +
+          l.hostname +
+          (l.port ? ':' + l.port : '') +
+          l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') +
+          '/?/' +
+          l.pathname
+            .slice(1)
+            .split('/')
+            .slice(pathSegmentsToKeep)
+            .join('/')
+            .replace(/&/g, '~and~') +
+          (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+          l.hash,
+      );
+    </script>
+  </head>
+  <body></body>
 </html>
 HTML
 
