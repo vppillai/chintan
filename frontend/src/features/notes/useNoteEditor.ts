@@ -15,6 +15,7 @@ import {
 import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
 
 import {
+  applyEdit,
   AUTOSAVE_DELAY_MS,
   editorReducer,
   hasUnsavedWork,
@@ -167,6 +168,12 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
   const edit = useCallback(
     (patch: Partial<NoteDraft>) => {
+      // Updated synchronously, not just via the effect that mirrors `model`
+      // into `latest` after the next render. A caller whose `onCommit` calls
+      // `saveNow()` in the same tick as `onChange` — `TagEditor`'s add/remove
+      // — would otherwise have `save()` read the pre-edit draft, find nothing
+      // dirty, and return without saving or leaving anything scheduled.
+      latest.current = applyEdit(latest.current, patch);
       dispatch({ type: 'edit', patch });
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
