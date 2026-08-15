@@ -878,7 +878,8 @@
 }
 
 .progress-card[data-status='failed'],
-.progress-card[data-status='spend_capped'] {
+.progress-card[data-status='spend_capped'],
+.progress-card[data-stuck] {
   border-color: var(--color-line-strong);
 }
 

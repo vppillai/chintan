@@ -42,7 +42,28 @@ function stageIndex(status: CaptureStatus): number {
   return index === -1 ? STAGES.length : index;
 }
 
-function describe(capture: CaptureWire): string {
+/**
+ * How long a capture can sit in a non-terminal status before the card stops
+ * trusting the pipeline and offers a way out.
+ *
+ * A capture only reaches this state if the upload event that should have
+ * driven the worker never arrived, or the worker died mid-stage without
+ * writing a `failed` status — both silent by design elsewhere in the stack
+ * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
+ * this). Without a client-side timeout the card polls forever showing a
+ * stage strip that will never move, with no error and no Retry, because
+ * `failed` was the only status that ever unlocked those actions.
+ */
+const STUCK_AFTER_MS = 10 * 60 * 1000;
+
+function isStuck(capture: CaptureWire): boolean {
+  if (isTerminalStatus(capture.status)) return false;
+  const createdAt = Date.parse(capture.created_at);
+  if (Number.isNaN(createdAt)) return false;
+  return Date.now() - createdAt > STUCK_AFTER_MS;
+}
+
+function describe(capture: CaptureWire, stuck: boolean): string {
   switch (capture.status) {
     case 'appended':
       return 'Filed';
@@ -55,6 +76,7 @@ function describe(capture: CaptureWire): string {
     case 'failed':
       return capture.error ?? 'That capture did not finish';
     default:
+      if (stuck) return 'Still not done — something may have gone wrong';
       return STAGES[stageIndex(capture.status)]?.label ?? 'Working';
   }
 }
@@ -110,6 +132,11 @@ interface CaptureCardProps {
 
 function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureCardProps) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
+  const stuck = isStuck(capture);
+  // A stuck capture gets the same way out a failed one does: retrying is safe
+  // (the backend resumes from whichever artifact already exists) and dismissing
+  // stops the card floating over the record surface forever.
+  const actionable = failed || stuck;
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
   const current = stageIndex(capture.status);
@@ -123,10 +150,10 @@ function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureC
   const running = !isTerminalStatus(capture.status);
 
   return (
-    <article className="progress-card" data-status={capture.status}>
+    <article className="progress-card" data-status={capture.status} data-stuck={stuck || undefined}>
       <div className="progress-card__body">
         <p className="progress-card__label" role="status" aria-live="polite">
-          {describe(capture)}
+          {describe(capture, stuck)}
         </p>
 
         {running && (
@@ -158,9 +185,12 @@ function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureC
         {/*
           A real Retry, wired to POST /v1/captures/{id}/retry. In v1 the client
           method existed and was called from nowhere, so a failed capture was a
-          dead end with a toast.
+          dead end with a toast. Also offered once a non-terminal capture has
+          sat past STUCK_AFTER_MS with no status change — RetryCapture resumes
+          from whichever artifact already exists, so it is safe to call on a
+          capture that never actually failed, only stalled.
         */}
-        {failed && (
+        {actionable && (
           <button
             type="button"
             className="progress-card__action"
@@ -175,7 +205,7 @@ function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureC
           Terminal and unactionable statuses need a way off the screen. Without
           one the card sat over the record surface for the rest of the session.
         */}
-        {(failed || capture.status === 'no_content') && (
+        {(actionable || capture.status === 'no_content') && (
           <button type="button" className="progress-card__action" onClick={onDismiss}>
             <span>Dismiss</span>
           </button>

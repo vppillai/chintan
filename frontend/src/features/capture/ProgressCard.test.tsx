@@ -12,11 +12,16 @@ function capture(overrides: Partial<CaptureWire> = {}): CaptureWire {
   return {
     id: 'srv-1',
     status: 'transcribing',
-    created_at: '2026-08-07T10:00:00.000Z',
+    // Recent by default so a plain in-progress fixture never trips the
+    // stuck-capture timeout below. Tests for that behaviour set an old
+    // `created_at` explicitly.
+    created_at: new Date().toISOString(),
     version: 1,
     ...overrides,
   };
 }
+
+const STUCK_CREATED_AT = '2026-08-07T10:00:00.000Z';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -140,6 +145,47 @@ describe('a failed capture has a Retry that is actually wired', () => {
   it('offers Open once the capture has been filed', async () => {
     mount([capture({ status: 'appended', note_id: 'roof-repair' })]);
     expect(await screen.findByRole('button', { name: /open/i })).toBeInTheDocument();
+  });
+});
+
+describe('a capture that never left "uploaded" is not a permanent dead end', () => {
+  // If the S3 upload event that should drive the worker never arrives — a
+  // cancelled upload, a lost event — the capture sits at whatever non-terminal
+  // status it last reached forever, `failed` is never set, and the card polled
+  // silently with no error and no Retry. `chintanctl reconcile` calls this
+  // finding `stuck_capture`; the card now recognises it live instead of only
+  // being detectable from an operator's terminal.
+  it('offers Retry once a non-terminal capture has sat past the stuck threshold', async () => {
+    mount([capture({ id: 'srv-stuck', status: 'uploaded', created_at: STUCK_CREATED_AT })]);
+
+    expect(
+      await screen.findByText(/still not done.*something may have gone wrong/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('still calls POST /v1/captures/{id}/retry from the stuck state', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount([
+      capture({ id: 'srv-stuck-2', status: 'transcribing', created_at: STUCK_CREATED_AT }),
+    ]);
+
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-stuck-2/retry'),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it('does not treat a recent capture the same way', async () => {
+    mount([capture({ status: 'uploaded' })]);
+    await screen.findByText('Queued');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
 
@@ -297,5 +343,75 @@ describe('the card says where it thinks the recording goes', () => {
 
     expect(await screen.findByRole('button', { name: /choose a note/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add to/i })).toBeNull();
+  });
+});
+
+/**
+ * A capture's outcome — success or failure — used to be invisible.
+ *
+ * `usePendingCaptures` polled `GET /v1/captures?status=pending` alone.
+ * Backend `CaptureIsPending` (internal/service/capture_status.go) excludes
+ * `failed`, `spend_capped` and `needs_target` by design — those are stopped,
+ * not moving — but `ProgressCard` renders a distinct, actionable outcome for
+ * every one of them. None of them ever satisfied `CaptureIsPending`, so a
+ * capture that failed, or that was waiting on "which note should this go
+ * in?", simply vanished from every poll — no error, no prompt, nothing,
+ * indistinguishable from one that had quietly succeeded. Real reproduction:
+ * a capture stuck for six days finally reconciled to `failed` mid-session,
+ * and the progress card that had shown "Queued… in progress" the entire time
+ * disappeared with nothing said.
+ *
+ * These mock each of the three server-side filters distinctly — unlike
+ * `mount()` above, which serves the same items regardless of query string —
+ * specifically to prove the merge happens, not just that the rendering does
+ * once data arrives.
+ */
+describe('a capture the pipeline stopped on is not indistinguishable from one that succeeded', () => {
+  function mountDistinctFilters(byStatus: {
+    pending?: CaptureWire[];
+    failed?: CaptureWire[];
+    needs_target?: CaptureWire[];
+  }) {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('status=failed')) return json({ items: byStatus.failed ?? [] });
+      if (url.includes('status=needs_target')) return json({ items: byStatus.needs_target ?? [] });
+      if (url.includes('status=pending')) return json({ items: byStatus.pending ?? [] });
+      return json({ items: [] });
+    });
+
+    render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter>
+          <ProgressCard />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    return { calls };
+  }
+
+  it('polls all three filters, not pending alone', async () => {
+    const { calls } = mountDistinctFilters({});
+    await waitFor(() => {
+      expect(calls.some((u) => u.includes('status=pending'))).toBe(true);
+      expect(calls.some((u) => u.includes('status=failed'))).toBe(true);
+      expect(calls.some((u) => u.includes('status=needs_target'))).toBe(true);
+    });
+  });
+
+  it('shows a capture that only the failed filter returns', async () => {
+    mountDistinctFilters({
+      failed: [capture({ id: 'srv-fail', status: 'failed', error: 'Transcription provider timed out' })],
+    });
+    expect(await screen.findByText('Transcription provider timed out')).toBeInTheDocument();
+  });
+
+  it('shows a capture that only the needs_target filter returns', async () => {
+    mountDistinctFilters({
+      needs_target: [capture({ id: 'srv-ask', status: 'needs_target' })],
+    });
+    expect(await screen.findByText(/which note should this go in/i)).toBeInTheDocument();
   });
 });

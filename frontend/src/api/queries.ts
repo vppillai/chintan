@@ -47,7 +47,7 @@ export const queryKeys = {
   note: (noteId: string) => ['note', noteId] as const,
   captures: (query: CaptureListQuery = {}) => ['captures', query] as const,
   capture: (captureId: string) => ['capture', captureId] as const,
-  pendingCaptures: () => ['captures', { status: 'pending' as const }] as const,
+  pendingCaptures: () => ['captures', 'progress-card'] as const,
   search: (q: string) => ['search', q] as const,
   tags: () => ['tags'] as const,
   settings: () => ['settings'] as const,
@@ -245,18 +245,43 @@ export function capturePollInterval(startedAt: number, now: number = Date.now())
 }
 
 /**
- * Every capture the server still considers in flight.
+ * Every capture the progress card has something to say about.
  *
- * This is what makes the progress card survive a reload: the pending set is
- * server state, not a JavaScript variable. v1 held the in-flight capture id in
- * a module-level field, so a refresh stranded the audio with no UI able to
- * find it again.
+ * This is what makes the progress card survive a reload: the set is server
+ * state, not a JavaScript variable. v1 held the in-flight capture id in a
+ * module-level field, so a refresh stranded the audio with no UI able to find
+ * it again.
+ *
+ * Fetches three server-side filters and merges them, rather than `pending`
+ * alone. `CaptureIsPending` (backend `internal/service/capture_status.go`)
+ * answers "is the pipeline still moving" — it excludes `failed`,
+ * `spend_capped` and `needs_target` by design, because those are stopped, not
+ * moving. But `ProgressCard` renders a distinct, actionable outcome for every
+ * one of those three: an error with Retry, "daily cap reached", and "which
+ * note should this go in?". None of them satisfy `CaptureIsPending`, so
+ * polling `pending` alone means a capture that failed, or that is waiting on
+ * the user to pick a note, simply vanishes — no error, no prompt, nothing —
+ * indistinguishable from one that quietly succeeded. `failed` and
+ * `needs_target` are themselves bounded (a capture leaves them the moment it
+ * is retried or answered), so merging them in cannot resurrect old,
+ * already-resolved history the way polling `all` would.
  */
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
   return useQuery({
     queryKey: queryKeys.pendingCaptures(),
-    queryFn: () => api.listCaptures({ status: 'pending' }),
+    queryFn: async () => {
+      const [pending, failed, needsTarget] = await Promise.all([
+        api.listCaptures({ status: 'pending' }),
+        api.listCaptures({ status: 'failed' }),
+        api.listCaptures({ status: 'needs_target' }),
+      ]);
+      const byId = new Map<string, CaptureWire>();
+      for (const page of [pending, failed, needsTarget]) {
+        for (const capture of page.items) byId.set(capture.id, capture);
+      }
+      return { items: Array.from(byId.values()) };
+    },
     enabled,
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
