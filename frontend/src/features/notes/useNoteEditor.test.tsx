@@ -117,3 +117,33 @@ describe('an edit is never dropped on the way out of the screen', () => {
     expect(patches).toHaveLength(0);
   });
 });
+
+describe('a same-tick edit-then-commit is not silently dropped', () => {
+  /*
+   * TagEditor's add/remove call `onChange` (which calls `edit()`) and then
+   * `onCommit` (which calls `saveNow()`) back to back, synchronously, in the
+   * same event handler — unlike a debounced text field, which only ever
+   * calls `edit()` and lets the timer call `save()` later, after at least one
+   * render has passed.
+   *
+   * `saveNow()` used to call `save()`, which read `latest.current` — a ref
+   * mirrored from `model` by an effect that runs after the next render. With
+   * no render between `edit()` and `saveNow()`, `save()` saw the pre-edit
+   * draft, found nothing dirty, and returned — and the debounce that would
+   * have caught it a moment later had already been cancelled by that same
+   * `saveNow()`. The tag was never sent, with no error, until a reload made
+   * the loss visible.
+   */
+  it('saves the value edit() just applied when saveNow() is called synchronously after it, with no render in between', async () => {
+    const { patches, wrapper } = harness();
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    await act(async () => {
+      view.result.current.edit({ tags: ['recipe'] });
+      await view.result.current.saveNow();
+    });
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.body['tags']).toEqual(['recipe']);
+  });
+});

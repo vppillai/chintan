@@ -93,21 +93,38 @@ export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
   );
 }
 
+/**
+ * The 'edit' transition, pulled out of the reducer so it can also run
+ * synchronously outside React's render cycle.
+ *
+ * `useNoteEditor.edit()` calls this directly against its `latest` ref, in
+ * addition to dispatching the event. A caller that fires `onChange` then
+ * `onCommit` back to back in the same handler — `TagEditor`'s add/remove,
+ * unlike every debounced text field — used to have `saveNow()` read the ref
+ * before the effect that mirrors `model` into it had run, so the save saw the
+ * pre-edit draft, decided there was nothing dirty to send, and returned with
+ * the debounce it would have relied on already cancelled by that same
+ * `saveNow()`. The tag or alias just added or removed was never sent, with no
+ * error and no further trigger — only a reload made the loss visible.
+ */
+export function applyEdit(model: EditorModel, patch: Partial<NoteDraft>): EditorModel {
+  const draft = { ...model.draft, ...patch };
+  // An unresolved conflict outranks everything. Letting a keystroke drop
+  // back to `dirty` would dismiss the conflict UI and let the next autosave
+  // clobber the other write — the exact failure this state exists to stop.
+  if (model.state === 'conflict') return { ...model, draft };
+  // Editing back to the saved text is not a change worth a request.
+  return {
+    ...model,
+    draft,
+    state: draftsEqual(draft, model.saved) ? 'clean' : 'dirty',
+  };
+}
+
 export function editorReducer(model: EditorModel, event: EditorEvent): EditorModel {
   switch (event.type) {
-    case 'edit': {
-      const draft = { ...model.draft, ...event.patch };
-      // An unresolved conflict outranks everything. Letting a keystroke drop
-      // back to `dirty` would dismiss the conflict UI and let the next autosave
-      // clobber the other write — the exact failure this state exists to stop.
-      if (model.state === 'conflict') return { ...model, draft };
-      // Editing back to the saved text is not a change worth a request.
-      return {
-        ...model,
-        draft,
-        state: draftsEqual(draft, model.saved) ? 'clean' : 'dirty',
-      };
-    }
+    case 'edit':
+      return applyEdit(model, event.patch);
 
     case 'saveStart':
       if (model.state === 'conflict') return model;
