@@ -19,6 +19,7 @@ import type {
   NoteCreateWire,
   NoteDetailWire,
   NoteListQuery,
+  NotePurgeResponseWire,
   NoteUpdateWire,
   NoteWire,
   Page,
@@ -112,6 +113,21 @@ export class ChintanApi {
   deleteNoteForever(noteId: string): Promise<void> {
     return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/permanent`, {
       method: 'DELETE',
+      retry: NO_RETRY,
+    });
+  }
+
+  /**
+   * Batch purge. No "all" flag exists server-side by design — the caller
+   * lists the notes it means and names them explicitly (see the backend's own
+   * `NotePurgeRequest` doc comment) — so "empty the archive" is this client
+   * gathering every archived note's id and sending them here, chunked at
+   * `service.MaxPurgeBatch` if there are more than that at once.
+   */
+  purgeNotesBatch(noteIds: string[]): Promise<NotePurgeResponseWire> {
+    return this.client.request('/v1/notes/purge', {
+      method: 'POST',
+      body: { note_ids: noteIds },
       retry: NO_RETRY,
     });
   }

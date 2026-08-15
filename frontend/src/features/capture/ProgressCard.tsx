@@ -204,8 +204,13 @@ function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureC
         {/*
           Terminal and unactionable statuses need a way off the screen. Without
           one the card sat over the record surface for the rest of the session.
+          `done` is included too: usePendingCaptures keeps showing a "Filed"
+          card for RECENTLY_APPENDED_MS after the fact, and polling stops the
+          moment nothing left is non-terminal — so once the last capture
+          appends, nothing else will ever refetch this away. Dismiss (or
+          Open, which navigates off this screen) is the only way it leaves.
         */}
-        {(actionable || capture.status === 'no_content') && (
+        {(actionable || done || capture.status === 'no_content') && (
           <button type="button" className="progress-card__action" onClick={onDismiss}>
             <span>Dismiss</span>
           </button>

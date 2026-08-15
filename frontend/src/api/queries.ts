@@ -184,6 +184,70 @@ export function useDeleteNoteForever() {
   });
 }
 
+/**
+ * Bulk archive and bulk restore, for a multi-select list.
+ *
+ * Neither operation has a batch endpoint — only purge does, because only
+ * purge is destructive enough to need one call instead of N (see
+ * `purgeNotesBatch`'s doc comment). Archiving or restoring several notes is
+ * just several ordinary archive/restore calls run together; `allSettled`
+ * rather than `all` so one note that is already gone does not stop the rest
+ * from moving.
+ */
+export function useBulkArchiveNotes() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (noteIds: string[]) =>
+      Promise.allSettled(noteIds.map((id) => api.archiveNote(id))),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
+export function useBulkRestoreNotes() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (noteIds: string[]) =>
+      Promise.allSettled(noteIds.map((id) => api.restoreNote(id))),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
+/**
+ * Bulk purge — "empty the archive" is this, given every archived note's id.
+ * Chunked at `MAX_PURGE_BATCH` because the server refuses a single request
+ * naming more (`service.MaxPurgeBatch`), not because this client paginates on
+ * its own initiative.
+ */
+const MAX_PURGE_BATCH = 100;
+
+export function useBulkPurgeNotes() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (noteIds: string[]) => {
+      const results = [];
+      for (let start = 0; start < noteIds.length; start += MAX_PURGE_BATCH) {
+        const chunk = noteIds.slice(start, start + MAX_PURGE_BATCH);
+        const response = await api.purgeNotesBatch(chunk);
+        results.push(...response.results);
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      for (const result of results) {
+        queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
 export function useSearch(q: string) {
   const api = useApi();
   return useQuery({
@@ -266,19 +330,44 @@ export function capturePollInterval(startedAt: number, now: number = Date.now())
  * is retried or answered), so merging them in cannot resurrect old,
  * already-resolved history the way polling `all` would.
  */
+/**
+ * How long a just-filed capture keeps its "Filed" card once appended.
+ *
+ * `status=all` is newest-first and otherwise unbounded — this is what stops a
+ * note filed weeks ago from resurfacing here forever just because its capture
+ * happens to be near the top of that list.
+ */
+const RECENTLY_APPENDED_MS = 10 * 60 * 1000;
+
+function recentlyAppended(capture: CaptureWire): boolean {
+  if (capture.status !== 'appended' || !capture.appended_at) return false;
+  const at = Date.parse(capture.appended_at);
+  return Number.isFinite(at) && Date.now() - at < RECENTLY_APPENDED_MS;
+}
+
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
   return useQuery({
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
-      const [pending, failed, needsTarget] = await Promise.all([
+      const [pending, failed, needsTarget, all] = await Promise.all([
         api.listCaptures({ status: 'pending' }),
         api.listCaptures({ status: 'failed' }),
         api.listCaptures({ status: 'needs_target' }),
+        // `appended` satisfies none of the three filters above — it is the
+        // pipeline's success state, not one it stopped on — so a capture that
+        // finished had nothing to show for it: no "Filed", no way to jump
+        // straight to the note it just wrote. This is the one filter that
+        // reaches it, filtered client-side to recent, since `all` is every
+        // capture the tenant has ever made.
+        api.listCaptures({ status: 'all' }),
       ]);
       const byId = new Map<string, CaptureWire>();
       for (const page of [pending, failed, needsTarget]) {
         for (const capture of page.items) byId.set(capture.id, capture);
+      }
+      for (const capture of all.items) {
+        if (recentlyAppended(capture)) byId.set(capture.id, capture);
       }
       return { items: Array.from(byId.values()) };
     },

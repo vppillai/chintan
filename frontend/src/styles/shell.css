@@ -337,6 +337,7 @@
 
 .screen__header {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-3);
@@ -391,6 +392,18 @@
   cursor: default;
 }
 
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-block-start: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -442,6 +455,29 @@
 
 .note-row:active {
   transform: scale(0.995);
+}
+
+/* A `<label>` wrapping a checkbox, standing in for the row's plain `<button>`
+   while bulk-select is active — see NoteRow's own doc comment. */
+.note-row--selectable {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.note-row__checkbox {
+  flex-shrink: 0;
+  margin-block-start: var(--space-1);
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  accent-color: var(--color-ink);
+}
+
+.note-row__body {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
 }
 
 .note-row__title {
@@ -1867,6 +1903,33 @@
 
 .note-copy {
   margin-block-start: var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+/* --------------------------------------------------------------------------
+   Downloading a file out
+   -------------------------------------------------------------------------- */
+
+.download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.download__result {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.download__result[data-state='failed'] {
+  color: var(--color-accent);
+}
+
+.player__actions {
+  display: flex;
 }
 
 .transcript__copy {
