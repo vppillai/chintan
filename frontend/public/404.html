@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Chintan</title>
+    <script type="text/javascript">
+      // GitHub Pages is a static host: it has no server-side route for a
+      // deep-linked SPA path, so a hard refresh, a bookmark, or a shared link
+      // to anything but the site root lands here, at its own 404 page,
+      // instead of in the app. The service worker's networkFirst handler
+      // (src/sw.ts) can catch this once it is installed and controlling the
+      // page, but a first-ever visit to a deep link has no service worker
+      // yet to intercept it — this is the fallback for that case.
+      //
+      // Adapted from the "spa-github-pages" trick (rafgraph, MIT License,
+      // https://github.com/rafgraph/spa-github-pages): redirect to the site
+      // root with the real path encoded as a query string, and index.html
+      // decodes it back before the app's router ever reads the URL.
+      //
+      // This repo's Pages layout is always /chintan/<site_path>/..., so the
+      // first two path segments (repo name, instance) are kept as-is and
+      // only the rest is encoded.
+      var pathSegmentsToKeep = 2;
+
+      var l = window.location;
+      l.replace(
+        l.protocol +
+          '//' +
+          l.hostname +
+          (l.port ? ':' + l.port : '') +
+          l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') +
+          '/?/' +
+          l.pathname
+            .slice(1)
+            .split('/')
+            .slice(pathSegmentsToKeep)
+            .join('/')
+            .replace(/&/g, '~and~') +
+          (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+          l.hash,
+      );
+    </script>
+  </head>
+  <body></body>
+</html>

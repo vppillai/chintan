@@ -96,6 +96,15 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
  * The timeout matters on mobile: a connection that hangs rather than failing
  * would otherwise leave the user on a blank screen indefinitely when a
  * perfectly good cached shell is sitting right there.
+ *
+ * A non-OK response falls back to the shell exactly like a network failure
+ * does. GitHub Pages (and any static host) has no server-side route for a
+ * deep-linked SPA path — `fetch` for `/notes/{id}` resolves with a real,
+ * non-throwing `404` response, not an error, so treating only a thrown
+ * exception as "the network didn't have it" left every hard refresh, deep
+ * link and bookmark to anything but the site root showing the host's 404
+ * page instead of the app. The router only gets a chance to make sense of
+ * the path once the shell it lives in has actually loaded.
  */
 async function networkFirst(request: Request): Promise<Response> {
   const cache = await caches.open(RUNTIME_CACHE);
@@ -111,8 +120,11 @@ async function networkFirst(request: Request): Promise<Response> {
 
     if (response.ok) {
       await cache.put(request, response.clone());
+      return response;
     }
-    return response;
+
+    const fallback = (await cache.match(request)) ?? (await matchShell());
+    return fallback ?? response;
   } catch {
     const cached = (await cache.match(request)) ?? (await matchShell());
     if (cached) return cached;
