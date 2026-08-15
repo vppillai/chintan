@@ -366,31 +366,35 @@ describe('the card says where it thinks the recording goes', () => {
  * specifically to prove the merge happens, not just that the rendering does
  * once data arrives.
  */
-describe('a capture the pipeline stopped on is not indistinguishable from one that succeeded', () => {
-  function mountDistinctFilters(byStatus: {
-    pending?: CaptureWire[];
-    failed?: CaptureWire[];
-    needs_target?: CaptureWire[];
-  }) {
-    const calls: string[] = [];
-    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-      const url = String(input);
-      calls.push(url);
-      if (url.includes('status=failed')) return json({ items: byStatus.failed ?? [] });
-      if (url.includes('status=needs_target')) return json({ items: byStatus.needs_target ?? [] });
-      if (url.includes('status=pending')) return json({ items: byStatus.pending ?? [] });
-      return json({ items: [] });
-    });
+/** Shared by both describes below: serves each server-side filter distinctly. */
+function mountDistinctFilters(byStatus: {
+  pending?: CaptureWire[];
+  failed?: CaptureWire[];
+  needs_target?: CaptureWire[];
+  all?: CaptureWire[];
+}) {
+  const calls: string[] = [];
+  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('status=failed')) return json({ items: byStatus.failed ?? [] });
+    if (url.includes('status=needs_target')) return json({ items: byStatus.needs_target ?? [] });
+    if (url.includes('status=pending')) return json({ items: byStatus.pending ?? [] });
+    if (url.includes('status=all')) return json({ items: byStatus.all ?? [] });
+    return json({ items: [] });
+  });
 
-    render(
-      <TestProviders api={testApiContext(fetchImpl)}>
-        <MemoryRouter>
-          <ProgressCard />
-        </MemoryRouter>
-      </TestProviders>,
-    );
-    return { calls };
-  }
+  render(
+    <TestProviders api={testApiContext(fetchImpl)}>
+      <MemoryRouter>
+        <ProgressCard />
+      </MemoryRouter>
+    </TestProviders>,
+  );
+  return { calls };
+}
+
+describe('a capture the pipeline stopped on is not indistinguishable from one that succeeded', () => {
 
   it('polls all three filters, not pending alone', async () => {
     const { calls } = mountDistinctFilters({});
@@ -413,5 +417,79 @@ describe('a capture the pipeline stopped on is not indistinguishable from one th
       needs_target: [capture({ id: 'srv-ask', status: 'needs_target' })],
     });
     expect(await screen.findByText(/which note should this go in/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * `appended` satisfies none of `CaptureIsPending`, `failed`/`spend_capped`, or
+ * `needs_target` — it is the pipeline's success state, not one it stopped on
+ * — so a capture that finished had nothing to show for it: the card the code
+ * already has for this (`done`, below) never received an item to render. The
+ * feature request this closes: "once a note is ready, let me tap through to
+ * it" — which `status=all`, filtered client-side to recent, is what supplies.
+ */
+describe('a capture that just finished gets a way to jump straight to what it wrote', () => {
+  it('shows Filed and an Open button for a capture appended a moment ago', async () => {
+    const user = userEvent.setup();
+    const { calls } = mountDistinctFilters({
+      all: [
+        capture({
+          id: 'srv-done',
+          status: 'appended',
+          note_id: 'roof-repair',
+          appended_at: new Date().toISOString(),
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    const open = screen.getByRole('button', { name: /open/i });
+    await user.click(open);
+
+    await waitFor(() => {
+      expect(calls.some((u) => u.includes('status=all'))).toBe(true);
+    });
+  });
+
+  it('can be dismissed even though it is terminal', async () => {
+    // Unlike failed/needs_target, `done` had no Dismiss at all before this —
+    // and once the last active capture appends, polling stops entirely
+    // (refetchInterval returns false), so nothing would ever refetch this
+    // card away on its own.
+    const user = userEvent.setup();
+    mountDistinctFilters({
+      all: [
+        capture({
+          id: 'srv-done-2',
+          status: 'appended',
+          note_id: 'roof-repair',
+          appended_at: new Date().toISOString(),
+        }),
+      ],
+    });
+
+    await screen.findByText('Filed');
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Filed')).toBeNull();
+    });
+  });
+
+  it('does not resurface a capture appended long ago', async () => {
+    mountDistinctFilters({
+      all: [
+        capture({
+          id: 'srv-old',
+          status: 'appended',
+          note_id: 'roof-repair',
+          appended_at: '2026-01-01T00:00:00.000Z',
+        }),
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /captures in progress/i })).toBeNull();
+    });
   });
 });
