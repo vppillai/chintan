@@ -1,13 +1,17 @@
 module github.com/vppillai/chintan/backend
 
-// 1.25.12 is not a rounding-up of 1.25.0: it is the first 1.25 patch carrying
-// the fix for GO-2026-5856 (CVE-2026-42505), a crypto/tls Encrypted Client
-// Hello leak that govulncheck reaches through provider.GroqSTT.Transcribe ->
-// http.Client.Do -> tls.Conn.HandshakeContext. Lowering it re-opens that.
+// 1.25.13 is not a rounding-up of 1.25.0: it carries the fix for GO-2026-5856
+// (CVE-2026-42505, a crypto/tls Encrypted Client Hello leak that govulncheck
+// reaches through provider.GroqSTT.Transcribe -> http.Client.Do ->
+// tls.Conn.HandshakeContext) and, as of this bump, two more: GO-2026-5972
+// (encoding/asn1's recursion depth, reached through auth.CognitoVerifier.Verify
+// parsing a JWT) and GO-2026-5026 (net/http accepting an ASCII-only
+// Punycode-encoded label in golang.org/x/net/idna, reached the same way as the
+// crypto/tls fix above). Lowering it re-opens all three.
 //
 // Every CI and deploy job resolves its Go from this line via setup-go's
 // go-version-file, so this is the only place the version is written down.
-go 1.25.12
+go 1.25.13
 
 require (
 	github.com/aws/aws-lambda-go v1.54.0
