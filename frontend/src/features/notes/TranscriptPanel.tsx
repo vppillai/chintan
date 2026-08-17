@@ -115,12 +115,18 @@ export function TranscriptPanel({
       {/*
         Stated in the interface, not buried in documentation. A user who taps
         "Cleaned" and finds the timestamps gone deserves to know why.
+        Skipped for raw view with no segments: "tap any line to jump there"
+        directly above the empty state's "there is nothing to jump to" told
+        the reader to do the one thing the same screen said was impossible.
+        That empty state already explains itself; nothing to add here.
       */}
-      <p className="transcript__note">
-        {effectiveView === 'raw'
-          ? 'What was said, as recorded. Tap any line to jump there.'
-          : 'Rewritten for the note. Cleanup changes the wording, so these lines have no reliable timestamps — there is nothing to jump to.'}
-      </p>
+      {(effectiveView === 'cleaned' || (hasSegments && segments.length > 0)) && (
+        <p className="transcript__note">
+          {effectiveView === 'raw'
+            ? 'What was said, as recorded. Tap any line to jump there.'
+            : 'Rewritten for the note. Cleanup changes the wording, so these lines have no reliable timestamps — there is nothing to jump to.'}
+        </p>
+      )}
 
       {effectiveView === 'raw' ? (
         hasSegments && segments.length > 0 ? (
