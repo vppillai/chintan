@@ -1276,7 +1276,14 @@ Resources:
       # adjustable. Anything above that is unreachable: the client already has
       # its 504 and the account is still paying for the running invocation.
       Timeout: 29
-      ReservedConcurrentExecutions: 5
+      # A single page load fires this many requests near-simultaneously on its
+      # own — usePendingCaptures alone polls four capture statuses in parallel,
+      # plus /settings and /auth/webauthn/status — so 5 left no headroom even
+      # for one person with one tab open: chintan-dev-prod-api-throttles
+      # tripped from exactly that on 2026-08-17. 50 is well above any realistic
+      # single-tenant burst while still bounded, unlike the worker's five,
+      # which really is sized for concurrent provider round-trips.
+      ReservedConcurrentExecutions: 50
       TracingConfig:
         Mode: Active
       Environment:

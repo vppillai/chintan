@@ -223,7 +223,7 @@ Verified against the deployed account (`338186951935`) where possible.
 | `ApiLambdaFunction` (512 MB, arm64) | $0.0000133334/GB-s, 400,000 GB-s free | $0.00 |
 | `WorkerLambdaFunction` (2048 MB, arm64) | same | $0.00 |
 | `ExpiryLambdaFunction` (512 MB, arm64) | same; invoked only when TTL expires a record, which on an idle instance is never | $0.00 |
-| ↳ `ReservedConcurrentExecutions: 5` | **free** — only *provisioned* concurrency bills | $0.00 |
+| ↳ `ReservedConcurrentExecutions` (50 API, 5 worker, 2 expiry) | **free** — only *provisioned* concurrency bills | $0.00 |
 | ↳ `Version` / `Alias` ×3 | code storage $0.0000000309/GB-s | ~$0.00 |
 | ↳ `TracingConfig: Mode: Active` (X-Ray) | $5.00/M traces, **100,000 free** | $0.00 |
 | `HttpApi` | $1.00/M requests, **no fixed charge** | $0.00 |
@@ -615,7 +615,7 @@ to ask CloudWatch later.
 | **The 9 standard alarms** | $0.10 each with **10 free** → $0.00. One alarm of headroom remains; see §2.1. |
 | **Consolidating alarms** | Would **increase** cost. A composite alarm is $0.50/month and a Metrics Insights alarm is $0.10/metric with **no** free tier, versus $0.10/alarm **inside a free 10** today. The current design of plain, directly-listed metric alarms is the cheapest option available. |
 | **`DuplicateDelivery`** | Closes a real defect — commit `88b2402` *"Let a duplicate delivery bow out, instead of dead-lettering itself"* — and `TestConcedingEmitsADuplicateDeliveryCounter` asserts it is emitted. It is the evidence the fix works. Up to 12 identities, $0.00. |
-| **`ReservedConcurrentExecutions: 5`** | Reserved concurrency is **free**; only *provisioned* concurrency bills ($0.0000077778/GB-s ARM). It is also the blast-radius cap on a runaway loop, which is itself a cost control. |
+| **`ReservedConcurrentExecutions`** | Reserved concurrency is **free**; only *provisioned* concurrency bills ($0.0000077778/GB-s ARM). It is also the blast-radius cap on a runaway loop, which is itself a cost control — the API's own cap was raised from 5 to 50 after normal single-tab traffic tripped it (`chintan-dev-prod-api-throttles`, 2026-08-17); the worker and expiry functions keep 5 and 2, sized for concurrent provider round-trips rather than request bursts. |
 
 ### 5.5 Cognito advanced security — DO NOT CUT
 
