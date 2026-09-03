@@ -125,10 +125,14 @@ describe('old URLs still land somewhere', () => {
     await waitFor(() => {
       expect(url(router)).toBe('/?view=archived');
     });
-    expect(screen.getByRole('button', { name: /^Archived/ })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    // The URL settles a render before the chip reflects it; on a slow runner
+    // the synchronous assertion here read the previous render.
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^Archived/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
 
     await goBack(router);
     expect(url(router)).toBe('/');
@@ -139,7 +143,9 @@ describe('old URLs still land somewhere', () => {
     await waitFor(() => {
       expect(url(router)).toBe('/?q=roof');
     });
-    expect(screen.getByRole('searchbox', { name: /search notes/i })).toHaveValue('roof');
+    await waitFor(() => {
+      expect(screen.getByRole('searchbox', { name: /search notes/i })).toHaveValue('roof');
+    });
   });
 });
 
