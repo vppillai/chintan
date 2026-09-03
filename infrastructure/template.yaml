@@ -1107,8 +1107,7 @@ Resources:
                 # is not more access than Query on the table — it is the same
                 # data by another key. What it removes is a list that has to be
                 # remembered, in a place where forgetting fails at runtime rather
-                # than at deploy. scripts/guardrails-check.sh asserts the
-                # invariant either way.
+                # than at deploy.
                 Resource:
                   - !GetAtt DynamoDBTable.Arn
                   - !Sub '${DynamoDBTable.Arn}/index/*'

@@ -22,6 +22,7 @@ on:
       - 'infrastructure/**'
       - 'config/**'
       - 'scripts/deploy.sh'
+      - 'scripts/ci-deploy-stack.sh'
       - 'scripts/build-lambda.sh'
       - 'scripts/lib/common.sh'
       - 'scripts/list-instances.sh'
@@ -52,8 +53,8 @@ jobs:
       prod: ${{ steps.instances.outputs.prod }}
       has_staging: ${{ steps.instances.outputs.has_staging }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
@@ -96,8 +97,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
@@ -119,14 +120,20 @@ jobs:
       artifact_key: ${{ steps.upload.outputs.key }}
       worker_key: ${{ steps.upload.outputs.worker_key }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - uses: aws-actions/configure-aws-credentials@v6
+      # The build role can upload the two zips and read stack outputs, and
+      # nothing else — the `build` environment has no protection rules, so it
+      # must not hand out the deploy role. BUILD_ROLE_ARN is a repository
+      # variable set by scripts/setup.sh from the bootstrap stack's output; the
+      # fallback keeps a repository whose bootstrap stack predates the build
+      # role deploying until setup.sh --apply has run.
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
+          role-to-assume: ${{ vars.BUILD_ROLE_ARN || format('arn:aws:iam::{0}:role/chintan-github-actions', secrets.AWS_ACCOUNT_ID) }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Build arm64 zips
         # Two artifacts: cmd/api and cmd/worker are separate main packages. A
@@ -171,8 +178,8 @@ jobs:
       matrix:
         entry: ${{ fromJSON(needs.discover.outputs.staging) }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -212,8 +219,8 @@ jobs:
       matrix:
         entry: ${{ fromJSON(needs.discover.outputs.prod) }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: aws-actions/configure-aws-credentials@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}

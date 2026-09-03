@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# One-time account and repository setup: the bootstrap stack, the GitHub OIDC
-# deploy role, the repository secrets, the deployment environments and Pages.
+# One-time account and repository setup: the bootstrap stack with the GitHub OIDC
+# deploy and build roles, the repository secrets and variables, the deployment
+# environments and Pages.
 #
 # Run this once per AWS account + fork, before scripts/bootstrap.sh.
 #
@@ -102,6 +103,7 @@ log ""
 info "plan"
 dim "  deploy stack        $CHINTAN_BOOTSTRAP_STACK in $REGION"
 dim "  gh secret           AWS_ACCOUNT_ID, AWS_REGION"
+dim "  gh variable         BUILD_ROLE_ARN, CFN_DEPLOY_ROLE_ARN"
 dim "  gh environment      production (reviewers: ${REVIEWERS[*]}, protected branches only)"
 dim "  gh environment      staging"
 dim "  gh pages            build_type=workflow"
@@ -141,21 +143,32 @@ wait_for_stack "$CHINTAN_BOOTSTRAP_STACK"
 ok "$CHINTAN_BOOTSTRAP_STACK deployed"
 
 ROLE_ARN="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" GitHubActionsRoleArn)"
+BUILD_ROLE_ARN="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" GitHubBuildRoleArn)"
+CFN_DEPLOY_ROLE_ARN="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" CfnDeployRoleArn)"
 BUCKET="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" LambdaDeploymentBucketName)"
 ok "deploy role:     $ROLE_ARN"
+ok "build role:      $BUILD_ROLE_ARN"
+ok "CFN role:        $CFN_DEPLOY_ROLE_ARN"
 ok "artifact bucket: $BUCKET"
 
 # ---------------------------------------------------------------------------
-# Repository secrets
+# Repository secrets and variables
 # ---------------------------------------------------------------------------
 #
-# The workflows build the role ARN from AWS_ACCOUNT_ID rather than storing it, so
-# there is one fewer secret to keep in step with the stack.
+# The workflows build the deploy role ARN from AWS_ACCOUNT_ID rather than storing
+# it. The build role and the CloudFormation service role are stored as plain
+# variables: neither is secret (the account id is already in the public
+# bundle's Cognito domain), and the workflows fall back sensibly when either is
+# unset — to the deploy role for the build jobs, to the caller's own permissions
+# for CloudFormation — which is what a repository whose bootstrap stack predates
+# them gets until this runs.
 
-info "setting repository secrets"
+info "setting repository secrets and variables"
 gh secret set AWS_ACCOUNT_ID --repo "$REPO" --body "$ACCOUNT_ID"
 gh secret set AWS_REGION --repo "$REPO" --body "$REGION"
-ok "AWS_ACCOUNT_ID and AWS_REGION set"
+gh variable set BUILD_ROLE_ARN --repo "$REPO" --body "$BUILD_ROLE_ARN"
+gh variable set CFN_DEPLOY_ROLE_ARN --repo "$REPO" --body "$CFN_DEPLOY_ROLE_ARN"
+ok "AWS_ACCOUNT_ID and AWS_REGION set; BUILD_ROLE_ARN and CFN_DEPLOY_ROLE_ARN set"
 
 # ---------------------------------------------------------------------------
 # Environments
