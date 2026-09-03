@@ -1,0 +1,33 @@
+# Dependabot keeps three things current: the action pins in the workflows
+# (which are full commit SHAs in deploy-*.yaml, so a moved tag cannot reach a
+# job that holds the deploy role), the Go module graph, and the frontend
+# lockfile. Weekly, on one day, so the pull requests arrive together.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "gomod"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  # Bun lockfiles are their own ecosystem (bun.lock, Bun >= 1.1.39), not npm.
+  - package-ecosystem: "bun"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      frontend:
+        patterns: ["*"]
