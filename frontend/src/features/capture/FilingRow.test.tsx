@@ -3,10 +3,11 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
+import { isFilingRelevant } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { ProgressCard } from './ProgressCard.tsx';
+import { FilingRow } from './FilingRow.tsx';
 
 function capture(overrides: Partial<CaptureWire> = {}): CaptureWire {
   return {
@@ -30,7 +31,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** Serves the pending list, and records every request for assertions. */
+/** Serves the capture list, and records every request for assertions. */
 function mount(items: CaptureWire[]) {
   const calls: { url: string; method: string }[] = [];
 
@@ -67,7 +68,7 @@ function mount(items: CaptureWire[]) {
   const view = render(
     <TestProviders api={testApiContext(fetchImpl)}>
       <MemoryRouter>
-        <ProgressCard />
+        <FilingRow />
       </MemoryRouter>
     </TestProviders>,
   );
@@ -75,27 +76,47 @@ function mount(items: CaptureWire[]) {
   return { view, calls, fetchImpl };
 }
 
-describe('the progress card is server state, not a JavaScript variable', () => {
-  it('renders from GET /v1/captures?status=pending', async () => {
-    // This is what makes it survive navigation, reload, and app restart. v1
-    // held the in-flight capture id in a module-level field, so a refresh
-    // stranded the audio with no UI able to find it.
+describe('the filing row is server state, not a JavaScript variable', () => {
+  it('renders from one GET /v1/captures, filtered here', async () => {
+    /*
+     * This is what makes it survive navigation, reload, and app restart. v1
+     * held the in-flight capture id in a module-level field, so a refresh
+     * stranded the audio with no UI able to find it.
+     *
+     * One request, not four. The card this replaces fired `pending`, `failed`,
+     * `needs_target` and `all` in parallel every four seconds.
+     */
     const { calls } = mount([capture()]);
 
-    expect(await screen.findByText('Transcribing')).toBeInTheDocument();
-    expect(calls[0]?.url).toContain('status=pending');
+    expect(await screen.findByText('Filing your recording')).toBeInTheDocument();
+    const listCalls = calls.filter((call) => call.url.includes('/v1/captures?'));
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0]?.url).toContain('status=all');
+    expect(listCalls[0]?.url).toContain('limit=20');
+    expect(calls.some((call) => call.url.includes('status=pending'))).toBe(false);
+    expect(calls.some((call) => call.url.includes('status=failed'))).toBe(false);
+    expect(calls.some((call) => call.url.includes('status=needs_target'))).toBe(false);
   });
 
   it('renders nothing when there is no capture in flight', async () => {
     mount([]);
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /captures in progress/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
     });
   });
 
-  it('names the pipeline stage rather than showing a fake percentage', async () => {
+  it('shows the recording length beside the title', async () => {
+    mount([capture({ duration_ms: 41_000 })]);
+    expect(await screen.findByText('0:41')).toBeInTheDocument();
+  });
+
+  it('shows four segments and names the stage, rather than a fake percentage', async () => {
     mount([capture({ status: 'cleaning' })]);
-    expect(await screen.findByText('Cleaning up')).toBeInTheDocument();
+    const strip = await screen.findByRole('list', { name: /filing progress/i });
+    expect(strip.querySelectorAll('li')).toHaveLength(4);
+    // Routing and cleaning are one segment to the user — the third.
+    expect(strip.querySelectorAll('[data-state="done"]')).toHaveLength(2);
+    expect(strip.querySelector('[data-state="active"]')).toHaveTextContent(/filing in progress/i);
     // No determinate bar: v1 pinned one at 100% and pulsed it, which reads as
     // stuck.
     expect(screen.queryByRole('progressbar')).toBeNull();
@@ -103,7 +124,7 @@ describe('the progress card is server state, not a JavaScript variable', () => {
 
   it('announces stage changes politely', async () => {
     mount([capture({ status: 'routing' })]);
-    const label = await screen.findByText('Filing');
+    const label = await screen.findByText('Filing your recording');
     expect(label).toHaveAttribute('aria-live', 'polite');
   });
 
@@ -138,23 +159,25 @@ describe('a failed capture has a Retry that is actually wired', () => {
 
   it('offers no Retry while the capture is still progressing', async () => {
     mount([capture({ status: 'transcribing' })]);
-    await screen.findByText('Transcribing');
+    await screen.findByText('Filing your recording');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
-  it('offers Open once the capture has been filed', async () => {
-    mount([capture({ status: 'appended', note_id: 'roof-repair' })]);
-    expect(await screen.findByRole('button', { name: /open/i })).toBeInTheDocument();
+  it('offers the note once the capture has been filed', async () => {
+    mount([
+      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
+    ]);
+    expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
   });
 });
 
 describe('a capture that never left "uploaded" is not a permanent dead end', () => {
   // If the S3 upload event that should drive the worker never arrives — a
   // cancelled upload, a lost event — the capture sits at whatever non-terminal
-  // status it last reached forever, `failed` is never set, and the card polled
+  // status it last reached forever, `failed` is never set, and the row polled
   // silently with no error and no Retry. `chintanctl reconcile` calls this
-  // finding `stuck_capture`; the card now recognises it live instead of only
-  // being detectable from an operator's terminal.
+  // finding `stuck_capture`; the row recognises it live instead of only being
+  // detectable from an operator's terminal.
   it('offers Retry once a non-terminal capture has sat past the stuck threshold', async () => {
     mount([capture({ id: 'srv-stuck', status: 'uploaded', created_at: STUCK_CREATED_AT })]);
 
@@ -184,7 +207,7 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
 
   it('does not treat a recent capture the same way', async () => {
     mount([capture({ status: 'uploaded' })]);
-    await screen.findByText('Queued');
+    await screen.findByText('Filing your recording');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
@@ -192,11 +215,11 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
 describe('a terminal capture is something the user can act on', () => {
   it('lets the user answer "which note should this go in?"', async () => {
     /*
-     * The card asked the question, marked all five pipeline stages complete,
-     * and rendered zero buttons. `useSetCaptureTarget` wrapped the contract's
-     * target endpoint and was called from nowhere in the app, and the schema
-     * lists `needs_target` as terminal pending user action — so the capture,
-     * and the thought in it, was stuck permanently.
+     * The card asked the question, marked every pipeline stage complete, and
+     * rendered zero buttons. `useSetCaptureTarget` wrapped the contract's target
+     * endpoint and was called from nowhere in the app, and the schema lists
+     * `needs_target` as terminal pending user action — so the capture, and the
+     * thought in it, was stuck permanently.
      */
     const user = userEvent.setup();
     const { calls } = mount([capture({ id: 'srv-7', status: 'needs_target' })]);
@@ -238,16 +261,16 @@ describe('a terminal capture is something the user can act on', () => {
   });
 
   it('does not mark every stage complete for a capture that stopped', async () => {
-    // Five filled stage pips over "Which note should this go in?" says the
+    // Four filled segments over "Which note should this go in?" says the
     // pipeline finished. It did not — it is waiting for the user.
     mount([capture({ status: 'needs_target' })]);
     await screen.findByText(/which note should this go in/i);
-    expect(screen.queryByRole('list', { name: /pipeline stage/i })).toBeNull();
+    expect(screen.queryByRole('list', { name: /filing progress/i })).toBeNull();
   });
 
   it('lets an unactionable capture be dismissed', async () => {
     // `no_content` has no retry, no target, and nothing to open, so without a
-    // dismiss the card sat on the record surface indefinitely.
+    // dismiss the row sat at the top of the library indefinitely.
     const user = userEvent.setup();
     mount([capture({ id: 'srv-quiet', status: 'no_content' })]);
 
@@ -269,7 +292,7 @@ describe('a terminal capture is something the user can act on', () => {
  * note the user has, with no indication of what the router thought. v1 led with
  * `Add to "<note>"`.
  */
-describe('the card says where it thinks the recording goes', () => {
+describe('the row says where it thinks the recording goes', () => {
   it('leads with the note the router proposed', async () => {
     const user = userEvent.setup();
     const { calls, fetchImpl } = mount([
@@ -303,9 +326,7 @@ describe('the card says where it thinks the recording goes', () => {
       capture({ id: 'srv-10', status: 'needs_target', suggested_title: 'Kitchen rebuild' }),
     ]);
 
-    await user.click(
-      await screen.findByRole('button', { name: /start .*kitchen rebuild/i }),
-    );
+    await user.click(await screen.findByRole('button', { name: /start .*kitchen rebuild/i }));
 
     await waitFor(() => {
       expect(
@@ -347,128 +368,59 @@ describe('the card says where it thinks the recording goes', () => {
 });
 
 /**
- * A capture's outcome — success or failure — used to be invisible.
- *
- * `usePendingCaptures` polled `GET /v1/captures?status=pending` alone.
- * Backend `CaptureIsPending` (internal/service/capture_status.go) excludes
- * `failed`, `spend_capped` and `needs_target` by design — those are stopped,
- * not moving — but `ProgressCard` renders a distinct, actionable outcome for
- * every one of them. None of them ever satisfied `CaptureIsPending`, so a
- * capture that failed, or that was waiting on "which note should this go
- * in?", simply vanished from every poll — no error, no prompt, nothing,
- * indistinguishable from one that had quietly succeeded. Real reproduction:
- * a capture stuck for six days finally reconciled to `failed` mid-session,
- * and the progress card that had shown "Queued… in progress" the entire time
- * disappeared with nothing said.
- *
- * These mock each of the three server-side filters distinctly — unlike
- * `mount()` above, which serves the same items regardless of query string —
- * specifically to prove the merge happens, not just that the rendering does
- * once data arrives.
+ * One list, filtered here, has to carry everything the four server-side
+ * filters used to: the moving captures, the stopped-and-actionable ones, and
+ * the just-finished one the user wants to tap through to — without dragging
+ * old history back to the top of the library.
  */
-/** Shared by both describes below: serves each server-side filter distinctly. */
-function mountDistinctFilters(byStatus: {
-  pending?: CaptureWire[];
-  failed?: CaptureWire[];
-  needs_target?: CaptureWire[];
-  all?: CaptureWire[];
-}) {
-  const calls: string[] = [];
-  const fetchImpl = vi.fn<typeof fetch>(async (input) => {
-    const url = String(input);
-    calls.push(url);
-    if (url.includes('status=failed')) return json({ items: byStatus.failed ?? [] });
-    if (url.includes('status=needs_target')) return json({ items: byStatus.needs_target ?? [] });
-    if (url.includes('status=pending')) return json({ items: byStatus.pending ?? [] });
-    if (url.includes('status=all')) return json({ items: byStatus.all ?? [] });
-    return json({ items: [] });
+describe('what the one poll keeps and what it drops', () => {
+  const NOW = Date.parse('2026-09-03T12:00:00.000Z');
+  const recent = new Date(NOW - 60_000).toISOString();
+  const old = '2026-01-01T00:00:00.000Z';
+
+  it('keeps anything still moving, however old', () => {
+    expect(isFilingRelevant(capture({ status: 'transcribing', created_at: old }), NOW)).toBe(true);
+    expect(isFilingRelevant(capture({ status: 'uploaded', created_at: old }), NOW)).toBe(true);
   });
 
-  render(
-    <TestProviders api={testApiContext(fetchImpl)}>
-      <MemoryRouter>
-        <ProgressCard />
-      </MemoryRouter>
-    </TestProviders>,
-  );
-  return { calls };
-}
-
-describe('a capture the pipeline stopped on is not indistinguishable from one that succeeded', () => {
-
-  it('polls all three filters, not pending alone', async () => {
-    const { calls } = mountDistinctFilters({});
-    await waitFor(() => {
-      expect(calls.some((u) => u.includes('status=pending'))).toBe(true);
-      expect(calls.some((u) => u.includes('status=failed'))).toBe(true);
-      expect(calls.some((u) => u.includes('status=needs_target'))).toBe(true);
-    });
+  it('keeps a capture that stopped on the user, however old', () => {
+    // Backend `CaptureIsPending` excludes these by design — they are stopped,
+    // not moving — but each has an action the user must take, and a capture
+    // waiting on the user must not vanish silently.
+    for (const status of ['failed', 'spend_capped', 'needs_target'] as const) {
+      expect(isFilingRelevant(capture({ status, created_at: old }), NOW)).toBe(true);
+    }
   });
 
-  it('shows a capture that only the failed filter returns', async () => {
-    mountDistinctFilters({
-      failed: [capture({ id: 'srv-fail', status: 'failed', error: 'Transcription provider timed out' })],
-    });
-    expect(await screen.findByText('Transcription provider timed out')).toBeInTheDocument();
+  it('keeps a just-filed capture, so there is something to tap through to', () => {
+    expect(
+      isFilingRelevant(capture({ status: 'appended', appended_at: recent }), NOW),
+    ).toBe(true);
   });
 
-  it('shows a capture that only the needs_target filter returns', async () => {
-    mountDistinctFilters({
-      needs_target: [capture({ id: 'srv-ask', status: 'needs_target' })],
-    });
-    expect(await screen.findByText(/which note should this go in/i)).toBeInTheDocument();
-  });
-});
-
-/**
- * `appended` satisfies none of `CaptureIsPending`, `failed`/`spend_capped`, or
- * `needs_target` — it is the pipeline's success state, not one it stopped on
- * — so a capture that finished had nothing to show for it: the card the code
- * already has for this (`done`, below) never received an item to render. The
- * feature request this closes: "once a note is ready, let me tap through to
- * it" — which `status=all`, filtered client-side to recent, is what supplies.
- */
-describe('a capture that just finished gets a way to jump straight to what it wrote', () => {
-  it('shows Filed and an Open button for a capture appended a moment ago', async () => {
-    const user = userEvent.setup();
-    const { calls } = mountDistinctFilters({
-      all: [
-        capture({
-          id: 'srv-done',
-          status: 'appended',
-          note_id: 'roof-repair',
-          appended_at: new Date().toISOString(),
-        }),
-      ],
-    });
-
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
-    const open = screen.getByRole('button', { name: /open/i });
-    await user.click(open);
-
-    await waitFor(() => {
-      expect(calls.some((u) => u.includes('status=all'))).toBe(true);
-    });
+  it('drops a capture filed long ago, and one that produced nothing long ago', () => {
+    expect(isFilingRelevant(capture({ status: 'appended', appended_at: old }), NOW)).toBe(false);
+    expect(isFilingRelevant(capture({ status: 'appended' }), NOW)).toBe(false);
+    expect(isFilingRelevant(capture({ status: 'no_content', created_at: old }), NOW)).toBe(false);
+    expect(isFilingRelevant(capture({ status: 'no_content', created_at: recent }), NOW)).toBe(true);
   });
 
-  it('can be dismissed even though it is terminal', async () => {
+  it('shows Filed for a capture appended a moment ago, and lets it be dismissed', async () => {
     // Unlike failed/needs_target, `done` had no Dismiss at all before this —
     // and once the last active capture appends, polling stops entirely
-    // (refetchInterval returns false), so nothing would ever refetch this
-    // card away on its own.
+    // (refetchInterval returns false), so nothing would ever refetch this row
+    // away on its own.
     const user = userEvent.setup();
-    mountDistinctFilters({
-      all: [
-        capture({
-          id: 'srv-done-2',
-          status: 'appended',
-          note_id: 'roof-repair',
-          appended_at: new Date().toISOString(),
-        }),
-      ],
-    });
+    mount([
+      capture({
+        id: 'srv-done',
+        status: 'appended',
+        note_id: 'roof-repair',
+        appended_at: new Date().toISOString(),
+      }),
+    ]);
 
-    await screen.findByText('Filed');
+    expect(await screen.findByText('Filed')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
 
     await waitFor(() => {
@@ -477,19 +429,17 @@ describe('a capture that just finished gets a way to jump straight to what it wr
   });
 
   it('does not resurface a capture appended long ago', async () => {
-    mountDistinctFilters({
-      all: [
-        capture({
-          id: 'srv-old',
-          status: 'appended',
-          note_id: 'roof-repair',
-          appended_at: '2026-01-01T00:00:00.000Z',
-        }),
-      ],
-    });
+    mount([
+      capture({
+        id: 'srv-old',
+        status: 'appended',
+        note_id: 'roof-repair',
+        appended_at: '2026-01-01T00:00:00.000Z',
+      }),
+    ]);
 
     await waitFor(() => {
-      expect(screen.queryByRole('region', { name: /captures in progress/i })).toBeNull();
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
     });
   });
 });

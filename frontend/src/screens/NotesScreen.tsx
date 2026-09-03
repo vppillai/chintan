@@ -15,7 +15,7 @@ import type { NoteState, NoteWire } from '@/api/schema.ts';
 import { ARCHIVED_VIEW } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { NoteRow } from '@/components/NoteRow.tsx';
-import { ProgressCard } from '@/features/capture/ProgressCard.tsx';
+import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
@@ -262,7 +262,7 @@ export function NotesScreen() {
       {!searching && view === 'active' && (
         <>
           <ResumePrompt />
-          <ProgressCard />
+          <FilingRow />
         </>
       )}
 

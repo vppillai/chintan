@@ -339,75 +339,82 @@ export function capturePollInterval(startedAt: number, now: number = Date.now())
 }
 
 /**
- * Every capture the progress card has something to say about.
- *
- * This is what makes the progress card survive a reload: the set is server
- * state, not a JavaScript variable. v1 held the in-flight capture id in a
- * module-level field, so a refresh stranded the audio with no UI able to find
- * it again.
- *
- * Fetches three server-side filters and merges them, rather than `pending`
- * alone. `CaptureIsPending` (backend `internal/service/capture_status.go`)
- * answers "is the pipeline still moving" — it excludes `failed`,
- * `spend_capped` and `needs_target` by design, because those are stopped, not
- * moving. But `ProgressCard` renders a distinct, actionable outcome for every
- * one of those three: an error with Retry, "daily cap reached", and "which
- * note should this go in?". None of them satisfy `CaptureIsPending`, so
- * polling `pending` alone means a capture that failed, or that is waiting on
- * the user to pick a note, simply vanishes — no error, no prompt, nothing —
- * indistinguishable from one that quietly succeeded. `failed` and
- * `needs_target` are themselves bounded (a capture leaves them the moment it
- * is retried or answered), so merging them in cannot resurrect old,
- * already-resolved history the way polling `all` would.
+ * How long a just-filed capture keeps its "Filed" row once appended, and how
+ * long a recording that produced nothing keeps saying so. `status=all` is
+ * newest-first and otherwise unbounded — this is what stops a note filed weeks
+ * ago from resurfacing at the top of the library forever just because its
+ * capture happens to be near the top of that list.
  */
-/**
- * How long a just-filed capture keeps its "Filed" card once appended.
- *
- * `status=all` is newest-first and otherwise unbounded — this is what stops a
- * note filed weeks ago from resurfacing here forever just because its capture
- * happens to be near the top of that list.
- */
-const RECENTLY_APPENDED_MS = 10 * 60 * 1000;
+const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
 
-function recentlyAppended(capture: CaptureWire): boolean {
-  if (capture.status !== 'appended' || !capture.appended_at) return false;
-  const at = Date.parse(capture.appended_at);
-  return Number.isFinite(at) && Date.now() - at < RECENTLY_APPENDED_MS;
+/** Newest-first, and twenty is more than one person records before the first has filed. */
+const CAPTURE_LIST_LIMIT = 20;
+
+/** How often to ask while something is still moving through the pipeline. */
+export const CAPTURE_POLL_INTERVAL_MS = 4_000;
+
+function within(iso: string | null | undefined, windowMs: number, now: number): boolean {
+  if (!iso) return false;
+  const at = Date.parse(iso);
+  return Number.isFinite(at) && now - at < windowMs;
 }
 
+/**
+ * Whether the library's filing row has anything to say about a capture.
+ *
+ * Anything still moving, obviously. Of the stopped ones: `failed`,
+ * `spend_capped` and `needs_target` always, because each has an action the
+ * user must take and a capture waiting on the user must not vanish silently;
+ * `appended` and `no_content` only briefly, because they are done and the row
+ * is a receipt, not a history.
+ */
+export function isFilingRelevant(capture: CaptureWire, now: number = Date.now()): boolean {
+  switch (capture.status) {
+    case 'failed':
+    case 'spend_capped':
+    case 'needs_target':
+      return true;
+    case 'appended':
+      return within(capture.appended_at, RECENTLY_SETTLED_MS, now);
+    case 'no_content':
+      return within(capture.created_at, RECENTLY_SETTLED_MS, now);
+    default:
+      return !isTerminalStatus(capture.status);
+  }
+}
+
+/**
+ * Every capture the library's filing row has something to say about.
+ *
+ * This is what makes the row survive a reload: the set is server state, not a
+ * JavaScript variable. v1 held the in-flight capture id in a module-level
+ * field, so a refresh stranded the audio with no UI able to find it again.
+ *
+ * ONE request per poll. This used to fire `pending`, `failed`, `needs_target`
+ * and `all` in parallel every four seconds, plus all four again on every
+ * window focus — ~120 invocations for a two-minute pipeline, while the user
+ * was most likely driving on cellular. The newest twenty captures contain
+ * everything those filters would have returned that is worth showing (see
+ * `isFilingRelevant`), so the filtering happens here. Focus refetch is off
+ * for this query alone: while anything is moving the interval already asks,
+ * and once nothing is, a focus has nothing new to learn.
+ */
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
   return useQuery({
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
-      const [pending, failed, needsTarget, all] = await Promise.all([
-        api.listCaptures({ status: 'pending' }),
-        api.listCaptures({ status: 'failed' }),
-        api.listCaptures({ status: 'needs_target' }),
-        // `appended` satisfies none of the three filters above — it is the
-        // pipeline's success state, not one it stopped on — so a capture that
-        // finished had nothing to show for it: no "Filed", no way to jump
-        // straight to the note it just wrote. This is the one filter that
-        // reaches it, filtered client-side to recent, since `all` is every
-        // capture the tenant has ever made.
-        api.listCaptures({ status: 'all' }),
-      ]);
-      const byId = new Map<string, CaptureWire>();
-      for (const page of [pending, failed, needsTarget]) {
-        for (const capture of page.items) byId.set(capture.id, capture);
-      }
-      for (const capture of all.items) {
-        if (recentlyAppended(capture)) byId.set(capture.id, capture);
-      }
-      return { items: Array.from(byId.values()) };
+      const page = await api.listCaptures({ status: 'all', limit: CAPTURE_LIST_LIMIT });
+      return { items: page.items.filter((capture) => isFilingRelevant(capture)) };
     },
     enabled,
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? [];
       const active = items.some((capture) => !isTerminalStatus(capture.status));
-      return active ? CAPTURE_POLL_MIN_MS * 2 : false;
+      return active ? CAPTURE_POLL_INTERVAL_MS : false;
     },
-    staleTime: 0,
+    refetchOnWindowFocus: false,
+    staleTime: 10_000,
   });
 }
 

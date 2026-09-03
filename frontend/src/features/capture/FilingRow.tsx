@@ -15,44 +15,53 @@ import {
 } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
+import { formatDurationShort } from '@/features/notes/groups.ts';
 
 /**
- * The capture progress card.
+ * A recording being filed, as a row at the top of the library.
  *
- * Backed by `GET /v1/captures?status=pending` rather than a JavaScript
- * variable, so it survives navigation, reload, and app restart. v1 held the
- * in-flight capture id in a module-level field; a refresh stranded the audio
- * with no UI anywhere able to find it again.
+ * Backed by `GET /v1/captures` rather than a JavaScript variable, so it
+ * survives navigation, reload, and app restart. v1 held the in-flight capture
+ * id in a module-level field; a refresh stranded the audio with no UI anywhere
+ * able to find it again. It used to be a card floating in the shell over every
+ * screen; it is a list row now, because a recording on its way into the
+ * library belongs at the top of the library.
  *
- * The stage labels are honest about where the pipeline actually is. There is
- * no determinate bar, because the client cannot know how long transcription
- * will take and a bar that sits at 100% reads as broken.
+ * Four segments — uploaded, transcribing, filing, saving — and no percentage,
+ * because the client cannot know how long transcription will take and a bar
+ * that sits at 100% reads as broken.
  */
 
-const STAGES: { status: CaptureStatus; label: string }[] = [
-  { status: 'uploaded', label: 'Queued' },
-  { status: 'transcribing', label: 'Transcribing' },
-  { status: 'routing', label: 'Filing' },
-  { status: 'cleaning', label: 'Cleaning up' },
-  { status: 'appending', label: 'Saving' },
+interface Stage {
+  label: string;
+  /** The statuses this segment is lit for. */
+  statuses: readonly CaptureStatus[];
+}
+
+const STAGES: readonly Stage[] = [
+  { label: 'Uploaded', statuses: ['uploaded'] },
+  { label: 'Transcribing', statuses: ['transcribing'] },
+  // Routing and cleaning are one segment to the user: "working out where this
+  // goes and what it says" is one step, however many the pipeline takes.
+  { label: 'Filing', statuses: ['routing', 'cleaning'] },
+  { label: 'Saving', statuses: ['appending'] },
 ];
 
 function stageIndex(status: CaptureStatus): number {
-  const index = STAGES.findIndex((stage) => stage.status === status);
+  const index = STAGES.findIndex((stage) => stage.statuses.includes(status));
   return index === -1 ? STAGES.length : index;
 }
 
 /**
- * How long a capture can sit in a non-terminal status before the card stops
+ * How long a capture can sit in a non-terminal status before the row stops
  * trusting the pipeline and offers a way out.
  *
  * A capture only reaches this state if the upload event that should have
  * driven the worker never arrived, or the worker died mid-stage without
  * writing a `failed` status — both silent by design elsewhere in the stack
  * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
- * this). Without a client-side timeout the card polls forever showing a
- * stage strip that will never move, with no error and no Retry, because
- * `failed` was the only status that ever unlocked those actions.
+ * this). Without a client-side timeout the row polls forever showing a stage
+ * strip that will never move, with no error and no Retry.
  */
 const STUCK_AFTER_MS = 10 * 60 * 1000;
 
@@ -77,22 +86,22 @@ function describe(capture: CaptureWire, stuck: boolean): string {
       return capture.error ?? 'That capture did not finish';
     default:
       if (stuck) return 'Still not done — something may have gone wrong';
-      return STAGES[stageIndex(capture.status)]?.label ?? 'Working';
+      return 'Filing your recording';
   }
 }
 
 /**
- * Cards the user has closed.
+ * Rows the user has closed.
  *
- * Module-level on purpose: the card is rendered by the shell and remounts every
- * time the sheet locks and unlocks, so component state would resurrect a card
- * the user had just dismissed. There is no server-side "seen" flag to sync
- * with — `no_content` and `failed` stay in the pending list by contract — so
- * this is a per-session client decision and nothing more.
+ * Module-level on purpose: the library remounts every time the user opens a
+ * note and comes back, so component state would resurrect a row the user had
+ * just dismissed. There is no server-side "seen" flag to sync with — `failed`
+ * and `no_content` stay in the list by contract — so this is a per-session
+ * client decision and nothing more.
  */
 const dismissed = new Set<string>();
 
-export function ProgressCard() {
+export function FilingRow() {
   const navigate = useNavigate();
   const { data } = usePendingCaptures();
   const retry = useRetryCapture();
@@ -102,9 +111,9 @@ export function ProgressCard() {
   if (captures.length === 0) return null;
 
   return (
-    <section className="progress-stack" aria-label="Captures in progress">
+    <section className="filing" aria-label="Recordings being filed">
       {captures.map((capture) => (
-        <CaptureCard
+        <FilingItem
           key={capture.id}
           capture={capture}
           onOpen={() => {
@@ -122,7 +131,7 @@ export function ProgressCard() {
   );
 }
 
-interface CaptureCardProps {
+interface FilingItemProps {
   capture: CaptureWire;
   onOpen: () => void;
   onRetry: () => void;
@@ -130,98 +139,112 @@ interface CaptureCardProps {
   onDismiss: () => void;
 }
 
-function CaptureCard({ capture, onOpen, onRetry, retrying, onDismiss }: CaptureCardProps) {
+function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingItemProps) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const stuck = isStuck(capture);
   // A stuck capture gets the same way out a failed one does: retrying is safe
   // (the backend resumes from whichever artifact already exists) and dismissing
-  // stops the card floating over the record surface forever.
+  // stops the row sitting at the top of the library forever.
   const actionable = failed || stuck;
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
   const current = stageIndex(capture.status);
+  const stage = STAGES[current];
 
   /*
    * The stage strip is for a capture that is still moving. It used to render
-   * for every status the two explicit branches above did not name, which meant
-   * `needs_target` and `no_content` showed all five stages *complete* while the
+   * for every status the explicit branches did not name, which meant
+   * `needs_target` and `no_content` showed every stage *complete* while the
    * capture had in fact stopped and was waiting for the user.
    */
   const running = !isTerminalStatus(capture.status);
 
   return (
-    <article className="progress-card" data-status={capture.status} data-stuck={stuck || undefined}>
-      <div className="progress-card__body">
-        <p className="progress-card__label" role="status" aria-live="polite">
+    <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
+      <div className="filing-row__head">
+        <p className="filing-row__title" role="status" aria-live="polite">
           {describe(capture, stuck)}
+          {running && stage && !stuck && (
+            <span className="visually-hidden">{` — ${stage.label}`}</span>
+          )}
         </p>
-
-        {running && (
-          <ol className="progress-card__stages" aria-label="Pipeline stage">
-            {STAGES.map((stage, index) => (
-              <li
-                key={stage.status}
-                className="progress-card__stage"
-                data-state={index < current ? 'done' : index === current ? 'active' : 'todo'}
-              >
-                <span className="visually-hidden">
-                  {stage.label}
-                  {index < current ? ' complete' : index === current ? ' in progress' : ' pending'}
-                </span>
-              </li>
-            ))}
-          </ol>
+        {typeof capture.duration_ms === 'number' && capture.duration_ms > 0 && (
+          <span className="filing-row__duration numeric">
+            {formatDurationShort(capture.duration_ms)}
+          </span>
         )}
       </div>
 
-      <div className="progress-card__actions">
-        {done && capture.note_id && (
-          <button type="button" className="progress-card__action" onClick={onOpen}>
-            <span>Open</span>
-            <Icon name="back" size={16} className="progress-card__open-icon" />
-          </button>
-        )}
+      {running && (
+        <ol className="filing-row__stages" aria-label="Filing progress">
+          {STAGES.map((step, index) => (
+            <li
+              key={step.label}
+              className="filing-row__stage"
+              data-state={index < current ? 'done' : index === current ? 'active' : 'todo'}
+            >
+              <span className="visually-hidden">
+                {step.label}
+                {index < current ? ' complete' : index === current ? ' in progress' : ' pending'}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
 
-        {/*
-          A real Retry, wired to POST /v1/captures/{id}/retry. In v1 the client
-          method existed and was called from nowhere, so a failed capture was a
-          dead end with a toast. Also offered once a non-terminal capture has
-          sat past STUCK_AFTER_MS with no status change — RetryCapture resumes
-          from whichever artifact already exists, so it is safe to call on a
-          capture that never actually failed, only stalled.
-        */}
-        {actionable && (
-          <button
-            type="button"
-            className="progress-card__action"
-            onClick={onRetry}
-            disabled={retrying}
-          >
-            <span>{retrying ? 'Retrying…' : 'Retry'}</span>
-          </button>
-        )}
+      {running && stage && (
+        <p className="filing-row__status" aria-hidden="true">
+          {stage.label}
+        </p>
+      )}
 
-        {/*
-          Terminal and unactionable statuses need a way off the screen. Without
-          one the card sat over the record surface for the rest of the session.
-          `done` is included too: usePendingCaptures keeps showing a "Filed"
-          card for RECENTLY_APPENDED_MS after the fact, and polling stops the
-          moment nothing left is non-terminal — so once the last capture
-          appends, nothing else will ever refetch this away. Dismiss (or
-          Open, which navigates off this screen) is the only way it leaves.
-        */}
-        {(actionable || done || capture.status === 'no_content') && (
-          <button type="button" className="progress-card__action" onClick={onDismiss}>
+      {(done || actionable || capture.status === 'no_content') && (
+        <div className="filing-row__actions">
+          {done && capture.note_id && (
+            <button type="button" className="filing-row__action" onClick={onOpen}>
+              <span>Open the note</span>
+              <Icon name="back" size={16} className="filing-row__open-icon" />
+            </button>
+          )}
+
+          {/*
+            A real Retry, wired to POST /v1/captures/{id}/retry. In v1 the client
+            method existed and was called from nowhere, so a failed capture was a
+            dead end with a toast. Also offered once a non-terminal capture has
+            sat past STUCK_AFTER_MS with no status change — RetryCapture resumes
+            from whichever artifact already exists, so it is safe to call on a
+            capture that never actually failed, only stalled.
+          */}
+          {actionable && (
+            <button
+              type="button"
+              className="filing-row__action"
+              onClick={onRetry}
+              disabled={retrying}
+            >
+              <span>{retrying ? 'Retrying…' : 'Retry'}</span>
+            </button>
+          )}
+
+          {/*
+            Terminal and unactionable statuses need a way off the screen. `done`
+            is included too: the list keeps showing a "Filed" row for a while
+            after the fact, and polling stops the moment nothing left is
+            non-terminal — so once the last capture appends, nothing else will
+            ever refetch this away. Dismiss (or Open, which navigates off this
+            screen) is the only way it leaves.
+          */}
+          <button type="button" className="filing-row__action" onClick={onDismiss}>
             <span>Dismiss</span>
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/*
-        The card asked "Which note should this go in?" and rendered no way to
+        The row asks "Which note should this go in?" and must render a way to
         answer it. `useSetCaptureTarget` wrapped the contract's target endpoint
-        and was called from nowhere, so the capture — and the thought in it —
-        was stuck permanently.
+        and was once called from nowhere, so the capture — and the thought in
+        it — was stuck permanently.
 
         Mounted only for `needs_target`, which is what keeps the notes list off
         the wire for a capture that is merely still transcribing.
@@ -278,10 +301,10 @@ function TargetPrompt({ capture }: { capture: CaptureWire }) {
 
   if (suggestion && !browsing) {
     return (
-      <div className="progress-card__actions">
+      <div className="filing-row__actions">
         <button
           type="button"
-          className="progress-card__action progress-card__action--primary"
+          className="filing-row__action filing-row__action--primary"
           disabled={setTarget.isPending}
           onClick={() => {
             choose(suggestion.target);
@@ -293,7 +316,7 @@ function TargetPrompt({ capture }: { capture: CaptureWire }) {
         {/* Disagreeing has to be one tap, or the suggestion becomes a trap. */}
         <button
           type="button"
-          className="progress-card__action"
+          className="filing-row__action"
           disabled={setTarget.isPending}
           onClick={() => {
             setBrowsing(true);
@@ -317,14 +340,14 @@ function TargetPrompt({ capture }: { capture: CaptureWire }) {
     <>
       {/*
         With no suggestion the library stays behind a tap, as it has: a list of
-        every note the user owns is not something to unfold over the record
-        surface unprompted.
+        every note the user owns is not something to unfold in the middle of
+        the library unprompted.
       */}
       {!browsing && (
-        <div className="progress-card__actions">
+        <div className="filing-row__actions">
           <button
             type="button"
-            className="progress-card__action"
+            className="filing-row__action"
             aria-expanded={picking}
             onClick={() => {
               setPicking((wasOpen) => !wasOpen);

@@ -792,93 +792,74 @@
 }
 
 /* --------------------------------------------------------------------------
-   Progress card
+   Filing row — a recording on its way into the library, at the top of it
 
-   Stage pips, not a determinate bar. The client cannot know how long
+   Four stage segments, not a determinate bar. The client cannot know how long
    transcription takes, and a bar parked at 100% reads as broken — which is
    precisely what v1's did.
    -------------------------------------------------------------------------- */
 
-/*
- * The stack is a shell row, so it shares the screens' content column — before
- * that it ran the full width of an ultra-wide display while the note list sat
- * in a 42rem column, parking Retry a thousand pixels from the text it belonged
- * to.
- *
- * The height cap matters more than it looks: the number of pending captures is
- * unbounded, and the shell is now exactly one viewport tall, so without it a
- * backlog of cards would squeeze `.app__main` to nothing and then push the
- * bottom bar out of the box entirely.
- */
-.progress-stack {
+.filing {
   display: grid;
   gap: var(--space-2);
-  inline-size: 100%;
-  max-inline-size: var(--layout-content-max);
-  margin-inline: auto;
-  padding: var(--space-2) var(--layout-gutter);
-  max-block-size: 38dvh;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
+  margin-block-end: var(--space-4);
 }
 
-.progress-card {
-  display: flex;
-  /*
-   * Wrapping, because a terminal card can carry two actions (Retry and
-   * Dismiss) and `needs_target` opens a picker below them. At 320px an
-   * unwrapped row would push the card past the viewport.
-   */
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+.filing-row {
+  display: grid;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
 }
 
-.progress-card[data-status='failed'],
-.progress-card[data-status='spend_capped'],
-.progress-card[data-stuck] {
+.filing-row[data-status='failed'],
+.filing-row[data-status='spend_capped'],
+.filing-row[data-stuck] {
   border-color: var(--color-line-strong);
 }
 
-.progress-card__body {
-  display: grid;
-  gap: var(--space-2);
-  min-inline-size: 0;
+.filing-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
 
-.progress-card__label {
+.filing-row__title {
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-ink);
 }
 
-.progress-card__stages {
-  display: flex;
+.filing-row__duration {
+  flex: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+.filing-row__stages {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.progress-card__stage {
-  inline-size: var(--space-6);
+.filing-row__stage {
   block-size: var(--space-1);
   border-radius: var(--radius-full);
   background-color: var(--color-line);
   transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
 }
 
-.progress-card__stage[data-state='done'] {
+.filing-row__stage[data-state='done'] {
   background-color: var(--color-muted);
 }
 
-.progress-card__stage[data-state='active'] {
+.filing-row__stage[data-state='active'] {
   background-color: var(--color-accent);
   animation: stage-pulse 1.6s var(--motion-ease-standard) infinite;
 }
@@ -893,11 +874,15 @@
   }
 }
 
-.progress-card__actions {
+.filing-row__status {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+.filing-row__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  flex-shrink: 0;
 }
 
 /* --------------------------------------------------------------------------
@@ -907,7 +892,6 @@
 .target-picker {
   display: grid;
   gap: var(--space-2);
-  flex-basis: 100%;
   padding-block-start: var(--space-3);
   border-block-start: 1px solid var(--color-line);
 }
@@ -1013,7 +997,7 @@
   }
 }
 
-.progress-card__action {
+.filing-row__action {
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -1026,12 +1010,12 @@
   color: var(--color-ink);
 }
 
-.progress-card__action[disabled] {
+.filing-row__action[disabled] {
   color: var(--color-faint);
   cursor: default;
 }
 
-.progress-card__open-icon {
+.filing-row__open-icon {
   transform: rotate(180deg);
 }
 
@@ -1764,9 +1748,9 @@
    The router's answer, offered rather than buried
    -------------------------------------------------------------------------- */
 
-/* The suggestion is the one action the card wants taken, so it reads as such
+/* The suggestion is the one action the row wants taken, so it reads as such
    against the "choose another note" beside it. */
-.progress-card__action--primary {
+.filing-row__action--primary {
   background-color: var(--color-ink);
   border-color: var(--color-ink);
   color: var(--color-ground);
