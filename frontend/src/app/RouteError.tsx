@@ -33,7 +33,7 @@ export function RouteError() {
 
       <div className="screen__actions">
         <Link className="screen__action" to={ROUTES.home}>
-          Back to recording
+          Back to your notes
         </Link>
         <button
           type="button"

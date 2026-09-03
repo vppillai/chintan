@@ -2,46 +2,48 @@ import { useRef } from 'react';
 import { Outlet, useLocation } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
-import { sheetForPath } from '@/app/sheet.ts';
-import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
-import { useAuthGate } from '@/features/auth/useAuth.ts';
-import { ProgressCard } from '@/features/capture/ProgressCard.tsx';
-import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
-import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
-import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
+import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
+import { useAuthGate } from '@/features/auth/useAuth.ts';
+import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
+import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 
-import { BottomBar } from './BottomBar.tsx';
-import { LibraryStrip } from './LibraryStrip.tsx';
 import { RecordingIndicator } from './RecordingIndicator.tsx';
 import { StatusRegion } from './StatusRegion.tsx';
+import { TabBar } from './TabBar.tsx';
 
-const SCREEN_TITLES: Record<string, string> = {
-  [ROUTES.home]: 'Record',
-  [ROUTES.notes]: 'Notes',
-  [ROUTES.search]: 'Search',
-  [ROUTES.settings]: 'You',
-  [ROUTES.capture]: 'Recording',
-};
+/** Which of the app's surfaces a URL is. Drives layout and announcements. */
+export type Screen = 'library' | 'note' | 'you' | 'capture' | 'other';
 
-function announcementFor(pathname: string): string {
-  if (SCREEN_TITLES[pathname]) return `${SCREEN_TITLES[pathname]} screen`;
-  if (pathname.startsWith(`${ROUTES.notes}/`)) return 'Note screen';
-  return 'Screen changed';
+export function screenForPath(pathname: string): Screen {
+  const path = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
+  if (path === ROUTES.home) return 'library';
+  if (path === ROUTES.capture) return 'capture';
+  if (path === ROUTES.settings) return 'you';
+  if (path.startsWith('/notes/')) return 'note';
+  return 'other';
 }
+
+const SCREEN_TITLES: Record<Screen, string> = {
+  library: 'Notes',
+  note: 'Note',
+  you: 'You',
+  capture: 'Recording',
+  other: 'Screen',
+};
 
 /**
  * The app shell.
  *
- * There is exactly one <main>. The sheet is not a second document region — it
- * is <main> itself, restyled: at `collapsed` it is the record surface, at
- * `expanded` it is the library pulled up over it, at `locked` it is the
- * capture screen. That keeps the landmark structure honest (one banner, one
- * main, one navigation) and lets one CSS transition do the pull-up.
+ * There is exactly one <main>, one banner and one navigation. The tab bar is a
+ * grid row in normal flow beneath <main>, so content can never be overlaid by
+ * it; on the capture screen the bar is not rendered at all, because a live
+ * microphone is the one state where an accidental tap on Record or Notes is
+ * worse than having to press Stop first.
  *
- * `data-sheet-state` on the wrapper is the single switch every layout rule
- * reads, so the sheet's appearance can never disagree with the URL.
+ * `data-screen` on the wrapper is the single switch the layout rules read, so
+ * the shell's appearance can never disagree with the URL.
  */
 export function AppShell() {
   const location = useLocation();
@@ -51,20 +53,20 @@ export function AppShell() {
   useBackGuard();
   useRouteFocus(mainRef);
 
-  const sheet = sheetForPath(location.pathname);
+  const screen = screenForPath(location.pathname);
 
   /*
    * The gate is here, above the outlet, rather than per screen.
    *
-   * Every screen's first act is an authenticated query, and the shell itself
-   * runs two more — the progress card polls `GET /v1/captures?status=pending`
-   * and the resume prompt offers a Send. Rendering any of that without a token
-   * is what produced a shell of 401s with nothing on screen explaining itself.
-   * One decision point means none of it can mount.
+   * Every screen's first act is an authenticated query, and the library itself
+   * runs two more — the filing row polls `GET /v1/captures` and the resume
+   * prompt offers a Send. Rendering any of that without a token is what
+   * produced a shell of 401s with nothing on screen explaining itself. One
+   * decision point means none of it can mount.
    */
   if (auth.phase !== 'signed-in') {
     return (
-      <div className="app" data-sheet-state="collapsed" data-signed-out="true">
+      <div className="app" data-screen="signed-out" data-signed-out="true">
         <header className="app__banner">
           <span className="app__wordmark">Chintan</span>
         </header>
@@ -81,7 +83,7 @@ export function AppShell() {
         Skip to content
       </a>
 
-      <div className="app" data-sheet-state={sheet.state} data-sheet-tab={sheet.tab}>
+      <div className="app" data-screen={screen}>
         <header className="app__banner">
           <span className="app__wordmark">Chintan</span>
           <OfflineBanner />
@@ -92,46 +94,28 @@ export function AppShell() {
           ref={mainRef}
           tabIndex={-1}
           className="app__main"
-          aria-label={SCREEN_TITLES[location.pathname] ?? 'Note'}
+          aria-label={SCREEN_TITLES[screen]}
         >
-          {sheet.state === 'expanded' && (
-            <span className="app__sheet-grip" aria-hidden="true" />
-          )}
           <Outlet />
         </main>
 
         {/*
-          The progress card lives in the shell, not in a screen, because a
-          capture must remain visible after the user navigates away from the
-          screen that started it.
+          The microphone being open is the one fact that outranks everything
+          else on the screen, so it is stated above the bar on every screen but
+          the capture screen, which is its own indicator.
         */}
-        {sheet.state !== 'locked' && (
-          <>
-            {/*
-              The microphone being open is the one fact that outranks everything
-              else on the screen, so it is stated above them all.
-            */}
-            <RecordingIndicator />
-            {/*
-              Offered before anything else: a recording stranded by a killed tab
-              is the only artifact in the app that exists in exactly one place.
-            */}
-            <ResumePrompt />
-            <ProgressCard />
-          </>
-        )}
+        {screen !== 'capture' && <RecordingIndicator />}
 
         {/*
-          Above the bar, not over it. The update prompt is a shell row like the
-          progress card, so it can never cover the record button — which is what
-          it did while it was a fixed-position toast.
+          Above the bar, not over it. The update prompt is a shell row, so it
+          can never cover the record button — which is what it did while it was
+          a fixed-position toast.
         */}
         <UpdatePrompt />
 
-        {sheet.state === 'collapsed' && <LibraryStrip />}
-        {sheet.state === 'expanded' && <BottomBar />}
+        {screen !== 'capture' && <TabBar />}
 
-        <StatusRegion message={announcementFor(location.pathname)} />
+        <StatusRegion message={`${SCREEN_TITLES[screen]} screen`} />
       </div>
     </>
   );

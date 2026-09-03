@@ -26,7 +26,7 @@ async function goBack(router: Router): Promise<void> {
   });
 }
 
-/** Lets the back guard's history seed settle before assertions. */
+/** Lets the back guard's history seed, or a redirect, settle. */
 async function settle(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -38,115 +38,120 @@ const path = (router: Router) => router.state.location.pathname;
 const shell = () => document.querySelector('.app');
 
 describe('the shell renders one landmark set', () => {
-  it('has a skip link, a banner, and exactly one main', () => {
+  it('has a skip link, a banner, one main and one navigation', () => {
     mount();
     expect(screen.getByRole('link', { name: /skip to content/i })).toHaveAttribute(
       'href',
       '#main',
     );
-    expect(screen.getByRole('banner')).toBeInTheDocument();
+    // The shell's own banner. A screen's `<header>` inside <main> is not one
+    // in the browser's accessibility tree, whatever jsdom thinks.
+    expect(screen.getByText('Chintan').closest('header')).toHaveClass('app__banner');
     expect(screen.getAllByRole('main')).toHaveLength(1);
+    expect(screen.getAllByRole('navigation')).toHaveLength(1);
   });
 
-  it('exposes a polite live region for pipeline status', () => {
+  it('exposes a polite live region for route announcements', () => {
     mount();
     const region = screen.getByTestId('status-region');
     expect(region).toHaveAttribute('aria-live', 'polite');
     expect(region).toHaveAttribute('role', 'status');
+    expect(region).toHaveTextContent('Notes screen');
   });
 });
 
-describe('record-first home', () => {
-  it('shows the record target and the collapsed strip', () => {
+describe('notes first', () => {
+  it('lands on the library, with the tab bar beneath it', async () => {
     mount();
-    expect(shell()).toHaveAttribute('data-sheet-state', 'collapsed');
-    expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument();
-    for (const label of ['Notes', 'Search', 'You']) {
-      expect(screen.getByRole('link', { name: label })).toBeInTheDocument();
-    }
+    expect(shell()).toHaveAttribute('data-screen', 'library');
+    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'You' })).not.toHaveAttribute('aria-current');
   });
-});
 
-describe('the expanded sheet', () => {
-  it('puts the record button in the bottom bar, not floating over content', async () => {
+  it('seats the record button in the tab bar, not floating over content', () => {
+    mount();
+    const record = screen.getByRole('button', { name: /record/i });
+    // A floating action button would be a sibling of <main> and would overlay
+    // the last note row.
+    expect(record.closest('.tab-bar')).not.toBeNull();
+  });
+
+  it('keeps the Notes tab lit while reading a note', async () => {
     const user = userEvent.setup();
     const { router } = mount();
-
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
-
-    expect(path(router)).toBe('/notes');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'expanded');
-
-    const record = screen.getByRole('button', { name: /record/i });
-    // The record control is a descendant of the bottom bar. A floating action
-    // button would be a sibling of <main> and would overlay the last note row.
-    expect(record.closest('.bottom-bar')).not.toBeNull();
+    await user.click(await screen.findByRole('button', { name: /roof repair/i }));
+    expect(path(router)).toBe('/notes/roof-repair');
+    expect(shell()).toHaveAttribute('data-screen', 'note');
+    expect(screen.getByRole('link', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
   });
 
-  it('locks shut while recording', async () => {
+  it('lights the You tab on settings', async () => {
+    const user = userEvent.setup();
+    const { router } = mount();
+    await user.click(screen.getByRole('link', { name: 'You' }));
+    expect(path(router)).toBe('/settings');
+    expect(screen.getByRole('link', { name: 'You' })).toHaveAttribute('aria-current', 'page');
+  });
+});
+
+describe('the capture screen is full screen', () => {
+  it('drops the tab bar while recording', async () => {
     const user = userEvent.setup();
     const { router } = mount();
 
     await user.click(screen.getByRole('button', { name: /record/i }));
 
     expect(path(router)).toBe('/capture');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'locked');
-    expect(screen.queryByRole('navigation', { name: 'Library' })).not.toBeInTheDocument();
+    expect(shell()).toHaveAttribute('data-screen', 'capture');
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 });
 
-describe('Back never exits the app', () => {
-  it('collapses the sheet instead of leaving, after opening the library', async () => {
-    const user = userEvent.setup();
-    const { router } = mount(['/']);
-
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
-    expect(path(router)).toBe('/notes');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'expanded');
-
-    // Browser / Android Back.
-    await goBack(router);
-
-    expect(path(router)).toBe('/');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'collapsed');
-    // Still inside the app: the record surface is mounted.
-    expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument();
-  });
-
-  it('collapses the sheet from a cold-start deep link, where v1 would have exited', async () => {
-    // Entering directly at /notes gives the app one history entry, so Back
-    // would leave the tab. useBackGuard seeds home beneath it.
+describe('old URLs still land somewhere', () => {
+  it('sends /notes to the library', async () => {
     const { router } = mount(['/notes']);
-
-    // The seed replaces the initial entry with home and pushes /notes back on
-    // top, so the deep link is still what is rendered.
     await settle();
-    expect(router.state.location.key).not.toBe('default');
-    expect(path(router)).toBe('/notes');
-
-    await goBack(router);
-
-    expect(path(router)).toBe('/');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'collapsed');
-    expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(path(router)).toBe('/');
+    });
+    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
   });
+});
 
+describe('Back always means back', () => {
   it('pops the note detail screen back to the library', async () => {
     const user = userEvent.setup();
     const { router } = mount(['/']);
 
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
-    await user.click(screen.getByRole('button', { name: /roof repair/i }));
-
+    await user.click(await screen.findByRole('button', { name: /roof repair/i }));
     expect(path(router)).toBe('/notes/roof-repair');
 
     await goBack(router);
 
-    expect(path(router)).toBe('/notes');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'expanded');
+    expect(path(router)).toBe('/');
+    expect(shell()).toHaveAttribute('data-screen', 'library');
   });
 
-  it('leaves the capture screen back to home', async () => {
+  it('seeds the library beneath a cold-start deep link, where v1 would have exited', async () => {
+    // Entering directly at a note gives the app one history entry, so Back
+    // would leave the tab. useBackGuard seeds home beneath it.
+    const { router } = mount(['/notes/roof-repair']);
+
+    // The seed replaces the initial entry with home and pushes the note back
+    // on top, so the deep link is still what is rendered.
+    await settle();
+    expect(router.state.location.key).not.toBe('default');
+    expect(path(router)).toBe('/notes/roof-repair');
+
+    await goBack(router);
+
+    expect(path(router)).toBe('/');
+    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+  });
+
+  it('leaves the capture screen back to the library', async () => {
     const user = userEvent.setup();
     const { router } = mount(['/']);
 
@@ -156,17 +161,20 @@ describe('Back never exits the app', () => {
     await goBack(router);
 
     expect(path(router)).toBe('/');
-    expect(shell()).toHaveAttribute('data-sheet-state', 'collapsed');
+    expect(shell()).toHaveAttribute('data-screen', 'library');
+  });
+
+  it('does not seed anything at the library itself', async () => {
+    const { router } = mount(['/']);
+    await settle();
+    expect(router.state.location.key).toBe('default');
   });
 });
 
 describe('accessibility of the library', () => {
   it('renders note rows as real buttons, not clickable divs', async () => {
-    const user = userEvent.setup();
     mount();
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
-
-    const row = screen.getByRole('button', { name: /roof repair/i });
+    const row = await screen.findByRole('button', { name: /roof repair/i });
     expect(row.tagName).toBe('BUTTON');
     expect(row).toHaveAttribute('type', 'button');
   });
@@ -175,53 +183,11 @@ describe('accessibility of the library', () => {
     const user = userEvent.setup();
     mount();
 
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
+    await user.click(screen.getByRole('link', { name: 'You' }));
 
     await waitFor(() => {
       expect(document.activeElement).toBe(screen.getByRole('main'));
     });
-  });
-});
-
-describe('Search and the library do not share a cache entry', () => {
-  /*
-   * One bug with two symptoms depending on visit order. Search's corpus and the
-   * library's infinite query both keyed on `['notes', {state:'active'}]` while
-   * holding incompatible shapes, so whichever screen ran first decided what the
-   * other one found in the cache.
-   */
-
-  it('still finds a cached note after the library has been opened', async () => {
-    // The common path — Notes is first on the strip. `corpus?.items` was
-    // undefined, `rankLocal` got an empty array, and the user was told their
-    // note did not exist.
-    const user = userEvent.setup();
-    mount(['/']);
-
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
-    await screen.findByRole('button', { name: /roof repair/i });
-
-    await user.click(screen.getByRole('link', { name: 'Search' }));
-    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
-
-    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
-  });
-
-  it('renders the library after Search has run, rather than crashing the app', async () => {
-    // The other direction: a plain `Page<NoteWire>` landed in the cache, the
-    // infinite query read `data.pages` as undefined, and the whole app was
-    // replaced by React Router's raw error page — zero links, zero buttons.
-    const user = userEvent.setup();
-    mount(['/search']);
-    await settle();
-
-    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
-    await screen.findByRole('button', { name: /roof repair/i });
-
-    await user.click(screen.getByRole('link', { name: 'Notes' }));
-
-    expect(await screen.findByRole('heading', { name: 'Notes' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
   });
 });
 
@@ -255,24 +221,8 @@ describe('a render fault never leaves the user with no controls', () => {
     await screen.findByRole('alert');
     expect(screen.getAllByRole('button').length + screen.getAllByRole('link').length)
       .toBeGreaterThan(0);
-    expect(screen.getByRole('link', { name: /back to recording/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /back to your notes/i })).toBeInTheDocument();
     // The message is a sentence, not a stack trace.
     expect(screen.queryByText(/at Object\.|\.tsx:\d/)).toBeNull();
-  });
-});
-
-describe('search state lives in the URL', () => {
-  it('reflects the typed query into the query string', async () => {
-    const user = userEvent.setup();
-    const { router } = mount(['/search']);
-    await settle();
-    expect(path(router)).toBe('/search');
-
-    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
-
-    await waitFor(() => {
-      expect(router.state.location.search).toBe('?q=roof');
-    });
-    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
   });
 });

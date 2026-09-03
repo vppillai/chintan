@@ -1,24 +1,25 @@
 import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 
-import { ROUTES } from './routes.ts';
+import { ROUTES, legacyRedirect } from './routes.ts';
 
 /**
  * Guarantees that Back always has somewhere to go inside the app.
  *
  * The v1 build's worst bug: opening the library and pressing Android Back left
- * the app, because the library was a DOM state with no history entry. v2 makes
- * every state a real URL, which fixes Back *within* a session — but not a cold
+ * the app, because the library was a DOM state with no history entry. Every
+ * state is now a real URL, which fixes Back *within* a session — but not a cold
  * start on a deep link, where the app's first history entry is also the tab's
  * first history entry, so Back exits.
  *
- * So on first mount at any non-home URL we seed the stack: replace the entry
- * with home, then push the requested route. Back from a deep-linked library
- * now collapses the sheet to the record surface — the one screen that always
- * works — instead of leaving the app.
+ * So on first mount at any URL other than the library we seed the stack:
+ * replace the entry with home, then push the requested route. Back from a
+ * deep-linked note now returns to the library instead of leaving the app.
  *
- * Deliberately does nothing at home. Back from the record surface exiting is
- * correct platform behaviour, and trapping the user there would be hostile.
+ * Deliberately does nothing at home. Back from the library exiting is correct
+ * platform behaviour, and trapping the user there would be hostile. Legacy
+ * paths are left alone too: `Redirect` seeds the stack itself, because it knows
+ * where the alias is going.
  */
 export function useBackGuard(): void {
   const location = useLocation();
@@ -29,6 +30,7 @@ export function useBackGuard(): void {
     if (seeded.current) return;
     seeded.current = true;
     if (location.pathname === ROUTES.home) return;
+    if (legacyRedirect(location.pathname, location.search)) return;
 
     const target = `${location.pathname}${location.search}${location.hash}`;
     void (async () => {

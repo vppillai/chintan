@@ -11,7 +11,7 @@ export function NotFoundScreen() {
       <p className="screen__empty">That address does not match anything in Chintan.</p>
       <p>
         <Link to={ROUTES.home} className="text-link">
-          Back to recording
+          Back to your notes
         </Link>
       </p>
     </div>

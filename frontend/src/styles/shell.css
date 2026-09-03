@@ -1,9 +1,8 @@
 /*
- * App shell layout (spec §5.2).
+ * App shell layout.
  *
- * `data-sheet-state` on `.app` is the only switch. Every rule below reads it,
- * so the sheet's appearance is a pure function of the URL and cannot drift
- * from it.
+ * `data-screen` on `.app` is the only switch. Every rule below reads it, so the
+ * shell's appearance is a pure function of the URL and cannot drift from it.
  *
  * Tokens only — no literal colour or font size lives here.
  */
@@ -15,12 +14,11 @@
  * `min-height` alone was not enough, and that was the app's worst layout bug.
  * With no definite block size on the grid container, the `1fr` row has no free
  * space to be a fraction *of*, so it sizes to its content: on any screen taller
- * than the viewport — settings on a phone, a note with a long transcript, the
- * home surface in landscape — the middle row grew, `overflow-y: auto` never
- * engaged, the document scrolled instead, and the bottom bar (with the record
- * button in it) was carried off the bottom of the screen with nothing to bring
- * it back. `block-size` makes the track definite, so the row is bounded and
- * main scrolls inside it as designed.
+ * than the viewport — settings on a phone, a note with a long transcript — the
+ * middle row grew, `overflow-y: auto` never engaged, the document scrolled
+ * instead, and the tab bar (with the record button in it) was carried off the
+ * bottom of the screen with nothing to bring it back. `block-size` makes the
+ * track definite, so the row is bounded and main scrolls inside it as designed.
  *
  * `100vh` first as the fallback for browsers without `dvh`; `dvh` is what makes
  * this correct while a mobile URL bar or an on-screen keyboard is changing the
@@ -62,11 +60,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Main — this element IS the sheet.
-
-   collapsed : the record surface, full-bleed on the ground colour.
-   expanded  : the library, pulled up as a rounded surface over the ground.
-   locked    : the capture screen, sheet shut.
+   Main — the one scrolling region.
    -------------------------------------------------------------------------- */
 
 /*
@@ -81,14 +75,12 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
-  transition:
-    background-color var(--motion-duration-base) var(--motion-ease-standard),
-    border-radius var(--motion-duration-base) var(--motion-ease-standard),
-    box-shadow var(--motion-duration-base) var(--motion-ease-standard),
-    margin var(--motion-duration-base) var(--motion-ease-decelerate);
+  background-color: var(--color-ground);
 }
 
 /*
+ * The capture screen and the signed-out screen are centred in the viewport.
+ *
  * `safe center`, not `center`. A centred grid item taller than its container
  * overflows equally in both directions, and the half above the scroll origin
  * is unreachable — which is what happened to the record surface on a landscape
@@ -99,39 +91,11 @@
  * `--layout-content-max`; centring them here as well made them shrink-wrap,
  * which is why the capture waveform was a ~300px island on a 1920px display.
  */
-[data-sheet-state='collapsed'] .app__main {
+[data-screen='capture'] .app__main,
+[data-screen='signed-out'] .app__main {
   display: grid;
   align-content: safe center;
   justify-items: stretch;
-  background-color: var(--color-ground);
-}
-
-[data-sheet-state='expanded'] .app__main {
-  margin-block-start: var(--space-4);
-  background-color: var(--color-surface);
-  border-start-start-radius: var(--radius-2xl);
-  border-start-end-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-sheet);
-  border-block-start: 1px solid var(--color-line);
-  padding-block-start: var(--space-2);
-}
-
-[data-sheet-state='locked'] .app__main {
-  display: grid;
-  align-content: safe center;
-  justify-items: stretch;
-  background-color: var(--color-ground);
-}
-
-.app__sheet-grip {
-  display: block;
-  inline-size: var(--space-10);
-  block-size: var(--space-1);
-  margin-inline: auto;
-  margin-block-end: var(--space-2);
-  border-radius: var(--radius-full);
-  background-color: var(--color-line-strong);
-  opacity: 0.7;
 }
 
 /* --------------------------------------------------------------------------
@@ -141,11 +105,12 @@
 .record-button {
   display: grid;
   place-items: center;
-  gap: var(--space-2);
+  inline-size: 3.75rem;
+  block-size: 3.75rem;
   border-radius: var(--radius-full);
   background-color: var(--color-accent);
   color: var(--color-on-accent);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   transition:
     transform var(--motion-duration-fast) var(--motion-ease-spring),
     box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
@@ -155,122 +120,14 @@
   transform: scale(0.96);
 }
 
-.record-button__dot {
-  display: none;
-}
-
-.record-button--hero {
-  inline-size: 11rem;
-  block-size: 11rem;
-}
-
-.record-button--hero .record-button__label {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-caps);
-  text-transform: uppercase;
-}
-
-.record-button--bar {
-  inline-size: 3.75rem;
-  block-size: 3.75rem;
-  box-shadow: var(--shadow-md);
-}
-
 /* --------------------------------------------------------------------------
-   Home
+   Tab bar — Notes · Record · You, on every screen but the capture screen.
+
+   A grid row in normal flow, NOT a floating action button. Content above it
+   can therefore never be overlaid: `.app` reserves the row.
    -------------------------------------------------------------------------- */
 
-.home {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: var(--space-8);
-  inline-size: 100%;
-  max-inline-size: var(--layout-content-max);
-  margin-inline: auto;
-  padding: var(--space-8) var(--layout-gutter);
-}
-
-.home__hint {
-  max-inline-size: 20rem;
-  text-align: center;
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
-/* --------------------------------------------------------------------------
-   Collapsed sheet — the persistent strip: Notes · Search · You
-   -------------------------------------------------------------------------- */
-
-.strip {
-  position: relative;
-  z-index: var(--z-sheet);
-  background-color: var(--color-surface);
-  border-block-start: 1px solid var(--color-line);
-  border-start-start-radius: var(--radius-2xl);
-  border-start-end-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-sheet);
-  padding-block: var(--space-2) calc(var(--space-2) + var(--safe-bottom));
-}
-
-.strip__grip {
-  position: absolute;
-  inset-block-start: var(--space-2);
-  inset-inline: 0;
-  inline-size: var(--space-10);
-  block-size: var(--space-1);
-  margin-inline: auto;
-  border-radius: var(--radius-full);
-  background-color: var(--color-line-strong);
-  opacity: 0.7;
-}
-
-/*
- * Full-bleed background, content in the same column as the screens above it.
- * Without the `max()` the three destinations were flung to the corners of an
- * ultra-wide display while the library sat in a 42rem column in the middle.
- */
-.strip__list {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  margin: 0;
-  padding-block: var(--space-4) 0;
-  padding-inline: max(var(--space-2), (100% - var(--layout-content-max)) / 2);
-  list-style: none;
-}
-
-.strip__link {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-1);
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  color: var(--color-muted);
-  text-decoration: none;
-  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.strip__link:hover,
-.strip__link[aria-current='page'] {
-  color: var(--color-ink);
-}
-
-.strip__label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: var(--letter-spacing-wide);
-}
-
-/* --------------------------------------------------------------------------
-   Expanded sheet — bottom bar with the record button centred.
-
-   The bar is a grid row in normal flow, NOT a floating action button. Content
-   above it can therefore never be overlaid: `.app` reserves the row.
-   -------------------------------------------------------------------------- */
-
-.bottom-bar {
+.tab-bar {
   position: relative;
   z-index: var(--z-bottom-bar);
   display: grid;
@@ -279,50 +136,45 @@
   gap: var(--space-2);
   min-block-size: var(--layout-bottom-bar-height);
   padding-block: var(--space-2) calc(var(--space-2) + var(--safe-bottom));
-  /* Same content column as the screens; see `.strip__list`. */
+  /*
+   * Full-bleed background, content in the same column as the screens above it.
+   * Without the `max()` the tabs were flung to the corners of an ultra-wide
+   * display while the library sat in a 42rem column in the middle.
+   */
   padding-inline: max(var(--space-3), (100% - var(--layout-content-max)) / 2);
   background-color: var(--color-raised);
   border-block-start: 1px solid var(--color-line);
 }
 
-.bottom-bar__group {
-  display: flex;
-  justify-content: space-evenly;
-  gap: var(--space-1);
-}
-
-.bottom-bar__record {
+.tab-bar__record {
   display: grid;
   place-items: center;
   padding-inline: var(--space-2);
 }
 
-.bottom-bar__tab {
+.tab-bar__tab {
   display: grid;
   justify-items: center;
+  justify-self: center;
   gap: var(--space-1);
   min-inline-size: var(--layout-touch-target-min);
   min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-md);
   color: var(--color-muted);
   text-decoration: none;
   transition: color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.bottom-bar__tab:hover,
-.bottom-bar__tab[aria-current='page'] {
+.tab-bar__tab:hover,
+.tab-bar__tab[aria-current='page'] {
   color: var(--color-ink);
 }
 
-.bottom-bar__tab-label {
+.tab-bar__label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-wide);
-}
-
-.bottom-bar__collapse-icon {
-  transform: rotate(180deg);
 }
 
 /* --------------------------------------------------------------------------
@@ -1643,7 +1495,7 @@
  * `--z-toast`, which put it 68px over the bottom bar and 55px over the record
  * button — covering the one control the product exists to offer, on every
  * screen, for as long as an update was pending. The shell already reserves a
- * row for it, and the same reasoning is written above `.bottom-bar`: content in
+ * row for it, and the same reasoning is written above `.tab-bar`: content in
  * flow cannot overlay anything.
  */
 .update-prompt {
