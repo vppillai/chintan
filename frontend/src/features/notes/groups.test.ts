@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { NoteWire } from '@/api/schema.ts';
 
 import {
+  describeMoment,
   describeRecordings,
   formatDurationShort,
   formatRowTime,
@@ -112,6 +113,24 @@ describe('describeRecordings', () => {
 
   it('leaves the duration off when none is known', () => {
     expect(describeRecordings({ ...note('a', at(0)), captures: [{}] })).toBe('1 recording');
+  });
+});
+
+describe('describeMoment', () => {
+  it('names the day and always the time, so two recordings on one day differ', () => {
+    // The time is whatever the device's locale writes — "14:05" or "2:05 PM".
+    const clock = (iso: string) =>
+      new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(
+        new Date(iso),
+      );
+    expect(describeMoment(at(0, 14), NOW)).toBe(`Today ${clock(at(0, 14))}`);
+    expect(describeMoment(at(1, 18), NOW)).toBe(`Yesterday ${clock(at(1, 18))}`);
+    // The date from `formatRowTime`, then the time.
+    expect(describeMoment(at(9, 7), NOW)).toBe(`${formatRowTime(at(9, 7), NOW)} ${clock(at(9, 7))}`);
+  });
+
+  it('is empty for an unparseable timestamp rather than the raw string', () => {
+    expect(describeMoment('not a date', NOW)).toBe('');
   });
 });
 

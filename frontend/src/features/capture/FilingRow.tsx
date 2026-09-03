@@ -267,8 +267,11 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
  * existing note the router was confident enough to propose but not confident
  * enough to append to unasked; `suggested_title` is what it would call a new
  * note when it found no plausible destination.
+ *
+ * Exported for the note screen's recording rows, which offer the same answer
+ * for a capture read from inside a note.
  */
-function TargetPrompt({ capture }: { capture: CaptureWire }) {
+export function TargetPrompt({ capture }: { capture: CaptureWire }) {
   const setTarget = useSetCaptureTarget();
   const { data } = useNotes({ state: 'active' });
   /** The user asked to see the library instead of the router's answer. */

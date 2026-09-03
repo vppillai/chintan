@@ -15,6 +15,8 @@ export const ROUTES = {
   archive: '/?view=archived',
   settings: '/settings',
   capture: '/capture',
+  /** Record straight into a note the user is already reading. */
+  captureInto: (noteId: string) => `/capture?note=${encodeURIComponent(noteId)}`,
 } as const;
 
 /** The `view` query parameter that switches the library to the archive. */

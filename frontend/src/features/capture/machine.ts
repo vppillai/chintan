@@ -117,6 +117,12 @@ export type CaptureEvent =
   | { type: 'uploadDone' }
   | { type: 'uploadFailed'; message: string; recoverable?: boolean }
   | { type: 'spendCapped'; message: string }
+  /**
+   * The user changed where this recording goes, from the chooser on the
+   * capture screen. Accepted from the moment the microphone is asked for until
+   * the upload begins; after that the target has been sent.
+   */
+  | { type: 'target'; noteId: string | null }
   | { type: 'discard' }
   | { type: 'reset' };
 
@@ -152,9 +158,10 @@ export function hasBufferedAudio(model: CaptureModel): boolean {
 }
 
 /**
- * True while the sheet must stay shut. Anything after the microphone opens and
- * before the audio is safely on the server counts, because navigating away
- * mid-upload is how a recording gets lost.
+ * True while a recording is in flight and leaving would endanger it. Anything
+ * after the microphone opens and before the audio is safely on the server
+ * counts, because navigating away mid-upload is how a recording gets lost. The
+ * shell's recording indicator reads this to say so on every other screen.
  */
 export function isCaptureBusy(model: CaptureModel): boolean {
   return (
@@ -351,6 +358,17 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
       // Distinct from a generic failure so the UI can explain it. The audio is
       // kept: the cap resets tomorrow.
       return fail(model, 'spend-capped', event.message, true);
+
+    case 'target':
+      if (
+        model.state === 'idle' ||
+        model.state === 'uploading' ||
+        model.state === 'uploaded'
+      ) {
+        return model;
+      }
+      if (model.noteId === event.noteId) return model;
+      return { ...model, noteId: event.noteId };
 
     case 'discard':
       return { ...INITIAL_CAPTURE };

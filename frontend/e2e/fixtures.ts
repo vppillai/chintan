@@ -288,12 +288,14 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     // ---- Captures -------------------------------------------------------
     if (path === '/v1/captures' && method === 'POST') {
       const id = `cap-${state.captures.length + 1}`;
+      // `note_id` is the target the client chose, as the real endpoint stores it.
+      const body = (request.postDataJSON() ?? {}) as { note_id?: string | null };
       state.captures.push({
         id,
         status: 'uploaded',
         created_at: new Date().toISOString(),
         version: 1,
-        note_id: null,
+        note_id: body.note_id ?? null,
       });
       await json(
         route,

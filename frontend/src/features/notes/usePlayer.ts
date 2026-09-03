@@ -29,10 +29,17 @@ export interface Player extends PlayerState {
  * read of that object a ref access as far as the React lint rules are
  * concerned, which is both noisy and a fair point: a hook's return value should
  * be values, not handles.
+ *
+ * `active` says whether the caller has the `<audio>` in the document right
+ * now. A recording row mounts its element only while it is open, and the
+ * artifact URL is cached across open/close — so `src` alone does not change
+ * when the row reopens, and the subscription below would never re-attach to
+ * the new element. Keying on `active` as well is what re-attaches it.
  */
 export function usePlayer(
   src: string | null,
   audioRef: RefObject<HTMLAudioElement | null>,
+  active = true,
 ): Player {
   const [state, setState] = useState<PlayerState>({
     playing: false,
@@ -56,6 +63,12 @@ export function usePlayer(
         ...previous,
         // A stream with no container duration reports Infinity.
         duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+        // Read from the element, not carried over: a row reopened after being
+        // closed has a fresh element at 0 and paused, and the previous
+        // element's last known position and state would otherwise show for a
+        // beat until the first `timeupdate`.
+        currentTime: audio.currentTime,
+        playing: !audio.paused,
         ready: true,
         error: null,
       }));
@@ -96,7 +109,7 @@ export function usePlayer(
       audio.removeEventListener('ended', onEnded);
       audio.removeEventListener('error', onError);
     };
-  }, [src, audioRef]);
+  }, [src, audioRef, active]);
 
   const toggle = useCallback(() => {
     const audio = audioRef.current;

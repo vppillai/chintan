@@ -1,30 +1,30 @@
-import { useQuery } from '@tanstack/react-query';
-import { useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
-import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import { useNote } from '@/api/queries.ts';
-import type { CaptureWire } from '@/api/schema.ts';
+import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
-import { CopyButton } from '@/components/CopyButton.tsx';
-import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
-import { TagEditor } from '@/components/TagEditor.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
 import { NoteActions } from './NoteActions.tsx';
-import { TranscriptPanel, type TranscriptView } from './TranscriptPanel.tsx';
-import { WaveformScrubber } from './WaveformScrubber.tsx';
-import { loadCaptureArtifacts } from './artifacts.ts';
+import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
-import { usePlayer } from './usePlayer.ts';
+import { describeMoment, describeRecordings } from './groups.ts';
 import { useNoteEditor } from './useNoteEditor.ts';
 
+/**
+ * A note.
+ *
+ * Top to bottom: the way back, the title, one line of metadata, the body, the
+ * recordings it was written from, and the action bar. The cleaned text is the
+ * document; the recordings below are its sources. The player used to sit
+ * *above* the body with its transcript, so the first thing on screen was the
+ * raw material and the note itself was below the fold.
+ */
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const online = useOnline();
   const { data: served, isLoading, fetchStatus, error } = useNote(id);
   const cached = useCachedNote(id);
@@ -38,10 +38,6 @@ export function NoteDetailScreen() {
   const note = served ?? cached.data ?? undefined;
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
-
-  const captures = note?.captures ?? [];
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const capture = captures.find((item) => item.id === selectedId) ?? captures[0];
 
   // Paused means offline, not slow: TanStack never runs the query at all, so
   // waiting for it would be waiting forever.
@@ -70,7 +66,7 @@ export function NoteDetailScreen() {
     return (
       <div className="screen">
         <header className="screen__header screen__header--detail">
-          <BackButton onClick={() => void navigate(ROUTES.notes)} />
+          <BackLink />
           <h1>{unreachable ? 'Not on this device' : 'Note not found'}</h1>
         </header>
         <p className="screen__empty">
@@ -83,52 +79,33 @@ export function NoteDetailScreen() {
   }
 
   return (
-    <div className="screen">
+    <div className="screen note-screen">
+      <header className="screen__header screen__header--detail">
+        <BackLink />
+      </header>
+
       {offlineCopy && (
         <p className="screen__count" role="status">
           Saved on this device. Edits are kept here and sent when you reconnect.
         </p>
       )}
-      <header className="screen__header screen__header--detail">
-        <BackButton onClick={() => void navigate(ROUTES.notes)} />
-        <label className="visually-hidden" htmlFor="note-title">
-          Note title
-        </label>
-        <input
-          id="note-title"
-          className="note-title-input"
-          value={editor.model.draft.title}
-          onChange={(event) => {
-            editor.edit({ title: event.target.value });
-          }}
-          onBlur={() => void editor.saveNow()}
-        />
-      </header>
+
+      <label className="visually-hidden" htmlFor="note-title">
+        Note title
+      </label>
+      <input
+        id="note-title"
+        className="note-title-input"
+        value={editor.model.draft.title}
+        onChange={(event) => {
+          editor.edit({ title: event.target.value });
+        }}
+        onBlur={() => void editor.saveNow()}
+      />
+
+      <NoteMeta note={note} tags={editor.model.draft.tags} />
 
       <SaveIndicator editor={editor} />
-
-      {capture && <Player key={capture.id} capture={capture} />}
-
-      {captures.length > 1 && (
-        <nav className="capture-picker" aria-label="Recordings">
-          <ul className="capture-picker__list" role="list">
-            {captures.map((item, index) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className="capture-picker__item"
-                  aria-pressed={item.id === capture?.id}
-                  onClick={() => {
-                    setSelectedId(item.id);
-                  }}
-                >
-                  Recording <span className="numeric">{index + 1}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      )}
 
       <label className="visually-hidden" htmlFor="note-body">
         Note body
@@ -144,97 +121,56 @@ export function NoteDetailScreen() {
         onBlur={() => void editor.saveNow()}
       />
 
-      {/*
-        Directly under the text it copies, where the eye already is — and a
-        clear distance above `NoteActions`, which holds Archive and Delete
-        forever. A copy control adjacent to an irreversible one is how a stray
-        thumb destroys a note it meant to keep.
+      <Recordings captures={note.captures ?? []} />
 
-        Title first, then the body: a body pasted somewhere else with no title
-        loses what it was about, and re-typing that is exactly the friction this
-        is meant to remove.
-      */}
-      <div className="note-copy">
-        <CopyButton
-          label="Copy note"
-          text={() =>
-            [editor.model.draft.title.trim(), editor.model.draft.body.trim()]
-              .filter(Boolean)
-              .join('\n\n')
-          }
-        />
-        <DownloadButton
-          label="Download note"
-          filename={() => `${filenameFor(editor.model.draft.title)}.md`}
-          blob={() =>
-            Promise.resolve(
-              new Blob(
-                [
-                  `# ${editor.model.draft.title.trim()}\n\n${editor.model.draft.body.trim()}\n`,
-                ],
-                { type: 'text/markdown' },
-              ),
-            )
-          }
-        />
-      </div>
-
-      <TagEditor
-        label="Tags"
-        values={editor.model.draft.tags}
-        placeholder="Add a tag"
-        onChange={(tags) => {
-          editor.edit({ tags });
-        }}
-        onCommit={() => void editor.saveNow()}
-      />
-
-      <TagEditor
-        label="Also called"
-        values={editor.model.draft.aliases}
-        placeholder="Add another name"
-        onChange={(aliases) => {
-          editor.edit({ aliases });
-        }}
-        onCommit={() => void editor.saveNow()}
-      />
-
-      <NoteActions note={note} />
+      <NoteActions note={note} editor={editor} />
     </div>
   );
 }
 
 /**
- * A dictated title, made safe as a filename.
+ * "Updated today 14:02 · house · 3 recordings · 4:12".
  *
- * The title comes from speech, unbounded — no reserved characters, no length
- * limit, sometimes not even Latin script. `/` and `\` would nest or break a
- * path; a title trimmed to nothing (all punctuation, or empty) still needs a
- * name a save dialog can show.
+ * The tags shown are the draft's, not the server's, so adding one in the bar
+ * shows up here at once rather than after the save lands.
  */
-function filenameFor(title: string): string {
-  const cleaned = title.trim().replace(/[/\\:*?"<>|]/g, '').trim();
-  return (cleaned || 'note').slice(0, 120);
+function NoteMeta({ note, tags }: { note: NoteDetailWire; tags: readonly string[] }) {
+  const updated = describeMoment(note.updated_at);
+  const parts = [
+    updated ? `Updated ${updated.charAt(0).toLowerCase()}${updated.slice(1)}` : null,
+    ...tags,
+    describeRecordings(note),
+  ].filter((part): part is string => Boolean(part));
+
+  // A real " · " between the facts, not a CSS pseudo-element: a screen reader
+  // reads text, and "housereading list3 recordings" is not a sentence.
+  return <p className="note-meta">{parts.join(' · ')}</p>;
 }
 
 /**
- * The real file extension off a presigned S3 URL's path, not its query
- * string — `audio.webm?X-Amz-...` should download as `.webm`, not as
- * whatever came after the `?`. Falls back to `.webm`, the format every
- * capture in this app is actually recorded in; a bare fallback with no
- * extension at all is the one outcome a save dialog can't recover from.
+ * ‹ Notes.
+ *
+ * Goes back through history when there is history to go back through, so a
+ * note opened from a filtered library returns to that filter; only a cold
+ * start with nothing beneath it goes to the library directly. React Router
+ * numbers its entries in `history.state.idx`, and `useBackGuard` seeds the
+ * library under any deep link, so the fallback is rarely taken — it is here
+ * for the case where it is.
  */
-function audioExtension(url: string): string {
-  const path = url.split('?')[0] ?? '';
-  const match = /\.[a-z0-9]+$/i.exec(path);
-  return match ? match[0] : '.webm';
-}
-
-function BackButton({ onClick }: { onClick: () => void }) {
+function BackLink() {
+  const navigate = useNavigate();
   return (
-    <button type="button" className="icon-button" onClick={onClick}>
-      <Icon name="back" size={20} />
-      <span className="visually-hidden">Back to notes</span>
+    <button
+      type="button"
+      className="back-link"
+      onClick={() => {
+        const index = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+        if (index > 0) void navigate(-1);
+        else void navigate(ROUTES.notes);
+      }}
+    >
+      <Icon name="back" size={18} />
+      <span className="visually-hidden">Back to </span>Notes
     </button>
   );
 }
@@ -294,157 +230,5 @@ function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> })
         </button>
       )}
     </p>
-  );
-}
-
-/**
- * Inline playback. Never `window.open`, never a new tab — v1 handed the
- * presigned S3 URL to the browser, which downloaded the file on desktop and
- * navigated out of the app on mobile.
- */
-function Player({ capture }: { capture: CaptureWire }) {
-  const api = useApi();
-  const [view, setView] = useState<TranscriptView>('raw');
-
-  const { data, isLoading, isError, error, fetchStatus } = useQuery({
-    queryKey: ['capture-artifacts', capture.id],
-    queryFn: () =>
-      loadCaptureArtifacts(api, capture.id, {
-        hasPeaks: capture.has_peaks ?? false,
-        hasSegments: capture.has_segments ?? false,
-      }),
-    staleTime: 5 * 60_000,
-    retry: false,
-  });
-
-  /*
-   * Audio is never cached: a presigned URL expires and the file is megabytes.
-   * So offline this query is either paused or a network failure, and both used
-   * to render as "The audio for this capture is no longer stored" — telling the
-   * user their recording had been deleted because they walked into a tunnel.
-   */
-  const unreachable =
-    fetchStatus === 'paused' || (isError && error instanceof ApiError && error.isOffline);
-
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const player = usePlayer(data?.audioUrl ?? null, audioRef);
-  const segments = data?.segments ?? [];
-  const peaks = data?.peaks ?? [];
-  // A pre-v2 capture has neither artifact and gets a plain player. There is no
-  // backfill, so this is a permanent branch, not a migration window.
-  const hasSegments = (capture.has_segments ?? false) && segments.length > 0;
-
-  const duration =
-    player.duration || (capture.duration_ms ? capture.duration_ms / 1000 : 0);
-
-  if (unreachable) {
-    return (
-      <p className="screen__count" role="status">
-        The recording and its transcript need a connection. The text below is on this
-        device.
-      </p>
-    );
-  }
-
-  if (isLoading) {
-    return (
-      <p className="screen__count" role="status">
-        Loading the recording…
-      </p>
-    );
-  }
-
-  if (!data?.audioUrl) {
-    return (
-      <p className="screen__count">
-        The audio for this capture is no longer stored. The text below is unaffected.
-      </p>
-    );
-  }
-
-  return (
-    <section className="player" aria-label="Recording">
-      <audio ref={audioRef} src={data.audioUrl} preload="metadata" />
-
-      <div className="player__controls">
-        <button
-          type="button"
-          className="player__play"
-          onClick={player.toggle}
-          aria-label={player.playing ? 'Pause' : 'Play'}
-        >
-          <Icon name={player.playing ? 'stop' : 'play'} size={20} />
-        </button>
-
-        {peaks.length > 0 ? (
-          <WaveformScrubber
-            peaks={peaks}
-            currentTime={player.currentTime}
-            duration={duration}
-            onSeek={player.seek}
-          />
-        ) : (
-          // No peaks: a plain range input, which is a real slider and works
-          // identically for keyboard users.
-          <PlainScrubber
-            currentTime={player.currentTime}
-            duration={duration}
-            onSeek={player.seek}
-          />
-        )}
-      </div>
-
-      <div className="player__actions">
-        <DownloadButton
-          label="Download audio"
-          filename={() => `chintan-${capture.id}${audioExtension(data.audioUrl ?? '')}`}
-          blob={async () => {
-            const response = await fetch(data.audioUrl as string);
-            if (!response.ok) throw new Error(`audio fetch failed: ${response.status}`);
-            return response.blob();
-          }}
-        />
-      </div>
-
-      {player.error && (
-        <p className="player__error" role="alert">
-          {player.error}
-        </p>
-      )}
-
-      <TranscriptPanel
-        segments={segments}
-        cleanedText={data.cleanedText}
-        view={hasSegments ? view : 'raw'}
-        onViewChange={setView}
-        currentTime={player.currentTime}
-        onSeek={player.seekAndPlay}
-        hasSegments={hasSegments}
-      />
-    </section>
-  );
-}
-
-function PlainScrubber({
-  currentTime,
-  duration,
-  onSeek,
-}: {
-  currentTime: number;
-  duration: number;
-  onSeek: (seconds: number) => void;
-}) {
-  return (
-    <input
-      type="range"
-      className="player__range"
-      min={0}
-      max={Math.max(1, Math.round(duration))}
-      value={Math.round(currentTime)}
-      aria-label="Playback position"
-      onChange={(event) => {
-        onSeek(Number(event.target.value));
-      }}
-    />
   );
 }

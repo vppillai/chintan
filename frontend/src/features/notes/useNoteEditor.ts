@@ -21,6 +21,7 @@ import {
   hasUnsavedWork,
   initialEditor,
   reconcileQueued,
+  type EditorEvent,
   type EditorModel,
   type NoteDraft,
 } from './autosave.ts';
@@ -48,6 +49,17 @@ export interface NoteEditor {
  * On 409 the server sends `current_version` in the problem document; the
  * current note is re-read so the user is shown what actually changed rather
  * than a bare error. Neither copy is written until they choose.
+ *
+ * One PATCH in flight at a time. Two used to overlap: type, wait 1.2 s, save #1
+ * leaves with `version N`; keep typing, 1.2 s later save #2 also leaves with
+ * `version N`, because the reducer has not seen #1's response yet. #1 lands
+ * and the server is at N+1; #2 is answered 409 — and the screen told the user
+ * "a voice capture or another device saved this note while you were editing"
+ * about their own keystrokes, offering to throw one burst away. On cellular a
+ * three-second PATCH is normal, so this was not a corner case. Now a save that
+ * finds one running marks "dirty again" and the running one re-saves when it
+ * lands, carrying the version the *server* returned rather than a guess of
+ * `version + 1`.
  */
 export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
   const api = useApi();
@@ -72,6 +84,35 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     latest.current = model;
   }, [model]);
 
+  /**
+   * Applies an event to the mirror *and* to the reducer, in that order.
+   *
+   * The mirror is what `save` reads, and the re-save after an in-flight PATCH
+   * runs synchronously from the first save's `finally` — before React has
+   * rendered, so before the effect above has copied the new `version` across.
+   * Read through the effect alone, the second save would carry the version
+   * the first one just superseded and manufacture the very 409 this guards
+   * against. `edit()` already does the same for the same reason.
+   */
+  const commit = useCallback((event: EditorEvent) => {
+    latest.current = editorReducer(latest.current, event);
+    dispatch(event);
+  }, []);
+
+  /** The PATCH currently on the wire, if any. */
+  const inFlight = useRef<Promise<void> | null>(null);
+  /** Set when a save was asked for while one was running. */
+  const dirtyAgain = useRef(false);
+  /**
+   * A stable handle on the current `save`, so the unmount flush below can stay
+   * a mount-only effect and the in-flight re-save can call the guarded entry
+   * point without `save` closing over itself. Keying the unmount effect on
+   * `save` would make it fire its cleanup on every note change, which is not
+   * what "the screen went away" means. Filled in by the effect after `save` is
+   * defined; the placeholder is never reachable before then.
+   */
+  const saveRef = useRef<() => Promise<void>>(async () => {});
+
   useEffect(() => {
     if (!note) return;
     if (loadedId.current === note.id) return;
@@ -79,7 +120,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     dispatch({ type: 'reset', draft: draftFrom(note), version: note.version });
   }, [note]);
 
-  const save = useCallback(async () => {
+  const performSave = useCallback(async () => {
     const current = latest.current;
     if (!note) return;
     if (current.state === 'conflict') return;
@@ -93,10 +134,10 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       aliases: attempted.aliases,
       tags: attempted.tags,
     };
-    dispatch({ type: 'saveStart' });
+    commit({ type: 'saveStart' });
 
     try {
-      await api.updateNote(note.id, body);
+      const stored = await api.updateNote(note.id, body);
       /*
        * A direct save supersedes anything the queue was still holding for this
        * note. Leaving a dead entry behind would let `reconcileQueued` flip the
@@ -105,11 +146,14 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        */
       await clearQueuedEdit(note.id).catch(() => {});
       queryClient.setQueryData(queuedEditKey(note.id), null);
-      // The PATCH response carries the note, but re-reading the version from
-      // it is enough: the text we sent is the text now stored.
-      dispatch({
+      // The version is the server's, not `current.version + 1`. The two agree
+      // today, but the guess is exactly the kind of thing that stops being true
+      // quietly — a server-side normalisation that bumps twice, a replayed
+      // idempotent response — and the text we sent is the text now stored, so
+      // the response's number is the only one worth carrying forward.
+      commit({
         type: 'saveSuccess',
-        version: current.version + 1,
+        version: stored.version,
         draft: attempted,
       });
     } catch (error) {
@@ -140,7 +184,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
           // and focus, so without this the user is told "nothing is saved on
           // this device" over an edit that is.
           void queryClient.invalidateQueries({ queryKey: OFFLINE_QUEUE_KEY });
-          dispatch({ type: 'saveQueued', draft: attempted });
+          commit({ type: 'saveQueued', draft: attempted });
           return;
         } catch {
           // Storage refused — private mode, quota, a blocked-storage policy.
@@ -151,7 +195,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
       if (error instanceof ApiError && error.isConflict) {
         const theirs = await api.getNote(note.id).catch(() => null);
-        dispatch({
+        commit({
           type: 'conflict',
           theirs: theirs ? draftFrom(theirs) : attempted,
           version: theirs?.version ?? error.currentVersion ?? current.version + 1,
@@ -159,12 +203,39 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         });
         return;
       }
-      dispatch({
+      commit({
         type: 'saveError',
         message: error instanceof ApiError ? error.userMessage : 'Could not save.',
       });
     }
-  }, [api, note, queryClient]);
+  }, [api, commit, note, queryClient]);
+
+  /**
+   * The serialised entry point: at most one `performSave` on the wire.
+   *
+   * A caller who arrives while one is running does not start a second — it
+   * would carry the same `version` and lose — but the intent is not dropped
+   * either: `dirtyAgain` is set and the running save re-runs this once it has
+   * settled, reading the draft and version as they are *then*. The awaiting
+   * caller is handed the in-flight promise, so `saveNow()` from a blur still
+   * resolves when a request has actually finished.
+   */
+  const save = useCallback(async (): Promise<void> => {
+    if (inFlight.current) {
+      dirtyAgain.current = true;
+      return inFlight.current;
+    }
+    const run = performSave().finally(() => {
+      inFlight.current = null;
+      if (!dirtyAgain.current) return;
+      dirtyAgain.current = false;
+      // `save`, not `performSave`: the re-save can itself be overtaken by a
+      // third burst and needs the same guard.
+      void saveRef.current();
+    });
+    inFlight.current = run;
+    return run;
+  }, [performSave]);
 
   const edit = useCallback(
     (patch: Partial<NoteDraft>) => {
@@ -189,13 +260,6 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     await save();
   }, [save]);
 
-  /**
-   * A stable handle on the current `save`, so the unmount flush below can stay
-   * a mount-only effect. Keying that effect on `save` would make it fire its
-   * cleanup on every note change, which is not what "the screen went away"
-   * means.
-   */
-  const saveRef = useRef(save);
   useEffect(() => {
     saveRef.current = save;
   }, [save]);

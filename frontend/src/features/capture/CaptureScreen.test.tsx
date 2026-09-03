@@ -1,4 +1,5 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -77,10 +78,10 @@ function fakeDeps(): RecorderDeps {
   };
 }
 
-function mount() {
+function mount(path = '/capture') {
   return render(
     <TestProviders>
-      <MemoryRouter initialEntries={['/capture']}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/capture" element={<CaptureScreen />} />
           <Route path="/" element={<p>Home</p>} />
@@ -203,5 +204,44 @@ describe('opening /capture arms a recording', () => {
     view.unmount();
 
     expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+});
+
+describe('the target chooser', () => {
+  it('files into a new note by default', async () => {
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    expect(useCaptureStore.getState().model.noteId).toBeNull();
+    expect(screen.getByRole('button', { name: /into new note/i })).toBeInTheDocument();
+  });
+
+  it('files into the note named by ?note=, and says so by title', async () => {
+    mount('/capture?note=roof-repair');
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.noteId).toBe('roof-repair');
+    });
+    // Named by its title, which comes from the library the app already holds.
+    expect(await screen.findByRole('button', { name: /into roof repair/i })).toBeInTheDocument();
+  });
+
+  it('moves the recording to a chosen note before Send, and back to a new note', async () => {
+    const user = userEvent.setup();
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+
+    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    await user.click(await screen.findByRole('button', { name: 'Reading list' }));
+    expect(useCaptureStore.getState().model.noteId).toBe('reading-list');
+    expect(screen.getByRole('button', { name: /into reading list/i })).toBeInTheDocument();
+    // The recording itself is untouched by the choice.
+    expect(useCaptureStore.getState().model.state).toBe('recording');
+
+    await user.click(screen.getByRole('button', { name: /into reading list/i }));
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    expect(useCaptureStore.getState().model.noteId).toBeNull();
   });
 });
