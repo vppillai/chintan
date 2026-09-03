@@ -135,12 +135,15 @@ Parameters:
 
   RefreshTokenValidityDays:
     Type: Number
-    Default: 7
+    Default: 30
     MinValue: 1
     MaxValue: 3650
     Description: >
-      Cognito refresh token lifetime. Explicit rather than the 30-day default,
-      because the app vaults these tokens under a CMK for biometric unlock.
+      Cognito refresh token lifetime. Explicit so it shows in a console diff.
+      Thirty days: signing in again is one passkey tap on the hosted page, so a
+      long-lived refresh token is not what keeps the app usable, and a leaked
+      one has a bounded life. It was 7 when the app kept its own sealed copy of
+      the token for biometric unlock; that machinery is gone.
 
 Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
@@ -188,7 +191,21 @@ Resources:
         RecoveryMechanisms:
           - Name: verified_email
             Priority: 1
+      # Passkeys, natively. The hosted managed-login page offers "sign in with a
+      # passkey" once one is registered, and the browser's platform
+      # authenticator (Face ID, Touch ID, Windows Hello) does the rest. This
+      # replaces ~2,600 lines of custom WebAuthn, a sealed refresh-token vault
+      # and an SSM key the app used to carry for the same tap. The relying
+      # party id has to be the domain the ceremony runs on, which is the user
+      # pool's managed-login domain — not the Pages host the app is served
+      # from. It is built from the same pieces as UserPoolDomain.Domain below.
+      WebAuthnRelyingPartyID: !Sub 'chintan-${InstanceName}-${Environment}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
+      WebAuthnUserVerification: required
       Policies:
+        SignInPolicy:
+          AllowedFirstAuthFactors:
+            - PASSWORD
+            - WEB_AUTHN
         PasswordPolicy:
           MinimumLength: 12
           RequireUppercase: true
@@ -251,6 +268,9 @@ Resources:
       ExplicitAuthFlows:
         - ALLOW_USER_SRP_AUTH
         - ALLOW_REFRESH_TOKEN_AUTH
+        # Choice-based sign-in, which is what lets managed login offer the
+        # passkey the pool's SignInPolicy allows.
+        - ALLOW_USER_AUTH
       AllowedOAuthFlows:
         - code
       AllowedOAuthFlowsUserPoolClient: true
@@ -272,7 +292,7 @@ Resources:
       EnableTokenRevocation: true
       AuthSessionValidity: 3
       # Explicit, because the defaults (1 hour / 30 days) are invisible in the
-      # console diff and the refresh token is the thing sealed in the CMK vault.
+      # console diff.
       TokenValidityUnits:
         AccessToken: minutes
         IdToken: minutes
@@ -1199,10 +1219,6 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/groq_api_key'
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/llm_api_key'
-                  # The refresh-token vault key. A SecureString like the two
-                  # above, and created out of band for the same reason:
-                  # AWS::SSM::Parameter cannot declare type SecureString.
-                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/token_vault_key'
               # Still needed, and nothing to do with the retired CMK: reading
               # any SecureString decrypts it under the AWS-managed aws/ssm key.
               # That key is free; only customer-managed keys carry the
@@ -1211,20 +1227,6 @@ Resources:
                 Action:
                   - kms:Decrypt
                 Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
-        - PolicyName: CognitoRefresh
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              # InitiateAuth takes no resource, so the scope has to come from a
-              # condition. Unconditioned, this role could initiate auth against
-              # every user pool in the account.
-              - Effect: Allow
-                Action:
-                  - cognito-idp:InitiateAuth
-                Resource: '*'
-                Condition:
-                  StringEquals:
-                    cognito-idp:userPoolArn: !GetAtt UserPool.Arn
         - PolicyName: CaptureQueueAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1296,7 +1298,7 @@ Resources:
       Timeout: 29
       # A single page load fires this many requests near-simultaneously on its
       # own — usePendingCaptures alone polls four capture statuses in parallel,
-      # plus /settings and /auth/webauthn/status — so 5 left no headroom even
+      # plus /settings — so 5 left no headroom even
       # for one person with one tab open: chintan-dev-prod-api-throttles
       # tripped from exactly that on 2026-08-17. 50 is well above any realistic
       # single-tenant burst while still bounded, unlike the worker's five,
@@ -1321,8 +1323,6 @@ Resources:
           # not.
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          TOKEN_VAULT_KEY_PATH: !Sub '/chintan/${InstanceName}/token_vault_key'
-          WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
@@ -1371,7 +1371,6 @@ Resources:
           # not.
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
@@ -1437,7 +1436,6 @@ Resources:
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          WEBAUTHN_RP_DISPLAY_NAME: Chintan
           CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
@@ -1713,9 +1711,10 @@ Resources:
       PayloadFormatVersion: '2.0'
 
   # Liveness. Declared NONE explicitly: it is the gateway default for a route
-  # that omits the property, but the two health routes and the WebAuthn login
-  # pair are the entire unauthenticated surface, and that is worth stating
-  # rather than inheriting.
+  # that omits the property, but the two health routes (and CORS preflight) are
+  # the entire unauthenticated surface, and that is worth stating rather than
+  # inheriting. Sign-in itself happens on the Cognito managed-login page, not
+  # on this API.
   HealthRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -1746,23 +1745,6 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'OPTIONS /{proxy+}'
-      AuthorizationType: NONE
-      Target: !Sub 'integrations/${LambdaIntegration}'
-
-  # Biometric login must be reachable without a Cognito JWT.
-  WebAuthnLoginOptionsRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: 'POST /v1/auth/webauthn/login/options'
-      AuthorizationType: NONE
-      Target: !Sub 'integrations/${LambdaIntegration}'
-
-  WebAuthnLoginRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: 'POST /v1/auth/webauthn/login'
       AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 

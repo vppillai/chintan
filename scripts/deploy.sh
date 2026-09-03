@@ -324,11 +324,11 @@ show_failure_events() {
 }
 
 # Resources carrying DeletionPolicy: Retain survive a stack delete. In production
-# that is the point -- deleting the stack must not brick the KMS key every
-# enrolled biometric credential depends on. But when a create has NEVER
-# succeeded, those survivors are debris, and they block the retry: bucket names,
-# Cognito domains and KMS aliases are globally or account unique, so the next
-# create collides with its own wreckage.
+# that is the point -- deleting the stack must not destroy the notes or the user
+# pool the tenant ids come from. But when a create has NEVER succeeded, those
+# survivors are debris, and they block the retry: bucket names and Cognito
+# domains are globally or account unique, so the next create collides with its
+# own wreckage.
 #
 # This deliberately does NOT delete them. The permissions boundary denies
 # irreversible deletes to any principal not acting through CloudFormation
@@ -354,8 +354,7 @@ report_retained_orphans() {
     for r in \
         "$(probe_bucket "chintan-content-${name}-${account}")" \
         "$(probe_table "chintan-${name}")" \
-        "$(probe_user_pool "chintan-${name}")" \
-        "$(probe_kms_alias "alias/chintan-${name}/token-vault")"; do
+        "$(probe_user_pool "chintan-${name}")"; do
         case "$(probe_state "$r")" in
             present)
                 warn "  retained: $(probe_detail "$r")"
