@@ -494,7 +494,9 @@ func (s *Store) BeginIdempotent(ctx context.Context, tenantID, key, fingerprint 
 			Key:         key,
 			TenantID:    tenantID,
 			Fingerprint: fingerprint,
-			ExpiresAt:   now.Add(repository.IdemTTL).Unix(),
+			// A claim is honoured only for the lease; the full TTL starts at
+			// completion. See repository.IdemClaimLease.
+			ExpiresAt: now.Add(repository.IdemClaimLease).Unix(),
 		},
 	}
 	return nil, nil
@@ -513,7 +515,24 @@ func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, st
 	entry.record.Done = true
 	entry.record.Status = status
 	entry.record.Response = append([]byte(nil), response...)
+	entry.record.ExpiresAt = time.Now().Add(repository.IdemTTL).Unix()
 	s.idem[tenantID][key] = entry
+	return nil
+}
+
+func (s *Store) AbandonIdempotent(ctx context.Context, tenantID, key string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry, ok := s.idem[tenantID][key]
+	if !ok || entry.record.Done {
+		// Nothing claimed, or already completed: a completed record is the
+		// caller's answer and must not be thrown away.
+		return nil
+	}
+	delete(s.idem[tenantID], key)
 	return nil
 }
 

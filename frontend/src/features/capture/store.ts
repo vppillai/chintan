@@ -69,16 +69,22 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
     }
 
     /*
-     * The capture record is written the moment a recording exists, not when the
-     * server first acknowledges it.
+     * The capture record is written the moment the microphone opens — before a
+     * single chunk exists — and refreshed when the recording is finished.
      *
-     * Writing it in the uploader — after `POST /v1/captures` returns — left a
-     * window where the chunks were safely on disk but nothing indexed them, so
-     * a recording stranded by going offline before the create, or by the tab
-     * dying during it, could never be offered back. The audio was durable and
-     * unreachable, which is indistinguishable from lost.
+     * The chunks stream to IndexedDB from the first `ondataavailable`, but a
+     * chunk group nothing indexes is unreachable: `unconfirmedCaptures()` reads
+     * the `captures` store only. Writing the record on `review` (which is what
+     * this did before) covered a tab killed mid-upload, and left the bigger
+     * hole open: a tab reloaded, or a backgrounded PWA jettisoned by iOS,
+     * *while recording* — a twenty-minute dictation with nothing to find it by.
+     * The audio was durable and unreachable, which is indistinguishable from
+     * lost. So the row goes in first, with what is known at that point, and
+     * `review` fills in the duration, size and envelope.
      */
-    if (after.state === 'review' && before.state !== 'review') {
+    const started = after.state === 'recording' && before.state === 'requesting';
+    const reviewed = after.state === 'review' && before.state !== 'review';
+    if ((started || reviewed) && after.localId) {
       void saveCaptureRecord({
         localId: after.localId,
         serverCaptureId: null,
@@ -89,7 +95,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
         chunkCount: after.chunks,
         createdAt: Date.now(),
         uploadedAt: null,
-        peaks: controller?.envelope() ?? null,
+        peaks: reviewed ? (controller?.envelope() ?? null) : null,
       }).catch(() => {
         /* Storage denied. The chunks are still on disk. */
       });

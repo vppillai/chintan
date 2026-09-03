@@ -74,27 +74,37 @@ type IdemRecord struct {
 	ExpiresAt   int64
 }
 
-// IdemTTL is how long an idempotency record is honoured.
+// IdemTTL is how long a COMPLETED idempotency record is honoured.
 const IdemTTL = 24 * time.Hour
+
+// IdemClaimLease is how long an idempotency key stays claimed without a
+// recorded response before another attempt may take it over.
+//
+// The handler abandons a claim explicitly when the request 5xxs, so the lease
+// is only the backstop for what no defer can reach — the Lambda being killed
+// mid-request. The API function's Timeout is 29 s, so no legitimate attempt can
+// still be running at 60 s; before this, an unfinished claim kept the full
+// 24-hour TTL and one transient 500 answered every retry with "an identical
+// request is still in flight" for a day.
+const IdemClaimLease = 60 * time.Second
 
 // AppendClaimLease bounds how long one worker may hold an unfinished append
 // claim before another attempt is allowed to take it over.
 //
-// It MUST stay strictly longer than CaptureQueue.VisibilityTimeout in
-// infrastructure/template.yaml:330, currently 960 seconds. SQS returns an
-// unfinished message at exactly that point; if the claim taken at T0 has
-// already expired by T0+960s, the redelivery takes the claim over and appends
-// the same paragraph again — three times over, at maxReceiveCount 3. Twenty
-// minutes leaves four minutes of margin over the 960 s timeout while staying
-// well inside Lambda's own 900 s ceiling on the work it protects.
+// It has to be longer than the longest time a LIVE worker can hold the claim,
+// which is the Lambda timeout (900 s): a claim taken over while its holder is
+// still writing is the one case the note-body check in Pipeline.appendToNote
+// cannot cover. Twenty minutes clears that with margin.
 //
-// The inequality is checked by TestAppendClaimLeaseOutlastsTheQueueVisibilityTimeout
-// in internal/pipeline, which restates the template's number. Go cannot read
-// the template, so that test is the only thing tying the two together — but it
-// is not what makes the append safe. Pipeline.append recognises its own
-// interrupted attempt from the deterministic claim token and the note body, so
-// a lease that is nonetheless too short costs a redelivery, not a duplicate
-// paragraph.
+// It does NOT have to be longer than the queue's visibility timeout, and it
+// used to be documented as if it did. SQS redelivers an unfinished message at
+// 960 s; a redelivery that finds its own token still claimed inside the lease
+// returns an error so the message comes back again (Pipeline.append), and the
+// delivery that arrives after the lease takes the claim over and finishes the
+// interrupted attempt without repeating the text. Conceding at that point
+// instead — which is what happened before — acked the message and left the
+// capture in `appending` for good. What keeps the append exactly-once is the
+// deterministic token plus the body check, not this number.
 const AppendClaimLease = 20 * time.Minute
 
 // Store persists per-tenant settings, note indexes, and capture indexes.
@@ -153,6 +163,10 @@ type Store interface {
 	// key with a different fingerprint returns ErrIdempotencyKeyReused.
 	BeginIdempotent(ctx context.Context, tenantID, key, fingerprint string) (*IdemRecord, error)
 	CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error
+	// AbandonIdempotent releases a claimed key whose request did not produce a
+	// recordable response, so the caller's retry runs instead of being told the
+	// original is still in flight. A completed record is left alone.
+	AbandonIdempotent(ctx context.Context, tenantID, key string) error
 
 	PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error
 	GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error)

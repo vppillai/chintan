@@ -121,6 +121,24 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// The claim is released unless a response gets recorded. Not recording a
+		// 5xx was always the intent — a caller must not be pinned to a transient
+		// failure — but leaving the claim in place pinned them to something
+		// worse: every retry with the same key answered 409 "an identical
+		// request is still in flight" until the record's TTL, which is a day.
+		// The defer also covers a handler panic, which the same reasoning
+		// applies to.
+		recorded := false
+		defer func() {
+			if recorded {
+				return
+			}
+			if err := rt.Store.AbandonIdempotent(r.Context(), tenantID, key); err != nil {
+				obs.Log(r.Context()).Warn("could not release an idempotency claim; the key stays claimed for the lease",
+					slog.String("error", err.Error()))
+			}
+		}()
+
 		buffered := &captureWriter{header: http.Header{}}
 		next(buffered, r)
 		if buffered.status == 0 {
@@ -131,9 +149,14 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		// to for the record's whole lifetime, and a retry of a transient
 		// failure must be allowed to succeed.
 		if buffered.status < 500 {
-			if err := rt.Store.CompleteIdempotent(r.Context(), tenantID, key, buffered.status, buffered.body.Bytes()); err != nil &&
-				!errors.Is(err, repository.ErrNotFound) {
-				obs.Log(r.Context()).Warn("could not record idempotent response",
+			err := rt.Store.CompleteIdempotent(r.Context(), tenantID, key, buffered.status, buffered.body.Bytes())
+			switch {
+			case err == nil, errors.Is(err, repository.ErrNotFound):
+				// Recorded, or the claim is already gone: either way there is
+				// nothing to release.
+				recorded = true
+			default:
+				obs.Log(r.Context()).Warn("could not record idempotent response; releasing the claim so a retry can run",
 					slog.String("error", err.Error()))
 			}
 		}

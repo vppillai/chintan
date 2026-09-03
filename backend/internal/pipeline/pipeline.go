@@ -139,6 +139,12 @@ func New(cfg Config) (*Pipeline, error) {
 // human for a system working exactly as designed.
 var errDeliveryConceded = errors.New("pipeline: another delivery owns this capture")
 
+// errAppendClaimHeld means this delivery found its own append claim already
+// taken and not finished, inside the lease. Unlike errDeliveryConceded it IS a
+// reason to redeliver: the holder may be dead, and only the lease expiring can
+// prove it. See append.
+var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinished attempt")
+
 // Run drives one capture as far as it can go and returns its final state.
 //
 // A returned error means the invocation should be retried by SQS: it is an
@@ -692,11 +698,39 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, fmt.Errorf("pipeline: claim capture append: %w", err)
 	}
 	if !claimed {
-		// Somebody owns this append: either an earlier attempt that finished, or
-		// one running right now. Either way this attempt must not write the text a
-		// second time.
 		*capture = current
-		return current, nil
+		if current.AppendToken != token || current.AppendedAt != 0 {
+			// Somebody else owns this append, or an earlier attempt finished
+			// it. Either way this attempt must not write the text a second time.
+			return current, nil
+		}
+
+		// Our own token, unfinished, inside the lease. Either the earlier
+		// attempt is still running, or it died after taking the claim; from
+		// here the two look the same. Conceding — which is what used to happen
+		// — acked the message and, in the second case, stranded the capture in
+		// `appending` for good: SQS redelivers at 960 s, inside the 20-minute
+		// lease, and nothing is redelivered after a concede.
+		//
+		// If the text is already in the note body the dangerous part is over,
+		// whoever did it: finishing the bookkeeping is idempotent (the index
+		// refresh re-derives from the body, the completion is a versioned write
+		// on the same token), so do it now rather than wait for the lease.
+		// Otherwise ask to be redelivered; by the time the message comes back
+		// the lease has either been finished by its holder or run out, and the
+		// takeover above resumes the interrupted attempt with the body check.
+		if written, err := p.textAlreadyInNote(ctx, note.S3MarkdownKey, cleanedText); err != nil {
+			return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
+		} else if written {
+			obs.Log(ctx).Info("append claim is held but the text is already in the note; finishing the interrupted attempt",
+				slog.String("note_id", note.ID))
+			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
+			return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
+		}
+		return current, fmt.Errorf("pipeline: append claim for this capture is still held by an "+
+			"unfinished attempt (claimed %s ago, lease %s): %w",
+			time.Since(time.Unix(current.AppendClaimedAt, 0)).Round(time.Second),
+			repository.AppendClaimLease, errAppendClaimHeld)
 	}
 	*capture = current
 
@@ -707,6 +741,14 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, fmt.Errorf("pipeline: append to note: %w", err)
 	}
 
+	return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
+}
+
+// finishAppend is the bookkeeping after the text is durably in the note body:
+// the index refresh and the completion of the claim. Both are safe to repeat,
+// which is what lets a redelivery that finds the text already written finish an
+// attempt that died here.
+func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
 	if err := p.refreshNoteIndex(ctx, tenantID, note.ID, cleanedText); err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
@@ -717,6 +759,24 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	}
 	*capture = appended
 	return appended, nil
+}
+
+// textAlreadyInNote reports whether text is already in the note body. It is the
+// same test appendToNote applies when resuming, and carries the same caveat: it
+// is only meaningful for an attempt that already holds the claim for this exact
+// capture and cleaned artefact, never as a general "is this text here?".
+func (p *Pipeline) textAlreadyInNote(ctx context.Context, noteKey, text string) (bool, error) {
+	if text == "" {
+		return false, nil
+	}
+	existing, err := p.cfg.Objects.Get(ctx, noteKey)
+	if errors.Is(err, repository.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(string(existing), text), nil
 }
 
 // appendToken is deterministic so a retry of the same work recognises its own

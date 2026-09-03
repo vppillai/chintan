@@ -180,31 +180,37 @@ func (s *WebAuthnService) FinishRegistration(ctx context.Context, userID string,
 	if err != nil {
 		return ErrWebAuthnVerification
 	}
-	if err := s.storeCredential(ctx, userID, credential); err != nil {
-		return err
-	}
 
-	// Bind vault only after Cognito accepts the refresh token and sub matches.
+	// Everything that can reject the enrolment runs BEFORE anything is written,
+	// so there is nothing to unwind. The previous order stored the credential
+	// first and, on a rejected refresh token or a sub mismatch, called
+	// DeleteAllWebAuthnCredentials — which also deleted every credential the
+	// user had enrolled from other devices. Enrolling a laptop with an expired
+	// refresh token silently un-enrolled the phone.
 	tokens, err := s.refresher.Refresh(ctx, req.RefreshToken)
 	if err != nil {
-		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
 		return fmt.Errorf("refresh token rejected: %w", err)
 	}
 	sub, err := s.verifiedSub(ctx, tokens.IDToken)
 	if err != nil || sub != userID {
-		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
 		return ErrWebAuthnSubMismatch
 	}
 	cipher, err := s.box.Seal(ctx, []byte(tokens.RefreshToken))
 	if err != nil {
-		_ = s.store.DeleteAllWebAuthnCredentials(ctx, userID)
 		return fmt.Errorf("seal refresh token: %w", err)
 	}
-	return s.store.PutRefreshVault(ctx, model.RefreshVault{
+
+	// Vault first, credential second. If the credential write fails the vault
+	// holds a fresh refresh token for this same user, which is harmless; the
+	// reverse order could leave a credential that unlocks nothing.
+	if err := s.store.PutRefreshVault(ctx, model.RefreshVault{
 		UserID:     userID,
 		Ciphertext: cipher,
 		UpdatedAt:  time.Now().Unix(),
-	})
+	}); err != nil {
+		return err
+	}
+	return s.storeCredential(ctx, userID, credential)
 }
 
 func (s *WebAuthnService) BeginLogin(ctx context.Context) (*model.WebAuthnOptionsResponse, error) {

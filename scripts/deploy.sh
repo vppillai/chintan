@@ -24,11 +24,18 @@
 #   scripts/deploy.sh --instance dev --environment staging \
 #       --template infrastructure/template.yaml \
 #       --parameter Key=Value [--parameter ...] [--tag Key=Value ...] \
-#       [--no-smoke] [--apply]
+#       [--no-smoke] [--allow-replacement LogicalId ...] [--apply]
 #
 # --apply is required to execute the change set; without it the change set is
 # created, printed, and deleted. That is the same dry-run-by-default rule the
 # other scripts follow, and it makes the workflow's plan step free.
+#
+# A change set that REPLACES a stateful resource — the user pool, the table, the
+# content bucket, the user pool client — is refused even with --apply. Retain
+# keeps the old resource alive, but the stack switches to an empty one: tenant
+# ids are Cognito subs, so a replaced pool makes every note unreachable, and
+# staging cannot catch it because an empty pool passes the health smoke. Pass
+# --allow-replacement <LogicalId> for each resource you have decided to replace.
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
@@ -40,6 +47,11 @@ SMOKE=1
 SELF_TEST=0
 PARAMETERS=()
 TAGS=()
+ALLOW_REPLACEMENT=()
+
+# The resources whose replacement loses data or identity. Everything else in
+# the template can be replaced and recreated from the template alone.
+STATEFUL_RESOURCES=(UserPool UserPoolClient UserPoolDomain DynamoDBTable ContentBucket)
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -64,6 +76,10 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --no-smoke) SMOKE=0 ;;
+        --allow-replacement)
+            ALLOW_REPLACEMENT+=("${2:?--allow-replacement needs a LogicalResourceId}")
+            shift
+            ;;
         --self-test) SELF_TEST=1 ;;
         --apply) APPLY=1 ;;
         --dry-run) APPLY=0 ;;
@@ -119,6 +135,35 @@ FAILURE_EVENT_JQ='
 # an old failure from a deploy that was fixed weeks ago, a successful update
 # after it, then today's operation with one root cause, a cancellation cascade,
 # and the rollback events that follow.
+# refuse_stateful_replacements reads a describe-change-set response and returns
+# non-zero if it would replace a resource in STATEFUL_RESOURCES that was not
+# named in --allow-replacement. .Replacement is "True", "False" or
+# "Conditional"; Conditional means CloudFormation only decides at execution
+# time, which is too late to ask, so it is treated as a replacement.
+refuse_stateful_replacements() {
+    local describe="$1" replacing id r a stateful allowed refused=0
+    replacing="$(printf '%s' "$describe" | jq -r '
+        [.Changes[].ResourceChange
+         | select(.Action == "Modify" and (.Replacement == "True" or .Replacement == "Conditional"))
+         | .LogicalResourceId] | .[]
+    ')"
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        stateful=0
+        for r in "${STATEFUL_RESOURCES[@]}"; do [ "$id" = "$r" ] && stateful=1; done
+        [ "$stateful" = "1" ] || continue
+        allowed=0
+        for a in "${ALLOW_REPLACEMENT[@]+"${ALLOW_REPLACEMENT[@]}"}"; do [ "$id" = "$a" ] && allowed=1; done
+        if [ "$allowed" = "1" ]; then
+            warn "replacing $id because --allow-replacement $id was passed"
+        else
+            err "change set would REPLACE $id, a stateful resource; refusing"
+            refused=1
+        fi
+    done <<<"$replacing"
+    [ "$refused" = "0" ]
+}
+
 if [ "$SELF_TEST" = "1" ]; then
     require_cmd jq
     info "self-test: the failure report names the resource that actually broke"
@@ -171,6 +216,43 @@ JSON
         exit 1
     fi
     ok "self-test: a clean operation reports nothing"
+
+    info "self-test: a change set that replaces the user pool is refused"
+    replacing_pool='{"Changes":[
+     {"ResourceChange":{"Action":"Modify","LogicalResourceId":"UserPool","ResourceType":"AWS::Cognito::UserPool","Replacement":"True"}},
+     {"ResourceChange":{"Action":"Modify","LogicalResourceId":"ApiLambdaFunction","ResourceType":"AWS::Lambda::Function","Replacement":"False"}}]}'
+    if refuse_stateful_replacements "$replacing_pool" 2>/dev/null; then
+        die "self-test FAILED: a user pool replacement was not refused"
+    fi
+    ok "a user pool replacement is refused"
+
+    info "self-test: a Conditional replacement of the table is refused"
+    conditional_table='{"Changes":[
+     {"ResourceChange":{"Action":"Modify","LogicalResourceId":"DynamoDBTable","ResourceType":"AWS::DynamoDB::Table","Replacement":"Conditional"}}]}'
+    if refuse_stateful_replacements "$conditional_table" 2>/dev/null; then
+        die "self-test FAILED: a Conditional table replacement was not refused"
+    fi
+    ok "a Conditional table replacement is refused"
+
+    info "self-test: replacing a stateless resource, or a modify in place, is allowed"
+    harmless='{"Changes":[
+     {"ResourceChange":{"Action":"Modify","LogicalResourceId":"ApiLambdaFunction","ResourceType":"AWS::Lambda::Function","Replacement":"False"}},
+     {"ResourceChange":{"Action":"Modify","LogicalResourceId":"UserPool","ResourceType":"AWS::Cognito::UserPool","Replacement":"False"}},
+     {"ResourceChange":{"Action":"Modify","LogicalResourceId":"ApiLogGroup","ResourceType":"AWS::Logs::LogGroup","Replacement":"True"}},
+     {"ResourceChange":{"Action":"Add","LogicalResourceId":"NewAlarm","ResourceType":"AWS::CloudWatch::Alarm"}}]}'
+    refuse_stateful_replacements "$harmless" 2>/dev/null ||
+        die "self-test FAILED: a harmless change set was refused"
+    ok "in-place modifications and stateless replacements pass"
+
+    info "self-test: --allow-replacement admits exactly the named resource"
+    ALLOW_REPLACEMENT=(UserPool)
+    refuse_stateful_replacements "$replacing_pool" 2>/dev/null ||
+        die "self-test FAILED: --allow-replacement UserPool did not admit the replacement"
+    if refuse_stateful_replacements "$conditional_table" 2>/dev/null; then
+        die "self-test FAILED: --allow-replacement UserPool admitted a table replacement"
+    fi
+    ALLOW_REPLACEMENT=()
+    ok "--allow-replacement is per resource"
     exit 0
 fi
 
@@ -511,6 +593,14 @@ if [ "${NO_CHANGES:-0}" != "1" ]; then
     ' >&2
     log ""
 
+    # Refuse to replace a stateful resource unless told to, by name.
+    if ! refuse_stateful_replacements "$DESCRIBE"; then
+        err "a replaced user pool, table or bucket leaves the stack pointing at an empty one while Retain keeps the data in the old one."
+        err "If that is really intended, re-run with --allow-replacement <LogicalId> for each, and plan the data migration first."
+        cleanup_change_set
+        exit 1
+    fi
+
     if ! confirm_apply "$APPLY" "execute change set $CHANGE_SET against $STACK"; then
         cleanup_change_set
         exit 0
@@ -597,6 +687,13 @@ if [ "$SMOKE" = "1" ] && is_apply; then
     [ -n "$endpoint" ] && [ "$endpoint" != "None" ] || die "no ApiEndpoint output on $STACK"
     info "smoke: GET ${endpoint}/v1/health"
     curl -fsS --max-time 20 "${endpoint}/v1/health" >&2
+    log ""
+    # /health/ready round-trips DynamoDB and S3 under the Lambda's own role. The
+    # liveness probe alone passed a multi-day outage in which the API could not
+    # read the index it had just been deployed against (see the gsi2 note on
+    # the table in the template).
+    info "smoke: GET ${endpoint}/v1/health/ready"
+    curl -fsS --max-time 20 "${endpoint}/v1/health/ready" >&2
     log ""
     ok "smoke passed for $STACK"
 fi

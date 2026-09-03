@@ -118,6 +118,18 @@ export class RecorderController {
     return this.stopping;
   }
 
+  /** Closes a finished recording's AudioContext. Best-effort, like everything audio. */
+  private static closeContext(context: AudioContext | null | undefined): void {
+    if (!context || context.state === 'closed') return;
+    try {
+      void context.close().catch(() => {
+        /* Already closing. */
+      });
+    } catch {
+      /* Not closable in this browser. */
+    }
+  }
+
   /** Releases a stream acquired for a recording that is no longer wanted. */
   private static discardStream(stream: MediaStream): void {
     for (const track of stream.getTracks()) {
@@ -169,6 +181,14 @@ export class RecorderController {
 
     this.stream = stream;
     this.chunkIndex = 0;
+    // One AudioContext per recording, and the previous one is closed before
+    // the next is opened. WebKit caps the number of live contexts (four, in
+    // practice); leaking one per recording meant the constructor started
+    // throwing after a handful of captures, `createAudioContext` swallowed it,
+    // and the waveform and the start/stop tones silently disappeared on iOS.
+    // It is closed here rather than in `teardown()` so the stop tone, which is
+    // scheduled on it just before `stop()`, is not cut off.
+    RecorderController.closeContext(this.session?.audioContext);
     this.session = {
       localId,
       encoder,
@@ -198,7 +218,12 @@ export class RecorderController {
       // Written to disk immediately. The recording must exist somewhere other
       // than this tab from the first chunk onward.
       void this.deps.persistChunk(localId, index, blob).catch(() => {
+        // Recording into nothing is worse than stopping: the machine moves to
+        // `review` on this event, and if the recorder is left running the
+        // microphone stays open — OS indicator on, wake lock held — behind a
+        // screen that says the recording has ended.
         this.emit({ type: 'recorderError', message: 'Could not save audio to this device.' });
+        void this.stop();
       });
     };
 
