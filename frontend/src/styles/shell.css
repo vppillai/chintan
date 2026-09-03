@@ -796,6 +796,111 @@
   color: var(--color-muted);
 }
 
+.capture__hint {
+  max-inline-size: 24rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+/* --------------------------------------------------------------------------
+   Target chooser — "Into · Roof repair ▾", above the timer
+   -------------------------------------------------------------------------- */
+
+.target-chooser {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.target-chooser__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.target-chooser__pill[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.target-chooser__into {
+  color: var(--color-faint);
+}
+
+/* A dictated title can run long; the pill keeps to one line and says so. */
+.target-chooser__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+}
+
+.target-chooser__caret {
+  color: var(--color-faint);
+}
+
+.target-chooser__sheet {
+  display: grid;
+  gap: var(--space-2);
+  inline-size: min(100%, 22rem);
+  padding: var(--space-2);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  text-align: start;
+}
+
+.target-chooser__list {
+  display: grid;
+  gap: var(--space-1);
+  max-block-size: 40dvh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.target-chooser__option {
+  display: block;
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-chooser__option:hover {
+  background-color: var(--color-surface);
+}
+
+.target-chooser__option[aria-pressed='true'] {
+  background-color: var(--color-surface);
+  font-weight: var(--font-weight-medium);
+  box-shadow: inset 2px 0 0 0 var(--color-accent);
+}
+
+.target-chooser__empty {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
 .capture__warning {
   max-inline-size: 26rem;
   font-size: var(--font-size-sm);
@@ -1347,28 +1452,6 @@
   font-weight: var(--font-weight-medium);
 }
 
-.capture-picker__list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.capture-picker__item {
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-xs);
-  color: var(--color-muted);
-}
-
-.capture-picker__item[aria-pressed='true'] {
-  border-color: var(--color-line-strong);
-  color: var(--color-ink);
-}
 
 /* --------------------------------------------------------------------------
    Tag editor
@@ -1815,7 +1898,6 @@
 }
 
 .note-copy {
-  margin-block-start: var(--space-4);
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-4);
@@ -1869,4 +1951,264 @@
   text-align: center;
   /* Selectable on purpose: it exists to be copied into a bug report. */
   user-select: text;
+}
+
+/* ==========================================================================
+   Note screen — back link, meta line, recordings, action bar
+   ========================================================================== */
+
+/* The bar carries its own bottom padding, so the screen gives up the usual
+   one: a sticky element rests in its in-flow position at the end of the
+   scroll, and 2rem of screen padding beneath it would float it. */
+.note-screen {
+  padding-block-end: 0;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: var(--layout-touch-target-min);
+  /* Pulled left so the chevron sits on the gutter line the title starts on. */
+  margin-inline-start: calc(-1 * var(--space-2));
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+
+.back-link:hover {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+}
+
+/* "Updated today 14:02 · house · 3 recordings" */
+.note-meta {
+  margin-block: var(--space-2) var(--space-4);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Recordings — the sources, as dated rows beneath the body
+   -------------------------------------------------------------------------- */
+
+.recordings {
+  display: grid;
+  gap: var(--space-3);
+  margin-block-start: var(--space-8);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.recordings__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.recordings__heading {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.recordings__empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.recordings__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recording {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-raised);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.recording[data-expanded] {
+  border-color: var(--color-line-strong);
+}
+
+.recording__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.recording__play {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+  background-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.recording__play[disabled] {
+  background-color: var(--color-line);
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/*
+ * When · how it was filed · duration, as one button that opens the row.
+ * Three columns so the duration stays flush right whatever the middle says;
+ * the middle column may shrink and wrap, the other two never do.
+ */
+.recording__summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-1);
+  text-align: start;
+  border-radius: var(--radius-md);
+  color: var(--color-ink);
+}
+
+.recording__when {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.recording__filed {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+.recording__filed[data-running] {
+  color: var(--color-accent);
+}
+
+.recording[data-status='failed'] .recording__filed,
+.recording[data-status='spend_capped'] .recording__filed,
+.recording[data-status='needs_target'] .recording__filed {
+  color: var(--color-ink);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Serif tabular numerals, like every duration in the app. */
+.recording__duration {
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+
+.recording__body {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.recording__error {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.recording__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Inside a row the player has the row's padding already. */
+.recording .player {
+  padding-block: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Action bar — Tags · Share · Archive · Record into this
+   -------------------------------------------------------------------------- */
+
+/*
+ * Sticky to the foot of the scrolling region, not fixed to the viewport: the
+ * tab bar owns the viewport's bottom row and a fixed bar here would sit on it.
+ * Inside `.app__main` a sticky element is clipped by that region, so it can
+ * cover nothing outside the note.
+ */
+.note-bar-anchor {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--z-content);
+  display: grid;
+  gap: var(--space-3);
+  margin-block-start: var(--space-6);
+  padding-block: var(--space-3) var(--space-4);
+  background-color: var(--color-ground);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.note-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+/* The editors carry a top padding for the inline layout they came from. */
+.note-panel .tag-editor {
+  padding-block-start: 0;
+}
+
+.note-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.note-bar__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.note-bar__action[aria-expanded='true'] {
+  background-color: var(--color-surface);
+}
+
+.note-bar__action[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* Record is the bar's one strong control, and it takes whatever room is
+   left so it reads as the primary action rather than one pill among four. */
+.note-bar__action--primary {
+  flex: 1 1 auto;
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.note-bar__action--destructive {
+  border-color: var(--color-accent);
 }

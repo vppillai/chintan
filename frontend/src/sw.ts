@@ -5,12 +5,11 @@
  *
  * Built with `vite-plugin-pwa` in `injectManifest` mode rather than
  * `generateSW`. The generated recipes are fine for cache-first static sites and
- * fight all three things this app actually needs: a network-first shell, an
- * update strategy that does *not* call `skipWaiting`, and a Background Sync
- * handler for the mutation queue. Owning ~150 lines is cheaper than working
- * around a generator for each of them.
+ * fight both things this app actually needs: a network-first shell and an
+ * update strategy that does *not* call `skipWaiting`. Owning ~130 lines is
+ * cheaper than working around a generator for each of them.
  *
- * Three rules, each fixing something v1 got wrong:
+ * Two rules, each fixing something v1 got wrong:
  *
  * 1. **Network-first for navigations.** v1 was cache-first including its
  *    generated `config.js`, so recreating the stack permanently bricked every
@@ -21,8 +20,14 @@
  *    served half the old bundle and half the new one. Here the new worker waits
  *    until the user accepts; `skipWaiting` runs only in response to that
  *    explicit message.
- * 3. **Background Sync that exists.** v1 registered a `sync` listener whose
- *    handler was an empty stub, for a tag nothing ever registered.
+ *
+ * There is deliberately no Background Sync here. The worker has no session and
+ * no API client, so all a `sync` event could ever do was post a message to an
+ * open tab asking it to flush — a tab that was already flushing on reconnect
+ * through `useOfflineQueue`. The two flushes ran concurrently, replayed the
+ * same PATCH, and the loser marked a delivered edit dead. It also does not
+ * exist on WebKit, the platform this app is for. Deleting it removed a race
+ * and gained nothing anyone could notice.
  */
 
 import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
@@ -55,9 +60,6 @@ async function matchShell(): Promise<Response | undefined> {
 
 /** How long to wait for the network before falling back to cache. */
 const NETWORK_TIMEOUT_MS = 4_000;
-
-/** The tag the page registers. Must match `offline/backgroundSync.ts`. */
-export const SYNC_TAG = 'chintan-flush-queue';
 
 // Content-hashed build assets. Safe to cache immutably: a new build produces
 // new filenames, so a stale asset can never shadow a fresh one.
@@ -151,33 +153,3 @@ self.addEventListener('fetch', (event: FetchEvent) => {
     event.respondWith(networkFirst(request));
   }
 });
-
-/**
- * Background Sync: flush the offline mutation queue even if the tab is gone.
- *
- * The worker cannot import the app's API client — it has no session and no
- * bundle — so it wakes any open client and asks it to flush. When there is no
- * client, the registration is retained by the browser and retried, and the
- * foreground `refetchOnReconnect` path covers the common case anyway.
- */
-self.addEventListener('sync', ((event: SyncEvent) => {
-  if (event.tag !== SYNC_TAG) return;
-  event.waitUntil(
-    (async () => {
-      const clients = await self.clients.matchAll({
-        type: 'window',
-        includeUncontrolled: true,
-      });
-      for (const client of clients) {
-        client.postMessage({ type: 'FLUSH_QUEUE' });
-      }
-      // No client to do the work: reject so the browser keeps the registration
-      // and retries later rather than silently dropping the queue.
-      if (clients.length === 0) throw new Error('No client available to flush');
-    })(),
-  );
-}) as EventListener);
-
-interface SyncEvent extends ExtendableEvent {
-  readonly tag: string;
-}

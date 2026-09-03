@@ -88,6 +88,22 @@ export function formatRowTime(iso: string, now: number = Date.now()): string {
   }).format(at);
 }
 
+/**
+ * A moment, for a recording row or a note's "Updated" line: `Today 14:02`,
+ * `Yesterday 18:40`, then `28 Aug 07:55`, with the year once it is not this
+ * one. The time of day is always there — two recordings on the same day are
+ * told apart by it and by nothing else.
+ */
+export function describeMoment(iso: string, now: number = Date.now()): string {
+  const at = parse(iso);
+  if (!at) return '';
+  const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(at);
+  const days = daysAgo(at, new Date(now));
+  if (days <= 0) return `Today ${time}`;
+  if (days === 1) return `Yesterday ${time}`;
+  return `${formatRowTime(iso, now)} ${time}`;
+}
+
 /** `M:SS`, for the total audio behind a note. */
 export function formatDurationShort(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));

@@ -1,8 +1,16 @@
 /**
- * Typed wrappers over every operation in `docs/api/openapi.yaml`.
+ * Typed wrappers over the operations in `docs/api/openapi.yaml` that this app
+ * calls.
  *
  * One method per operation, so a contract change is a compile error rather
  * than a runtime surprise, and so no component ever builds a URL by hand.
+ *
+ * Not every operation: `POST /v1/notes/match` and the two export endpoints are
+ * served and have no screen. Their wrappers sat here for two releases with no
+ * caller, and the request-contract recorder replayed them against the backend
+ * on every run — proving the router accepted requests nobody sends. They come
+ * back with the screen that needs them; the wire types stay in `schema.ts`
+ * because the response-contract fixtures still pin them.
  */
 
 import { NO_RETRY } from './client.ts';
@@ -14,8 +22,6 @@ import type {
   CaptureListQuery,
   CaptureTargetWire,
   CaptureWire,
-  ExportJobWire,
-  MatchResponseWire,
   NoteCreateWire,
   NoteDetailWire,
   NoteListQuery,
@@ -129,13 +135,6 @@ export class ChintanApi {
     });
   }
 
-  matchNotes(query: string): Promise<MatchResponseWire> {
-    return this.client.request('/v1/notes/match', {
-      method: 'POST',
-      body: { query },
-    });
-  }
-
   listTags(): Promise<{ items: TagWire[] }> {
     return this.client.request('/v1/tags');
   }
@@ -210,16 +209,6 @@ export class ChintanApi {
       `/v1/captures/${encodeURIComponent(captureId)}/download`,
       { query: { kind } },
     );
-  }
-
-  /* ---- Export --------------------------------------------------------- */
-
-  startExport(idempotencyKey?: string): Promise<ExportJobWire> {
-    return this.client.request('/v1/export', { method: 'POST', idempotencyKey });
-  }
-
-  getExport(exportId: string): Promise<ExportJobWire> {
-    return this.client.request(`/v1/export/${encodeURIComponent(exportId)}`);
   }
 }
 

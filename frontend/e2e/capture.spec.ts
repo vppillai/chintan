@@ -98,6 +98,43 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
   }
 });
 
+/**
+ * Filing into a note you are already reading, and changing your mind on the
+ * record screen. `POST /v1/captures` has accepted `note_id` since the contract
+ * was written; until now nothing in the UI sent it, so the only ways to file
+ * into a particular note were to say its name and hope, or to fix it afterwards
+ * from the "needs a target" row.
+ */
+test('records into the note it was opened from, and the target can be changed before Send', async ({
+  page,
+  api,
+}) => {
+  await page.goto('/notes/roof-repair');
+  await page.getByRole('button', { name: /record into this/i }).click();
+  await expect(page).toHaveURL(/\/capture\?note=roof-repair$/);
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+
+  // Where it will file is stated before a word is spoken.
+  const pill = page.getByRole('button', { name: /into roof repair/i });
+  await expect(pill).toBeVisible();
+
+  // And it can be changed: to another note, from the list the app holds.
+  await pill.click();
+  await page.getByRole('button', { name: 'Reading list' }).click();
+  await expect(page.getByRole('button', { name: /into reading list/i })).toBeVisible();
+
+  await page.waitForTimeout(1_100);
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  const create = api.requests.find(
+    (request) => request.method === 'POST' && request.url === '/v1/captures',
+  );
+  expect(create).toBeTruthy();
+  expect(api.captures[0]?.note_id).toBe('reading-list');
+});
+
 test('pause and stop are distinct controls', async ({ page }) => {
   await page.goto('/capture');
 

@@ -95,14 +95,6 @@
     "path": "/v1/notes/contract-archived-note/permanent"
   },
   {
-    "name": "matchNotes",
-    "method": "POST",
-    "path": "/v1/notes/match",
-    "body": {
-      "query": "kitchen rebuild"
-    }
-  },
-  {
     "name": "listTags",
     "method": "GET",
     "path": "/v1/tags"
@@ -211,15 +203,5 @@
     "name": "downloadUrl_peaks",
     "method": "GET",
     "path": "/v1/captures/contract-capture/download?kind=peaks"
-  },
-  {
-    "name": "startExport",
-    "method": "POST",
-    "path": "/v1/export"
-  },
-  {
-    "name": "getExport",
-    "method": "GET",
-    "path": "/v1/export/contract-export"
   }
 ]

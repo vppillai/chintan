@@ -317,9 +317,12 @@ jobs:
       # Chromium only — playwright.config.ts defines exactly one project, and
       # installing the other two engines triples the setup time for browsers no
       # spec runs in.
-      - name: Install Chromium
+      - name: Install Chromium and WebKit
         working-directory: frontend
-        run: bunx playwright install --with-deps chromium
+        # WebKit runs the non-microphone specs (playwright.config.ts's second
+        # project): the app's target is an iPhone, and until this the suite
+        # had never executed on the engine it ships to.
+        run: bunx playwright install --with-deps chromium webkit
       # playwright.config.ts's webServer runs `bun run build && bun run preview`
       # itself, because three of the specs need the service worker and the hashed
       # asset paths that only exist in a real build. There is no separate build

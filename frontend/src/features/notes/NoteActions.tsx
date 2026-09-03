@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -6,108 +6,189 @@ import { useArchiveNote, useDeleteNoteForever, useRestoreNote } from '@/api/quer
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { CopyButton } from '@/components/CopyButton.tsx';
+import { DownloadButton } from '@/components/DownloadButton.tsx';
+import { TagEditor } from '@/components/TagEditor.tsx';
 
 import { describePurge, purgeCountdown } from './purge.ts';
+import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
- * Getting rid of a note, and getting it back.
+ * The note's action bar: Tags · Share · Archive · Record into this.
  *
- * v2 had no control for any of this. The backend served archive, restore and
- * purge, `endpoints.ts` wrapped all three, and nothing called them — so the app
- * was append-only and the note screen's own "may have been archived or purged"
- * described states it could not reach.
+ * Sticky at the foot of the note, so none of it is buried under a long body
+ * and six transcripts — "Record into this" in particular is the one-tap path
+ * to add to a note you are already reading, and a control the user has to
+ * scroll two screens to find is not one tap.
  *
- * Two confirmation disciplines, because these are two different promises:
+ * Tags and Share are disclosures: the tag and alias editors and the copy and
+ * download controls open above the bar when asked for and are otherwise out
+ * of the way. The two used to sit inline between the body and Archive, which
+ * put a copy control adjacent to a destructive one — how a stray thumb
+ * destroys a note it meant to keep. Archive is the far side of the bar from
+ * Record for the same reason.
+ *
+ * Getting rid of a note, and getting it back, keep their two confirmation
+ * disciplines, because these are two different promises:
  *
  *   Archive       reversible for as long as the purge window lasts, so it asks
  *                 once, plainly.
  *   Delete for    irreversible, and it takes the recordings and the transcripts
  *   ever          with it, so it names what goes and requires the note's title
  *                 to be typed before the control unlocks.
+ *
+ * v2 had no control for any of this. The backend served archive, restore and
+ * purge, `endpoints.ts` wrapped all three, and nothing called them — so the app
+ * was append-only and the note screen's own "may have been archived or purged"
+ * described states it could not reach.
  */
-export function NoteActions({ note }: { note: NoteDetailWire }) {
+export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: NoteEditor }) {
   const navigate = useNavigate();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const purge = useDeleteNoteForever();
 
+  const tagsId = useId();
+  const shareId = useId();
+  const [open, setOpen] = useState<'tags' | 'share' | null>(null);
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
 
   const busy = archive.isPending || restore.isPending || purge.isPending;
   const failure = archive.error ?? restore.error ?? purge.error;
+  const { draft } = editor.model;
 
-  if (note.archived) {
-    return (
-      <section className="note-actions" aria-label="Archived note">
+  return (
+    <div className="note-bar-anchor">
+      {open === 'tags' && (
+        <div id={tagsId} className="note-panel">
+          <TagEditor
+            label="Tags"
+            values={draft.tags}
+            placeholder="Add a tag"
+            onChange={(tags) => {
+              editor.edit({ tags });
+            }}
+            onCommit={() => void editor.saveNow()}
+          />
+          <TagEditor
+            label="Also called"
+            values={draft.aliases}
+            placeholder="Add another name"
+            maxLength={120}
+            onChange={(aliases) => {
+              editor.edit({ aliases });
+            }}
+            onCommit={() => void editor.saveNow()}
+          />
+        </div>
+      )}
+
+      {open === 'share' && (
+        /*
+         * Title first, then the body: a body pasted somewhere else with no
+         * title loses what it was about, and re-typing that is exactly the
+         * friction this is meant to remove.
+         */
+        <div id={shareId} className="note-panel note-copy">
+          <CopyButton
+            label="Copy note"
+            text={() => [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')}
+          />
+          <DownloadButton
+            label="Download note"
+            filename={() => `${filenameFor(draft.title)}.md`}
+            blob={() =>
+              Promise.resolve(
+                new Blob([`# ${draft.title.trim()}\n\n${draft.body.trim()}\n`], {
+                  type: 'text/markdown',
+                }),
+              )
+            }
+          />
+        </div>
+      )}
+
+      {note.archived && (
         <p className="note-actions__state" role="status">
           This note is archived. {describePurge(purgeCountdown(note.purge_after))}.
         </p>
-
-        <div className="screen__actions">
-          <button
-            type="button"
-            className="screen__action"
-            disabled={busy}
-            onClick={() => {
-              restore.mutate(note.id);
-            }}
-          >
-            {restore.isPending ? 'Restoring…' : 'Restore'}
-          </button>
-          <button
-            type="button"
-            className="screen__action screen__action--destructive"
-            disabled={busy}
-            onClick={() => {
-              setConfirming('purge');
-            }}
-          >
-            Delete forever
-          </button>
-        </div>
-
-        {failure && <Failure error={failure} />}
-
-        <ConfirmDialog
-          open={confirming === 'purge'}
-          title="Delete this note forever?"
-          body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
-          confirmLabel="Delete forever"
-          requireText={note.title}
-          requireLabel={`Type the note's title to confirm: ${note.title}`}
-          destructive
-          onCancel={() => {
-            setConfirming(null);
-          }}
-          onConfirm={() => {
-            setConfirming(null);
-            purge.mutate(note.id, {
-              // Back to the archive, which is where this note was. Staying put
-              // would leave the screen showing a note the server no longer has.
-              onSuccess: () => void navigate(ROUTES.archive, { replace: true }),
-            });
-          }}
-        />
-      </section>
-    );
-  }
-
-  return (
-    <section className="note-actions" aria-label="Note actions">
-      <div className="screen__actions">
-        <button
-          type="button"
-          className="screen__action"
-          disabled={busy}
-          onClick={() => {
-            setConfirming('archive');
-          }}
-        >
-          {archive.isPending ? 'Archiving…' : 'Archive'}
-        </button>
-      </div>
+      )}
 
       {failure && <Failure error={failure} />}
+
+      <div className="note-bar" role="toolbar" aria-label="Note actions">
+        <button
+          type="button"
+          className="note-bar__action"
+          aria-expanded={open === 'tags'}
+          aria-controls={tagsId}
+          onClick={() => {
+            setOpen((current) => (current === 'tags' ? null : 'tags'));
+          }}
+        >
+          Tags
+        </button>
+        <button
+          type="button"
+          className="note-bar__action"
+          aria-expanded={open === 'share'}
+          aria-controls={shareId}
+          onClick={() => {
+            setOpen((current) => (current === 'share' ? null : 'share'));
+          }}
+        >
+          Share
+        </button>
+
+        {note.archived ? (
+          <>
+            <button
+              type="button"
+              className="note-bar__action"
+              disabled={busy}
+              onClick={() => {
+                restore.mutate(note.id);
+              }}
+            >
+              {restore.isPending ? 'Restoring…' : 'Restore'}
+            </button>
+            <button
+              type="button"
+              className="note-bar__action note-bar__action--destructive"
+              disabled={busy}
+              onClick={() => {
+                setConfirming('purge');
+              }}
+            >
+              Delete forever
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="note-bar__action"
+              disabled={busy}
+              onClick={() => {
+                setConfirming('archive');
+              }}
+            >
+              {archive.isPending ? 'Archiving…' : 'Archive'}
+            </button>
+            {/*
+              The server refuses an archived note as a capture target, so the
+              control is only offered where it can work.
+            */}
+            <button
+              type="button"
+              className="note-bar__action note-bar__action--primary"
+              onClick={() => void navigate(ROUTES.captureInto(note.id))}
+            >
+              <span aria-hidden="true">＋ </span>Record into this
+            </button>
+          </>
+        )}
+      </div>
 
       <ConfirmDialog
         open={confirming === 'archive'}
@@ -125,7 +206,28 @@ export function NoteActions({ note }: { note: NoteDetailWire }) {
           });
         }}
       />
-    </section>
+
+      <ConfirmDialog
+        open={confirming === 'purge'}
+        title="Delete this note forever?"
+        body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
+        confirmLabel="Delete forever"
+        requireText={note.title}
+        requireLabel={`Type the note's title to confirm: ${note.title}`}
+        destructive
+        onCancel={() => {
+          setConfirming(null);
+        }}
+        onConfirm={() => {
+          setConfirming(null);
+          purge.mutate(note.id, {
+            // Back to the archive, which is where this note was. Staying put
+            // would leave the screen showing a note the server no longer has.
+            onSuccess: () => void navigate(ROUTES.archive, { replace: true }),
+          });
+        }}
+      />
+    </div>
   );
 }
 
@@ -140,4 +242,17 @@ function Failure({ error }: { error: unknown }) {
       {error instanceof ApiError ? error.userMessage : 'That did not go through.'}
     </p>
   );
+}
+
+/**
+ * A dictated title, made safe as a filename.
+ *
+ * The title comes from speech, unbounded — no reserved characters, no length
+ * limit, sometimes not even Latin script. `/` and `\` would nest or break a
+ * path; a title trimmed to nothing (all punctuation, or empty) still needs a
+ * name a save dialog can show.
+ */
+export function filenameFor(title: string): string {
+  const cleaned = title.trim().replace(/[/\\:*?"<>|]/g, '').trim();
+  return (cleaned || 'note').slice(0, 120);
 }

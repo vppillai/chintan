@@ -34,6 +34,8 @@ export interface CaptureStore {
   amplitudes: (count: number) => number[];
   dispatch: (event: CaptureEvent) => void;
   start: (noteId?: string | null) => Promise<void>;
+  /** Changes where the recording will be filed; `null` means a new note. */
+  setTarget: (noteId: string | null) => void;
   pause: () => void;
   resume: () => void;
   stop: () => Promise<void>;
@@ -84,7 +86,10 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
      */
     const started = after.state === 'recording' && before.state === 'requesting';
     const reviewed = after.state === 'review' && before.state !== 'review';
-    if ((started || reviewed) && after.localId) {
+    // A changed target is rewritten too, or a recording resumed from disk
+    // after a reload would be sent to the note the user had moved it away from.
+    const retargeted = event.type === 'target' && after.state !== 'requesting';
+    if ((started || reviewed || retargeted) && after.localId) {
       void saveCaptureRecord({
         localId: after.localId,
         serverCaptureId: null,
@@ -95,7 +100,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
         chunkCount: after.chunks,
         createdAt: Date.now(),
         uploadedAt: null,
-        peaks: reviewed ? (controller?.envelope() ?? null) : null,
+        peaks: started ? null : (controller?.envelope() ?? null),
       }).catch(() => {
         /* Storage denied. The chunks are still on disk. */
       });
@@ -122,6 +127,10 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
       if (get().model.state === 'recording') {
         startFeedback(active.current()?.audioContext ?? null);
       }
+    },
+
+    setTarget(noteId) {
+      dispatch({ type: 'target', noteId });
     },
 
     pause() {
@@ -180,7 +189,7 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
   };
 });
 
-/** Selector: the sheet must stay shut while any of this is in flight. */
+/** Selector for the shell's recording indicator: what the machine is doing. */
 export function selectCaptureModel(state: CaptureStore): CaptureModel {
   return state.model;
 }

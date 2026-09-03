@@ -6,9 +6,10 @@
  * flush that partly succeeded before dying replays rather than double-applying
  * — which is the only reason retrying a queued POST is safe at all.
  *
- * v1 shipped the shape of this and none of the substance: the service worker
- * registered a `sync` listener whose handler was an empty stub, and the tag it
- * listened for was never registered by anything.
+ * Flushed from the foreground only — on reconnect, on focus and on a slow
+ * interval, by `useOfflineQueue`. There is no service-worker half: a worker
+ * has no session to send with, and the one that used to exist only ever asked
+ * an open tab to do what the tab was already doing.
  */
 
 import { ApiError } from '@/api/problem.ts';
@@ -172,15 +173,40 @@ export interface FlushResult {
 }
 
 /**
+ * The flush in progress, if one is. Module-level: there is one queue on the
+ * device, so there is one pass over it at a time whoever asked.
+ */
+let flushing: Promise<FlushResult> | null = null;
+
+/**
  * Flushes the queue in order.
  *
  * Stops at the first offline error rather than burning every entry's attempt
- * budget against a network that is not there. A permanent failure (a 4xx that
- * is not 401) drops the entry: replaying a request the server has already
- * rejected on its merits will never succeed, and keeping it blocks everything
- * behind it forever.
+ * budget against a network that is not there. A permanent failure — a 4xx the
+ * server will answer the same way every time — retires the entry: replaying a
+ * request rejected on its merits will never succeed, and keeping it live
+ * blocks everything behind it forever.
+ *
+ * Never two at once. A reconnect and a window focus can land in the same
+ * moment, and TanStack's `refetchQueries` cancels the earlier *promise* but not
+ * the earlier loop — so both read the same `pending()` list and both ran the
+ * same PATCH under the same idempotency key. Whichever lost got a 4xx, called
+ * `markDead`, and re-inserted, at the attempt ceiling, an edit the other had
+ * just delivered and removed; the note then read "That edit did not save" over
+ * text the server had. A second caller now awaits the pass already running.
+ * It does not start another afterwards: anything enqueued during the pass is
+ * picked up by the next reconnect, focus or interval tick, all of which are
+ * seconds away.
  */
-export async function flush(run: MutationRunner): Promise<FlushResult> {
+export function flush(run: MutationRunner): Promise<FlushResult> {
+  if (flushing) return flushing;
+  flushing = flushOnce(run).finally(() => {
+    flushing = null;
+  });
+  return flushing;
+}
+
+async function flushOnce(run: MutationRunner): Promise<FlushResult> {
   const result: FlushResult = { applied: 0, failed: 0, stoppedOffline: false };
 
   for (const mutation of await pending()) {
@@ -212,19 +238,27 @@ export async function flush(run: MutationRunner): Promise<FlushResult> {
 }
 
 /**
- * Errors no replay can get past.
+ * The statuses no replay can get past: the request itself is wrong (400, 413,
+ * 422), forbidden (403), aimed at something that is gone (404), or settled
+ * (409).
  *
- * 401 is not one: the client refreshes and the next flush succeeds.
+ * Named rather than "any 4xx but 401", which is what this was. That net also
+ * caught 429 — a rate limit, which `ApiError.isRetryable` rightly says to try
+ * again — and the spend-cap 429, which means "not today", not "never". Both
+ * were marked dead on first sight, so an edit made during a busy minute was
+ * reported as one that "did not save" when it merely had not saved yet.
  *
- * 409 **is** one, which it was not. A queued mutation carries the version the
- * note was loaded at, and that version never changes — so a 409 was retried on
- * every flush until the attempt budget ran out, eight guaranteed conflicts for
- * an outcome that was settled at the first. It is the same shape as replaying
- * an expired presigned URL: repeating a request that cannot change. The edit is
- * kept and surfaced so the user can reconcile it; it is simply not sent again.
+ * 401 is not here either: the client refreshes and the next flush succeeds.
+ *
+ * 409 **is**. A queued mutation carries the version the note was loaded at,
+ * and that version never changes — so a 409 was once retried on every flush
+ * until the attempt budget ran out, eight guaranteed conflicts for an outcome
+ * settled at the first. It is the same shape as replaying an expired presigned
+ * URL: repeating a request that cannot change. The edit is kept and surfaced so
+ * the user can reconcile it; it is simply not sent again.
  */
+const TERMINAL_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 413, 422]);
+
 function isTerminal(error: ApiError): boolean {
-  if (error.kind !== 'http') return false;
-  if (error.status === 401) return false;
-  return error.status >= 400 && error.status < 500;
+  return error.kind === 'http' && TERMINAL_STATUSES.has(error.status);
 }

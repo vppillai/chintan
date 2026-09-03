@@ -15,8 +15,31 @@
  * fact from the same place.
  */
 
-import { openChintanDB } from './db.ts';
+import type { NoteUpdateWire } from '@/api/schema.ts';
+
+import { openChintanDB, type QueuedMutation } from './db.ts';
 import { isDead } from './queue.ts';
+
+/** What a queued `updateNote` carries: the note and the whole PATCH body. */
+export interface QueuedEditPayload {
+  noteId: string;
+  body: NoteUpdateWire;
+}
+
+/**
+ * Narrows a stored mutation's payload, or returns null when it does not have
+ * the shape this build writes — which happens if an older build wrote it. A
+ * malformed entry is dropped by the flush rather than replayed with missing
+ * fields, which would fail forever and block everything queued behind it.
+ */
+export function queuedEditPayload(mutation: QueuedMutation): QueuedEditPayload | null {
+  const { payload } = mutation;
+  if (typeof payload !== 'object' || payload === null) return null;
+  const candidate = payload as Record<string, unknown>;
+  if (typeof candidate['noteId'] !== 'string') return null;
+  if (typeof candidate['body'] !== 'object' || candidate['body'] === null) return null;
+  return candidate as unknown as QueuedEditPayload;
+}
 
 /** Query key prefix. Deliberately not under `['offline','queue']`, which the
  * flush query owns — invalidating that from inside its own queryFn would loop. */

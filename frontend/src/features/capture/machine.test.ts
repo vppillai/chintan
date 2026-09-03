@@ -337,7 +337,7 @@ describe('upload', () => {
   });
 });
 
-describe('busy-ness gates the sheet', () => {
+describe('busy-ness, which the shell indicator reports', () => {
   it.each([
     ['requesting', run([{ type: 'request', localId: 'c' }])],
     ['recording', run(requestAndStart)],
@@ -358,6 +358,39 @@ describe('busy-ness gates the sheet', () => {
     ],
   ])('is not busy while %s', (_label, model) => {
     expect(isCaptureBusy(model)).toBe(false);
+  });
+});
+
+describe('changing the target mid-recording', () => {
+  it('moves a live recording to the chosen note, and back to a new note', () => {
+    const live = run([...requestAndStart, { type: 'target', noteId: 'roof-repair' }]);
+    expect(live.noteId).toBe('roof-repair');
+    expect(live.state).toBe('recording');
+    expect(captureReducer(live, { type: 'target', noteId: null }).noteId).toBeNull();
+  });
+
+  it('still applies in review, where Send is about to read it', () => {
+    const reviewed = run([
+      ...requestAndStart,
+      { type: 'data', bytes: 1 },
+      { type: 'stop', now: T0 + 1 },
+      { type: 'finalised' },
+      { type: 'target', noteId: 'reading-list' },
+    ]);
+    expect(reviewed.state).toBe('review');
+    expect(reviewed.noteId).toBe('reading-list');
+  });
+
+  it('is ignored once the upload has begun, because the target has been sent', () => {
+    const uploading = run([
+      ...requestAndStart,
+      { type: 'data', bytes: 1 },
+      { type: 'stop', now: T0 + 1 },
+      { type: 'finalised' },
+      { type: 'uploadStart' },
+    ]);
+    expect(captureReducer(uploading, { type: 'target', noteId: 'x' })).toBe(uploading);
+    expect(captureReducer(INITIAL_CAPTURE, { type: 'target', noteId: 'x' })).toBe(INITIAL_CAPTURE);
   });
 });
 

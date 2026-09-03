@@ -6,6 +6,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
+import { TargetChooser } from './TargetChooser.tsx';
 import { Waveform } from './Waveform.tsx';
 import {
   canRetryUpload,
@@ -35,6 +36,7 @@ export function CaptureScreen() {
 
   const model = useCaptureStore((state) => state.model);
   const start = useCaptureStore((state) => state.start);
+  const setTarget = useCaptureStore((state) => state.setTarget);
   const pause = useCaptureStore((state) => state.pause);
   const resume = useCaptureStore((state) => state.resume);
   const stop = useCaptureStore((state) => state.stop);
@@ -116,6 +118,19 @@ export function CaptureScreen() {
         {statusLabel(model)}
       </p>
 
+      {/*
+        Where it will file, shown and changeable before you speak. Read from
+        the machine, not from the URL: `?note=` seeds the target at `start`, and
+        the chooser can move it until Send reads it.
+      */}
+      <TargetChooser
+        noteId={model.noteId}
+        onChoose={setTarget}
+        disabled={
+          model.state === 'idle' || model.state === 'uploading' || model.state === 'uploaded'
+        }
+      />
+
       <p
         className="capture__timer numeric"
         aria-label={`Elapsed ${formatElapsed(model.elapsedMs)}`}
@@ -131,6 +146,14 @@ export function CaptureScreen() {
           label={model.state === 'recording' ? 'Live audio level' : 'Audio level'}
         />
       </div>
+
+      {(model.state === 'requesting' ||
+        model.state === 'recording' ||
+        model.state === 'paused') && (
+        <p className="capture__hint">
+          Say &ldquo;add this to my roof note&rdquo; or pick the note above.
+        </p>
+      )}
 
       {model.nearDurationLimit && model.state === 'recording' && (
         <p className="capture__warning" role="status">

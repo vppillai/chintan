@@ -6,12 +6,17 @@ import { expect, test } from './fixtures.ts';
  * Inline playback with tap-to-seek, and the raw/cleaned distinction.
  *
  * The scrubber canvas is only reachable here — jsdom has no `getContext`.
+ *
+ * The recordings sit beneath the note as dated rows and the newest is open on
+ * arrival, so the player and transcript these specs reach for are on screen
+ * without a tap. `exact: true` on the region: the row's player is "Recording",
+ * the section around it is "Recordings", and a substring match would find both.
  */
 
 test('plays inline, never in a new tab', async ({ page, context }) => {
   await page.goto('/notes/roof-repair');
 
-  await expect(page.getByRole('region', { name: 'Recording' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Recording', exact: true })).toBeVisible();
 
   const pagesBefore = context.pages().length;
   await page.getByRole('button', { name: 'Play' }).click();
@@ -163,11 +168,17 @@ test('an edit conflict is surfaced rather than clobbering', async ({ page, api }
  * thought out and using it elsewhere, and the only route was select-all inside
  * a textarea, which one-handed on a phone is miserable.
  */
-test('copies the note as its title and body', async ({ page, context }) => {
+test('copies the note as its title and body', async ({ page, context, browserName }) => {
+  // Playwright grants clipboard permissions in Chromium only; the control is
+  // the same component on every engine, so the check is not repeated.
+  test.skip(browserName !== 'chromium', 'clipboard permissions are Chromium-only in Playwright');
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/notes/roof-repair');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
+  // Copy and download live behind Share in the action bar, a clear distance
+  // from Archive, so a stray thumb cannot reach both.
+  await page.getByRole('button', { name: 'Share' }).click();
   await page.getByRole('button', { name: 'Copy note' }).click();
 
   // A copy with no confirmation cannot be told from one that failed.
@@ -182,12 +193,18 @@ test('copies the note as its title and body', async ({ page, context }) => {
   );
 });
 
-test('copies the transcript separately, and names which one', async ({ page, context }) => {
+test('copies the transcript separately, and names which one', async ({
+  page,
+  context,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'clipboard permissions are Chromium-only in Playwright');
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.goto('/notes/roof-repair');
 
   // Three different things could be meant by "copy" on this screen, so no
   // control is allowed to be called just "Copy".
+  await page.getByRole('button', { name: 'Share' }).click();
   await expect(page.getByRole('button', { name: 'Copy note' })).toBeVisible();
   await page.getByRole('button', { name: 'Copy transcript' }).click();
 

@@ -5,9 +5,18 @@
  * Cognito and back, so the verifier and the state cannot live in a React ref or
  * a module variable — both are gone by the time the code arrives.
  *
- * `sessionStorage` rather than `localStorage`: this is per-tab, single-use, and
- * lasts seconds. Leaving a spent verifier in `localStorage` for the life of the
- * device would be storing a secret long after it means anything.
+ * `localStorage`, not `sessionStorage`. It was `sessionStorage` on the
+ * argument that the flow is per-tab and lasts seconds — and on an iOS
+ * home-screen app that argument fails in the one place it matters: switching
+ * to Messages to read the MFA code routinely gets the PWA's process killed,
+ * and `sessionStorage` dies with it. The redirect back then found no pending
+ * flow and said "That sign-in could not be completed. Please try again." to
+ * someone who had done everything right. `localStorage` survives the kill.
+ *
+ * The secret is still bounded: `PENDING_TTL_MS` refuses anything older than
+ * ten minutes, `takePending` removes the entry as it reads it, and a verifier
+ * is worthless once its code has been exchanged or has expired at Cognito —
+ * so nothing sits in storage longer than it means anything.
  */
 
 export const PENDING_AUTH_KEY = 'chintan.auth.pending.v1';
@@ -29,7 +38,7 @@ export const PENDING_TTL_MS = 10 * 60_000;
 
 function storage(): Storage | null {
   try {
-    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+    return typeof localStorage === 'undefined' ? null : localStorage;
   } catch {
     // Storage disabled by policy. Sign-in cannot complete, and saying so is
     // better than a redirect loop that never lands.

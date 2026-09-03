@@ -147,3 +147,97 @@ describe('a same-tick edit-then-commit is not silently dropped', () => {
     expect(patches[0]?.body['tags']).toEqual(['recipe']);
   });
 });
+
+describe('one PATCH at a time', () => {
+  /*
+   * Type, wait out the debounce, and keep typing while the first PATCH is on a
+   * slow connection. There used to be two requests in flight carrying the same
+   * `version`: the second lost with a 409 and the screen announced "a voice
+   * capture or another device saved this note while you were editing" — about
+   * the user's own keystrokes — and offered to throw one burst away. On
+   * cellular a three-second PATCH is routine, so this was the ordinary case,
+   * not the corner.
+   */
+  it('sends exactly two PATCHes for a keystroke made mid-save, the second with the version the first returned', async () => {
+    const patches: Record<string, unknown>[] = [];
+    let release: (() => void) | null = null;
+    // The server jumps to a version the client could not have guessed, so a
+    // `version + 1` regression fails here rather than passing by coincidence.
+    const SERVER_VERSION_AFTER_FIRST = 7;
+
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        patches.push(body);
+        const first = patches.length === 1;
+        if (first) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            ...NOTE,
+            version: first ? SERVER_VERSION_AFTER_FIRST : SERVER_VERSION_AFTER_FIRST + 1,
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify(NOTE), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    // First burst, and the save leaves.
+    act(() => {
+      view.result.current.edit({ body: 'Ellis quoted' });
+    });
+    let firstSave: Promise<void> | undefined;
+    act(() => {
+      firstSave = view.result.current.saveNow();
+    });
+    await waitFor(() => {
+      expect(patches).toHaveLength(1);
+    });
+    expect(patches[0]?.['version']).toBe(NOTE.version);
+    expect(view.result.current.model.state).toBe('saving');
+
+    // Second burst while it is on the wire. Asking to save again must not put
+    // a second request out with the same version.
+    act(() => {
+      view.result.current.edit({ body: 'Ellis quoted nine hundred pounds.' });
+    });
+    let secondSave: Promise<void> | undefined;
+    act(() => {
+      secondSave = view.result.current.saveNow();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(patches, 'a second PATCH left while the first was in flight').toHaveLength(1);
+
+    // The first lands. The re-save follows on its own, carrying what the
+    // server said the version now is.
+    await act(async () => {
+      release?.();
+      await Promise.all([firstSave, secondSave]);
+    });
+    await waitFor(() => {
+      expect(patches).toHaveLength(2);
+    });
+    expect(patches[1]?.['version']).toBe(SERVER_VERSION_AFTER_FIRST);
+    expect(patches[1]?.['body']).toBe('Ellis quoted nine hundred pounds.');
+
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('saved');
+    });
+    expect(view.result.current.model.version).toBe(SERVER_VERSION_AFTER_FIRST + 1);
+    // And no fabricated conflict at any point.
+    expect(view.result.current.model.theirs).toBeNull();
+    expect(patches).toHaveLength(2);
+  });
+});
