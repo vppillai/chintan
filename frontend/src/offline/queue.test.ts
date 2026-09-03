@@ -275,8 +275,10 @@ describe('flush runs one pass at a time', () => {
     const [a, b] = await Promise.all([first, second]);
     expect(a).toEqual({ applied: 2, failed: 0, stoppedOffline: false });
     expect(b).toBe(a);
-    // Each mutation ran exactly once.
-    expect(seen).toEqual(['a', 'b']);
+    // Each mutation ran exactly once. Order is not asserted: both were
+    // enqueued in the same millisecond, and the byCreatedAt index does not
+    // order ties, so on a fast runner 'b' can legitimately come first.
+    expect([...seen].sort()).toEqual(['a', 'b']);
     expect(await count()).toBe(0);
   });
 
