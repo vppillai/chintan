@@ -1,0 +1,287 @@
+<title>Chintan Notes-First</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=Inter:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#fbf9f4;--surface:#f2eee4;--raised:#f7f4ec;--ink:#1a1917;--muted:#534f48;--faint:#716a5b;
+  --line:#e4dfd2;--line-strong:#8a8478;--accent:#c2410c;--accent-strong:#a8380a;--on-accent:#fbf9f4;
+  --selection:rgb(194 65 12 / 18%);--ok:#2f6b3a;--warn:#8a6a10;
+  --serif:'Source Serif 4','Iowan Old Style',Charter,Georgia,serif;
+  --sans:Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0a0c0b;--surface:#141816;--raised:#1c211f;--ink:#f2f5f3;--muted:#a4aca8;--faint:#7c8c82;
+    --line:#242a27;--line-strong:#5e6e66;--accent:#b8f135;--accent-strong:#b8f135;--on-accent:#0a0c0b;
+    --selection:rgb(184 241 53 / 22%);--ok:#8fd19a;--warn:#e0c25a;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0a0c0b;--surface:#141816;--raised:#1c211f;--ink:#f2f5f3;--muted:#a4aca8;--faint:#7c8c82;
+  --line:#242a27;--line-strong:#5e6e66;--accent:#b8f135;--accent-strong:#b8f135;--on-accent:#0a0c0b;
+  --selection:rgb(184 241 53 / 22%);--ok:#8fd19a;--warn:#e0c25a;color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:16px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:72rem;margin:0 auto;padding:2.5rem 1.25rem 5rem}
+h1,h2,h3{font-family:var(--serif);font-weight:600;letter-spacing:-.015em;text-wrap:balance;margin:0}
+h1{font-size:2.5rem;line-height:1.1}
+h2{font-size:1.5rem;line-height:1.2;margin-top:3rem;margin-bottom:.75rem}
+h3{font-size:1.15rem;margin-bottom:.25rem}
+p{max-width:65ch;margin:.5rem 0}
+.eyebrow{font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.lede{font-size:1.15rem;color:var(--muted);max-width:60ch}
+.grid{display:grid;gap:1.25rem}
+.two{grid-template-columns:repeat(auto-fit,minmax(18rem,1fr))}
+.three{grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))}
+.cmp{border-top:1px solid var(--line);padding-top:1rem}
+.cmp h3{font-family:var(--sans);font-size:.95rem;font-weight:600}
+.cmp p{color:var(--muted);font-size:.95rem}
+.now{color:var(--faint)}
+.tbl{width:100%;border-collapse:collapse;font-size:.92rem;margin-top:.75rem}
+.tbl th,.tbl td{text-align:left;padding:.55rem .6rem;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl th{font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.tbl td:first-child{white-space:nowrap;font-weight:500}
+.scroll{overflow-x:auto}
+.num{font-variant-numeric:tabular-nums}
+.pill{display:inline-block;padding:.1rem .5rem;border-radius:999px;font-size:.75rem;font-weight:600;letter-spacing:.02em;border:1px solid var(--line-strong);color:var(--muted)}
+.pill.keep{border-color:var(--ok);color:var(--ok)}
+.pill.del{border-color:var(--accent);color:var(--accent)}
+.pill.new{border-color:var(--line-strong);color:var(--ink);background:var(--surface)}
+
+/* ------- phones ------- */
+.stage{display:grid;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));gap:1.5rem;margin-top:1.5rem;align-items:start}
+.phone{background:var(--surface);border:1px solid var(--line);border-radius:2.2rem;padding:.6rem;box-shadow:0 1px 0 var(--line) inset}
+.screen{position:relative;background:var(--ground);border-radius:1.7rem;height:41rem;overflow:hidden;display:flex;flex-direction:column;font-size:.86rem}
+.status{display:flex;justify-content:space-between;padding:.7rem 1.2rem 0;font-size:.72rem;color:var(--faint);font-weight:600}
+.caption{margin-top:.75rem;color:var(--muted);font-size:.9rem}
+.caption b{color:var(--ink);font-weight:600}
+.hdr{padding:.9rem 1.1rem .4rem}
+.hdr h4{margin:0;font:600 1.6rem/1.1 var(--serif);letter-spacing:-.015em}
+.search{margin:.6rem 1.1rem .2rem;display:flex;align-items:center;gap:.5rem;padding:.55rem .8rem;background:var(--surface);border-radius:.75rem;color:var(--faint)}
+.search svg{width:1rem;height:1rem;flex:none}
+.chips{display:flex;gap:.4rem;padding:.4rem 1.1rem .2rem;overflow-x:auto;scrollbar-width:none}
+.chip{flex:none;padding:.25rem .65rem;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.75rem;font-weight:500;background:var(--ground)}
+.chip.on{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.list{flex:1;overflow:auto;padding:0 0 5rem}
+.grp{padding:.9rem 1.1rem .25rem;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.row{display:grid;grid-template-columns:1fr auto;gap:.15rem .75rem;padding:.7rem 1.1rem;border-bottom:1px solid var(--line);cursor:pointer}
+.row:hover{background:var(--surface)}
+.row .t{font:600 1.05rem/1.25 var(--serif);letter-spacing:-.01em}
+.row .s{grid-column:1/-1;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4}
+.row .m{grid-column:1/-1;display:flex;gap:.6rem;align-items:center;color:var(--faint);font-size:.74rem;margin-top:.15rem}
+.row .m .tag{padding:0 .4rem;border:1px solid var(--line);border-radius:.3rem}
+.row .when{color:var(--faint);font-size:.74rem;font-family:var(--serif);font-variant-numeric:tabular-nums;padding-top:.15rem}
+.live{display:flex;align-items:center;gap:.5rem;color:var(--accent);font-weight:600;font-size:.76rem}
+.live i{width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);display:inline-block;animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.live i{animation:none}}
+.prog{margin:.5rem 1.1rem 0;padding:.6rem .8rem;background:var(--surface);border-radius:.75rem;display:grid;grid-template-columns:1fr auto;gap:.2rem}
+.prog .steps{grid-column:1/-1;display:flex;gap:.35rem;margin-top:.35rem}
+.prog .steps span{flex:1;height:.25rem;border-radius:.2rem;background:var(--line)}
+.prog .steps span.done{background:var(--ink)}
+.prog .steps span.now{background:var(--accent)}
+.tabs{position:absolute;left:0;right:0;bottom:0;display:grid;grid-template-columns:1fr auto 1fr;align-items:end;padding:.5rem 1.4rem 1.1rem;background:linear-gradient(to top,var(--ground) 70%,transparent)}
+.tab{display:flex;flex-direction:column;align-items:center;gap:.2rem;font-size:.68rem;font-weight:600;color:var(--faint);padding:.4rem;border:0;background:none;font-family:inherit;cursor:pointer}
+.tab.on{color:var(--ink)}
+.tab svg{width:1.35rem;height:1.35rem}
+.rec{width:4.25rem;height:4.25rem;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:0 8px 24px rgb(0 0 0 / 18%);border:0;cursor:pointer;margin-bottom:.2rem}
+.rec svg{width:1.6rem;height:1.6rem}
+/* note screen */
+.note{padding:0 1.1rem 6rem;overflow:auto;flex:1}
+.back{color:var(--faint);font-size:.78rem;font-weight:600;padding:.6rem 0 .3rem}
+.note h4{font:600 1.75rem/1.1 var(--serif);letter-spacing:-.02em;margin:.2rem 0 .3rem}
+.meta{color:var(--faint);font-size:.74rem;display:flex;gap:.6rem;flex-wrap:wrap}
+.body{font:400 .98rem/1.55 var(--serif);margin:1rem 0;color:var(--ink)}
+.body p{margin:0 0 .7rem;max-width:none}
+.sec{display:flex;justify-content:space-between;align-items:baseline;margin-top:1.2rem;padding-top:.8rem;border-top:1px solid var(--line)}
+.sec h5{margin:0;font:600 .72rem var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+.sec a{font-size:.76rem;color:var(--muted);text-decoration:none;font-weight:500}
+.cap{display:grid;grid-template-columns:auto 1fr auto;gap:.6rem;align-items:center;padding:.6rem 0;border-bottom:1px solid var(--line)}
+.play{width:2rem;height:2rem;border-radius:50%;border:1px solid var(--line-strong);display:grid;place-items:center;color:var(--ink)}
+.play svg{width:.9rem;height:.9rem}
+.cap .d{font-size:.8rem}
+.cap .d small{display:block;color:var(--faint);font-size:.72rem}
+.cap .len{font-family:var(--serif);font-variant-numeric:tabular-nums;color:var(--muted);font-size:.8rem}
+.tx{grid-column:1/-1;font-size:.82rem;color:var(--muted);line-height:1.5;padding:.2rem .5rem .4rem 2.6rem;border-left:2px solid var(--line);margin-left:.9rem}
+.tx b{color:var(--ink);font-weight:500;background:var(--selection)}
+.actions{position:absolute;left:0;right:0;bottom:0;display:flex;gap:.5rem;padding:.7rem 1.1rem 1.1rem;background:linear-gradient(to top,var(--ground) 70%,transparent)}
+.btn{flex:1;padding:.7rem;border-radius:.75rem;border:1px solid var(--line-strong);background:var(--ground);color:var(--ink);font:600 .8rem var(--sans);text-align:center}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+/* record screen */
+.recscr{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:1rem 1.1rem 1.4rem;text-align:center}
+.into{display:inline-flex;gap:.4rem;align-items:center;padding:.45rem .9rem;border:1px solid var(--line);border-radius:999px;font-size:.8rem;color:var(--muted)}
+.into b{color:var(--ink);font-weight:600}
+.timer{font:400 4.4rem/1 var(--serif);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.wave{width:100%;height:5.5rem;display:flex;align-items:center;gap:3px;justify-content:center}
+.wave span{width:3px;border-radius:2px;background:var(--accent);opacity:.9}
+.ctrls{display:flex;gap:1.4rem;align-items:center}
+.ctl{width:3.2rem;height:3.2rem;border-radius:50%;border:1px solid var(--line-strong);display:grid;place-items:center;color:var(--ink);font-size:.7rem;font-weight:600;background:var(--ground)}
+.ctl.stop{width:4.4rem;height:4.4rem;background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.hint{color:var(--faint);font-size:.78rem}
+/* controls */
+.toolbar{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:1rem}
+.tbtn{padding:.45rem .9rem;border-radius:999px;border:1px solid var(--line-strong);background:var(--ground);color:var(--ink);font:600 .82rem var(--sans);cursor:pointer}
+.tbtn:focus-visible,.tab:focus-visible,.rec:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:.75rem;margin-top:1rem}
+.node{padding:.8rem .9rem;border:1px solid var(--line);border-radius:.75rem;background:var(--surface)}
+.node b{display:block;font-family:var(--serif);font-size:1.05rem;font-weight:600}
+.node span{color:var(--muted);font-size:.85rem}
+.plan li{margin:.35rem 0}
+.plan{padding-left:1.2rem;max-width:70ch}
+footer{margin-top:4rem;color:var(--faint);font-size:.85rem;border-top:1px solid var(--line);padding-top:1rem}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Chintan · UX proposal · 2026-09-03</div>
+  <h1>Notes first. Record from anywhere.</h1>
+  <p class="lede">Today the app opens on a record button and hides the notes behind a pull-up sheet. This proposal turns that inside out: you land on your notes, the record control is one thumb away on every screen, and a note shows its recordings as the sources it was written from.</p>
+
+  <div class="toolbar" role="group" aria-label="Preview controls">
+    <button class="tbtn" data-shot="library">Library</button>
+    <button class="tbtn" data-shot="note">A note</button>
+    <button class="tbtn" data-shot="record">Recording</button>
+    <span class="now" style="font-size:.85rem">← click a phone, or these, to move between the three screens</span>
+  </div>
+
+  <div class="stage" id="stage">
+    <!-- Phone 1: Library -->
+    <figure class="phone" style="margin:0">
+      <div class="screen" data-screen="library">
+        <div class="status"><span>9:41</span><span class="num">●●● 78%</span></div>
+        <div class="hdr"><h4>Notes</h4></div>
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Search titles, tags, transcripts</div>
+        <div class="chips"><span class="chip on">All</span><span class="chip">house</span><span class="chip">work</span><span class="chip">travel</span><span class="chip">ideas</span><span class="chip">Archived · 3</span></div>
+        <div class="prog" aria-label="Recording being filed">
+          <div class="live"><i></i>Filing your recording</div><span class="num when">0:41</span>
+          <div class="steps"><span class="done"></span><span class="done"></span><span class="now"></span><span></span></div>
+        </div>
+        <div class="list">
+          <div class="grp">Today</div>
+          <div class="row" data-go="note"><span class="t">Roof repair</span><span class="when">14:02</span><span class="s">The gutter on the north side is leaking again near the downpipe. Ask the roofer whether the flashing was replaced last time or just sealed.</span><span class="m"><span class="tag">house</span><span class="num">3 recordings · 4:12</span></span></div>
+          <div class="row"><span class="t">Ideas for the talk</span><span class="when">08:15</span><span class="s">Open with the failure, not the fix. The point is that the retry passed while the promise was false.</span><span class="m"><span class="tag">work</span><span class="num">1 recording · 1:48</span></span></div>
+          <div class="grp">Yesterday</div>
+          <div class="row"><span class="t">Dentist</span><span class="when">17:30</span><span class="s">Book the hygienist for the week after Portugal. Ask about the crown on the lower left.</span><span class="m"><span class="num">1 recording · 0:36</span></span></div>
+          <div class="grp">August</div>
+          <div class="row"><span class="t">Portugal trip</span><span class="when">Aug 28</span><span class="s">Two nights in Porto, then the train south. Rent the car in Lisbon not Porto, the return is cheaper.</span><span class="m"><span class="tag">travel</span><span class="num">6 recordings · 11:05</span></span></div>
+          <div class="row"><span class="t">Garage shelving</span><span class="when">Aug 19</span><span class="s">Measure the back wall before ordering. The uprights need to clear the door track.</span><span class="m"><span class="tag">house</span><span class="num">2 recordings · 2:20</span></span></div>
+        </div>
+        <nav class="tabs" aria-label="Main">
+          <button class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h14v16H5zM8 9h8M8 13h8M8 17h5"/></svg>Notes</button>
+          <button class="rec" aria-label="Record" data-go="record"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11a6 6 0 0 0 12 0" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 17v4" stroke="currentColor" stroke-width="2"/></svg></button>
+          <button class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>You</button>
+        </nav>
+      </div>
+      <figcaption class="caption"><b>Library.</b> Grouped by day, two lines of the note, its tags and how much audio is behind it. Search filters as you type from the offline corpus. A recording being filed sits in the list, not in a floating card. Archive is a chip, not a destination.</figcaption>
+    </figure>
+
+    <!-- Phone 2: Note -->
+    <figure class="phone" style="margin:0">
+      <div class="screen" data-screen="note">
+        <div class="status"><span>9:41</span><span class="num">●●● 78%</span></div>
+        <div class="note">
+          <div class="back" data-go="library">‹ Notes</div>
+          <h4>Roof repair</h4>
+          <div class="meta"><span>Updated today 14:02</span><span>·</span><span class="tag chip" style="padding:0 .4rem">house</span><span>·</span><span class="num">3 recordings</span></div>
+          <div class="body">
+            <p>The north gutter is leaking again next to the downpipe. Ask the roofer whether the flashing was replaced last time or just sealed, and get the invoice to check.</p>
+            <p>Bring the ladder round before Saturday so the quote can include the soffit.</p>
+            <p>Budget: keep it under what the insurance excess would be, otherwise claim.</p>
+          </div>
+          <div class="sec"><h5>Recordings</h5><a href="#">Show cleaned text</a></div>
+          <div class="cap"><span class="play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span><span class="d">Today 14:02<small>Filed automatically</small></span><span class="len num">1:12</span>
+            <div class="tx">…the <b>gutter on the north side is leaking again</b> near the downpipe, ask him whether the flashing was actually replaced or just sealed…</div></div>
+          <div class="cap"><span class="play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span><span class="d">Yesterday 18:40<small>You chose this note</small></span><span class="len num">1:58</span></div>
+          <div class="cap"><span class="play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span><span class="d">Aug 30 07:55<small>Filed automatically</small></span><span class="len num">1:02</span></div>
+        </div>
+        <div class="actions"><span class="btn">Tags</span><span class="btn">Share</span><span class="btn">Archive</span><span class="btn primary" data-go="record">＋ Record into this</span></div>
+      </div>
+      <figcaption class="caption"><b>A note.</b> The cleaned text is the document; the recordings below are its sources. Tap a line of transcript to seek; the playing sentence highlights. "Record into this" is the one-tap path to add to a note you are already reading.</figcaption>
+    </figure>
+
+    <!-- Phone 3: Recording -->
+    <figure class="phone" style="margin:0">
+      <div class="screen" data-screen="record">
+        <div class="status"><span>9:41</span><span class="num">●●● 78%</span></div>
+        <div class="recscr">
+          <div style="display:grid;gap:.6rem;justify-items:center">
+            <div class="live"><i></i>Recording</div>
+            <div class="into">Into <b>Roof repair</b> <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></div>
+          </div>
+          <div style="display:grid;gap:.75rem;justify-items:center;width:100%">
+            <div class="timer" aria-live="off">01:12</div>
+            <div class="wave" id="wave" aria-hidden="true"></div>
+            <div class="hint">Say “add this to my roof note” or pick the note above.</div>
+          </div>
+          <div class="ctrls">
+            <button class="ctl" data-go="library">✕</button>
+            <button class="ctl stop" data-go="library" aria-label="Stop"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+            <button class="ctl">❙❙</button>
+          </div>
+        </div>
+      </div>
+      <figcaption class="caption"><b>Recording.</b> Unchanged in spirit — big timer, live waveform, tones — with one addition: where it will file, shown and changeable before you speak. Stop returns you to the library, where the filing progress appears at the top.</figcaption>
+    </figure>
+  </div>
+
+  <h2>What changes, and why</h2>
+  <div class="grid two">
+    <div class="cmp"><h3>Landing screen</h3><p class="now">Now: a record button with a pull-up sheet you have to discover.</p><p>Proposed: your notes, with Record fixed in the bottom bar. Eyes-off recording still starts from the home-screen shortcut and the lock screen, which never went through the sheet anyway.</p></div>
+    <div class="cmp"><h3>Finding a note</h3><p class="now">Now: a flat list, most recent first, and a separate Search screen.</p><p>Proposed: date groups, two-line previews, tag chips and a search field on the list itself that filters instantly from the offline corpus. Search stops being a place.</p></div>
+    <div class="cmp"><h3>Reading a note</h3><p class="now">Now: body, then a transcript panel and a scrubber, with recordings numbered “Recording 2”.</p><p>Proposed: the body is the document; each recording is a dated row with duration, how it was filed, a player and its transcript. The 4-seconds-times-4 progress polling goes away with the floating card.</p></div>
+    <div class="cmp"><h3>Filing into a note</h3><p class="now">Now: you say it, or fix it afterwards via “needs a target”.</p><p>Proposed: “Record into this” on every note, and a chooser on the record screen — the backend endpoint for this already exists and has no UI.</p></div>
+    <div class="cmp"><h3>Archive</h3><p class="now">Now: a separate screen reached from the bottom of the list.</p><p>Proposed: a chip on the library. Bulk select, archive and delete work the same in either view.</p></div>
+    <div class="cmp"><h3>Navigation model</h3><p class="now">Now: home, sheet states, five routes and a back-guard that decides whether Back collapses the sheet.</p><p>Proposed: three tabs, one stack. Back always means “back”. The sheet reducer, the strip and the back guard are deleted.</p></div>
+  </div>
+
+  <h2>Information architecture</h2>
+  <div class="flow">
+    <div class="node"><b>Notes</b><span>list · search · tag chips · archived chip · bulk select</span></div>
+    <div class="node"><b>Note</b><span>title · body · tags · recordings with transcript · record into</span></div>
+    <div class="node"><b>Record</b><span>full screen · target chooser · pause · stop → back to Notes</span></div>
+    <div class="node"><b>You</b><span>theme · retention · cleanup style · export · sign out · version</span></div>
+  </div>
+
+  <h2>What this deletes from the frontend</h2>
+  <div class="scroll"><table class="tbl">
+    <tr><th>Area</th><th>Today</th><th>Proposed</th></tr>
+    <tr><td>Sheet / strip</td><td>pull-up sheet, collapsed strip, sheet reducer, back guard, route focus juggling</td><td><span class="pill del">delete</span> replaced by a tab bar</td></tr>
+    <tr><td>Home + Search screens</td><td>two screens</td><td><span class="pill del">delete</span> Notes is home; search is a field on it</td></tr>
+    <tr><td>Archive screen</td><td>twin of Notes with its own bulk bar</td><td><span class="pill del">delete</span> a filter chip on Notes, same rows</td></tr>
+    <tr><td>Progress card + resume prompt</td><td>floating cards, 4 requests / 4 s</td><td><span class="pill new">rework</span> one row at the top of the list, one poll</td></tr>
+    <tr><td>Background Sync + queued mutation kinds</td><td>~500 lines nothing enqueues</td><td><span class="pill del">delete</span> foreground retry on reconnect stays</td></tr>
+    <tr><td>Capture machine, recorder, uploader, buffer</td><td>tested, correct</td><td><span class="pill keep">keep</span></td></tr>
+    <tr><td>Note editor, autosave, player, transcript sync</td><td>tested, correct; autosave needs the in-flight guard</td><td><span class="pill keep">keep</span> + fix</td></tr>
+    <tr><td>Design tokens, themes, a11y dialog</td><td>good</td><td><span class="pill keep">keep</span></td></tr>
+  </table></div>
+  <p>Roughly a third of the frontend goes, and the part that stays is the part the tests prove.</p>
+
+  <h2>Plan</h2>
+  <ol class="plan">
+    <li><b>Shell:</b> tab bar, three routes plus the note route; delete sheet, strip, back guard, Home and Search screens. One PR, behind nothing — the old screens go the same day.</li>
+    <li><b>Library:</b> grouped list, search field over the offline corpus, tag and archived chips, inline filing row; bulk select carries over as is.</li>
+    <li><b>Note:</b> recordings as dated rows with player and transcript; “Record into this”; autosave in-flight guard.</li>
+    <li><b>Record:</b> target chooser; stop returns to Notes.</li>
+    <li><b>Cleanup:</b> Background Sync, dead mutation kinds, unused API wrappers, the WebKit Playwright project for the non-mic specs.</li>
+  </ol>
+  <p class="now">Each step is a PR that passes the existing suite; the e2e specs for capture, notes and archive are rewritten as their screens move.</p>
+
+  <footer>Prepared from the code as of <span class="num">2026-09-03</span>. Colours and type are the app's own Ink &amp; Paper and Nocturne tokens; switch your OS theme to see the other.</footer>
+</div>
+
+<script>
+(function(){
+  var stage=document.getElementById('stage');
+  var screens=Array.prototype.slice.call(stage.querySelectorAll('.screen'));
+  function focus(name){
+    screens.forEach(function(s){ s.parentElement.style.outline = (s.dataset.screen===name)?'2px solid var(--line-strong)':'none'; s.parentElement.style.outlineOffset='4px'; });
+    var el=stage.querySelector('[data-screen="'+name+'"]'); if(el&&window.innerWidth<900){ el.parentElement.scrollIntoView({behavior:'smooth',block:'nearest'}); }
+  }
+  document.querySelectorAll('[data-go]').forEach(function(b){ b.addEventListener('click',function(e){ e.preventDefault(); focus(b.dataset.go); }); });
+  document.querySelectorAll('[data-shot]').forEach(function(b){ b.addEventListener('click',function(){ focus(b.dataset.shot); }); });
+  // waveform bars
+  var w=document.getElementById('wave'); if(w){ for(var i=0;i<44;i++){ var s=document.createElement('span'); var h=8+Math.abs(Math.sin(i*0.55)*30+Math.sin(i*1.7)*14); s.style.height=h+'px'; w.appendChild(s);} }
+})();
+</script>
