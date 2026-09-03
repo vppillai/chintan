@@ -171,6 +171,10 @@ if [ "$(probe_state "$BUCKET_PROBE")" = present ]; then
 fi
 
 if [ "$(probe_state "$TABLE_PROBE")" = present ]; then
+    # Deletion protection is on by design and must come off first; the call is
+    # a no-op on a table that never had it.
+    info "disabling deletion protection on ${TABLE}"
+    aws dynamodb update-table --table-name "$TABLE" --no-deletion-protection-enabled >/dev/null
     info "deleting table ${TABLE}"
     aws dynamodb delete-table --table-name "$TABLE" >/dev/null
     # delete-table returns immediately; the name stays taken until it is gone,

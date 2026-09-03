@@ -59,6 +59,11 @@ export interface SettingsWire {
   cleanup_mode: CleanupMode;
   retention_days: number;
   theme: ThemeSetting;
+  /**
+   * The instance-wide daily provider budget, read-only. Reported by the
+   * server so the app can show the ceiling that is enforced; a value sent on
+   * PUT is ignored. The per-tenant cap this used to be went with v3 step 3.
+   */
   daily_spend_cap_micros?: number;
 }
 

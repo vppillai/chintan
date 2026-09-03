@@ -63,6 +63,13 @@ type Page[T any] struct {
 	Cursor string `json:"cursor,omitempty"`
 }
 
+// TenantNote is a note together with the tenant that owns it, for the one
+// read that crosses tenants: the expiry sweep.
+type TenantNote struct {
+	TenantID string
+	Note     model.NoteIndex
+}
+
 // IdemRecord is the stored result of a completed idempotent request.
 type IdemRecord struct {
 	Key         string
@@ -117,12 +124,18 @@ type Store interface {
 	GetSettings(ctx context.Context, tenantID string) (model.Settings, error)
 	PutSettings(ctx context.Context, tenantID string, s model.Settings) error
 
-	// ListNotes returns active (non-archived) notes.
+	// ListNotes returns active (non-archived) notes, most recently touched
+	// first.
 	ListNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error)
 	// ListArchivedNotes returns archived notes that have not passed their purge
-	// deadline. DynamoDB TTL removes them eventually; the filter keeps them out
-	// of the UI in the meantime.
+	// deadline. The expiry sweep removes them once it has; the filter keeps
+	// them out of the UI in the meantime.
 	ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error)
+	// ExpiredNotes returns every archived note, in every tenant, whose purge
+	// deadline had passed at asOf (Unix seconds). It is the input to the
+	// weekly expiry sweep, which unlinks each note's objects and captures and
+	// then deletes the note; DynamoDB TTL is only the backstop.
+	ExpiredNotes(ctx context.Context, asOf int64) ([]TenantNote, error)
 	GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error)
 	// PutNote writes n conditionally on n.Version matching the stored version,
 	// and returns the note with its new version. A losing write returns

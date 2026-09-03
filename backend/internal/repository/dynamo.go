@@ -28,15 +28,20 @@ type DynamoAPI interface {
 	UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	Scan(ctx context.Context, in *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
 }
 
 // DynamoStore implements Store using DynamoDB with a single-table design.
 //
 // Keys: pk = USER#<tenantId>, sk = SETTINGS | NOTE#<id> | CAPTURE#<id> |
-// IDEM#<key>.
+// IDEM#<key>. One partition is not a tenant's: pk = INSTANCE, sk = SPEND#<day>
+// is the instance-wide daily provider spend counter (internal/pipeline
+// DynamoCounter), written by the worker's breaker and read by the API's
+// spend gate.
 //
 // GSI1 (gsi1pk = TENANT#<tenantId>#NOTE#<noteId>, gsi1sk = CAPTURE#<createdAt>)
-// turns note -> captures into a direct query.
+// turns note -> captures into a direct query. It is the only index: the notes
+// list reads the base table and orders in Go (see listNotes).
 //
 // Attributes that a list renders or filters on are stored top-level so queries
 // can use a ProjectionExpression. The `data` blob is retained as the full
@@ -55,11 +60,8 @@ var (
 	_ Objects = (*S3Objects)(nil)
 )
 
-// gsi1Name and gsi2Name are the indexes the template creates.
-const (
-	gsi1Name = "gsi1"
-	gsi2Name = "gsi2"
-)
+// gsi1Name is the one index the template creates.
+const gsi1Name = "gsi1"
 
 // NewDynamoStore creates a new DynamoDB-backed store.
 func NewDynamoStore(client DynamoAPI, tableName string) *DynamoStore {
@@ -69,10 +71,6 @@ func NewDynamoStore(client DynamoAPI, tableName string) *DynamoStore {
 		indexName: gsi1Name,
 	}
 }
-
-// maxFilterRounds bounds how many Query round trips one page may cost when a
-// FilterExpression discards most items, so a list can never run unbounded.
-const maxFilterRounds = 10
 
 // Key mapping helpers for single-table design
 func userPK(tenantID string) string {
@@ -105,64 +103,51 @@ func captureGSI1SK(createdAt string) string {
 	return "CAPTURE#" + createdAt
 }
 
-// GSI2 orders a tenant's notes by when they were last touched.
+// maxNotesListed bounds how many of a tenant's notes one list drains from the
+// base table before ordering them.
 //
-// The base table cannot answer this. Its sort key is NOTE#<id> and a note id
-// leads with its CREATION instant, so walking it backwards returns the most
-// recently created note — and in a voice app the common case is a note made
-// months ago that a capture appended to this morning. Ordering by update time
-// needs the update time in a key, which is what this index is.
+// The notes list is ordered by when each note was last touched, and the base
+// table cannot answer that: its sort key is NOTE#<id> and a note id leads with
+// its CREATION instant. Until 2026-09 a second index (gsi2) carried updated_at
+// as its sort key so DynamoDB could do the ordering; it cost a backfill
+// (`chintanctl reindex`), a two-step deploy procedure and an INCLUDE projection
+// that had to be kept in step with the model, all to order a few hundred notes.
+// The capture router had always drained the partition and sorted in Go
+// (pipeline.decideTarget); the list now does the same, with the same bound.
 //
-// The shelf is in the partition rather than in a filter. DynamoDB applies Limit
-// before FilterExpression, so a filtered query returns short pages and has to
-// be re-issued; with active and archived in separate partitions each list is a
-// plain query over exactly the items it wants, and neither can page the other
-// out.
-const (
-	noteShelfActive   = "ACTIVE"
-	noteShelfArchived = "ARCHIVED"
-)
+// The drain walks the base table newest-created first, so a tenant with more
+// notes than this sees the most recently created 500 ordered by touch, and a
+// note older than that which was touched today is not listed. Revisit if a
+// tenant ever has thousands of notes.
+const maxNotesListed = 500
 
-// NoteIndexKeys returns the GSI2 key attributes a note item must carry.
+// ttlGraceSeconds is how long after its purge deadline a note's row is left
+// for DynamoDB TTL to collect: fourteen days.
 //
-// Exported so the backfill in chintanctl derives them from the same code the
-// write path uses. Two copies of this derivation is how an index quietly
-// disagrees with the table it indexes: the shelf choice and the timestamp
-// normalisation both have to match exactly, and neither failure would error —
-// a note would simply stop appearing in a list.
-func NoteIndexKeys(tenantID string, n model.NoteIndex) (pk, sk string) {
-	return notesShelfGSI2PK(tenantID, noteShelfOf(n)), noteUpdatedSortKey(n.UpdatedAt)
-}
+// The row must outlive the deadline because the objects it names have to go
+// first. The weekly expiry sweep (internal/purge) finds notes past their
+// purge_after_epoch, runs PurgeNoteArtifacts — captures, audio, transcripts,
+// the note body — and then deletes the row itself. TTL is the backstop for a
+// sweep that did not run, and it has to lose the race to the sweep: TTL fires
+// within about two days of the attribute's value, so a ttl equal to the
+// deadline would usually delete the row before the weekly sweep had seen it,
+// leaving every object the row named orphaned in the bucket — the leak the
+// stream-triggered expiry Lambda used to exist to close. Two weeks gives the
+// sweep two chances. The archived list filters on purge_after_epoch, not ttl,
+// so a note past its deadline is already invisible while it waits.
+const ttlGraceSeconds = 14 * 24 * 60 * 60
 
-func notesShelfGSI2PK(tenantID, shelf string) string {
-	return fmt.Sprintf("TENANT#%s#NOTES#%s", tenantID, shelf)
-}
-
-// noteShelfOf reports which shelf a note belongs on. Archived is "has a
-// deletion stamp"; whether it has also passed its purge deadline is a question
-// about time, which cannot live in a key, so the archived list still filters on
-// purge_after_epoch.
-func noteShelfOf(n model.NoteIndex) string {
-	if strings.TrimSpace(n.DeletedAt) == "" {
-		return noteShelfActive
-	}
-	return noteShelfArchived
-}
-
-// noteUpdatedSortKey renders a note's update time as a fixed-width instant.
+// noteTouchedSortKey renders a note's update time as a fixed-width instant, so
+// that comparing two as strings compares them chronologically.
 //
 // The width is load-bearing. model.TimeLayout pads the fraction to nine digits
 // precisely so a string comparison is a chronological comparison; RFC3339Nano
 // trims trailing zeros, so "…:00Z" sorts ABOVE "…:00.1Z" because 'Z' > '.'.
 // That defect was found and fixed in the capture router, where it handed the
-// model the wrong fifty notes. A sort key built from a variable-width timestamp
-// reintroduces it silently and permanently, because a GSI sort key cannot be
-// changed without rebuilding the index.
-//
-// A value written before the fixed-width layout existed is re-rendered here. An
-// unparseable one is carried through as-is: it sorts oddly, which is visible,
-// rather than being dropped from the index, which is not.
-func noteUpdatedSortKey(updatedAt string) string {
+// model the wrong fifty notes. A value written before the fixed-width layout
+// existed is re-rendered here; an unparseable one is carried through as-is, so
+// it sorts oddly, which is visible, rather than being dropped, which is not.
+func noteTouchedSortKey(updatedAt string) string {
 	if t, err := model.ParseTime(updatedAt); err == nil {
 		return model.FormatTime(t)
 	}
@@ -179,13 +164,15 @@ type dynamoItem struct {
 	TTL  int64  `dynamodbav:"ttl,omitempty"`
 }
 
-// The note list no longer names its attributes. It reads gsi2, whose INCLUDE
-// projection is that list — `snippet` included, because note matching scores
-// against it and dropping it to save bytes would silently degrade routing — and
-// `data` excluded, which is the transfer cost the projection work removed. A
-// ProjectionExpression here would be a second copy of that list to keep in
-// step, and on a GSI it cannot fetch what the index does not hold: it would
-// return blanks rather than fail.
+// noteListProjection is what a list reads of each note: everything a note row
+// renders, what the editor and the archive need without a second read, and the
+// archive's filter attribute. `snippet` is included because note matching
+// scores against it and dropping it to save bytes would silently degrade
+// routing. `data` — the blob that duplicates every attribute here — is the
+// transfer cost this projection exists to avoid, and `sk` is kept so an item
+// written before the attributes were promoted can be read whole by its key.
+const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
+	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, version"
 
 func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
 
@@ -319,15 +306,13 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		"version":         numAttr(n.Version),
 		"data":            strAttr(string(blob)),
 	}
-	// GSI2: the notes list, ordered by when each note was last touched.
-	item["gsi2pk"] = strAttr(notesShelfGSI2PK(tenantID, noteShelfOf(n)))
-	item["gsi2sk"] = strAttr(noteUpdatedSortKey(n.UpdatedAt))
 	if n.PurgeAfterEpoch > 0 {
 		item["purge_after_epoch"] = numAttr(n.PurgeAfterEpoch)
 		// The table has one TTL attribute, `ttl`, shared with idempotency
-		// records. purge_after_epoch is the projected, queryable
-		// copy; ttl is what DynamoDB expires on.
-		item["ttl"] = numAttr(n.PurgeAfterEpoch)
+		// records. purge_after_epoch is the deadline the archived list filters
+		// on and the expiry sweep acts on; ttl is the backstop DynamoDB expires
+		// on, deliberately later — see ttlGraceSeconds.
+		item["ttl"] = numAttr(n.PurgeAfterEpoch + ttlGraceSeconds)
 	}
 	return item, nil
 }
@@ -376,139 +361,73 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	return n, nil
 }
 
-// listNotes runs the shared paginated note query. filter is applied server-side.
-func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf, filter string, extraValues map[string]types.AttributeValue, opts ListOptions) (Page[model.NoteIndex], error) {
+// listNotes drains the tenant's notes from the base table, keeps the ones on the
+// requested shelf, orders them most recently touched first and pages the result.
+//
+// Ordering in Go is the whole design: see maxNotesListed for why there is no
+// index. The page cursor is not a DynamoDB key — the walk it resumes is over a
+// sorted slice this store built — so it carries the position in that order:
+// the touch instant and id of the last note served. Resuming re-derives the
+// offset by comparison rather than trusting a stored count, which is what keeps
+// the cursor stable when a note is touched or created between two pages: the
+// second page begins after the last note the client saw, whatever moved above
+// it.
+func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, keep func(model.NoteIndex) bool, opts ListOptions) (Page[model.NoteIndex], error) {
 	if err := ctx.Err(); err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
-
-	// GSI2, not the base table. The base table is keyed NOTE#<id> and a note id
-	// leads with its creation instant, so it can only answer "newest made";
-	// the owner asked for "most recently touched", which in a voice app is a
-	// different note most of the time, because every capture appends to one.
-	gsiPK := notesShelfGSI2PK(tenantID, shelf)
-	start, err := decodeCursor(opts.Cursor, cursorScope{
-		pkAttr: "gsi2pk", wantPK: gsiPK,
-		// No sort-key prefix to check: the sort key is a timestamp and shares no
-		// prefix. The shelf is already in the partition, so an archived cursor
-		// cannot be replayed against the active list either.
-		skAttr: "gsi2sk", skPrefix: "",
-		direction: cursorDescending,
-		// Every note cursor that existed before this index did was a base-table
-		// cursor carrying pk/sk, so it fails the partition check above whatever
-		// this says. Declared for the same reason the others are.
-		unmarked: cursorDescending,
-	})
+	after, err := decodeNoteCursor(opts.Cursor, tenantID, shelf)
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
 
-	limit := opts.limit()
-	items := make([]model.NoteIndex, 0, limit)
+	all, err := s.drainNotes(ctx, tenantID)
+	if err != nil {
+		return Page[model.NoteIndex]{}, err
+	}
+	kept := make([]model.NoteIndex, 0, len(all))
+	for _, n := range all {
+		if keep(n) {
+			kept = append(kept, n)
+		}
+	}
+	sortNotesMostRecentlyTouchedFirst(kept)
 
-	// DynamoDB applies Limit before FilterExpression, so a page can come back
-	// short while more matching items exist. Keep querying until the page is
-	// full or the partition is exhausted; bound the rounds so a filter that
-	// matches almost nothing cannot turn one request into an unbounded scan.
-	// The active shelf carries no filter at all now, so this only spins for the
-	// archived list, whose filter drops notes already past their purge deadline.
-	for round := 0; round < maxFilterRounds && int32(len(items)) < limit; round++ {
-		values := map[string]types.AttributeValue{
-			":pk": strAttr(gsiPK),
+	start := 0
+	if after != nil {
+		// The first note that sorts after the cursor's position. A note touched
+		// since page one moved above it and is skipped, exactly as it would
+		// have been on an index walk; nothing below it is skipped or repeated.
+		start = len(kept)
+		for i, n := range kept {
+			if noteOrderKey(n) < after.key() {
+				start = i
+				break
+			}
 		}
-		for k, v := range extraValues {
-			values[k] = v
-		}
-
-		in := &dynamodb.QueryInput{
-			TableName:                 aws.String(s.tableName),
-			IndexName:                 aws.String(gsi2Name),
-			KeyConditionExpression:    aws.String("gsi2pk = :pk"),
-			ExpressionAttributeValues: values,
-			ExclusiveStartKey:         start,
-			Limit:                     aws.Int32(limit - int32(len(items))),
-			// Most recently touched first. This is the whole point of the index.
-			ScanIndexForward: aws.Bool(false),
-		}
-		if filter != "" {
-			in.FilterExpression = aws.String(filter)
-		}
-		// No ProjectionExpression. The index's INCLUDE projection is already
-		// exactly the notes list, so naming the attributes again would be a
-		// second copy of that list to keep in step with the template — and on a
-		// GSI a ProjectionExpression cannot fetch what the index does not hold,
-		// so it would silently return blanks rather than fail.
-
-		out, err := s.client.Query(ctx, in)
+	}
+	end := min(start+int(opts.limit()), len(kept))
+	page := Page[model.NoteIndex]{Items: kept[start:end]}
+	if page.Items == nil {
+		page.Items = []model.NoteIndex{}
+	}
+	if end < len(kept) {
+		page.Cursor, err = encodeNoteCursor(tenantID, shelf, kept[end-1])
 		if err != nil {
-			return Page[model.NoteIndex]{}, fmt.Errorf("dynamo query notes: %w", err)
-		}
-
-		for _, raw := range out.Items {
-			if readString(raw, "note_id") == "" {
-				// An item written before the attributes were promoted carries
-				// only the `data` blob, which the index does not project. Read
-				// it whole rather than dropping the note.
-				n, err := s.GetNote(ctx, tenantID, trimPrefix(readString(raw, "sk"), "NOTE#"))
-				if errors.Is(err, ErrNotFound) {
-					continue
-				}
-				if err != nil {
-					return Page[model.NoteIndex]{}, err
-				}
-				items = append(items, n)
-				continue
-			}
-			n, err := noteFromItem(raw)
-			if err != nil {
-				return Page[model.NoteIndex]{}, err
-			}
-			items = append(items, n)
-		}
-
-		start = out.LastEvaluatedKey
-		if len(start) == 0 {
-			return Page[model.NoteIndex]{Items: items}, nil
+			return Page[model.NoteIndex]{}, err
 		}
 	}
-
-	cursor, err := encodeCursor(start, cursorDescending)
-	if err != nil {
-		return Page[model.NoteIndex]{}, err
-	}
-	return Page[model.NoteIndex]{Items: items, Cursor: cursor}, nil
+	return page, nil
 }
 
-// activeNoteFilter keeps notes that were never archived. Items written before
-// deleted_at was promoted carry no such attribute, so absence counts as active.
-// ReindexNotes writes the GSI2 key attributes onto every note in a tenant's
-// partition, and reports how many it touched.
-//
-// It exists because adding a global secondary index does NOT index the items
-// already in the table. DynamoDB backfills a new index only from items that
-// carry its key attributes, and every note written before this index existed
-// carries neither — so on the deploy that adds it, the notes list goes empty
-// and stays empty until each note is written again. That is a data-visibility
-// outage, not a slow migration, and it is the reason this is shipped with the
-// index rather than after it.
-//
-// It is idempotent and it does not touch `version`. A version bump would be a
-// lost update waiting to happen: a client holding version 4 would find 5 in the
-// table and be told to reconcile a change nobody made. This writes only the two
-// index attributes, so an editor open in another tab is unaffected.
-//
-// It reads the whole item rather than the promoted attributes, so a note
-// written before ANY attribute was promoted — one that is nothing but a `data`
-// blob — is indexed from the blob rather than skipped.
-func (s *DynamoStore) ReindexNotes(ctx context.Context, tenantID string) (int, error) {
+// drainNotes reads up to maxNotesListed of the tenant's note items, following
+// LastEvaluatedKey: an unpaginated Query silently truncates at ~1 MB.
+func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string) ([]model.NoteIndex, error) {
 	pk := userPK(tenantID)
 	var start map[string]types.AttributeValue
-	touched := 0
+	notes := make([]model.NoteIndex, 0, 64)
 
-	for {
-		if err := ctx.Err(); err != nil {
-			return touched, err
-		}
+	for len(notes) < maxNotesListed {
 		out, err := s.client.Query(ctx, &dynamodb.QueryInput{
 			TableName:              aws.String(s.tableName),
 			KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
@@ -516,62 +435,127 @@ func (s *DynamoStore) ReindexNotes(ctx context.Context, tenantID string) (int, e
 				":pk":        strAttr(pk),
 				":sk_prefix": strAttr("NOTE#"),
 			},
+			ProjectionExpression: aws.String(noteListProjection),
+			// Newest CREATED first, so when the bound bites it drops the oldest
+			// notes rather than the newest.
+			ScanIndexForward:  aws.Bool(false),
 			ExclusiveStartKey: start,
+			Limit:             aws.Int32(int32(maxNotesListed - len(notes))),
 		})
 		if err != nil {
-			return touched, fmt.Errorf("dynamo reindex notes: %w", err)
+			return nil, fmt.Errorf("dynamo query notes: %w", err)
 		}
 
 		for _, raw := range out.Items {
-			n, err := noteFromItem(raw)
-			if err != nil {
-				return touched, fmt.Errorf("dynamo reindex notes: %w", err)
-			}
-			if _, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-				TableName: aws.String(s.tableName),
-				Key: map[string]types.AttributeValue{
-					"pk": raw["pk"],
-					"sk": raw["sk"],
-				},
-				UpdateExpression: aws.String("SET gsi2pk = :gpk, gsi2sk = :gsk"),
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":gpk": strAttr(notesShelfGSI2PK(tenantID, noteShelfOf(n))),
-					":gsk": strAttr(noteUpdatedSortKey(n.UpdatedAt)),
-				},
-				// The row must still exist. A note purged while this runs is not
-				// an error and must not be recreated as a key-only ghost.
-				ConditionExpression: aws.String("attribute_exists(pk)"),
-			}); err != nil {
-				if isConditionalCheckFailed(err) {
+			if readString(raw, "note_id") == "" {
+				// An item written before the attributes were promoted carries
+				// only the `data` blob, which the projection does not name.
+				// Read it whole rather than dropping the note.
+				n, err := s.GetNote(ctx, tenantID, trimPrefix(readString(raw, "sk"), "NOTE#"))
+				if errors.Is(err, ErrNotFound) {
 					continue
 				}
-				return touched, fmt.Errorf("dynamo reindex notes: %w", err)
+				if err != nil {
+					return nil, err
+				}
+				notes = append(notes, n)
+				continue
 			}
-			touched++
+			n, err := noteFromItem(raw)
+			if err != nil {
+				return nil, err
+			}
+			notes = append(notes, n)
 		}
 
 		start = out.LastEvaluatedKey
 		if len(start) == 0 {
-			return touched, nil
+			break
 		}
 	}
+	return notes, nil
 }
 
-// The active shelf needs no filter: being on it is what "not archived" means,
-// and the shelf is chosen at write time. Only the archived list still filters,
-// on the one part of the question that is about time rather than state — a note
-// past its purge deadline is one TTL has not collected yet, and it must not
-// appear in the archive the user is looking at.
-const archivedNoteFilter = "purge_after_epoch > :now"
+// noteOrderKey is the position of a note in the list: most recently touched
+// first, id breaking a tie so the order is total and a cursor unambiguous.
+// Larger sorts earlier.
+func noteOrderKey(n model.NoteIndex) string {
+	return noteTouchedSortKey(n.UpdatedAt) + "\x00" + n.ID
+}
+
+func sortNotesMostRecentlyTouchedFirst(notes []model.NoteIndex) {
+	sort.SliceStable(notes, func(i, j int) bool {
+		return noteOrderKey(notes[i]) > noteOrderKey(notes[j])
+	})
+}
+
+// Note shelves. Archived is "has a deletion stamp"; whether it has also passed
+// its purge deadline is a question about time, so the archived list also
+// filters on purge_after_epoch — a note past its deadline is one the expiry
+// sweep has not collected yet, and it must not appear in the archive the user
+// is looking at.
+const (
+	noteShelfActive   = "ACTIVE"
+	noteShelfArchived = "ARCHIVED"
+)
 
 func (s *DynamoStore) ListNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
-	return s.listNotes(ctx, tenantID, noteShelfActive, "", nil, opts)
+	return s.listNotes(ctx, tenantID, noteShelfActive, func(n model.NoteIndex) bool {
+		return strings.TrimSpace(n.DeletedAt) == ""
+	}, opts)
 }
 
 func (s *DynamoStore) ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
-	return s.listNotes(ctx, tenantID, noteShelfArchived, archivedNoteFilter, map[string]types.AttributeValue{
-		":now": numAttr(time.Now().Unix()),
+	now := time.Now().Unix()
+	return s.listNotes(ctx, tenantID, noteShelfArchived, func(n model.NoteIndex) bool {
+		return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
 	}, opts)
+}
+
+// ExpiredNotes returns every archived note, across every tenant, whose purge
+// deadline had passed at asOf. It is the expiry sweep's input.
+//
+// This is the one Scan in the store, and it reads across tenants on purpose:
+// the sweep is an instance job and the worker knows no tenant list. It is
+// bounded by the table, which holds one tenant's few hundred notes plus their
+// captures, and it runs weekly.
+func (s *DynamoStore) ExpiredNotes(ctx context.Context, asOf int64) ([]TenantNote, error) {
+	var start map[string]types.AttributeValue
+	var out []TenantNote
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		res, err := s.client.Scan(ctx, &dynamodb.ScanInput{
+			TableName: aws.String(s.tableName),
+			// Only an archived note carries purge_after_epoch: PutNote deletes
+			// it on restore, and no other item type writes it.
+			FilterExpression:          aws.String("purge_after_epoch < :now"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":now": numAttr(asOf)},
+			ProjectionExpression:      aws.String("pk, " + noteListProjection),
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dynamo scan expired notes: %w", err)
+		}
+		for _, raw := range res.Items {
+			n, err := noteFromItem(raw)
+			if err != nil {
+				return nil, err
+			}
+			if n.ID == "" {
+				n.ID = trimPrefix(readString(raw, "sk"), "NOTE#")
+			}
+			out = append(out, TenantNote{
+				TenantID: trimPrefix(readString(raw, "pk"), "USER#"),
+				Note:     n,
+			})
+		}
+		start = res.LastEvaluatedKey
+		if len(start) == 0 {
+			return out, nil
+		}
+	}
 }
 
 func (s *DynamoStore) GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {

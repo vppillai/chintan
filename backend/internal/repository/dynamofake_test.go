@@ -43,6 +43,7 @@ type fakeDynamo struct {
 
 	queries []*dynamodb.QueryInput
 	gets    int
+	scans   int
 }
 
 func newFakeDynamo() *fakeDynamo {
@@ -50,7 +51,6 @@ func newFakeDynamo() *fakeDynamo {
 		items: make(map[string]map[string]map[string]types.AttributeValue),
 		projected: map[string]map[string]bool{
 			"gsi1": indexNonKeyAttributes("gsi1"),
-			"gsi2": indexNonKeyAttributes("gsi2"),
 		},
 	}
 }
@@ -59,10 +59,9 @@ func newFakeDynamo() *fakeDynamo {
 // infrastructure/template.yaml, so the tests are pinned to the index that will
 // actually be deployed rather than to a copy that can drift away from it.
 //
-// It walks from the named IndexName to that index's own NonKeyAttributes block.
-// The previous version took the first block in the file, which was correct
-// while there was one index and silently kept enforcing gsi1's projection
-// against gsi2 the moment a second existed.
+// It walks from the named IndexName to that index's own NonKeyAttributes block
+// rather than taking the first block in the file, so a second index would get
+// its own projection rather than silently inheriting gsi1's.
 func indexNonKeyAttributes(index string) map[string]bool {
 	raw, err := os.ReadFile(templatePath)
 	if err != nil {
@@ -313,6 +312,68 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 			key[skAttr] = last[skAttr]
 		}
 		out.LastEvaluatedKey = key
+	}
+	return out, nil
+}
+
+// Scan walks the whole table in (pk, sk) order, honouring FilterExpression,
+// ProjectionExpression, Limit, ExclusiveStartKey and the page cap, the way
+// Query does. Limit bounds items evaluated, before the filter.
+func (f *fakeDynamo) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := validateValues(in.ExpressionAttributeValues); err != nil {
+		return nil, err
+	}
+	f.scans++
+
+	var candidates []map[string]types.AttributeValue
+	for _, partition := range f.items {
+		for _, item := range partition {
+			candidates = append(candidates, item)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if av(candidates[i]["pk"]) != av(candidates[j]["pk"]) {
+			return av(candidates[i]["pk"]) < av(candidates[j]["pk"])
+		}
+		return av(candidates[i]["sk"]) < av(candidates[j]["sk"])
+	})
+	if len(in.ExclusiveStartKey) > 0 {
+		startPK, startSK := av(in.ExclusiveStartKey["pk"]), av(in.ExclusiveStartKey["sk"])
+		for i, item := range candidates {
+			if av(item["pk"]) == startPK && av(item["sk"]) == startSK {
+				candidates = candidates[i+1:]
+				break
+			}
+		}
+	}
+
+	evaluate := len(candidates)
+	if in.Limit != nil && int(*in.Limit) < evaluate {
+		evaluate = int(*in.Limit)
+	}
+	if f.pageSize > 0 && f.pageSize < evaluate {
+		evaluate = f.pageSize
+	}
+
+	out := &dynamodb.ScanOutput{}
+	for _, item := range candidates[:evaluate] {
+		if in.FilterExpression != nil {
+			ok, err := evalExpr(*in.FilterExpression, item, in.ExpressionAttributeValues)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				continue
+			}
+		}
+		out.Items = append(out.Items, project(item, in.ProjectionExpression, "pk", "sk"))
+	}
+	out.Count = int32(len(out.Items))
+	if evaluate < len(candidates) {
+		last := candidates[evaluate-1]
+		out.LastEvaluatedKey = map[string]types.AttributeValue{"pk": last["pk"], "sk": last["sk"]}
 	}
 	return out, nil
 }

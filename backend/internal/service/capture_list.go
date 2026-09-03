@@ -78,9 +78,8 @@ type TenantCaptureLister interface {
 const maxCaptureWalkNotes = 500
 
 // maxCaptureFilterRounds bounds how many store queries one filtered page may
-// cost, matching the bound the DynamoDB store already applies to its own
-// server-side filters (repository.maxFilterRounds). Without it, a filter that
-// matches almost nothing turns one request into a scan of the whole partition.
+// cost. Without it, a filter that matches almost nothing turns one request into
+// a scan of the whole partition.
 const maxCaptureFilterRounds = 10
 
 // ListCaptures returns one page of the tenant's captures, newest first.

@@ -20,9 +20,8 @@
 // Two properties hold throughout and are worth stating before the code:
 //
 //   - Every provider call goes through breaker.Do. There is no path to a
-//     provider that skips the spend check or the metering record — and, since
-//     the worker builds the breaker with a tenant cap resolver, the check is
-//     against the cap the tenant set rather than only the instance-wide one.
+//     provider that skips the reservation against the instance's daily spend
+//     counter, and none that skips the usage log line the breaker writes.
 //   - Every stage persists its status and its artifact before the next begins,
 //     so a failure resumes from the last good stage instead of re-transcribing
 //     twenty minutes of audio.
@@ -340,12 +339,11 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	}
 
 	var result provider.Transcription
-	_, err = p.cfg.Breaker.Do(ctx, tenantID, breaker.Estimate{
+	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.STTProvider,
 		Model:    p.cfg.STTModel,
 		Op:       meter.OpTranscribe,
-		Unit:     meter.UnitAudioSeconds,
-		Quantity: estimateSeconds,
+		Usage:    meter.Quantities{meter.UnitAudioSeconds: estimateSeconds},
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.STT.Transcribe(ctx, provider.Audio{
 			URL:         audioURL,
@@ -355,7 +353,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 			return breaker.Result{}, err
 		}
 		result = out
-		return breaker.Result{Unit: meter.UnitAudioSeconds, Quantity: out.Duration}, nil
+		return breaker.Result{Usage: meter.Quantities{meter.UnitAudioSeconds: out.Duration}}, nil
 	})
 	if err != nil {
 		return p.handleProviderError(ctx, capture, "transcribe", err)
@@ -580,22 +578,21 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string
 	}
 
 	var decision provider.RouteDecision
-	_, err = p.cfg.Breaker.Do(ctx, tenantID, breaker.Estimate{
+	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.LLMProvider,
 		Model:    p.cfg.LLMModel,
 		Op:       meter.OpRoute,
-		Unit:     meter.UnitInputTokens,
-		Quantity: estimateTokens(transcript) + estimateCandidateTokens(candidates),
+		Usage: meter.Quantities{
+			meter.UnitInputTokens:  estimateTokens(transcript) + estimateCandidateTokens(candidates),
+			meter.UnitOutputTokens: routeOutputTokensEstimate,
+		},
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.Router.Route(ctx, transcript, candidates)
 		if err != nil {
 			return breaker.Result{}, err
 		}
 		decision = out
-		return breaker.Result{
-			Unit:     meter.UnitInputTokens,
-			Quantity: float64(out.Usage.InputTokens),
-		}, nil
+		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
 	})
 	if err != nil {
 		return provider.RouteDecision{}, err
@@ -631,22 +628,24 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	}
 
 	var cleaned provider.Cleaned
-	_, err = p.cfg.Breaker.Do(ctx, tenantID, breaker.Estimate{
+	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.LLMProvider,
 		Model:    p.cfg.LLMModel,
 		Op:       meter.OpCleanup,
-		Unit:     meter.UnitInputTokens,
-		Quantity: estimateTokens(source),
+		Usage: meter.Quantities{
+			meter.UnitInputTokens: estimateTokens(source),
+			// Cleanup rewrites the transcript, so it writes about as much as
+			// it reads. Reserving for the output too is what keeps the
+			// reservation near the bill: output tokens cost four times input.
+			meter.UnitOutputTokens: estimateTokens(source),
+		},
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.LLM.Cleanup(ctx, capture.Mode, source)
 		if err != nil {
 			return breaker.Result{}, err
 		}
 		cleaned = out
-		return breaker.Result{
-			Unit:     meter.UnitInputTokens,
-			Quantity: float64(out.Usage.InputTokens),
-		}, nil
+		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
 	})
 	if err != nil {
 		return p.handleProviderError(ctx, capture, "cleanup", err)
@@ -1097,6 +1096,25 @@ func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, 
 // is the usual English rule of thumb; the breaker reconciles against the
 // provider's own count once the call returns, so the guess only has to be close
 // enough to reserve against.
+// routeOutputTokensEstimate is what a routing decision is reserved against
+// before the model answers. The answer is a short JSON object — an id, a
+// confidence, a title — so the number is small and fixed; the reconcile step
+// replaces it with what the provider reports.
+const routeOutputTokensEstimate = 64
+
+// tokenUsage converts a provider's token report into what the breaker prices.
+// An empty report (a provider that returned no usage block) stays empty, so
+// the breaker keeps the estimate rather than reconciling to zero.
+func tokenUsage(u provider.TokenUsage) meter.Quantities {
+	if u.InputTokens == 0 && u.OutputTokens == 0 {
+		return nil
+	}
+	return meter.Quantities{
+		meter.UnitInputTokens:  float64(u.InputTokens),
+		meter.UnitOutputTokens: float64(u.OutputTokens),
+	}
+}
+
 func estimateTokens(s string) float64 {
 	if s == "" {
 		return 0

@@ -95,7 +95,7 @@ func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
 	// tenant uploads a recording, watches the capture sit at spend_capped, and
 	// is told nothing about why.
 	if rt.Spend != nil {
-		capped, err := rt.Spend.Capped(r.Context(), userID)
+		capped, err := rt.Spend.Capped(r.Context())
 		if err != nil {
 			fail(w, r, err)
 			return
@@ -188,7 +188,7 @@ func (rt *router) retryCapture(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rt.Spend != nil {
-		capped, err := rt.Spend.Capped(r.Context(), userID)
+		capped, err := rt.Spend.Capped(r.Context())
 		if err != nil {
 			fail(w, r, err)
 			return

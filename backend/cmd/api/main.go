@@ -96,31 +96,29 @@ func init() {
 		WithNoteCreator(notesService)
 
 	// The API does not call a provider, so it cannot spend. It reads the same
-	// atomic counter the breaker enforces against, so a capped tenant is told
-	// before it uploads rather than after the capture stalls.
-	spendGate := service.NewSpendGate(
-		pipeline.NewDynamoCounter(dynamoClient, tableName),
-		settingsService,
-		envInt64("DAILY_SPEND_CAP_MICROS", 0),
-	)
+	// atomic counter the breaker enforces against, with the same cap, so a
+	// capped instance is told before it uploads rather than after the capture
+	// stalls.
+	spendCapMicros := envInt64("DAILY_SPEND_CAP_MICROS", 0)
+	spendGate := service.NewSpendGate(pipeline.NewDynamoCounter(dynamoClient, tableName), spendCapMicros)
 
 	// There is no biometric-unlock wiring here any more. Cognito's managed
 	// login does passkeys natively (SignInPolicy.AllowedFirstAuthFactors on the
 	// user pool), which replaced the custom WebAuthn ceremony, the sealed
 	// refresh-token vault and the SSM vault key that used to be built here.
 	router := handler.New(handler.Deps{
-		Notes:                 notesService,
-		Settings:              settingsService,
-		Captures:              captureService,
-		Search:                service.NewSearchService(notesService),
-		Tags:                  service.NewTagsService(notesService),
-		Export:                service.NewExportService(notesService, captureService, settingsService, objects),
-		Readiness:             service.NewReadinessService(store, objects),
-		Spend:                 spendGate,
-		Store:                 store,
-		Verifier:              verifier,
-		AllowedOrigin:         allowedOrigin,
-		DefaultSpendCapMicros: envInt64("DAILY_SPEND_CAP_MICROS", 0),
+		Notes:          notesService,
+		Settings:       settingsService,
+		Captures:       captureService,
+		Search:         service.NewSearchService(notesService),
+		Tags:           service.NewTagsService(notesService),
+		Export:         service.NewExportService(notesService, captureService, settingsService, objects),
+		Readiness:      service.NewReadinessService(store, objects),
+		Spend:          spendGate,
+		Store:          store,
+		Verifier:       verifier,
+		AllowedOrigin:  allowedOrigin,
+		SpendCapMicros: spendCapMicros,
 	})
 	lambdaAdapter = httpadapter.NewV2(router)
 }

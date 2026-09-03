@@ -5,71 +5,72 @@ import (
 	"testing"
 )
 
-// TestSourceOfDistinguishesTheTwoEventSources is the guard on the one decision
+// TestSniffDistinguishesTheThreeInvocations is the guard on the one decision
 // this binary makes before any handler runs.
 //
-// Getting it wrong is not a no-op in either direction. A stream event read as a
-// capture invocation goes to pipeline.Worker, which finds no capture it
-// recognises; an S3 event read as a stream event goes to the purge cascade,
-// which is the code that deletes objects. Neither may happen by accident, so
-// the discriminator is the event's own eventSource field rather than a
+// Getting it wrong is not a no-op in either direction. The sweep's payload read
+// as a capture invocation reaches pipeline.Worker, which finds no capture and
+// returns nil — a week of expiries silently skipped. An S3 event read as a
+// task would be dropped as unrecognised, and the recording never transcribed.
+// So the discriminator is the payload's own fields rather than a
 // deployment-time setting that a template edit can put out of step with the
 // trigger beside it.
-func TestSourceOfDistinguishesTheTwoEventSources(t *testing.T) {
+func TestSniffDistinguishesTheThreeInvocations(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
-		want eventSource
+		want invocation
 	}{
 		{
 			name: "an S3 notification",
 			raw:  `{"Records":[{"eventSource":"aws:s3","s3":{"object":{"key":"tenants/u/captures/c/audio.webm"}}}]}`,
-			want: sourceS3,
+			want: invocation{source: sourceS3},
 		},
 		{
-			name: "a DynamoDB stream batch",
-			raw:  `{"Records":[{"eventSource":"aws:dynamodb","eventName":"REMOVE","dynamodb":{"SequenceNumber":"1"}}]}`,
-			want: sourceDynamoDBStream,
+			// The EventBridge rule's constant input.
+			name: "the weekly sweep",
+			raw:  `{"task":"sweep-expired"}`,
+			want: invocation{task: "sweep-expired"},
 		},
 		{
 			// The API's payload names a capture directly and has no records at
 			// all; it goes to the pipeline worker with the S3 notifications.
 			name: "the API's invocation",
 			raw:  `{"tenant_id":"u","capture_id":"c","reason":"retry"}`,
-			want: "",
+			want: invocation{},
 		},
 		{
 			// Lambda can deliver an empty batch. It is not an error and there is
 			// nothing to run.
 			name: "no records",
 			raw:  `{"Records":[]}`,
-			want: "",
+			want: invocation{},
 		},
 		{
-			name: "something neither handler serves",
-			raw:  `{"Records":[{"eventSource":"aws:sqs","messageId":"m1","body":"{}"}]}`,
-			want: "aws:sqs",
+			name: "something no handler serves",
+			raw:  `{"Records":[{"eventSource":"aws:dynamodb","eventName":"REMOVE"}]}`,
+			want: invocation{source: "aws:dynamodb"},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := sourceOf(json.RawMessage(tc.raw))
+			got, err := sniff(json.RawMessage(tc.raw))
 			if err != nil {
-				t.Fatalf("sourceOf: %v", err)
+				t.Fatalf("sniff: %v", err)
 			}
 			if got != tc.want {
-				t.Errorf("sourceOf = %q, want %q", got, tc.want)
+				t.Errorf("sniff = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
 }
 
-// TestSourceOfRejectsAnUndecodableEvent keeps a malformed payload from being
-// read as "no records", which would hand it to the pipeline worker as if it
-// were the API's payload.
-func TestSourceOfRejectsAnUndecodableEvent(t *testing.T) {
-	if _, err := sourceOf(json.RawMessage(`not json`)); err == nil {
-		t.Fatal("sourceOf accepted a payload that is not JSON")
+// TestSniffRejectsAnUndecodableEvent keeps a malformed payload from being read
+// as "no records", which would hand it to the pipeline worker as if it were the
+// API's payload.
+func TestSniffRejectsAnUndecodableEvent(t *testing.T) {
+	if _, err := sniff(json.RawMessage(`not json`)); err == nil {
+		t.Fatal("sniff accepted a payload that is not JSON")
 	}
 }

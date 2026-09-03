@@ -92,9 +92,8 @@ type Settings struct {
 	RetentionDays int         `json:"retention_days"` // 0 = indefinite
 	// Theme is empty on records written before v2; readers substitute ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
-	// DailySpendCapMicros is the tenant's own provider budget. 0 means "use the
-	// instance default", which is itself 0 — metering without enforcement.
-	DailySpendCapMicros int64 `json:"daily_spend_cap_micros,omitempty"`
+	// There is no per-tenant spend cap. Records written before 2026-09 may
+	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
 }
 
 type NoteIndex struct {
@@ -114,8 +113,10 @@ type NoteIndex struct {
 	// rewritten by polished mode.
 	Verbatim bool `json:"verbatim,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
-	// It is the DynamoDB TTL attribute, so expiry is performed by the table
-	// rather than by a synchronous sweep on the read path.
+	// The archived list filters on it, and the weekly expiry sweep
+	// (internal/purge) deletes the note's objects and row once it has passed.
+	// The store also derives the DynamoDB TTL attribute from it, later by a
+	// grace period, as the backstop for a sweep that did not run.
 	PurgeAfterEpoch int64 `json:"purge_after_epoch,omitempty"`
 	// Version is the optimistic-concurrency counter. A write carries the version
 	// it read; the store rejects it if the stored version has moved on.

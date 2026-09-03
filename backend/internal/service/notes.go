@@ -430,8 +430,9 @@ func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (
 		return note, nil
 	}
 
-	// Set archive timestamps. PurgeAfterEpoch is the DynamoDB TTL attribute, so
-	// expiry is the table's job rather than a synchronous sweep on every read.
+	// Set archive timestamps. PurgeAfterEpoch is the deadline the archived list
+	// filters on and the weekly expiry sweep (internal/purge) collects on; the
+	// store derives the DynamoDB TTL backstop from it. Nothing sweeps on read.
 	now := time.Now().UTC()
 	purgeAt := now.Add(ArchiveRetention)
 	note.DeletedAt = model.FormatTime(now)

@@ -100,7 +100,7 @@ QUEUES="$(stack_resources_of_type "$STACK" 'AWS::SQS::Queue')"
 log ""
 info "resources belonging to $STACK"
 for b in $BUCKETS; do dim "  s3 bucket     $b (Retain)"; done
-for t in $TABLES; do dim "  dynamodb      $t (Retain)"; done
+for t in $TABLES; do dim "  dynamodb      $t (Retain, DeletionProtectionEnabled)"; done
 for p in $USER_POOLS; do dim "  user pool     $p (Retain, DeletionProtection ACTIVE)"; done
 for k in $KMS_KEYS; do dim "  kms key       $k (Retain)"; done
 for q in $QUEUES; do dim "  dead-letter queue $q (deleted with the stack)"; done
@@ -195,6 +195,16 @@ ok "stack deleted"
 
 for table in $TABLES; do
     if aws_cli dynamodb describe-table --table-name "$table" >/dev/null 2>&1; then
+        # DeletionProtectionEnabled is on by design (template.yaml) and refuses
+        # delete-table outright. Turned off here, named in the log, immediately
+        # before the delete it exists to prevent — the same shape as the user
+        # pool above. If the delete then fails, redeploying the stack does NOT
+        # put the protection back on a retained table; run
+        #   aws dynamodb update-table --table-name <table> --deletion-protection-enabled
+        # by hand.
+        info "disabling deletion protection on table $table"
+        aws_cli dynamodb update-table --table-name "$table" \
+            --no-deletion-protection-enabled >/dev/null
         info "deleting retained table $table"
         aws_cli dynamodb delete-table --table-name "$table" >/dev/null
         ok "table $table deleted"

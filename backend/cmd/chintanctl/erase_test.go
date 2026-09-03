@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -107,52 +106,3 @@ func TestEraseRejectsATenantIdThatCouldEscapeThePrefix(t *testing.T) {
 		}
 	}
 }
-
-func TestUsageAggregatesMeteringRecords(t *testing.T) {
-	ctx := context.Background()
-	e, part, blobs := newTestEnv(nil)
-	seedTenant(t, part, blobs, "tenantA")
-
-	usageItem := func(sk, provider, mdl, op, unit string, quantity float64, micros int64) Item {
-		return Item{
-			"pk":          StringAttr(tenantPK("tenantA")),
-			"sk":          StringAttr(sk),
-			"type":        StringAttr("usage"),
-			"provider":    StringAttr(provider),
-			"model":       StringAttr(mdl),
-			"op":          StringAttr(op),
-			"unit":        StringAttr(unit),
-			"quantity":    AttrValue{N: ptr(formatFloat(quantity))},
-			"cost_micros": NumberAttr(micros),
-		}
-	}
-	put(t, part, usageItem("USAGE#2026-08-05#a", "groq", "whisper-large-v3", "transcribe", "audio_seconds", 60, 120))
-	put(t, part, usageItem("USAGE#2026-08-07#b", "groq", "whisper-large-v3", "transcribe", "audio_seconds", 30, 60))
-	put(t, part, usageItem("USAGE#2026-08-07#c", "openai", "gpt", "cleanup", "input_tokens", 1200, 1200))
-
-	all, err := runUsage(ctx, e, nil, "")
-	if err != nil {
-		t.Fatalf("usage: %v", err)
-	}
-	if all.Records != 3 || len(all.Rows) != 2 {
-		t.Fatalf("records=%d rows=%d, want 3 and 2", all.Records, len(all.Rows))
-	}
-	if all.CostMicros != 1380 {
-		t.Errorf("total cost = %d micros, want 1380", all.CostMicros)
-	}
-	if all.Rows[0].Provider != "groq" || all.Rows[0].Calls != 2 || all.Rows[0].Quantity != 90 {
-		t.Errorf("groq row = %+v", all.Rows[0])
-	}
-
-	since, err := runUsage(ctx, e, nil, "2026-08-07")
-	if err != nil {
-		t.Fatalf("usage --since: %v", err)
-	}
-	if since.Records != 2 || since.CostMicros != 1260 {
-		t.Errorf("--since 2026-08-07: records=%d cost=%d, want 2 and 1260", since.Records, since.CostMicros)
-	}
-}
-
-func ptr[T any](v T) *T { return &v }
-
-func formatFloat(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }

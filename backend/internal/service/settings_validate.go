@@ -14,8 +14,6 @@ var (
 	ErrInvalidRetentionDays = errors.New("retention_days must be between 0 and 3650")
 	// ErrInvalidTheme rejects an unknown theme.
 	ErrInvalidTheme = errors.New("theme must be ink, nocturne or system")
-	// ErrInvalidSpendCap rejects a negative spend cap.
-	ErrInvalidSpendCap = errors.New("daily_spend_cap_micros must not be negative")
 )
 
 // ValidateSettings checks a settings record and returns the canonical form that
@@ -60,11 +58,6 @@ func ValidateSettings(s model.Settings) (model.Settings, error) {
 	default:
 		return model.Settings{}, fmt.Errorf("%w", ErrInvalidTheme)
 	}
-
-	if s.DailySpendCapMicros < 0 {
-		return model.Settings{}, fmt.Errorf("%w", ErrInvalidSpendCap)
-	}
-	out.DailySpendCapMicros = s.DailySpendCapMicros
 
 	return out, nil
 }

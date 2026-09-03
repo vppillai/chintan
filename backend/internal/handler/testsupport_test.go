@@ -178,7 +178,7 @@ type fakeSpend struct {
 	err    error
 }
 
-func (f *fakeSpend) Capped(context.Context, string) (bool, error) { return f.capped, f.err }
+func (f *fakeSpend) Capped(context.Context) (bool, error) { return f.capped, f.err }
 
 // brokenStore fails the one read readiness makes. Embedding the interface keeps
 // every other method the real one.

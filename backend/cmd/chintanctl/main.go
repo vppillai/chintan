@@ -11,8 +11,6 @@
 //	chintanctl backup    --instance <name> --out <dir>
 //	chintanctl restore   --instance <name> --in <dir> [--apply]
 //	chintanctl reconcile --instance <name> [--apply]
-//	chintanctl reindex --instance <name> [--apply]
-//	chintanctl usage     --instance <name> [--since <date>]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //
 // Three conventions are load-bearing and shared with scripts/:
@@ -32,8 +30,6 @@ import (
 	"io"
 	"os"
 	"strings"
-
-	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
 const usageText = `chintanctl — operator CLI for a Chintan instance
@@ -47,13 +43,8 @@ Commands:
   backup     Full-fidelity copy: DynamoDB items verbatim alongside the S3
              objects, with a content hash per object.
   restore    Inverse of backup. Verifies every hash before it writes anything.
-  reindex    Write the gsi2 key attributes onto notes that lack them. Adding a
-             global secondary index does not index the rows already in the
-             table, so run this once after the deploy that adds one or the
-             notes list comes back empty. Idempotent.
   reconcile  Report orphans in both directions: objects with no index row, and
              index rows whose objects are gone.
-  usage      Aggregate the USAGE# metering records written by internal/meter.
   erase      Irreversibly delete one tenant everywhere, and report what went.
 
 Run "chintanctl <command> --help" for the flags of one command.
@@ -128,15 +119,8 @@ func (g *globalFlags) validate() error {
 // env is everything a subcommand needs. Tests construct it directly with
 // in-memory ports; main wires the AWS ones.
 type env struct {
-	Part  Partition
-	Blobs Blobs
-	// Notes is the note-index maintenance the repository owns. It is a
-	// narrow interface rather than the Partition port because reindexing has
-	// to be a conditional attribute update: Partition.Put overwrites an item
-	// verbatim, so a Scan-then-Put would silently discard an edit made
-	// between the two — and this tool is run against a live instance while
-	// somebody is using it.
-	Notes  NoteIndexMaintainer
+	Part   Partition
+	Blobs  Blobs
 	Target target
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -167,22 +151,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdRestore(ctx, rest, stdout, stderr, stdin)
 	case "reconcile":
 		return cmdReconcile(ctx, rest, stdout, stderr, stdin)
-	case "reindex":
-		return cmdReindex(ctx, rest, stdout, stderr, stdin)
-	case "usage":
-		return cmdUsage(ctx, rest, stdout, stderr, stdin)
 	case "erase":
 		return cmdErase(ctx, rest, stdout, stderr, stdin)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
-}
-
-// NoteIndexMaintainer repairs the notes index. The store implements it; the
-// command below only decides which tenants to run it for.
-type NoteIndexMaintainer interface {
-	ReindexNotes(ctx context.Context, tenantID string) (int, error)
 }
 
 // dial resolves the instance and returns a live env. Every subcommand goes
@@ -199,7 +173,6 @@ func dial(ctx context.Context, g globalFlags, stdout, stderr io.Writer, stdin io
 	return &env{
 		Part:   &dynamoPartition{client: dyn, table: t.Table},
 		Blobs:  &s3Blobs{client: s3c, bucket: t.Bucket},
-		Notes:  repository.NewDynamoStore(dyn, t.Table),
 		Target: t,
 		Stdin:  stdin,
 		Stdout: stdout,

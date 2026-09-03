@@ -1,22 +1,15 @@
-// Package meter records what each third-party call cost.
+// Package meter prices what a third-party call cost.
 //
-// v1 had no visibility into STT seconds or LLM tokens at all, and that data
-// cannot be reconstructed after the fact — which is why this lands before the
-// features that increase usage rather than after.
-//
-// It is also the prerequisite for internal/breaker: you cannot cap spend you do
-// not measure.
+// It is the arithmetic half of internal/breaker: the breaker reserves and
+// enforces, this converts "so many audio seconds" or "so many tokens" into
+// microdollars. Nothing here persists anything — the breaker's own log line is
+// the only record of a call, and the SPEND# counter in the table is the only
+// running total.
 package meter
 
 import (
-	"context"
-	"fmt"
-	"log/slog"
 	"math"
 	"strings"
-	"time"
-
-	"github.com/vppillai/chintan/backend/internal/obs"
 )
 
 // Unit is what a provider bills for.
@@ -26,7 +19,6 @@ const (
 	UnitAudioSeconds Unit = "audio_seconds"
 	UnitInputTokens  Unit = "input_tokens"
 	UnitOutputTokens Unit = "output_tokens"
-	UnitRequests     Unit = "requests"
 )
 
 // Op names the pipeline stage that incurred the cost.
@@ -38,31 +30,11 @@ const (
 	OpCleanup    Op = "cleanup"
 )
 
-// Usage is one billable event.
-//
-// It deliberately carries no transcript, prompt, or completion text — only
-// shape and cost. Nothing in this record may reveal user content.
-type Usage struct {
-	TenantID      string    `json:"tenant_id"`
-	Provider      string    `json:"provider"`
-	Model         string    `json:"model"`
-	Op            Op        `json:"op"`
-	Unit          Unit      `json:"unit"`
-	Quantity      float64   `json:"quantity"`
-	CostMicros    int64     `json:"cost_micros"`
-	CorrelationID string    `json:"correlation_id"`
-	At            time.Time `json:"at"`
-}
-
-// Sink persists usage records.
-type Sink interface {
-	Record(ctx context.Context, u Usage) error
-}
-
-// Pricer converts a quantity into whole microdollars.
-type Pricer interface {
-	CostMicros(provider, model string, unit Unit, quantity float64) int64
-}
+// Quantities is what one call consumed, per unit. A call is priced as the sum
+// over its units, which is how a completion is charged for the tokens it read
+// AND the tokens it wrote: pricing input alone understated cleanup by roughly
+// the output-to-input price ratio, four to five times.
+type Quantities map[Unit]float64
 
 // PriceTable maps "provider/model" to a per-unit price in microdollars.
 //
@@ -70,14 +42,18 @@ type Pricer interface {
 // differ per account. A missing entry falls back to the provider-wide "*" row,
 // and a missing provider prices at zero rather than blocking the call — an
 // unpriced model must not become an outage.
-type PriceTable map[string]map[Unit]int64
+//
+// The per-unit price is a float because the real numbers are fractions of a
+// microdollar: a MiniMax input token is 0.3 µ$. The total is still whole
+// microdollars, rounded up.
+type PriceTable map[string]map[Unit]float64
 
 // Key builds the lookup key for a provider and model.
 func Key(provider, model string) string {
 	return strings.ToLower(strings.TrimSpace(provider)) + "/" + strings.ToLower(strings.TrimSpace(model))
 }
 
-// CostMicros implements Pricer.
+// CostMicros prices one unit of one call.
 func (p PriceTable) CostMicros(provider, model string, unit Unit, quantity float64) int64 {
 	if quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
 		return 0
@@ -95,53 +71,48 @@ func (p PriceTable) CostMicros(provider, model string, unit Unit, quantity float
 	}
 	// Round up: a fractional microdollar that rounds to zero would let a high
 	// call rate accumulate real spend that the breaker never sees.
-	return int64(math.Ceil(quantity * float64(per)))
+	return int64(math.Ceil(quantity * per))
 }
 
-// DefaultPrices is a starting table in microdollars per unit.
-//
-// These are estimates for budgeting, not billing. Override them per instance
-// via configuration once real invoices are available.
-var DefaultPrices = PriceTable{
-	Key("groq", "*"):   {UnitAudioSeconds: 2},                     // ~$0.007/min
-	Key("openai", "*"): {UnitInputTokens: 1, UnitOutputTokens: 4}, // ~$1/$4 per Mtok
-}
-
-// SlogSink writes usage to the structured log.
-//
-// Useful before the DynamoDB sink is wired, and as a durable audit trail
-// afterwards: log retention outlives a table row.
-type SlogSink struct{}
-
-// Record implements Sink.
-func (SlogSink) Record(ctx context.Context, u Usage) error {
-	obs.Log(ctx).Info("provider usage",
-		slog.String("provider", u.Provider),
-		slog.String("model", u.Model),
-		slog.String("op", string(u.Op)),
-		slog.String("unit", string(u.Unit)),
-		slog.Float64("quantity", u.Quantity),
-		slog.Int64("cost_micros", u.CostMicros),
-	)
-	obs.Emit(ctx,
-		map[string]string{"Provider": u.Provider, "Op": string(u.Op)},
-		obs.Metric{Name: "ProviderCostMicros", Value: float64(u.CostMicros), Unit: obs.UnitCount},
-		obs.Metric{Name: "ProviderCalls", Value: 1, Unit: obs.UnitCount},
-	)
-	return nil
-}
-
-// MultiSink fans a record out to several sinks, returning the first failure but
-// always attempting all of them.
-type MultiSink []Sink
-
-// Record implements Sink.
-func (m MultiSink) Record(ctx context.Context, u Usage) error {
-	var firstErr error
-	for _, s := range m {
-		if err := s.Record(ctx, u); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("meter: sink failed: %w", err)
-		}
+// Cost prices a whole call: the sum over every unit it consumed.
+func (p PriceTable) Cost(provider, model string, q Quantities) int64 {
+	var total int64
+	for unit, quantity := range q {
+		total += p.CostMicros(provider, model, unit, quantity)
 	}
-	return firstErr
+	return total
+}
+
+// DefaultPrices is the table the worker ships with, in microdollars per unit.
+//
+// These are list prices for budgeting, not an invoice. Each row says where its
+// number came from and when it was read; a price that could not be verified
+// says so rather than pretending.
+var DefaultPrices = PriceTable{
+	// Groq speech-to-text, groq.com/pricing read 2026-09-03. Billed per hour
+	// of audio with a 10-second minimum per request, which the estimate below
+	// ignores (a 3-second clip is priced as 3 seconds, not 10; at $0.04/hour
+	// the difference is a tenth of a microdollar).
+	//
+	//   whisper-large-v3-turbo  $0.040 / hour = 11.11 µ$/s
+	//   whisper-large-v3        $0.111 / hour = 30.83 µ$/s
+	//
+	// The wildcard is the dearer model, so an unrecognised Groq model is
+	// over-reserved rather than under.
+	Key("groq", "whisper-large-v3-turbo"): {UnitAudioSeconds: 0.04 * 1_000_000 / 3600},
+	Key("groq", "*"):                      {UnitAudioSeconds: 0.111 * 1_000_000 / 3600},
+
+	// The OpenAI-compatible endpoint the worker points at is MiniMax by default
+	// (LLM_BASE_URL in the template), so the provider key is "openai" and the
+	// model is what the endpoint bills. MiniMax-M3, platform.minimax.io
+	// pricing read 2026-09-03, standard tier (≤ 512K input): $0.30 per million
+	// input tokens, $1.20 per million output tokens. That is a "permanent 50%
+	// off" of a $0.60 / $2.40 list price; if the promotion ends the row is
+	// 2× low, which the wildcard below covers.
+	Key("openai", "minimax-m3"): {UnitInputTokens: 0.30, UnitOutputTokens: 1.20},
+	// Any other model on the endpoint: the pre-2026-09-03 numbers ($1 / $4 per
+	// million), kept because they were never tied to a price sheet and there
+	// is no invoice to correct them from. They are 3–4× MiniMax's list price,
+	// so an unrecognised model over-reserves.
+	Key("openai", "*"): {UnitInputTokens: 1, UnitOutputTokens: 4},
 }

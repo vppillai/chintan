@@ -49,14 +49,16 @@ type Deps struct {
 
 	AllowedOrigin string
 
-	// DefaultSpendCapMicros is the instance-wide daily cap reported to a tenant
-	// that has not set its own.
-	DefaultSpendCapMicros int64
+	// SpendCapMicros is the instance-wide daily provider budget, reported by
+	// GET /v1/settings so the UI can show the ceiling that is actually
+	// enforced. It is the template's DailySpendCapMicros; nothing a tenant
+	// sends changes it.
+	SpendCapMicros int64
 }
 
-// SpendGate reports whether a tenant has already spent its daily budget.
+// SpendGate reports whether the instance has already spent its daily budget.
 type SpendGate interface {
-	Capped(ctx context.Context, tenantID string) (bool, error)
+	Capped(ctx context.Context) (bool, error)
 }
 
 type router struct {

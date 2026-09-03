@@ -699,7 +699,18 @@ components:
         daily_spend_cap_micros:
           type: integer
           minimum: 0
-          description: 0 disables enforcement while still metering.
+          readOnly: true
+          description: |
+            The instance-wide daily provider spend ceiling, in microdollars
+            (1000000 = $1). 0 means calls are counted but never refused.
+
+            Read-only. It is the operator's number, set in the deployment
+            configuration, and is reported here so the app can show the
+            budget that is actually enforced. A value sent on PUT is accepted
+            for compatibility and ignored; the response carries the instance
+            value, which is how a client learns its own did not take. Until
+            2026-09 this was a per-tenant cap stored in the settings record,
+            and the breaker enforced the lower of the two.
 
     Note:
       type: object

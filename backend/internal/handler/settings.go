@@ -5,7 +5,6 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
-	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -20,7 +19,7 @@ func (rt *router) getSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, settingsOf(rt.withDefaults(stored)))
+	writeJSON(w, http.StatusOK, settingsOf(service.NormalizeSettings(stored), rt.SpendCapMicros))
 }
 
 // putSettings validates, stores, and returns what was stored.
@@ -36,12 +35,12 @@ func (rt *router) putSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req model.Settings
+	var req SettingsUpdate
 	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
 		return
 	}
 
-	validated, err := service.ValidateSettings(req)
+	validated, err := service.ValidateSettings(req.settings())
 	if err != nil {
 		fail(w, r, err)
 		return
@@ -58,16 +57,5 @@ func (rt *router) putSettings(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, settingsOf(rt.withDefaults(stored)))
-}
-
-// withDefaults fills the fields a pre-v2 record does not carry and substitutes
-// the instance-wide spend cap for a tenant that has not set its own, so the UI
-// can show the budget that will actually be enforced.
-func (rt *router) withDefaults(s model.Settings) model.Settings {
-	s = service.NormalizeSettings(s)
-	if s.DailySpendCapMicros == 0 {
-		s.DailySpendCapMicros = rt.DefaultSpendCapMicros
-	}
-	return s
+	writeJSON(w, http.StatusOK, settingsOf(service.NormalizeSettings(stored), rt.SpendCapMicros))
 }

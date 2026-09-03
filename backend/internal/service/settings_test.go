@@ -58,10 +58,9 @@ func TestUpdateSettingsRoundTripsThroughTheStore(t *testing.T) {
 	ctx := context.Background()
 
 	want := model.Settings{
-		CleanupMode:         model.CleanupPolished,
-		RetentionDays:       30,
-		Theme:               model.ThemeNocturne,
-		DailySpendCapMicros: 250000,
+		CleanupMode:   model.CleanupPolished,
+		RetentionDays: 30,
+		Theme:         model.ThemeNocturne,
 	}
 	if err := svc.UpdateSettings(ctx, "user1", want); err != nil {
 		t.Fatalf("UpdateSettings: %v", err)
@@ -108,9 +107,8 @@ func TestValidateSettingsKeepsAValueTheCallerActuallyChose(t *testing.T) {
 		// a different thing, now that retention is stored as the tier that will
 		// actually expire the audio. 3650 is still accepted and is still not
 		// rejected; it now comes back as 365, which is asserted below.
-		RetentionDays:       365,
-		Theme:               model.ThemeSystem,
-		DailySpendCapMicros: 1,
+		RetentionDays: 365,
+		Theme:         model.ThemeSystem,
 	}
 
 	got, err := ValidateSettings(sent)
@@ -142,7 +140,6 @@ func TestValidateSettingsRejectsValuesOutsideTheDeclaredSets(t *testing.T) {
 	}{
 		{"unknown cleanup mode", model.Settings{CleanupMode: model.CleanupMode("tidy")}, ErrInvalidCleanupMode},
 		{"unknown theme", model.Settings{Theme: model.Theme("purple")}, ErrInvalidTheme},
-		{"negative spend cap", model.Settings{DailySpendCapMicros: -1}, ErrInvalidSpendCap},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

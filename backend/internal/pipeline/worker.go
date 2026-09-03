@@ -23,6 +23,12 @@ type Invocation struct {
 	TenantID  string `json:"tenant_id"`
 	CaptureID string `json:"capture_id"`
 	Reason    string `json:"reason,omitempty"`
+	// Task names a job that is not a capture — the weekly expiry sweep's
+	// EventBridge rule sends {"task":"sweep-expired"}. cmd/worker dispatches on
+	// it before this package sees the payload; it is declared here so the one
+	// payload shape the worker accepts is written down in one place, and so a
+	// task that reaches the capture path is refused rather than misread.
+	Task string `json:"task,omitempty"`
 	// CorrelationID is the id the API minted for the request, so the worker's
 	// log lines join the API's into one trace.
 	CorrelationID string `json:"correlation_id,omitempty"`
@@ -141,6 +147,9 @@ func parseInvocation(raw json.RawMessage) ([]CaptureRef, string, error) {
 		return nil, "", fmt.Errorf("pipeline: decode invocation: %w", err)
 	}
 
+	if probe.Task != "" {
+		return nil, "", fmt.Errorf("pipeline: invocation is the task %q, not a capture", probe.Task)
+	}
 	if probe.TenantID != "" && probe.CaptureID != "" {
 		return []CaptureRef{{TenantID: probe.TenantID, CaptureID: probe.CaptureID}}, probe.CorrelationID, nil
 	}

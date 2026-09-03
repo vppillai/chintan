@@ -251,6 +251,7 @@ else
     log ""
     warn "$orphans orphaned resource(s) remain. Delete them deliberately, by name:"
     dim "  aws s3 rb s3://<bucket> --force"
+    dim "  aws dynamodb update-table --table-name <table> --no-deletion-protection-enabled"
     dim "  aws dynamodb delete-table --table-name <table>"
     dim "  aws ssm delete-parameter --name <name>"
     if [ "${#kms_orphans[@]}" -gt 0 ]; then
