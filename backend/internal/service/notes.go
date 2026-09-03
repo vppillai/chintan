@@ -247,7 +247,9 @@ func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return NoteDetail{}, fmt.Errorf("failed to load note body: %w", err)
 	}
-	return NoteDetail{NoteIndex: note, Body: string(bodyBytes)}, nil
+	// The worker's append markers stay in the object and out of the editor;
+	// UpdateNote puts them back. See note_markers.go.
+	return NoteDetail{NoteIndex: note, Body: StripCaptureMarkers(string(bodyBytes))}, nil
 }
 
 // UpdateNote updates a note with partial changes
@@ -267,9 +269,15 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	// below covers the whole of this call. The pipeline's append writes the
 	// object first and refreshes the index afterwards, so an append that lands
 	// after the version check is invisible to it — only the ETag catches it.
+	//
+	// The stored body is kept as well as its ETag: the client never saw the
+	// worker's append markers (GetNoteDetail strips them), so they are put
+	// back onto whatever it sends, or a save inside a capture's retry window
+	// would erase the one fact that stops the retry appending twice.
 	bodyETag := ""
+	var storedBody []byte
 	if updates.Body != nil {
-		_, bodyETag, err = s.objects.GetWithETag(ctx, note.S3MarkdownKey)
+		storedBody, bodyETag, err = s.objects.GetWithETag(ctx, note.S3MarkdownKey)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return model.NoteIndex{}, fmt.Errorf("failed to read note body: %w", err)
 		}
@@ -310,7 +318,8 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		// ETag read above. An unconditional Put here destroys a voice append
 		// that landed in the meantime and only then reports the conflict — the
 		// client is told to re-read text that no longer exists anywhere.
-		err = s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(*updates.Body), "text/markdown", bodyETag)
+		body := CarryCaptureMarkers(string(storedBody), *updates.Body)
+		err = s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(body), "text/markdown", bodyETag)
 		if errors.Is(err, repository.ErrPreconditionFailed) {
 			// Somebody else wrote the body between the read and this write.
 			// That is the same 409 the version check answers, and the client
@@ -395,8 +404,13 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 // The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
 // writes invalid UTF-8 into DynamoDB and into the routing prompt, which is what
 // v1 did.
+//
+// The worker's append markers are removed first: the snippet is shown in the
+// notes list and handed to the router as a summary of the note, and neither
+// wants an HTML comment in it.
 func generateSnippet(body string) string {
 	const maxRunes = 500
+	body = StripCaptureMarkers(body)
 	runes := []rune(body)
 	if len(runes) <= maxRunes {
 		return body

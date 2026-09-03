@@ -78,14 +78,12 @@ Parameters:
 
       It used to default to '' and be read as "share LambdaCodeKey with the API
       function". The API entrypoint is Handler(ctx,
-      events.APIGatewayV2HTTPRequest): fed a real SQS event it returns
-      {"statusCode":404} with a nil error, and because CaptureEventSourceMapping
-      declares FunctionResponseTypes: [ReportBatchItemFailures], Lambda reads a
-      success carrying no batchItemFailures key as "the whole batch succeeded"
-      and deletes every uploaded recording from the queue on first receive. No
-      retry, no DLQ message, no Errors datapoint, no alarm, and GET /v1/health
-      still answers — so the deploy reports success while every recording is
-      discarded. Failing here, at deploy time, is the cheapest place to catch it.
+      events.APIGatewayV2HTTPRequest): fed the S3 notification for a recording it
+      returns {"statusCode":404} with a nil error, which Lambda reads as a
+      successful asynchronous invocation and never retries. No retry, no DLQ
+      message, no Errors datapoint, no alarm, and GET /v1/health still answers —
+      so the deploy reports success while every recording is discarded. Failing
+      here, at deploy time, is the cheapest place to catch it.
 
   AlarmEmail:
     Type: String
@@ -820,34 +818,30 @@ Resources:
         - Key: Application
           Value: Chintan
 
-  # Capture pipeline queue. S3 ObjectCreated on an audio object lands here and
-  # the worker drains it out-of-band, so nothing slow is bound by the gateway's
-  # fixed 30-second integration ceiling.
+  # The capture pipeline's dead-letter queue.
+  #
+  # There is no queue in FRONT of the worker any more. S3 ObjectCreated on an
+  # audio object invokes WorkerLambdaLiveAlias directly (see ContentBucket's
+  # NotificationConfiguration), the API's retry and target endpoints invoke it
+  # with InvocationType Event, and Lambda's own asynchronous retry — twice,
+  # about a minute and then two minutes apart, per WorkerLambdaEventInvokeConfig
+  # — replaces the visibility-timeout redelivery. That removed the coupling the
+  # 2026-09-03 review found under its one Critical: a 960 s visibility timeout
+  # forced by the 900 s function timeout, forcing a 16-minute redelivery that
+  # landed inside the 20-minute append claim lease.
+  #
+  # What remains is the destination for an invocation that failed all three
+  # attempts. Lambda writes the original payload and the error here through its
+  # OnFailure destination, and CaptureDLQDepthAlarm watches the depth, so one
+  # message here still means exactly what it did: one recording the user
+  # believes was filed and was not. The recovery is POST /v1/captures/{id}/retry,
+  # which invokes the worker again for the capture named in the message.
   CaptureDLQ:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub 'chintan-captures-dlq-${InstanceName}-${Environment}'
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
-      Tags:
-        - Key: Project
-          Value: chintan
-        - Key: Instance
-          Value: !Ref InstanceName
-        - Key: Application
-          Value: Chintan
-
-  CaptureQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub 'chintan-captures-${InstanceName}-${Environment}'
-      # Must exceed the worker Timeout (900s) or Lambda refuses the mapping.
-      VisibilityTimeout: 960
-      MessageRetentionPeriod: 1209600
-      SqsManagedSseEnabled: true
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt CaptureDLQ.Arn
-        maxReceiveCount: 3
       Tags:
         - Key: Project
           Value: chintan
@@ -878,35 +872,28 @@ Resources:
         - Key: Application
           Value: Chintan
 
-  # The bucket ARN is written out rather than !GetAtt'd: ContentBucket already
-  # points at the queue through its notification config, and referencing the
-  # bucket here would close the cycle. The name is deterministic, so this is
-  # exact, not approximate.
-  CaptureQueuePolicy:
-    Type: AWS::SQS::QueuePolicy
+  # S3 may invoke the worker. Granted on the alias, because the bucket's
+  # notification names the alias and a qualified invocation is authorised
+  # against the qualified resource — a permission on the bare function would
+  # not be consulted (LambdaApiPermission has the same note).
+  #
+  # The bucket ARN is written out rather than !GetAtt'd: ContentBucket points at
+  # the alias through its notification config, and referencing the bucket here
+  # would close the cycle. The name is deterministic, so this is exact, not
+  # approximate — but it MUST stay byte-identical to ContentBucket's BucketName
+  # below, and to the copies in LambdaExecutionRole and the functions'
+  # CONTENT_BUCKET, all of which exist for the same reason. When the bucket
+  # gained ${Environment} the queue policy this replaced was left behind, the
+  # SourceArn matched nothing, and S3's test-publish failed the whole stack
+  # with "Unable to validate the following destination configurations".
+  ContentBucketInvokesWorkerPermission:
+    Type: AWS::Lambda::Permission
     Properties:
-      Queues:
-        - !Ref CaptureQueue
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowContentBucketToPublishObjectCreated
-            Effect: Allow
-            Principal:
-              Service: s3.amazonaws.com
-            Action: sqs:SendMessage
-            Resource: !GetAtt CaptureQueue.Arn
-            Condition:
-              ArnLike:
-                # MUST stay byte-identical to ContentBucket's BucketName below.
-                # These are two hand-written copies of one name, coupled only by
-                # this comment: when the bucket gained ${Environment} this was
-                # left behind, the ArnLike pattern matched nothing, and S3's
-                # test-publish failed the whole stack with "Unable to validate
-                # the following destination configurations".
-                aws:SourceArn: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
-              StringEquals:
-                aws:SourceAccount: !Ref AWS::AccountId
+      FunctionName: !Ref WorkerLambdaLiveAlias
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
 
   # S3 Content Bucket
   ContentBucket:
@@ -914,9 +901,12 @@ Resources:
     # Deleting the stack must not delete the recordings.
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
-    # S3 validates the notification destination at create time, so the queue
-    # policy has to be in place first.
-    DependsOn: CaptureQueuePolicy
+    # S3 validates the notification destination when the configuration is
+    # written, so the permission has to exist first. NotificationConfiguration
+    # is a mutable property: switching it from the retired queue to the alias
+    # is an in-place update of the existing bucket, and scripts/deploy.sh still
+    # refuses any change set that would replace ContentBucket.
+    DependsOn: ContentBucketInvokesWorkerPermission
     Properties:
       # ${Environment} is load-bearing. S3 bucket names are globally unique, so
       # without it a second environment of the same instance cannot be created
@@ -929,10 +919,18 @@ Resources:
       # tenants/*/captures/. Matching on the audio filename instead is exact:
       # it fires for the uploaded recording and for nothing the worker writes
       # afterwards, which would otherwise re-trigger the worker on its own output.
+      #
+      # The destination is the worker's live alias, invoked asynchronously —
+      # the same pointer the API integration and the API's retries use, so a
+      # rollback that moves the alias moves every way into the worker at once.
+      # The cycle this would normally create (bucket → alias → function → role
+      # → bucket) is broken on the Lambda side: the role's S3 grants and the
+      # functions' CONTENT_BUCKET spell the bucket name out instead of
+      # referencing this resource.
       NotificationConfiguration:
-        QueueConfigurations:
+        LambdaConfigurations:
           - Event: 's3:ObjectCreated:*'
-            Queue: !GetAtt CaptureQueue.Arn
+            Function: !Ref WorkerLambdaLiveAlias
             Filter:
               S3Key:
                 Rules:
@@ -941,7 +939,7 @@ Resources:
                   - Name: suffix
                     Value: '/audio.webm'
           - Event: 's3:ObjectCreated:*'
-            Queue: !GetAtt CaptureQueue.Arn
+            Function: !Ref WorkerLambdaLiveAlias
             Filter:
               S3Key:
                 Rules:
@@ -950,7 +948,7 @@ Resources:
                   - Name: suffix
                     Value: '/audio.m4a'
           - Event: 's3:ObjectCreated:*'
-            Queue: !GetAtt CaptureQueue.Arn
+            Function: !Ref WorkerLambdaLiveAlias
             Filter:
               S3Key:
                 Rules:
@@ -959,7 +957,7 @@ Resources:
                   - Name: suffix
                     Value: '/audio.mp3'
           - Event: 's3:ObjectCreated:*'
-            Queue: !GetAtt CaptureQueue.Arn
+            Function: !Ref WorkerLambdaLiveAlias
             Filter:
               S3Key:
                 Rules:
@@ -968,7 +966,7 @@ Resources:
                   - Name: suffix
                     Value: '/audio.ogg'
           - Event: 's3:ObjectCreated:*'
-            Queue: !GetAtt CaptureQueue.Arn
+            Function: !Ref WorkerLambdaLiveAlias
             Filter:
               S3Key:
                 Rules:
@@ -977,7 +975,7 @@ Resources:
                   - Name: suffix
                     Value: '/audio.wav'
           - Event: 's3:ObjectCreated:*'
-            Queue: !GetAtt CaptureQueue.Arn
+            Function: !Ref WorkerLambdaLiveAlias
             Filter:
               S3Key:
                 Rules:
@@ -1006,8 +1004,8 @@ Resources:
       # now the only thing it means.
       #
       # chintan-processed is the third, newer condition. A capture whose upload
-      # event never reached the worker — the SQS/S3 notification lost, the
-      # worker dead — sits at `uploaded` with no chance to run, and this tag is
+      # event never reached the worker — the S3 notification lost, the worker
+      # dead — sits at `uploaded` with no chance to run, and this tag is
       # the only one of the three the WORKER sets rather than the upload PUT: it
       # is applied by internal/pipeline.markAudioProcessedIfSafe once
       # transcription actually succeeds, not merely once time has passed. Before
@@ -1216,11 +1214,16 @@ Resources:
                   # Adding the tag without this grant made every upload fail.
                   - s3:PutObjectTagging
                   - s3:GetObjectTagging
-                Resource: !Sub '${ContentBucket.Arn}/*'
+                # The bucket name is spelled out, not !GetAtt'd. ContentBucket's
+                # notification invokes the worker alias, whose function runs
+                # under this role; a reference here would be the last edge of a
+                # cycle CloudFormation refuses. MUST stay byte-identical to
+                # ContentBucket's BucketName.
+                Resource: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}/*'
               - Effect: Allow
                 Action:
                   - s3:ListBucket
-                Resource: !GetAtt ContentBucket.Arn
+                Resource: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
         - PolicyName: SSMAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1239,35 +1242,34 @@ Resources:
                 Action:
                   - kms:Decrypt
                 Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
-        - PolicyName: CaptureQueueAccess
+        - PolicyName: CapturePipelineAccess
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Receive/Delete for the worker's event source mapping; Send so the
-              # API can requeue a capture on POST /v1/captures/{id}/retry.
+              # The API hands a capture to the worker on POST
+              # /v1/captures/{id}/retry and /target by invoking the worker's
+              # live alias asynchronously. The alias ARN is spelled out rather
+              # than !Ref'd: the alias depends on the function, the function on
+              # this role, and a reference here would close that cycle. MUST
+              # stay in step with WorkerLambdaFunction's FunctionName and the
+              # alias Name below.
               - Effect: Allow
                 Action:
-                  - sqs:ReceiveMessage
-                  - sqs:DeleteMessage
-                  - sqs:ChangeMessageVisibility
-                  - sqs:GetQueueAttributes
-                  - sqs:GetQueueUrl
-                  - sqs:SendMessage
-                Resource: !GetAtt CaptureQueue.Arn
-              - Effect: Allow
-                Action:
-                  - sqs:GetQueueAttributes
-                Resource: !GetAtt CaptureDLQ.Arn
-              # A stream event source has no redrive policy of its own: the
-              # OnFailure destination is written by LAMBDA using the function's
-              # execution role, so without this the mapping is created, the
-              # retries are exhausted, and the record is dropped with the
-              # destination silently unwritten.
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-${InstanceName}-${Environment}:live'
+              # Both dead-letter destinations are written by LAMBDA using the
+              # function's execution role — the worker's OnFailure destination
+              # (WorkerLambdaEventInvokeConfig) and the expiry stream's. Without
+              # these grants the retries are exhausted and the record is dropped
+              # with the destination silently unwritten and the alarm never
+              # given a datapoint.
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
                   - sqs:GetQueueAttributes
-                Resource: !GetAtt ExpiryDLQ.Arn
+                Resource:
+                  - !GetAtt CaptureDLQ.Arn
+                  - !GetAtt ExpiryDLQ.Arn
         - PolicyName: XRayTracing
           PolicyDocument:
             Version: '2012-10-17'
@@ -1321,7 +1323,9 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
-          CONTENT_BUCKET: !Ref ContentBucket
+          # Spelled out rather than !Ref'd, to keep the function off the
+          # bucket → alias → function → role cycle; see ContentBucket.
+          CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
           ALLOWED_ORIGIN: !Ref AllowedOrigin
           LLM_BASE_URL: https://api.minimax.io/v1
           LLM_MODEL: MiniMax-M3
@@ -1335,7 +1339,10 @@ Resources:
           # not.
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          CAPTURE_QUEUE_URL: !Ref CaptureQueue
+          # The worker's live alias, which retry and target invoke
+          # asynchronously. The alias, not the function, so a rollback that
+          # moves the alias moves the API's retries with it.
+          WORKER_FUNCTION_ARN: !Ref WorkerLambdaLiveAlias
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
         - Key: Project
@@ -1346,8 +1353,8 @@ Resources:
           Value: Chintan
 
   # Worker Lambda — the slow half of the pipeline. Transcribe, route, clean,
-  # append. Invoked out-of-band from SQS, so its ceiling is Lambda's 900s rather
-  # than the gateway's 30.
+  # append. Invoked asynchronously by S3 and by the API, so its ceiling is
+  # Lambda's 900s rather than the gateway's 30.
   WorkerLambdaFunction:
     Type: AWS::Lambda::Function
     DependsOn: WorkerLogGroup
@@ -1369,7 +1376,9 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
-          CONTENT_BUCKET: !Ref ContentBucket
+          # Spelled out rather than !Ref'd, to keep the function off the
+          # bucket → alias → function → role cycle; see ContentBucket.
+          CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
           ALLOWED_ORIGIN: !Ref AllowedOrigin
           LLM_BASE_URL: https://api.minimax.io/v1
           LLM_MODEL: MiniMax-M3
@@ -1383,7 +1392,6 @@ Resources:
           # not.
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
         - Key: Project
@@ -1402,11 +1410,11 @@ Resources:
   #   * Concurrency. The worker's five reserved executions are sized for
   #     provider round-trips measured in minutes. A month's worth of notes
   #     expiring in one hour must not consume them and leave a recording the
-  #     user just made sitting in the queue.
+  #     user just made waiting in Lambda's retry queue.
   #   * Timeout. 900 seconds is right for a transcription and absurd for a
   #     handful of DeleteObject calls; five minutes bounds a runaway.
   #   * Its own dead-letter queue and its own alarm, which is only possible per
-  #     function and per mapping.
+  #     function.
   #   * Memory. 2048 MB is sized for the worker's provider work; this holds a
   #     page of capture rows.
   #
@@ -1435,7 +1443,9 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
-          CONTENT_BUCKET: !Ref ContentBucket
+          # Spelled out rather than !Ref'd, to keep the function off the
+          # bucket → alias → function → role cycle; see ContentBucket.
+          CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
           ALLOWED_ORIGIN: !Ref AllowedOrigin
           LLM_BASE_URL: https://api.minimax.io/v1
           LLM_MODEL: MiniMax-M3
@@ -1448,7 +1458,6 @@ Resources:
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          CAPTURE_QUEUE_URL: !Ref CaptureQueue
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
       Tags:
         - Key: Project
@@ -1520,45 +1529,61 @@ Resources:
       FunctionVersion: !GetAtt ExpiryLambdaInitialVersion.Version
       Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
 
-  CaptureQueueEventSourceMapping:
-    Type: AWS::Lambda::EventSourceMapping
-    # Lambda validates, at mapping-creation time, that the function's execution
-    # role can ReceiveMessage on the queue. Nothing otherwise orders this against
-    # LambdaExecutionRole: the dependency runs through the alias to the function
-    # to the role, so CloudFormation is free to create the mapping while the
-    # role's inline policy is still propagating, and it fails with
-    #   "The function execution role does not have permissions to call
-    #    ReceiveMessage on SQS"
-    # naming a permission the role demonstrably has.
-    #
-    # DependsOn makes the ordering explicit rather than transitive. It does not
-    # abolish IAM's eventual consistency -- nothing in a template can -- so a
-    # first create can still lose the race; the deploy script clears
-    # ROLLBACK_COMPLETE so a retry is one re-run rather than a manual cleanup.
+  # How the worker's asynchronous invocations are retried, and where one that
+  # cannot be goes. This applies to every asynchronous invocation of the alias
+  # alike — S3's notification and the API's retry and target.
+  #
+  # Two retries is Lambda's maximum and its default; it is written down so the
+  # schedule the pipeline's tests replay (about one minute after the failure,
+  # then about two minutes after that) is pinned here rather than assumed. Both
+  # fall inside the append claim's twenty-minute lease, which is fine: an
+  # attempt that died after writing the paragraph is finished by the first
+  # retry on the strength of the marker it wrote, and the one attempt that has
+  # to wait for the lease — died between claiming and writing — dead-letters
+  # and is recovered by the user's retry after the alarm. Six hours of event
+  # age is how long a burst of throttled captures may wait for the worker's
+  # five reserved executions before being dead-lettered instead.
+  #
+  # On the alias, not the function: an EventInvokeConfig is per qualifier, and
+  # everything that invokes the worker invokes the alias.
+  WorkerLambdaEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    # The Qualifier is the alias NAME, not a reference, so nothing here orders
+    # this against the alias existing; DependsOn does. Lambda also validates,
+    # when the destination is written, that the execution role can SendMessage
+    # to it — the same race TableExpiryEventSourceMapping documents — so the
+    # role is named too rather than reached transitively through the function.
     DependsOn:
+      - WorkerLambdaLiveAlias
       - LambdaExecutionRole
-      - CaptureQueuePolicy
     Properties:
-      EventSourceArn: !GetAtt CaptureQueue.Arn
-      # The alias, not the function: a rollback that leaves the worker on the
-      # bad version has rolled back half the system.
-      FunctionName: !Ref WorkerLambdaLiveAlias
-      Enabled: true
-      # One capture per invocation: a batch failure must not redeliver captures
-      # that already appended.
-      BatchSize: 1
-      FunctionResponseTypes:
-        - ReportBatchItemFailures
-      ScalingConfig:
-        MaximumConcurrency: 5
+      FunctionName: !Ref WorkerLambdaFunction
+      Qualifier: live
+      MaximumRetryAttempts: 2
+      MaximumEventAgeInSeconds: 21600
+      DestinationConfig:
+        OnFailure:
+          # The failure record carries the original payload — the S3 event or
+          # the API's {tenant_id, capture_id} — and the error, so the capture
+          # can be named from the message. Written by Lambda under
+          # LambdaExecutionRole, which is why that role has sqs:SendMessage on
+          # the queue.
+          Destination: !GetAtt CaptureDLQ.Arn
 
   # The expiry stream. This is what closes the orphaned-object leak: TTL removes
   # an archived note's index row, and this mapping is how anything finds out.
   TableExpiryEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
-    # Same reasoning as CaptureQueueEventSourceMapping: Lambda validates the
-    # execution role's stream permissions when the mapping is created, and
-    # nothing else orders this against the role's inline policy.
+    # Lambda validates the execution role's stream permissions when the mapping
+    # is created. Nothing otherwise orders this against LambdaExecutionRole: the
+    # dependency runs through the alias to the function to the role, so
+    # CloudFormation is free to create the mapping while the role's inline
+    # policy is still propagating, and it fails naming a permission the role
+    # demonstrably has. DependsOn makes the ordering explicit rather than
+    # transitive. It does not abolish IAM's eventual consistency -- nothing in a
+    # template can -- so a first create can still lose the race; the deploy
+    # script clears ROLLBACK_COMPLETE so a retry is one re-run rather than a
+    # manual cleanup.
     DependsOn:
       - LambdaExecutionRole
     Properties:
@@ -1934,7 +1959,7 @@ Resources:
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-errors'
-      AlarmDescription: Worker Lambda failed a capture. Fires before the DLQ does.
+      AlarmDescription: Worker Lambda failed an attempt at a capture. Lambda retries it twice; this fires before the DLQ does.
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
@@ -1956,7 +1981,7 @@ Resources:
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-throttles'
-      AlarmDescription: Worker Lambda hit its reserved concurrency ceiling; captures are queueing.
+      AlarmDescription: Worker Lambda hit its reserved concurrency ceiling; Lambda is holding captures for retry.
       Namespace: AWS/Lambda
       MetricName: Throttles
       Dimensions:
@@ -1971,13 +1996,15 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
-  # A single message here is one recording the user believes was filed and was not.
+  # A single message here is one recording the user believes was filed and was
+  # not: an asynchronous invocation of the worker failed all three attempts and
+  # Lambda wrote its OnFailure record here.
   CaptureDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-dlq'
-      AlarmDescription: A capture exhausted its retries and is sitting in the dead-letter queue.
+      AlarmDescription: A capture exhausted its retries; its failure record is in the dead-letter queue. Retry it from the app.
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Dimensions:
@@ -2000,7 +2027,7 @@ Resources:
   #
   # There is deliberately no companion Errors alarm on ExpiryLambdaFunction, as
   # there is on the worker. The worker's exists because a capture failure is
-  # user-visible and worth hearing about before the DLQ fills three retries
+  # user-visible and worth hearing about before the DLQ fills two retries
   # later; nobody is waiting on an expiry, and an alarm per transient
   # DeleteObject blip would be noise for a job the retries fix on their own.
   ExpiryDLQDepthAlarm:
@@ -2249,20 +2276,8 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-TableName'
 
-  CaptureQueueUrl:
-    Description: Capture pipeline SQS queue URL (CAPTURE_QUEUE_URL)
-    Value: !Ref CaptureQueue
-    Export:
-      Name: !Sub '${AWS::StackName}-CaptureQueueUrl'
-
-  CaptureQueueArn:
-    Description: Capture pipeline SQS queue ARN (CAPTURE_QUEUE_ARN)
-    Value: !GetAtt CaptureQueue.Arn
-    Export:
-      Name: !Sub '${AWS::StackName}-CaptureQueueArn'
-
   CaptureDLQUrl:
-    Description: Capture pipeline dead-letter queue URL
+    Description: Dead-letter queue for worker invocations that failed every retry
     Value: !Ref CaptureDLQ
     Export:
       Name: !Sub '${AWS::StackName}-CaptureDLQUrl'
@@ -2298,7 +2313,7 @@ Outputs:
       Name: !Sub '${AWS::StackName}-ApiFunctionLiveAliasArn'
 
   WorkerFunctionLiveAliasArn:
-    Description: Alias the capture queue invokes; move it to roll back
+    Description: Alias S3 and the API invoke (WORKER_FUNCTION_ARN); move it to roll back
     Value: !Ref WorkerLambdaLiveAlias
     Export:
       Name: !Sub '${AWS::StackName}-WorkerFunctionLiveAliasArn'

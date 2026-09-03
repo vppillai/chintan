@@ -5,10 +5,10 @@
 # Each package builds to one arm64 binary named `bootstrap`, which is what the
 # provided.al2023 runtime executes, zipped at the archive root.
 #
-# Two binaries, not one. cmd/api serves HTTP; cmd/worker drains the capture
-# queue. They are separate main packages and must be separate artifacts: the
-# worker running the API handler starts cleanly and then fails every SQS event,
-# which looks like a broken pipeline rather than a broken deploy.
+# Two binaries, not one. cmd/api serves HTTP; cmd/worker runs the capture
+# pipeline. They are separate main packages and must be separate artifacts: the
+# worker running the API handler starts cleanly and then swallows every S3
+# notification, which looks like a broken pipeline rather than a broken deploy.
 #
 # Usage:
 #   scripts/build-lambda.sh [--output PATH] [--worker-output PATH]

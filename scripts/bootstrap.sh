@@ -115,17 +115,15 @@ ok "artifact bucket: $BUCKET"
 # Build and upload
 # ---------------------------------------------------------------------------
 
-# Two packages, not one. cmd/api serves HTTP and cmd/worker drains the capture
-# queue; they are separate main packages and must be separate artifacts.
+# Two packages, not one. cmd/api serves HTTP and cmd/worker runs the capture
+# pipeline; they are separate main packages and must be separate artifacts.
 #
 # This script used to build and upload one zip and pass only LambdaCodeKey,
 # which the template reads as "the worker shares the API zip". The API
-# entrypoint is Handler(ctx, events.APIGatewayV2HTTPRequest): fed a real SQS
-# event it returns {"statusCode":404} with a nil error, and because the event
-# source mapping declares FunctionResponseTypes: [ReportBatchItemFailures],
-# Lambda reads a success with no batchItemFailures key as "the whole batch
-# succeeded" and deletes every uploaded recording from the queue on first
-# receive. No retry, no DLQ message, no Errors datapoint, no alarm — and the
+# entrypoint is Handler(ctx, events.APIGatewayV2HTTPRequest): fed the S3
+# notification for a recording it returns {"statusCode":404} with a nil error,
+# which Lambda reads as a successful asynchronous invocation and never retries.
+# No retry, no DLQ message, no Errors datapoint, no alarm — and the
 # GET /v1/health smoke test below still passes, so the deploy reports success
 # while every recording is silently discarded.
 info "building the Lambda packages (api and worker)"

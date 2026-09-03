@@ -51,8 +51,8 @@ ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://${PAGES_HOST}}"
 
 # The worker is a SEPARATE main package (backend/cmd/worker) and needs its own
 # artifact. An empty WorkerCodeKey used to mean "share the API zip", and the API
-# entrypoint fed an SQS event returns {"statusCode":404} with a nil error, which
-# Lambda reads as a successful batch and deletes every queued recording. That
+# entrypoint fed an S3 notification returns {"statusCode":404} with a nil error,
+# which Lambda reads as a successful invocation and never retries. That
 # failure is silent all the way through — the health smoke test still passes.
 # So it is required here, by name, before anything is deployed.
 [ -n "${WORKER_KEY:-}" ] ||

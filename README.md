@@ -1,6 +1,8 @@
 # Chintan
 
-Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and the system transcribes, lightly cleans up the text, and appends it to the right note. It runs on serverless AWS (Cognito, Lambda, SQS, DynamoDB, S3) with a static frontend on GitHub Pages, and each instance gets its own isolated stack.
+Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and the system transcribes, lightly cleans up the text, and appends it to the right note. It runs on serverless AWS (Cognito, Lambda, DynamoDB, S3) with a static frontend on GitHub Pages, and each instance gets its own isolated stack.
+
+The capture pipeline is two Lambdas and no queue: the API Lambda answers HTTP and presigns the upload; S3 invokes the worker Lambda directly when the recording lands, and the worker transcribes, routes, cleans and appends. `POST /v1/captures/{id}/retry` and `/target` invoke the same worker asynchronously. Lambda retries a failed invocation twice on its own, and one that fails all three attempts is written to a dead-letter queue that raises the `capture-dlq` alarm — one message there is one recording that was not filed, and the recovery is the retry button.
 
 Uses **Groq** (speech-to-text) and an OpenAI-compatible endpoint, **MiniMax-M3** by default (text cleanup), with API keys in AWS SSM Parameter Store.
 
@@ -317,6 +319,6 @@ This is a **public repository**.
 
 All resources carry `Project=chintan`, `Instance=<instance>` and `Environment=<prod|staging|dev>`, and the budget is defined in `infrastructure/template.yaml` rather than clicked into the console — set `monthly_budget_usd` and `alarm_email` in the instance config.
 
-Typical monthly cost per instance: **$0.00 idle, and cents under use** on the AWS side — Lambda, DynamoDB, S3, SQS, SNS and CloudWatch all sit inside always-free tiers at single-user volume. The transcription and cleanup providers are the real bill (~$0.70/month light, ~$17 heavy). A staging instance adds nothing fixed.
+Typical monthly cost per instance: **$0.00 idle, and cents under use** on the AWS side — Lambda, DynamoDB, S3, SNS, CloudWatch and the two dead-letter queues all sit inside always-free tiers at single-user volume. The transcription and cleanup providers are the real bill (~$0.70/month light, ~$17 heavy). A staging instance adds nothing fixed.
 
 This was $1.00/month idle until the customer-managed KMS key was removed — it was the entire idle cost, and it bought separation that an SSM SecureString provides for free. `docs/cost-analysis.md` has the itemised figures against the AWS Price List, and the earlier README claim of "$1–10, nearly all of it per-recording" was structurally wrong: the per-recording AWS cost is approximately zero and the fixed cost was everything.

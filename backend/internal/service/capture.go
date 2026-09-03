@@ -70,10 +70,11 @@ var (
 	// ErrNoteCreationUnavailable means the service was built without a note
 	// creator, so a capture cannot be given a brand new note.
 	ErrNoteCreationUnavailable = errors.New("note creation is unavailable")
-	// ErrCaptureQueueUnavailable means no queue is wired, so the slow half of the
-	// pipeline cannot be reached. It is an error rather than a silent inline run:
-	// running the pipeline on the request path is the defect this phase removes.
-	ErrCaptureQueueUnavailable = errors.New("capture queue is not configured")
+	// ErrCaptureWorkerUnavailable means no worker invoker is wired, so the slow
+	// half of the pipeline cannot be reached. It is an error rather than a silent
+	// inline run: running the pipeline on the request path is the defect this
+	// phase removes.
+	ErrCaptureWorkerUnavailable = errors.New("capture worker is not configured")
 	// ErrUnsupportedContentType rejects a container the pipeline cannot route to
 	// a transcription provider.
 	ErrUnsupportedContentType = errors.New("unsupported audio content type")
@@ -88,12 +89,12 @@ type NoteCreator interface {
 	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
 }
 
-// Enqueuer hands a capture to the worker.
+// Invoker hands a capture to the worker Lambda.
 //
 // The interface is here and the implementation is in internal/pipeline, so the
-// API binary depends on the shape of the queue and not on the pipeline.
-type Enqueuer interface {
-	EnqueueCapture(ctx context.Context, tenantID, captureID, reason string) error
+// API binary depends on the shape of the hand-off and not on the pipeline.
+type Invoker interface {
+	InvokeCapture(ctx context.Context, tenantID, captureID, reason string) error
 }
 
 // CaptureRequest is what a client asks for when it begins a capture.
@@ -130,7 +131,7 @@ type CaptureService struct {
 	store   repository.Store
 	objects repository.Objects
 	uploads upload.Presigner
-	queue   Enqueuer
+	worker  Invoker
 	notes   NoteCreator
 }
 
@@ -162,9 +163,9 @@ func (s *CaptureService) WithUploads(p upload.Presigner) *CaptureService {
 	return s
 }
 
-// WithQueue installs the queue the worker drains.
-func (s *CaptureService) WithQueue(q Enqueuer) *CaptureService {
-	s.queue = q
+// WithInvoker installs the hand-off to the worker Lambda.
+func (s *CaptureService) WithInvoker(w Invoker) *CaptureService {
+	s.worker = w
 	return s
 }
 
@@ -269,8 +270,8 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 	return CaptureCreated{Capture: stored, Audio: audioUpload, Peaks: peaksUpload}, nil
 }
 
-// RetryCapture re-enqueues a capture so the worker resumes it from its last good
-// stage. It does no work inline: v1's retry ran the whole pipeline on the
+// RetryCapture hands a capture back to the worker so it resumes from its last
+// good stage. It does no work inline: v1's retry ran the whole pipeline on the
 // request path, which is what turned a gateway timeout into duplicated note
 // content.
 func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
@@ -297,7 +298,7 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 		capture = updated
 	}
 
-	if err := s.enqueue(ctx, userID, captureID, "retry"); err != nil {
+	if err := s.invokeWorker(ctx, userID, captureID, "retry"); err != nil {
 		return nil, err
 	}
 	return &capture, nil
@@ -361,20 +362,20 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return nil, fmt.Errorf("failed to update capture: %w", err)
 	}
 
-	if err := s.enqueue(ctx, userID, captureID, "target"); err != nil {
+	if err := s.invokeWorker(ctx, userID, captureID, "target"); err != nil {
 		return nil, err
 	}
 	return &updated, nil
 }
 
-func (s *CaptureService) enqueue(ctx context.Context, userID, captureID, reason string) error {
-	if s.queue == nil {
-		return ErrCaptureQueueUnavailable
+func (s *CaptureService) invokeWorker(ctx context.Context, userID, captureID, reason string) error {
+	if s.worker == nil {
+		return ErrCaptureWorkerUnavailable
 	}
-	if err := s.queue.EnqueueCapture(ctx, userID, captureID, reason); err != nil {
-		return fmt.Errorf("failed to enqueue capture: %w", err)
+	if err := s.worker.InvokeCapture(ctx, userID, captureID, reason); err != nil {
+		return fmt.Errorf("failed to hand capture to the worker: %w", err)
 	}
-	obs.Log(ctx).Info("capture enqueued",
+	obs.Log(ctx).Info("capture handed to the worker",
 		slog.String("capture_id", captureID),
 		slog.String("reason", reason))
 	return nil

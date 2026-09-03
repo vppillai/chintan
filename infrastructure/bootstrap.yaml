@@ -380,6 +380,13 @@ Resources:
                   - lambda:GetAlias
                   - lambda:ListVersionsByFunction
                   - lambda:ListAliases
+                  # WorkerLambdaEventInvokeConfig: the retry count, event age
+                  # and dead-letter destination of the worker's asynchronous
+                  # invocations, which is how S3 and the API reach it.
+                  - lambda:GetFunctionEventInvokeConfig
+                  - lambda:PutFunctionEventInvokeConfig
+                  - lambda:UpdateFunctionEventInvokeConfig
+                  - lambda:DeleteFunctionEventInvokeConfig
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
 
@@ -687,7 +694,7 @@ Resources:
               # CloudFormation does not own — bootstrap-agent.sh applies it, and
               # no deploy runs bootstrap-agent.sh — so the deployed ceiling can
               # fall behind the template's needs with nothing reporting it. When
-              # that happened, template.yaml's sqs:ReceiveMessage grant was void
+              # that happened, template.yaml's (since retired) sqs:ReceiveMessage grant was void
               # and Lambda reported a role that "does not have permissions" for
               # a grant it visibly held.
               #
@@ -720,6 +727,7 @@ Resources:
                   - lambda:GetFunction
                   - lambda:GetFunctionConfiguration
                   - lambda:GetFunctionConcurrency
+                  - lambda:GetFunctionEventInvokeConfig
                   - lambda:ListTags
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
@@ -736,6 +744,12 @@ Resources:
                   - lambda:UntagResource
                   - lambda:PutFunctionConcurrency
                   - lambda:DeleteFunctionConcurrency
+                  # WorkerLambdaEventInvokeConfig: how the worker's asynchronous
+                  # invocations (S3's notification, the API's retry) are retried
+                  # and where a failed one is dead-lettered.
+                  - lambda:PutFunctionEventInvokeConfig
+                  - lambda:UpdateFunctionEventInvokeConfig
+                  - lambda:DeleteFunctionEventInvokeConfig
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
                 Condition:

@@ -14,11 +14,11 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// s3EventOfSize is the notification the content bucket publishes, carrying the
-// size S3 actually wrote. A presigned PUT signs neither Content-Length nor a
-// length policy, so this is the first moment anything in the system learns how
-// big the recording really is.
-func s3EventOfSize(key string, size int64) string {
+// s3EventOfSize is the notification the content bucket invokes the worker with,
+// carrying the size S3 actually wrote. A presigned PUT signs neither
+// Content-Length nor a length policy, so this is the first moment anything in
+// the system learns how big the recording really is.
+func s3EventOfSize(key string, size int64) json.RawMessage {
 	body, err := json.Marshal(events.S3Event{
 		Records: []events.S3EventRecord{{
 			EventName: "ObjectCreated:Put",
@@ -31,7 +31,7 @@ func s3EventOfSize(key string, size int64) string {
 	if err != nil {
 		panic(err)
 	}
-	return string(body)
+	return body
 }
 
 // Ask for a URL for a 1 KB clip, PUT five gigabytes. S3 takes it. The worker is
@@ -43,14 +43,10 @@ func TestWorkerRefusesAnObjectLargerThanTheCaptureLimit(t *testing.T) {
 
 	oversize := service.MaxCaptureBytes + 1
 	worker := NewWorker(h.pipeline)
-	resp, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3EventOfSize("tenants/user1/captures/c_1/audio.webm", oversize), nil))
-	if err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v; an oversized upload is the client's fault, "+
-			"not an infrastructure fault, so redelivering it only fills the dead-letter queue", resp.BatchItemFailures)
+	if err := worker.Handle(context.Background(),
+		s3EventOfSize("tenants/user1/captures/c_1/audio.webm", oversize)); err != nil {
+		t.Fatalf("Handle: %v; an oversized upload is the client's fault, "+
+			"not an infrastructure fault, so retrying it only fills the dead-letter queue", err)
 	}
 
 	if got := h.stt.Calls(); got != 0 {
@@ -83,8 +79,8 @@ func TestWorkerAcceptsAnObjectInsideTheCaptureLimit(t *testing.T) {
 	seedUploadedCapture(t, h, "note1")
 
 	worker := NewWorker(h.pipeline)
-	if _, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3EventOfSize("tenants/user1/captures/c_1/audio.webm", 11), nil)); err != nil {
+	if err := worker.Handle(context.Background(),
+		s3EventOfSize("tenants/user1/captures/c_1/audio.webm", 11)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	capture, err := h.store.GetCapture(context.Background(), "user1", "c_1")

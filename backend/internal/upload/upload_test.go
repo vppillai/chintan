@@ -202,8 +202,8 @@ func TestEveryRetentionTierHasALifecycleRule(t *testing.T) {
 // internal/pipeline.markAudioProcessedIfSafe, the only place that ever sets
 // ProcessedTagKey.
 //
-// A capture whose upload event never reaches the worker — the S3/SQS
-// notification lost, the worker dead — sits at `uploaded` with no chance to
+// A capture whose upload event never reaches the worker — the S3 notification
+// lost, the worker dead — sits at `uploaded` with no chance to
 // run, and this tag is what keeps its audio out of every rule below until
 // transcription actually succeeds, regardless of how old the object gets. A
 // rule missing this filter would expire that audio on schedule anyway, on a

@@ -239,7 +239,9 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return exportDocument{}, fmt.Errorf("export: read note body: %w", err)
 		}
-		entry.Body = string(body)
+		// Strip the worker's append markers as GET /v1/notes/{id} does: the
+		// export is the note as the user knows it, not the object as stored.
+		entry.Body = StripCaptureMarkers(string(body))
 
 		captures, err := repository.DrainPages(ctx, maxExportCapturesPerNote, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 			return s.captures.ListCapturesForNote(ctx, userID, note.ID, opts)

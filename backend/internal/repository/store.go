@@ -91,20 +91,21 @@ const IdemClaimLease = 60 * time.Second
 // AppendClaimLease bounds how long one worker may hold an unfinished append
 // claim before another attempt is allowed to take it over.
 //
-// It has to be longer than the longest time a LIVE worker can hold the claim,
-// which is the Lambda timeout (900 s): a claim taken over while its holder is
-// still writing is the one case the note-body check in Pipeline.appendToNote
-// cannot cover. Twenty minutes clears that with margin.
+// The claim is a mutex and this is how a dead holder releases it. It has to be
+// longer than the longest time a LIVE worker can hold the claim, which is the
+// Lambda timeout (900 s): a claim taken over while its holder is still writing
+// is the one case the marker check in Pipeline.appendToNote cannot cover.
+// Twenty minutes clears that with margin.
 //
-// It does NOT have to be longer than the queue's visibility timeout, and it
-// used to be documented as if it did. SQS redelivers an unfinished message at
-// 960 s; a redelivery that finds its own token still claimed inside the lease
-// returns an error so the message comes back again (Pipeline.append), and the
-// delivery that arrives after the lease takes the claim over and finishes the
-// interrupted attempt without repeating the text. Conceding at that point
-// instead — which is what happened before — acked the message and left the
-// capture in `appending` for good. What keeps the append exactly-once is the
-// deterministic token plus the body check, not this number.
+// It is not tied to any retry schedule, and there is no number elsewhere it
+// has to stay above or below. Lambda retries a failed asynchronous invocation
+// at about one and two minutes — both inside this lease — and that is fine:
+// a retry that finds its own token claimed looks for the capture's marker in
+// the note body (Pipeline.append). Marker present means the paragraph landed
+// and the bookkeeping is finished; marker absent means the invocation fails
+// again, and the attempt after the lease takes the claim over and appends
+// once. What keeps the append exactly-once is the deterministic token plus the
+// marker, not this number.
 const AppendClaimLease = 20 * time.Minute
 
 // Store persists per-tenant settings, note indexes, and capture indexes.

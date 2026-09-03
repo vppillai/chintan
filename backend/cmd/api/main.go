@@ -13,8 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	lambdasvc "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/vppillai/chintan/backend/internal/auth"
@@ -86,13 +86,13 @@ func init() {
 	//    signs untagged PUTs, the lifecycle rule never matches the object, and
 	//    RetentionDays goes back to being a setting that is stored, returned,
 	//    rendered in the UI, and read by nothing.
-	//  - WithQueue hands captures to the worker. Without it a retry has nowhere
-	//    to go.
+	//  - WithInvoker hands captures to the worker Lambda, asynchronously, on
+	//    the worker's live alias. Without it a retry has nowhere to go.
 	//  - WithNoteCreator lets a user resolve a needs_target capture by naming a
 	//    new note.
 	captureService := service.NewCaptureService(store, objects).
 		WithUploads(upload.NewS3(s3Client, contentBucket)).
-		WithQueue(pipeline.NewQueue(sqs.NewFromConfig(cfg), mustEnv("CAPTURE_QUEUE_URL"))).
+		WithInvoker(pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), mustEnv("WORKER_FUNCTION_ARN"))).
 		WithNoteCreator(notesService)
 
 	// The API does not call a provider, so it cannot spend. It reads the same

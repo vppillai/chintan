@@ -122,7 +122,7 @@ func runFailingTranscribe(t *testing.T, err error) (model.CaptureIndex, []emfRec
 	restore()
 
 	if runErr != nil {
-		t.Fatalf("Run returned %v; a provider verdict must not ask SQS to redeliver", runErr)
+		t.Fatalf("Run returned %v; a provider verdict must not ask Lambda to retry", runErr)
 	}
 	return final, decodeMetrics(t, metrics.Bytes())
 }

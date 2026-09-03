@@ -42,7 +42,7 @@ func (s *throttleGetNote) throttled() int {
 
 // The router said "append to the note the user has been dictating into all
 // week". If the read of that note fails transiently, the only safe answer is to
-// let SQS redeliver. Treating the fault as "no such note" silently starts a
+// fail the invocation so Lambda retries it. Treating the fault as "no such note" silently starts a
 // second note with the same subject, and the user's week is now split across
 // two notes with nothing recording that it happened.
 func TestATransientNoteReadFaultDuringRoutingIsRetriedNotRerouted(t *testing.T) {
@@ -88,10 +88,10 @@ func TestATransientNoteReadFaultDuringRoutingIsRetriedNotRerouted(t *testing.T) 
 	}
 	if runErr == nil {
 		t.Fatalf("routing swallowed a transient note read fault and returned status %q with note_id %q; "+
-			"SQS will never redeliver this capture", capture.Status, capture.NoteID)
+			"Lambda will never retry this capture", capture.Status, capture.NoteID)
 	}
 	if !errors.Is(runErr, errInducedThrottle) {
-		t.Fatalf("error = %v, want the induced throttle to propagate so the message is redelivered", runErr)
+		t.Fatalf("error = %v, want the induced throttle to propagate so the invocation is retried", runErr)
 	}
 
 	stored, err := f.store.GetCapture(ctx, "user1", "c_1")
