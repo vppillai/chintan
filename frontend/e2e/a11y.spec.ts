@@ -12,11 +12,10 @@ import { expect, test } from './fixtures.ts';
 
 const ROUTES = [
   '/',
-  '/notes',
-  '/search',
+  '/?view=archived',
+  '/?q=roof',
   '/settings',
   '/notes/roof-repair',
-  '/archive',
 ] as const;
 const THEMES = ['ink', 'nocturne'] as const;
 
@@ -56,7 +55,7 @@ for (const theme of THEMES) {
 }
 
 test('the library is fully traversable by keyboard', async ({ page }) => {
-  await page.goto('/notes');
+  await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   // Tab until a note row has focus, proving rows are real buttons rather than
@@ -88,14 +87,17 @@ test('the skip link moves focus to main', async ({ page }) => {
 
 test('every interactive element shows a visible focus ring', async ({ page }) => {
   await page.goto('/');
+  // Let the library settle first: a Tab that lands on a control the next
+  // render replaces leaves focus on <body>, which has no ring to measure.
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
 
   const outline = await page.evaluate(() => {
     const element = document.activeElement;
-    if (!element) return null;
+    if (!element || element === document.body) return null;
     const styles = getComputedStyle(element);
-    return { width: styles.outlineWidth, style: styles.outlineStyle };
+    return { tag: element.tagName, width: styles.outlineWidth, style: styles.outlineStyle };
   });
 
   expect(outline).not.toBeNull();
@@ -103,25 +105,26 @@ test('every interactive element shows a visible focus ring', async ({ page }) =>
   expect(parseFloat(outline?.width ?? '0')).toBeGreaterThan(0);
 });
 
-test('Back collapses the sheet instead of leaving the app', async ({ page }) => {
+test('Back from a note returns to the library, not out of the app', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('link', { name: 'Notes' }).click();
-  await expect(page).toHaveURL(/\/notes$/);
+  await page.getByRole('button', { name: /roof repair/i }).click();
+  await expect(page).toHaveURL(/\/notes\/roof-repair$/);
 
   await page.goBack();
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('button', { name: /record/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^record$/i })).toBeVisible();
 });
 
-test('a deep link seeds home beneath it, so Back stays in the app', async ({ page }) => {
-  await page.goto('/notes');
-  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+test('a deep link seeds the library beneath it, so Back stays in the app', async ({ page }) => {
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
   await page.goBack();
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('button', { name: /record/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 });
 
 /**

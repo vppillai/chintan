@@ -24,17 +24,24 @@ test('a note can be archived from its own screen', async ({ page, api }) => {
   // the title be typed — that discipline is reserved for the irreversible one.
   await page.getByRole('button', { name: 'Archive it' }).click();
 
-  // Off the library, and the app is not left sitting on a note that is gone.
-  await expect(page).toHaveURL(/\/notes$/);
+  // Back on the library, and the app is not left sitting on a note that is gone.
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('button', { name: /roof repair/i })).toHaveCount(0);
   expect(api.notes['roof-repair']?.archived).toBe(true);
 });
 
-test('the archive lists archived notes and says when each is purged', async ({ page }) => {
-  await page.goto('/notes');
+test('the archive is a chip on the library, and says when each note is purged', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
-  await page.getByRole('link', { name: /archive/i }).click();
-  await expect(page).toHaveURL(/\/archive$/);
+  await page.getByRole('button', { name: /^Archived/ }).click();
+  await expect(page).toHaveURL(/\?view=archived$/);
+  await expect(page.getByRole('button', { name: /^Archived/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
   await expect(page.getByRole('button', { name: /stray thought/i })).toBeVisible();
@@ -50,7 +57,9 @@ test('the archive lists archived notes and says when each is purged', async ({ p
 });
 
 test('an archived note can be restored', async ({ page, api }) => {
+  // The old address still works; it is the library with the archive chip on.
   await page.goto('/archive');
+  await expect(page).toHaveURL(/\?view=archived$/);
   await page.getByRole('button', { name: /old fence/i }).click();
 
   await expect(page.getByText(/this note is archived/i)).toBeVisible();
@@ -60,7 +69,7 @@ test('an archived note can be restored', async ({ page, api }) => {
   await expect(page.getByText(/this note is archived/i)).toHaveCount(0);
   expect(api.notes['old-fence']?.archived).toBe(false);
 
-  await page.goto('/notes');
+  await page.goto('/');
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
 });
 
@@ -85,9 +94,55 @@ test('delete forever is gated by typing the title, and cascades', async ({ page,
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
-  await expect(page).toHaveURL(/\/archive$/);
+  await expect(page).toHaveURL(/\?view=archived$/);
   expect(api.purged).toEqual(['old-fence']);
   await expect(page.getByRole('button', { name: /old fence/i })).toHaveCount(0);
+});
+
+/**
+ * Bulk select, the same control in both views: Archive from the library,
+ * Restore from the archive, Delete forever in either behind a typed word.
+ */
+test('several notes can be archived at once from the library', async ({ page, api }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Select' }).click();
+  await page.getByRole('button', { name: 'Select all' }).click();
+  await expect(page.getByText('2 selected')).toBeVisible();
+
+  await page.getByRole('toolbar', { name: 'Bulk actions' }).getByRole('button', { name: 'Archive' }).click();
+  await page.getByRole('button', { name: 'Archive them' }).click();
+
+  await expect(page.getByText(/tap record to make your first note/i)).toBeVisible();
+  expect(api.notes['roof-repair']?.archived).toBe(true);
+  expect(api.notes['reading-list']?.archived).toBe(true);
+  // And the chip now counts them.
+  await expect(page.getByRole('button', { name: 'Archived · 4' })).toBeVisible();
+});
+
+test('the archive can be emptied: select all, delete forever, type the word', async ({
+  page,
+  api,
+}) => {
+  await page.goto('/?view=archived');
+  await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Select' }).click();
+  await page.getByRole('button', { name: 'Select all' }).click();
+  await page.getByRole('button', { name: 'Delete forever' }).click();
+
+  const dialog = page.getByRole('dialog');
+  const confirm = dialog.getByRole('button', { name: 'Delete them forever' });
+  await expect(confirm).toBeDisabled();
+  await dialog.getByRole('textbox').fill('delete');
+  await confirm.click();
+
+  await expect(page.getByText(/nothing is archived/i)).toBeVisible();
+  expect(api.notes['old-fence']).toBeUndefined();
+  expect(api.notes['stray-thought']).toBeUndefined();
+  // The active notes were never touched.
+  expect(api.notes['roof-repair']).toBeDefined();
 });
 
 test('escape closes the delete dialog without deleting anything', async ({ page, api }) => {

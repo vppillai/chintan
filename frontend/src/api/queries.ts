@@ -397,7 +397,10 @@ export function isFilingRelevant(capture: CaptureWire, now: number = Date.now())
  * everything those filters would have returned that is worth showing (see
  * `isFilingRelevant`), so the filtering happens here. Focus refetch is off
  * for this query alone: while anything is moving the interval already asks,
- * and once nothing is, a focus has nothing new to learn.
+ * and once nothing is, a focus has nothing new to learn. Always stale, though:
+ * the library is remounted every time the user comes back to it — including
+ * from the capture screen, six hundred milliseconds after a Send — and that
+ * mount is the one moment a fresh answer is owed.
  */
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
@@ -414,7 +417,7 @@ export function usePendingCaptures(enabled = true) {
       return active ? CAPTURE_POLL_INTERVAL_MS : false;
     },
     refetchOnWindowFocus: false,
-    staleTime: 10_000,
+    staleTime: 0,
   });
 }
 

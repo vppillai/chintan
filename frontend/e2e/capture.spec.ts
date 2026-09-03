@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 
 /**
- * Record → stop → send → progress card → filed.
+ * Record → stop → send → filing row → filed.
  *
  * Chromium's fake media device gives MediaRecorder a real encoded stream, so
  * this exercises the actual recorder, the real IndexedDB buffer, and the real
@@ -9,10 +9,10 @@ import { expect, test } from './fixtures.ts';
  * because jsdom has no `getContext`.
  */
 
-test('records, uploads, and hands off to the progress card', async ({ page, api }) => {
+test('records, uploads, and hands off to the filing row', async ({ page, api }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: /record/i }).click();
+  await page.getByRole('button', { name: /^record$/i }).click();
   await expect(page).toHaveURL(/\/capture$/);
 
   // The claim the machine has to earn: not "Recording" until the stream is live.
@@ -54,10 +54,14 @@ test('records, uploads, and hands off to the progress card', async ({ page, api 
   expect(create?.headers['idempotency-key']).toBeTruthy();
   expect(create?.headers['authorization']).toBe('Bearer e2e-id-token');
 
-  // Handed off: the progress card lives in the shell and survives this screen.
+  // Handed off: back on the library, with the filing row at the top of it.
   api.captures[0]!.status = 'transcribing';
   await expect(page).toHaveURL(/\/$/, { timeout: 10_000 });
-  await expect(page.getByRole('region', { name: /captures in progress/i })).toBeVisible();
+  await expect(page.getByRole('region', { name: /recordings being filed/i })).toBeVisible();
+  await expect(page.getByText('Filing your recording')).toBeVisible();
+  // And Back does not walk into a fresh recording: the capture entry was replaced.
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/capture$/);
 });
 
 /**
@@ -72,7 +76,7 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
   await page.goto('/');
 
   for (const attempt of [1, 2]) {
-    await page.getByRole('button', { name: /record/i }).click();
+    await page.getByRole('button', { name: /^record$/i }).click();
     await expect(page).toHaveURL(/\/capture$/);
 
     // Never "Sent", and never the previous recording's clock.
@@ -88,7 +92,7 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
       .poll(() => api.captures.length, { message: `capture ${attempt} created`, timeout: 15_000 })
       .toBe(attempt);
 
-    // Filed, so the progress card clears and Home is back to the record hero.
+    // Filed, so the row settles and the library is back with the tab bar.
     api.captures.at(-1)!.status = 'appended';
     await expect(page).toHaveURL(/\/$/, { timeout: 10_000 });
   }
@@ -153,12 +157,14 @@ test('leads with the note the router picked, and files into it', async ({ page, 
 
   await page.goto('/');
 
-  await expect(page.getByText(/which note should this go in/i)).toBeVisible();
-  const add = page.getByRole('button', { name: /add to .*roof repair/i });
+  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  await expect(filing.getByText(/which note should this go in/i)).toBeVisible();
+  const add = filing.getByRole('button', { name: /add to .*roof repair/i });
   await expect(add).toBeVisible();
 
-  // Not an unranked list of everything the user owns.
-  await expect(page.getByRole('button', { name: 'Reading list' })).toHaveCount(0);
+  // Not an unranked list of everything the user owns. (The library beneath
+  // lists the notes too, so the check is scoped to the row.)
+  await expect(filing.getByRole('button', { name: 'Reading list' })).toHaveCount(0);
 
   await add.click();
 
@@ -184,11 +190,12 @@ test('a suggested new note is offered by the title the router chose', async ({ p
 
   await page.goto('/');
 
-  await expect(page.getByRole('button', { name: /start .*kitchen rebuild/i })).toBeVisible();
+  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  await expect(filing.getByRole('button', { name: /start .*kitchen rebuild/i })).toBeVisible();
 
   // And disagreeing is one tap, so the suggestion is never a trap.
-  await page.getByRole('button', { name: /choose another note/i }).click();
-  await expect(page.getByRole('button', { name: 'Roof repair' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Reading list' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /back to the suggestion/i })).toBeVisible();
+  await filing.getByRole('button', { name: /choose another note/i }).click();
+  await expect(filing.getByRole('button', { name: 'Roof repair' })).toBeVisible();
+  await expect(filing.getByRole('button', { name: 'Reading list' })).toBeVisible();
+  await expect(filing.getByRole('button', { name: /back to the suggestion/i })).toBeVisible();
 });
