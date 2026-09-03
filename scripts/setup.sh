@@ -115,11 +115,23 @@ fi
 # ---------------------------------------------------------------------------
 
 info "deploying $CHINTAN_BOOTSTRAP_STACK"
+# CloudFormation takes at most 51,200 bytes of template inline; anything larger
+# has to be staged through S3. The artifact bucket the stack itself creates is
+# the natural place, so it is used whenever it already exists (every update),
+# and the first-ever create — a smaller template, before the bucket exists —
+# goes inline. A one-time bootstrap that fails on its own template size is the
+# kind of thing this script exists to avoid.
+BUCKET_NAME="chintan-lambda-${ACCOUNT_ID}-${REGION}"
+stage_args=()
+if aws_cli s3api head-bucket --bucket "$BUCKET_NAME" >/dev/null 2>&1; then
+    stage_args=(--s3-bucket "$BUCKET_NAME" --s3-prefix bootstrap-templates)
+fi
 aws_cli cloudformation deploy \
     --template-file "$TEMPLATE" \
     --stack-name "$CHINTAN_BOOTSTRAP_STACK" \
     --capabilities CAPABILITY_NAMED_IAM \
     --no-fail-on-empty-changeset \
+    "${stage_args[@]+"${stage_args[@]}"}" \
     --parameter-overrides \
     "GitHubOrg=$OWNER" \
     "GitHubRepo=$NAME" \
