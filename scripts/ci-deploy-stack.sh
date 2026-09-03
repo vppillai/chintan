@@ -39,6 +39,9 @@ case "${1:-}" in
     *) die "ci-deploy-stack.sh takes no arguments; every input is an environment variable (see --help)" ;;
 esac
 
+# SITE_PATH is optional only so a hand run can omit it for a prod stack, where
+# the template's fallback (the instance name) is the right answer. The
+# workflow always passes it, because for a staging stack it is not.
 for v in INSTANCE ENVIRONMENT LAMBDA_BUCKET LAMBDA_KEY PAGES_HOST REPO_NAME; do
     [ -n "${!v:-}" ] || die "$v is required"
 done
@@ -67,6 +70,7 @@ args=(
     --parameter "WorkerCodeKey=${WORKER_KEY}"
     --parameter "PagesHost=${PAGES_HOST}"
     --parameter "RepoName=${REPO_NAME}"
+    --parameter "SitePath=${SITE_PATH:-}"
     --tag Application=Chintan
     --tag Project=chintan
     --tag "Instance=${INSTANCE}"

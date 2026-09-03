@@ -15,7 +15,7 @@ Everything below is CloudFormation. There is no Terraform in this repository.
 
 Naming is uniform: every stack is `chintan-<instance>-<environment>`, every provider secret is `/chintan/<instance>/<key>`, and every physical resource is `chintan-*`. The scripts, the workflows and the templates all derive names from that one rule, and `scripts/lib/common.sh` is the single place it is written down.
 
-Every script has `--help`, and every script you run by hand defaults to a **dry run** — nothing changes until you pass `--apply`. The one exception is `scripts/ci-deploy-stack.sh`, the CI wrapper: it is invoked by an already-gated workflow job, takes no flags, and always applies.
+Every script has `--help`, and every script you run by hand defaults to a **dry run** — nothing changes until you pass `--apply`. `scripts/deploy.sh` additionally refuses a change set that would *replace* the user pool, the table, the bucket or the user pool client, even with `--apply`: `Retain` keeps the old resource, but the stack would switch to an empty one and every note would become unreachable. Pass `--allow-replacement <LogicalId>` per resource once the data migration is planned. The one exception is `scripts/ci-deploy-stack.sh`, the CI wrapper: it is invoked by an already-gated workflow job, takes no flags, and always applies.
 
 ### Prerequisites
 
@@ -109,7 +109,7 @@ scripts/list-instances.sh --format text
 
 ### 4. Deploy
 
-Push to `main`. `Deploy Backend` runs `go test -race`, builds one arm64 binary, deploys every **staging** stack through a printed change set, smoke-tests each one, and only then deploys the **production** stacks — which wait for your approval on the `production` environment. `Deploy Frontend` then builds one Vite bundle per instance and publishes them to Pages.
+Push to `main`. `Deploy Backend` runs `go test -race`, builds one arm64 binary, deploys every **staging** stack through a printed change set, smoke-tests each one (`/v1/health` and `/v1/health/ready`, which round-trips DynamoDB and S3), and only then deploys the **production** stacks — which wait for your approval on the `production` environment. `Deploy Frontend` then builds one Vite bundle per instance and publishes them to Pages.
 
 For a first deploy, or when the pipeline itself is broken, deploy from a workstation:
 

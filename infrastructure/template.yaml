@@ -43,6 +43,19 @@ Parameters:
     Description: Repository name for Cognito callback URLs
     MinLength: 1
 
+  SitePath:
+    Type: String
+    Default: ''
+    Description: >
+      The GitHub Pages sub-path this stack's bundle is served from, without
+      slashes — the `site_path` field scripts/list-instances.sh resolves for the
+      instance config. The Cognito callback and logout URLs are built from it,
+      and Cognito matches redirect_uri byte for byte. Empty means "the instance
+      name", which is what a prod stack's path is; a staging stack's path is
+      `<instance>-staging`, and registering `/<instance>/` for it (which is
+      what this template did before the parameter existed) meant every
+      staging sign-in ended in redirect_mismatch before the login form.
+
   WorkerCodeKey:
     Type: String
     MinLength: 1
@@ -131,6 +144,7 @@ Parameters:
 
 Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
+  HasSitePath: !Not [!Equals [!Ref SitePath, '']]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
   AlarmsEnabled: !Equals [!Ref EnableAlarms, 'true']
@@ -245,9 +259,13 @@ Resources:
         - email
         - profile
       CallbackURLs:
-        - !Sub 'https://${PagesHost}/${RepoName}/${InstanceName}/'
+        - !Sub
+          - 'https://${PagesHost}/${RepoName}/${Path}/'
+          - Path: !If [HasSitePath, !Ref SitePath, !Ref InstanceName]
       LogoutURLs:
-        - !Sub 'https://${PagesHost}/${RepoName}/${InstanceName}/'
+        - !Sub
+          - 'https://${PagesHost}/${RepoName}/${Path}/'
+          - Path: !If [HasSitePath, !Ref SitePath, !Ref InstanceName]
       SupportedIdentityProviders:
         - COGNITO
       PreventUserExistenceErrors: ENABLED

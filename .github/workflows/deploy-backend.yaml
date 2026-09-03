@@ -185,6 +185,7 @@ jobs:
           WORKER_KEY: ${{ needs.build.outputs.worker_key }}
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
+          SITE_PATH: ${{ matrix.entry.site_path }}
           # When the bootstrap stack exports it, CloudFormation acts under a
           # service role scoped to one stack rather than under the CI role.
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
@@ -225,6 +226,7 @@ jobs:
           WORKER_KEY: ${{ needs.build.outputs.worker_key }}
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
+          SITE_PATH: ${{ matrix.entry.site_path }}
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
           # A secret rather than a field in config/instances/*.yaml, because this
           # repository is public and that file is not the place to publish an
