@@ -88,6 +88,15 @@ describe('a signed-out visitor gets a sign-in, not a shell of 401s', () => {
     mountSignedOut();
     expect(await screen.findByText(/still here and will be offered back/i)).toBeInTheDocument();
   });
+
+  it('says where signing in happens, and offers no second way in', async () => {
+    // The only way in is the hosted UI, which is also where any stronger
+    // credential is set up and used. The app itself offers no second button,
+    // so the sentence is what tells someone what to expect on the other side.
+    mountSignedOut();
+    expect(await screen.findByText(/on the Cognito page/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
 });
 
 describe('an unconfigured build says so rather than offering a dead button', () => {
@@ -101,104 +110,33 @@ describe('an unconfigured build says so rather than offering a dead button', () 
         phase="signed-out"
         error={null}
         signIn={vi.fn()}
-        unlock={vi.fn()}
-        needsReEnrolment={false}
         configured={false}
       />,
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent(/no sign-in configured/i);
     expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull();
-    // Neither way in works without the configuration, and offering the shortcut
-    // alone would be a button that reaches an API this bundle has no URL for.
-    expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
-  });
-});
-
-describe('the signed-out screen offers the unlock beside the sign-in', () => {
-  it('renders it when the browser can assert a credential', () => {
-    render(
-      <SignedOutScreen
-        phase="signed-out"
-        error={null}
-        signIn={vi.fn()}
-        unlock={vi.fn()}
-        needsReEnrolment={false}
-        configured
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Unlock with biometrics' }),
-    ).toBeInTheDocument();
-  });
-
-  it('omits it when the browser cannot', () => {
-    render(
-      <SignedOutScreen
-        phase="signed-out"
-        error={null}
-        signIn={vi.fn()}
-        unlock={null}
-        needsReEnrolment={false}
-        configured
-      />,
-    );
-
-    expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull();
-  });
-
-  it('asks for re-enrolment instead of reporting a failure', () => {
-    // The assertion verified; the vault behind it was sealed by a retired key
-    // and has been discarded. Nothing is wrong with the user's finger, so
-    // "biometric verification failed" would send them to try it again forever.
-    render(
-      <SignedOutScreen
-        phase="signed-out"
-        error={null}
-        signIn={vi.fn()}
-        unlock={vi.fn()}
-        needsReEnrolment
-        configured
-      />,
-    );
-
-    expect(screen.getByRole('status')).toHaveTextContent(/set up again on this device/i);
-    expect(screen.queryByRole('alert')).toBeNull();
-    // And the way out of it is still on screen.
-    expect(screen.getByRole('button', { name: 'Sign in' })).toBeInTheDocument();
   });
 });
 
 describe('the sign-out confirmation names what it destroys', () => {
   it('warns about a recording that never reached the server', () => {
-    const body = confirmBody({ captures: 1, queued: 0 }, false);
+    const body = confirmBody({ captures: 1, queued: 0 });
     expect(body).toMatch(/one recording that has not reached the server/i);
     expect(body).toMatch(/not saved anywhere else/i);
   });
 
   it('counts more than one', () => {
-    expect(confirmBody({ captures: 3, queued: 0 }, false)).toMatch(/3 recordings/);
+    expect(confirmBody({ captures: 3, queued: 0 })).toMatch(/3 recordings/);
   });
 
   it('warns about queued changes', () => {
-    expect(confirmBody({ captures: 0, queued: 2 }, false)).toMatch(/2 unsynced changes/);
+    expect(confirmBody({ captures: 0, queued: 2 })).toMatch(/2 unsynced changes/);
   });
 
   it('is reassuring when there is genuinely nothing to lose', () => {
-    const body = confirmBody({ captures: 0, queued: 0 }, false);
+    const body = confirmBody({ captures: 0, queued: 0 });
     expect(body).toMatch(/notes stay on the server/i);
     expect(body).not.toMatch(/deletes/i);
-  });
-
-  it('says biometric unlock is going too, because that is irreversible', () => {
-    expect(confirmBody({ captures: 0, queued: 0 }, true)).toMatch(
-      /biometric unlock will also be turned off/i,
-    );
-  });
-
-  it('says nothing about biometrics when nothing is enrolled', () => {
-    expect(confirmBody({ captures: 0, queued: 0 }, false)).not.toMatch(/biometric/i);
   });
 });

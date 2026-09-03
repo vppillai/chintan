@@ -50,9 +50,6 @@ import {
   settings,
   settingsStored,
   tagsPage,
-  tokenSet,
-  webauthnOptions,
-  webauthnStatus,
 } from './__fixtures__/responses.ts';
 import { putPresigned } from './endpoints.ts';
 import { CORRELATION_HEADER, SPEND_CAP_PROBLEM_TYPE, problemFromResponse } from './problem.ts';
@@ -64,7 +61,6 @@ import {
   type ProblemWire,
   type SearchField,
 } from './schema.ts';
-import { tokenSetFromWire } from './tokens.ts';
 
 /** Rebuilds the `Response` the client would have received. */
 function asResponse(body: unknown, status: number, contentType: string): Response {
@@ -382,19 +378,4 @@ describe('the remaining shapes the app reads', () => {
     expect(captureDownload.expires_at).toBeTruthy();
   });
 
-  it('reads the biometric shapes', () => {
-    expect(typeof webauthnStatus.enrolled).toBe('boolean');
-    expect(webauthnOptions.challenge_id).toBeTruthy();
-    expect(typeof webauthnOptions.options).toBe('object');
-  });
-
-  // The token set is the one response whose snake_case names are allowed
-  // outside schema.ts, and only inside this parser. If it stops parsing, a
-  // biometric unlock signs the user out instead of in.
-  it('parses the biometric token set the way the session does', () => {
-    const parsed = tokenSetFromWire(tokenSet, 0, null);
-    expect(parsed.idToken).toBe(tokenSet.id_token);
-    expect(parsed.accessToken).toBe(tokenSet.access_token);
-    expect(parsed.expiresAt).toBeGreaterThan(0);
-  });
 });

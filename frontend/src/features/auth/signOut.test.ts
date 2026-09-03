@@ -1,8 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 import { IDBFactory } from 'fake-indexeddb';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { ChintanApi } from '@/api/endpoints.ts';
 import { Session } from '@/api/session.ts';
 import { createMemoryTokenStore, type TokenSet } from '@/api/tokens.ts';
 import { saveCaptureRecord } from '@/features/capture/buffer.ts';
@@ -19,20 +18,17 @@ const TOKENS: TokenSet = {
   tokenType: 'Bearer',
 };
 
-function harness(overrides: { webauthnDisable?: () => Promise<void> } = {}) {
+function harness() {
   const store = createMemoryTokenStore(TOKENS);
   const session = new Session(store, { refresh: () => Promise.reject(new Error('no')) });
   const queryClient = new QueryClient();
   const navigated: string[] = [];
-  const webauthnDisable = vi.fn(overrides.webauthnDisable ?? (async () => {}));
 
   return {
     store,
     session,
     queryClient,
     navigated,
-    webauthnDisable,
-    api: { webauthnDisable } as unknown as ChintanApi,
     navigate: (url: string) => navigated.push(url),
   };
 }
@@ -49,7 +45,7 @@ describe('what signing out has to leave behind', () => {
     const h = harness();
     expect(h.session.isAuthenticated()).toBe(true);
 
-    await performSignOut({ ...h, revokeBiometric: false });
+    await performSignOut(h);
 
     expect(h.session.isAuthenticated()).toBe(false);
     expect(h.store.read()).toBeNull();
@@ -59,7 +55,7 @@ describe('what signing out has to leave behind', () => {
     const h = harness();
     h.queryClient.setQueryData(['notes', { state: 'active' }], { items: [{ id: 'roof' }] });
 
-    await performSignOut({ ...h, revokeBiometric: false });
+    await performSignOut(h);
 
     expect(h.queryClient.getQueryData(['notes', { state: 'active' }])).toBeUndefined();
   });
@@ -80,65 +76,12 @@ describe('what signing out has to leave behind', () => {
     });
     await enqueue({ kind: 'updateNote', payload: { noteId: 'roof', body: {} } });
 
-    await performSignOut({ ...h, revokeBiometric: false });
+    await performSignOut(h);
 
     const db = await openChintanDB();
     expect(await db.count('captures')).toBe(0);
     expect(await db.count('mutations')).toBe(0);
     expect(await db.count('captureChunks')).toBe(0);
-  });
-});
-
-describe('the biometric credential', () => {
-  it('is destroyed when the device is enrolled', async () => {
-    /*
-     * Biometric unlock vaults a Cognito refresh token server-side. Left
-     * enrolled, the next person to pick up the phone taps unlock and is signed
-     * straight back in — the sign-out would be cosmetic.
-     */
-    const h = harness();
-    await performSignOut({ ...h, revokeBiometric: true });
-    expect(h.webauthnDisable).toHaveBeenCalledTimes(1);
-  });
-
-  it('is left alone when nothing is enrolled', async () => {
-    const h = harness();
-    await performSignOut({ ...h, revokeBiometric: false });
-    expect(h.webauthnDisable).not.toHaveBeenCalled();
-  });
-
-  it('does not block the sign-out when the server cannot be reached', async () => {
-    // Being offline is not a reason to leave a live session on a phone that is
-    // being handed over. The user is told instead.
-    const h = harness({
-      webauthnDisable: async () => {
-        throw new Error('offline');
-      },
-    });
-
-    const result = await performSignOut({ ...h, revokeBiometric: true });
-
-    expect(result.biometricLeftBehind).toBe(true);
-    expect(h.session.isAuthenticated()).toBe(false);
-  });
-
-  it('is revoked while the token still exists', async () => {
-    // Order matters: it is an authenticated call.
-    const seen: (boolean | string)[] = [];
-    const h = harness({
-      webauthnDisable: async () => {
-        seen.push('revoke');
-      },
-    });
-    const realClear = h.session.clear.bind(h.session);
-    h.session.clear = () => {
-      seen.push('clear');
-      realClear();
-    };
-
-    await performSignOut({ ...h, revokeBiometric: true });
-
-    expect(seen).toEqual(['revoke', 'clear']);
   });
 });
 

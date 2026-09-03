@@ -185,18 +185,6 @@ describe('the requests the frontend actually sends', () => {
       await call(`downloadUrl_${kind}`, () => api.downloadUrl(CAPTURE_ID, kind));
     }
 
-    /* ---- biometric unlock --------------------------------------------- */
-    await call('webauthnStatus', () => api.webauthnStatus());
-    await call('webauthnRegisterOptions', () => api.webauthnRegisterOptions());
-    await call('webauthnRegister', () =>
-      api.webauthnRegister({
-        challenge_id: 'ch_1',
-        credential: { id: 'abc', type: 'public-key' },
-        refresh_token: 'refresh-token',
-      }),
-    );
-    await call('webauthnDisable', () => api.webauthnDisable());
-
     /* ---- export ------------------------------------------------------- */
     await call('startExport', () => api.startExport());
     await call('getExport', () => api.getExport(EXPORT_ID));

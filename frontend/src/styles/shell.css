@@ -1840,25 +1840,6 @@
   cursor: default;
 }
 
-/*
- * The second way in.
- *
- * Quiet on purpose: unlocking is the faster path for someone already enrolled,
- * but two solid buttons of equal weight make the signed-out screen a choice
- * where there should be one obvious action and one shortcut.
- */
-.signed-out__action--quiet {
-  margin-block-start: var(--space-3);
-  background-color: transparent;
-  border-color: var(--color-line-strong);
-  color: var(--color-ink);
-}
-
-.signed-out__action[disabled] {
-  color: var(--color-faint);
-  cursor: default;
-}
-
 /* --------------------------------------------------------------------------
    The router's answer, offered rather than buried
    -------------------------------------------------------------------------- */

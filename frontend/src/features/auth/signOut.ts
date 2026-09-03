@@ -6,27 +6,25 @@
  * has to leave the device with nothing on it and leave Cognito with no session
  * to sign the same person straight back in.
  *
- * Four things, in this order:
+ * Three things, in this order:
  *
- *   1. Revoke the biometric credential, if there is one — see below.
- *   2. Drop the token set.
- *   3. Empty the query cache and IndexedDB.
- *   4. Hand the browser to Cognito's `/logout`.
+ *   1. Drop the token set.
+ *   2. Empty the query cache and IndexedDB.
+ *   3. Hand the browser to Cognito's `/logout`.
  *
- * Order matters. The revoke is an authenticated call, so it has to happen while
- * the token still exists; the redirect is last because it ends this document.
+ * The redirect is last because it ends this document. Nothing here talks to
+ * the API: every credential lives with Cognito, so ending the hosted-UI session
+ * is the whole of the server-side half.
  */
 
 import type { QueryClient } from '@tanstack/react-query';
 
-import type { ChintanApi } from '@/api/endpoints.ts';
 import type { Session } from '@/api/session.ts';
 import { unconfirmedCaptures } from '@/features/capture/buffer.ts';
 import { clearAllLocalData } from '@/offline/db.ts';
 import { count as queuedCount } from '@/offline/queue.ts';
 import { config } from '@/config/env.ts';
 
-import { forgetEnrolment, rememberEnrolment } from './enrolment.ts';
 import { logoutUrl, redirectUri } from './oauth.ts';
 import { clearPending } from './pending.ts';
 
@@ -63,61 +61,17 @@ export async function readUnsentWork(): Promise<UnsentWork> {
 export interface SignOutInput {
   session: Session;
   queryClient: QueryClient;
-  api: ChintanApi;
-  /**
-   * Whether to destroy the server-side WebAuthn credential as well.
-   *
-   * **This defaults to true when the device is enrolled, and that is a
-   * deliberate choice.** Biometric unlock vaults a Cognito refresh token
-   * server-side, so an enrolled credential left behind means the next person to
-   * pick up the phone taps "unlock" and is signed straight back in — the
-   * sign-out would be cosmetic. Since the whole reason to reach for sign-out on
-   * a phone is that it is leaving your hands, a sign-out that survives itself
-   * is the wrong default.
-   *
-   * The cost is real and bounded: re-enrolling needs one fresh sign-in, which
-   * is exactly what the user is about to do anyway.
-   */
-  revokeBiometric: boolean;
   /** Injected by tests; production navigates for real. */
   navigate?: (url: string) => void;
-}
-
-export interface SignOutResult {
-  /** True when the biometric credential could not be revoked (offline, 5xx). */
-  biometricLeftBehind: boolean;
 }
 
 export async function performSignOut({
   session,
   queryClient,
-  api,
-  revokeBiometric,
   navigate = (url) => {
     window.location.assign(url);
   },
-}: SignOutInput): Promise<SignOutResult> {
-  let biometricLeftBehind = false;
-
-  if (revokeBiometric) {
-    // Best effort, and it must not block the sign-out: failing to reach the
-    // server is not a reason to leave a live session on a phone that is being
-    // handed over. The user is told instead.
-    try {
-      await api.webauthnDisable();
-      // The credential is gone, so the offer to use it must go with it. Left
-      // behind, it produced the same loop after every sign-out: sign in, see
-      // "Unlock with biometrics", tap it, `login/options → 503`.
-      forgetEnrolment();
-    } catch {
-      biometricLeftBehind = true;
-      // The revoke did not land, so the credential may well still be live and
-      // the offer is still the right one to make. Saying otherwise would hide a
-      // working unlock; the user is told about the failure separately.
-      rememberEnrolment(true);
-    }
-  }
-
+}: SignOutInput): Promise<void> {
   session.clear();
   clearPending();
   queryClient.clear();
@@ -132,6 +86,4 @@ export async function performSignOut({
   if (config.cognitoDomain.length > 0 && config.clientId.length > 0) {
     navigate(logoutUrl(redirectUri()));
   }
-
-  return { biometricLeftBehind };
 }

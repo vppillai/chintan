@@ -13,16 +13,14 @@ import type { AuthGateState } from './useAuth.ts';
  * to an identity provider the instant it loads cannot be opened offline, cannot
  * be reasoned about from the address bar, and turns Back into a redirect loop.
  * One button, pressed on purpose.
+ *
+ * One button only. The hosted UI is where every credential lives — password,
+ * and a passkey once the user has added one there — so there is no second way
+ * in for this screen to offer, and nothing here has to know how the person
+ * chose to prove who they are.
  */
-export function SignedOutScreen({
-  phase,
-  error,
-  signIn,
-  unlock,
-  needsReEnrolment,
-  configured,
-}: AuthGateState) {
-  const busy = phase === 'redirecting' || phase === 'exchanging' || phase === 'unlocking';
+export function SignedOutScreen({ phase, error, signIn, configured }: AuthGateState) {
+  const busy = phase === 'redirecting' || phase === 'exchanging';
 
   return (
     <div className="signed-out">
@@ -32,20 +30,6 @@ export function SignedOutScreen({
       {error && (
         <p className="signed-out__error" role="alert">
           {error}
-        </p>
-      )}
-
-      {/*
-        Not an error, and deliberately not worded as one. The assertion was
-        good; the vault it should have opened was sealed by a key that has since
-        been retired, and the server discarded it. Nothing is wrong with the
-        user's finger, so telling them verification failed would send them to
-        try it again forever. Signing in once re-enrols them.
-      */}
-      {needsReEnrolment && (
-        <p className="signed-out__error" role="status">
-          Biometric unlock has to be set up again on this device. Sign in once, then turn
-          it back on in Settings.
         </p>
       )}
 
@@ -64,24 +48,10 @@ export function SignedOutScreen({
                 : 'Sign in'}
           </button>
 
-          {/*
-            Beside Sign in, which is its entire purpose: an enrolled user should
-            not have to take the hosted-UI round trip. Offered unconditionally
-            rather than gated on an enrolment check, because asking the server
-            "is this device enrolled?" before anyone has authenticated is a
-            question with no session to answer it for — the server answers 503
-            if nothing is enrolled and the button says so.
-          */}
-          {unlock && (
-            <button
-              type="button"
-              className="signed-out__action signed-out__action--quiet"
-              onClick={unlock}
-              disabled={busy}
-            >
-              {phase === 'unlocking' ? 'Unlocking…' : 'Unlock with biometrics'}
-            </button>
-          )}
+          <p className="signed-out__note">
+            Signing in happens on the Cognito page, where you can use a passkey once you have
+            set one up.
+          </p>
         </>
       ) : (
         /*

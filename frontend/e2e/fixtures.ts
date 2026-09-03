@@ -44,18 +44,6 @@ export interface AuthState {
   rejectExchange: boolean;
   /** Set to send the user back with `error=access_denied` instead of a code. */
   denyLogin: boolean;
-  /** Whether biometric unlock is enrolled, which sign-out has to deal with. */
-  webauthnEnrolled: boolean;
-  /** Every DELETE /v1/auth/webauthn the app made. */
-  webauthnDisabled: number;
-  /** Assertions posted to POST /v1/auth/webauthn/login. */
-  webauthnLogins: Record<string, unknown>[];
-  /**
-   * Makes the unlock fail the way a vault sealed by a retired key does: the
-   * assertion verifies, the vault will not open, and the server says so
-   * distinguishably rather than opaquely.
-   */
-  vaultNeedsReEnrolment: boolean;
 }
 
 interface NoteRecord {
@@ -177,10 +165,6 @@ export function freshState(): ApiState {
       logout: [],
       rejectExchange: false,
       denyLogin: false,
-      webauthnEnrolled: false,
-      webauthnDisabled: 0,
-      webauthnLogins: [],
-      vaultNeedsReEnrolment: false,
     },
   };
 }
@@ -464,7 +448,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
-    // ---- Settings, tags, auth ------------------------------------------
+    // ---- Settings and tags ---------------------------------------------
     if (path === '/v1/settings') {
       await json(route, {
         cleanup_mode: 'faithful',
@@ -472,73 +456,6 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         theme: 'ink',
         daily_spend_cap_micros: 0,
       });
-      return;
-    }
-    /*
-     * The unlock ceremony, both halves.
-     *
-     * `login/options` and `login` carry `security: []` in `openapi.yaml` — they
-     * exist precisely for a client that has no session — so the spec asserts
-     * that the app sends no bearer on either.
-     */
-    if (path === '/v1/auth/webauthn/login/options' && method === 'POST') {
-      if (!state.auth.webauthnEnrolled) {
-        // Not enrolled is the same answer for every caller, so it is not an
-        // oracle: 503, as `handler/webauthn.go` returns.
-        // 404 with a machine-readable `type`, as `handler/webauthn.go` now
-        // answers. It was a 503, which reads as transient and made a permanent
-        // loop out of an account fact.
-        await problem(route, 404, {
-          type: 'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-not-enrolled',
-          title: 'Not found',
-          detail: 'nothing is enrolled on this account',
-        });
-        return;
-      }
-      await json(route, {
-        challenge_id: 'e2e-assert-challenge',
-        options: {
-          // base64url, as the contract sends it.
-          challenge: 'ZTJlLWFzc2VydC1jaGFsbGVuZ2U',
-          timeout: 60_000,
-          userVerification: 'required',
-          allowCredentials: [{ id: 'ZTJlLWNyZWQ', type: 'public-key' }],
-        },
-      });
-      return;
-    }
-
-    if (path === '/v1/auth/webauthn/login' && method === 'POST') {
-      const body = request.postDataJSON() as Record<string, unknown>;
-      state.auth.webauthnLogins.push(body);
-
-      if (state.auth.vaultNeedsReEnrolment) {
-        await problem(route, 401, {
-          type: 'https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-re-enrolment-required',
-          title: 'Unauthorized',
-          detail: 'biometric unlock must be set up again on this device',
-        });
-        return;
-      }
-
-      await json(route, {
-        id_token: 'e2e-unlocked-id-token',
-        access_token: 'e2e-unlocked-access-token',
-        refresh_token: 'e2e-unlocked-refresh-token',
-        expires_in: 3600,
-        token_type: 'Bearer',
-      });
-      return;
-    }
-
-    if (path === '/v1/auth/webauthn/status') {
-      await json(route, { enrolled: state.auth.webauthnEnrolled });
-      return;
-    }
-    if (path === '/v1/auth/webauthn' && method === 'DELETE') {
-      state.auth.webauthnDisabled += 1;
-      state.auth.webauthnEnrolled = false;
-      await route.fulfill({ status: 204, body: '' });
       return;
     }
     if (path === '/v1/tags') {

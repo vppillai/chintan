@@ -242,27 +242,4 @@ test.describe('signing out', () => {
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     expect(await storedTokens(page)).not.toBeNull();
   });
-
-  test('turns biometric unlock off, so the next person cannot unlock back in', async ({
-    page,
-    api,
-  }) => {
-    api.auth.webauthnEnrolled = true;
-    await page.goto('/settings');
-
-    await page.getByRole('button', { name: /sign out/i }).first().click();
-    await expect(page.getByRole('dialog')).toContainText(/biometric unlock will also be turned off/i);
-    await page.getByRole('dialog').getByRole('button', { name: /^Sign out/ }).click();
-
-    await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible({ timeout: 15_000 });
-    expect(api.auth.webauthnDisabled).toBe(1);
-  });
-
-  test('does not mention biometrics when nothing is enrolled', async ({ page, api }) => {
-    await page.goto('/settings');
-    await page.getByRole('button', { name: /sign out/i }).first().click();
-
-    await expect(page.getByRole('dialog')).not.toContainText(/biometric/i);
-    expect(api.auth.webauthnDisabled).toBe(0);
-  });
 });

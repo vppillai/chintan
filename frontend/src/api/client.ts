@@ -55,7 +55,7 @@ export interface RequestOptions {
    * request's internal retries, which is the entire point).
    */
   idempotencyKey?: string | undefined;
-  /** Skip bearer injection. Only health and the WebAuthn login routes. */
+  /** Skip bearer injection. Only the health routes. */
   anonymous?: boolean;
 }
 

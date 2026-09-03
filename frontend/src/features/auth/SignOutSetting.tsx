@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 
-import { useApi, useSession } from '@/api/ApiProvider.tsx';
+import { useSession } from '@/api/ApiProvider.tsx';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 
 import { hasUnsentWork, performSignOut, readUnsentWork } from './signOut.ts';
@@ -20,7 +20,6 @@ import { hasUnsentWork, performSignOut, readUnsentWork } from './signOut.ts';
  * be told that a recording is about to go.
  */
 export function SignOutSetting() {
-  const api = useApi();
   const session = useSession();
   const queryClient = useQueryClient();
   const headingId = useId();
@@ -35,12 +34,6 @@ export function SignOutSetting() {
     queryFn: () => readUnsentWork(),
     staleTime: 0,
   });
-
-  const enrolled = useQuery({
-    queryKey: ['webauthn', 'status'],
-    queryFn: () => api.webauthnStatus(),
-    retry: false,
-  }).data?.enrolled ?? false;
 
   const work = unsent ?? { captures: 0, queued: 0 };
   const risky = hasUnsentWork(work);
@@ -79,7 +72,7 @@ export function SignOutSetting() {
       <ConfirmDialog
         open={open}
         title={risky ? 'Sign out and lose unsent work?' : 'Sign out?'}
-        body={confirmBody(work, enrolled)}
+        body={confirmBody(work)}
         confirmLabel={risky ? 'Sign out and discard' : 'Sign out'}
         destructive
         onCancel={() => {
@@ -88,19 +81,9 @@ export function SignOutSetting() {
         onConfirm={() => {
           setOpen(false);
           setBusy(true);
-          void performSignOut({
-            session,
-            queryClient,
-            api,
-            revokeBiometric: enrolled,
-          })
-            .then((result) => {
+          void performSignOut({ session, queryClient })
+            .then(() => {
               setBusy(false);
-              if (result.biometricLeftBehind) {
-                setMessage(
-                  'Signed out, but biometric unlock could not be turned off — you were offline. Turn it off from another device if this one is not yours.',
-                );
-              }
             })
             .catch(() => {
               setBusy(false);
@@ -113,10 +96,7 @@ export function SignOutSetting() {
 }
 
 /** Names exactly what is about to be destroyed, in the order it matters. */
-export function confirmBody(
-  work: { captures: number; queued: number },
-  enrolled: boolean,
-): string {
+export function confirmBody(work: { captures: number; queued: number }): string {
   const losses: string[] = [];
 
   if (work.captures > 0) {
@@ -132,27 +112,13 @@ export function confirmBody(
     );
   }
 
-  const parts: string[] = [];
-
-  if (losses.length > 0) {
-    parts.push(
-      `This device is still holding ${losses.join(' and ')}. Signing out deletes ${
-        losses.length > 1 ? 'them' : 'it'
-      } — ${
-        work.captures > 0 ? 'the audio is not saved anywhere else' : 'the changes are not saved anywhere else'
-      }.`,
-    );
-  } else {
-    parts.push('Your notes stay on the server. Nothing is waiting to sync from this device.');
+  if (losses.length === 0) {
+    return 'Your notes stay on the server. Nothing is waiting to sync from this device.';
   }
 
-  if (enrolled) {
-    // Said plainly, because it is irreversible and it is the difference between
-    // a sign-out that holds and one the next person walks straight through.
-    parts.push(
-      'Biometric unlock will also be turned off, so nobody can unlock back into this account on this device. Turning it on again needs a fresh sign-in.',
-    );
-  }
-
-  return parts.join(' ');
+  return `This device is still holding ${losses.join(' and ')}. Signing out deletes ${
+    losses.length > 1 ? 'them' : 'it'
+  } — ${
+    work.captures > 0 ? 'the audio is not saved anywhere else' : 'the changes are not saved anywhere else'
+  }.`;
 }
