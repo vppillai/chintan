@@ -711,30 +711,6 @@ Resources:
                   - cloudformation:ValidateTemplate
                 Resource: '*'
 
-              # Read-only, so that scripts/check-boundary-drift.sh can compare
-              # the deployed permissions boundary against the repository from a
-              # credentialed job. The boundary is the one guardrail
-              # CloudFormation does not own — bootstrap-agent.sh applies it, and
-              # no deploy runs bootstrap-agent.sh — so the deployed ceiling can
-              # fall behind the template's needs with nothing reporting it. When
-              # that happened, template.yaml's (since retired) sqs:ReceiveMessage grant was void
-              # and Lambda reported a role that "does not have permissions" for
-              # a grant it visibly held.
-              #
-              # Read only, and it must stay that way: this role carries the
-              # boundary itself, whose DenyModifyingTheGuardrailPoliciesThemselves
-              # statement withholds iam:CreatePolicyVersion and
-              # iam:SetDefaultPolicyVersion on chintan-agent-*. A principal that
-              # can rewrite its own ceiling has no ceiling. The check therefore
-              # reports drift and prints the command a human runs; it cannot
-              # repair it.
-              - Effect: Allow
-                Action:
-                  - iam:GetPolicy
-                  - iam:GetPolicyVersion
-                Resource:
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-*'
-
               - Effect: Allow
                 Action:
                   - s3:PutObject

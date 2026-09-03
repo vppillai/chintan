@@ -40,9 +40,9 @@ set -euo pipefail
 CHINTAN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -n "${CHINTAN_REPO_ROOT:-}" ]; then
     # Explicit override, for tests that need to run a check against a doctored
-    # tree — guardrails-check.sh --self-test proves it fails when a guardrail is
-    # removed, which requires pointing it at a tree that is missing one. Not for
-    # ordinary use.
+    # tree — the --self-test modes of check-log-hygiene.sh and check-vite-env.sh
+    # prove they fail when the thing they check is broken, which requires
+    # pointing them at a tree where it is. Not for ordinary use.
     REPO_ROOT="$(cd "$CHINTAN_REPO_ROOT" && pwd)"
 else
     REPO_ROOT="$(cd "${CHINTAN_LIB_DIR}/../.." && pwd)"
@@ -143,73 +143,6 @@ finish_check() {
     exit 1
 }
 
-# ---------------------------------------------------------------------------
-# File selection
-# ---------------------------------------------------------------------------
-
-# tracked_files lists every file in the worktree that git does not ignore, so
-# generated artifacts, vendored code, and node_modules never reach a check. Falls
-# back to find when git is unavailable (a source tarball, or a container without
-# the repo's .git).
-#
-# --cached --others --exclude-standard, NOT a bare `ls-files`. A bare `ls-files`
-# lists only COMMITTED files, which quietly makes a check unable to see the change
-# being checked.
-tracked_files() {
-    local out=""
-    if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-        out="$(git -C "$REPO_ROOT" ls-files --cached --others --exclude-standard "$@" 2>/dev/null || true)"
-    fi
-
-    # Fall back to the filesystem when git has nothing to report. This is not
-    # only for a source tarball: `git ls-files` is also empty on a repository
-    # with no commits yet, and a check that iterates over an empty list PASSES
-    # VACUOUSLY.
-    if [ -z "$out" ]; then
-        local patterns=("$@")
-        if [ "${#patterns[@]}" -eq 0 ]; then
-            out="$(cd "$REPO_ROOT" && find . -type f \
-                -not -path './.git/*' -not -path './build/*' \
-                -not -path './frontend/node_modules/*' -not -path './frontend/dist/*' |
-                sed 's|^\./||')"
-        else
-            local pat found=""
-            for pat in "${patterns[@]}"; do
-                # Translate a git pathspec glob into a find -path pattern.
-                found="$(cd "$REPO_ROOT" && find . -type f -path "./${pat//\*\*\//}" \
-                    -not -path './.git/*' 2>/dev/null | sed 's|^\./||' || true)"
-                [ -n "$found" ] && out="${out}${found}"$'\n'
-            done
-            # A '**' pattern needs a recursive match as well as the literal one.
-            for pat in "${patterns[@]}"; do
-                case "$pat" in
-                    *'**'*)
-                        local suffix="${pat##*/}"
-                        local prefix="${pat%%/**}"
-                        found="$(cd "$REPO_ROOT" && find "./$prefix" -type f -name "$suffix" \
-                            2>/dev/null | sed 's|^\./||' || true)"
-                        [ -n "$found" ] && out="${out}${found}"$'\n'
-                        ;;
-                esac
-            done
-        fi
-    fi
-
-    # Dedupe and sort: the fallback runs several overlapping patterns, and a file
-    # listed twice makes a check report the same violation twice.
-    printf '%s' "$out" | grep -v '^$' | LC_ALL=C sort -u || true
-}
-
-# shell_files lists every shell script, which is what shellcheck and shfmt run
-# over. Selected by path and extension rather than by shebang scan, so a new
-# script in scripts/ is covered the moment it is added.
-shell_files() {
-    tracked_files 'scripts/**/*.sh' 'scripts/*.sh' 2>/dev/null |
-        grep -v '^scripts/test/fake-aws/' || true
-}
-
-# ---------------------------------------------------------------------------
-# Dry-run execution
 # ---------------------------------------------------------------------------
 
 # APPLY is the one dry-run switch. 0 (the default) prints the plan; 1 executes.

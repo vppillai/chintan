@@ -256,9 +256,8 @@ JSON
     exit 0
 fi
 
-# The CI guard. guardrails-check.sh asserts this line is here, because a deploy
-# path that works from a developer machine is a deploy path that bypasses every
-# check the pipeline runs.
+# The CI guard: a deploy path that works from a developer machine is a deploy
+# path that bypasses every check the pipeline runs.
 if [ "${CI:-}" != "true" ] && [ "${GITHUB_ACTIONS:-}" != "true" ]; then
     die "scripts/deploy.sh runs only in CI (CI=true). Use scripts/bootstrap.sh for a first-time or recovery deploy."
 fi

@@ -1,67 +1,72 @@
 #!/usr/bin/env bash
 #
-# Create the agent IAM principal, its permissions boundary, the deny policies, and
-# CloudTrail (§9.5, §0.8 item 1).
+# One-time, administrator-only bootstrap: create the agent IAM principal, the
+# policies it runs under, and the CloudTrail trail.
 #
 # ============================================================================
 # READ THIS BEFORE RUNNING IT
 # ============================================================================
 #
-# **This script requires elevated credentials, and it is the only thing in this
-# repository that does.** It creates the constraints every other operation runs
-# under, which is why §0.8 lists it as a human prerequisite that blocks the start:
-# "The agent cannot create its own credentials by design (I17)."
-#
-# Run it once, as a human, with administrative credentials. Everything afterwards
-# runs as the role it creates.
+# This is the one script in the repository that needs administrative AWS
+# credentials, and the only one that touches IAM outside CloudFormation. It is
+# run once, by a human, and then everything else runs as the role it creates.
+# Nothing in CI calls it, nothing checks that what it deployed still matches the
+# repository, and nothing here should be mistaken for a control on the account's
+# owner: a permissions boundary constrains the principal it is attached to and
+# cannot constrain root or an administrator.
 #
 # What it creates, all named chintan-*:
 #
-#   chintan-agent-boundary     managed policy — the permissions CEILING
+#   chintan-agent-boundary     managed policy — the permissions CEILING. Also
+#                              named by infrastructure/bootstrap.yaml, so the
+#                              deploy roles cannot be created until this exists.
 #   chintan-agent-deny         managed policy — explicit denies, override any allow
 #   chintan-agent-permissions  managed policy — what the agent may actually do
-#   chintan-agent             IAM role, boundary attached, both policies attached
-#   chintan-agent-cli         IAM user, boundary attached, may only assume that role
-#   chintan-cloudtrail-*      S3 bucket for the audit trail
-#   chintan-trail             CloudTrail trail
+#   chintan-agent              IAM role, boundary attached, both policies attached,
+#                              sessions capped at one hour
+#   chintan-agent-cli          IAM user, boundary attached, may only assume that role
+#   chintan-cloudtrail-*       S3 bucket for the audit trail; the agent is denied
+#                              write and delete on it by bucket policy
+#   chintan-trail              CloudTrail trail (multi-region, management events,
+#                              log-file validation)
+#
+# The policy documents it applies are the four JSON files in
+# infrastructure/agent-policies/ — boundary.json, deny.json, permissions.json and
+# trust.json — with ACCOUNT_ID and REGION substituted at apply time. They are
+# hand-maintained now: the generator that derived boundary.json and deny.json
+# from a shared source, and the drift check that compared the deployed boundary
+# against the repository, were removed with the rest of the guardrail tooling
+# (docs/review-2026-09-03.md §4, §5.1 step 5). Edit the JSON directly, keep the
+# boundary under IAM's 6144-character cap (this script measures it), and re-run
+# with --apply; each policy is updated as a new default version rather than
+# recreated, so there is no window in which it does not exist.
 #
 # WHY BOTH A ROLE AND A MINIMAL USER
 #
-# §9.5 prefers "a dedicated role assumed via short-lived credentials (IAM Identity
-# Center preferred) or, failing that, an IAM user with rotated access keys."
-#
-# The obvious reading — create the role, let an administrator assume it — does not
-# work on an account bootstrapped with root credentials, because **AWS refuses to let
-# the account root user assume any role at all**: "Roles may not be assumed by root
-# accounts." The trust policy is irrelevant; the restriction is on the caller. So
-# without IAM Identity Center configured, there is no path from root to
-# boundary-limited credentials that does not pass through an IAM user. (G-064)
-#
-# Hence two objects, in layers:
+# An account bootstrapped with root credentials cannot assume any role: "Roles
+# may not be assumed by root accounts", whatever the trust policy says. Without
+# IAM Identity Center there is therefore no path from root to bounded, short-lived
+# credentials that does not pass through an IAM user, so there are two objects:
 #
 #   chintan-agent-cli   an IAM user whose ONLY permission is sts:AssumeRole on the
-#                          role below, with the boundary also attached so it can never
-#                          be granted more. Holds the one long-lived access key.
+#                       role below, with the boundary also attached so it can never
+#                       be granted more. Holds the one long-lived access key.
 #   chintan-agent       the role that actually carries the project permissions.
 #
-# The honest accounting: the security gain over attaching the permissions straight to
-# the user is real but modest — anyone holding the key can assume the role. What it
-# buys is that the credentials used for *work* are short-lived, so exfiltrated session
-# credentials expire within the hour, and the stored key on its own can do nothing
-# except acquire a bounded session. That matters here specifically because G-050 notes
-# an agent holding cloud credentials is a more valuable target than the product
-# pipeline.
+# The gain over attaching the permissions straight to the user is modest — anyone
+# holding the key can assume the role — but the credentials used for *work*
+# expire within the hour, and the stored key on its own can only acquire a bounded
+# session.
 #
-# WHAT THIS SCRIPT CANNOT GIVE YOU
-#
-# A boundary constrains the principal it is attached to. It cannot constrain root.
-# So the value of this script is entirely in what happens *after* it: if work
-# continues under administrative credentials, none of the guardrails below are in
-# force, and guardrails-check.sh will say so rather than quietly passing.
+# The trail costs about $0.13/month in S3 PUTs for hourly digest files across
+# every region (docs/review-2026-09-03/cost-alarms-logs.md item 2); deleting it or
+# making it single-region is an owner decision, taken with the same credentials
+# this script needs. scripts/teardown.sh deliberately leaves the trail, its bucket
+# and the agent principal alone.
 #
 # Usage:
 #   scripts/bootstrap-agent.sh                 # dry run — prints the plan, changes nothing
-#   scripts/bootstrap-agent.sh --apply         # create
+#   scripts/bootstrap-agent.sh --apply         # create or update
 #   scripts/bootstrap-agent.sh --verify        # check what exists, change nothing
 #   scripts/bootstrap-agent.sh --region <r>    # default: us-west-2
 #
@@ -87,7 +92,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -h | --help)
-            sed -n '2,60p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '2,75p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) die "unknown flag '$1' (see --help)" ;;
@@ -135,10 +140,8 @@ fi
 # ---------------------------------------------------------------------------
 #
 # The documents live in infrastructure/agent-policies/ as reviewable files with
-# ACCOUNT_ID and REGION placeholders, rather than inline heredocs here. Two reasons:
-# they are diffable, so a change to a guardrail shows up in review (the directory is
-# CODEOWNERS-protected, §9.6); and guardrails-check.sh can compare what is deployed
-# against them to detect a guardrail that has been silently altered (§9.8).
+# ACCOUNT_ID and REGION placeholders, rather than inline heredocs here, so a
+# change to one shows up as a diff rather than inside a 500-line script.
 
 RENDER_DIR="$(mktemp -d)"
 trap 'rm -rf "$RENDER_DIR"' EXIT
@@ -546,15 +549,12 @@ dim "  aws sts assume-role \\"
 dim "    --role-arn arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME} \\"
 dim "    --role-session-name chintan-agent"
 log ""
-warn "everything from here runs as that role, not as an administrator."
-warn "guardrails-check.sh fails if it is ever run under root, because a permissions"
-warn "boundary cannot constrain root and every guardrail above would be unenforceable."
+warn "everything from here runs as that role, not as an administrator; a permissions"
+warn "boundary cannot constrain root, so work done as root is work done with no ceiling."
 log ""
-info "still outstanding from §0.8, and not this script's to do:"
-dim "  2. confirm the app name resolves by voice in a moving car (G-005)"
-dim "  3. repository visibility, plan, and the assetlinks topology (ADR 0003)"
-dim "  4. provider keys in SSM — Groq and MiniMax, SecureString under alias/aws/ssm"
-dim "  5. activate the Project cost allocation tag in the Billing console (G-023)"
-dim "  6. branch protection, required checks, CODEOWNERS enforcement, secret scanning"
+info "still to do by hand, and not this script's to do:"
+dim "  - scripts/setup.sh --region ${REGION} --apply   (bootstrap stack, secrets, environments)"
+dim "  - provider keys in SSM: /chintan/<instance>/groq_api_key and llm_api_key"
+dim "  - activate the Project/Instance/Environment cost allocation tags in Billing"
 
 finish_check "bootstrap-agent" "$AS_JSON"

@@ -82,8 +82,8 @@ CONFIG_DIR="$REPO_ROOT/config/instances"
 [ -d "$CONFIG_DIR" ] || die "no config/instances directory at $CONFIG_DIR"
 
 # Parsed in Python rather than with yq: yq is not installed on a stock GitHub
-# runner and was an undeclared dependency of guardrails-check.sh, whereas python3
-# with PyYAML is present on every runner image and in the dev container.
+# runner, whereas python3 with PyYAML is present on every runner image and in
+# the dev container.
 entries="$(
     CHINTAN_CONFIG_DIR="$CONFIG_DIR" \
         CHINTAN_DEFAULT_REGION="${AWS_REGION:-us-west-2}" \
