@@ -10,8 +10,6 @@ import { useTheme } from '@/theme/useTheme.ts';
 
 import { SignOutSetting } from '@/features/auth/SignOutSetting.tsx';
 
-import { BiometricSetting } from './BiometricSetting.tsx';
-
 const CLEANUP_LABELS: Record<CleanupMode, string> = {
   faithful: 'Faithful — fix only what was clearly misheard',
   polished: 'Polished — tidy the wording as well',
@@ -232,8 +230,6 @@ export function SettingsScreen() {
             : 'Captures stop once the cap is reached, and say so rather than failing vaguely.'}
         </p>
       </section>
-
-      <BiometricSetting />
 
       <SignOutSetting />
 

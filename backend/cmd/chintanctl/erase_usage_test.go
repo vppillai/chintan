@@ -76,20 +76,6 @@ func TestEraseRemovesOneTenantAndProvesIt(t *testing.T) {
 	seedTenant(t, part, blobs, "tenantA")
 	seedTenant(t, part, blobs, "tenantB")
 
-	// A credential, and the global mirror row repository dual-writes with it.
-	put(t, part, Item{
-		"pk": StringAttr(tenantPK("tenantA")), "sk": StringAttr("WACRED#cred1"),
-		"data": StringAttr(`{"credential_id":"cred1"}`),
-	})
-	put(t, part, Item{
-		"pk": StringAttr(credentialListPK), "sk": StringAttr("WACRED#cred1"),
-		"data": StringAttr(`{"credential_id":"cred1"}`),
-	})
-	put(t, part, Item{
-		"pk": StringAttr(credentialListPK), "sk": StringAttr("WACRED#other"),
-		"data": StringAttr(`{"credential_id":"other"}`),
-	})
-
 	res, err := runErase(ctx, e, "tenantA", true, "")
 	if err != nil {
 		t.Fatalf("erase: %v", err)
@@ -98,18 +84,8 @@ func TestEraseRemovesOneTenantAndProvesIt(t *testing.T) {
 		t.Errorf("deleted %d/%d items and %d/%d objects",
 			res.ItemsDeleted, res.ItemsPlanned, res.ObjectsDeleted, res.ObjectsPlanned)
 	}
-	if len(res.MirrorSortKeys) != 1 || res.MirrorSortKeys[0] != "WACRED#cred1" {
-		t.Errorf("mirror rows = %v, want the tenant's credential only", res.MirrorSortKeys)
-	}
-
 	if _, ok := part.items[tenantPK("tenantA")]["NOTE#n1"]; ok {
 		t.Error("tenantA still has index rows")
-	}
-	if _, ok := part.items[credentialListPK]["WACRED#cred1"]; ok {
-		t.Error("the global credential mirror survived the erase")
-	}
-	if _, ok := part.items[credentialListPK]["WACRED#other"]; !ok {
-		t.Error("erase deleted another tenant's credential mirror")
 	}
 	if blobs.has("tenants/tenantA/notes/n1/note.md") {
 		t.Error("tenantA still has objects")

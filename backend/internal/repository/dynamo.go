@@ -33,7 +33,7 @@ type DynamoAPI interface {
 // DynamoStore implements Store using DynamoDB with a single-table design.
 //
 // Keys: pk = USER#<tenantId>, sk = SETTINGS | NOTE#<id> | CAPTURE#<id> |
-// IDEM#<key> | WACRED#<id> | WAREFRESH.
+// IDEM#<key>.
 //
 // GSI1 (gsi1pk = TENANT#<tenantId>#NOTE#<noteId>, gsi1sk = CAPTURE#<createdAt>)
 // turns note -> captures into a direct query.
@@ -169,22 +169,8 @@ func noteUpdatedSortKey(updatedAt string) string {
 	return updatedAt
 }
 
-func webAuthnChallengePK(challengeID string) string {
-	return "WACHAL#" + challengeID
-}
-
-func webAuthnCredSK(credentialID string) string {
-	return "WACRED#" + credentialID
-}
-
-func refreshVaultSK() string {
-	return "WAREFRESH"
-}
-
-const pkWebAuthnCredList = "WACREDLIST"
-
 // dynamoItem represents the generic JSON-blob item used by records that have no
-// queryable attributes of their own (settings, challenges, credentials, vault).
+// queryable attributes of their own (settings).
 type dynamoItem struct {
 	PK   string `dynamodbav:"pk"`
 	SK   string `dynamodbav:"sk"`
@@ -338,8 +324,8 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 	item["gsi2sk"] = strAttr(noteUpdatedSortKey(n.UpdatedAt))
 	if n.PurgeAfterEpoch > 0 {
 		item["purge_after_epoch"] = numAttr(n.PurgeAfterEpoch)
-		// The table has one TTL attribute, `ttl`, shared with challenges and
-		// idempotency records. purge_after_epoch is the projected, queryable
+		// The table has one TTL attribute, `ttl`, shared with idempotency
+		// records. purge_after_epoch is the projected, queryable
 		// copy; ttl is what DynamoDB expires on.
 		item["ttl"] = numAttr(n.PurgeAfterEpoch)
 	}
@@ -1354,211 +1340,4 @@ func (s *DynamoStore) getJSONItem(ctx context.Context, pk, sk string) (dynamoIte
 		return dynamoItem{}, err
 	}
 	return item, nil
-}
-
-// --------------------------------------------------------------- webauthn
-
-func (s *DynamoStore) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	pk := webAuthnChallengePK(c.ChallengeID)
-	return s.putJSONItem(ctx, pk, pk, "wachal", string(data), c.ExpiresAt)
-}
-
-func (s *DynamoStore) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
-	if err := ctx.Err(); err != nil {
-		return model.WebAuthnChallenge{}, err
-	}
-	pk := webAuthnChallengePK(challengeID)
-	item, err := s.getJSONItem(ctx, pk, pk)
-	if err != nil {
-		return model.WebAuthnChallenge{}, err
-	}
-	var c model.WebAuthnChallenge
-	if err := json.Unmarshal([]byte(item.Data), &c); err != nil {
-		return model.WebAuthnChallenge{}, err
-	}
-	return c, nil
-}
-
-func (s *DynamoStore) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	pk := webAuthnChallengePK(challengeID)
-	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-		TableName: aws.String(s.tableName),
-		Key: map[string]types.AttributeValue{
-			"pk": strAttr(pk),
-			"sk": strAttr(pk),
-		},
-	})
-	return err
-}
-
-func (s *DynamoStore) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(c)
-	if err != nil {
-		return err
-	}
-	sk := webAuthnCredSK(c.CredentialID)
-	if err := s.putJSONItem(ctx, userPK(c.UserID), sk, "wacred", string(data), 0); err != nil {
-		return err
-	}
-	return s.putJSONItem(ctx, pkWebAuthnCredList, sk, "wacredlist", string(data), 0)
-}
-
-func (s *DynamoStore) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
-	if err := ctx.Err(); err != nil {
-		return model.WebAuthnCredential{}, err
-	}
-	sk := webAuthnCredSK(credentialID)
-	item, err := s.getJSONItem(ctx, pkWebAuthnCredList, sk)
-	if err != nil {
-		return model.WebAuthnCredential{}, err
-	}
-	var c model.WebAuthnCredential
-	if err := json.Unmarshal([]byte(item.Data), &c); err != nil {
-		return model.WebAuthnCredential{}, err
-	}
-	return c, nil
-}
-
-// listCredentials is the shared paginated credential query.
-func (s *DynamoStore) listCredentials(ctx context.Context, pk string, opts ListOptions) (Page[model.WebAuthnCredential], error) {
-	if err := ctx.Err(); err != nil {
-		return Page[model.WebAuthnCredential]{}, err
-	}
-
-	start, err := decodeCursor(opts.Cursor, cursorScope{
-		pkAttr: "pk", wantPK: pk, skAttr: "sk", skPrefix: "WACRED#",
-		direction: cursorAscending, unmarked: cursorAscending,
-	})
-	if err != nil {
-		return Page[model.WebAuthnCredential]{}, err
-	}
-
-	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
-		TableName:              aws.String(s.tableName),
-		KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":pk":        strAttr(pk),
-			":sk_prefix": strAttr("WACRED#"),
-		},
-		ExclusiveStartKey: start,
-		Limit:             aws.Int32(opts.limit()),
-	})
-	if err != nil {
-		return Page[model.WebAuthnCredential]{}, err
-	}
-
-	creds := make([]model.WebAuthnCredential, 0, len(out.Items))
-	for _, raw := range out.Items {
-		var item dynamoItem
-		if err := attributevalue.UnmarshalMap(raw, &item); err != nil {
-			return Page[model.WebAuthnCredential]{}, err
-		}
-		var c model.WebAuthnCredential
-		if err := json.Unmarshal([]byte(item.Data), &c); err != nil {
-			return Page[model.WebAuthnCredential]{}, err
-		}
-		creds = append(creds, c)
-	}
-
-	cursor, err := encodeCursor(out.LastEvaluatedKey, cursorAscending)
-	if err != nil {
-		return Page[model.WebAuthnCredential]{}, err
-	}
-	return Page[model.WebAuthnCredential]{Items: creds, Cursor: cursor}, nil
-}
-
-func (s *DynamoStore) ListWebAuthnCredentials(ctx context.Context, opts ListOptions) (Page[model.WebAuthnCredential], error) {
-	return s.listCredentials(ctx, pkWebAuthnCredList, opts)
-}
-
-func (s *DynamoStore) ListWebAuthnCredentialsByUser(ctx context.Context, tenantID string, opts ListOptions) (Page[model.WebAuthnCredential], error) {
-	return s.listCredentials(ctx, userPK(tenantID), opts)
-}
-
-func (s *DynamoStore) DeleteAllWebAuthnCredentials(ctx context.Context, tenantID string) error {
-	creds, err := DrainPages(ctx, 0, func(ctx context.Context, opts ListOptions) (Page[model.WebAuthnCredential], error) {
-		return s.ListWebAuthnCredentialsByUser(ctx, tenantID, opts)
-	})
-	if err != nil {
-		return err
-	}
-	for _, c := range creds {
-		sk := webAuthnCredSK(c.CredentialID)
-		_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-			TableName: aws.String(s.tableName),
-			Key: map[string]types.AttributeValue{
-				"pk": strAttr(userPK(tenantID)),
-				"sk": strAttr(sk),
-			},
-		})
-		if err != nil {
-			return err
-		}
-		_, err = s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-			TableName: aws.String(s.tableName),
-			Key: map[string]types.AttributeValue{
-				"pk": strAttr(pkWebAuthnCredList),
-				"sk": strAttr(sk),
-			},
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ------------------------------------------------------------ refresh vault
-
-func (s *DynamoStore) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	return s.putJSONItem(ctx, userPK(v.UserID), refreshVaultSK(), "warefresh", string(data), 0)
-}
-
-func (s *DynamoStore) GetRefreshVault(ctx context.Context, tenantID string) (model.RefreshVault, error) {
-	if err := ctx.Err(); err != nil {
-		return model.RefreshVault{}, err
-	}
-	item, err := s.getJSONItem(ctx, userPK(tenantID), refreshVaultSK())
-	if err != nil {
-		return model.RefreshVault{}, err
-	}
-	var v model.RefreshVault
-	if err := json.Unmarshal([]byte(item.Data), &v); err != nil {
-		return model.RefreshVault{}, err
-	}
-	return v, nil
-}
-
-func (s *DynamoStore) DeleteRefreshVault(ctx context.Context, tenantID string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-		TableName: aws.String(s.tableName),
-		Key: map[string]types.AttributeValue{
-			"pk": strAttr(userPK(tenantID)),
-			"sk": strAttr(refreshVaultSK()),
-		},
-	})
-	return err
 }

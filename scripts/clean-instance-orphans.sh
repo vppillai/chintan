@@ -3,12 +3,11 @@
 # Delete the resources a failed instance create left behind.
 #
 # Resources in infrastructure/template.yaml carry DeletionPolicy: Retain so that
-# deleting a stack cannot destroy notes, audio, or the KMS key every enrolled
-# biometric credential depends on. When a create SUCCEEDS that is exactly right.
-# When a create FAILS, the same policy strands resources from a stack that never
-# worked — and because bucket names, Cognito domains and KMS aliases are globally
-# or account unique, the next create collides with its own wreckage and fails
-# validation before it starts.
+# deleting a stack cannot destroy notes, audio, or the user pool the tenant ids
+# come from. When a create SUCCEEDS that is exactly right. When a create FAILS,
+# the same policy strands resources from a stack that never worked — and because
+# bucket names and Cognito domains are globally or account unique, the next
+# create collides with its own wreckage and fails validation before it starts.
 #
 # WHY THIS IS A SEPARATE, HUMAN-RUN SCRIPT
 #
@@ -89,7 +88,6 @@ ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)" ||
 BUCKET="chintan-content-${INSTANCE}-${ENVIRONMENT}-${ACCOUNT_ID}"
 TABLE="chintan-${INSTANCE}-${ENVIRONMENT}"
 POOL_NAME="chintan-${INSTANCE}-${ENVIRONMENT}"
-KEY_ALIAS="alias/chintan-${INSTANCE}-${ENVIRONMENT}/token-vault"
 
 info "account:     $ACCOUNT_ID"
 info "region:      $REGION"
@@ -113,7 +111,6 @@ blind=0
 BUCKET_PROBE="$(probe_bucket "$BUCKET")"
 TABLE_PROBE="$(probe_table "$TABLE")"
 POOL_PROBE="$(probe_user_pool "$POOL_NAME")"
-ALIAS_PROBE="$(probe_kms_alias "$KEY_ALIAS")"
 
 note_probe() {
     local probe="$1" label="$2"
@@ -145,18 +142,9 @@ fi
 
 note_probe "$TABLE_PROBE" "table   "
 note_probe "$POOL_PROBE" "userpool"
-note_probe "$ALIAS_PROBE" "kmsalias"
 
 POOL=""
 [ "$(probe_state "$POOL_PROBE")" = present ] && POOL="$(probe_detail "$POOL_PROBE")"
-
-# Captured BEFORE the alias is deleted. The alias is the only human-readable
-# handle on the CMK: delete it first and the key becomes one UUID among many,
-# still billing, with nothing naming it. That is exactly how this account came
-# to hold three keys described "Chintan dev Cognito refresh-token vault" behind
-# a single alias.
-KEY_ID=""
-[ "$(probe_state "$ALIAS_PROBE")" = present ] && KEY_ID="$(probe_detail "$ALIAS_PROBE")"
 
 if [ "$blind" = 1 ]; then
     printf '\n'
@@ -203,29 +191,6 @@ if [ -n "$POOL" ]; then
         --auto-verified-attributes email \
         --user-attribute-update-settings AttributesRequireVerificationBeforeUpdate=email >/dev/null
     aws cognito-idp delete-user-pool --user-pool-id "$POOL" >/dev/null
-fi
-
-if [ -n "$KEY_ID" ]; then
-    info "deleting kms alias ${KEY_ALIAS} (target key ${KEY_ID})"
-    aws kms delete-alias --alias-name "$KEY_ALIAS"
-fi
-
-# The CMK itself is left alone on purpose. It is the one retained resource that
-# might still hold something irreplaceable, it does not block a create (keys have
-# no unique name), and deletion is reversible only inside its pending window.
-#
-# But the alias this script just deleted was the only thing naming it, so the
-# command is printed WITH THE KEY ID rather than with a <id> placeholder. Told
-# to "schedule it separately", an operator now has to match an unaliased UUID
-# against a description — which is the state that left two unreferenced keys
-# billing $1/month each in this account, and the reason teardown.sh's orphan
-# report cannot see them.
-if [ -n "$KEY_ID" ]; then
-    printf '\n'
-    warn "the KMS CMK ${KEY_ID} was left in place; it does not block a create."
-    warn "its alias is now gone, so this is the only remaining handle on it. To bill nothing:"
-    warn "  aws kms schedule-key-deletion --key-id ${KEY_ID} --pending-window-in-days 7 --region ${REGION}"
-    warn "that is reversible until the window expires (aws kms cancel-key-deletion --key-id ${KEY_ID})"
 fi
 
 ok "orphans cleared for ${STACK}"

@@ -108,9 +108,9 @@ for g in $LOG_GROUPS; do dim "  log group     $g"; done
 [ -n "$BUCKETS$TABLES$LOG_GROUPS$USER_POOLS$KMS_KEYS$QUEUES" ] || dim "  (no resources found)"
 
 # Every one of these carries DeletionPolicy: Retain in infrastructure/template.yaml,
-# and correctly so — deleting the stack must not schedule the token-vault CMK for
-# deletion and silently brick every enrolled biometric credential, which is what
-# v1 did. The consequence is that "delete the stack" and "delete the data" are two
+# and correctly so — deleting the stack must not destroy the notes, or the user
+# pool whose subjects every note is keyed by. The consequence is that "delete
+# the stack" and "delete the data" are two
 # separate acts, and this script performs the second one explicitly, after the
 # first, on resources it identified while the stack still listed them.
 
@@ -144,9 +144,7 @@ fi
 
 confirm_destructive "DELETE ${STACK}" \
     "This permanently deletes every note, transcript and audio recording in ${STACK}." \
-    "It also deletes the Cognito user pool, so every enrolled identity and every" \
-    "biometric credential goes with it, and schedules the token-vault CMK for" \
-    "deletion 30 days out." \
+    "It also deletes the Cognito user pool, so every identity and passkey goes with it." \
     "DynamoDB point-in-time recovery does not survive table deletion."
 
 # ---------------------------------------------------------------------------
@@ -216,10 +214,9 @@ for pool in $USER_POOLS; do
 done
 
 # A CMK is SCHEDULED for deletion, never deleted: AWS gives no other option, and
-# the 30-day window is chosen rather than the 7-day minimum on purpose. This key
-# wraps the Cognito refresh tokens behind biometric unlock, so if this teardown
-# turns out to have been a mistake, cancel-key-deletion inside the window is the
-# difference between "re-enrol" and "the vault is gone".
+# the 30-day window is chosen rather than the 7-day minimum on purpose, so a
+# teardown that turns out to have been a mistake is still recoverable inside it.
+# The template declares no KMS key today; this handles one an older stack left.
 for key in $KMS_KEYS; do
     state="$(aws_cli kms describe-key --key-id "$key" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || echo NONE)"
     case "$state" in

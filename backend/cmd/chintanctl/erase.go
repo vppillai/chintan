@@ -30,9 +30,6 @@ type eraseResult struct {
 	// prints.
 	SortKeys   []string `json:"sort_keys"`
 	ObjectKeys []string `json:"object_keys"`
-	// MirrorSortKeys are the tenant's rows in the global WebAuthn credential
-	// partition, which live outside the tenant's own partition.
-	MirrorSortKeys []string `json:"mirror_sort_keys,omitempty"`
 }
 
 func (r *eraseResult) human(w *lineWriter) {
@@ -50,10 +47,6 @@ func (r *eraseResult) human(w *lineWriter) {
 	w.printf("  index items (%d):\n", r.ItemsPlanned)
 	for _, n := range names {
 		w.printf("    %-14s %d\n", n, groups[n])
-	}
-	if len(r.MirrorSortKeys) > 0 {
-		w.printf("    %-14s %d (in the global %s partition)\n",
-			"WACRED#mirror", len(r.MirrorSortKeys), credentialListPK)
 	}
 	w.printf("  objects (%d, %s)\n", r.ObjectsPlanned, humanBytes(r.BytesPlanned))
 
@@ -125,36 +118,12 @@ func runErase(ctx context.Context, e *env, tenantID string, apply bool, confirm 
 	// invisible to any later erase or export. A deletion request that reports
 	// completion and deletes none of the recordings is the worst outcome this
 	// tool has.
-	credentialSKs := map[string]bool{}
-	idx, err := buildIndex(ctx, e.Part, tenantID, func(it Item) error {
-		if strings.HasPrefix(it.SK(), credentialSKPrefix) {
-			credentialSKs[it.SK()] = true
-		}
-		return nil
-	})
+	idx, err := buildIndex(ctx, e.Part, tenantID, nil)
 	if err != nil {
 		return nil, err
 	}
 	res.SortKeys = idx.SortKeys
 	res.ItemsPlanned = idx.ItemCount
-
-	// repository dual-writes WebAuthn credentials into a global partition, so
-	// erasing the tenant partition alone would leave a usable passkey behind
-	// pointing at a deleted user. This is the only place chintanctl needs to
-	// know about a specific kind, and it is because the storage layout puts
-	// this one kind outside the tenant's partition.
-	if len(credentialSKs) > 0 {
-		err = e.Part.Scan(ctx, credentialListPK, credentialSKPrefix, func(it Item) error {
-			if credentialSKs[it.SK()] {
-				res.MirrorSortKeys = append(res.MirrorSortKeys, it.SK())
-				res.ItemsPlanned++
-			}
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	err = e.Blobs.List(ctx, tenantPrefix(tenantID), func(info ObjectInfo) error {
 		res.ObjectKeys = append(res.ObjectKeys, info.Key)
@@ -197,12 +166,6 @@ func runErase(ctx context.Context, e *env, tenantID string, apply bool, confirm 
 
 	for _, sk := range res.SortKeys {
 		if err := e.Part.Delete(ctx, tenantPK(tenantID), sk); err != nil {
-			return res, err
-		}
-		res.ItemsDeleted++
-	}
-	for _, sk := range res.MirrorSortKeys {
-		if err := e.Part.Delete(ctx, credentialListPK, sk); err != nil {
 			return res, err
 		}
 		res.ItemsDeleted++

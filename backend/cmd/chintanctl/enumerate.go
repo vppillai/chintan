@@ -66,18 +66,6 @@ func tenantPK(tenantID string) string {
 	return "USER#" + tenantID
 }
 
-// credentialListPK is the global partition that mirrors every WebAuthn
-// credential alongside its tenant-partition copy, so login can find a
-// credential before it knows whose it is.
-//
-// It is the one place where a tenant's data lives outside the tenant's own
-// partition, so it is the one place enumeration by partition alone would miss.
-// backup and erase therefore reconcile it against the sort keys they found in
-// the tenant partition rather than pretending it does not exist.
-const credentialListPK = "WACREDLIST"
-
-const credentialSKPrefix = "WACRED#"
-
 // discoverTenants lists the tenant ids that have objects in the bucket.
 //
 // Tenants are discovered from S3 rather than from DynamoDB because finding

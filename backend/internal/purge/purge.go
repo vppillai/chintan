@@ -159,9 +159,9 @@ func (h *Handler) purge(ctx context.Context, old map[string]events.DynamoDBAttri
 	case "capture":
 		return h.purgeCapture(ctx, old)
 	default:
-		// Idempotency records and WebAuthn challenges also carry a ttl and also
-		// expire through this stream. They own no S3 objects, so there is
-		// nothing to do and their expiry is not an error.
+		// Idempotency records also carry a ttl and also expire through this
+		// stream. They own no S3 objects, so there is nothing to do and their
+		// expiry is not an error.
 		obs.Log(ctx).Debug("expired record owns no objects",
 			slog.String("item_type", itemType))
 		return nil

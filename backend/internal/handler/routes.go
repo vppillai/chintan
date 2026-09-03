@@ -54,15 +54,4 @@ func (rt *router) routes() {
 	// Export.
 	rt.handle("POST "+p+"/export", rt.startExport, idempotent())
 	rt.handle("GET "+p+"/export/{exportId}", rt.getExport)
-
-	// Biometric unlock. The two login routes are the only unauthenticated data
-	// routes on the API — API Gateway marks them AuthorizationType: NONE to
-	// match — so they carry a per-IP limit that the authenticated routes do not
-	// need.
-	rt.handle("POST "+p+"/auth/webauthn/login/options", rt.webauthnLoginOptions, public(), perIP(rt.loginLimiter))
-	rt.handle("POST "+p+"/auth/webauthn/login", rt.webauthnLogin, public(), perIP(rt.loginLimiter))
-	rt.handle("POST "+p+"/auth/webauthn/register/options", rt.webauthnRegisterOptions)
-	rt.handle("POST "+p+"/auth/webauthn/register", rt.webauthnRegister, idempotent())
-	rt.handle("GET "+p+"/auth/webauthn/status", rt.webauthnStatus)
-	rt.handle("DELETE "+p+"/auth/webauthn", rt.webauthnDisable)
 }

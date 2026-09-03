@@ -161,52 +161,6 @@ func TestIntruderCannotReadAnotherTenantsSettings(t *testing.T) {
 	})
 }
 
-func TestIntruderCannotReadAnotherTenantsVault(t *testing.T) {
-	eachStore(t, func(t *testing.T) {
-		store, ctx := seededStore(t)
-		if err := store.PutRefreshVault(ctx, model.RefreshVault{
-			UserID: owner, Ciphertext: []byte("sealed"),
-		}); err != nil {
-			t.Fatalf("seed vault: %v", err)
-		}
-
-		if _, err := store.GetRefreshVault(ctx, intruder); !errors.Is(err, repository.ErrNotFound) {
-			t.Fatalf("GetRefreshVault as intruder returned %v, want ErrNotFound", err)
-		}
-
-		// Disabling biometrics for the intruder must not clear the owner's vault.
-		if err := store.DeleteRefreshVault(ctx, intruder); err != nil && !errors.Is(err, repository.ErrNotFound) {
-			t.Fatalf("DeleteRefreshVault: %v", err)
-		}
-		if _, err := store.GetRefreshVault(ctx, owner); err != nil {
-			t.Fatalf("owner's vault was cleared by another tenant: %v", err)
-		}
-	})
-}
-
-func TestIntruderCannotDeleteAnotherTenantsCredentials(t *testing.T) {
-	eachStore(t, func(t *testing.T) {
-		store, ctx := seededStore(t)
-		if err := store.PutWebAuthnCredential(ctx, model.WebAuthnCredential{
-			UserID: owner, CredentialID: "cred-1", Credential: `{"ID":"Yw=="}`,
-		}); err != nil {
-			t.Fatalf("seed credential: %v", err)
-		}
-
-		if err := store.DeleteAllWebAuthnCredentials(ctx, intruder); err != nil {
-			t.Fatalf("DeleteAllWebAuthnCredentials: %v", err)
-		}
-
-		creds, err := store.ListWebAuthnCredentialsByUser(ctx, owner, repository.ListOptions{})
-		if err != nil {
-			t.Fatalf("ListWebAuthnCredentialsByUser: %v", err)
-		}
-		if len(creds.Items) != 1 {
-			t.Fatalf("owner's credentials were deleted by another tenant: have %d", len(creds.Items))
-		}
-	})
-}
-
 // Object keys are the other half of isolation: even a correct store is
 // worthless if two tenants can be made to share an S3 prefix.
 func TestObjectKeysAreTenantScoped(t *testing.T) {

@@ -248,6 +248,44 @@ export function useBulkPurgeNotes() {
   });
 }
 
+/**
+ * Bulk delete from the live list: archive, then purge, in one gesture.
+ *
+ * The server refuses to purge an active note (service.purgeOne), and rightly —
+ * a client working from a stale listing must not turn "clear my archive" into
+ * "delete the notes I am still using". So deleting from the notes list is the
+ * two server operations the user would otherwise perform by hand: archive each
+ * selected note, then purge the ones that archived. A note that could not be
+ * archived is left exactly where it was and reported by the purge as failed.
+ */
+export function useBulkDeleteNotes() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (noteIds: string[]) => {
+      const archived = await Promise.allSettled(noteIds.map((id) => api.archiveNote(id)));
+      const toPurge = noteIds.filter((_id, i) => archived[i]?.status === 'fulfilled');
+      const results = [];
+      for (let start = 0; start < toPurge.length; start += MAX_PURGE_BATCH) {
+        const chunk = toPurge.slice(start, start + MAX_PURGE_BATCH);
+        const response = await api.purgeNotesBatch(chunk);
+        results.push(...response.results);
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      for (const result of results) {
+        if (result.status !== 'purged') continue;
+        // Same as the single-note delete: the device forgets it too, and the
+        // detail query is removed rather than refetched into a 404.
+        remember(() => forgetNote(result.note_id), queryClient);
+        queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
 export function useSearch(q: string) {
   const api = useApi();
   return useQuery({

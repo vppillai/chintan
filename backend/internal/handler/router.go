@@ -26,8 +26,7 @@ const APIPrefix = "/v1"
 // reached six positional arguments and was about to reach twelve; a caller
 // swapping two same-typed pointers would have compiled and misbehaved.
 //
-// Nil is meaningful for three fields and nothing else:
-//   - WebAuthn nil makes the biometric routes answer 503.
+// Nil is meaningful for two fields and nothing else:
 //   - Spend nil disables the pre-flight budget check; the breaker still enforces.
 //   - Store nil disables idempotent replay, which then answers 503 rather than
 //     silently doing the work twice.
@@ -39,7 +38,6 @@ type Deps struct {
 	Tags      *service.TagsService
 	Export    *service.ExportService
 	Readiness *service.ReadinessService
-	WebAuthn  WebAuthnAPI
 	Spend     SpendGate
 
 	// Store backs idempotent replay. It is the raw store rather than a service
@@ -64,7 +62,6 @@ type SpendGate interface {
 type router struct {
 	Deps
 	authenticated func(http.Handler) http.Handler
-	loginLimiter  *ipLimiter
 	mux           *http.ServeMux
 	// bodyLimits maps a registered pattern to its request cap, so the
 	// idempotency wrapper reads a body under the same limit the handler would.
@@ -80,7 +77,6 @@ func New(deps Deps) http.Handler {
 	rt := &router{
 		Deps:          deps,
 		authenticated: middleware.Auth(deps.Verifier),
-		loginLimiter:  newIPLimiter(loginAttemptsPerWindow, loginWindow),
 		mux:           http.NewServeMux(),
 		bodyLimits:    map[string]int64{},
 	}
@@ -97,19 +93,16 @@ type routeOption func(*routeConfig)
 type routeConfig struct {
 	public     bool
 	idempotent bool
-	limiter    *ipLimiter
 	bodyLimit  int64
 }
 
 // public marks a route as reachable without a bearer token. There are exactly
-// three: liveness, readiness, and the two halves of biometric login.
+// two: liveness and readiness. Sign-in itself happens against Cognito, never
+// against this API.
 func public() routeOption { return func(c *routeConfig) { c.public = true } }
 
 // idempotent honours Idempotency-Key on this route.
 func idempotent() routeOption { return func(c *routeConfig) { c.idempotent = true } }
-
-// perIP applies the unauthenticated-route rate limit.
-func perIP(l *ipLimiter) routeOption { return func(c *routeConfig) { c.limiter = l } }
 
 // body sets this route's request body cap.
 func body(limit int64) routeOption { return func(c *routeConfig) { c.bodyLimit = limit } }
@@ -133,14 +126,6 @@ func (rt *router) handle(pattern string, h http.HandlerFunc, opts ...routeOption
 	var final http.Handler = wrapped
 	if !cfg.public {
 		final = rt.authenticated(final)
-	}
-	if cfg.limiter != nil {
-		// The limiter sits outside authentication: refusing a flood must not
-		// cost a token verification per request.
-		inner := final
-		final = cfg.limiter.rateLimit(func(w http.ResponseWriter, r *http.Request) {
-			inner.ServeHTTP(w, r)
-		})
 	}
 	rt.mux.Handle(pattern, instrument(pattern, final))
 }

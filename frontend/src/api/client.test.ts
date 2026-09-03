@@ -268,12 +268,7 @@ describe('a 401 refreshes before anything reaches the user', () => {
     const { client } = build(fetchImpl, refresher);
 
     await expect(
-      client.request('/v1/auth/webauthn/login', {
-        method: 'POST',
-        body: {},
-        anonymous: true,
-        retry: NO_RETRY,
-      }),
+      client.request('/v1/health', { anonymous: true, retry: NO_RETRY }),
     ).rejects.toBeInstanceOf(ApiError);
     expect(refresher.calls).toBe(0);
   });

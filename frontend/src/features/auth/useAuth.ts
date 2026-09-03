@@ -8,18 +8,10 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import { useApi, useSession } from '@/api/ApiProvider.tsx';
-import {
-  ApiError,
-  BIOMETRIC_NOT_ENROLLED_TYPE,
-  BIOMETRIC_RE_ENROLMENT_TYPE,
-} from '@/api/problem.ts';
+import { useSession } from '@/api/ApiProvider.tsx';
+import { ApiError } from '@/api/problem.ts';
 import type { Session } from '@/api/session.ts';
-import { tokenSetFromWire } from '@/api/tokens.ts';
 import { config } from '@/config/env.ts';
-import { canAssertWebAuthn, performAssertion } from '@/features/settings/webauthn.ts';
-
-import { deviceMayBeEnrolled, forgetEnrolment } from './enrolment.ts';
 
 import {
   authorizeUrl,
@@ -47,55 +39,18 @@ export type AuthPhase =
   | 'redirecting'
   /** A code came back and is being redeemed. */
   | 'exchanging'
-  /** A biometric assertion is in flight. */
-  | 'unlocking'
   | 'signed-in';
 
 /** The part of the flow React owns. Whether a token exists is the session's. */
-type Flow = 'idle' | 'redirecting' | 'exchanging' | 'unlocking';
+type Flow = 'idle' | 'redirecting' | 'exchanging';
 
 export interface AuthGateState {
   phase: AuthPhase;
-  /** Set when the hosted UI refused, the exchange failed, or unlock did. */
+  /** Set when the hosted UI refused or the exchange failed. */
   error: string | null;
   signIn: () => void;
-  /**
-   * Signs in with the enrolled authenticator, skipping the hosted UI entirely.
-   *
-   * Null when this browser cannot assert a credential, which is what stops the
-   * signed-out screen offering an unlock it cannot perform.
-   */
-  unlock: (() => void) | null;
-  /**
-   * Set when the server accepted the assertion but could not open the vault.
-   *
-   * A distinct state, not an error: nothing is wrong with the user, their
-   * finger or their device, and the only thing that fixes it is enrolling
-   * again. Showing "biometric verification failed" here would send them to try
-   * the same finger a second time, forever.
-   */
-  needsReEnrolment: boolean;
   /** True when the build has no Cognito configuration to sign in against. */
   configured: boolean;
-}
-
-/**
- * How the server says "the assertion was fine, the vault was not".
- *
- * The problem `type` is the authority now that the backend emits one. The prose
- * match stays as a fallback so a client running against an instance that has
- * not been redeployed still behaves; it can go once nothing old is serving.
- *
- * Either way it fails *safe*: an unrecognised 401 is reported as a failed
- * verification, which is the more conservative of the two answers.
- */
-const RE_ENROL_DETAIL = /set up again/i;
-
-function isReEnrolmentRequired(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return false;
-  if (error.problemType === BIOMETRIC_RE_ENROLMENT_TYPE) return true;
-  if (error.status !== 401) return false;
-  return RE_ENROL_DETAIL.test(`${error.detail ?? ''} ${error.title}`);
 }
 
 /** A flow failure with a sentence already fit to show someone. */
@@ -111,24 +66,7 @@ class AuthFlowError extends Error {}
  */
 export function useAuthGate(): AuthGateState {
   const session = useSession();
-  const api = useApi();
   const authenticated = useAuthenticated();
-  const [needsReEnrolment, setNeedsReEnrolment] = useState(false);
-  /*
-   * Whether to offer an unlock at all.
-   *
-   * Two conditions, and the second is the one that was missing. The browser
-   * must be able to assert a credential, and this device must have seen one
-   * enrolled — because signing out revokes the credential on purpose, so
-   * offering the button unconditionally meant every sign-out was followed by
-   * sign in, tap unlock, `login/options → 503`, every time.
-   *
-   * State rather than a constant: the hint is only a hint, and the first
-   * authoritative "there is nothing enrolled" withdraws the offer for good.
-   */
-  const [mayUnlock, setMayUnlock] = useState(
-    () => canAssertWebAuthn() && deviceMayBeEnrolled(),
-  );
 
   // Read once, synchronously, before the first paint: landing with `?code=`
   // must never flash the signed-out screen on the way in.
@@ -222,54 +160,6 @@ export function useAuthGate(): AuthGateState {
     })();
   }, []);
 
-  /**
-   * Unlock: `POST login/options` → `navigator.credentials.get` → `POST login`.
-   *
-   * This is the path that did not exist. `BiometricSetting` performed a real
-   * registration and the backend sealed a real refresh token, and there was no
-   * `webauthn/login` wrapper, no assertion helper and no control anywhere in the
-   * client — so an enrolled credential could never be used for anything, and
-   * `useAuth` always redirected to Cognito regardless.
-   */
-  const unlock = useCallback(() => {
-    setError(null);
-    setNeedsReEnrolment(false);
-    setFlow('unlocking');
-
-    void (async () => {
-      try {
-        const options = await api.webauthnLoginOptions();
-        const credential = await performAssertion(options.options);
-        const tokens = await api.webauthnLogin({
-          challenge_id: options.challenge_id,
-          credential,
-        });
-        // Straight into the session: the vault held a Cognito refresh token and
-        // the server has already exchanged it, so this is the same token set
-        // the hosted UI would have produced.
-        session.set(tokenSetFromWire(tokens));
-        setFlow('idle');
-      } catch (cause) {
-        setFlow('idle');
-        if (isReEnrolmentRequired(cause)) {
-          setNeedsReEnrolment(true);
-          return;
-        }
-        /*
-         * The server is the authority and it says there is nothing to unlock.
-         * The hint this device was going on is wrong — the account was changed
-         * elsewhere, or a revoke was missed — so it is erased and the offer
-         * withdrawn rather than left to fail again on the next tap.
-         */
-        if (isNotEnrolled(cause)) {
-          forgetEnrolment();
-          setMayUnlock(false);
-        }
-        setError(describeUnlockFailure(cause));
-      }
-    })();
-  }, [api, session]);
-
   /*
    * Derived, never mirrored. Whether a token exists is the session's answer and
    * is read through `useSyncExternalStore`; `flow` only says what this
@@ -283,56 +173,14 @@ export function useAuthGate(): AuthGateState {
         ? 'signed-in'
         : flow === 'redirecting'
           ? 'redirecting'
-          : flow === 'unlocking'
-            ? 'unlocking'
-            : 'signed-out';
+          : 'signed-out';
 
   return {
     phase,
     error,
     signIn,
-    unlock: mayUnlock ? unlock : null,
-    needsReEnrolment,
     configured: config.cognitoDomain.length > 0 && config.clientId.length > 0,
   };
-}
-
-/**
- * An unlock failure, said in words.
- *
- * The DOM throws `NotAllowedError` both when the user dismissed the prompt and
- * when the authenticator timed out, and they are the same thing to the person
- * looking at the screen: nothing happened, try again or use the other button.
- */
-/**
- * The server saying this account has no enrolled credential.
- *
- * Now a 404 carrying `#biometric-not-enrolled`: an account fact, not a server
- * fault, and deliberately not the 503 it used to be — 503 means the instance
- * cannot do biometrics at all and reads as transient, so a client retried an
- * answer that could not change until somebody enrolled.
- *
- * The old 503 and the prose are still accepted, so a client that has updated
- * ahead of its backend keeps working. Both fallbacks can go once nothing old is
- * serving.
- */
-function isNotEnrolled(cause: unknown): boolean {
-  if (!(cause instanceof ApiError)) return false;
-  if (cause.problemType === BIOMETRIC_NOT_ENROLLED_TYPE) return true;
-  if (cause.status === 503) return true;
-  return /not set up on this account/i.test(`${cause.detail ?? ''} ${cause.title}`);
-}
-
-function describeUnlockFailure(cause: unknown): string {
-  const name = (cause as { name?: string } | null)?.name;
-  if (name === 'NotAllowedError' || name === 'AbortError') {
-    return 'That unlock was cancelled.';
-  }
-  if (isNotEnrolled(cause)) {
-    return 'Biometric unlock is not set up on this account. Sign in, then turn it on in Settings.';
-  }
-  if (cause instanceof ApiError) return cause.userMessage;
-  return 'That did not unlock. You can sign in instead.';
 }
 
 function describeFailure(cause: unknown): string {

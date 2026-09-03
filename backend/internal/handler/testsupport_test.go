@@ -30,20 +30,9 @@ type harness struct {
 	captures *service.CaptureService
 	queue    *recordingQueue
 	spend    *fakeSpend
-	webauthn *fakeWebAuthn
-	// remoteAddr overrides the connecting address for subsequent do() calls.
-	// Empty leaves httptest's default in place.
-	remoteAddr string
 }
 
 type harnessOption func(*handler.Deps, *harness)
-
-// withoutWebAuthn builds an instance with biometrics unconfigured, which is what
-// an operator whose TOKEN_VAULT_KEY_PATH parameter is missing or unreadable
-// gets. Fail closed: no vault key, no biometric unlock, no plaintext fallback.
-func withoutWebAuthn() harnessOption {
-	return func(d *handler.Deps, _ *harness) { d.WebAuthn = nil }
-}
 
 // withBrokenStore makes every settings read fail, so readiness reports degraded.
 func withBrokenStore() harnessOption {
@@ -64,11 +53,10 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	t.Helper()
 
 	h := &harness{
-		store:    memory.NewStore(),
-		objects:  memory.NewObjects(),
-		queue:    &recordingQueue{},
-		spend:    &fakeSpend{},
-		webauthn: newFakeWebAuthn(),
+		store:   memory.NewStore(),
+		objects: memory.NewObjects(),
+		queue:   &recordingQueue{},
+		spend:   &fakeSpend{},
 	}
 	h.notes = service.NewNotesService(h.store, h.objects)
 	h.captures = service.NewCaptureService(h.store, h.objects).
@@ -84,7 +72,6 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Tags:          service.NewTagsService(h.notes),
 		Export:        service.NewExportService(h.notes, h.captures, settings, h.objects),
 		Readiness:     service.NewReadinessService(h.store, h.objects),
-		WebAuthn:      h.webauthn,
 		Spend:         h.spend,
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
@@ -116,13 +103,6 @@ func (h *harness) do(t *testing.T, method, path, userID string, body any, header
 	}
 	for _, kv := range headers {
 		req.Header.Set(kv[0], kv[1])
-	}
-	// httptest.NewRequest hardcodes RemoteAddr to 192.0.2.1:1234, so every
-	// request a test makes is the same caller unless it says otherwise. That
-	// matters for anything keyed on the connecting address — the rate limiter
-	// is, deliberately, because X-Forwarded-For is caller-supplied.
-	if addr := h.remoteAddr; addr != "" {
-		req.RemoteAddr = addr
 	}
 	if userID != "" {
 		req = req.WithContext(middleware.WithUserID(req.Context(), userID))
@@ -211,52 +191,6 @@ type brokenObjects struct{ repository.Objects }
 
 func (brokenObjects) Delete(context.Context, string) error {
 	return errors.New("s3: AccessDenied on chintan-content-bucket")
-}
-
-// fakeWebAuthn stands in for the real ceremony. The biometric routes cannot be
-// exercised end to end without an authenticator, and a contract test that
-// skipped them would leave four declared statuses unproven.
-type fakeWebAuthn struct {
-	enrolled     bool
-	beginErr     error
-	finishRegErr error
-	finishLogErr error
-	statusErr    error
-}
-
-func newFakeWebAuthn() *fakeWebAuthn { return &fakeWebAuthn{} }
-
-func (f *fakeWebAuthn) Status(context.Context, string) (bool, error) {
-	return f.enrolled, f.statusErr
-}
-
-func (f *fakeWebAuthn) Disable(context.Context, string) error { return nil }
-
-func (f *fakeWebAuthn) BeginRegistration(context.Context, string) (*model.WebAuthnOptionsResponse, error) {
-	if f.beginErr != nil {
-		return nil, f.beginErr
-	}
-	return &model.WebAuthnOptionsResponse{ChallengeID: "ch_1", Options: json.RawMessage(`{"challenge":"x"}`)}, nil
-}
-
-func (f *fakeWebAuthn) FinishRegistration(context.Context, string, *model.WebAuthnVerifyRequest) error {
-	return f.finishRegErr
-}
-
-func (f *fakeWebAuthn) BeginLogin(context.Context) (*model.WebAuthnOptionsResponse, error) {
-	if f.beginErr != nil {
-		return nil, f.beginErr
-	}
-	return &model.WebAuthnOptionsResponse{ChallengeID: "ch_2", Options: json.RawMessage(`{"challenge":"y"}`)}, nil
-}
-
-func (f *fakeWebAuthn) FinishLogin(context.Context, *model.WebAuthnVerifyRequest) (*model.CognitoTokenSet, error) {
-	if f.finishLogErr != nil {
-		return nil, f.finishLogErr
-	}
-	return &model.CognitoTokenSet{
-		IDToken: "id", AccessToken: "access", ExpiresIn: 3600, TokenType: "Bearer",
-	}, nil
 }
 
 // TestMain silences the access log and the EMF stream. Both are asserted on

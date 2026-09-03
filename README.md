@@ -66,17 +66,9 @@ aws ssm put-parameter --type SecureString \
   --name "/chintan/dev/llm_api_key"  --value "..."
 ```
 
-A third SecureString holds the **refresh-token vault key** — 32 random bytes, base64 — which seals the one Cognito refresh token biometric unlock keeps per device. `scripts/bootstrap.sh` generates it if it is absent, so you only need this if you are setting an instance up by hand:
+Both are SecureStrings created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type.
 
-```bash
-aws ssm put-parameter --type SecureString \
-  --name "/chintan/dev/token_vault_key" \
-  --value "$(head -c 32 /dev/urandom | base64)"
-```
-
-All three are SecureStrings created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type. **Replacing the vault key makes every enrolled device enrol again**; the sealed blob records which parameter version sealed it, so a rotation is detectable rather than silent.
-
-Biometric unlock fails closed: no vault key, no biometric unlock, and the API says so in its startup log. There is no plaintext fallback — the identity `SealBox` exists only in the test binary.
+Biometric sign-in is a Cognito **passkey**: the pool allows `WEB_AUTHN` as a first factor and the managed-login page offers to register one after a password sign-in. Nothing in this repository stores or seals a credential for it.
 
 ### 3. Declare your instances
 
@@ -197,7 +189,7 @@ scripts/teardown.sh --apply        # asks for a typed confirmation
 scripts/teardown.sh --apply --yes  # unattended
 ```
 
-It deletes every `chintan-<instance>-<environment>` stack, then `chintan-bootstrap`. For each stack it empties the content bucket, disables Cognito deletion protection, deletes the stack, and then deletes the resources the template deliberately retains — the DynamoDB table, the content bucket and the user pool — and schedules the token-vault CMK for deletion with a 30-day window, so a change of mind is still recoverable with `aws kms cancel-key-deletion`.
+It deletes every `chintan-<instance>-<environment>` stack, then `chintan-bootstrap`. For each stack it empties the content bucket, disables Cognito deletion protection, deletes the stack, and then deletes the resources the template deliberately retains — the DynamoDB table, the content bucket and the user pool.
 
 Provider secrets under `/chintan/<instance>/` are removed only when no other stack for that instance still needs them.
 

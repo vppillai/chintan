@@ -4,7 +4,7 @@
  * v1 spread them across three files with two spellings. `auth.js` stored the
  * raw Cognito response, checked `tokens.id_token` for validity, returned
  * `tokens.id_token` as the bearer — and then, in the refresh path, decoded
- * `tokens.access_token` to decide whether a refresh was needed. Biometric login
+ * `tokens.access_token` to decide whether a refresh was needed. One login path
  * populated only some of those fields, so `access_token` was undefined, the
  * decode threw, refresh was skipped, and the user was silently logged out on
  * the next foreground.

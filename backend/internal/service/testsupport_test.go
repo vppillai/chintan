@@ -42,17 +42,6 @@ func (bareNotFoundStore) GetSettings(context.Context, string) (model.Settings, e
 	return model.Settings{}, repository.ErrNotFound
 }
 
-// errCredentialStore fails the credential delete, so Disable cannot finish and
-// must not report success.
-type errCredentialStore struct {
-	repository.Store
-	err error
-}
-
-func (s errCredentialStore) DeleteAllWebAuthnCredentials(context.Context, string) error {
-	return s.err
-}
-
 // errGetObjects fails every object read, which is how the S3 half of the
 // readiness probe is made to fail without an S3.
 type errGetObjects struct {
@@ -73,12 +62,6 @@ func (o *recordingObjects) Get(ctx context.Context, key string) ([]byte, error) 
 	o.reads = append(o.reads, key)
 	return o.Objects.Get(ctx, key)
 }
-
-// errBox is a SealBox whose KMS is unreachable.
-type errBox struct{ err error }
-
-func (b errBox) Seal(context.Context, []byte) ([]byte, error) { return nil, b.err }
-func (b errBox) Open(context.Context, []byte) ([]byte, error) { return nil, b.err }
 
 // stubCounter stands in for the DynamoDB spend counter and records the day
 // partitions it was asked about.

@@ -167,20 +167,6 @@ type Store interface {
 	// recordable response, so the caller's retry runs instead of being told the
 	// original is still in flight. A completed record is left alone.
 	AbandonIdempotent(ctx context.Context, tenantID, key string) error
-
-	PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error
-	GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error)
-	DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error
-
-	PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error
-	GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error)
-	ListWebAuthnCredentials(ctx context.Context, opts ListOptions) (Page[model.WebAuthnCredential], error)
-	ListWebAuthnCredentialsByUser(ctx context.Context, tenantID string, opts ListOptions) (Page[model.WebAuthnCredential], error)
-	DeleteAllWebAuthnCredentials(ctx context.Context, tenantID string) error
-
-	PutRefreshVault(ctx context.Context, v model.RefreshVault) error
-	GetRefreshVault(ctx context.Context, tenantID string) (model.RefreshVault, error)
-	DeleteRefreshVault(ctx context.Context, tenantID string) error
 }
 
 // Objects stores blob content addressed by S3-style keys.

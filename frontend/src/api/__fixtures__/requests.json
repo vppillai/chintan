@@ -213,34 +213,6 @@
     "path": "/v1/captures/contract-capture/download?kind=peaks"
   },
   {
-    "name": "webauthnStatus",
-    "method": "GET",
-    "path": "/v1/auth/webauthn/status"
-  },
-  {
-    "name": "webauthnRegisterOptions",
-    "method": "POST",
-    "path": "/v1/auth/webauthn/register/options"
-  },
-  {
-    "name": "webauthnRegister",
-    "method": "POST",
-    "path": "/v1/auth/webauthn/register",
-    "body": {
-      "challenge_id": "ch_1",
-      "credential": {
-        "id": "abc",
-        "type": "public-key"
-      },
-      "refresh_token": "refresh-token"
-    }
-  },
-  {
-    "name": "webauthnDisable",
-    "method": "DELETE",
-    "path": "/v1/auth/webauthn"
-  },
-  {
     "name": "startExport",
     "method": "POST",
     "path": "/v1/export"

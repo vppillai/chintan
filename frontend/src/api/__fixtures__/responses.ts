@@ -36,8 +36,6 @@ import type {
   SearchHitWire,
   SettingsWire,
   TagWire,
-  TokenSetWire,
-  WebAuthnOptionsWire,
 } from '../schema.ts';
 
 /** GET /v1/health → 200 */
@@ -360,28 +358,6 @@ export const exportJob: ExportJobWire = {
   "url": "https://example.invalid/presigned"
 };
 
-/** GET /v1/auth/webauthn/status → 200 */
-export const webauthnStatus: { enrolled: boolean } = {
-  "enrolled": false
-};
-
-/** POST /v1/auth/webauthn/register/options → 200 */
-export const webauthnOptions: WebAuthnOptionsWire = {
-  "challenge_id": "fixture-challenge-id",
-  "options": {
-    "challenge": "x"
-  }
-};
-
-/** POST /v1/auth/webauthn/login → 200, the Cognito token set as it arrives */
-export const tokenSet: TokenSetWire = {
-  "access_token": "access",
-  "expires_in": 3600,
-  "id_token": "id",
-  "refresh_token": "",
-  "token_type": "Bearer"
-};
-
 /** GET /v1/notes/{noteId} → 404 */
 export const problemNotFound: ProblemWire = {
   "correlation_id": "00000000-0000-4000-8000-000000000000",
@@ -441,36 +417,6 @@ export const notePurgeResults: NotePurgeResponseWire = {
       "status": "failed"
     }
   ]
-};
-
-/** POST /v1/auth/webauthn/login/options → 404 when nothing is enrolled. Offer enrolment; do not retry. */
-export const problemBiometricNotEnrolled: ProblemWire = {
-  "correlation_id": "00000000-0000-4000-8000-000000000000",
-  "detail": "no biometric credential is enrolled here",
-  "instance": "/v1/fixture",
-  "status": 404,
-  "title": "Not Found",
-  "type": "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-not-enrolled"
-};
-
-/** POST /v1/auth/webauthn/login/options → 503 when the instance has no biometric support at all. Hide the control. */
-export const problemBiometricUnavailable: ProblemWire = {
-  "correlation_id": "00000000-0000-4000-8000-000000000000",
-  "detail": "biometric unlock is not configured on this instance",
-  "instance": "/v1/fixture",
-  "status": 503,
-  "title": "Service Unavailable",
-  "type": "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-unavailable"
-};
-
-/** POST /v1/auth/webauthn/login → 401 when the credential verified but its sealed token cannot be opened. Offer enrolment again, do not fall back to a plain sign-in. */
-export const problemBiometricReEnrolment: ProblemWire = {
-  "correlation_id": "00000000-0000-4000-8000-000000000000",
-  "detail": "biometric unlock must be set up again on this device",
-  "instance": "/v1/fixture",
-  "status": 401,
-  "title": "Unauthorized",
-  "type": "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#biometric-re-enrolment-required"
 };
 
 /** Every CaptureStatus the Go backend can write. Compared against CAPTURE_STATUSES. */

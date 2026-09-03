@@ -307,17 +307,6 @@ export interface ExportJobWire {
   bytes?: number | null;
 }
 
-export interface WebAuthnOptionsWire {
-  challenge_id: string;
-  options: Record<string, unknown>;
-}
-
-export interface WebAuthnVerifyWire {
-  challenge_id: string;
-  credential: Record<string, unknown>;
-  refresh_token?: string;
-}
-
 /**
  * The Cognito token set as it arrives on the wire. The ONLY place these
  * snake_case names are allowed to appear outside this file is

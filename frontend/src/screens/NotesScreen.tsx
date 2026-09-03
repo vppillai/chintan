@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 
-import { useBulkArchiveNotes, useNotes } from '@/api/queries.ts';
+import { useBulkArchiveNotes, useBulkDeleteNotes, useNotes } from '@/api/queries.ts';
 import { ApiError } from '@/api/problem.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
@@ -58,8 +58,10 @@ export function NotesScreen() {
    */
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [confirmingBulkArchive, setConfirmingBulkArchive] = useState(false);
+  const [confirmingBulk, setConfirmingBulk] = useState<'archive' | 'delete' | null>(null);
   const bulkArchive = useBulkArchiveNotes();
+  const bulkDelete = useBulkDeleteNotes();
+  const bulkBusy = bulkArchive.isPending || bulkDelete.isPending;
   const [timestamped, setTimestamped] = useState(readShowTime);
 
   const toggleSelect = (noteId: string): void => {
@@ -241,12 +243,29 @@ export function NotesScreen() {
           <button
             type="button"
             className="screen__action"
-            disabled={selectedIds.size === 0 || bulkArchive.isPending}
+            disabled={selectedIds.size === 0 || bulkBusy}
             onClick={() => {
-              setConfirmingBulkArchive(true);
+              setConfirmingBulk('archive');
             }}
           >
             {bulkArchive.isPending ? 'Archiving…' : 'Archive'}
+          </button>
+          {/*
+            Delete without the detour through the archive. It is the same two
+            server operations — archive, then purge — behind one typed
+            confirmation, because "select all, delete" is what emptying a
+            library actually looks like, and making it two screens did not
+            make it safer, only slower.
+          */}
+          <button
+            type="button"
+            className="screen__action screen__action--destructive"
+            disabled={selectedIds.size === 0 || bulkBusy}
+            onClick={() => {
+              setConfirmingBulk('delete');
+            }}
+          >
+            {bulkDelete.isPending ? 'Deleting…' : 'Delete forever'}
           </button>
         </div>
       ) : (
@@ -264,17 +283,36 @@ export function NotesScreen() {
       )}
 
       <ConfirmDialog
-        open={confirmingBulkArchive}
+        open={confirmingBulk === 'archive'}
         title={`Archive ${selectedIds.size} ${selectedIds.size === 1 ? 'note' : 'notes'}?`}
         body="They leave your notes and move to the archive, where you can restore them until they are deleted."
         confirmLabel="Archive them"
         destructive
         onCancel={() => {
-          setConfirmingBulkArchive(false);
+          setConfirmingBulk(null);
         }}
         onConfirm={() => {
-          setConfirmingBulkArchive(false);
+          setConfirmingBulk(null);
           bulkArchive.mutate(Array.from(selectedIds), {
+            onSuccess: exitSelecting,
+          });
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmingBulk === 'delete'}
+        title={`Delete ${selectedIds.size} ${selectedIds.size === 1 ? 'note' : 'notes'} forever?`}
+        body="Their recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on."
+        confirmLabel="Delete them forever"
+        requireText="delete"
+        requireLabel='Type "delete" to confirm'
+        destructive
+        onCancel={() => {
+          setConfirmingBulk(null);
+        }}
+        onConfirm={() => {
+          setConfirmingBulk(null);
+          bulkDelete.mutate(Array.from(selectedIds), {
             onSuccess: exitSelecting,
           });
         }}

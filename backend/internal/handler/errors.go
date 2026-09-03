@@ -70,9 +70,10 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		// Distinct from a generic failure so the UI can explain a budget
 		// decision instead of inviting a retry that will fail the same way.
 		//
-		// The distinction lives in `type`, not in the title. Both 429s this API
-		// produces say "Too Many Requests", and the client's rule — back off on
-		// a rate limit, stop on a budget — cannot be derived from prose.
+		// The distinction lives in `type`, not in the title. This 429 and the
+		// gateway's throttling 429 both say "Too Many Requests", and the
+		// client's rule — back off on a rate limit, stop on a budget — cannot
+		// be derived from prose.
 		capped := httperr.New(http.StatusTooManyRequests, "the daily provider spend cap has been reached")
 		capped.Type = httperr.TypeSpendCapped
 		httperr.Write(w, r, capped)

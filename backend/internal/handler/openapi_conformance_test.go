@@ -13,7 +13,6 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/model"
-	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 // docs/api/openapi.yaml is normative: a frontend has been written against it.
@@ -166,7 +165,6 @@ func TestOpenAPIReaderFindsTheDocument(t *testing.T) {
 		"GET /v1/search",
 		"POST /v1/captures/{captureId}/retry",
 		"GET /v1/export/{exportId}",
-		"DELETE /v1/auth/webauthn",
 	} {
 		if _, ok := byKey[want]; !ok {
 			t.Errorf("the reader did not find %q; every other assertion here is unreliable", want)
@@ -177,7 +175,7 @@ func TestOpenAPIReaderFindsTheDocument(t *testing.T) {
 	if !containsInt(retry.Statuses, 202) || !containsInt(retry.Statuses, 429) {
 		t.Errorf("retry statuses = %v, want at least 202 and 429", retry.Statuses)
 	}
-	if len(byKey) < 25 {
+	if len(byKey) < 20 {
 		t.Errorf("parsed %d operations; the document declares many more", len(byKey))
 	}
 }
@@ -239,7 +237,7 @@ func parseRegisteredRoutes(t *testing.T, path string) []string {
 	for _, m := range registrationLine.FindAllStringSubmatch(string(src), -1) {
 		routes = append(routes, m[1]+" "+handler.APIPrefix+m[2])
 	}
-	if len(routes) < 25 {
+	if len(routes) < 20 {
 		t.Fatalf("parsed %d registrations from %s; the reader and the route table have diverged",
 			len(routes), path)
 	}
@@ -704,77 +702,6 @@ func statusScenarios() map[string]scenario {
 			decodeInto(t, w, &job)
 			return h.do(t, http.MethodGet, "/v1/export/"+job.ID, "user1", nil).Code
 		},
-
-		// ---- biometrics
-		"POST /v1/auth/webauthn/login/options -> 200": send(http.MethodPost, "/v1/auth/webauthn/login/options", "", nil),
-		"POST /v1/auth/webauthn/login/options -> 429": func(t *testing.T) int {
-			h := newHarness(t)
-			var code int
-			for i := 0; i < 30; i++ {
-				code = h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil,
-					[2]string{"X-Forwarded-For", "203.0.113.1"}).Code
-				if code == http.StatusTooManyRequests {
-					break
-				}
-			}
-			return code
-		},
-		"POST /v1/auth/webauthn/login/options -> 404": func(t *testing.T) int {
-			h := newHarness(t)
-			h.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
-			return h.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil).Code
-		},
-		"POST /v1/auth/webauthn/login/options -> 503": func(t *testing.T) int {
-			return newHarness(t, withoutWebAuthn()).
-				do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil).Code
-		},
-
-		"POST /v1/auth/webauthn/login -> 200": send(http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()),
-		"POST /v1/auth/webauthn/login -> 401": func(t *testing.T) int {
-			h := newHarness(t)
-			h.webauthn.finishLogErr = service.ErrWebAuthnVerification
-			return h.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()).Code
-		},
-		"POST /v1/auth/webauthn/login -> 429": func(t *testing.T) int {
-			h := newHarness(t)
-			var code int
-			for i := 0; i < 30; i++ {
-				code = h.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody(),
-					[2]string{"X-Forwarded-For", "203.0.113.2"}).Code
-				if code == http.StatusTooManyRequests {
-					break
-				}
-			}
-			return code
-		},
-		"POST /v1/auth/webauthn/login -> 503": func(t *testing.T) int {
-			return newHarness(t, withoutWebAuthn()).
-				do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()).Code
-		},
-
-		"POST /v1/auth/webauthn/register/options -> 200": send(http.MethodPost, "/v1/auth/webauthn/register/options", "user1", nil),
-		"POST /v1/auth/webauthn/register/options -> 401": send(http.MethodPost, "/v1/auth/webauthn/register/options", "", nil),
-		"POST /v1/auth/webauthn/register/options -> 503": func(t *testing.T) int {
-			return newHarness(t, withoutWebAuthn()).
-				do(t, http.MethodPost, "/v1/auth/webauthn/register/options", "user1", nil).Code
-		},
-
-		"POST /v1/auth/webauthn/register -> 204": send(http.MethodPost, "/v1/auth/webauthn/register", "user1", verifyBody()),
-		"POST /v1/auth/webauthn/register -> 400": func(t *testing.T) int {
-			h := newHarness(t)
-			h.webauthn.finishRegErr = service.ErrWebAuthnMissingRefresh
-			return h.do(t, http.MethodPost, "/v1/auth/webauthn/register", "user1", verifyBody()).Code
-		},
-		"POST /v1/auth/webauthn/register -> 401": send(http.MethodPost, "/v1/auth/webauthn/register", "", verifyBody()),
-		"POST /v1/auth/webauthn/register -> 503": func(t *testing.T) int {
-			return newHarness(t, withoutWebAuthn()).
-				do(t, http.MethodPost, "/v1/auth/webauthn/register", "user1", verifyBody()).Code
-		},
-
-		"GET /v1/auth/webauthn/status -> 200": get("/v1/auth/webauthn/status", "user1"),
-		"GET /v1/auth/webauthn/status -> 401": get("/v1/auth/webauthn/status", ""),
-		"DELETE /v1/auth/webauthn -> 204":     send(http.MethodDelete, "/v1/auth/webauthn", "user1", nil),
-		"DELETE /v1/auth/webauthn -> 401":     send(http.MethodDelete, "/v1/auth/webauthn", "", nil),
 	}
 }
 
