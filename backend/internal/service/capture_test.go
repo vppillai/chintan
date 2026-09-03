@@ -38,12 +38,13 @@ func (p *recordingPresigner) PresignPut(_ context.Context, key, contentType stri
 	}, nil
 }
 
-type stubQueue struct {
+// stubInvoker records every hand-off to the worker and runs nothing.
+type stubInvoker struct {
 	calls []string
 }
 
-func (q *stubQueue) EnqueueCapture(_ context.Context, tenantID, captureID, reason string) error {
-	q.calls = append(q.calls, tenantID+"/"+captureID+"/"+reason)
+func (w *stubInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reason string) error {
+	w.calls = append(w.calls, tenantID+"/"+captureID+"/"+reason)
 	return nil
 }
 
@@ -170,11 +171,11 @@ func TestBeginCaptureWritesAKeyTheBucketNotifiesOn(t *testing.T) {
 
 // Retry hands the capture back to the worker. v1 ran the whole pipeline inline,
 // which is what turned a gateway timeout into duplicated note content.
-func TestRetryCaptureEnqueuesRatherThanRunningTheWorkInline(t *testing.T) {
+func TestRetryCaptureInvokesTheWorkerRatherThanRunningTheWorkInline(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
-	queue := &stubQueue{}
-	svc := NewCaptureService(store, objects).WithQueue(queue)
+	worker := &stubInvoker{}
+	svc := NewCaptureService(store, objects).WithInvoker(worker)
 
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{
@@ -194,15 +195,15 @@ func TestRetryCaptureEnqueuesRatherThanRunningTheWorkInline(t *testing.T) {
 	if capture.Error != "" {
 		t.Errorf("error = %q, want it cleared on retry", capture.Error)
 	}
-	if len(queue.calls) != 1 || queue.calls[0] != "user1/c_1/retry" {
-		t.Fatalf("queue calls = %v, want one retry enqueue", queue.calls)
+	if len(worker.calls) != 1 || worker.calls[0] != "user1/c_1/retry" {
+		t.Fatalf("worker invocations = %v, want one retry", worker.calls)
 	}
 }
 
 func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
 	store := memory.NewStore()
-	queue := &stubQueue{}
-	svc := NewCaptureService(store, memory.NewObjects()).WithQueue(queue)
+	worker := &stubInvoker{}
+	svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker)
 
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{
@@ -214,15 +215,15 @@ func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
 	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); !errors.Is(err, ErrCaptureTerminal) {
 		t.Fatalf("err = %v, want ErrCaptureTerminal", err)
 	}
-	if len(queue.calls) != 0 {
-		t.Fatalf("an appended capture was re-enqueued: %v", queue.calls)
+	if len(worker.calls) != 0 {
+		t.Fatalf("an appended capture was handed to the worker: %v", worker.calls)
 	}
 }
 
-// Without a queue there is nowhere for the slow work to go. Failing loudly beats
-// quietly running the pipeline on the request path, which is the defect this
-// phase removes.
-func TestRetryCaptureFailsLoudlyWithNoQueue(t *testing.T) {
+// Without a worker there is nowhere for the slow work to go. Failing loudly
+// beats quietly running the pipeline on the request path, which is the defect
+// this phase removes.
+func TestRetryCaptureFailsLoudlyWithNoWorker(t *testing.T) {
 	store := memory.NewStore()
 	svc := NewCaptureService(store, memory.NewObjects())
 
@@ -233,8 +234,8 @@ func TestRetryCaptureFailsLoudlyWithNoQueue(t *testing.T) {
 		t.Fatalf("PutCapture: %v", err)
 	}
 
-	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); !errors.Is(err, ErrCaptureQueueUnavailable) {
-		t.Fatalf("err = %v, want ErrCaptureQueueUnavailable", err)
+	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); !errors.Is(err, ErrCaptureWorkerUnavailable) {
+		t.Fatalf("err = %v, want ErrCaptureWorkerUnavailable", err)
 	}
 }
 

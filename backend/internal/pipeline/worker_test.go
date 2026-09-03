@@ -8,17 +8,22 @@ import (
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// s3Event builds the notification the content bucket publishes when a recording
-// lands, which is the only thing that starts a capture in production.
-func s3Event(key string) string {
+// s3Event builds the notification the content bucket invokes the worker with
+// when a recording lands, which is the only thing that starts a capture in
+// production.
+func s3Event(key string) json.RawMessage {
 	body, err := json.Marshal(events.S3Event{
 		Records: []events.S3EventRecord{{
 			EventName: "ObjectCreated:Put",
@@ -31,19 +36,7 @@ func s3Event(key string) string {
 	if err != nil {
 		panic(err)
 	}
-	return string(body)
-}
-
-func sqsEvent(messageID, body string, attrs map[string]string) events.SQSEvent {
-	msg := events.SQSMessage{MessageId: messageID, Body: body}
-	if len(attrs) > 0 {
-		msg.MessageAttributes = map[string]events.SQSMessageAttribute{}
-		for k, v := range attrs {
-			value := v
-			msg.MessageAttributes[k] = events.SQSMessageAttribute{DataType: "String", StringValue: &value}
-		}
-	}
-	return events.SQSEvent{Records: []events.SQSMessage{msg}}
+	return body
 }
 
 // seedUploadedCapture puts a tenant, a note, an audio object and a capture row
@@ -80,7 +73,7 @@ func seedUploadedCapture(t *testing.T, h *harness, noteID string) model.CaptureI
 }
 
 // The whole pipeline, driven the way production drives it: an S3 ObjectCreated
-// notification on the queue and nothing else.
+// notification invoking the worker and nothing else.
 func TestWorkerDrivesTheWholePipelineFromAnS3Event(t *testing.T) {
 	h := newHarness(t, harnessOpts{
 		stt: &fake.STT{Result: &provider.Transcription{
@@ -98,13 +91,8 @@ func TestWorkerDrivesTheWholePipelineFromAnS3Event(t *testing.T) {
 	seedUploadedCapture(t, h, "note1")
 
 	worker := NewWorker(h.pipeline)
-	resp, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3Event("tenants/user1/captures/c_1/audio.webm"), nil))
-	if err != nil {
+	if err := worker.Handle(context.Background(), s3Event("tenants/user1/captures/c_1/audio.webm")); err != nil {
 		t.Fatalf("Handle: %v", err)
-	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
 	}
 
 	ctx := context.Background()
@@ -195,7 +183,7 @@ func TestACaptureLongerThanTheGatewayCeilingStillCompletes(t *testing.T) {
 
 	// The request path: creating the capture must touch no provider at all.
 	svc := service.NewCaptureService(h.store, h.objects).
-		WithQueue(recordingQueue{})
+		WithInvoker(recordingInvoker{})
 	if _, err := svc.BeginCapture(context.Background(), "user1", service.CaptureRequest{ContentType: "audio/webm"}); err != nil {
 		t.Fatalf("BeginCapture: %v", err)
 	}
@@ -205,13 +193,8 @@ func TestACaptureLongerThanTheGatewayCeilingStillCompletes(t *testing.T) {
 
 	before := clock.Now()
 	worker := NewWorker(p)
-	resp, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3Event("tenants/user1/captures/c_1/audio.webm"), nil))
-	if err != nil {
+	if err := worker.Handle(context.Background(), s3Event("tenants/user1/captures/c_1/audio.webm")); err != nil {
 		t.Fatalf("Handle: %v", err)
-	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
 	}
 
 	if elapsed := clock.Now().Sub(before); elapsed <= 30*time.Second {
@@ -227,11 +210,11 @@ func TestACaptureLongerThanTheGatewayCeilingStillCompletes(t *testing.T) {
 	}
 }
 
-// recordingQueue accepts enqueues and does nothing, standing in for SQS on the
-// request path.
-type recordingQueue struct{}
+// recordingInvoker accepts hand-offs and does nothing, standing in for the
+// asynchronous Lambda invocation on the request path.
+type recordingInvoker struct{}
 
-func (recordingQueue) EnqueueCapture(context.Context, string, string, string) error { return nil }
+func (recordingInvoker) InvokeCapture(context.Context, string, string, string) error { return nil }
 
 // A cap rejection is a budget decision, not a fault: it gets its own status and
 // the provider is never contacted.
@@ -243,8 +226,7 @@ func TestSpendCapStopsTheCaptureBeforeTheProviderIsCalled(t *testing.T) {
 	seedUploadedCapture(t, h, "note1")
 
 	worker := NewWorker(h.pipeline)
-	if _, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3Event("tenants/user1/captures/c_1/audio.webm"), nil)); err != nil {
+	if err := worker.Handle(context.Background(), s3Event("tenants/user1/captures/c_1/audio.webm")); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -306,9 +288,9 @@ func TestRetryResumesFromTheLastGoodStageWithoutRetranscribing(t *testing.T) {
 		t.Fatalf("seed capture: %v", err)
 	}
 
-	// The API's retry: reset to the last good stage and re-enqueue. It runs no
-	// pipeline of its own.
-	svc := service.NewCaptureService(h.store, h.objects).WithQueue(recordingQueue{})
+	// The API's retry: reset to the last good stage and hand the capture to the
+	// worker. It runs no pipeline of its own.
+	svc := service.NewCaptureService(h.store, h.objects).WithInvoker(recordingInvoker{})
 	if _, err := svc.RetryCapture(ctx, "user1", "c_1"); err != nil {
 		t.Fatalf("RetryCapture: %v", err)
 	}
@@ -320,8 +302,9 @@ func TestRetryResumesFromTheLastGoodStageWithoutRetranscribing(t *testing.T) {
 		t.Fatalf("retry reset the capture to %s, want cleaned", reset.Status)
 	}
 
+	// The worker is then invoked with the API's payload rather than an S3 event.
 	worker := NewWorker(h.pipeline)
-	if _, err := worker.Handle(ctx, sqsEvent("m1", `{"tenant_id":"user1","capture_id":"c_1","reason":"retry"}`, nil)); err != nil {
+	if err := worker.Handle(ctx, json.RawMessage(`{"tenant_id":"user1","capture_id":"c_1","reason":"retry"}`)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 
@@ -348,36 +331,26 @@ func TestRetryResumesFromTheLastGoodStageWithoutRetranscribing(t *testing.T) {
 	}
 }
 
-// An infrastructure fault is retryable and reports itself per item; a capture
-// that failed on its own terms is not, because three identical failures only
-// fill the dead-letter queue.
-func TestInfrastructureFailureReportsABatchItemFailure(t *testing.T) {
+// An infrastructure fault fails the invocation, which is what makes Lambda
+// retry it; a capture that failed on its own terms does not, because three
+// identical failures only fill the dead-letter queue.
+func TestInfrastructureFailureFailsTheInvocation(t *testing.T) {
 	h := newHarness(t, harnessOpts{})
 	// No capture row at all: GetCapture fails, which is a store fault.
 	worker := NewWorker(h.pipeline)
 
-	resp, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3Event("tenants/user1/captures/c_missing/audio.webm"), nil))
-	if err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if len(resp.BatchItemFailures) != 1 || resp.BatchItemFailures[0].ItemIdentifier != "m1" {
-		t.Fatalf("batch item failures = %v, want [m1]", resp.BatchItemFailures)
+	if err := worker.Handle(context.Background(), s3Event("tenants/user1/captures/c_missing/audio.webm")); err == nil {
+		t.Fatal("Handle returned nil for a store fault; Lambda would treat the capture as done and never retry it")
 	}
 }
 
-func TestProviderFailureIsNotRedelivered(t *testing.T) {
+func TestProviderFailureIsNotRetried(t *testing.T) {
 	h := newHarness(t, harnessOpts{stt: &fake.STT{ShouldFail: true}})
 	seedUploadedCapture(t, h, "note1")
 
 	worker := NewWorker(h.pipeline)
-	resp, err := worker.Handle(context.Background(),
-		sqsEvent("m1", s3Event("tenants/user1/captures/c_1/audio.webm"), nil))
-	if err != nil {
-		t.Fatalf("Handle: %v", err)
-	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v; a provider failure is a verdict, not a fault to redeliver", resp.BatchItemFailures)
+	if err := worker.Handle(context.Background(), s3Event("tenants/user1/captures/c_1/audio.webm")); err != nil {
+		t.Fatalf("Handle: %v; a provider failure is a verdict, not a fault to retry", err)
 	}
 
 	capture, err := h.store.GetCapture(context.Background(), "user1", "c_1")
@@ -389,23 +362,23 @@ func TestProviderFailureIsNotRedelivered(t *testing.T) {
 	}
 }
 
-func TestWorkerIgnoresMessagesItDoesNotOwn(t *testing.T) {
+// A payload that addresses no capture is dropped, not failed: retrying it
+// twice and dead-lettering it would raise the "a recording was lost" alarm for
+// something that was never a recording.
+func TestWorkerIgnoresPayloadsItDoesNotOwn(t *testing.T) {
 	h := newHarness(t, harnessOpts{})
 	worker := NewWorker(h.pipeline)
 
-	for name, body := range map[string]string{
-		"s3 test event":       `{"Service":"Amazon S3","Event":"s3:TestEvent"}`,
+	for name, body := range map[string]json.RawMessage{
 		"the worker's output": s3Event("tenants/user1/captures/c_1/raw.txt"),
 		"a foreign key":       s3Event("something/else/entirely"),
-		"garbage":             `not json at all`,
+		"half an invocation":  json.RawMessage(`{"tenant_id":"user1"}`),
+		"garbage":             json.RawMessage(`not json at all`),
+		"nothing":             json.RawMessage(``),
 	} {
 		t.Run(name, func(t *testing.T) {
-			resp, err := worker.Handle(context.Background(), sqsEvent("m1", body, nil))
-			if err != nil {
-				t.Fatalf("Handle: %v", err)
-			}
-			if len(resp.BatchItemFailures) != 0 {
-				t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
+			if err := worker.Handle(context.Background(), body); err != nil {
+				t.Fatalf("Handle: %v, want nil", err)
 			}
 		})
 	}
@@ -436,24 +409,79 @@ func TestCaptureFromAudioKey(t *testing.T) {
 }
 
 // One capture is one greppable trace, which means the id the API minted has to
-// survive the queue.
-func TestCorrelationIDIsTakenFromTheMessageAttribute(t *testing.T) {
-	msg := sqsEvent("m1", `{}`, map[string]string{CorrelationAttribute: "trace-abc-123"}).Records[0]
-	if got := correlationFrom(msg); got != "trace-abc-123" {
+// survive the hand-off to the worker.
+func TestCorrelationIDIsTakenFromTheInvocation(t *testing.T) {
+	ref := CaptureRef{TenantID: "user1", CaptureID: "c_1"}
+	if got := correlationFor("trace-abc-123", ref); got != "trace-abc-123" {
 		t.Fatalf("correlation id = %q, want trace-abc-123", got)
 	}
 
 	// A hostile value must not reach the log stream verbatim.
-	hostile := sqsEvent("m1", `{}`, map[string]string{CorrelationAttribute: "bad\nid"}).Records[0]
-	if got := correlationFrom(hostile); got == "bad\nid" || got == "" {
-		t.Fatalf("correlation id = %q, want a freshly generated id", got)
+	if got := correlationFor("bad\nid", ref); got == "bad\nid" || got == "" {
+		t.Fatalf("correlation id = %q, want a safe id", got)
 	}
 
-	// No attribute at all still yields a trace, so a first upload is never
-	// untraceable.
-	if got := correlationFrom(sqsEvent("m1", `{}`, nil).Records[0]); got == "" {
-		t.Fatal("a message with no correlation attribute produced no correlation id")
+	// An S3 notification carries no id, so the capture's own id traces it —
+	// and traces the two automatic retries of the same attempt with it.
+	if got := correlationFor("", ref); got != "capture-c_1" {
+		t.Fatalf("correlation id = %q, want capture-c_1", got)
 	}
+}
+
+// capturingLambda records the one Invoke the API makes.
+type capturingLambda struct{ in *lambda.InvokeInput }
+
+func (c *capturingLambda) Invoke(_ context.Context, in *lambda.InvokeInput, _ ...func(*lambda.Options)) (*lambda.InvokeOutput, error) {
+	c.in = in
+	return &lambda.InvokeOutput{StatusCode: 202}, nil
+}
+
+// The API's retry and the worker meet only through this payload, so the test
+// closes the loop: what Invoker sends is what parseInvocation reads, and the
+// correlation id the request carried comes out the other side.
+func TestInvokerSendsWhatTheWorkerAccepts(t *testing.T) {
+	client := &capturingLambda{}
+	inv := NewInvoker(client, "arn:aws:lambda:us-west-2:123456789012:function:chintan-worker-dev-prod:live")
+
+	ctx := obs.WithCorrelationID(context.Background(), "trace-abc-123")
+	if err := inv.InvokeCapture(ctx, "user1", "c_1", "retry"); err != nil {
+		t.Fatalf("InvokeCapture: %v", err)
+	}
+	if client.in == nil {
+		t.Fatal("Invoke was not called")
+	}
+	if got := aws.ToString(client.in.FunctionName); !strings.HasSuffix(got, ":live") {
+		t.Fatalf("invoked %q, want the worker's live alias", got)
+	}
+	if client.in.InvocationType != types.InvocationTypeEvent {
+		t.Fatalf("invocation type = %q, want Event: the request path must not wait for the pipeline", client.in.InvocationType)
+	}
+
+	refs, correlationID, err := parseInvocation(client.in.Payload)
+	if err != nil {
+		t.Fatalf("the worker cannot parse the API's payload: %v", err)
+	}
+	if len(refs) != 1 || refs[0] != (CaptureRef{TenantID: "user1", CaptureID: "c_1"}) {
+		t.Fatalf("refs = %+v, want the one capture the API named", refs)
+	}
+	if correlationID != "trace-abc-123" {
+		t.Fatalf("correlation id = %q, want the request's", correlationID)
+	}
+}
+
+// A 202 is the only answer that means "queued". Anything else is not accepted
+// and the request must not report success over it.
+func TestInvokerRejectsANonAcceptedStatus(t *testing.T) {
+	inv := NewInvoker(statusLambda(200), "arn:aws:lambda:us-west-2:123456789012:function:f:live")
+	if err := inv.InvokeCapture(context.Background(), "user1", "c_1", "retry"); err == nil {
+		t.Fatal("a 200 from an Event invocation was reported as success")
+	}
+}
+
+type statusLambda int32
+
+func (s statusLambda) Invoke(context.Context, *lambda.InvokeInput, ...func(*lambda.Options)) (*lambda.InvokeOutput, error) {
+	return &lambda.InvokeOutput{StatusCode: int32(s)}, nil
 }
 
 // The pipeline refuses to exist without a breaker, so there is no build in which

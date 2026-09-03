@@ -67,13 +67,14 @@ func (f *routingFixture) run(ctx context.Context, captureID string) (model.Captu
 }
 
 // setTarget mirrors what the API does when the user resolves a needs_target
-// capture, then hands the capture back to the pipeline the way the queue does.
+// capture, then hands the capture back to the pipeline the way the worker
+// invocation does.
 func (f *routingFixture) setTarget(t *testing.T, captureID, noteID, newTitle string) model.CaptureIndex {
 	t.Helper()
 	ctx := context.Background()
 	svc := service.NewCaptureService(f.store, f.objects).
 		WithNoteCreator(f.h.creator).
-		WithQueue(directQueue{f.h.pipeline})
+		WithInvoker(directInvoker{f.h.pipeline})
 
 	capture, err := svc.SetCaptureTarget(ctx, f.userID, captureID, noteID, newTitle)
 	if err != nil {
@@ -86,13 +87,14 @@ func (f *routingFixture) setTarget(t *testing.T, captureID, noteID, newTitle str
 	return updated
 }
 
-// directQueue stands in for SQS: the API enqueues, the worker runs. Collapsing
-// the two makes the test about the pipeline rather than about the transport,
-// while keeping the boundary the production code has.
-type directQueue struct{ p *Pipeline }
+// directInvoker stands in for the asynchronous Lambda invocation: the API
+// invokes, the worker runs. Collapsing the two makes the test about the
+// pipeline rather than about the transport, while keeping the boundary the
+// production code has.
+type directInvoker struct{ p *Pipeline }
 
-func (q directQueue) EnqueueCapture(ctx context.Context, tenantID, captureID, reason string) error {
-	_, err := q.p.Run(ctx, tenantID, captureID)
+func (w directInvoker) InvokeCapture(ctx context.Context, tenantID, captureID, reason string) error {
+	_, err := w.p.Run(ctx, tenantID, captureID)
 	return err
 }
 
@@ -170,7 +172,7 @@ func TestCompleteCaptureAsksWhenRoutingIsUncertain(t *testing.T) {
 		t.Errorf("note was modified before confirmation: %q", body)
 	}
 
-	// A redelivered message must keep waiting rather than guess.
+	// A retried invocation must keep waiting rather than guess.
 	again, err := f.run(ctx, "c_1")
 	if err != nil {
 		t.Fatalf("second run: %v", err)
@@ -249,7 +251,7 @@ func TestSetCaptureTargetRejectsAlreadyRoutedCapture(t *testing.T) {
 
 	svc := service.NewCaptureService(f.store, f.objects).
 		WithNoteCreator(f.h.creator).
-		WithQueue(directQueue{f.h.pipeline})
+		WithInvoker(directInvoker{f.h.pipeline})
 	if _, err := svc.SetCaptureTarget(ctx, f.userID, "c_1", "n1", ""); err == nil {
 		t.Fatal("expected error when retargeting a routed capture")
 	}
@@ -313,7 +315,7 @@ func TestCompleteCaptureCreatesEmptyNoteForInstructionOnlyRecording(t *testing.T
 		t.Errorf("note body = %q, want empty", body)
 	}
 
-	// A redelivery must not append the instruction on a second pass.
+	// A retry must not append the instruction on a second pass.
 	again, err := f.run(ctx, "c_1")
 	if err != nil {
 		t.Fatalf("second run: %v", err)

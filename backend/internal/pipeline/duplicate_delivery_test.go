@@ -48,8 +48,9 @@ func (s *foreignWriteBeforeFirstPut) PutCapture(ctx context.Context, c model.Cap
 
 // A duplicate delivery that arrives after the other one has already appended
 // must exit successfully. It has nothing left to do, and reporting a failure
-// would have SQS redeliver it twice more and then dead-letter it — an alarm
-// raised against a queue behaving exactly as an at-least-once queue behaves.
+// would have Lambda retry it twice more and then dead-letter it — an alarm
+// raised against a transport behaving exactly as an at-least-once transport
+// behaves.
 func TestADuplicateDeliveryOfAFinishedCaptureExitsCleanly(t *testing.T) {
 	ctx := context.Background()
 	var objects repository.Objects = memory.NewObjects()
@@ -78,7 +79,7 @@ func TestADuplicateDeliveryOfAFinishedCaptureExitsCleanly(t *testing.T) {
 
 	final, err := f.run(ctx)
 	if err != nil {
-		t.Fatalf("a duplicate delivery of a finished capture must not fail; SQS would redeliver it: %v", err)
+		t.Fatalf("a duplicate delivery of a finished capture must not fail; Lambda would retry it: %v", err)
 	}
 	if final.Status != model.StatusAppended {
 		t.Fatalf("status = %s, want the reloaded truth (appended), not this delivery's stale copy", final.Status)
@@ -95,9 +96,8 @@ func TestADuplicateDeliveryOfAFinishedCaptureExitsCleanly(t *testing.T) {
 // A duplicate delivery that arrives while the other one is still mid-flight must
 // also exit successfully, and must write nothing.
 //
-// Conceding drops no work: if the owner dies, the queue's visibility timeout
-// redelivers the owner's message, and the append claim's lease lets that
-// redelivery take the append over.
+// Conceding drops no work: if the owner dies, its own invocation fails and is
+// retried, and that retry finishes the interrupted attempt.
 func TestADuplicateDeliveryOfAnInFlightCaptureConcedesWithoutWriting(t *testing.T) {
 	ctx := context.Background()
 	var objects repository.Objects = memory.NewObjects()
@@ -142,8 +142,8 @@ func TestADuplicateDeliveryOfAnInFlightCaptureConcedesWithoutWriting(t *testing.
 }
 
 // A lost write is visible as a counter rather than as silence, because a
-// sustained rate of these means the queue's visibility timeout is shorter than
-// the pipeline and every capture is being done twice.
+// sustained rate of these means something is invoking the worker twice for
+// every capture.
 func TestConcedingEmitsADuplicateDeliveryCounter(t *testing.T) {
 	ctx := context.Background()
 	var metrics bytes.Buffer

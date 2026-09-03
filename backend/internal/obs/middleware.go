@@ -41,8 +41,9 @@ func (r *statusRecorder) Flush() {
 // Correlate assigns every request a correlation id, echoes it back, and writes
 // one structured access log line per request.
 //
-// The id crosses into the worker through an SQS message attribute, so one
-// capture is one greppable trace from upload through append.
+// The id crosses into the worker in the payload of the asynchronous Lambda
+// invocation, so one capture is one greppable trace from the retry request
+// through the append.
 func Correlate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := SanitizeCorrelationID(r.Header.Get(HeaderCorrelationID))

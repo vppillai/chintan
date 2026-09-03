@@ -28,7 +28,7 @@ type harness struct {
 	objects  *memory.Objects
 	notes    *service.NotesService
 	captures *service.CaptureService
-	queue    *recordingQueue
+	worker   *recordingInvoker
 	spend    *fakeSpend
 }
 
@@ -55,12 +55,12 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	h := &harness{
 		store:   memory.NewStore(),
 		objects: memory.NewObjects(),
-		queue:   &recordingQueue{},
+		worker:  &recordingInvoker{},
 		spend:   &fakeSpend{},
 	}
 	h.notes = service.NewNotesService(h.store, h.objects)
 	h.captures = service.NewCaptureService(h.store, h.objects).
-		WithQueue(h.queue).
+		WithInvoker(h.worker).
 		WithNoteCreator(h.notes)
 	settings := service.NewSettingsService(h.store)
 
@@ -164,10 +164,12 @@ func problemOf(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 // ---------------------------------------------------------------- doubles
 
-type recordingQueue struct{ calls []string }
+// recordingInvoker stands in for the worker Lambda: it records every hand-off
+// and runs nothing, which is exactly what the request path must observe.
+type recordingInvoker struct{ calls []string }
 
-func (q *recordingQueue) EnqueueCapture(_ context.Context, tenantID, captureID, reason string) error {
-	q.calls = append(q.calls, tenantID+"/"+captureID+"/"+reason)
+func (w *recordingInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reason string) error {
+	w.calls = append(w.calls, tenantID+"/"+captureID+"/"+reason)
 	return nil
 }
 

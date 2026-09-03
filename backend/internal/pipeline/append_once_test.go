@@ -162,8 +162,8 @@ func TestRetryAfterAFailedFinishAppendsExactlyOnce(t *testing.T) {
 	}
 }
 
-// A plain second run — a redelivered SQS message, or the frontend polling twice
-// — must also be a no-op rather than a second append.
+// A plain second run — a retried invocation, or the frontend polling twice —
+// must also be a no-op rather than a second append.
 func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
 	ctx := context.Background()

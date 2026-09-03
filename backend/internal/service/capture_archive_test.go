@@ -37,7 +37,7 @@ func TestBeginCaptureRejectsArchivedNote(t *testing.T) {
 func TestSetCaptureTargetRejectsArchivedNote(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
-	svc := NewCaptureService(store, objects).WithQueue(&stubQueue{})
+	svc := NewCaptureService(store, objects).WithInvoker(&stubInvoker{})
 
 	archivedNote := model.NoteIndex{
 		ID:        "archived-note",

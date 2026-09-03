@@ -1,12 +1,21 @@
 // Package pipeline runs the slow half of a capture: transcribe, route, clean,
 // append.
 //
-// It lives out of band, behind SQS, for one reason. API Gateway's HTTP API caps
-// an integration at 30 seconds and the cap is not adjustable, so any capture
-// whose speech-to-text plus LLM work exceeds that returned 504 to the user while
-// the Lambda kept running and billing — and the client's retry then appended the
-// same text a second time. For a driving-length recording that was the common
-// case, not an edge case.
+// It lives out of band, in a Lambda that S3 invokes directly when a recording
+// lands, for one reason. API Gateway's HTTP API caps an integration at 30
+// seconds and the cap is not adjustable, so any capture whose speech-to-text
+// plus LLM work exceeds that returned 504 to the user while the Lambda kept
+// running and billing — and the client's retry then appended the same text a
+// second time. For a driving-length recording that was the common case, not an
+// edge case.
+//
+// The transport is Lambda's own asynchronous invocation: S3 ObjectCreated
+// invokes the worker, and the API's retry and target endpoints invoke it with
+// InvocationType Event. A returned error is retried twice, about a minute and
+// then about two minutes later; an invocation that fails all three lands in the
+// dead-letter queue and raises the alarm. There is no queue in front of the
+// worker any more, and no visibility timeout to keep in step with the Lambda
+// timeout and the append claim lease.
 //
 // Two properties hold throughout and are worth stating before the code:
 //
@@ -133,25 +142,26 @@ func New(cfg Config) (*Pipeline, error) {
 // errDeliveryConceded means another delivery of the same capture owns the row,
 // and this one stopped rather than fight it for the conditional write.
 //
-// It is not a failure. SQS is at-least-once, so two deliveries of one capture is
-// a normal event; treating the loser as an error would redeliver it, exhaust
-// maximumReceiveCount, and put a dead-letter entry and an alarm in front of a
-// human for a system working exactly as designed.
+// It is not a failure. Asynchronous invocation is at-least-once, and the API's
+// retry can arrive while an S3-triggered attempt is still running, so two
+// deliveries of one capture is a normal event; treating the loser as an error
+// would retry it, exhaust the retries, and put a dead-letter entry and an alarm
+// in front of a human for a system working exactly as designed.
 var errDeliveryConceded = errors.New("pipeline: another delivery owns this capture")
 
 // errAppendClaimHeld means this delivery found its own append claim already
 // taken and not finished, inside the lease, with no marker in the note. Unlike
-// errDeliveryConceded it IS a reason to redeliver: the holder may be dead, and
-// only the lease expiring can prove it. See append.
+// errDeliveryConceded it IS a reason to fail the invocation: the holder may be
+// dead, and only the lease expiring can prove it. See append.
 var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinished attempt")
 
 // Run drives one capture as far as it can go and returns its final state.
 //
-// A returned error means the invocation should be retried by SQS: it is an
+// A returned error means the invocation should be retried by Lambda: it is an
 // infrastructure fault, not a verdict on the capture. A capture that failed for
 // its own reasons — a provider error, an exhausted spend cap, an undecidable
 // destination — is persisted in that state and returned with a nil error, so the
-// message is not redelivered to fail identically twice more before the DLQ. So
+// invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
 	ctx = obs.WithTenant(ctx, tenantID)
@@ -179,10 +189,9 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	p.markAudioProcessedIfSafe(ctx, &final)
 	if errors.Is(err, errDeliveryConceded) {
 		// The other delivery is either finished or still running. Either way this
-		// one is done and its message must be deleted, not redelivered. If the
-		// owner dies mid-flight the queue's visibility timeout redelivers its
-		// message, and the append claim's lease lets that redelivery take the
-		// append over — so conceding drops nothing.
+		// one is done and must succeed, not be retried. If the owner dies
+		// mid-flight its own invocation fails and is retried, and that retry
+		// finishes the interrupted attempt — so conceding drops nothing.
 		log.Info("capture is owned by a concurrent delivery; leaving it to that one",
 			slog.String("status", string(final.Status)),
 			slog.Bool("already_finished", service.CaptureIsTerminal(final.Status)))
@@ -212,8 +221,8 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 // object can outlive its row, and an object with no row is reachable by nothing
 // else in this system.
 //
-// A nil return means the verdict is recorded and the queue message is done. An
-// error means the *recording* failed, so the message should come back.
+// A nil return means the verdict is recorded and the invocation is done. An
+// error means the *recording* failed, so the invocation should be retried.
 func (p *Pipeline) RejectOversizedCapture(ctx context.Context, ref CaptureRef) error {
 	ctx = obs.WithTenant(ctx, ref.TenantID)
 	log := obs.Log(ctx).With(slog.String("capture_id", ref.CaptureID))
@@ -489,7 +498,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		// indistinguishable from ErrNotFound, so a transient DynamoDB fault
 		// started a second note on the subject the user has been dictating into
 		// all week — silently, unretried, and with the two halves of the thought
-		// now in different notes. The message is worth redelivering; a duplicate
+		// now in different notes. The invocation is worth retrying; a duplicate
 		// note is not worth creating.
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, decision.NoteID)
 		switch {
@@ -718,14 +727,19 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		// If the marker is in the note body the dangerous part is over,
 		// whoever did it: finishing the bookkeeping is idempotent (the index
 		// refresh re-derives from the body, the completion is a versioned write
-		// on the same token), so do it now rather than wait for the lease.
+		// on the same token), so do it now rather than wait for the lease. This
+		// is the case a Lambda retry a minute later actually meets — the
+		// paragraph was written and the worker died before marking the capture
+		// appended.
 		//
-		// Otherwise ask to be redelivered. Conceding here would ack the message
-		// and leave the capture in `appending` with nothing left to finish it;
-		// appending would race a holder that may still be about to write. By
-		// the time the message comes back the lease has either been finished by
-		// its holder or run out, and the takeover above resumes the interrupted
-		// attempt with the marker check.
+		// Otherwise fail the invocation. Conceding here would leave the capture
+		// in `appending` with nothing left to finish it; appending would race a
+		// holder that may still be about to write. Lambda's automatic retries
+		// at about one and two minutes both fall inside the twenty-minute
+		// lease, so an attempt that died between claiming and writing — a
+		// window of one object read and one write — dead-letters and raises
+		// the alarm, and the user's retry after the lease takes the claim over
+		// and does the append once.
 		if written, err := p.markerInNote(ctx, note.S3MarkdownKey, capture.ID); err != nil {
 			return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
 		} else if written {
@@ -753,8 +767,8 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 
 // finishAppend is the bookkeeping after the text is durably in the note body:
 // the index refresh and the completion of the claim. Both are safe to repeat,
-// which is what lets a redelivery that finds the marker already written finish
-// an attempt that died here.
+// which is what lets a retry that finds the marker already written finish an
+// attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
 	if err := p.refreshNoteIndex(ctx, tenantID, note.ID, cleanedText); err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
@@ -811,7 +825,7 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 // out of everything the user sees (service.StripCaptureMarkers) and puts it
 // back on every save (service.CarryCaptureMarkers), so it survives edits.
 //
-// resuming says this call is a redelivery of an attempt that already held the claim
+// resuming says this call is a retry of an attempt that already held the claim
 // for this exact capture and cleaned artefact. Only then is the marker a
 // reason to do nothing — a first attempt that finds one has found a bug, not a
 // shortcut, and appends so the dictation is not lost.
@@ -967,10 +981,10 @@ func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) err
 	}
 	*capture = current
 
-	// Info, not warn. A duplicate delivery is expected of an at-least-once queue;
-	// the counter is here so that "expected" can be checked against reality
-	// rather than assumed, because a sustained rate of these means the visibility
-	// timeout is shorter than the pipeline and every capture is being done twice.
+	// Info, not warn. A duplicate delivery is expected of an at-least-once
+	// transport; the counter is here so that "expected" can be checked against
+	// reality rather than assumed, because a sustained rate of these means
+	// something is invoking the worker twice for every capture.
 	obs.Log(ctx).Info("lost a conditional write to a concurrent delivery",
 		slog.String("capture_id", current.ID),
 		slog.String("status", string(current.Status)))
@@ -992,7 +1006,7 @@ var ErrProviderKeyRejected = errors.New("the provider rejected this instance's A
 //
 // A spend cap gets its own status because it is a budget decision, not a fault:
 // telling the user "your daily provider budget is spent" is actionable and
-// "capture failed" is not. Neither outcome asks SQS to redeliver — the same call
+// "capture failed" is not. Neither outcome asks Lambda to retry — the same call
 // would be refused or fail identically, and three of those is a DLQ entry and an
 // alarm for something that is working as designed.
 //

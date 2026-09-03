@@ -79,7 +79,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Write(w, r, capped)
 
 	// ---- not configured on this instance ---------------------------------
-	case errors.Is(err, service.ErrCaptureQueueUnavailable):
+	case errors.Is(err, service.ErrCaptureWorkerUnavailable):
 		httperr.ServiceUnavailable(w, r, "the capture pipeline is not configured on this instance")
 	case errors.Is(err, service.ErrNoteCreationUnavailable):
 		httperr.ServiceUnavailable(w, r, "creating a note from a capture is not configured on this instance")

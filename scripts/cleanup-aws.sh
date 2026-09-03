@@ -103,7 +103,7 @@ for b in $BUCKETS; do dim "  s3 bucket     $b (Retain)"; done
 for t in $TABLES; do dim "  dynamodb      $t (Retain)"; done
 for p in $USER_POOLS; do dim "  user pool     $p (Retain, DeletionProtection ACTIVE)"; done
 for k in $KMS_KEYS; do dim "  kms key       $k (Retain)"; done
-for q in $QUEUES; do dim "  sqs queue     $q (deleted with the stack)"; done
+for q in $QUEUES; do dim "  dead-letter queue $q (deleted with the stack)"; done
 for g in $LOG_GROUPS; do dim "  log group     $g"; done
 [ -n "$BUCKETS$TABLES$LOG_GROUPS$USER_POOLS$KMS_KEYS$QUEUES" ] || dim "  (no resources found)"
 

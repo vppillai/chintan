@@ -130,8 +130,9 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Build arm64 zips
         # Two artifacts: cmd/api and cmd/worker are separate main packages. A
-        # worker running the API handler starts cleanly and then fails every SQS
-        # event, which reads as a broken pipeline rather than a broken deploy.
+        # worker running the API handler starts cleanly and then swallows every
+        # S3 notification, which reads as a broken pipeline rather than a broken
+        # deploy.
         run: |
           scripts/build-lambda.sh \
             --output "function-${GITHUB_SHA}.zip" \

@@ -1,4 +1,4 @@
-// Command worker drains the capture queue and the table's expiry stream.
+// Command worker runs the capture pipeline and the table's expiry stream.
 //
 // It is a second Lambda because the first one cannot do this work. API Gateway's
 // HTTP API caps an integration at 30 seconds and the cap is not adjustable, so a
@@ -7,20 +7,28 @@
 // followed appended the same text again. Here the ceiling is Lambda's 900
 // seconds and nobody is waiting on the other end of a socket.
 //
+// The capture pipeline is invoked asynchronously: by S3 when a recording lands
+// in the content bucket, and by the API when the user retries a capture or
+// picks its destination. There is no queue in between. A returned error makes
+// Lambda retry the same payload twice, and an invocation that fails all three
+// attempts is written to the dead-letter queue, which is what the capture
+// alarm watches.
+//
 // One binary, two event sources, and the template deploys it as two functions.
-// The capture queue and the DynamoDB expiry stream want different concurrency,
-// different timeouts and different dead-letter queues, which is why they are
-// separate functions rather than two mappings onto one; but they want the same
-// store, the same object storage and the same cascade, which is why they are one
-// binary rather than a third artifact. A third artifact would have meant a new
-// required template parameter and edits to build-lambda.sh, bootstrap.sh,
-// ci-deploy-stack.sh and the deploy workflow — four more places for a deploy to
-// fail — to save an init this process performs in single-digit milliseconds.
+// The capture pipeline and the DynamoDB expiry stream want different
+// concurrency, different timeouts and different dead-letter queues, which is
+// why they are separate functions rather than two triggers onto one; but they
+// want the same store, the same object storage and the same cascade, which is
+// why they are one binary rather than a third artifact. A third artifact would
+// have meant a new required template parameter and edits to build-lambda.sh,
+// bootstrap.sh, ci-deploy-stack.sh and the deploy workflow — four more places
+// for a deploy to fail — to save an init this process performs in single-digit
+// milliseconds.
 //
 // Which handler runs is decided by the event, not by configuration: a stream
-// record says `aws:dynamodb` and a queue message says `aws:sqs`. A function
-// pointed at the wrong source therefore does nothing rather than the wrong
-// thing.
+// record says `aws:dynamodb`; an S3 notification says `aws:s3`; the API's
+// payload has no records at all. A function pointed at the wrong source
+// therefore does nothing rather than the wrong thing.
 package main
 
 import (
@@ -242,23 +250,25 @@ func resolveSecret(ctx context.Context, client *ssm.Client, valueEnv, pathEnv st
 }
 
 // eventSource names the AWS service a Lambda event came from. Both of the
-// sources this binary serves stamp it on every record.
+// record-bearing sources this binary serves stamp it on every record.
 type eventSource string
 
 const (
-	sourceSQS            eventSource = "aws:sqs"
+	sourceS3             eventSource = "aws:s3"
 	sourceDynamoDBStream eventSource = "aws:dynamodb"
 )
 
 // sourceOf reads the event source off the first record.
 //
 // Sniffing the payload rather than reading an environment variable means a
-// function wired to the wrong event source is inert rather than wrong: an SQS
-// message arriving at the expiry function is not run through the purge cascade
-// because it does not claim to be a stream record. Lambda guarantees the field
-// — a record without one is not a record either of these sources produced.
+// function wired to the wrong event source is inert rather than wrong: an S3
+// notification arriving at the expiry function is not run through the purge
+// cascade because it does not claim to be a stream record. Lambda guarantees
+// the field — a record without one is not a record either of these sources
+// produced.
 //
-// An event with no records at all is legal and means there is nothing to do.
+// An event with no records at all is the API's invocation payload — a capture
+// named directly — or nothing to do; the pipeline worker tells the two apart.
 func sourceOf(raw json.RawMessage) (eventSource, error) {
 	var probe struct {
 		Records []struct {
@@ -276,9 +286,11 @@ func sourceOf(raw json.RawMessage) (eventSource, error) {
 
 // Handler is the entry point for both event sources.
 //
-// The return value is whichever batch-failure report the source understands.
-// They are different types with the same JSON shape, and returning the wrong
-// one would tell Lambda the whole batch succeeded.
+// The two halves speak different protocols to Lambda. The expiry stream is an
+// event source mapping and returns a batch-failure report, so a partial failure
+// means only itself. The capture pipeline is invoked asynchronously and has no
+// batch: it returns nil for done and an error for "retry this payload", and
+// returning a report there would be ignored.
 func Handler(ctx context.Context, raw json.RawMessage) (any, error) {
 	source, err := sourceOf(raw)
 	if err != nil {
@@ -286,13 +298,6 @@ func Handler(ctx context.Context, raw json.RawMessage) (any, error) {
 	}
 
 	switch source {
-	case sourceSQS:
-		var event events.SQSEvent
-		if err := json.Unmarshal(raw, &event); err != nil {
-			return nil, fmt.Errorf("worker: decode sqs event: %w", err)
-		}
-		return worker.Handle(ctx, event)
-
 	case sourceDynamoDBStream:
 		var event events.DynamoDBEvent
 		if err := json.Unmarshal(raw, &event); err != nil {
@@ -300,16 +305,16 @@ func Handler(ctx context.Context, raw json.RawMessage) (any, error) {
 		}
 		return purger.Handle(ctx, event)
 
-	case "":
-		// No records. Nothing to report and nothing to fail.
-		return events.SQSEventResponse{}, nil
+	case sourceS3, "":
+		// A recording landing in the bucket, or the API naming a capture.
+		return nil, worker.Handle(ctx, raw)
 
 	default:
 		// Retrying cannot make this recognisable, so it is logged and dropped
-		// rather than redelivered until it dead-letters.
+		// rather than retried until it dead-letters.
 		obs.Log(ctx).Error("ignoring an event from an unrecognised source",
 			slog.String("event_source", string(source)))
-		return events.SQSEventResponse{}, nil
+		return nil, nil
 	}
 }
 

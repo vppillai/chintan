@@ -142,8 +142,8 @@ func TestRetryIsAcceptedNotPerformed(t *testing.T) {
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (body=%s)", w.Code, w.Body.String())
 	}
-	if len(h.queue.calls) == 0 {
-		t.Fatal("retry did not enqueue; the work must not happen on the request path")
+	if len(h.worker.calls) == 0 {
+		t.Fatal("retry did not hand the capture to the worker; the work must not happen on the request path")
 	}
 	var capture handler.Capture
 	decodeInto(t, w, &capture)
