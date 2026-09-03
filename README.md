@@ -35,7 +35,7 @@ scripts/bootstrap-agent.sh --region us-west-2            # dry run
 scripts/bootstrap-agent.sh --region us-west-2 --apply
 ```
 
-**This is a hard prerequisite and it is easy to miss.** `infrastructure/bootstrap.yaml` references the permissions boundary `policy/chintan-agent-boundary`, which only this script creates, so step 1 fails without it. It is also the only thing in the repository that needs administrative credentials: it creates the constraints everything else runs under — a permissions boundary, explicit deny policies, a CloudTrail trail, and an IAM role whose sessions expire in an hour.
+**This is a hard prerequisite and it is easy to miss.** `infrastructure/bootstrap.yaml` references the permissions boundary `policy/chintan-agent-boundary`, which only this script creates, so step 1 fails without it. It is also the only thing in the repository that needs administrative credentials: it creates the constraints everything else runs under — a permissions boundary, explicit deny policies, a CloudTrail trail, and an IAM role whose sessions expire in an hour. The four policy documents it applies are the JSON files in `infrastructure/agent-policies/`, edited by hand; nothing in the repository or in CI checks afterwards that what is deployed still matches them.
 
 Run it once, as a human. Everything afterwards runs as `chintan-agent`.
 
@@ -52,7 +52,9 @@ scripts/setup.sh --region us-west-2                      # dry run; --region is 
 scripts/setup.sh --region us-west-2 --apply
 ```
 
-This deploys `chintan-bootstrap` (the Lambda artifact bucket and the GitHub Actions deploy role, scoped to `chintan-*`), sets the `AWS_ACCOUNT_ID` and `AWS_REGION` repository secrets, creates the `production` environment **with you as a required reviewer**, creates `staging`, and switches GitHub Pages to build from Actions.
+This deploys `chintan-bootstrap` (the Lambda artifact bucket, the GitHub Actions deploy role scoped to `chintan-*`, and a separate build role that can only upload artifacts and read stack outputs), sets the `AWS_ACCOUNT_ID` and `AWS_REGION` repository secrets and the `BUILD_ROLE_ARN` and `CFN_DEPLOY_ROLE_ARN` repository variables from the stack's outputs, creates the `production` environment **with you as a required reviewer**, creates `staging`, and switches GitHub Pages to build from Actions.
+
+Re-run it after any change to `infrastructure/bootstrap.yaml`: nothing in CI deploys that template, and the workflows fall back to older behaviour (the build jobs use the deploy role, CloudFormation acts as the CI role) only while the variables it sets are absent.
 
 Add `--reviewer <login>` to require someone else's approval for a production deploy.
 
@@ -142,11 +144,19 @@ Delete the file once you have signed in.
 | See what would be deployed | `scripts/list-instances.sh` |
 | Deploy one stack by hand | `scripts/bootstrap.sh --instance dev --region us-west-2 --origin https://<owner>.github.io --apply` |
 | Invite or reset a user | `scripts/invite-user.sh --instance dev --email you@example.com --apply` |
-| Check the guardrails | `scripts/guardrails-check.sh` |
-| Prove the guardrail check still detects a removal | `scripts/guardrails-check.sh --self-test` |
 | Check no user content reaches a log | `scripts/check-log-hygiene.sh` |
 | Delete one instance | `scripts/cleanup-aws.sh --instance dev --environment staging --apply` |
 | Delete everything | `scripts/teardown.sh --apply` |
+
+### Owner actions outside the repository
+
+Things the account's owner does by hand, with administrative credentials, that no script or workflow here will do:
+
+- **Activate the cost-allocation tags.** `Project`, `Instance` and `Environment` are on every resource but do nothing in Billing until they are activated there (Billing → Cost allocation tags; ~24 h to take effect, no backfill).
+- **Decide about the CloudTrail trail.** `chintan-trail` is multi-region with log-file validation, and its hourly digest files across idle regions are the largest single line on the bill at about $0.13/month (`docs/review-2026-09-03/cost-alarms-logs.md`, item 2). Delete it, or make it single-region without digests, or keep it as the record of what was done to the account — it is the one thing `teardown.sh` leaves alone, and the agent principal's deny policy keeps it from stopping or deleting the trail, so this needs the owner's credentials.
+- **Delete the dead invite.** A second Cognito user has sat in `FORCE_CHANGE_PASSWORD` since 2026-08-06 with a three-day temporary password (`docs/review-2026-09-03/aws-live-audit.md`); `aws cognito-idp admin-delete-user`, or re-invite with `scripts/invite-user.sh`.
+- **Delete the `token_vault_key` SSM parameters.** `/chintan/<instance>/token_vault_key` belonged to the custom WebAuthn vault removed in v3 step 1; nothing reads it now. `aws ssm delete-parameter --name /chintan/dev/token_vault_key`.
+- **Remove the agent principal's boundary and deny policies** when the agent stops holding AWS credentials. They are left in the account because removing them needs the same administrative credentials that created them; see `scripts/bootstrap-agent.sh`.
 
 ### The sign-in page
 
@@ -236,19 +246,22 @@ Design constraints it holds to: enumeration is by **S3 prefix and DynamoDB parti
 | `backend-vuln` | `govulncheck` (reachable vulnerabilities only) | `cd backend && govulncheck ./...` |
 | `infrastructure-lint` | `cfn-lint` on both templates | `uvx cfn-lint infrastructure/*.yaml` |
 | `shell` | `shellcheck`, `shfmt -d -i 4 -ci`, `bash -n` on every script | `shellcheck --severity=warning scripts/*.sh` |
-| `guardrails` | `guardrails-check.sh --local-only` and `--self-test`; `check-boundary-drift.sh --self-test` | `scripts/guardrails-check.sh --local-only` |
 | `log-hygiene` | no provider adapter logs a response body, plus a self-test | `scripts/check-log-hygiene.sh` |
 | `vite-env` | the `VITE_*` names the deploy exports are the ones the bundle reads | `scripts/check-vite-env.sh` |
 | `instance-configs` | every `config/instances/*.yaml` resolves to a unique stack | `scripts/list-instances.sh --format text` |
 | `frontend` | `bun install --frozen-lockfile`, `bun run typecheck`, **`bun run lint`**, `bun run test`, `bun run build` | `cd frontend && bun run lint` |
 | `contract` | the committed frontend↔backend fixtures are the ones both sides actually produce — it fails on stale fixtures | `cd backend && CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract` |
-| `e2e` | Playwright | `cd frontend && bunx playwright install chromium && bun run e2e` |
+| `e2e` | Playwright, Chromium only (`playwright.config.ts` defines one project) | `cd frontend && bunx playwright install chromium && bun run e2e` |
 
 `bun run lint` is eslint **plus** `scripts/check-tokens.mjs`, which forbids literal colours and font sizes outside the design tokens. A change with `color: #1B4332` passes typecheck, test and build, and is blocked here.
 
 The frontend toolchain is **Bun**, not npm. The lockfile is `bun.lock`.
 
-`.github/CODEOWNERS` requires review on `/.github/workflows/`, `/infrastructure/`, `/scripts/` and `/config/instances/`. A fork must replace `@vppillai` with its own owner. CODEOWNERS is only enforced once branch protection on `main` has "Require review from Code Owners" enabled; `guardrails-check.sh` reports the two separately, because the file without the setting is a suggestion.
+### What stands between a change and production
+
+CI runs on every pull request. A merge to `main` deploys to `chintan-dev-staging` and smoke-tests it, and the `production` environment then waits for the owner's approval before the same artifact reaches `chintan-dev-prod`; `scripts/deploy.sh` refuses a change set that would replace the pool, the table, the bucket or the client. `main` itself has no branch protection: for a repository with one committer, the environment reviewer is the human gate, and requiring pull-request review would block every PR its owner opens. There is no CODEOWNERS file for the same reason.
+
+The two deploy workflows pin every action to a commit SHA (the version is the trailing comment), pin Bun to the version the lockfile was written with, and `.github/dependabot.yml` opens weekly pull requests for the actions, the Go modules and the Bun lockfile.
 
 ---
 
@@ -298,8 +311,8 @@ This is a **public repository**.
 - **The frontend bundle** contains only public endpoints and the Cognito client ID.
 - **Authentication** is Cognito with real JWKS signature verification; identity comes from the verified token and from nothing else.
 - **CORS** is restricted to your Pages origin.
-- **Deploys** happen only from CI, under a role scoped to `chintan-*`, gated by an environment that requires a human.
-- **The agent principal** runs under a permissions boundary, cannot read provider secrets, and cannot write to the CloudTrail bucket.
+- **Deploys** happen only from CI. The staging and production jobs assume `chintan-github-actions`, scoped to `chintan-*` and trusted only from those two environments; production waits for the owner's approval. The build jobs assume `chintan-github-build`, which can upload artifacts and read stack outputs and nothing else. `main` has no branch protection — the owner's choice, see above.
+- **The agent principal** created by `scripts/bootstrap-agent.sh` runs under a permissions boundary, cannot read provider secrets, and cannot write to the CloudTrail bucket. Those policies are applied once, by hand, and nothing checks them afterwards.
 - **Never commit** real API keys, `.env` files, or secrets.
 
 ---
