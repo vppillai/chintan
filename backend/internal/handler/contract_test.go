@@ -288,15 +288,6 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("exportJob", "ExportJobWire", "POST /v1/export → 202",
 		h.do(t, http.MethodPost, "/v1/export", contractUser, nil))
 
-	// ---- biometric unlock
-	h = newHarness(t)
-	add("webauthnStatus", "{ enrolled: boolean }", "GET /v1/auth/webauthn/status → 200",
-		h.do(t, http.MethodGet, "/v1/auth/webauthn/status", contractUser, nil))
-	add("webauthnOptions", "WebAuthnOptionsWire", "POST /v1/auth/webauthn/register/options → 200",
-		h.do(t, http.MethodPost, "/v1/auth/webauthn/register/options", contractUser, nil))
-	add("tokenSet", "TokenSetWire", "POST /v1/auth/webauthn/login → 200, the Cognito token set as it arrives",
-		h.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()))
-
 	// ---- problem documents
 	h = newHarness(t)
 	add("problemNotFound", "ProblemWire", "GET /v1/notes/{noteId} → 404",
@@ -333,26 +324,6 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 			"note_ids": []string{purgeArchived.ID, "note_missing", purgeActive.ID},
 		}))
 
-	// The three biometric outcomes, as fixtures, because the frontend has to
-	// branch on all three and was branching on English prose. Recording each
-	// response is what stops a `type` string being changed on one side only.
-	notEnrolled := newHarness(t)
-	notEnrolled.webauthn.beginErr = service.ErrWebAuthnNotEnrolled
-	add("problemBiometricNotEnrolled", "ProblemWire",
-		"POST /v1/auth/webauthn/login/options → 404 when nothing is enrolled. Offer enrolment; do not retry.",
-		notEnrolled.do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil))
-
-	add("problemBiometricUnavailable", "ProblemWire",
-		"POST /v1/auth/webauthn/login/options → 503 when the instance has no biometric support at all. Hide the control.",
-		newHarness(t, withoutWebAuthn()).
-			do(t, http.MethodPost, "/v1/auth/webauthn/login/options", "", nil))
-
-	reEnrol := newHarness(t)
-	reEnrol.webauthn.finishLogErr = service.ErrWebAuthnReEnrolRequired
-	add("problemBiometricReEnrolment", "ProblemWire",
-		"POST /v1/auth/webauthn/login → 401 when the credential verified but its sealed token cannot be opened. Offer enrolment again, do not fall back to a plain sign-in.",
-		reEnrol.do(t, http.MethodPost, "/v1/auth/webauthn/login", "", verifyBody()))
-
 	return out
 }
 
@@ -382,7 +353,6 @@ var volatileStrings = map[string]string{
 	"id":             "fixture-id",
 	"note_id":        "fixture-note-id",
 	"auto_select_id": "fixture-note-id",
-	"challenge_id":   "fixture-challenge-id",
 	"correlation_id": "00000000-0000-4000-8000-000000000000",
 	"instance":       "/v1/fixture",
 	"url":            "https://example.invalid/presigned",
@@ -513,7 +483,7 @@ func neededSchemaTypes(fixtures []contractFixture) []string {
 		"NotePurgeResponseWire": true,
 		"Page":                  true, "PresignedDownloadWire": true, "ProblemWire": true,
 		"ReadinessWire": true, "SearchHitWire": true, "SettingsWire": true,
-		"TagWire": true, "TokenSetWire": true, "WebAuthnOptionsWire": true,
+		"TagWire": true,
 	}
 	seen := map[string]bool{}
 	for _, f := range fixtures {

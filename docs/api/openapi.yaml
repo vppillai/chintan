@@ -10,13 +10,13 @@ info:
     Three rules hold across every endpoint and are not repeated per-operation:
 
     1. **Authentication.** Every route except the two health probes
-       (`/v1/health`, `/v1/health/ready`) and the two WebAuthn login routes
-       requires a verified Cognito bearer token. Those four, and only those
-       four, declare `security: []` below and are the four the API Gateway
-       route table admits without an authorizer. The service
-       verifies signature, issuer, audience, expiry, and `token_use` itself; it
-       does not rely on the API Gateway authorizer alone. There is no header-based
-       identity path.
+       (`/v1/health`, `/v1/health/ready`) requires a verified Cognito bearer
+       token. Those two, and only those two, declare `security: []` below and
+       are the two the API Gateway route table admits without an authorizer.
+       Sign-in happens against Cognito's managed login, never against this
+       API. The service verifies signature, issuer, audience, expiry, and
+       `token_use` itself; it does not rely on the API Gateway authorizer
+       alone. There is no header-based identity path.
     2. **Errors.** Every non-2xx response is `application/problem+json`
        (RFC 9457). Infrastructure error text is logged, never serialised.
     3. **Pagination.** Every collection is cursor-paginated. There is no
@@ -44,7 +44,6 @@ tags:
   - name: notes
   - name: captures
   - name: search
-  - name: auth
   - name: export
 
 security:
@@ -543,130 +542,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /v1/auth/webauthn/login/options:
-    post:
-      tags: [auth]
-      summary: Begin biometric login
-      security: []
-      responses:
-        '200':
-          description: WebAuthn assertion options.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
-        '404':
-          description: |
-            Nothing is enrolled here, so there is no credential to log in with.
-            `type` is `…#biometric-not-enrolled`.
-
-            This is an account fact, not a server fault, and it is deliberately
-            NOT 503: 503 means the instance cannot do biometrics at all, and it
-            reads as transient, so a client retries an answer that cannot change
-            until somebody enrols. Signing out revokes the enrolled credential
-            by design, so 503 here made a permanent loop.
-
-            The response is identical for every caller. This route is
-            unauthenticated and begins a discoverable-credential login that
-            names no account, so nothing about which accounts exist varies it.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '503':
-          description: |
-            Biometric unlock is not configured on this instance. `type` is
-            `…#biometric-unavailable`. A property of the deployment: enrolling
-            cannot change it, and a client should hide the control rather than
-            offer enrolment.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
-  /v1/auth/webauthn/login:
-    post:
-      tags: [auth]
-      summary: Complete biometric login
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WebAuthnVerify' }
-      responses:
-        '200':
-          description: Cognito token set.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/TokenSet' }
-        '401':
-          description: |
-            The assertion was refused, or it verified but the sealed refresh
-            token behind it can no longer be opened.
-
-            The two are told apart by `type`, never by reading `detail`:
-            `…#biometric-re-enrolment-required` means enrolling again on this
-            device is the whole fix, and a client should offer exactly that.
-            Any other 401 here is an ordinary refusal and the client should fall
-            back to password sign-in. Telling them apart by matching the prose
-            in `detail` is one rewording away from doing the wrong thing.
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-        '429': { $ref: '#/components/responses/RateLimited' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/auth/webauthn/register/options:
-    post:
-      tags: [auth]
-      summary: Begin biometric enrollment
-      responses:
-        '200':
-          description: WebAuthn creation options.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/WebAuthnOptions' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/auth/webauthn/register:
-    post:
-      tags: [auth]
-      summary: Complete biometric enrollment
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/WebAuthnVerify' }
-      responses:
-        '204': { description: Enrolled. }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-
-  /v1/auth/webauthn/status:
-    get:
-      tags: [auth]
-      summary: Whether this account has biometric unlock enrolled
-      responses:
-        '200':
-          description: Enrollment state.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [enrolled]
-                properties:
-                  enrolled: { type: boolean }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-
-  /v1/auth/webauthn:
-    delete:
-      tags: [auth]
-      summary: Disable biometric unlock and destroy the token vault
-      responses:
-        '204': { description: Disabled. }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-
 components:
   securitySchemes:
     cognitoBearer:
@@ -731,11 +606,6 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
-    RateLimited:
-      description: Too many attempts.
-      content:
-        application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
     SpendCapped:
       description: |
         The daily provider spend cap was reached. Distinct from a generic
@@ -743,14 +613,9 @@ components:
 
         The body's `type` is
         `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#spend-capped`.
-        That URI is the discriminator, not the title: the rate-limit 429 and
-        this one both read "Too Many Requests", and only one of them may be
-        retried.
-      content:
-        application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
-    Unavailable:
-      description: Feature not configured on this instance.
+        That URI is the discriminator, not the title: the gateway's throttling
+        429 and this one both read "Too Many Requests", and only one of them
+        may be retried.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1131,30 +996,3 @@ components:
         url: { type: string, format: uri, nullable: true }
         expires_at: { type: string, format: date-time, nullable: true }
         bytes: { type: integer, nullable: true }
-
-    WebAuthnOptions:
-      type: object
-      required: [challenge_id, options]
-      properties:
-        challenge_id: { type: string }
-        options: { type: object, additionalProperties: true }
-
-    WebAuthnVerify:
-      type: object
-      required: [challenge_id, credential]
-      properties:
-        challenge_id: { type: string }
-        credential: { type: object, additionalProperties: true }
-        refresh_token:
-          type: string
-          description: Required on enrollment only. Sealed with KMS and vaulted.
-
-    TokenSet:
-      type: object
-      required: [id_token, access_token, expires_in, token_type]
-      properties:
-        id_token: { type: string }
-        access_token: { type: string }
-        refresh_token: { type: string }
-        expires_in: { type: integer }
-        token_type: { type: string }

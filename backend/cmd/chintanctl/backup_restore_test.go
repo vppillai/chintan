@@ -27,18 +27,6 @@ func TestBackupRestoreRoundTripIsExact(t *testing.T) {
 		"empty":   AttrValue{L: []AttrValue{}},
 		"nested":  AttrValue{M: map[string]AttrValue{"n": NumberAttr(9007199254740993)}},
 	})
-	put(t, srcPart, Item{
-		"pk":   StringAttr(tenantPK("tenantA")),
-		"sk":   StringAttr("WACRED#cred1"),
-		"data": StringAttr(`{"credential_id":"cred1"}`),
-	})
-	// The global mirror repository dual-writes credentials into.
-	put(t, srcPart, Item{
-		"pk":   StringAttr(credentialListPK),
-		"sk":   StringAttr("WACRED#cred1"),
-		"data": StringAttr(`{"credential_id":"cred1"}`),
-	})
-
 	dir := t.TempDir()
 	res, err := runBackup(ctx, src, dir, nil)
 	if err != nil {
@@ -47,8 +35,8 @@ func TestBackupRestoreRoundTripIsExact(t *testing.T) {
 	if res.ObjectCount != 7 {
 		t.Errorf("backed up %d objects, want 7", res.ObjectCount)
 	}
-	if res.ItemCount != 6 {
-		t.Errorf("backed up %d items, want 6 (4 tenant + credential + mirror)", res.ItemCount)
+	if res.ItemCount != 4 {
+		t.Errorf("backed up %d items, want 4", res.ItemCount)
 	}
 
 	dst, dstPart, dstBlobs := newTestEnv(nil)

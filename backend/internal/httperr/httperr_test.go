@@ -125,14 +125,3 @@ func TestMethodNotAllowedSetsAllow(t *testing.T) {
 		t.Error("status is not 405")
 	}
 }
-
-func TestTooManyRequestsSetsRetryAfter(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/v1/auth/webauthn/login", nil)
-	w := httptest.NewRecorder()
-
-	TooManyRequests(w, r, "slow down", 30)
-
-	if got := w.Header().Get("Retry-After"); got != "30" {
-		t.Fatalf("Retry-After = %q, want 30", got)
-	}
-}

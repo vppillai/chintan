@@ -314,9 +314,9 @@ func TestAnExpiredCaptureUnlinksItsSixArtefacts(t *testing.T) {
 	}
 }
 
-// TestAnExpiredRecordWithNoObjectsIsNotAnError covers the other items that
-// carry the shared ttl attribute — idempotency records and WebAuthn challenges
-// — which expire through the same stream and own nothing in S3.
+// TestAnExpiredRecordWithNoObjectsIsNotAnError covers the other item that
+// carries the shared ttl attribute — an idempotency record — which expires
+// through the same stream and owns nothing in S3.
 func TestAnExpiredRecordWithNoObjectsIsNotAnError(t *testing.T) {
 	f := newFixture(t)
 
@@ -327,9 +327,9 @@ func TestAnExpiredRecordWithNoObjectsIsNotAnError(t *testing.T) {
 			Change: events.DynamoDBStreamRecord{
 				SequenceNumber: "000000000000000000003",
 				OldImage: map[string]events.DynamoDBAttributeValue{
-					"pk":   events.NewStringAttribute("WACHAL#abc"),
-					"sk":   events.NewStringAttribute("WACHAL#abc"),
-					"type": events.NewStringAttribute("wachal"),
+					"pk":   events.NewStringAttribute("USER#tenant-1"),
+					"sk":   events.NewStringAttribute("IDEM#abc"),
+					"type": events.NewStringAttribute("idem"),
 					"data": events.NewStringAttribute("{}"),
 				},
 			},

@@ -168,33 +168,12 @@ func runBackup(ctx context.Context, e *env, out string, explicitTenants []string
 
 		// The partition, whole. No sort-key filter, no kind switch: whatever
 		// is in the partition is in the backup. See enumerate.go.
-		credentialSKs := map[string]bool{}
 		err := e.Part.Scan(tctx, tenantPK(tenantID), "", func(it Item) error {
-			if strings.HasPrefix(it.SK(), credentialSKPrefix) {
-				credentialSKs[it.SK()] = true
-			}
 			res.ItemCount++
 			return items.writeLine(it)
 		})
 		if err != nil {
 			return nil, err
-		}
-
-		// The one exception to "a tenant lives in its own partition":
-		// repository dual-writes every WebAuthn credential into a global
-		// lookup partition. Backing up only the tenant partition would
-		// restore a tenant that cannot log in with a passkey.
-		if len(credentialSKs) > 0 {
-			err = e.Part.Scan(tctx, credentialListPK, credentialSKPrefix, func(it Item) error {
-				if !credentialSKs[it.SK()] {
-					return nil
-				}
-				res.ItemCount++
-				return items.writeLine(it)
-			})
-			if err != nil {
-				return nil, err
-			}
 		}
 
 		// The prefix, whole.

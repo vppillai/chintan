@@ -38,14 +38,11 @@ type idemEntry struct {
 
 // Store is an in-memory repository.Store for tests and local development.
 type Store struct {
-	mu          sync.RWMutex
-	settings    map[string]model.Settings
-	notes       map[string]map[string]model.NoteIndex
-	captures    map[string]map[string]model.CaptureIndex
-	challenges  map[string]model.WebAuthnChallenge
-	credentials map[string]model.WebAuthnCredential
-	vaults      map[string]model.RefreshVault
-	idem        map[string]map[string]idemEntry
+	mu       sync.RWMutex
+	settings map[string]model.Settings
+	notes    map[string]map[string]model.NoteIndex
+	captures map[string]map[string]model.CaptureIndex
+	idem     map[string]map[string]idemEntry
 }
 
 var _ repository.Store = (*Store)(nil)
@@ -53,13 +50,10 @@ var _ repository.Store = (*Store)(nil)
 // NewStore returns an empty in-memory store.
 func NewStore() *Store {
 	return &Store{
-		settings:    make(map[string]model.Settings),
-		notes:       make(map[string]map[string]model.NoteIndex),
-		captures:    make(map[string]map[string]model.CaptureIndex),
-		challenges:  make(map[string]model.WebAuthnChallenge),
-		credentials: make(map[string]model.WebAuthnCredential),
-		vaults:      make(map[string]model.RefreshVault),
-		idem:        make(map[string]map[string]idemEntry),
+		settings: make(map[string]model.Settings),
+		notes:    make(map[string]map[string]model.NoteIndex),
+		captures: make(map[string]map[string]model.CaptureIndex),
+		idem:     make(map[string]map[string]idemEntry),
 	}
 }
 
@@ -533,148 +527,6 @@ func (s *Store) AbandonIdempotent(ctx context.Context, tenantID, key string) err
 		return nil
 	}
 	delete(s.idem[tenantID], key)
-	return nil
-}
-
-func (s *Store) PutWebAuthnChallenge(ctx context.Context, c model.WebAuthnChallenge) error {
-	if err := s.checkCtx(ctx); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.challenges[c.ChallengeID] = c
-	return nil
-}
-
-func (s *Store) GetWebAuthnChallenge(ctx context.Context, challengeID string) (model.WebAuthnChallenge, error) {
-	if err := s.checkCtx(ctx); err != nil {
-		return model.WebAuthnChallenge{}, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	c, ok := s.challenges[challengeID]
-	if !ok {
-		return model.WebAuthnChallenge{}, repository.ErrNotFound
-	}
-	if c.ExpiresAt > 0 && time.Now().Unix() > c.ExpiresAt {
-		return model.WebAuthnChallenge{}, repository.ErrNotFound
-	}
-	return c, nil
-}
-
-func (s *Store) DeleteWebAuthnChallenge(ctx context.Context, challengeID string) error {
-	if err := s.checkCtx(ctx); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.challenges, challengeID)
-	return nil
-}
-
-func (s *Store) PutWebAuthnCredential(ctx context.Context, c model.WebAuthnCredential) error {
-	if err := s.checkCtx(ctx); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.credentials[c.CredentialID] = c
-	return nil
-}
-
-func (s *Store) GetWebAuthnCredential(ctx context.Context, credentialID string) (model.WebAuthnCredential, error) {
-	if err := s.checkCtx(ctx); err != nil {
-		return model.WebAuthnCredential{}, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	c, ok := s.credentials[credentialID]
-	if !ok {
-		return model.WebAuthnCredential{}, repository.ErrNotFound
-	}
-	return c, nil
-}
-
-func (s *Store) listCredentials(ctx context.Context, partition string, opts repository.ListOptions, keep func(model.WebAuthnCredential) bool) (repository.Page[model.WebAuthnCredential], error) {
-	if err := s.checkCtx(ctx); err != nil {
-		return repository.Page[model.WebAuthnCredential]{}, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	keys := make([]string, 0, len(s.credentials))
-	for id, c := range s.credentials {
-		if keep(c) {
-			keys = append(keys, id)
-		}
-	}
-	sort.Strings(keys)
-	return paginate(partition, keys, opts, func(id string) model.WebAuthnCredential {
-		return s.credentials[id]
-	})
-}
-
-func (s *Store) ListWebAuthnCredentials(ctx context.Context, opts repository.ListOptions) (repository.Page[model.WebAuthnCredential], error) {
-	return s.listCredentials(ctx, "WACREDLIST", opts, func(model.WebAuthnCredential) bool { return true })
-}
-
-func (s *Store) ListWebAuthnCredentialsByUser(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.WebAuthnCredential], error) {
-	return s.listCredentials(ctx, tenantID, opts, func(c model.WebAuthnCredential) bool {
-		return c.UserID == tenantID
-	})
-}
-
-func (s *Store) DeleteAllWebAuthnCredentials(ctx context.Context, tenantID string) error {
-	if err := s.checkCtx(ctx); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for id, c := range s.credentials {
-		if c.UserID == tenantID {
-			delete(s.credentials, id)
-		}
-	}
-	return nil
-}
-
-func (s *Store) PutRefreshVault(ctx context.Context, v model.RefreshVault) error {
-	if err := s.checkCtx(ctx); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	cp := v
-	if v.Ciphertext != nil {
-		cp.Ciphertext = append([]byte(nil), v.Ciphertext...)
-	}
-	s.vaults[v.UserID] = cp
-	return nil
-}
-
-func (s *Store) GetRefreshVault(ctx context.Context, tenantID string) (model.RefreshVault, error) {
-	if err := s.checkCtx(ctx); err != nil {
-		return model.RefreshVault{}, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	v, ok := s.vaults[tenantID]
-	if !ok {
-		return model.RefreshVault{}, repository.ErrNotFound
-	}
-	cp := v
-	if v.Ciphertext != nil {
-		cp.Ciphertext = append([]byte(nil), v.Ciphertext...)
-	}
-	return cp, nil
-}
-
-func (s *Store) DeleteRefreshVault(ctx context.Context, tenantID string) error {
-	if err := s.checkCtx(ctx); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.vaults, tenantID)
 	return nil
 }
 
