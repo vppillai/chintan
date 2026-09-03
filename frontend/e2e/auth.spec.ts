@@ -213,12 +213,15 @@ test.describe('signing out', () => {
   test('warns before destroying a recording that never reached the server', async ({
     page,
     api,
+    browserName,
   }) => {
     /*
      * The one artifact the product cannot lose. The audio is in IndexedDB on
      * this device and nowhere else, and signing out clears it — so this dialog
      * is the last moment anyone can be told.
      */
+    // A real recording needs the fake media device, which only Chromium has.
+    test.skip(browserName !== 'chromium', 'needs the Chromium fake microphone');
     await page.goto('/');
     api.offline = true;
 

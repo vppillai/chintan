@@ -227,6 +227,32 @@ function json(route: Route, body: unknown, status = 200): Promise<void> {
   });
 }
 
+/**
+ * A redirect the stub can make in every engine.
+ *
+ * Cognito answers `/oauth2/authorize` and `/logout` with a 302, and that is
+ * what this fulfilled — until the WebKit project: Playwright can only fulfil a
+ * redirect status in Chromium ("Cannot fulfill with redirect status: 302").
+ * A 200 carrying a zero-second meta refresh is the same navigation as far as
+ * the app can tell — the document is destroyed and rebuilt on the callback URL
+ * — and it works in all three engines.
+ */
+function redirect(route: Route, location: string): Promise<void> {
+  // `location.replace`, so the stub page leaves no history entry — the same
+  // shape a 302 has. The meta refresh is the fallback for a document whose
+  // script never runs.
+  const target = JSON.stringify(location);
+  const attribute = location.replace(/"/g, '&quot;');
+  return route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body:
+      `<!doctype html><title>Redirecting</title>` +
+      `<meta http-equiv="refresh" content="0;url=${attribute}">` +
+      `<script>location.replace(${target});</script>`,
+  });
+}
+
 function problem(route: Route, status: number, extra: Record<string, unknown> = {}) {
   return route.fulfill({
     status,
@@ -526,7 +552,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         back.searchParams.set('code', `e2e-code-${String(state.auth.authorize.length)}`);
         back.searchParams.set('state', params['state'] ?? '');
       }
-      await route.fulfill({ status: 302, headers: { location: back.href }, body: '' });
+      await redirect(route, back.href);
       return;
     }
 
@@ -560,11 +586,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     if (path === '/logout') {
       const params = Object.fromEntries(url.searchParams);
       state.auth.logout.push(params);
-      await route.fulfill({
-        status: 302,
-        headers: { location: params['logout_uri'] ?? '/' },
-        body: '',
-      });
+      await redirect(route, params['logout_uri'] ?? '/');
       return;
     }
 
