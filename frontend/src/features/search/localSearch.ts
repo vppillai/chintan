@@ -9,7 +9,7 @@
  * Pure, so the ranking is testable without a component.
  */
 
-import type { NoteWire } from '@/api/schema.ts';
+import type { NoteWire, SearchHitWire } from '@/api/schema.ts';
 
 export interface MergedHit {
   noteId: string;
@@ -129,4 +129,39 @@ export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[
       return b.updatedAt.localeCompare(a.updatedAt);
     })
     .map(({ score: _score, updatedAt: _updatedAt, ...hit }) => hit);
+}
+
+/**
+ * Local results first — they are already on screen and reordering under the
+ * user's finger is worse than a stable list — then anything only the server
+ * found, which in practice means transcript matches.
+ */
+export function mergeResults(
+  local: readonly MergedHit[],
+  remote: readonly SearchHitWire[],
+): MergedHit[] {
+  const byId = new Map<string, MergedHit>();
+
+  for (const hit of local) byId.set(hit.noteId, hit);
+
+  for (const hit of remote) {
+    const existing = byId.get(hit.note_id);
+    if (existing) {
+      // Keep the local excerpt (already rendered) but take the server's richer
+      // field list, which can include `transcript`.
+      byId.set(hit.note_id, {
+        ...existing,
+        matchedIn: Array.from(new Set([...existing.matchedIn, ...(hit.matched_in ?? [])])),
+      });
+      continue;
+    }
+    byId.set(hit.note_id, {
+      noteId: hit.note_id,
+      title: hit.title,
+      excerpt: hit.excerpt ?? '',
+      matchedIn: hit.matched_in ?? [],
+    });
+  }
+
+  return Array.from(byId.values());
 }

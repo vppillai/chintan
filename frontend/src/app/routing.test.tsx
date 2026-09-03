@@ -34,6 +34,7 @@ async function settle(): Promise<void> {
 }
 
 const path = (router: Router) => router.state.location.pathname;
+const url = (router: Router) => `${path(router)}${router.state.location.search}`;
 
 const shell = () => document.querySelector('.app');
 
@@ -117,6 +118,28 @@ describe('old URLs still land somewhere', () => {
       expect(path(router)).toBe('/');
     });
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+  });
+
+  it('sends /archive to the archived view, with the library beneath it for Back', async () => {
+    const { router } = mount(['/archive']);
+    await waitFor(() => {
+      expect(url(router)).toBe('/?view=archived');
+    });
+    expect(screen.getByRole('button', { name: /^Archived/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await goBack(router);
+    expect(url(router)).toBe('/');
+  });
+
+  it('sends /search?q= to the library with the query kept', async () => {
+    const { router } = mount(['/search?q=roof']);
+    await waitFor(() => {
+      expect(url(router)).toBe('/?q=roof');
+    });
+    expect(screen.getByRole('searchbox', { name: /search notes/i })).toHaveValue('roof');
   });
 });
 

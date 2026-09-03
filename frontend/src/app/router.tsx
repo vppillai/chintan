@@ -3,9 +3,7 @@ import type { RouteObject } from 'react-router';
 import { AppShell } from '@/components/AppShell.tsx';
 import { CaptureScreen } from '@/features/capture/CaptureScreen.tsx';
 import { NoteDetailScreen } from '@/features/notes/NoteDetailScreen.tsx';
-import { SearchScreen } from '@/features/search/SearchScreen.tsx';
 import { SettingsScreen } from '@/features/settings/SettingsScreen.tsx';
-import { ArchiveScreen } from '@/screens/ArchiveScreen.tsx';
 import { NotFoundScreen } from '@/screens/NotFoundScreen.tsx';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
 
@@ -31,11 +29,6 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, Component: NotesScreen, ErrorBoundary: RouteError },
       {
-        path: ROUTES.archive.slice(1),
-        Component: ArchiveScreen,
-        ErrorBoundary: RouteError,
-      },
-      {
         path: ROUTES.notePattern.slice(1),
         Component: NoteDetailScreen,
         ErrorBoundary: RouteError,
@@ -46,7 +39,6 @@ export const routes: RouteObject[] = [
         ErrorBoundary: RouteError,
       },
       { path: ROUTES.capture.slice(1), Component: CaptureScreen, ErrorBoundary: RouteError },
-      { path: 'search', Component: SearchScreen, ErrorBoundary: RouteError },
       ...Object.keys(LEGACY_ROUTES).map((path) => ({
         path: path.slice(1),
         Component: Redirect,

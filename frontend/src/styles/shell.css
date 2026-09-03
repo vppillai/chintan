@@ -362,27 +362,103 @@
   color: var(--color-faint);
 }
 
-/* The date is one token and must never be broken across lines. Without this it
-   shrank against a long tag list and rendered as "Aug" over "6". */
-.note-row__date {
+/* Title on the left, time on the right, on one line; the title wraps, the
+   time never does. */
+.note-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.note-row__time {
   flex: none;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+/* A tag on a row is a label, not a control: no border weight, no 44px floor. */
+.note-row__tag {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-full);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+.note-row__recordings {
+  margin-inline-start: auto;
   white-space: nowrap;
 }
 
-/* Twenty tags is a legal note. One line of them is a summary; four lines is the
-   tag list wearing the note row as a hat. */
-.note-row__tags {
-  /* `flex: 1 1 0` rather than `auto`, so a long tag list takes the space left
-     over instead of demanding its own line: date, separator and tags stay on
-     one line and the tags truncate. Twenty tags is a legal note, and four lines
-     of them is the tag list wearing the note row as a hat. */
-  flex: 1 1 0;
-  min-inline-size: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/* The archived row's deadline. Muted like any other row meta, except when the
+   note is already past its purge date and the sweeper has yet to run. */
+.note-row__purge[data-purge='due'] {
+  color: var(--color-accent-strong);
+}
+
+/* --------------------------------------------------------------------------
+   Library: day groups and filter chips
+   -------------------------------------------------------------------------- */
+
+.note-groups {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.note-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.note-group__label {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+  padding-inline: var(--space-1);
+}
+
+/* One scrolling row on a phone, wrapping never: a library with thirty tags is
+   a legal library and three lines of chips is the filter wearing the screen as
+   a hat. The row is the one container in the app allowed to scroll sideways. */
+.chips {
+  display: flex;
+  gap: var(--space-2);
+  margin-inline: calc(-1 * var(--layout-gutter));
+  padding-inline: var(--layout-gutter);
+  padding-block-end: var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-padding-inline: var(--layout-gutter);
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip[aria-pressed='true'] {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
 }
 
 /* --------------------------------------------------------------------------
@@ -1439,11 +1515,9 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  /* Lines its edges up with the note rows; see `--layout-card-max`. */
-  inline-size: calc(100% - 2 * var(--layout-gutter));
-  max-inline-size: var(--layout-card-max);
-  margin-block: var(--space-2);
-  margin-inline: auto;
+  /* A row at the top of the library, the same width as the note rows. */
+  inline-size: 100%;
+  margin-block-end: var(--space-3);
   padding: var(--space-3) var(--space-4);
   background-color: var(--color-raised);
   border: 1px solid var(--color-accent);
@@ -1647,12 +1721,6 @@
 
 .screen__action--destructive {
   border-color: var(--color-accent);
-  color: var(--color-accent);
-}
-
-/* The archive row's deadline. Muted like any other row meta, except when the
-   note is already past its purge date and the sweeper has yet to run. */
-.note-row__meta[data-purge='due'] {
   color: var(--color-accent);
 }
 

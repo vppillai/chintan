@@ -11,8 +11,8 @@ export const ROUTES = {
   notes: '/',
   note: (id: string) => `/notes/${encodeURIComponent(id)}`,
   notePattern: '/notes/:id',
-  /** Archived notes, awaiting restore or purge. */
-  archive: '/archive',
+  /** Archived notes are the library with a filter chip, not a destination. */
+  archive: '/?view=archived',
   settings: '/settings',
   capture: '/capture',
 } as const;
@@ -27,6 +27,8 @@ export const ARCHIVED_VIEW = 'archived';
  */
 export const LEGACY_ROUTES: Record<string, string> = {
   '/notes': '/',
+  '/archive': ROUTES.archive,
+  '/search': '/',
 };
 
 /**
