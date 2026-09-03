@@ -25,10 +25,9 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     /*
-     * injectManifest, not generateSW. The app needs a network-first shell, an
-     * update flow that does NOT call skipWaiting on install, and a real
-     * Background Sync handler; the generated recipes fight all three. See
-     * src/sw.ts.
+     * injectManifest, not generateSW. The app needs a network-first shell and
+     * an update flow that does NOT call skipWaiting on install; the generated
+     * recipes fight both. See src/sw.ts.
      */
     VitePWA({
       strategies: 'injectManifest',

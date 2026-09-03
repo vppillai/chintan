@@ -24,13 +24,18 @@ export const DB_NAME = 'chintan';
 /** 2 added `notes`. The upgrade is additive; no capture data is touched. */
 export const DB_VERSION = 2;
 
-export type QueuedMutationKind =
-  | 'createCapture'
-  | 'updateNote'
-  | 'archiveNote'
-  | 'restoreNote'
-  | 'setCaptureTarget'
-  | 'retryCapture';
+/**
+ * What the queue can hold: a note PATCH, and nothing else.
+ *
+ * Six kinds were declared here and one was ever enqueued. Archive, restore,
+ * retry and set-target are online actions with a button the user is looking
+ * at — they report failure to the person who pressed them — and a capture
+ * upload resumes from the audio on disk, not from a queue entry. Declaring the
+ * others bought an exhaustively-typed runner for five branches nothing could
+ * reach. The field stays a union so a second kind is a one-line addition, with
+ * its enqueue call site.
+ */
+export type QueuedMutationKind = 'updateNote';
 
 export interface QueuedMutation {
   id: string;

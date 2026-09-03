@@ -1,15 +1,13 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect } from 'react';
+import { useCallback } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import type { ChintanApi } from '@/api/endpoints.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
-import { listenForFlushRequests, registerBackgroundSync } from './backgroundSync.ts';
 import type { QueuedMutation } from './db.ts';
-import { narrow } from './payloads.ts';
 import { count, flush } from './queue.ts';
-import { QUEUED_EDIT_KEY } from './queuedEdits.ts';
+import { QUEUED_EDIT_KEY, queuedEditPayload } from './queuedEdits.ts';
 
 /**
  * Applies one queued mutation against the live API.
@@ -17,47 +15,19 @@ import { QUEUED_EDIT_KEY } from './queuedEdits.ts';
  * The idempotency key is the one minted at enqueue time, so replaying an entry
  * whose first attempt actually reached the server returns the original
  * response rather than applying it twice.
+ *
+ * One kind, one branch. The `switch` this used to be had six arms and five of
+ * them were unreachable — see `QueuedMutationKind`.
  */
 export async function runMutation(
   api: ChintanApi,
   mutation: QueuedMutation,
 ): Promise<void> {
-  const typed = narrow(mutation);
-  // A payload that does not match its kind was written by an older build.
-  // Dropping it is right: replaying it with missing fields would fail forever
-  // and block everything queued behind it.
-  if (!typed) return;
-
-  switch (typed.kind) {
-    case 'updateNote':
-      await api.updateNote(typed.payload.noteId, typed.payload.body, typed.idempotencyKey);
-      return;
-    case 'archiveNote':
-      await api.archiveNote(typed.payload.noteId);
-      return;
-    case 'restoreNote':
-      await api.restoreNote(typed.payload.noteId);
-      return;
-    case 'setCaptureTarget':
-      await api.setCaptureTarget(
-        typed.payload.captureId,
-        typed.payload.target,
-        typed.idempotencyKey,
-      );
-      return;
-    case 'retryCapture':
-      await api.retryCapture(typed.payload.captureId, typed.idempotencyKey);
-      return;
-    case 'createCapture':
-      // Capture uploads are not generic mutations: they need a presigned URL
-      // minted fresh. They resume from the audio still on disk instead — see
-      // features/capture/buffer.unconfirmedCaptures.
-      return;
-    default: {
-      const exhaustive: never = typed;
-      return exhaustive;
-    }
-  }
+  const payload = queuedEditPayload(mutation);
+  // Written by an older build. Dropping it is right: replaying it with
+  // missing fields would fail forever and block everything queued behind it.
+  if (!payload) return;
+  await api.updateNote(payload.noteId, payload.body, mutation.idempotencyKey);
 }
 
 export const OFFLINE_QUEUE_KEY = ['offline', 'queue'] as const;
@@ -78,10 +48,13 @@ export interface OfflineQueueState {
  * effect would mean calling setState from an effect body and reimplementing
  * the reconnect detection that is already here.
  *
- * Background Sync, where the browser supports it, is registered by the service
- * worker in the PWA phase and covers the case where the tab is closed. v1 had
- * the shape of that and none of the substance: a `sync` listener whose handler
- * was empty, for a tag nothing ever registered.
+ * This foreground path is the whole story. Background Sync used to sit beside
+ * it and could never do the work itself — the worker has no session — so it
+ * only ever asked an open tab to flush a queue the tab was already flushing.
+ * Two flushes at once replayed the same PATCH, and `markDead` on the loser
+ * re-inserted an edit the server had. `queue.flush` now also refuses to
+ * overlap itself, so a reconnect refetch and a focus refetch landing together
+ * share one pass rather than racing.
  */
 export function useOfflineQueue(): OfflineQueueState {
   const api = useApi();
@@ -138,23 +111,6 @@ export function useOfflineQueue(): OfflineQueueState {
   const flushNow = useCallback(async () => {
     await queryClient.refetchQueries({ queryKey: OFFLINE_QUEUE_KEY });
   }, [queryClient]);
-
-  // Background Sync is the upgrade path: it flushes even after the tab is
-  // closed, where the browser supports it. Registration is best-effort and the
-  // reconnect refetch above remains the baseline everywhere.
-  useEffect(() => {
-    if ((query.data ?? 0) === 0) return;
-    void registerBackgroundSync();
-  }, [query.data]);
-
-  // Subscription to an external system, so it belongs in an effect.
-  useEffect(
-    () =>
-      listenForFlushRequests(() => {
-        void flushNow();
-      }),
-    [flushNow],
-  );
 
   return {
     online,
