@@ -92,9 +92,8 @@ type Settings struct {
 	RetentionDays int         `json:"retention_days"` // 0 = indefinite
 	// Theme is empty on records written before v2; readers substitute ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
-	// DailySpendCapMicros is the tenant's own provider budget. 0 means "use the
-	// instance default", which is itself 0 — metering without enforcement.
-	DailySpendCapMicros int64 `json:"daily_spend_cap_micros,omitempty"`
+	// There is no per-tenant spend cap. Records written before 2026-09 may
+	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
 }
 
 type NoteIndex struct {

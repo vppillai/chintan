@@ -13,17 +13,24 @@ import (
 )
 
 // spendRetention is how long a day's counter survives. Long enough to answer
-// "what did last month cost", short enough that the table does not accumulate a
-// row per tenant per day forever.
+// "what did last month cost" from the table, short enough that it does not
+// accumulate a row per day forever.
 const spendRetention = 90 * 24 * time.Hour
+
+// spendPK is the partition every day's counter lives in. It is not a tenant
+// partition: the cap is instance-wide, and one row per day for the whole
+// instance is what the breaker compares against. Keeping it out of USER#
+// also keeps it out of chintanctl erase, which is right — a tenant's departure
+// does not un-spend the money.
+const spendPK = "INSTANCE"
 
 // CounterAPI is the slice of DynamoDB the spend counter uses.
 type CounterAPI interface {
 	UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 }
 
-// DynamoCounter is the atomic per-tenant, per-day spend accumulator the breaker
-// enforces its cap with.
+// DynamoCounter is the atomic per-day spend accumulator the breaker enforces
+// its cap with.
 //
 // It is an ADD, not a read-then-write. Two concurrent captures reading 900 and
 // each writing 950 would leave a day's spend understated by exactly the amount
@@ -41,12 +48,13 @@ func NewDynamoCounter(client CounterAPI, table string) *DynamoCounter {
 	return &DynamoCounter{client: client, table: table, now: time.Now}
 }
 
-// Add applies deltaMicros and returns the post-increment total for the day.
-func (c *DynamoCounter) Add(ctx context.Context, tenantID, day string, deltaMicros int64) (int64, error) {
+// Add applies deltaMicros to the day's row — pk INSTANCE, sk SPEND#<day> —
+// and returns the post-increment total.
+func (c *DynamoCounter) Add(ctx context.Context, day string, deltaMicros int64) (int64, error) {
 	out, err := c.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(c.table),
 		Key: map[string]types.AttributeValue{
-			"pk": &types.AttributeValueMemberS{Value: "USER#" + tenantID},
+			"pk": &types.AttributeValueMemberS{Value: spendPK},
 			"sk": &types.AttributeValueMemberS{Value: "SPEND#" + day},
 		},
 		UpdateExpression: aws.String("ADD spend_micros :d SET #t = :ttl, #ty = :type"),

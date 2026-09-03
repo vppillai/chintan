@@ -1,10 +1,7 @@
 package meter
 
 import (
-	"context"
-	"errors"
 	"math"
-	"reflect"
 	"testing"
 )
 
@@ -46,6 +43,11 @@ func TestPriceTableRoundsUp(t *testing.T) {
 	if got := p.CostMicros("openai", "m", UnitInputTokens, 0.2); got != 1 {
 		t.Fatalf("sub-unit quantity must round up, got %d", got)
 	}
+	// A sub-microdollar unit price, which the real MiniMax rows have.
+	p = PriceTable{Key("openai", "*"): {UnitInputTokens: 0.3}}
+	if got := p.CostMicros("openai", "m", UnitInputTokens, 10); got != 3 {
+		t.Fatalf("10 tokens at 0.3 µ$ = %d, want 3", got)
+	}
 }
 
 func TestPriceTableRejectsNonsenseQuantities(t *testing.T) {
@@ -57,67 +59,41 @@ func TestPriceTableRejectsNonsenseQuantities(t *testing.T) {
 	}
 }
 
-func TestDefaultPricesCoverBothProviders(t *testing.T) {
-	if DefaultPrices.CostMicros("groq", "whisper", UnitAudioSeconds, 60) <= 0 {
+// A completion is charged for what it read and what it wrote. Pricing input
+// alone is the understatement the 2026-09-03 review measured at ~5× on cleanup.
+func TestCostSumsEveryUnitTheCallConsumed(t *testing.T) {
+	p := PriceTable{Key("openai", "*"): {UnitInputTokens: 1, UnitOutputTokens: 4}}
+	got := p.Cost("openai", "m", Quantities{UnitInputTokens: 1000, UnitOutputTokens: 500})
+	if got != 1000+2000 {
+		t.Fatalf("cost = %d, want 3000 (1000 in at 1 + 500 out at 4)", got)
+	}
+	if got := p.Cost("openai", "m", nil); got != 0 {
+		t.Fatalf("an empty call priced at %d", got)
+	}
+}
+
+func TestDefaultPricesCoverBothProvidersAndBothTokenKinds(t *testing.T) {
+	if DefaultPrices.CostMicros("groq", "whisper-large-v3-turbo", UnitAudioSeconds, 3600) <= 0 {
 		t.Fatal("groq audio is unpriced in DefaultPrices")
 	}
-	if DefaultPrices.CostMicros("openai", "gpt", UnitInputTokens, 1000) <= 0 {
-		t.Fatal("openai input tokens are unpriced in DefaultPrices")
+	// The models the template deploys have their own rows, and the rows are
+	// the list prices: an hour of turbo is $0.04, a million MiniMax-M3 input
+	// tokens is $0.30 and a million output tokens is $1.20.
+	if got := DefaultPrices.CostMicros("groq", "whisper-large-v3-turbo", UnitAudioSeconds, 3600); got != 40_000 {
+		t.Fatalf("an hour of whisper-large-v3-turbo = %d µ$, want 40000", got)
+	}
+	if got := DefaultPrices.CostMicros("openai", "MiniMax-M3", UnitInputTokens, 1_000_000); got != 300_000 {
+		t.Fatalf("1M MiniMax-M3 input tokens = %d µ$, want 300000", got)
+	}
+	if got := DefaultPrices.CostMicros("openai", "MiniMax-M3", UnitOutputTokens, 1_000_000); got != 1_200_000 {
+		t.Fatalf("1M MiniMax-M3 output tokens = %d µ$, want 1200000", got)
+	}
+	// An unrecognised model on either provider still prices, and no cheaper
+	// than the recognised ones.
+	if DefaultPrices.CostMicros("groq", "whisper-unknown", UnitAudioSeconds, 60) < DefaultPrices.CostMicros("groq", "whisper-large-v3-turbo", UnitAudioSeconds, 60) {
+		t.Fatal("the groq wildcard is cheaper than the model it stands in for")
 	}
 	if DefaultPrices.CostMicros("openai", "gpt", UnitOutputTokens, 1000) <= 0 {
 		t.Fatal("openai output tokens are unpriced in DefaultPrices")
 	}
 }
-
-type recordingSink struct {
-	n   int
-	err error
-}
-
-func (r *recordingSink) Record(context.Context, Usage) error {
-	r.n++
-	return r.err
-}
-
-func TestMultiSinkAttemptsAllEvenAfterFailure(t *testing.T) {
-	a := &recordingSink{err: errors.New("first down")}
-	b := &recordingSink{}
-	c := &recordingSink{err: errors.New("third down")}
-
-	err := MultiSink{a, b, c}.Record(context.Background(), Usage{})
-	if err == nil {
-		t.Fatal("expected the first failure to surface")
-	}
-	if a.n != 1 || b.n != 1 || c.n != 1 {
-		t.Fatalf("all sinks must be attempted: a=%d b=%d c=%d", a.n, b.n, c.n)
-	}
-}
-
-func TestMultiSinkSucceedsWhenAllSucceed(t *testing.T) {
-	a, b := &recordingSink{}, &recordingSink{}
-	if err := (MultiSink{a, b}).Record(context.Background(), Usage{}); err != nil {
-		t.Fatalf("got %v", err)
-	}
-}
-
-// Usage is written to logs and to DynamoDB; it must never carry content.
-func TestUsageCarriesNoContentFields(t *testing.T) {
-	u := Usage{TenantID: "t", Provider: "groq", Model: "m", Op: OpTranscribe}
-	_ = u
-	// Compile-time intent: if someone adds a Transcript/Prompt/Text field to
-	// Usage, this test is the place that should stop them. Enumerate the
-	// permitted field names explicitly.
-	permitted := map[string]bool{
-		"TenantID": true, "Provider": true, "Model": true, "Op": true,
-		"Unit": true, "Quantity": true, "CostMicros": true,
-		"CorrelationID": true, "At": true,
-	}
-	typ := typeOfUsage()
-	for i := 0; i < typ.NumField(); i++ {
-		if name := typ.Field(i).Name; !permitted[name] {
-			t.Fatalf("Usage gained field %q — usage records must never carry content", name)
-		}
-	}
-}
-
-func typeOfUsage() reflect.Type { return reflect.TypeOf(Usage{}) }

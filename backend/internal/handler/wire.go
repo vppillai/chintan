@@ -224,6 +224,11 @@ type CaptureCreated struct {
 }
 
 // Settings is the OpenAPI Settings schema.
+//
+// DailySpendCapMicros is the one field that is not the tenant's: it is the
+// instance-wide daily provider budget from the template, reported so the UI can
+// show the ceiling that is actually enforced. There is no per-tenant cap any
+// more — the 2026-09-03 review collapsed the two caps into one counter.
 type Settings struct {
 	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
@@ -231,12 +236,34 @@ type Settings struct {
 	DailySpendCapMicros int64  `json:"daily_spend_cap_micros"`
 }
 
-func settingsOf(s model.Settings) Settings {
+// SettingsUpdate is the PUT /v1/settings request body.
+//
+// It accepts daily_spend_cap_micros and ignores it. decodeJSON refuses unknown
+// fields, so dropping it from the schema would turn every save from a client
+// built against the previous contract into a 400 — and the settings screen
+// still sends it. The response says what was stored, which is how the client
+// learns the value did not take.
+type SettingsUpdate struct {
+	CleanupMode         string `json:"cleanup_mode"`
+	RetentionDays       int    `json:"retention_days"`
+	Theme               string `json:"theme"`
+	DailySpendCapMicros int64  `json:"daily_spend_cap_micros"`
+}
+
+func (u SettingsUpdate) settings() model.Settings {
+	return model.Settings{
+		CleanupMode:   model.CleanupMode(u.CleanupMode),
+		RetentionDays: u.RetentionDays,
+		Theme:         model.Theme(u.Theme),
+	}
+}
+
+func settingsOf(s model.Settings, spendCapMicros int64) Settings {
 	return Settings{
 		CleanupMode:         string(s.CleanupMode),
 		RetentionDays:       s.RetentionDays,
 		Theme:               string(s.Theme),
-		DailySpendCapMicros: s.DailySpendCapMicros,
+		DailySpendCapMicros: spendCapMicros,
 	}
 }
 

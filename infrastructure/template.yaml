@@ -124,12 +124,14 @@ Parameters:
     MinValue: 0
     MaxValue: 1000000000
     Description: >
-      Per-tenant, per-day provider spend ceiling in MICRODOLLARS — 1000000 is
-      one US dollar, so a ten-dollar day is 10000000. 0 means the meter still
-      records every call but the breaker enforces nothing, which is the default
-      because a cap that is guessed at is worse than one that is chosen. The
-      ceiling here is $1000/day, high enough never to bind and low enough to
-      catch a fat-fingered extra zero.
+      Instance-wide, per-day provider spend ceiling in MICRODOLLARS — 1000000
+      is one US dollar, so a ten-dollar day is 10000000. One counter for the
+      whole instance, the SPEND#<day> row in the table; every paid call
+      reserves against it first. 0 means the counter still records every call
+      but the breaker enforces nothing, which is the default because a cap
+      that is guessed at is worse than one that is chosen. The ceiling here is
+      $1000/day, high enough never to bind and low enough to catch a
+      fat-fingered extra zero.
 
   CognitoTier:
     Type: String

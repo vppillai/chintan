@@ -116,7 +116,6 @@ func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
 			{"cleanup_mode": "creative"},
 			{"retention_days": -1},
 			{"retention_days": 100000},
-			{"daily_spend_cap_micros": -5},
 		} {
 			w := h.do(t, http.MethodPut, "/v1/settings", "user1", body)
 			if w.Code != http.StatusBadRequest {

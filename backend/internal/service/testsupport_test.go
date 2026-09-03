@@ -71,7 +71,7 @@ type stubCounter struct {
 	days  []string
 }
 
-func (c *stubCounter) Add(_ context.Context, _, day string, deltaMicros int64) (int64, error) {
+func (c *stubCounter) Add(_ context.Context, day string, deltaMicros int64) (int64, error) {
 	c.days = append(c.days, day)
 	if c.err != nil {
 		return 0, c.err

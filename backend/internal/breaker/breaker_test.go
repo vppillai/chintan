@@ -23,67 +23,56 @@ func newMemCounter() *memCounter {
 	return &memCounter{totals: map[string]int64{}}
 }
 
-func (m *memCounter) Add(_ context.Context, tenantID, day string, delta int64) (int64, error) {
+func (m *memCounter) Add(_ context.Context, day string, delta int64) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
 		return 0, m.err
 	}
 	m.calls = append(m.calls, delta)
-	k := tenantID + "|" + day
-	m.totals[k] += delta
-	return m.totals[k], nil
+	m.totals[day] += delta
+	return m.totals[day], nil
 }
 
-func (m *memCounter) total(tenantID, day string) int64 {
+func (m *memCounter) total(day string) int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.totals[tenantID+"|"+day]
-}
-
-type capturingSink struct {
-	mu      sync.Mutex
-	records []meter.Usage
-}
-
-func (s *capturingSink) Record(_ context.Context, u meter.Usage) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.records = append(s.records, u)
-	return nil
-}
-
-func (s *capturingSink) len() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.records)
+	return m.totals[day]
 }
 
 var testPrices = meter.PriceTable{
-	meter.Key("groq", "*"): {meter.UnitAudioSeconds: 10}, // 10 micros per second
+	meter.Key("groq", "*"):   {meter.UnitAudioSeconds: 10}, // 10 micros per second
+	meter.Key("openai", "*"): {meter.UnitInputTokens: 1, meter.UnitOutputTokens: 4},
 }
+
+const testDay = "2026-08-07"
 
 func fixedClock() func() time.Time {
 	t := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
 	return func() time.Time { return t }
 }
 
-func newTestBreaker(c Counter, s meter.Sink, capMicros int64) *Breaker {
-	return New(c, s, testPrices, capMicros, WithClock(fixedClock()))
+func newTestBreaker(c Counter, capMicros int64) *Breaker {
+	return New(c, testPrices, capMicros, WithClock(fixedClock()))
 }
 
 func estimate(seconds float64) Estimate {
-	return Estimate{Provider: "groq", Model: "whisper", Op: meter.OpTranscribe, Unit: meter.UnitAudioSeconds, Quantity: seconds}
+	return Estimate{Provider: "groq", Model: "whisper", Op: meter.OpTranscribe,
+		Usage: meter.Quantities{meter.UnitAudioSeconds: seconds}}
 }
 
-func TestDoRunsAndRecordsWithinCap(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 10_000)
+func seconds(n float64) Result {
+	return Result{Usage: meter.Quantities{meter.UnitAudioSeconds: n}}
+}
+
+func TestDoRunsAndCountsWithinCap(t *testing.T) {
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 10_000)
 
 	called := false
-	res, err := b.Do(context.Background(), "tenant-1", estimate(60), func(context.Context) (Result, error) {
+	res, err := b.Do(context.Background(), estimate(60), func(context.Context) (Result, error) {
 		called = true
-		return Result{Unit: meter.UnitAudioSeconds, Quantity: 60}, nil
+		return seconds(60), nil
 	})
 	if err != nil {
 		t.Fatalf("Do: %v", err)
@@ -91,27 +80,21 @@ func TestDoRunsAndRecordsWithinCap(t *testing.T) {
 	if !called {
 		t.Fatal("provider function was not called")
 	}
-	if res.Quantity != 60 {
+	if res.Usage[meter.UnitAudioSeconds] != 60 {
 		t.Fatalf("result=%+v", res)
 	}
-	if got := counter.total("tenant-1", "2026-08-07"); got != 600 {
+	if got := counter.total(testDay); got != 600 {
 		t.Fatalf("spend total=%d, want 600", got)
-	}
-	if sink.len() != 1 {
-		t.Fatalf("expected exactly one usage record, got %d", sink.len())
-	}
-	if rec := sink.records[0]; rec.CostMicros != 600 || rec.TenantID != "tenant-1" {
-		t.Fatalf("record=%+v", rec)
 	}
 }
 
 // The whole point: the provider is unreachable once the cap is hit.
 func TestDoRefusesToCallProviderOverCap(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 500) // 500 micros = 50 seconds of audio
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 500) // 500 micros = 50 seconds of audio
 
 	called := false
-	_, err := b.Do(context.Background(), "tenant-1", estimate(60), func(context.Context) (Result, error) {
+	_, err := b.Do(context.Background(), estimate(60), func(context.Context) (Result, error) {
 		called = true
 		return Result{}, nil
 	})
@@ -122,31 +105,25 @@ func TestDoRefusesToCallProviderOverCap(t *testing.T) {
 	if called {
 		t.Fatal("provider was called despite the cap being exceeded")
 	}
-	if sink.len() != 0 {
-		t.Fatal("a rejected call must not record usage")
-	}
 	// A rejected call must not hold budget.
-	if got := counter.total("tenant-1", "2026-08-07"); got != 0 {
+	if got := counter.total(testDay); got != 0 {
 		t.Fatalf("reservation was not released: total=%d", got)
 	}
 }
 
 func TestDoReleasesReservationWhenProviderFails(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 10_000)
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 10_000)
 
 	boom := errors.New("provider exploded")
-	_, err := b.Do(context.Background(), "tenant-1", estimate(60), func(context.Context) (Result, error) {
+	_, err := b.Do(context.Background(), estimate(60), func(context.Context) (Result, error) {
 		return Result{}, boom
 	})
 	if !errors.Is(err, boom) {
 		t.Fatalf("err=%v", err)
 	}
-	if got := counter.total("tenant-1", "2026-08-07"); got != 0 {
+	if got := counter.total(testDay); got != 0 {
 		t.Fatalf("a failed call consumed budget: total=%d", got)
-	}
-	if sink.len() != 0 {
-		t.Fatal("a failed call must not record usage")
 	}
 }
 
@@ -154,51 +131,71 @@ func TestDoReconcilesUnderAndOverEstimates(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		estimateSecs   float64
-		actualSecs     float64
+		actual         Result
 		wantTotalMicro int64
 	}{
-		{"actual below estimate", 120, 30, 300},
-		{"actual above estimate", 30, 120, 1200},
-		{"actual equals estimate", 60, 60, 600},
-		{"actual unmeasured falls back to estimate", 60, 0, 600},
+		{"actual below estimate", 120, seconds(30), 300},
+		{"actual above estimate", 30, seconds(120), 1200},
+		{"actual equals estimate", 60, seconds(60), 600},
+		{"actual unmeasured falls back to estimate", 60, Result{}, 600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			counter, sink := newMemCounter(), &capturingSink{}
-			b := newTestBreaker(counter, sink, 100_000)
+			counter := newMemCounter()
+			b := newTestBreaker(counter, 100_000)
 
-			_, err := b.Do(context.Background(), "t", estimate(tc.estimateSecs), func(context.Context) (Result, error) {
-				return Result{Unit: meter.UnitAudioSeconds, Quantity: tc.actualSecs}, nil
+			_, err := b.Do(context.Background(), estimate(tc.estimateSecs), func(context.Context) (Result, error) {
+				return tc.actual, nil
 			})
 			if err != nil {
 				t.Fatalf("Do: %v", err)
 			}
-			if got := counter.total("t", "2026-08-07"); got != tc.wantTotalMicro {
+			if got := counter.total(testDay); got != tc.wantTotalMicro {
 				t.Fatalf("total=%d want %d", got, tc.wantTotalMicro)
-			}
-			if got := sink.records[0].CostMicros; got != tc.wantTotalMicro {
-				t.Fatalf("recorded cost=%d want %d", got, tc.wantTotalMicro)
 			}
 		})
 	}
 }
 
+// A completion is charged for its output tokens as well as its input tokens.
+// The 2026-09-03 review found the pipeline reporting only input, so cleanup —
+// whose output is about as long as its input and priced four times higher —
+// was understated roughly five-fold, and the cap bound at a fraction of the
+// dollars the operator set.
+func TestDoPricesOutputTokensToo(t *testing.T) {
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 0)
+
+	est := Estimate{Provider: "openai", Model: "m", Op: meter.OpCleanup,
+		Usage: meter.Quantities{meter.UnitInputTokens: 1000, meter.UnitOutputTokens: 1000}}
+	_, err := b.Do(context.Background(), est, func(context.Context) (Result, error) {
+		return Result{Usage: meter.Quantities{meter.UnitInputTokens: 800, meter.UnitOutputTokens: 600}}, nil
+	})
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	// 800 in at 1 + 600 out at 4. Input-only accounting would say 800.
+	if got := counter.total(testDay); got != 800+2400 {
+		t.Fatalf("total=%d, want 3200: output tokens are not being priced", got)
+	}
+}
+
 func TestDoAccumulatesAcrossCallsUntilCap(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 1_000) // 100 seconds of audio
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 1_000) // 100 seconds of audio
 
 	for i := 0; i < 3; i++ {
-		if _, err := b.Do(context.Background(), "t", estimate(30), func(context.Context) (Result, error) {
-			return Result{Unit: meter.UnitAudioSeconds, Quantity: 30}, nil
+		if _, err := b.Do(context.Background(), estimate(30), func(context.Context) (Result, error) {
+			return seconds(30), nil
 		}); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
 	// 3 x 300 = 900, still under 1000.
-	if got := counter.total("t", "2026-08-07"); got != 900 {
+	if got := counter.total(testDay); got != 900 {
 		t.Fatalf("total=%d", got)
 	}
 
-	_, err := b.Do(context.Background(), "t", estimate(30), func(context.Context) (Result, error) {
+	_, err := b.Do(context.Background(), estimate(30), func(context.Context) (Result, error) {
 		t.Fatal("fourth call should not reach the provider")
 		return Result{}, nil
 	})
@@ -207,54 +204,31 @@ func TestDoAccumulatesAcrossCallsUntilCap(t *testing.T) {
 	}
 }
 
-// One tenant exhausting its budget must not affect another.
-func TestCapIsPerTenant(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 500)
-
-	if _, err := b.Do(context.Background(), "heavy", estimate(60), func(context.Context) (Result, error) {
-		return Result{}, nil
-	}); !errors.Is(err, ErrSpendCapExceeded) {
-		t.Fatalf("heavy tenant: %v", err)
-	}
-
-	called := false
-	if _, err := b.Do(context.Background(), "light", estimate(10), func(context.Context) (Result, error) {
-		called = true
-		return Result{Unit: meter.UnitAudioSeconds, Quantity: 10}, nil
-	}); err != nil {
-		t.Fatalf("light tenant was blocked by another tenant's spend: %v", err)
-	}
-	if !called {
-		t.Fatal("light tenant's call did not run")
-	}
-}
-
-// A cap of zero means "measure but do not enforce" — correct for a fresh
-// install with no spend history to set a cap from.
-func TestZeroCapMetersWithoutEnforcing(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 0)
+// A cap of zero means "count but do not enforce" — correct for a fresh install
+// with no spend history to set a cap from.
+func TestZeroCapCountsWithoutEnforcing(t *testing.T) {
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 0)
 
 	for i := 0; i < 5; i++ {
-		if _, err := b.Do(context.Background(), "t", estimate(3600), func(context.Context) (Result, error) {
-			return Result{Unit: meter.UnitAudioSeconds, Quantity: 3600}, nil
+		if _, err := b.Do(context.Background(), estimate(3600), func(context.Context) (Result, error) {
+			return seconds(3600), nil
 		}); err != nil {
 			t.Fatalf("call %d: %v", i, err)
 		}
 	}
-	if sink.len() != 5 {
-		t.Fatalf("expected 5 usage records, got %d", sink.len())
+	if got := counter.total(testDay); got != 5*36_000 {
+		t.Fatalf("total=%d, want every call counted", got)
 	}
 }
 
 func TestDoFailsWhenCounterUnavailable(t *testing.T) {
 	counter := newMemCounter()
 	counter.err = errors.New("dynamo down")
-	b := newTestBreaker(counter, &capturingSink{}, 1000)
+	b := newTestBreaker(counter, 1000)
 
 	called := false
-	_, err := b.Do(context.Background(), "t", estimate(10), func(context.Context) (Result, error) {
+	_, err := b.Do(context.Background(), estimate(10), func(context.Context) (Result, error) {
 		called = true
 		return Result{}, nil
 	})
@@ -266,44 +240,23 @@ func TestDoFailsWhenCounterUnavailable(t *testing.T) {
 	}
 }
 
-// A sink failure must not fail a call the provider already completed and billed.
-func TestSinkFailureDoesNotFailTheCall(t *testing.T) {
-	b := New(newMemCounter(), failingSink{}, testPrices, 10_000, WithClock(fixedClock()))
-	res, err := b.Do(context.Background(), "t", estimate(10), func(context.Context) (Result, error) {
-		return Result{Unit: meter.UnitAudioSeconds, Quantity: 10}, nil
-	})
-	if err != nil {
-		t.Fatalf("a metering failure must not fail the call: %v", err)
-	}
-	if res.Quantity != 10 {
-		t.Fatalf("result=%+v", res)
-	}
-}
-
-type failingSink struct{}
-
-func (failingSink) Record(context.Context, meter.Usage) error { return errors.New("sink down") }
-
 func TestConcurrentCallsAccountExactly(t *testing.T) {
-	counter, sink := newMemCounter(), &capturingSink{}
-	b := newTestBreaker(counter, sink, 0) // no cap, we are checking accounting
+	counter := newMemCounter()
+	b := newTestBreaker(counter, 0) // no cap, we are checking accounting
 
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = b.Do(context.Background(), "t", estimate(10), func(context.Context) (Result, error) {
-				return Result{Unit: meter.UnitAudioSeconds, Quantity: 10}, nil
+			_, _ = b.Do(context.Background(), estimate(10), func(context.Context) (Result, error) {
+				return seconds(10), nil
 			})
 		}()
 	}
 	wg.Wait()
 
-	if got := counter.total("t", "2026-08-07"); got != 20*100 {
+	if got := counter.total(testDay); got != 20*100 {
 		t.Fatalf("total=%d, want %d", got, 20*100)
-	}
-	if sink.len() != 20 {
-		t.Fatalf("records=%d", sink.len())
 	}
 }

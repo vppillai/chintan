@@ -11,8 +11,7 @@
 //	chintanctl backup    --instance <name> --out <dir>
 //	chintanctl restore   --instance <name> --in <dir> [--apply]
 //	chintanctl reconcile --instance <name> [--apply]
-//	chintanctl reindex --instance <name> [--apply]
-//	chintanctl usage     --instance <name> [--since <date>]
+//	chintanctl reindex   --instance <name> [--apply]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //
 // Three conventions are load-bearing and shared with scripts/:
@@ -53,7 +52,6 @@ Commands:
              notes list comes back empty. Idempotent.
   reconcile  Report orphans in both directions: objects with no index row, and
              index rows whose objects are gone.
-  usage      Aggregate the USAGE# metering records written by internal/meter.
   erase      Irreversibly delete one tenant everywhere, and report what went.
 
 Run "chintanctl <command> --help" for the flags of one command.
@@ -169,8 +167,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdReconcile(ctx, rest, stdout, stderr, stdin)
 	case "reindex":
 		return cmdReindex(ctx, rest, stdout, stderr, stdin)
-	case "usage":
-		return cmdUsage(ctx, rest, stdout, stderr, stdin)
 	case "erase":
 		return cmdErase(ctx, rest, stdout, stderr, stdin)
 	default:
