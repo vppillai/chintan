@@ -354,9 +354,8 @@
 
 .note-row__meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
   align-items: baseline;
+  gap: var(--space-2);
   padding-block-start: var(--space-1);
   font-size: var(--font-size-xs);
   color: var(--color-faint);
@@ -378,18 +377,47 @@
   color: var(--color-faint);
 }
 
-/* A tag on a row is a label, not a control: no border weight, no 44px floor. */
+/* One line of tags is a summary; eight lines is the tag list wearing the note
+   row as a hat. Twenty tags is a legal note, so the list takes what is left
+   after the recordings count, wraps, and is cut at one line — the note screen
+   has them all. `contain: inline-size` is what stops twenty chips reporting a
+   1700px min-content width up through the row, the list and the screen;
+   without it the whole library scrolled sideways. */
+.note-row__tags {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  max-block-size: calc(var(--font-size-xs) * var(--line-height-normal) + 2px);
+  overflow: hidden;
+  contain: inline-size;
+}
+
+/* A tag on a row is a label, not a control: no border weight, no 44px floor.
+   A 56-character tag is legal too; it ends in an ellipsis rather than pushing
+   the row wider than the screen. */
 .note-row__tag {
+  flex: none;
+  max-inline-size: 100%;
   padding: 0 var(--space-2);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-full);
   line-height: var(--line-height-normal);
   color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .note-row__recordings {
+  flex: none;
   margin-inline-start: auto;
   white-space: nowrap;
+}
+
+.note-row__purge {
+  flex: none;
 }
 
 /* The archived row's deadline. Muted like any other row meta, except when the

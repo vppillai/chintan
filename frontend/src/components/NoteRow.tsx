@@ -72,11 +72,15 @@ export function NoteRow({
               {describePurge(countdown)}
             </span>
           )}
-          {tags.map((tag) => (
-            <span key={tag} className="note-row__tag">
-              {tag}
+          {tags.length > 0 && (
+            <span className="note-row__tags">
+              {tags.map((tag) => (
+                <span key={tag} className="note-row__tag">
+                  {tag}
+                </span>
+              ))}
             </span>
-          ))}
+          )}
           {recordings && <span className="note-row__recordings numeric">{recordings}</span>}
         </span>
       )}
