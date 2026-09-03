@@ -141,7 +141,10 @@ export function freshState(): ApiState {
         updated_at: '2026-07-02T11:00:00.000Z',
         version: 2,
         archived: true,
-        purge_after: '2026-08-18T11:00:00.000Z',
+        // Relative, not a literal date: the archive spec asserts this row says
+        // "deletes in …", which is only true while the date is in the future.
+        // The literal this used to be (2026-08-18) expired and took CI with it.
+        purge_after: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         captures: [],
       },
       /*
