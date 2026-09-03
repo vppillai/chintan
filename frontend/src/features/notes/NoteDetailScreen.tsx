@@ -137,7 +137,8 @@ export function NoteDetailScreen() {
 function NoteMeta({ note, tags }: { note: NoteDetailWire; tags: readonly string[] }) {
   const updated = describeMoment(note.updated_at);
   const parts = [
-    updated ? `Updated ${updated.charAt(0).toLowerCase()}${updated.slice(1)}` : null,
+    // "Updated today 14:02", but "Updated 6 Aug 09:14" — a month keeps its case.
+    updated ? `Updated ${updated.replace(/^(Today|Yesterday)/, (day) => day.toLowerCase())}` : null,
     ...tags,
     describeRecordings(note),
   ].filter((part): part is string => Boolean(part));
