@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Chintan bootstrap — artifact bucket + GitHub Actions deploy role.
+  Chintan bootstrap — artifact bucket + GitHub Actions deploy and build roles.
   Reuses the account's existing GitHub OIDC provider (do not create a second one).
   Role permissions are scoped to chintan-* only; passbook-* is out of reach.
 
@@ -668,13 +668,16 @@ Resources:
               # build step was split out of the deploy jobs and shipped with no
               # environment. Nothing in CI can catch that; it only fails against
               # real STS.
+              #
+              # That argument holds only for environments that have rules.
+              # `staging` and `production` are restricted to protected branches
+              # and production waits for a reviewer; `build` has none, so a
+              # workflow on any branch that declares `environment: build` can
+              # assume whatever trusts it. It therefore trusts GitHubBuildRole
+              # below, which can upload artifacts and read stack outputs and
+              # nothing else, and it is NOT listed here (review H15 / infra H5).
               StringLike:
                 token.actions.githubusercontent.com:sub:
-                  # Builds the artifact and uploads it to the artifact bucket.
-                  # Separate from the deploy environments so that gating prod
-                  # does not gate compiling.
-                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:build'
-                  - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:build'
                   - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:staging'
                   - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:staging'
                   - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:production'
@@ -1094,6 +1097,70 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/*'
 
+  # The build jobs' role. deploy-backend.yaml's `build` compiles the two Lambda
+  # zips and uploads them to the artifact bucket; deploy-frontend.yaml's `build`
+  # reads each stack's outputs to bake the API endpoint and Cognito IDs into the
+  # bundle. That is everything either job does with AWS, so that is everything
+  # this role can do. It used to be GitHubActionsRole, which can create, update
+  # and delete every chintan-* stack and move the live Lambda alias, from an
+  # environment with no protection rules at all.
+  #
+  # The workflows read the ARN from the BUILD_ROLE_ARN repository variable
+  # (scripts/setup.sh sets it from the GitHubBuildRoleArn output) and fall back
+  # to GitHubActionsRole when it is unset, so a repository whose bootstrap stack
+  # predates this role keeps deploying until setup.sh --apply has run.
+  GitHubBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: chintan-github-build
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - UseOwnAccountOIDCProvider
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+                - !Ref ExistingOIDCProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOrg}/${GitHubRepo}:environment:build'
+                  - !Sub 'repo:${GitHubOrg}@*/${GitHubRepo}@*:environment:build'
+      Tags:
+        - Key: Application
+          Value: Chintan
+        - Key: Project
+          Value: chintan
+      Policies:
+        - PolicyName: ChintanBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The two keys deploy-backend.yaml writes: function-<sha>.zip and
+              # worker-<sha>.zip. PutObject covers the multipart calls the CLI
+              # uses above 8 MiB; AbortMultipartUpload lets a failed upload
+              # clean up after itself. No Get, no Delete, no List.
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                Resource:
+                  - !Sub '${LambdaDeploymentBucket.Arn}/function-*'
+                  - !Sub '${LambdaDeploymentBucket.Arn}/worker-*'
+
+              # scripts/ci-build-site.sh reads ApiEndpoint, UserPoolId and the
+              # rest from each instance's stack. Read-only, chintan-* only.
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/chintan-*/*'
+
 Outputs:
   LambdaDeploymentBucketName:
     Description: S3 bucket for Lambda deployment artifacts
@@ -1102,10 +1169,19 @@ Outputs:
       Name: ChintanLambdaBucket
 
   GitHubActionsRoleArn:
-    Description: IAM Role ARN for GitHub Actions (chintan-* scoped)
+    Description: IAM Role ARN for GitHub Actions deploy jobs (chintan-* scoped; staging and production environments only)
     Value: !GetAtt GitHubActionsRole.Arn
     Export:
       Name: ChintanGitHubActionsRole
+
+  GitHubBuildRoleArn:
+    Description: >
+      IAM Role ARN for the GitHub Actions build jobs (artifact upload and stack
+      reads only). scripts/setup.sh stores it as the BUILD_ROLE_ARN repository
+      variable, which both deploy workflows read.
+    Value: !GetAtt GitHubBuildRole.Arn
+    Export:
+      Name: ChintanGitHubBuildRole
 
   CfnDeployRoleArn:
     Description: >

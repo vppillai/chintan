@@ -22,6 +22,7 @@ on:
       - 'infrastructure/**'
       - 'config/**'
       - 'scripts/deploy.sh'
+      - 'scripts/ci-deploy-stack.sh'
       - 'scripts/build-lambda.sh'
       - 'scripts/lib/common.sh'
       - 'scripts/list-instances.sh'
@@ -124,9 +125,15 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+      # The build role can upload the two zips and read stack outputs, and
+      # nothing else — the `build` environment has no protection rules, so it
+      # must not hand out the deploy role. BUILD_ROLE_ARN is a repository
+      # variable set by scripts/setup.sh from the bootstrap stack's output; the
+      # fallback keeps a repository whose bootstrap stack predates the build
+      # role deploying until setup.sh --apply has run.
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
+          role-to-assume: ${{ vars.BUILD_ROLE_ARN || format('arn:aws:iam::{0}:role/chintan-github-actions', secrets.AWS_ACCOUNT_ID) }}
           aws-region: ${{ env.AWS_REGION }}
       - name: Build arm64 zips
         # Two artifacts: cmd/api and cmd/worker are separate main packages. A

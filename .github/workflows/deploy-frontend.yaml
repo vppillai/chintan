@@ -81,10 +81,12 @@ jobs:
 
       # Read-only AWS access: the bundle's API endpoint and Cognito IDs come from
       # the deployed stacks rather than from a checked-in config, so a rebuilt
-      # bundle cannot point at a stack that no longer exists.
+      # bundle cannot point at a stack that no longer exists. The build role
+      # can DescribeStacks on chintan-* and upload Lambda zips, and nothing
+      # else; see deploy-backend.yaml for the BUILD_ROLE_ARN fallback.
       - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
+          role-to-assume: ${{ vars.BUILD_ROLE_ARN || format('arn:aws:iam::{0}:role/chintan-github-actions', secrets.AWS_ACCOUNT_ID) }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Build site
