@@ -308,6 +308,6 @@ This is a **public repository**.
 
 All resources carry `Project=chintan`, `Instance=<instance>` and `Environment=<prod|staging|dev>`, and the budget is defined in `infrastructure/template.yaml` rather than clicked into the console — set `monthly_budget_usd` and `alarm_email` in the instance config.
 
-Typical monthly cost per instance: **$0.00 idle, and cents under use** on the AWS side — Lambda, DynamoDB, S3, SNS, CloudWatch and the two dead-letter queues all sit inside always-free tiers at single-user volume. The transcription and cleanup providers are the real bill (~$0.70/month light, ~$17 heavy). A staging instance adds nothing fixed.
+Typical monthly cost per instance: **$0.00 idle, and cents under use** on the AWS side — Lambda, DynamoDB, S3, SNS, EventBridge, CloudWatch and the dead-letter queue all sit inside always-free tiers at single-user volume; the four alarms are the one line that leaves a free tier, and only when a second environment or another project shares the account. The transcription and cleanup providers are the real bill (~$0.70/month light, ~$17 heavy). A staging instance adds nothing fixed.
 
 This was $1.00/month idle until the customer-managed KMS key was removed — it was the entire idle cost, and it bought separation that an SSM SecureString provides for free. `docs/cost-analysis.md` has the itemised figures against the AWS Price List, and the earlier README claim of "$1–10, nearly all of it per-recording" was structurally wrong: the per-recording AWS cost is approximately zero and the fixed cost was everything.
