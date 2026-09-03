@@ -137,6 +137,17 @@ export function openChintanDB(): Promise<ChintanDatabase> {
         notes.createIndex('byUpdatedAt', 'updatedAt');
       }
     },
+    // Safari closes IndexedDB connections behind a backgrounded page. With the
+    // handle cached forever, every later write — chunks, capture records,
+    // queued edits — rejected until a reload, and every caller swallows that.
+    // Dropping the cached promise makes the next call reopen.
+    terminated() {
+      dbPromise = null;
+    },
+  });
+  // An open that fails must not be cached as a permanent rejection either.
+  dbPromise.catch(() => {
+    dbPromise = null;
   });
   return dbPromise;
 }

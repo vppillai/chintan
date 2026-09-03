@@ -254,6 +254,42 @@ describe('chunks reach the disk as they are produced', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(kinds(h.events)).toContain('recorderError');
+    // And it stops. Surfacing the error alone moved the machine to `review`
+    // while the recorder, the track and the wake lock stayed live behind it —
+    // an open microphone with no UI admitting to it.
+    expect(h.recorder.state).toBe('inactive');
+    expect(h.stream.track.stopped).toBe(true);
+    expect(h.wakeLockReleased()).toBe(true);
+  });
+
+  it('closes the previous recording’s AudioContext before opening the next', async () => {
+    // WebKit caps live AudioContexts; one leaked per recording meant the
+    // constructor started throwing after a few captures and the waveform and
+    // tones vanished on iOS.
+    const contexts: { state: string; close: () => Promise<void> }[] = [];
+    const h = harness({
+      createAudioContext: () => {
+        const context = {
+          state: 'running',
+          async close() {
+            context.state = 'closed';
+          },
+        };
+        contexts.push(context);
+        return context as unknown as AudioContext;
+      },
+    });
+
+    await h.start('cap-1');
+    await h.controller.stop();
+    expect(contexts).toHaveLength(1);
+    // Still open right after stop, so the stop tone scheduled on it plays.
+    expect(contexts[0]?.state).toBe('running');
+
+    await h.start('cap-2');
+    expect(contexts).toHaveLength(2);
+    expect(contexts[0]?.state).toBe('closed');
+    expect(contexts[1]?.state).toBe('running');
   });
 });
 
