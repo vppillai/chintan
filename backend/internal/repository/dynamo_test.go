@@ -89,28 +89,28 @@ func TestListNotesPagesThroughEveryItem(t *testing.T) {
 func TestListNotesClampsLimit(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := context.Background()
-	seedNotes(t, store, "tenant-a", 5)
+	seedNotes(t, store, "tenant-a", int(repository.MaxListLimit)+25)
 
-	if _, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: 100000}); err != nil {
+	// The clamp is visible in the page the store returns: the list is ordered
+	// in Go, so the limit is applied to the sorted result rather than to the
+	// query.
+	page, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: 100000})
+	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
-	// The clamp is visible in the request the store issued.
-	store2, api := newTestStore(t)
-	seedNotes(t, store2, "tenant-a", 1)
-	api.queries = nil
-	if _, err := store2.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: 100000}); err != nil {
-		t.Fatalf("ListNotes: %v", err)
+	if got := len(page.Items); got != int(repository.MaxListLimit) {
+		t.Fatalf("page has %d notes, want the clamp %d", got, repository.MaxListLimit)
 	}
-	if got := *api.queries[0].Limit; got != repository.MaxListLimit {
-		t.Fatalf("Limit = %d, want clamp to %d", got, repository.MaxListLimit)
+	if page.Cursor == "" {
+		t.Fatal("a clamped page with more notes behind it carried no cursor")
 	}
 
-	api.queries = nil
-	if _, err := store2.ListNotes(ctx, "tenant-a", repository.ListOptions{}); err != nil {
+	page, err = store.ListNotes(ctx, "tenant-a", repository.ListOptions{})
+	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
-	if got := *api.queries[0].Limit; got != repository.DefaultListLimit {
-		t.Fatalf("Limit = %d, want default %d", got, repository.DefaultListLimit)
+	if got := len(page.Items); got != int(repository.DefaultListLimit) {
+		t.Fatalf("page has %d notes, want the default %d", got, repository.DefaultListLimit)
 	}
 }
 
@@ -174,11 +174,9 @@ func TestListNotesRejectsGarbageCursor(t *testing.T) {
 // attribute a list renders, so transferring it made listing notes to draw
 // titles pay for the whole corpus.
 //
-// It used to be enforced by a ProjectionExpression on a base-table query. The
-// list now reads GSI2, whose INCLUDE projection does not hold `data` at all, so
-// the guarantee is structural rather than per-query — and this asserts the
-// guarantee rather than the mechanism, which is why it survived the change of
-// mechanism.
+// The list reads the base table and orders in Go (there was an index for a
+// year; see maxNotesListed for why there is not one now), so the guarantee is a
+// ProjectionExpression that never names `data`.
 func TestListNotesDoesNotTransferTheDataBlob(t *testing.T) {
 	store, api := newTestStore(t)
 	seedNotes(t, store, "tenant-a", 1)
@@ -196,18 +194,143 @@ func TestListNotesDoesNotTransferTheDataBlob(t *testing.T) {
 		t.Fatal("the list issued no query")
 	}
 	q := api.queries[0]
-	if q.IndexName == nil || *q.IndexName != "gsi2" {
-		t.Fatalf("the note list queried %v, want the gsi2 index — the base table can only order by creation",
-			q.IndexName)
+	if q.IndexName != nil {
+		t.Fatalf("the note list queried index %q; there is no notes index any more", *q.IndexName)
 	}
-	// A ProjectionExpression naming an unprojected attribute on a GSI does not
-	// fetch it, it returns nothing for it. Relying on the index projection is
-	// the only way this can fail loudly rather than silently blank a field.
-	if q.ProjectionExpression != nil && strings.Contains(*q.ProjectionExpression, "data") {
-		t.Fatalf("the list asks for the record blob: %q", *q.ProjectionExpression)
+	if q.ProjectionExpression == nil {
+		t.Fatal("the note list issued no ProjectionExpression, so it transfers the record blob")
 	}
-	if !*q.ScanIndexForward == false {
-		t.Fatal("the note list is not walking the index backwards")
+	for _, name := range strings.Split(*q.ProjectionExpression, ",") {
+		if strings.TrimSpace(name) == "data" {
+			t.Fatalf("the list asks for the record blob: %q", *q.ProjectionExpression)
+		}
+	}
+}
+
+// TestListNotesCursorIsStableWhenANoteMovesAboveIt is the property the cursor
+// exists for. The order is built in Go from a sorted slice, so a cursor cannot
+// be a DynamoDB key; it is the position of the last note served, and resuming
+// re-derives the offset by comparison. A note touched between two pages jumps
+// to the top, above the cursor, and page two must neither repeat a note the
+// client saw nor skip one it had not — a stored offset would do the latter.
+func TestListNotesCursorIsStableWhenANoteMovesAboveIt(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	const total = 6
+	for i := 0; i < total; i++ {
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID: fmt.Sprintf("note_%03d", i), Title: fmt.Sprintf("Note %d", i),
+			UpdatedAt: model.FormatTime(time.Date(2026, 8, 1, 0, 0, total-i, 0, time.UTC)),
+		}); err != nil {
+			t.Fatalf("seed note %d: %v", i, err)
+		}
+	}
+
+	first, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if len(first.Items) != 2 || first.Items[0].ID != "note_000" || first.Items[1].ID != "note_001" {
+		t.Fatalf("page one = %v, want note_000, note_001", ids(first.Items))
+	}
+
+	// The last note in the order is touched now and belongs at the top.
+	last, err := store.GetNote(ctx, "tenant-a", "note_005")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	last.UpdatedAt = model.FormatTime(time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC))
+	if _, err := store.PutNote(ctx, "tenant-a", last); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	var rest []string
+	cursor := first.Cursor
+	for cursor != "" {
+		page, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: 2, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("ListNotes(cursor): %v", err)
+		}
+		rest = append(rest, ids(page.Items)...)
+		cursor = page.Cursor
+	}
+	want := []string{"note_002", "note_003", "note_004"}
+	if fmt.Sprint(rest) != fmt.Sprint(want) {
+		t.Fatalf("after the touch the remaining pages returned %v, want %v: nothing repeated, nothing skipped, "+
+			"and the touched note is above the cursor where an index walk would also have left it", rest, want)
+	}
+}
+
+// An archive cursor replayed against the active list would resume at a
+// position in a different order. Refused, like another tenant's.
+func TestListNotesRejectsTheArchiveListsCursor(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	purge := time.Now().Add(24 * time.Hour)
+	for i := 0; i < 3; i++ {
+		if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID: fmt.Sprintf("note_%03d", i), Title: "t", UpdatedAt: model.Now(), DeletedAt: model.Now(),
+			PurgeAfter: model.FormatTime(purge), PurgeAfterEpoch: purge.Unix(),
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{Limit: 1})
+	if err != nil || page.Cursor == "" {
+		t.Fatalf("ListArchivedNotes = %v, cursor %q", err, page.Cursor)
+	}
+	if _, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Cursor: page.Cursor}); err == nil {
+		t.Fatal("the active list accepted an archive cursor")
+	}
+}
+
+// TestExpiredNotesFindsEveryPastDueArchivedNoteAcrossTenants is the sweep's
+// input. It has to cross tenants — the worker knows no tenant list — and it has
+// to leave alone both the archived note that is not yet due and the live note
+// that carries no deadline at all.
+func TestExpiredNotesFindsEveryPastDueArchivedNoteAcrossTenants(t *testing.T) {
+	store, api := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	put := func(tenant, id string, deadline time.Time) {
+		n := model.NoteIndex{ID: id, Title: "Note " + id, UpdatedAt: model.Now()}
+		if !deadline.IsZero() {
+			n.DeletedAt = model.Now()
+			n.PurgeAfter = model.FormatTime(deadline)
+			n.PurgeAfterEpoch = deadline.Unix()
+		}
+		if _, err := store.PutNote(ctx, tenant, n); err != nil {
+			t.Fatalf("PutNote(%s/%s): %v", tenant, id, err)
+		}
+	}
+	put("tenant-a", "live", time.Time{})
+	put("tenant-a", "pending", now.Add(time.Hour))
+	put("tenant-a", "due_a", now.Add(-time.Hour))
+	put("tenant-b", "due_b", now.Add(-48*time.Hour))
+	// Something that is not a note at all in the same table.
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{ID: "c_1", UserID: "tenant-a", Status: model.StatusAppended, CreatedAt: model.Now()}); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+
+	// Several pages, so the scan has to follow LastEvaluatedKey.
+	api.pageSize = 2
+	expired, err := store.ExpiredNotes(ctx, now.Unix())
+	if err != nil {
+		t.Fatalf("ExpiredNotes: %v", err)
+	}
+	got := map[string]string{}
+	for _, tn := range expired {
+		got[tn.Note.ID] = tn.TenantID
+		if tn.Note.Title == "" {
+			t.Errorf("expired note %s came back without its attributes; the sweep's cascade needs its keys", tn.Note.ID)
+		}
+	}
+	want := map[string]string{"due_a": "tenant-a", "due_b": "tenant-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expired = %v, want %v", got, want)
+	}
+	if api.scans < 2 {
+		t.Fatalf("the scan took %d round trip(s) with a page size of 2; it is not following LastEvaluatedKey", api.scans)
 	}
 }
 
@@ -683,8 +806,11 @@ func (d *putRetryingDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInp
 	return d.fakeDynamo.PutItem(ctx, in, opts...)
 }
 
-// Items written by v1 carry only the `data` blob, which the list projection
-// deliberately does not fetch. They must still list, not vanish and not error.
+// TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted: a note written by
+// v1 is nothing but a `data` blob, so the projected read returns only its key,
+// and the list has to fetch it whole rather than drop it. No migration is
+// needed to make it appear — which is the point of ordering in Go rather than
+// through an index that only holds items carrying its key attributes.
 func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 	api := newFakeDynamo()
 	store := repository.NewDynamoStore(api, tableName)
@@ -696,42 +822,18 @@ func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 		"type": &types.AttributeValueMemberS{Value: "note"},
 		"data": &types.AttributeValueMemberS{Value: legacy},
 	})
-
-	// A note written before GSI2 existed carries none of its key attributes, so
-	// DynamoDB does not index it and the list cannot see it. That is the
-	// migration this index needs, and leaving it implicit would mean shipping a
-	// deploy that empties the notes list.
-	before, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
-	if err != nil {
-		t.Fatalf("ListNotes: %v", err)
-	}
-	if len(before.Items) != 0 {
-		t.Fatalf("got %d notes before reindexing; if this passes, the migration below is not the thing being tested",
-			len(before.Items))
-	}
-
-	touched, err := store.ReindexNotes(context.Background(), "tenant-a")
-	if err != nil {
-		t.Fatalf("ReindexNotes: %v", err)
-	}
-	if touched != 1 {
-		t.Fatalf("reindexed %d notes, want 1", touched)
-	}
+	seedNotes(t, store, "tenant-a", 1)
 
 	page, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
 	}
-	if len(page.Items) != 1 {
-		t.Fatalf("got %d notes after reindexing, want the one legacy note", len(page.Items))
+	if len(page.Items) != 2 {
+		t.Fatalf("got %d notes, want the legacy note beside the new one", len(page.Items))
 	}
-	if page.Items[0].Title != "Written by v1" {
-		t.Fatalf("legacy note = %+v, want its title recovered from the blob", page.Items[0])
-	}
-
-	// Idempotent: running it again must not double-count or disturb anything.
-	if touched, err := store.ReindexNotes(context.Background(), "tenant-a"); err != nil || touched != 1 {
-		t.Fatalf("second ReindexNotes = %d, %v; want 1, nil", touched, err)
+	// Touched in 2026-08-01, so it sorts after the note seeded now.
+	if page.Items[1].Title != "Written by v1" || page.Items[1].ID != "note_legacy" {
+		t.Fatalf("legacy note = %+v, want its title recovered from the blob", page.Items[1])
 	}
 }
 
@@ -1375,128 +1477,5 @@ func TestCapturesComeBackNewestFirstAcrossPages(t *testing.T) {
 					order, fmt.Sprintf("c_%03d", total-1))
 			}
 		})
-	}
-}
-
-// TestGSI2ProjectionCoversWhatTheNoteListReads holds the notes index to the
-// same standard as GSI1, and for the same reason: a projection that is missing
-// an attribute does not error, it returns an empty field — a note with no title
-// rather than a failure. Widening it later is not an update; the index is
-// deleted and rebuilt, which on a populated table is an outage of the notes
-// list.
-func TestGSI2ProjectionCoversWhatTheNoteListReads(t *testing.T) {
-	projected := indexNonKeyAttributes("gsi2")
-	if len(projected) == 0 {
-		t.Fatalf("could not read the gsi2 projection from %s; the drift check is not running", templatePath)
-	}
-
-	required := []string{
-		// Everything a note row renders.
-		"note_id", "title", "snippet", "tags", "aliases", "created_at", "updated_at",
-		// What the editor and the archive need without a second read.
-		"s3_markdown_key", "s3_meta_key", "verbatim", "version",
-		// What marks a note archived, and what the archived list filters on.
-		"deleted_at", "purge_after", "purge_after_epoch",
-	}
-	for _, name := range required {
-		if !projected[name] {
-			t.Errorf("gsi2 does not project %q; the note list would read it back empty", name)
-		}
-	}
-
-	// ALL would project `data`, the blob that duplicates every attribute above.
-	// Carrying it is the transfer cost the projection exists to avoid.
-	if projected["data"] {
-		t.Error("gsi2 projects `data`; that is the cost this index exists to avoid")
-	}
-}
-
-// TestNoteIndexKeysAreWhatTheIndexIsBuiltFrom pins the derivation both the
-// write path and chintanctl's backfill use. Two copies of it is how an index
-// quietly disagrees with the table it indexes, and neither disagreement would
-// error — a note would simply stop appearing in a list.
-func TestNoteIndexKeysAreWhatTheIndexIsBuiltFrom(t *testing.T) {
-	cases := []struct {
-		name           string
-		note           model.NoteIndex
-		wantPK, wantSK string
-	}{
-		{
-			name:   "an active note",
-			note:   model.NoteIndex{ID: "note_a", UpdatedAt: "2026-08-01T00:00:00.000000000Z"},
-			wantPK: "TENANT#user1#NOTES#ACTIVE",
-			wantSK: "2026-08-01T00:00:00.000000000Z",
-		},
-		{
-			// The shelf is what keeps the archive out of the active list
-			// without a filter, so a deletion stamp has to move it.
-			name:   "an archived note",
-			note:   model.NoteIndex{ID: "note_b", UpdatedAt: "2026-08-01T00:00:00.000000000Z", DeletedAt: "2026-08-02T00:00:00.000000000Z"},
-			wantPK: "TENANT#user1#NOTES#ARCHIVED",
-			wantSK: "2026-08-01T00:00:00.000000000Z",
-		},
-		{
-			// RFC3339Nano trims trailing zeros, so "…:00Z" sorts above
-			// "…:00.1Z" because 'Z' > '.'. A sort key cannot be changed without
-			// rebuilding the index, so a value written in the older layout is
-			// re-rendered on the way in rather than stored as it arrived.
-			name:   "a timestamp written before the fixed-width layout",
-			note:   model.NoteIndex{ID: "note_c", UpdatedAt: "2026-08-01T00:00:00Z"},
-			wantPK: "TENANT#user1#NOTES#ACTIVE",
-			wantSK: "2026-08-01T00:00:00.000000000Z",
-		},
-		{
-			// Unparseable is carried through rather than dropped: it sorts
-			// oddly, which somebody can see, instead of vanishing from the
-			// index, which nobody can.
-			name:   "a timestamp nothing can parse",
-			note:   model.NoteIndex{ID: "note_d", UpdatedAt: "yesterday"},
-			wantPK: "TENANT#user1#NOTES#ACTIVE",
-			wantSK: "yesterday",
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			pk, sk := repository.NoteIndexKeys("user1", tc.note)
-			if pk != tc.wantPK {
-				t.Errorf("gsi2pk = %q, want %q", pk, tc.wantPK)
-			}
-			if sk != tc.wantSK {
-				t.Errorf("gsi2sk = %q, want %q", sk, tc.wantSK)
-			}
-		})
-	}
-}
-
-// TestReindexDoesNotDisturbTheRecord is why the backfill is an attribute update
-// rather than a rewrite. A version bump would hand a client holding the
-// previous one a conflict for a change nobody made, and this runs against a
-// live instance while somebody is using it.
-func TestReindexDoesNotDisturbTheRecord(t *testing.T) {
-	store, _ := newTestStore(t)
-	ctx := context.Background()
-
-	stored, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
-		ID: "note_a", Title: "Roof repair", UpdatedAt: model.Now(),
-	})
-	if err != nil {
-		t.Fatalf("PutNote: %v", err)
-	}
-
-	if _, err := store.ReindexNotes(ctx, "tenant-a"); err != nil {
-		t.Fatalf("ReindexNotes: %v", err)
-	}
-
-	after, err := store.GetNote(ctx, "tenant-a", "note_a")
-	if err != nil {
-		t.Fatalf("GetNote: %v", err)
-	}
-	if after.Version != stored.Version {
-		t.Errorf("version moved from %d to %d; an open editor would be told to reconcile a change nobody made",
-			stored.Version, after.Version)
-	}
-	if after.Title != stored.Title || after.UpdatedAt != stored.UpdatedAt {
-		t.Errorf("reindex altered the record: %+v", after)
 	}
 }

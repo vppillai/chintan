@@ -113,8 +113,10 @@ type NoteIndex struct {
 	// rewritten by polished mode.
 	Verbatim bool `json:"verbatim,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
-	// It is the DynamoDB TTL attribute, so expiry is performed by the table
-	// rather than by a synchronous sweep on the read path.
+	// The archived list filters on it, and the weekly expiry sweep
+	// (internal/purge) deletes the note's objects and row once it has passed.
+	// The store also derives the DynamoDB TTL attribute from it, later by a
+	// grace period, as the backstop for a sweep that did not run.
 	PurgeAfterEpoch int64 `json:"purge_after_epoch,omitempty"`
 	// Version is the optimistic-concurrency counter. A write carries the version
 	// it read; the store rejects it if the stored version has moved on.

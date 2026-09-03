@@ -31,10 +31,11 @@ daily_spend_cap_micros: 2000000
 
 # No CloudWatch alarms here.
 #
-# CloudWatch's always-free allowance is ten alarm-months and the template
-# declares exactly ten alarms, so prod alone fits precisely and this stack's
-# identical ten fall entirely outside it — a measured ~$1.00/month to duplicate
-# alarms that nobody is subscribed to and that watch no user data.
+# CloudWatch's always-free allowance is ten alarm-months for the whole account,
+# and the account's other project holds alarms too. The template declares four
+# (three plus the spend-cap alarm), and this stack's copies would be billed at
+# $0.10 each to duplicate alarms that nobody is subscribed to and that watch no
+# user data.
 #
 # Staging is not left unwatched: every deploy reaches it before prod and its
 # smoke test gates the prod job, so a broken Lambda or template fails the

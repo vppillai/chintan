@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
+	"github.com/vppillai/chintan/backend/internal/model"
 )
 
 // A cursor is the DynamoDB LastEvaluatedKey, base64url-encoded, plus the
@@ -117,4 +119,68 @@ func decodeCursor(cursor string, scope cursorScope) (map[string]types.AttributeV
 		out[k] = &types.AttributeValueMemberS{Value: v}
 	}
 	return out, nil
+}
+
+// noteCursor is the position a notes page ended at: the touch instant and id of
+// the last note served, in the order listNotes builds. It is not a DynamoDB
+// key, because the walk it resumes is over a slice this store sorted, not over
+// the table — see listNotes.
+type noteCursor struct {
+	at, id string
+}
+
+// key is the note's position in the list order, comparable to noteOrderKey.
+func (c noteCursor) key() string { return c.at + "\x00" + c.id }
+
+// Note cursor fields. "pk" and "shelf" scope the cursor to the partition and
+// the list that issued it, so tenant A's cursor is refused by tenant B's list
+// and an archive cursor by the active list; "dir" is carried so the generic
+// decoder refuses one rather than misreading it as a key.
+const (
+	noteCursorAt    = "at"
+	noteCursorID    = "id"
+	noteCursorShelf = "shelf"
+)
+
+func encodeNoteCursor(tenantID, shelf string, last model.NoteIndex) (string, error) {
+	raw, err := json.Marshal(map[string]string{
+		"pk":                userPK(tenantID),
+		noteCursorShelf:     shelf,
+		noteCursorAt:        noteTouchedSortKey(last.UpdatedAt),
+		noteCursorID:        last.ID,
+		cursorDirectionAttr: cursorDescending,
+	})
+	if err != nil {
+		return "", fmt.Errorf("cursor: encode: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// decodeNoteCursor returns the position to resume after, or nil for page one.
+// A cursor minted by the index-backed list this replaced carries key
+// attributes instead of a position and is refused; the client starts again
+// from the first page, which is the honest answer across that deploy.
+func decodeNoteCursor(cursor, tenantID, shelf string) (*noteCursor, error) {
+	if cursor == "" {
+		return nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return nil, fmt.Errorf("cursor: not valid base64: %w", err)
+	}
+	var flat map[string]string
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		return nil, fmt.Errorf("cursor: not a valid position: %w", err)
+	}
+	if flat["pk"] != userPK(tenantID) {
+		return nil, fmt.Errorf("cursor: does not belong to this partition")
+	}
+	if flat[noteCursorShelf] != shelf {
+		return nil, fmt.Errorf("cursor: does not belong to this query")
+	}
+	at, id := flat[noteCursorAt], flat[noteCursorID]
+	if id == "" || len(flat) != 5 {
+		return nil, fmt.Errorf("cursor: unexpected shape; start again from the first page")
+	}
+	return &noteCursor{at: at, id: id}, nil
 }

@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"sync"
 	"testing"
-
-	"github.com/aws/aws-lambda-go/events"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -16,392 +14,233 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-const (
-	testTenant = "user1"
-	testNote   = "note_1"
-)
+const testTenant = "user1"
 
-// fixture is a real NotesService over in-memory storage, carrying one archived
-// note with one capture, and every object both of them name.
+// fixture is a real NotesService over in-memory storage.
 type fixture struct {
 	store   *memory.Store
 	objects *memory.Objects
 	notes   *service.NotesService
-	handler *Handler
-	note    model.NoteIndex
-	capture model.CaptureIndex
+	sweeper *Sweeper
+	now     time.Time
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	ctx := context.Background()
-
 	store := memory.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
-
-	note, err := notes.CreateNote(ctx, testTenant, "Roof repair", nil)
-	if err != nil {
-		t.Fatalf("CreateNote: %v", err)
-	}
-
-	capture := model.CaptureIndex{
-		ID:          "cap_1",
-		NoteID:      note.ID,
-		UserID:      testTenant,
-		Status:      model.StatusAppended,
-		CreatedAt:   model.Now(),
-		AudioKey:    fmt.Sprintf("tenants/%s/captures/cap_1/audio.webm", testTenant),
-		RawKey:      fmt.Sprintf("tenants/%s/captures/cap_1/raw.txt", testTenant),
-		RoutedKey:   fmt.Sprintf("tenants/%s/captures/cap_1/routed.txt", testTenant),
-		CleanKey:    fmt.Sprintf("tenants/%s/captures/cap_1/clean.txt", testTenant),
-		SegmentsKey: fmt.Sprintf("tenants/%s/captures/cap_1/segments.json", testTenant),
-		PeaksKey:    fmt.Sprintf("tenants/%s/captures/cap_1/peaks.json", testTenant),
-	}
-	stored, err := store.PutCapture(ctx, capture)
-	if err != nil {
-		t.Fatalf("PutCapture: %v", err)
-	}
-	for _, key := range captureKeys(stored) {
-		if err := objects.Put(ctx, key, []byte("x"), "application/octet-stream"); err != nil {
-			t.Fatalf("Put(%s): %v", key, err)
-		}
-	}
-
-	handler, err := New(notes, objects)
+	sweeper, err := New(store, notes)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-
-	return &fixture{
-		store: store, objects: objects, notes: notes,
-		handler: handler, note: note, capture: stored,
-	}
+	f := &fixture{store: store, objects: objects, notes: notes, sweeper: sweeper,
+		now: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)}
+	sweeper.now = func() time.Time { return f.now }
+	return f
 }
 
-func captureKeys(c model.CaptureIndex) []string {
-	return []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, c.PeaksKey}
-}
-
-// allKeys is every object the fixture's note and capture own together.
-func (f *fixture) allKeys() []string {
-	return append(captureKeys(f.capture), f.note.S3MarkdownKey, f.note.S3MetaKey)
-}
-
-func (f *fixture) surviving(t *testing.T) []string {
+// archivedNote creates a note with one capture and every object both of them
+// name, archived so that its deadline is `deadline`.
+func (f *fixture) archivedNote(t *testing.T, tenant, id string, deadline time.Time) (model.NoteIndex, []string) {
 	t.Helper()
+	ctx := context.Background()
+
+	note, err := f.notes.CreateNote(ctx, tenant, "Roof repair "+id, nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	capture := model.CaptureIndex{
+		ID: "cap_" + id, NoteID: note.ID, UserID: tenant, Status: model.StatusAppended, CreatedAt: model.Now(),
+		AudioKey:    fmt.Sprintf("tenants/%s/captures/cap_%s/audio.webm", tenant, id),
+		RawKey:      fmt.Sprintf("tenants/%s/captures/cap_%s/raw.txt", tenant, id),
+		RoutedKey:   fmt.Sprintf("tenants/%s/captures/cap_%s/routed.txt", tenant, id),
+		CleanKey:    fmt.Sprintf("tenants/%s/captures/cap_%s/clean.txt", tenant, id),
+		SegmentsKey: fmt.Sprintf("tenants/%s/captures/cap_%s/segments.json", tenant, id),
+		PeaksKey:    fmt.Sprintf("tenants/%s/captures/cap_%s/peaks.json", tenant, id),
+	}
+	if _, err := f.store.PutCapture(ctx, capture); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	keys := []string{note.S3MarkdownKey, note.S3MetaKey, capture.AudioKey, capture.RawKey,
+		capture.RoutedKey, capture.CleanKey, capture.SegmentsKey, capture.PeaksKey}
+	for _, k := range keys {
+		if err := f.objects.Put(ctx, k, []byte("x"), "application/octet-stream"); err != nil {
+			t.Fatalf("Put %s: %v", k, err)
+		}
+	}
+
+	stored, err := f.store.GetNote(ctx, tenant, note.ID)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if !deadline.IsZero() {
+		stored.DeletedAt = model.FormatTime(deadline.Add(-service.ArchiveRetention))
+		stored.PurgeAfter = model.FormatTime(deadline)
+		stored.PurgeAfterEpoch = deadline.Unix()
+	}
+	if stored, err = f.store.PutNote(ctx, tenant, stored); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	return stored, keys
+}
+
+func (f *fixture) alive(keys []string) []string {
 	var alive []string
-	for _, key := range f.allKeys() {
-		if _, err := f.objects.Get(context.Background(), key); err == nil {
-			alive = append(alive, key)
-		} else if !errors.Is(err, repository.ErrNotFound) {
-			t.Fatalf("Get(%s): %v", key, err)
+	for _, k := range keys {
+		if _, err := f.objects.Get(context.Background(), k); err == nil {
+			alive = append(alive, k)
 		}
 	}
 	sort.Strings(alive)
 	return alive
 }
 
-// noteRemoveRecord is the stream record DynamoDB emits for the fixture's note.
-// identity is what distinguishes an expiry from a delete somebody asked for.
-func (f *fixture) noteRemoveRecord(identity *events.DynamoDBUserIdentity) events.DynamoDBEventRecord {
-	return events.DynamoDBEventRecord{
-		EventName:    "REMOVE",
-		EventSource:  "aws:dynamodb",
-		UserIdentity: identity,
-		Change: events.DynamoDBStreamRecord{
-			SequenceNumber: "000000000000000000001",
-			StreamViewType: "NEW_AND_OLD_IMAGES",
-			Keys: map[string]events.DynamoDBAttributeValue{
-				"pk": events.NewStringAttribute(tenantKeyPrefix + testTenant),
-				"sk": events.NewStringAttribute("NOTE#" + f.note.ID),
-			},
-			OldImage: map[string]events.DynamoDBAttributeValue{
-				"pk":              events.NewStringAttribute(tenantKeyPrefix + testTenant),
-				"sk":              events.NewStringAttribute("NOTE#" + f.note.ID),
-				"type":            events.NewStringAttribute("note"),
-				"note_id":         events.NewStringAttribute(f.note.ID),
-				"title":           events.NewStringAttribute(f.note.Title),
-				"s3_markdown_key": events.NewStringAttribute(f.note.S3MarkdownKey),
-				"s3_meta_key":     events.NewStringAttribute(f.note.S3MetaKey),
-				"deleted_at":      events.NewStringAttribute(model.Now()),
-			},
-		},
-	}
-}
-
-// ttlIdentity is what DynamoDB stamps on a record its own expiry service
-// produced.
-func ttlIdentity() *events.DynamoDBUserIdentity {
-	return &events.DynamoDBUserIdentity{Type: ttlIdentityType, PrincipalID: ttlPrincipalID}
-}
-
-// TestTTLExpiryUnlinksEveryObjectTheNoteOwned is the leak this package closes.
-//
-// Before it existed, TTL removed the index row and left all eight objects in
-// the bucket: two for the note, six for its capture. Nothing referenced them
-// and nothing could reach them, and the bill grew with every note the table
-// collected.
-func TestTTLExpiryUnlinksEveryObjectTheNoteOwned(t *testing.T) {
+// TestSweepPurgesEveryObjectAnExpiredNoteOwnedAndThenItsRow is the leak this
+// package closes: the note's own two objects, and the six of every capture
+// filed against it, which TTL alone never touched.
+func TestSweepPurgesEveryObjectAnExpiredNoteOwnedAndThenItsRow(t *testing.T) {
 	f := newFixture(t)
+	ctx := context.Background()
+	note, keys := f.archivedNote(t, testTenant, "a", f.now.Add(-time.Hour))
 
-	resp, err := f.handler.Handle(context.Background(), events.DynamoDBEvent{
-		Records: []events.DynamoDBEventRecord{f.noteRemoveRecord(ttlIdentity())},
-	})
+	report, err := f.sweeper.Sweep(ctx)
 	if err != nil {
-		t.Fatalf("Handle: %v", err)
+		t.Fatalf("Sweep: %v", err)
 	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
+	if report != (Report{Expired: 1, Purged: 1}) {
+		t.Fatalf("report = %+v, want one expired, one purged", report)
 	}
+	if alive := f.alive(keys); len(alive) != 0 {
+		t.Errorf("these objects outlived the sweep that expired their note: %v", alive)
+	}
+	if _, err := f.store.GetNote(ctx, testTenant, note.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("GetNote after sweep: err = %v, want the row gone", err)
+	}
+	if _, err := f.store.GetCapture(ctx, testTenant, "cap_a"); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("GetCapture after sweep: err = %v, want the capture row gone", err)
+	}
+}
 
-	if alive := f.surviving(t); len(alive) != 0 {
-		t.Errorf("these objects outlived the expiry that removed their note: %v", alive)
-	}
+// A note that is archived but not yet due, and a note that is not archived at
+// all, are exactly what the sweep must leave alone: the first is in the user's
+// archive with a restore button, the second is live.
+func TestSweepLeavesLiveAndNotYetDueNotesAlone(t *testing.T) {
+	f := newFixture(t)
+	_, liveKeys := f.archivedNote(t, testTenant, "live", time.Time{})
+	_, pendingKeys := f.archivedNote(t, testTenant, "pending", f.now.Add(24*time.Hour))
+	_, dueKeys := f.archivedNote(t, testTenant, "due", f.now.Add(-24*time.Hour))
 
-	// The capture row itself is not expired by TTL — only the note carries the
-	// attribute — so a handler that unlinked objects and left the rows behind
-	// would leave the note's captures listed forever against a note that no
-	// longer exists.
-	page, err := f.store.ListCapturesByNote(context.Background(), testTenant, f.note.ID, repository.ListOptions{})
+	report, err := f.sweeper.Sweep(context.Background())
 	if err != nil {
-		t.Fatalf("ListCapturesByNote: %v", err)
+		t.Fatalf("Sweep: %v", err)
 	}
-	if len(page.Items) != 0 {
-		t.Errorf("captures still filed against the expired note: %d, want 0", len(page.Items))
+	if report.Expired != 1 || report.Purged != 1 {
+		t.Fatalf("report = %+v, want exactly the due note", report)
 	}
-}
-
-// TestAUserDeleteIsNotTreatedAsAnExpiry is the other direction, and it is the
-// one that costs a user their recording if it regresses.
-//
-// Archiving a note is a PutItem, but permanently deleting one — and every
-// cascade and chintanctl erase — is a DeleteItem, which produces a REMOVE
-// record carrying the same old image as an expiry and no userIdentity at all.
-// Acting on those would delete the audio of a note the user still has.
-func TestAUserDeleteIsNotTreatedAsAnExpiry(t *testing.T) {
-	cases := map[string]*events.DynamoDBUserIdentity{
-		// The ordinary DeleteItem: no identity block on the record at all.
-		"no user identity": nil,
-		// A principal that is not the expiry service.
-		"an assumed role": {Type: "AssumedRole", PrincipalID: "AROAEXAMPLE:chintan-api"},
-		// The right principal under the wrong type, and vice versa: both halves
-		// have to match or the filter is a substring check.
-		"the right principal, the wrong type": {Type: "AssumedRole", PrincipalID: ttlPrincipalID},
-		"the right type, the wrong principal": {Type: ttlIdentityType, PrincipalID: "s3.amazonaws.com"},
+	if got := f.alive(liveKeys); len(got) != len(liveKeys) {
+		t.Errorf("the live note lost objects: %d of %d remain", len(got), len(liveKeys))
 	}
-
-	for name, identity := range cases {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t)
-			want := f.surviving(t)
-			if len(want) != len(f.allKeys()) {
-				t.Fatalf("fixture starts with %d objects, want %d", len(want), len(f.allKeys()))
-			}
-
-			resp, err := f.handler.Handle(context.Background(), events.DynamoDBEvent{
-				Records: []events.DynamoDBEventRecord{f.noteRemoveRecord(identity)},
-			})
-			if err != nil {
-				t.Fatalf("Handle: %v", err)
-			}
-			if len(resp.BatchItemFailures) != 0 {
-				t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
-			}
-
-			if got := f.surviving(t); len(got) != len(want) {
-				t.Errorf("a delete this handler did not perform destroyed objects: %d of %d survived",
-					len(got), len(want))
-			}
-		})
+	if got := f.alive(pendingKeys); len(got) != len(pendingKeys) {
+		t.Errorf("the archived-but-not-due note lost objects: %d of %d remain", len(got), len(pendingKeys))
+	}
+	if got := f.alive(dueKeys); len(got) != 0 {
+		t.Errorf("the due note kept objects: %v", got)
 	}
 }
 
-// TestOnlyRemoveEventsAreActedOn guards the other half of the filter. An
-// archive is a MODIFY carrying a complete old image, and unlinking on that
-// would delete the audio of a note the user can still restore.
-func TestOnlyRemoveEventsAreActedOn(t *testing.T) {
-	for _, eventName := range []string{"INSERT", "MODIFY"} {
-		t.Run(eventName, func(t *testing.T) {
-			f := newFixture(t)
-			record := f.noteRemoveRecord(ttlIdentity())
-			record.EventName = eventName
-
-			if IsTTLExpiry(record) {
-				t.Fatalf("%s was read as a TTL expiry", eventName)
-			}
-			if _, err := f.handler.Handle(context.Background(), events.DynamoDBEvent{
-				Records: []events.DynamoDBEventRecord{record},
-			}); err != nil {
-				t.Fatalf("Handle: %v", err)
-			}
-			if got := f.surviving(t); len(got) != len(f.allKeys()) {
-				t.Errorf("a %s event destroyed objects: %d of %d survived",
-					eventName, len(got), len(f.allKeys()))
-			}
-		})
-	}
-}
-
-// TestARedeliveredRecordDoesNotFail is why the handler may report batch item
-// failures at all. Streams are at-least-once, so the same expiry arrives twice
-// whenever anything else in the batch is retried; a second pass finds every
-// object already gone and must call that success, not a fault to redeliver
-// until the record ages out of the stream.
-func TestARedeliveredRecordDoesNotFail(t *testing.T) {
+// The sweep is an instance job: it does not know the tenants and must not need
+// to.
+func TestSweepCrossesTenants(t *testing.T) {
 	f := newFixture(t)
-	event := events.DynamoDBEvent{
-		Records: []events.DynamoDBEventRecord{f.noteRemoveRecord(ttlIdentity())},
-	}
+	_, aKeys := f.archivedNote(t, "tenant-a", "a", f.now.Add(-time.Hour))
+	_, bKeys := f.archivedNote(t, "tenant-b", "b", f.now.Add(-time.Hour))
 
-	for attempt := 1; attempt <= 3; attempt++ {
-		resp, err := f.handler.Handle(context.Background(), event)
-		if err != nil {
-			t.Fatalf("delivery %d: Handle: %v", attempt, err)
-		}
-		if len(resp.BatchItemFailures) != 0 {
-			t.Fatalf("delivery %d reported %v; an already-unlinked record is not a failure",
-				attempt, resp.BatchItemFailures)
-		}
-	}
-}
-
-// TestAnExpiredCaptureUnlinksItsSixArtefacts covers the other item type the
-// stream can carry. No capture holds a ttl today, but the six keys are promoted
-// to top-level attributes precisely so a cascade can read them off a projection
-// — which is what makes them readable off a stream record with no table access
-// at all.
-func TestAnExpiredCaptureUnlinksItsSixArtefacts(t *testing.T) {
-	f := newFixture(t)
-
-	old := map[string]events.DynamoDBAttributeValue{
-		"pk":         events.NewStringAttribute(tenantKeyPrefix + testTenant),
-		"sk":         events.NewStringAttribute("CAPTURE#" + f.capture.ID),
-		"type":       events.NewStringAttribute("capture"),
-		"capture_id": events.NewStringAttribute(f.capture.ID),
-	}
-	for i, attr := range captureObjectAttributes {
-		old[attr] = events.NewStringAttribute(captureKeys(f.capture)[i])
-	}
-
-	resp, err := f.handler.Handle(context.Background(), events.DynamoDBEvent{
-		Records: []events.DynamoDBEventRecord{{
-			EventName:    "REMOVE",
-			UserIdentity: ttlIdentity(),
-			Change: events.DynamoDBStreamRecord{
-				SequenceNumber: "000000000000000000002",
-				OldImage:       old,
-			},
-		}},
-	})
+	report, err := f.sweeper.Sweep(context.Background())
 	if err != nil {
-		t.Fatalf("Handle: %v", err)
+		t.Fatalf("Sweep: %v", err)
 	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
+	if report.Purged != 2 {
+		t.Fatalf("report = %+v, want both tenants' notes purged", report)
 	}
-
-	for _, key := range captureKeys(f.capture) {
-		if _, err := f.objects.Get(context.Background(), key); !errors.Is(err, repository.ErrNotFound) {
-			t.Errorf("%s outlived the capture that named it (err = %v)", key, err)
-		}
-	}
-	// The note's own objects were not named on this record and must be untouched.
-	for _, key := range []string{f.note.S3MarkdownKey, f.note.S3MetaKey} {
-		if _, err := f.objects.Get(context.Background(), key); err != nil {
-			t.Errorf("%s was deleted by a record that did not name it: %v", key, err)
-		}
+	if alive := f.alive(append(aKeys, bKeys...)); len(alive) != 0 {
+		t.Errorf("objects survived: %v", alive)
 	}
 }
 
-// TestAnExpiredRecordWithNoObjectsIsNotAnError covers the other item that
-// carries the shared ttl attribute — an idempotency record — which expires
-// through the same stream and owns nothing in S3.
-func TestAnExpiredRecordWithNoObjectsIsNotAnError(t *testing.T) {
+// Weekly means the same note is seen at most once, but a sweep retried by
+// Lambda after a partial failure sees notes it already purged the objects of.
+// Re-deleting what is gone must be success, or the retry can never finish.
+func TestSweepIsIdempotent(t *testing.T) {
 	f := newFixture(t)
+	f.archivedNote(t, testTenant, "a", f.now.Add(-time.Hour))
 
-	resp, err := f.handler.Handle(context.Background(), events.DynamoDBEvent{
-		Records: []events.DynamoDBEventRecord{{
-			EventName:    "REMOVE",
-			UserIdentity: ttlIdentity(),
-			Change: events.DynamoDBStreamRecord{
-				SequenceNumber: "000000000000000000003",
-				OldImage: map[string]events.DynamoDBAttributeValue{
-					"pk":   events.NewStringAttribute("USER#tenant-1"),
-					"sk":   events.NewStringAttribute("IDEM#abc"),
-					"type": events.NewStringAttribute("idem"),
-					"data": events.NewStringAttribute("{}"),
-				},
-			},
-		}},
-	})
+	if _, err := f.sweeper.Sweep(context.Background()); err != nil {
+		t.Fatalf("first Sweep: %v", err)
+	}
+	report, err := f.sweeper.Sweep(context.Background())
 	if err != nil {
-		t.Fatalf("Handle: %v", err)
+		t.Fatalf("second Sweep: %v", err)
 	}
-	if len(resp.BatchItemFailures) != 0 {
-		t.Fatalf("batch item failures = %v, want none", resp.BatchItemFailures)
-	}
-	if got := f.surviving(t); len(got) != len(f.allKeys()) {
-		t.Errorf("an unrelated expiry destroyed objects: %d of %d survived", len(got), len(f.allKeys()))
+	if report != (Report{}) {
+		t.Fatalf("second sweep report = %+v, want nothing left to do", report)
 	}
 }
 
-// failingCascade fails every purge, so the batch-item-failure path can be
-// exercised without inventing a broken object store.
-type failingCascade struct {
-	mu    sync.Mutex
-	calls int
+// failingObjects refuses to delete one key, standing in for an S3 fault.
+type failingObjects struct {
+	repository.Objects
+	refuse string
 }
 
-var errCascadeBroke = errors.New("induced cascade failure")
-
-func (c *failingCascade) PurgeNoteArtifacts(context.Context, string, string, model.NoteIndex) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.calls++
-	return errCascadeBroke
+func (o *failingObjects) Delete(ctx context.Context, key string) error {
+	if key == o.refuse {
+		return errors.New("s3: 503 slow down")
+	}
+	return o.Objects.Delete(ctx, key)
 }
 
-// TestAFailedUnlinkIsReportedForRedelivery proves the handler does not swallow
-// a cascade failure. Swallowing it is how the leak this package closes would
-// come back silently: the record is deleted from the stream, the objects stay,
-// and nothing has recorded that they did.
-func TestAFailedUnlinkIsReportedForRedelivery(t *testing.T) {
-	f := newFixture(t)
-	cascade := &failingCascade{}
-	handler, err := New(cascade, f.objects)
+// One note that cannot be purged must not stop the others, must not lose its
+// row — the row is the only record of what to delete — and must be reported,
+// because the error is what makes Lambda retry and, failing that, alarm.
+func TestAFailedPurgeIsReportedAndKeepsItsRowForTheNextSweep(t *testing.T) {
+	store := memory.NewStore()
+	objects := &failingObjects{Objects: memory.NewObjects()}
+	notes := service.NewNotesService(store, objects)
+	sweeper, err := New(store, notes)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	f := &fixture{store: store, objects: objects.Objects.(*memory.Objects), notes: notes, sweeper: sweeper,
+		now: time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)}
+	sweeper.now = func() time.Time { return f.now }
 
-	record := f.noteRemoveRecord(ttlIdentity())
-	resp, err := handler.Handle(context.Background(), events.DynamoDBEvent{
-		Records: []events.DynamoDBEventRecord{record},
-	})
-	if err != nil {
-		// The batch is reported per record, not as an invocation error: an
-		// error here would redeliver records that succeeded.
-		t.Fatalf("Handle: %v", err)
+	stuck, stuckKeys := f.archivedNote(t, testTenant, "stuck", f.now.Add(-time.Hour))
+	objects.refuse = stuckKeys[2] // the capture's audio
+	_, fineKeys := f.archivedNote(t, testTenant, "fine", f.now.Add(-time.Hour))
+
+	report, err := sweeper.Sweep(context.Background())
+	if err == nil {
+		t.Fatal("Sweep returned nil with a note it could not purge; Lambda would never retry it")
 	}
-	if len(resp.BatchItemFailures) != 1 {
-		t.Fatalf("batch item failures = %v, want exactly one", resp.BatchItemFailures)
+	if report.Expired != 2 || report.Purged != 1 || report.Failed != 1 {
+		t.Fatalf("report = %+v, want 2 expired, 1 purged, 1 failed", report)
 	}
-	if got := resp.BatchItemFailures[0].ItemIdentifier; got != record.Change.SequenceNumber {
-		t.Errorf("item identifier = %q, want the sequence number %q", got, record.Change.SequenceNumber)
+	if alive := f.alive(fineKeys); len(alive) != 0 {
+		t.Errorf("the purgeable note was not purged because its neighbour failed: %v", alive)
 	}
-	if cascade.calls != 1 {
-		t.Errorf("cascade calls = %d, want 1", cascade.calls)
+	if _, err := store.GetNote(context.Background(), testTenant, stuck.ID); err != nil {
+		t.Errorf("the failed note's row is gone (%v); nothing can find its objects now", err)
 	}
 }
 
-// TestNewRefusesAnIncompleteHandler keeps a half-built handler from starting.
-// A nil cascade unlinks nothing and reports success, which is the leak wearing
-// a green tick.
-func TestNewRefusesAnIncompleteHandler(t *testing.T) {
-	if _, err := New(nil, memory.NewObjects()); err == nil {
-		t.Error("New accepted a nil note cascade")
+func TestNewRefusesAnIncompleteSweeper(t *testing.T) {
+	store := memory.NewStore()
+	notes := service.NewNotesService(store, memory.NewObjects())
+	if _, err := New(nil, notes); err == nil {
+		t.Error("New accepted a nil store")
 	}
-	if _, err := New(service.NewNotesService(memory.NewStore(), memory.NewObjects()), nil); err == nil {
-		t.Error("New accepted a nil object store")
+	if _, err := New(store, nil); err == nil {
+		t.Error("New accepted a nil cascade")
 	}
 }

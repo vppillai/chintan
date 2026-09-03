@@ -212,8 +212,10 @@ fi
 info "every secondary index the table declares is readable by the Lambda role"
 # This check exists because its absence caused a production outage.
 #
-# gsi2 was added to order notes by updated_at. The table gained the index; the
-# execution role's Resource list, which enumerates indexes one by one, did not.
+# gsi2 was added to order notes by updated_at (2026-08; the index has since been
+# removed in favour of ordering in Go, but gsi1 remains and the invariant
+# stands). The table gained the index; the execution role's Resource list,
+# which enumerates indexes one by one, did not.
 # Every GET /v1/notes then failed with
 #
 #   AccessDeniedException: ... not authorized to perform: dynamodb:Query on

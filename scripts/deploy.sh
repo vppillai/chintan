@@ -689,8 +689,8 @@ if [ "$SMOKE" = "1" ] && is_apply; then
     log ""
     # /health/ready round-trips DynamoDB and S3 under the Lambda's own role. The
     # liveness probe alone passed a multi-day outage in which the API could not
-    # read the index it had just been deployed against (see the gsi2 note on
-    # the table in the template).
+    # read an index it had just been deployed against (gsi2, since removed; see
+    # the index note on the Lambda role in the template).
     info "smoke: GET ${endpoint}/v1/health/ready"
     curl -fsS --max-time 20 "${endpoint}/v1/health/ready" >&2
     log ""

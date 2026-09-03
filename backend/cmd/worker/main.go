@@ -1,4 +1,4 @@
-// Command worker runs the capture pipeline and the table's expiry stream.
+// Command worker runs the capture pipeline and the weekly expiry sweep.
 //
 // It is a second Lambda because the first one cannot do this work. API Gateway's
 // HTTP API caps an integration at 30 seconds and the cap is not adjustable, so a
@@ -7,28 +7,21 @@
 // followed appended the same text again. Here the ceiling is Lambda's 900
 // seconds and nobody is waiting on the other end of a socket.
 //
-// The capture pipeline is invoked asynchronously: by S3 when a recording lands
-// in the content bucket, and by the API when the user retries a capture or
-// picks its destination. There is no queue in between. A returned error makes
-// Lambda retry the same payload twice, and an invocation that fails all three
-// attempts is written to the dead-letter queue, which is what the capture
-// alarm watches.
+// Everything reaches it asynchronously, through the `live` alias: S3 when a
+// recording lands in the content bucket, the API when the user retries a
+// capture or picks its destination, and an EventBridge rule once a week with
+// {"task":"sweep-expired"}. There is no queue in between. A returned error
+// makes Lambda retry the same payload twice, and an invocation that fails all
+// three attempts is written to the dead-letter queue, which is what the alarm
+// watches.
 //
-// One binary, two event sources, and the template deploys it as two functions.
-// The capture pipeline and the DynamoDB expiry stream want different
-// concurrency, different timeouts and different dead-letter queues, which is
-// why they are separate functions rather than two triggers onto one; but they
-// want the same store, the same object storage and the same cascade, which is
-// why they are one binary rather than a third artifact. A third artifact would
-// have meant a new required template parameter and edits to build-lambda.sh,
-// bootstrap.sh, ci-deploy-stack.sh and the deploy workflow — four more places
-// for a deploy to fail — to save an init this process performs in single-digit
-// milliseconds.
-//
-// Which handler runs is decided by the event, not by configuration: a stream
-// record says `aws:dynamodb`; an S3 notification says `aws:s3`; the API's
-// payload has no records at all. A function pointed at the wrong source
-// therefore does nothing rather than the wrong thing.
+// Which handler runs is decided by the event, not by configuration: a payload
+// naming a task is that task; a payload with records says `aws:s3` on each; the
+// API's payload has neither. A function fed something else does nothing rather
+// than the wrong thing. Until 2026-09 this binary was also deployed as a third
+// function consuming the table's DynamoDB stream to cascade S3 deletes after
+// TTL removed a note; the sweep replaced that function, its event-source
+// mapping, its dead-letter queue and the stream.
 package main
 
 import (
@@ -41,7 +34,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -60,8 +52,8 @@ import (
 )
 
 var (
-	worker *pipeline.Worker
-	purger *purge.Handler
+	worker  *pipeline.Worker
+	sweeper *purge.Sweeper
 )
 
 // setup builds everything the handlers need. It is called from main rather
@@ -152,13 +144,13 @@ func setup() {
 
 	worker = pipeline.NewWorker(p)
 
-	// The expiry stream runs the same cascade a permanent delete runs, over the
+	// The expiry sweep runs the same cascade a permanent delete runs, over the
 	// same store and bucket. Building it here rather than lazily keeps the
 	// failure at init, where the deploy can see it, instead of on the first
-	// expired note thirty days after the deploy that broke it.
-	purger, err = purge.New(notes, objects)
+	// sweep a week after the deploy that broke it.
+	sweeper, err = purge.New(store, notes)
 	if err != nil {
-		log.Fatalf("failed to build the expiry stream handler: %v", err)
+		log.Fatalf("failed to build the expiry sweeper: %v", err)
 	}
 }
 
@@ -226,72 +218,75 @@ func resolveSecret(ctx context.Context, client *ssm.Client, valueEnv, pathEnv st
 	return *out.Parameter.Value, nil
 }
 
-// eventSource names the AWS service a Lambda event came from. Both of the
-// record-bearing sources this binary serves stamp it on every record.
+// eventSource names the AWS service a Lambda event came from. S3 stamps it on
+// every record it delivers.
 type eventSource string
 
-const (
-	sourceS3             eventSource = "aws:s3"
-	sourceDynamoDBStream eventSource = "aws:dynamodb"
-)
+const sourceS3 eventSource = "aws:s3"
 
-// sourceOf reads the event source off the first record.
+// invocation is what the payload sniff decides: a task by name, or the event
+// source of a record-bearing event ("" for a payload with no records, which is
+// the API's).
+type invocation struct {
+	task   string
+	source eventSource
+}
+
+// sniff reads the task name and the first record's event source off a payload.
 //
 // Sniffing the payload rather than reading an environment variable means a
-// function wired to the wrong event source is inert rather than wrong: an S3
-// notification arriving at the expiry function is not run through the purge
-// cascade because it does not claim to be a stream record. Lambda guarantees
-// the field — a record without one is not a record either of these sources
-// produced.
-//
-// An event with no records at all is the API's invocation payload — a capture
-// named directly — or nothing to do; the pipeline worker tells the two apart.
-func sourceOf(raw json.RawMessage) (eventSource, error) {
+// function wired to the wrong trigger is inert rather than wrong. The task is
+// checked first: the sweep's payload has no records and no capture, and read as
+// the API's shape it would reach the pipeline as "addressed no capture" — a
+// silent no-op where a whole week's expiries are concerned.
+func sniff(raw json.RawMessage) (invocation, error) {
 	var probe struct {
+		Task    string `json:"task"`
 		Records []struct {
 			EventSource string `json:"eventSource"`
 		} `json:"Records"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
-		return "", fmt.Errorf("worker: decode event: %w", err)
+		return invocation{}, fmt.Errorf("worker: decode event: %w", err)
 	}
-	if len(probe.Records) == 0 {
-		return "", nil
+	inv := invocation{task: probe.Task}
+	if len(probe.Records) > 0 {
+		inv.source = eventSource(probe.Records[0].EventSource)
 	}
-	return eventSource(probe.Records[0].EventSource), nil
+	return inv, nil
 }
 
-// Handler is the entry point for both event sources.
+// Handler is the entry point for every asynchronous invocation.
 //
-// The two halves speak different protocols to Lambda. The expiry stream is an
-// event source mapping and returns a batch-failure report, so a partial failure
-// means only itself. The capture pipeline is invoked asynchronously and has no
-// batch: it returns nil for done and an error for "retry this payload", and
-// returning a report there would be ignored.
-func Handler(ctx context.Context, raw json.RawMessage) (any, error) {
-	source, err := sourceOf(raw)
+// The return value is the whole protocol: nil for done, an error for "retry
+// this payload". Both halves — a capture and the sweep — are idempotent, so a
+// retry re-does only what did not finish.
+func Handler(ctx context.Context, raw json.RawMessage) error {
+	inv, err := sniff(raw)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	switch source {
-	case sourceDynamoDBStream:
-		var event events.DynamoDBEvent
-		if err := json.Unmarshal(raw, &event); err != nil {
-			return nil, fmt.Errorf("worker: decode dynamodb stream event: %w", err)
-		}
-		return purger.Handle(ctx, event)
+	switch {
+	case inv.task == purge.Task:
+		_, err := sweeper.Sweep(ctx)
+		return err
 
-	case sourceS3, "":
-		// A recording landing in the bucket, or the API naming a capture.
-		return nil, worker.Handle(ctx, raw)
-
-	default:
+	case inv.task != "":
 		// Retrying cannot make this recognisable, so it is logged and dropped
 		// rather than retried until it dead-letters.
+		obs.Log(ctx).Error("ignoring an unrecognised task",
+			slog.String("task", inv.task))
+		return nil
+
+	case inv.source == sourceS3, inv.source == "":
+		// A recording landing in the bucket, or the API naming a capture.
+		return worker.Handle(ctx, raw)
+
+	default:
 		obs.Log(ctx).Error("ignoring an event from an unrecognised source",
-			slog.String("event_source", string(source)))
-		return nil, nil
+			slog.String("event_source", string(inv.source)))
+		return nil
 	}
 }
 

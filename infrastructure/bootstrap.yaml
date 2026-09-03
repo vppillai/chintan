@@ -244,13 +244,15 @@ Resources:
                   - dynamodb:ListTagsOfResource
                   - dynamodb:TagResource
                   - dynamodb:UntagResource
-                  # The expiry stream. UpdateTable is what turns
-                  # StreamSpecification on, and DescribeStream/ListStreams are
-                  # what the table handler and the event-source-mapping handler
-                  # call to resolve the stream ARN afterwards. Enumerated here
-                  # rather than discovered: a missing action on this role costs
-                  # a whole deploy round trip to find, because only a real
-                  # deploy exercises it.
+                  # The table's stream. Nothing consumes one since the expiry
+                  # Lambda went (2026-09), but the deploy that removes it is an
+                  # UpdateTable that turns StreamSpecification off, and the
+                  # event-source-mapping handler still describes the stream to
+                  # delete the mapping. Enumerated here rather than discovered:
+                  # a missing action on this role costs a whole deploy round
+                  # trip to find, because only a real deploy exercises it. Drop
+                  # these two, and the mapping actions below, once every stack
+                  # has taken that deploy.
                   - dynamodb:DescribeStream
                   - dynamodb:ListStreams
                 Resource:
@@ -422,6 +424,27 @@ Resources:
                   - lambda:UntagResource
                   - lambda:ListTags
                 Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*'
+
+              # ExpirySweepRule: the weekly EventBridge schedule that invokes
+              # the worker with {"task":"sweep-expired"}. Rules carry their
+              # name in the ARN, so this is prefix-scoped like everything else;
+              # the tag actions are here because the deploy passes stack tags
+              # and CloudFormation applies them to every resource that can
+              # carry one.
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:DescribeRule
+                  - events:EnableRule
+                  - events:DisableRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:ListTargetsByRule
+                  - events:TagResource
+                  - events:UntagResource
+                  - events:ListTagsForResource
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/chintan-*'
 
               - Effect: Allow
                 Action:
@@ -752,6 +775,31 @@ Resources:
                   - lambda:DeleteFunctionEventInvokeConfig
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-*'
+                Condition:
+                  ForAnyValue:StringEquals:
+                    aws:CalledVia: ['cloudformation.amazonaws.com']
+
+              # ExpirySweepRule, for the deploys that run without
+              # CFN_DEPLOY_ROLE_ARN and therefore act as this role. Same set as
+              # CfnDeployRole's, same prefix scope.
+              - Effect: Allow
+                Action:
+                  - events:DescribeRule
+                  - events:ListTargetsByRule
+                  - events:ListTagsForResource
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/chintan-*'
+
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:DeleteRule
+                  - events:EnableRule
+                  - events:DisableRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                  - events:TagResource
+                  - events:UntagResource
+                Resource: !Sub 'arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/chintan-*'
                 Condition:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']

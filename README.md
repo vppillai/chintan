@@ -2,7 +2,7 @@
 
 Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and the system transcribes, lightly cleans up the text, and appends it to the right note. It runs on serverless AWS (Cognito, Lambda, DynamoDB, S3) with a static frontend on GitHub Pages, and each instance gets its own isolated stack.
 
-The capture pipeline is two Lambdas and no queue: the API Lambda answers HTTP and presigns the upload; S3 invokes the worker Lambda directly when the recording lands, and the worker transcribes, routes, cleans and appends. `POST /v1/captures/{id}/retry` and `/target` invoke the same worker asynchronously. Lambda retries a failed invocation twice on its own, and one that fails all three attempts is written to a dead-letter queue that raises the `capture-dlq` alarm — one message there is one recording that was not filed, and the recovery is the retry button.
+The capture pipeline is two Lambdas and no queue: the API Lambda answers HTTP and presigns the upload; S3 invokes the worker Lambda directly when the recording lands, and the worker transcribes, routes, cleans and appends. `POST /v1/captures/{id}/retry` and `/target` invoke the same worker asynchronously. Lambda retries a failed invocation twice on its own, and one that fails all three attempts is written to a dead-letter queue that raises the `capture-dlq` alarm — one message there is one recording that was not filed, and the recovery is the retry button. Once a week an EventBridge rule invokes the same worker with `{"task":"sweep-expired"}`, and it deletes the objects and rows of archived notes whose thirty-day purge deadline has passed; DynamoDB TTL, set a fortnight later, is only the backstop.
 
 Uses **Groq** (speech-to-text) and an OpenAI-compatible endpoint, **MiniMax-M3** by default (text cleanup), with API keys in AWS SSM Parameter Store.
 
@@ -84,7 +84,7 @@ Biometric sign-in is a Cognito **passkey**: the pool allows `WEB_AUTHN` as a fir
 | `site_path` | `<name>` for prod, `<name>-<environment>` otherwise | The GitHub Pages sub-path. |
 | `display_name` | `<name>` | Human label. |
 | `alarm_email` | none | Subscribed to the alarm topic and the budget. **This repository is public, so the deployed instance sets it from the `ALARM_EMAIL` repository secret instead** (production only — the budget is account-scoped, and two stacks subscribing one address send two emails per overspend). A config value still wins if present, which is what a private fork wants. |
-| `enable_alarms` | `true` | Create this stack's CloudWatch alarms. CloudWatch's always-free allowance is **ten alarm-months** and the template declares exactly ten alarms, so one environment fits precisely and a second identical one costs ~$1.00/month. Shipped `false` for `dev-staging`, whose failures are already caught by the deploy's own smoke test. |
+| `enable_alarms` | `true` | Create this stack's CloudWatch alarms. There are four — API function errors (five in five minutes), the capture dead-letter queue, a rejected provider key, and the spend cap when one is set — none of which e-mails on the return to OK. CloudWatch's always-free allowance is **ten alarm-months** for the whole account, which this project shares with another, so a second environment's copies are billed at $0.10 each. Shipped `false` for `dev-staging`, whose failures are already caught by the deploy's own smoke test. |
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
 | `log_retention_days` | `14` | CloudWatch retention. |
 | `daily_spend_cap_micros` | `0` (count, never enforce) | Instance-wide daily provider spend ceiling, in **microdollars** — `1000000` = $1. One counter for the whole instance (`SPEND#<day>` in the table); the worker reserves against it before every paid call and a capture that would cross it fails with status `spend_capped`. `GET /v1/settings` reports the value so the app can show it. Non-zero also creates the `chintan-<i>-<env>-spend-cap-tripped` alarm. |
@@ -191,7 +191,7 @@ scripts/teardown.sh --apply        # asks for a typed confirmation
 scripts/teardown.sh --apply --yes  # unattended
 ```
 
-It deletes every `chintan-<instance>-<environment>` stack, then `chintan-bootstrap`. For each stack it empties the content bucket, disables Cognito deletion protection, deletes the stack, and then deletes the resources the template deliberately retains — the DynamoDB table, the content bucket and the user pool.
+It deletes every `chintan-<instance>-<environment>` stack, then `chintan-bootstrap`. For each stack it empties the content bucket, disables Cognito deletion protection, deletes the stack, and then deletes the resources the template deliberately retains — the DynamoDB table (turning its deletion protection off first, by name, in the log), the content bucket and the user pool.
 
 Provider secrets under `/chintan/<instance>/` are removed only when no other stack for that instance still needs them.
 
@@ -214,18 +214,8 @@ cd backend && go build -o chintanctl ./cmd/chintanctl
 | `restore --instance <i> --in <dir> [--apply]` | Inverse of `backup`. Verifies both manifests and re-hashes every object body **before** writing anything, and refuses on any mismatch. Dry run by default. |
 | `reconcile --instance <i> [--apply]` | Reports every disagreement between the table and the bucket in both directions: index rows whose objects are gone, objects whose owning row is gone, objects nothing references, and captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row — never a row, never an object it does not understand. |
 | `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere and reports every key it removed. `--apply` requires the tenant id typed exactly, interactively or via `--confirm`. |
-| `reindex --instance <i> [--apply]` | Writes the `gsi2` key attributes onto every note in the tenant, with a conditional `UpdateItem` that sets those two attributes and nothing else — `version` does not move, so an editor open in another tab is unaffected, and a note purged mid-run is skipped rather than resurrected. Idempotent; the count it reports is notes **touched**, not notes repaired, so a second run reports the same number. Dry run by default. **Required after any deploy that adds a secondary index — see below.** |
 
-### Adding a secondary index is a two-step deploy
-
-DynamoDB backfills a new global secondary index only from items that **already carry its key attributes**. Every row written before the index existed carries none, so it is absent from the index — and a list that reads through the index comes back empty. The stack update is therefore only the first half of the change:
-
-```bash
-scripts/deploy.sh ...                             # 1. the index exists but is empty of old rows
-chintanctl reindex --instance dev --environment prod --apply   # 2. the old rows enter it
-```
-
-Between the two the affected list reads empty to the user, so run them back to back. `gsi2` (notes ordered by `updated_at`) was the first index to need this; anything added later needs the same pair of steps, and its own reason to be in `reindex`.
+The table has one secondary index, `gsi1` (note → captures). The notes list orders by `updated_at` in Go after reading the tenant's partition, so there is no index to backfill and no two-step deploy; `chintanctl reindex` and the `gsi2` it served are gone.
 
 Every subcommand takes `--json` for machine-readable results on stdout, with diagnostics on stderr. The table name is derived from the instance (`chintan-<i>-<env>`); the **bucket is read from the stack's `ContentBucketName` output**, not re-derived, because a fourth hand-written copy of a naming convention is a fourth place for it to go stale. Both can be overridden with `--table` / `--bucket`. The principal running `chintanctl` therefore needs `cloudformation:DescribeStacks` on `chintan-*`; without it the tool warns and falls back to the convention.
 

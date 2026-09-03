@@ -98,12 +98,14 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: >
-      Create the CloudWatch alarms for this stack. CloudWatch's always-free
-      allowance is ten alarm-months, and this template declares ten alarms, so a
-      single environment fits exactly and a second identical environment puts
-      half of them outside it — a fixed ~$1.00/month for alarms nobody reads.
-      Set false on an environment whose failures are already caught some other
-      way; the deploy's own smoke test is what gates staging.
+      Create the CloudWatch alarms for this stack. The template declares four
+      (three, plus the spend-cap alarm when a cap is set): API function errors,
+      the capture dead-letter queue, a rejected provider key, and the spend
+      cap. CloudWatch's always-free allowance is ten alarm-months for the whole
+      account, and the account's other project holds alarms too, so a second
+      environment's copies are billed. Set false on an environment whose
+      failures are already caught some other way; the deploy's own smoke test
+      is what gates staging.
 
   MonthlyBudgetUSD:
     Type: Number
@@ -688,10 +690,6 @@ Resources:
           AttributeType: S
         - AttributeName: gsi1sk
           AttributeType: S
-        - AttributeName: gsi2pk
-          AttributeType: S
-        - AttributeName: gsi2sk
-          AttributeType: S
       KeySchema:
         - AttributeName: pk
           KeyType: HASH
@@ -742,76 +740,30 @@ Resources:
               - raw_key
               - routed_key
               - clean_key
-        # gsi2pk = TENANT#<id>#NOTES#{ACTIVE|ARCHIVED}, gsi2sk = the note's
-        # updated_at.
-        #
-        # It exists because the base table cannot answer "most recently
-        # touched". Its sort key is NOTE#<id> and a note id leads with its
-        # CREATION instant, so walking it backwards returns the newest note
-        # MADE — and in a voice app the usual case is a note made months ago
-        # that a capture appended to this morning. Sorting a page after it
-        # arrives is not a substitute: it orders that page and leaves the
-        # collection reversed, so the note you touched last is on the last page.
-        #
-        # gsi2sk is written by the store from model.FormatTime, which pads the
-        # fraction to nine digits. That width is load-bearing: RFC3339Nano trims
-        # trailing zeros, so "…:00Z" sorts above "…:00.1Z" because 'Z' > '.',
-        # and the same bug already handed the capture router the wrong fifty
-        # notes. A sort key cannot be changed without rebuilding the index, so
-        # it is normalised on the way in.
-        #
-        # The shelf is in the partition rather than in a filter because DynamoDB
-        # applies Limit before FilterExpression: a filtered list returns short
-        # pages and has to be re-issued, and active and archived would page each
-        # other out.
-        #
-        # INCLUDE, not ALL, for the same reason as gsi1: ALL projects `data`,
-        # the blob that duplicates every attribute below, which is the transfer
-        # cost this projection exists to avoid. The set is exactly what a note
-        # list renders plus what the archived filter reads, so nothing here
-        # needs a second GetItem. Get it right now — changing a GSI projection
-        # means deleting and rebuilding the index.
-        - IndexName: gsi2
-          KeySchema:
-            - AttributeName: gsi2pk
-              KeyType: HASH
-            - AttributeName: gsi2sk
-              KeyType: RANGE
-          Projection:
-            ProjectionType: INCLUDE
-            NonKeyAttributes:
-              - note_id
-              - title
-              - aliases
-              - tags
-              - snippet
-              - created_at
-              - updated_at
-              - s3_markdown_key
-              - s3_meta_key
-              - deleted_at
-              - purge_after
-              - purge_after_epoch
-              - verbatim
-              - version
+        # There is no second index. gsi2 (notes by updated_at) existed from
+        # 2026-08 to 2026-09 so the notes list could order by touch; the list
+        # now drains the partition from the base table and orders in Go, as the
+        # capture router always did, and the index, its backfill (`chintanctl
+        # reindex`) and the two-step deploy it needed are gone. Removing a GSI
+        # is an in-place UpdateTable — one index change per stack update — not
+        # a replacement; scripts/deploy.sh's guard would refuse a replacement.
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
+      # TTL is the backstop, not the mechanism. The weekly expiry sweep
+      # (ExpirySweepRule → the worker) deletes an archived note's objects and
+      # then its row once purge_after_epoch has passed; the store writes ttl a
+      # fortnight later than that deadline so the sweep wins the race. Nothing
+      # consumes a stream any more — the stream-triggered expiry Lambda went
+      # with the sweep — so the table has no StreamSpecification.
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
-      # NEW_AND_OLD_IMAGES, and the OLD image is the one that matters. TTL
-      # removes an archived note's index row and nothing else, so the S3 objects
-      # it named — audio, raw transcript, routed transcript, cleaned text,
-      # segments, peaks — used to stay in the bucket, billed, referenced by
-      # nothing and reachable by nothing. The only record of what to delete is
-      # the item as it was immediately before it vanished, and a TTL deletion
-      # has no new image at all.
-      #
-      # KEYS_ONLY would carry pk and sk and none of the six S3 keys, which would
-      # force the handler to read a row that no longer exists. NEW_IMAGE is
-      # empty on a REMOVE. Only this view type answers the question.
-      StreamSpecification:
-        StreamViewType: NEW_AND_OLD_IMAGES
+      # Belt to Retain's braces. Retain keeps the table when the STACK is
+      # deleted; this refuses a DeleteTable call on the table itself, which is
+      # the console click or the script bug Retain cannot see. cleanup-aws.sh
+      # turns it off, by name, in the log, immediately before the delete it
+      # intends — the same way it handles the user pool.
+      DeletionProtectionEnabled: true
       Tags:
         - Key: Project
           Value: chintan
@@ -842,28 +794,6 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: !Sub 'chintan-captures-dlq-${InstanceName}-${Environment}'
-      MessageRetentionPeriod: 1209600
-      SqsManagedSseEnabled: true
-      Tags:
-        - Key: Project
-          Value: chintan
-        - Key: Instance
-          Value: !Ref InstanceName
-        - Key: Application
-          Value: Chintan
-
-  # The expiry handler's own dead-letter queue, matching the capture worker's.
-  # A stream record that cannot be unlinked after its retries lands here rather
-  # than ageing out of the stream unnoticed, which is what "the leak came back"
-  # would otherwise look like: nothing in the logs and a bill that grows.
-  #
-  # It holds the record's metadata, not the record. Lambda's OnFailure
-  # destination for a stream sends a pointer — stream ARN, shard, sequence
-  # number range — so no note content and no S3 key reaches this queue.
-  ExpiryDLQ:
-    Type: AWS::SQS::Queue
-    Properties:
-      QueueName: !Sub 'chintan-expiry-dlq-${InstanceName}-${Environment}'
       MessageRetentionPeriod: 1209600
       SqsManagedSseEnabled: true
       Tags:
@@ -1152,15 +1082,18 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:DeleteItem
                   - dynamodb:Query
-                # dynamodb:Scan is deliberately absent. Every access path is a
-                # keyed Query; a Scan here would only ever be a bug that reads
-                # across tenants.
+                  # Scan is for exactly one caller: the weekly expiry sweep,
+                  # which has to find every note past its purge deadline in
+                  # every tenant, and the worker knows no tenant list. Every
+                  # other access path is a keyed Query, and a Scan anywhere
+                  # else in the API would be a bug that reads across tenants.
+                  - dynamodb:Scan
                 # The table, and every index ON that table.
                 #
                 # This enumerated the indexes one by one and listed only gsi1.
-                # When gsi2 was added so the notes list could order by
-                # updated_at, the table gained the index and this list did not,
-                # so every GET /v1/notes failed with
+                # When gsi2 was added (2026-08, since removed) so the notes list
+                # could order by updated_at, the table gained the index and this
+                # list did not, so every GET /v1/notes failed with
                 #
                 #   AccessDeniedException: not authorized to perform:
                 #   dynamodb:Query on resource: table/chintan-dev-prod/index/gsi2
@@ -1179,21 +1112,6 @@ Resources:
                 Resource:
                   - !GetAtt DynamoDBTable.Arn
                   - !Sub '${DynamoDBTable.Arn}/index/*'
-              # The expiry stream. Lambda checks these four at
-              # CreateEventSourceMapping time and refuses the mapping without
-              # them, so a missing grant here fails the deploy rather than the
-              # first expired note. The stream ARN carries a creation-time label
-              # that changes if streams are ever disabled and re-enabled, hence
-              # the wildcard: !GetAtt DynamoDBTable.StreamArn would pin this
-              # policy to one label and silently stop matching after that.
-              - Effect: Allow
-                Action:
-                  - dynamodb:DescribeStream
-                  - dynamodb:GetRecords
-                  - dynamodb:GetShardIterator
-                  - dynamodb:ListStreams
-                Resource:
-                  - !Sub '${DynamoDBTable.Arn}/stream/*'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
@@ -1236,14 +1154,14 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/groq_api_key'
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/llm_api_key'
-              # Still needed, and nothing to do with the retired CMK: reading
-              # any SecureString decrypts it under the AWS-managed aws/ssm key.
-              # That key is free; only customer-managed keys carry the
-              # $1/month/version charge that the vault CMK was costing.
-              - Effect: Allow
-                Action:
-                  - kms:Decrypt
-                Resource: !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm'
+              # No kms:Decrypt. ssm:GetParameter with WithDecryption on a
+              # SecureString under the AWS-managed aws/ssm key is authorised by
+              # the SSM grant alone; the AWS-managed key's policy lets SSM
+              # decrypt on the caller's behalf, and a kms:Decrypt statement on
+              # the key ALIAS ARN would grant nothing in any case, because KMS
+              # authorises against key ARNs, not alias ARNs. The statement that
+              # sat here was dead, and its comment claimed otherwise (review
+              # 2026-09-03, infra M3).
         - PolicyName: CapturePipelineAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1259,30 +1177,17 @@ Resources:
                 Action:
                   - lambda:InvokeFunction
                 Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-${InstanceName}-${Environment}:live'
-              # Both dead-letter destinations are written by LAMBDA using the
-              # function's execution role — the worker's OnFailure destination
-              # (WorkerLambdaEventInvokeConfig) and the expiry stream's. Without
-              # these grants the retries are exhausted and the record is dropped
-              # with the destination silently unwritten and the alarm never
-              # given a datapoint.
+              # The dead-letter destination is written by LAMBDA using the
+              # function's execution role (WorkerLambdaEventInvokeConfig).
+              # Without this grant the retries are exhausted and the record is
+              # dropped with the destination silently unwritten and the alarm
+              # never given a datapoint.
               - Effect: Allow
                 Action:
                   - sqs:SendMessage
                   - sqs:GetQueueAttributes
                 Resource:
                   - !GetAtt CaptureDLQ.Arn
-                  - !GetAtt ExpiryDLQ.Arn
-        - PolicyName: XRayTracing
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              # AWSLambdaBasicExecutionRole does not carry these, and the
-              # bootstrap role may only attach that one managed policy.
-              - Effect: Allow
-                Action:
-                  - xray:PutTraceSegments
-                  - xray:PutTelemetryRecords
-                Resource: '*'
       Tags:
         - Key: Project
           Value: chintan
@@ -1320,8 +1225,13 @@ Resources:
       # single-tenant burst while still bounded, unlike the worker's five,
       # which really is sized for concurrent provider round-trips.
       ReservedConcurrentExecutions: 50
+      # PassThrough: no X-Ray. Every invocation was being sampled and traced
+      # (1,690 traces in August 2026 for one user) for nobody to read; the
+      # traces were inside the free tier but cost ~70 bytes on every REPORT
+      # line and an IAM statement. Flip one function to Active for an
+      # afternoon when there is a latency question.
       TracingConfig:
-        Mode: Active
+        Mode: PassThrough
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
@@ -1356,7 +1266,8 @@ Resources:
 
   # Worker Lambda — the slow half of the pipeline. Transcribe, route, clean,
   # append. Invoked asynchronously by S3 and by the API, so its ceiling is
-  # Lambda's 900s rather than the gateway's 30.
+  # Lambda's 900s rather than the gateway's 30. Also the weekly expiry sweep
+  # (ExpirySweepRule), dispatched on the payload's task field.
   WorkerLambdaFunction:
     Type: AWS::Lambda::Function
     DependsOn: WorkerLogGroup
@@ -1373,8 +1284,13 @@ Resources:
       MemorySize: 2048
       Timeout: 900
       ReservedConcurrentExecutions: 5
+      # PassThrough: no X-Ray. Every invocation was being sampled and traced
+      # (1,690 traces in August 2026 for one user) for nobody to read; the
+      # traces were inside the free tier but cost ~70 bytes on every REPORT
+      # line and an IAM statement. Flip one function to Active for an
+      # afternoon when there is a latency question.
       TracingConfig:
-        Mode: Active
+        Mode: PassThrough
       Environment:
         Variables:
           TABLE_NAME: !Ref DynamoDBTable
@@ -1392,72 +1308,6 @@ Resources:
           # fails closed at init with "auth: issuer is required" and every
           # request 500s. Fail-closed is right; shipping only half the config was
           # not.
-          USER_POOL_ID: !Ref UserPool
-          USER_POOL_CLIENT_ID: !Ref UserPoolClient
-          DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
-      Tags:
-        - Key: Project
-          Value: chintan
-        - Key: Instance
-          Value: !Ref InstanceName
-        - Key: Application
-          Value: Chintan
-
-  # Expiry Lambda — unlinks the S3 objects belonging to a record DynamoDB TTL
-  # has expired. Same deployment package as the worker (backend/cmd/worker
-  # dispatches on the event's own eventSource), a different function.
-  #
-  # A separate function rather than a second event source mapping on the worker,
-  # for reasons that are all about blast radius rather than code:
-  #   * Concurrency. The worker's five reserved executions are sized for
-  #     provider round-trips measured in minutes. A month's worth of notes
-  #     expiring in one hour must not consume them and leave a recording the
-  #     user just made waiting in Lambda's retry queue.
-  #   * Timeout. 900 seconds is right for a transcription and absurd for a
-  #     handful of DeleteObject calls; five minutes bounds a runaway.
-  #   * Its own dead-letter queue and its own alarm, which is only possible per
-  #     function.
-  #   * Memory. 2048 MB is sized for the worker's provider work; this holds a
-  #     page of capture rows.
-  #
-  # Same package rather than a third artifact: a new zip would mean a new
-  # required template parameter plus edits to build-lambda.sh, bootstrap.sh,
-  # ci-deploy-stack.sh and the deploy workflow, and a required parameter with no
-  # default breaks every existing deploy invocation that does not yet pass it.
-  ExpiryLambdaFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: ExpiryLogGroup
-    Properties:
-      FunctionName: !Sub 'chintan-expiry-${InstanceName}-${Environment}'
-      Runtime: provided.al2023
-      Handler: bootstrap
-      Code:
-        S3Bucket: !Ref LambdaCodeBucket
-        S3Key: !Ref WorkerCodeKey
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Architectures:
-        - arm64
-      MemorySize: 512
-      Timeout: 300
-      ReservedConcurrentExecutions: 2
-      TracingConfig:
-        Mode: Active
-      Environment:
-        Variables:
-          TABLE_NAME: !Ref DynamoDBTable
-          # Spelled out rather than !Ref'd, to keep the function off the
-          # bucket → alias → function → role cycle; see ContentBucket.
-          CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
-          ALLOWED_ORIGIN: !Ref AllowedOrigin
-          LLM_BASE_URL: https://api.minimax.io/v1
-          LLM_MODEL: MiniMax-M3
-          # The binary is shared with the worker and refuses to start without a
-          # resolvable provider key, deliberately: that fail-fast is what stops
-          # a misconfigured worker from reporting healthy. This function never
-          # calls a provider, but it is the same process and must satisfy the
-          # same contract.
-          GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
-          LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
@@ -1517,20 +1367,6 @@ Resources:
       FunctionVersion: !GetAtt WorkerLambdaInitialVersion.Version
       Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
 
-  ExpiryLambdaInitialVersion:
-    Type: AWS::Lambda::Version
-    Properties:
-      FunctionName: !Ref ExpiryLambdaFunction
-      Description: Initial version, so the live alias has a target at stack create.
-
-  ExpiryLambdaLiveAlias:
-    Type: AWS::Lambda::Alias
-    Properties:
-      FunctionName: !Ref ExpiryLambdaFunction
-      Name: live
-      FunctionVersion: !GetAtt ExpiryLambdaInitialVersion.Version
-      Description: Traffic pointer. Moved by scripts/deploy.sh, not by this template.
-
   # How the worker's asynchronous invocations are retried, and where one that
   # cannot be goes. This applies to every asynchronous invocation of the alias
   # alike — S3's notification and the API's retry and target.
@@ -1553,8 +1389,11 @@ Resources:
     # The Qualifier is the alias NAME, not a reference, so nothing here orders
     # this against the alias existing; DependsOn does. Lambda also validates,
     # when the destination is written, that the execution role can SendMessage
-    # to it — the same race TableExpiryEventSourceMapping documents — so the
-    # role is named too rather than reached transitively through the function.
+    # to it, and nothing otherwise orders this against LambdaExecutionRole —
+    # the dependency runs through the alias to the function to the role, so
+    # CloudFormation is free to write the destination while the role's inline
+    # policy is still propagating — so the role is named too rather than
+    # reached transitively through the function.
     DependsOn:
       - WorkerLambdaLiveAlias
       - LambdaExecutionRole
@@ -1572,60 +1411,52 @@ Resources:
           # the queue.
           Destination: !GetAtt CaptureDLQ.Arn
 
-  # The expiry stream. This is what closes the orphaned-object leak: TTL removes
-  # an archived note's index row, and this mapping is how anything finds out.
-  TableExpiryEventSourceMapping:
-    Type: AWS::Lambda::EventSourceMapping
-    # Lambda validates the execution role's stream permissions when the mapping
-    # is created. Nothing otherwise orders this against LambdaExecutionRole: the
-    # dependency runs through the alias to the function to the role, so
-    # CloudFormation is free to create the mapping while the role's inline
-    # policy is still propagating, and it fails naming a permission the role
-    # demonstrably has. DependsOn makes the ordering explicit rather than
-    # transitive. It does not abolish IAM's eventual consistency -- nothing in a
-    # template can -- so a first create can still lose the race; the deploy
-    # script clears ROLLBACK_COMPLETE so a retry is one re-run rather than a
-    # manual cleanup.
-    DependsOn:
-      - LambdaExecutionRole
+  # The weekly expiry sweep. Archiving a note stamps it with a purge deadline
+  # thirty days out; once that has passed the note's objects — its body, its
+  # metadata, and every capture filed against it with its audio and transcripts
+  # — have to leave the bucket, and DynamoDB TTL deletes rows, not objects.
+  # This rule invokes the worker once a week with a constant payload naming the
+  # task (internal/purge.Task), and the worker scans for notes past their
+  # deadline, runs the same cascade a user's "delete forever" runs, and deletes
+  # the row. TTL, set a fortnight after the deadline by the store, is only the
+  # backstop for a sweep that did not run.
+  #
+  # This replaced a third Lambda function consuming the table's stream, with
+  # its own event-source mapping, dead-letter queue, log group, alias, two
+  # alarms and four stream permissions on the role — ~260 lines of Go and
+  # template for what is one scan and one cascade a week (review 2026-09-03,
+  # §4). A week is the cadence because the objects are already invisible: the
+  # archived list filters on the same deadline, so nothing the user can reach
+  # changes between the deadline and the sweep, only the bucket's bill.
+  #
+  # The target is the live alias, like every other way into the worker, so a
+  # rollback that moves the alias moves the sweep too. The invocation is
+  # asynchronous (EventBridge's default for Lambda), so a sweep that returns an
+  # error is retried by Lambda twice and then dead-lettered to CaptureDLQ with
+  # the others — the depth alarm's description covers both.
+  ExpirySweepRule:
+    Type: AWS::Events::Rule
     Properties:
-      EventSourceArn: !GetAtt DynamoDBTable.StreamArn
-      # The alias, not the function, so a rollback moves this too.
-      FunctionName: !Ref ExpiryLambdaLiveAlias
-      Enabled: true
-      # TRIM_HORIZON, not LATEST. The stream is created empty by this same
-      # change, so on a first deploy the two are identical — but if the mapping
-      # is ever replaced, LATEST silently discards every expiry that happened
-      # in between, and those are precisely the records nothing else can
-      # reconstruct. Replaying up to 24 hours is harmless because the handler
-      # is idempotent: a redelivered record re-deletes objects that are already
-      # gone, which repository.Objects reports as success.
-      StartingPosition: TRIM_HORIZON
-      BatchSize: 10
-      MaximumRetryAttempts: 3
-      # A poison record must not block its shard. Without this, one record the
-      # handler cannot process is retried with the whole batch until it ages
-      # out, and every expiry behind it waits.
-      BisectBatchOnFunctionError: true
-      FunctionResponseTypes:
-        - ReportBatchItemFailures
-      DestinationConfig:
-        OnFailure:
-          Destination: !GetAtt ExpiryDLQ.Arn
-      # Belt to the handler's braces. purge.IsTTLExpiry makes the same decision
-      # in code and is what the tests cover; this filter means Lambda is never
-      # invoked for the other 99% of the stream — every note write, every
-      # capture status change, every idempotency record — which is both the
-      # cost argument and a second lock on the one mistake that matters.
-      #
-      # userIdentity is stamped only on a deletion DynamoDB performed itself.
-      # A user pressing "delete forever" produces a REMOVE with no userIdentity
-      # at all, does not match this pattern, and must not: that path has already
-      # deleted its own objects, and unlinking again on an ordinary archive
-      # would destroy a recording the user still has.
-      FilterCriteria:
-        Filters:
-          - Pattern: '{"eventName":["REMOVE"],"userIdentity":{"type":["Service"],"principalId":["dynamodb.amazonaws.com"]}}'
+      Name: !Sub 'chintan-${InstanceName}-${Environment}-expiry-sweep'
+      Description: Weekly sweep of archived notes past their purge deadline; invokes the worker with {"task":"sweep-expired"}.
+      ScheduleExpression: rate(7 days)
+      State: ENABLED
+      Targets:
+        - Id: worker
+          Arn: !Ref WorkerLambdaLiveAlias
+          Input: '{"task":"sweep-expired"}'
+
+  # EventBridge may invoke the worker. On the alias, for the same reason as
+  # ContentBucketInvokesWorkerPermission: the rule names the alias, and a
+  # qualified invocation is authorised against the qualified resource. Scoped
+  # to this one rule's ARN so no other rule in the account can invoke it.
+  ExpirySweepRuleInvokesWorkerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkerLambdaLiveAlias
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ExpirySweepRule.Arn
 
   # CloudWatch Log Group
   ApiLogGroup:
@@ -1645,19 +1476,6 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/chintan-worker-${InstanceName}-${Environment}'
-      RetentionInDays: !Ref LogRetentionDays
-      Tags:
-        - Key: Project
-          Value: chintan
-        - Key: Instance
-          Value: !Ref InstanceName
-        - Key: Application
-          Value: Chintan
-
-  ExpiryLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/lambda/chintan-expiry-${InstanceName}-${Environment}'
       RetentionInDays: !Ref LogRetentionDays
       Tags:
         - Key: Project
@@ -1820,8 +1638,6 @@ Resources:
         # ApiRequests/ApiLatency metrics already carry the real registered-route
         # breakdown.
         #
-        # Api5xxRateAlarm is unaffected: it dimensions on ApiId alone, and the
-        # ApiId and (ApiId, Stage) sets are published by default at no charge.
         DetailedMetricsEnabled: false
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
@@ -1928,85 +1744,38 @@ Resources:
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-
-  ApiFunctionThrottlesAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-throttles'
-      AlarmDescription: API Lambda hit its reserved concurrency ceiling.
-      Namespace: AWS/Lambda
-      MetricName: Throttles
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref ApiLambdaFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
+      # Five in five minutes, not one. The Errors metric counts the function
+      # faulting — a panic, a timeout, an init failure — never an application
+      # 5xx, and the one-error threshold this had until 2026-09 fired only
+      # during development. One fault from a provider blip is the retry's
+      # problem; five in a window is an outage.
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
 
-  WorkerFunctionErrorsAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-errors'
-      AlarmDescription: Worker Lambda failed an attempt at a capture. Lambda retries it twice; this fires before the DLQ does.
-      Namespace: AWS/Lambda
-      MetricName: Errors
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref WorkerLambdaFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-
-  WorkerFunctionThrottlesAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-worker-throttles'
-      AlarmDescription: Worker Lambda hit its reserved concurrency ceiling; Lambda is holding captures for retry.
-      Namespace: AWS/Lambda
-      MetricName: Throttles
-      Dimensions:
-        - Name: FunctionName
-          Value: !Ref WorkerLambdaFunction
-      Statistic: Sum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-
+  # There are deliberately no Throttles alarms, no worker Errors alarm and no
+  # API 5xx-rate alarm. Cost review 2026-09-03: of ten alarms, five had never
+  # left OK, two fired only while the developer was watching in August, and
+  # twelve of the eighteen e-mails ever sent were OK transitions or creation
+  # notices. The throttles alarms watched a reserved-concurrency ceiling one
+  # browser tab cannot reach; the worker's Errors alarm fired before the DLQ
+  # alarm said the same thing; and the 5xx-rate alarm, an average over a quiet
+  # five minutes, tripped on a single 500 in ten requests. Four remain, and
+  # none notifies on OK.
+  #
   # A single message here is one recording the user believes was filed and was
-  # not: an asynchronous invocation of the worker failed all three attempts and
-  # Lambda wrote its OnFailure record here.
+  # not — an asynchronous invocation of the worker failed all three attempts
+  # and Lambda wrote its OnFailure record here — or a weekly expiry sweep that
+  # could not finish (the same alias, the same destination; the record names
+  # which).
   CaptureDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-dlq'
-      AlarmDescription: A capture exhausted its retries; its failure record is in the dead-letter queue. Retry it from the app.
+      AlarmDescription: A worker invocation exhausted its retries and its failure record is in the dead-letter queue — a capture (retry it from the app) or the weekly expiry sweep (read the record).
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Dimensions:
@@ -2020,50 +1789,19 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-
-  # A message here is an expired note whose objects were not unlinked. Nothing
-  # else reports that: the index row is already gone, the UI never showed the
-  # note again, and the only symptom is a storage bill that keeps growing.
-  #
-  # There is deliberately no companion Errors alarm on ExpiryLambdaFunction, as
-  # there is on the worker. The worker's exists because a capture failure is
-  # user-visible and worth hearing about before the DLQ fills two retries
-  # later; nobody is waiting on an expiry, and an alarm per transient
-  # DeleteObject blip would be noise for a job the retries fix on their own.
-  ExpiryDLQDepthAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-expiry-dlq'
-      AlarmDescription: An expired record exhausted its retries; its S3 objects are still in the bucket.
-      Namespace: AWS/SQS
-      MetricName: ApproximateNumberOfMessagesVisible
-      Dimensions:
-        - Name: QueueName
-          Value: !GetAtt ExpiryDLQ.QueueName
-      Statistic: Maximum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
 
   # ---------------------------------------------------------------------------
-  # Provider credentials and provider throttling. Two alarms rather than one,
-  # because the two failures need opposite responses and merging them gives
-  # either false alarms or a missed outage.
+  # Provider credentials. A rejected key does not resolve itself and every
+  # capture fails the same way until it is replaced, so it is worth an e-mail
+  # on the first occurrence. Provider throttling (429) used to have a sibling
+  # alarm here; it never fired outside development and ordinary throttling
+  # clears on its own, so it is gone.
   #
-  # Both read a DIMENSIONLESS metric. obs.EmitWithRollup publishes each counter
+  # This reads a DIMENSIONLESS metric. obs.EmitWithRollup publishes the counter
   # under two identities — {Provider} for the answer, and no dimensions for the
-  # alarm — precisely so these can be plain metric alarms. SpendCapRejectionsAlarm
-  # below now does the same; it was the one Metrics Insights query alarm here,
-  # and that form is billed per metric analysed with no free tier. See
+  # alarm — precisely so this can be a plain metric alarm. SpendCapRejectionsAlarm
+  # below does the same; it was once a Metrics Insights query alarm, and that
+  # form is billed per metric analysed with no free tier. See
   # docs/cost-analysis.md §5.3.
   #
   # Neither the pipeline nor the handler notifies anybody directly. The email is
@@ -2092,58 +1830,6 @@ Resources:
       # healthy state.
       TreatMissingData: notBreaching
       AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-
-  ProviderRateLimitedAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-provider-rate-limited'
-      AlarmDescription: >-
-        A provider has been answering 429 continuously for fifteen minutes.
-        Ordinary throttling clears long before this fires.
-      Namespace: Chintan
-      MetricName: ProviderRateLimited
-      Statistic: Sum
-      Period: 300
-      # Three consecutive five-minute windows, each containing at least one
-      # rejection. A single 429 — the common case, and self-resolving — produces
-      # one datapoint and two missing periods, and notBreaching means those two
-      # do not count. Only sustained throttling reaches all three.
-      EvaluationPeriods: 3
-      DatapointsToAlarm: 3
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
-
-  # Average of the 5xx metric is the 5xx rate: 0.05 is five percent of requests.
-  Api5xxRateAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Condition: AlarmsEnabled
-    Properties:
-      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-5xx-rate'
-      AlarmDescription: More than five percent of API requests are failing server-side.
-      Namespace: AWS/ApiGateway
-      MetricName: 5xx
-      Dimensions:
-        - Name: ApiId
-          Value: !Ref HttpApi
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 2
-      DatapointsToAlarm: 2
-      Threshold: 0.05
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions:
-        - !Ref AlarmTopic
-      OKActions:
         - !Ref AlarmTopic
 
   # A breaker nobody hears about is a silent outage with a good excuse: captures
@@ -2187,8 +1873,6 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlarmTopic
-      OKActions:
-        - !Ref AlarmTopic
 
   # ---------------------------------------------------------------------------
   # Cost ceiling, in the template rather than in a README copy-paste step that
@@ -2198,6 +1882,10 @@ Resources:
   # ---------------------------------------------------------------------------
   MonthlyBudget:
     Type: AWS::Budgets::Budget
+    # Only with somebody to tell. A budget is account-scoped, so staging's was
+    # a second copy of prod's number with no subscriber — clutter in the
+    # console and nothing else. Budgets are free; this is tidiness, not cost.
+    Condition: HasAlarmEmail
     Properties:
       Budget:
         # Deliberately unnamed, and this is load-bearing rather than an
@@ -2221,25 +1909,23 @@ Resources:
         BudgetLimit:
           Amount: !Ref MonthlyBudgetUSD
           Unit: USD
-      NotificationsWithSubscribers: !If
-        - HasAlarmEmail
-        - - Notification:
-              NotificationType: ACTUAL
-              ComparisonOperator: GREATER_THAN
-              Threshold: 80
-              ThresholdType: PERCENTAGE
-            Subscribers:
-              - SubscriptionType: EMAIL
-                Address: !Ref AlarmEmail
-          - Notification:
-              NotificationType: FORECASTED
-              ComparisonOperator: GREATER_THAN
-              Threshold: 100
-              ThresholdType: PERCENTAGE
-            Subscribers:
-              - SubscriptionType: EMAIL
-                Address: !Ref AlarmEmail
-        - !Ref AWS::NoValue
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlarmEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlarmEmail
 
 Outputs:
   ApiEndpoint:
@@ -2289,18 +1975,6 @@ Outputs:
     Value: !Ref WorkerLambdaFunction
     Export:
       Name: !Sub '${AWS::StackName}-WorkerFunctionName'
-
-  ExpiryFunctionName:
-    Description: Expiry Lambda function name (DynamoDB TTL stream consumer)
-    Value: !Ref ExpiryLambdaFunction
-    Export:
-      Name: !Sub '${AWS::StackName}-ExpiryFunctionName'
-
-  ExpiryDLQUrl:
-    Description: Dead-letter queue for expired records whose objects were not unlinked
-    Value: !Ref ExpiryDLQ
-    Export:
-      Name: !Sub '${AWS::StackName}-ExpiryDLQUrl'
 
   AlarmTopicArn:
     Description: SNS topic every alarm publishes to

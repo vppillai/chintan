@@ -142,8 +142,8 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Most recently touched first, matching the GSI2 query the DynamoDB store
-	// issues. Ordering by note id here instead would order by CREATION, and the
+	// Most recently touched first, matching the order the DynamoDB store
+	// builds. Ordering by note id here instead would order by CREATION, and the
 	// double would then quietly disagree with production about the one thing
 	// this list is for — every service and handler test runs against this store.
 	type entry struct{ sortKey, id string }
@@ -153,8 +153,8 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 			continue
 		}
 		// Fixed-width instant, then id to break a tie deterministically. The
-		// width matters for the same reason it does in the index: RFC3339Nano
-		// trims trailing zeros and stops sorting chronologically.
+		// width matters for the same reason it does in the real store:
+		// RFC3339Nano trims trailing zeros and stops sorting chronologically.
 		entries = append(entries, entry{sortKey: noteTouchedSortKey(n) + "\x00" + id, id: id})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].sortKey > entries[j].sortKey })
@@ -173,8 +173,8 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 	})
 }
 
-// noteTouchedSortKey renders a note's update time the way the GSI2 sort key is
-// written, so the double orders notes the way the table does.
+// noteTouchedSortKey renders a note's update time the way the DynamoDB store
+// orders on, so the double orders notes the way production does.
 func noteTouchedSortKey(n model.NoteIndex) string {
 	if t, err := model.ParseTime(n.UpdatedAt); err == nil {
 		return model.FormatTime(t)
@@ -193,6 +193,30 @@ func (s *Store) ListArchivedNotes(ctx context.Context, tenantID string, opts rep
 	return s.listNotes(ctx, tenantID, opts, func(n model.NoteIndex) bool {
 		return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
 	})
+}
+
+func (s *Store) ExpiredNotes(ctx context.Context, asOf int64) ([]repository.TenantNote, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []repository.TenantNote
+	for tenantID, notes := range s.notes {
+		for _, n := range notes {
+			if n.PurgeAfterEpoch > 0 && n.PurgeAfterEpoch < asOf {
+				out = append(out, repository.TenantNote{TenantID: tenantID, Note: copyNote(n)})
+			}
+		}
+	}
+	// Deterministic for tests: by tenant, then id.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TenantID != out[j].TenantID {
+			return out[i].TenantID < out[j].TenantID
+		}
+		return out[i].Note.ID < out[j].Note.ID
+	})
+	return out, nil
 }
 
 func (s *Store) GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
