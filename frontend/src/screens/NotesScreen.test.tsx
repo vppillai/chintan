@@ -145,6 +145,46 @@ describe('archiving several notes at once, instead of one at a time from inside 
     expect(screen.queryByRole('checkbox')).toBeNull();
   });
 
+  it('deletes every selected note forever: archives, then purges, behind a typed confirmation', async () => {
+    const user = userEvent.setup();
+    const archived: string[] = [];
+    let purged: string[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (method === 'DELETE' && url.includes('/v1/notes/')) {
+        archived.push(decodeURIComponent(url.split('/v1/notes/')[1] ?? ''));
+        return json({});
+      }
+      if (method === 'POST' && url.endsWith('/v1/notes/purge')) {
+        const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
+        purged = body.note_ids;
+        return json({
+          results: purged.map((id) => ({ note_id: id, status: 'purged' })),
+        });
+      }
+      return json({ items: TEST_NOTES });
+    });
+    mount(fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
+
+    // Gated: the confirm stays disabled until the word is typed.
+    const confirm = await screen.findByRole('button', { name: 'Delete them forever' });
+    expect(confirm).toBeDisabled();
+    await user.type(screen.getByLabelText('Type "delete" to confirm'), 'delete');
+    await user.click(confirm);
+
+    await waitFor(() => {
+      expect(purged).toEqual(TEST_NOTES.map((note) => note.id));
+    });
+    // Every note was archived first, because the server only purges archived notes.
+    expect([...archived].sort()).toEqual(TEST_NOTES.map((note) => note.id).sort());
+    expect(await screen.findByRole('button', { name: 'Select' })).toBeInTheDocument();
+  });
+
   it('selects and deselects everything with one control', async () => {
     const user = userEvent.setup();
     mount(vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES })));
