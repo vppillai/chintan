@@ -1149,7 +1149,12 @@ func (s *DynamoStore) BeginIdempotent(ctx context.Context, tenantID, key, finger
 	token := hex.EncodeToString(tokenBytes)
 
 	now := time.Now().Unix()
-	expires := time.Now().Add(IdemTTL).Unix()
+	// `ttl` is when DynamoDB may delete the item and is the full TTL from the
+	// start, since deletion is lazy anyway. `idem_expires_at` is what the
+	// condition below honours, and a bare claim is honoured only for the lease;
+	// CompleteIdempotent extends it to the full TTL once a response exists.
+	ttl := time.Now().Add(IdemTTL).Unix()
+	claimExpires := time.Now().Add(IdemClaimLease).Unix()
 
 	// There is deliberately no idem_response here. A claimed key has no response
 	// yet, and absence is how that is spelled: an AttributeValue must carry
@@ -1173,8 +1178,8 @@ func (s *DynamoStore) BeginIdempotent(ctx context.Context, tenantID, key, finger
 		"idem_done":         &types.AttributeValueMemberBOOL{Value: false},
 		"idem_status":       numAttr(0),
 		"idem_claimed_at":   numAttr(now),
-		"ttl":               numAttr(expires),
-		"idem_expires_at":   numAttr(expires),
+		"ttl":               numAttr(ttl),
+		"idem_expires_at":   numAttr(claimExpires),
 		"idem_tenant_scope": strAttr(tenantID),
 	}
 
@@ -1253,10 +1258,14 @@ func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key stri
 	// attribute is left out of the SET instead of written empty. idem_done is
 	// what records completion; idem_response only carries a body when there is
 	// one.
-	update := "SET idem_done = :done, idem_status = :status"
+	//
+	// Completion is also when the record earns its full lifetime: the claim was
+	// honoured only for IdemClaimLease, the recorded response for IdemTTL.
+	update := "SET idem_done = :done, idem_status = :status, idem_expires_at = :expires"
 	values := map[string]types.AttributeValue{
-		":done":   &types.AttributeValueMemberBOOL{Value: true},
-		":status": numAttr(int64(status)),
+		":done":    &types.AttributeValueMemberBOOL{Value: true},
+		":status":  numAttr(int64(status)),
+		":expires": numAttr(time.Now().Add(IdemTTL).Unix()),
 	}
 	if len(response) > 0 {
 		update += ", idem_response = :response"
@@ -1278,6 +1287,32 @@ func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key stri
 			return ErrNotFound
 		}
 		return fmt.Errorf("dynamo complete idempotent: %w", err)
+	}
+	return nil
+}
+
+func (s *DynamoStore) AbandonIdempotent(ctx context.Context, tenantID, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Only an unfinished claim is deleted. A completed record is the answer a
+	// replay is owed, and the condition is what stops a late abandon — say from
+	// a request that 5xx'd after a concurrent SDK retry had committed — from
+	// destroying it.
+	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(idemSK(key)),
+		},
+		ConditionExpression:       aws.String("attribute_exists(pk) AND idem_done = :notdone"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":notdone": &types.AttributeValueMemberBOOL{Value: false}},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return nil // nothing claimed, or already completed
+		}
+		return fmt.Errorf("dynamo abandon idempotent: %w", err)
 	}
 	return nil
 }

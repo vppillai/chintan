@@ -144,13 +144,21 @@ func TestRetryAfterAFailedFinishAppendsExactlyOnce(t *testing.T) {
 		t.Fatal("capture was marked appended despite the failure; the test no longer reproduces the retry window")
 	}
 
-	// The retry. It must recognise its own claim and skip the append.
-	if _, err := f.run(ctx); err != nil {
+	// The retry. It must recognise its own claim, skip the append, and — this
+	// is the part that used to be missing — actually finish the capture. A
+	// retry that left it in `appending` passed this test while the progress
+	// card spun forever.
+	final, err := f.run(ctx)
+	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 
 	if got := strings.Count(f.body(t), appendedText); got != 1 {
 		t.Fatalf("note body contains the dictated text %d times after a retry, want exactly 1:\n%s", got, f.body(t))
+	}
+	if final.Status != model.StatusAppended || final.AppendedAt == 0 {
+		t.Fatalf("status = %s, appended_at = %d after the retry; want appended and set",
+			final.Status, final.AppendedAt)
 	}
 }
 
