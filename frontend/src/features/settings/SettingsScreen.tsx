@@ -207,27 +207,23 @@ export function SettingsScreen() {
         <h2 id={spendId} className="settings-group__title">
           Daily spending cap
         </h2>
-        <div className="settings-field">
-          <span className="settings-field__prefix">$</span>
-          <label className="visually-hidden" htmlFor={`${spendId}-input`}>
-            Daily spending cap in dollars
-          </label>
-          <input
-            id={`${spendId}-input`}
-            className="settings-input numeric"
-            type="number"
-            min={0}
-            step="0.10"
-            value={microsToDollars(draft.daily_spend_cap_micros ?? 0)}
-            onChange={(event) => {
-              update({ daily_spend_cap_micros: dollarsToMicros(Number(event.target.value)) });
-            }}
-          />
-        </div>
+        {/*
+          Read-only since v3 step 3: the cap is one number for the whole
+          instance, set in the deploy config (`daily_spend_cap_micros`) and
+          echoed back by the API. Before that it was a per-user field this
+          screen edited, which the server now accepts and ignores — so the
+          input was a control that did nothing.
+        */}
         <p className="settings-group__note">
-          {(draft.daily_spend_cap_micros ?? 0) === 0
-            ? 'No cap. Usage is still measured.'
-            : 'Captures stop once the cap is reached, and say so rather than failing vaguely.'}
+          {(draft.daily_spend_cap_micros ?? 0) === 0 ? (
+            'No cap is set for this instance. Usage is still measured.'
+          ) : (
+            <>
+              <span className="numeric">${microsToDollars(draft.daily_spend_cap_micros ?? 0)}</span>{' '}
+              a day across transcription and cleanup. Captures stop once it is reached, and say
+              so rather than failing vaguely. It is set in the instance configuration, not here.
+            </>
+          )}
         </p>
       </section>
 
