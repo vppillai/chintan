@@ -8,9 +8,16 @@ pwa:
   background_color: "#F7F3EB"
 
 # Instance-wide, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1,
-# so this is $5/day. Without a non-zero value here the template's HasSpendCap is
-# false and the chintan-dev-prod-spend-cap-tripped alarm is never created, which
-# leaves a runaway provider loop bounded only by the monthly Budgets email.
+# so this is $5/day. One SPEND#<day> counter for the whole instance; the worker
+# reserves against it before every paid call and a capture that would cross it
+# fails with status spend_capped. Without a non-zero value here the template's
+# HasSpendCap is false and the chintan-dev-prod-spend-cap-tripped alarm is never
+# created, which leaves a runaway provider loop bounded only by the monthly
+# Budgets email.
 daily_spend_cap_micros: 5000000
 
-# Cognito app client is created by CFN; invite first user via AWS console or scripts later
+# Alarms default on: API function errors, the worker dead-letter queue (a lost
+# capture or a failed expiry sweep), a rejected provider key, and the spend cap
+# above.
+# The address they e-mail comes from the ALARM_EMAIL repository secret, not from
+# this public file. The first user is created with scripts/invite-user.sh.
