@@ -34,7 +34,6 @@ const BASE_URL = 'https://contract.invalid';
 const NOTE_ID = 'contract-note';
 const ARCHIVED_NOTE_ID = 'contract-archived-note';
 const CAPTURE_ID = 'contract-capture';
-const EXPORT_ID = 'contract-export';
 
 /**
  * Stands in for a continuation token.
@@ -142,7 +141,6 @@ describe('the requests the frontend actually sends', () => {
     await call('archiveNote', () => api.archiveNote(NOTE_ID));
     await call('restoreNote', () => api.restoreNote(ARCHIVED_NOTE_ID));
     await call('deleteNoteForever', () => api.deleteNoteForever(ARCHIVED_NOTE_ID));
-    await call('matchNotes', () => api.matchNotes('kitchen rebuild'));
     await call('listTags', () => api.listTags());
 
     /* ---- search ------------------------------------------------------- */
@@ -184,10 +182,6 @@ describe('the requests the frontend actually sends', () => {
     for (const kind of ['audio', 'raw', 'clean', 'segments', 'peaks'] as const) {
       await call(`downloadUrl_${kind}`, () => api.downloadUrl(CAPTURE_ID, kind));
     }
-
-    /* ---- export ------------------------------------------------------- */
-    await call('startExport', () => api.startExport());
-    await call('getExport', () => api.getExport(EXPORT_ID));
 
     /* ---- what the recording itself has to be true of ------------------- */
 

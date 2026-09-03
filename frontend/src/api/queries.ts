@@ -23,7 +23,6 @@ import type {
   CaptureListQuery,
   CaptureWire,
   NoteListQuery,
-  NoteUpdateWire,
   Page,
   SettingsWire,
 } from './schema.ts';
@@ -101,18 +100,6 @@ export function useNote(noteId: string | undefined) {
       return note;
     },
     enabled: Boolean(noteId),
-  });
-}
-
-export function useUpdateNote(noteId: string) {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: NoteUpdateWire) => api.updateNote(noteId, body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
-    },
   });
 }
 
@@ -319,25 +306,6 @@ export function useSaveSettings() {
    Captures
    --------------------------------------------------------------------------- */
 
-/** How long to keep polling a capture before giving up and offering Retry. */
-export const CAPTURE_POLL_MAX_MS = 10 * 60_000;
-const CAPTURE_POLL_MIN_MS = 2_000;
-const CAPTURE_POLL_MAX_INTERVAL_MS = 20_000;
-
-/**
- * Backoff for the progress card's poll.
- *
- * Bounded and widening: a capture that is still running after five minutes is
- * not going to be helped by asking every two seconds, and a stuck pipeline
- * should not cost the user a request per second of standing still.
- */
-export function capturePollInterval(startedAt: number, now: number = Date.now()): number | false {
-  const elapsed = now - startedAt;
-  if (elapsed > CAPTURE_POLL_MAX_MS) return false;
-  const widened = CAPTURE_POLL_MIN_MS * 2 ** Math.floor(elapsed / 60_000);
-  return Math.min(widened, CAPTURE_POLL_MAX_INTERVAL_MS);
-}
-
 /**
  * How long a just-filed capture keeps its "Filed" row once appended, and how
  * long a recording that produced nothing keeps saying so. `status=all` is
@@ -417,25 +385,6 @@ export function usePendingCaptures(enabled = true) {
       return active ? CAPTURE_POLL_INTERVAL_MS : false;
     },
     refetchOnWindowFocus: false,
-    staleTime: 0,
-  });
-}
-
-export function useCapture(captureId: string | undefined, startedAt: number) {
-  const api = useApi();
-  return useQuery({
-    queryKey: queryKeys.capture(captureId ?? ''),
-    queryFn: () => api.getCapture(captureId as string),
-    enabled: Boolean(captureId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      if (status && isTerminalStatus(status)) return false;
-      return capturePollInterval(startedAt);
-    },
-    // A single transient poll failure must not orphan the capture. v1 nulled
-    // the capture id on any error, which lost the only handle to the in-flight
-    // recording; here the query simply keeps its last good data and retries.
-    retry: false,
     staleTime: 0,
   });
 }
