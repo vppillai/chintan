@@ -56,6 +56,19 @@ Parameters:
       what this template did before the parameter existed) meant every
       staging sign-in ended in redirect_mismatch before the login form.
 
+  PasskeyRelyingPartyID:
+    Type: String
+    Default: ''
+    MaxLength: 63
+    Description: >
+      The WebAuthn relying party for Cognito passkeys: the pool's managed-login
+      domain, which is where the ceremony runs (not the Pages host the app is
+      served from). Cognito caps it at 63 characters, and a prefix domain of the
+      form chintan-<instance>-<environment>-<account>.auth.<region>.amazoncognito.com
+      is 62 for "prod" and 65 for "staging", so it is computed by
+      scripts/ci-deploy-stack.sh and passed only when it fits. Empty leaves the
+      pool password-only, which is what a staging pool with no users needs.
+
   WorkerCodeKey:
     Type: String
     MinLength: 1
@@ -148,6 +161,7 @@ Parameters:
 Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
   HasSitePath: !Not [!Equals [!Ref SitePath, '']]
+  HasPasskeys: !Not [!Equals [!Ref PasskeyRelyingPartyID, '']]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
   AlarmsEnabled: !Equals [!Ref EnableAlarms, 'true']
@@ -198,14 +212,12 @@ Resources:
       # and an SSM key the app used to carry for the same tap. The relying
       # party id has to be the domain the ceremony runs on, which is the user
       # pool's managed-login domain — not the Pages host the app is served
-      # from. It is built from the same pieces as UserPoolDomain.Domain below.
-      WebAuthnRelyingPartyID: !Sub 'chintan-${InstanceName}-${Environment}-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
-      WebAuthnUserVerification: required
+      # from; see the PasskeyRelyingPartyID parameter for why it arrives as one.
+      WebAuthnRelyingPartyID: !If [HasPasskeys, !Ref PasskeyRelyingPartyID, !Ref AWS::NoValue]
+      WebAuthnUserVerification: !If [HasPasskeys, required, !Ref AWS::NoValue]
       Policies:
         SignInPolicy:
-          AllowedFirstAuthFactors:
-            - PASSWORD
-            - WEB_AUTHN
+          AllowedFirstAuthFactors: !If [HasPasskeys, [PASSWORD, WEB_AUTHN], [PASSWORD]]
         PasswordPolicy:
           MinimumLength: 12
           RequireUppercase: true

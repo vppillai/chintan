@@ -58,6 +58,21 @@ ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://${PAGES_HOST}}"
 [ -n "${WORKER_KEY:-}" ] ||
     die "WORKER_KEY is required: the worker Lambda must get backend/cmd/worker, not the API zip"
 
+# The passkey relying party is the pool's managed-login domain. Cognito caps the
+# value at 63 characters and the prefix-domain scheme produces 62 for prod and
+# 65 for staging, so it is passed only when it fits; the template treats an
+# empty value as "password only". The account id is read from the caller
+# rather than from an environment variable so a hand run needs nothing extra.
+ACCOUNT_ID="$(aws_cli sts get-caller-identity --query Account --output text)"
+[ -n "$ACCOUNT_ID" ] || die "could not resolve the AWS account id"
+REGION="$(aws_cli configure get region 2>/dev/null || printf '%s' "${AWS_REGION:-${AWS_DEFAULT_REGION:-}}")"
+[ -n "$REGION" ] || die "could not resolve the AWS region"
+PASSKEY_RP_ID="chintan-${INSTANCE}-${ENVIRONMENT}-${ACCOUNT_ID}.auth.${REGION}.amazoncognito.com"
+if [ "${#PASSKEY_RP_ID}" -gt 63 ]; then
+    warn "passkeys stay off for $INSTANCE/$ENVIRONMENT: relying party '$PASSKEY_RP_ID' is ${#PASSKEY_RP_ID} characters, Cognito allows 63"
+    PASSKEY_RP_ID=""
+fi
+
 args=(
     --instance "$INSTANCE"
     --environment "$ENVIRONMENT"
@@ -71,6 +86,7 @@ args=(
     --parameter "PagesHost=${PAGES_HOST}"
     --parameter "RepoName=${REPO_NAME}"
     --parameter "SitePath=${SITE_PATH:-}"
+    --parameter "PasskeyRelyingPartyID=${PASSKEY_RP_ID}"
     --tag Application=Chintan
     --tag Project=chintan
     --tag "Instance=${INSTANCE}"
