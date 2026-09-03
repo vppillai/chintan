@@ -10,11 +10,10 @@ import { useCaptureStore } from '@/features/capture/store.ts';
  * `isCaptureBusy` was written and documented — "the sheet must stay shut while
  * any of this is in flight" — and then called from nowhere. Pressing system
  * Back while recording, which a pocket or a steering wheel does by accident,
- * landed the user on Home showing the ordinary Record hero and "Speak a
- * thought. It files itself." while the recorder kept running, kept writing
- * chunks, kept the wake lock, and kept counting toward the twenty-minute cap. A
- * user who believed they had stopped could record, transcribe and pay for
- * twenty minutes of pocket noise.
+ * landed the user on the home screen showing the ordinary Record button while
+ * the recorder kept running, kept writing chunks, kept the wake lock, and kept
+ * counting toward the twenty-minute cap. A user who believed they had stopped
+ * could record, transcribe and pay for twenty minutes of pocket noise.
  *
  * Deliberately a row that returns you to the capture screen rather than a stop
  * button, and deliberately not an auto-stop on leaving: a recording surviving

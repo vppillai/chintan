@@ -2,6 +2,8 @@ import { useNavigate } from 'react-router';
 
 import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
+import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 
 export interface NoteRowProps {
   note: NoteWire;
@@ -14,40 +16,74 @@ export interface NoteRowProps {
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (noteId: string) => void;
-  /** Date-only by default; see NotesScreen's "Show time" toggle. */
-  timestamped?: boolean;
+  /**
+   * A search hit: the excerpt around the match stands in for the snippet, and
+   * the matched term is marked in it. Absent on the plain library.
+   */
+  excerpt?: string;
+  highlight?: string;
 }
 
 /**
  * A note row is a real <button> (spec §5.7), not a clickable div. v1 shipped
  * divs, which made the entire library unreachable by keyboard and invisible to
  * assistive technology as an actionable thing.
+ *
+ * Serif title with the time on the right in tabular serif numerals, two lines
+ * of the note, then a meta line: the purge countdown for an archived note, the
+ * tags, and — when the payload carries them — how many recordings are behind
+ * it and how long they run.
  */
 export function NoteRow({
   note,
   selectable = false,
   selected = false,
   onToggleSelect,
-  timestamped = false,
+  excerpt,
+  highlight,
 }: NoteRowProps) {
   const navigate = useNavigate();
   const tags = note.tags ?? [];
+  const time = formatRowTime(note.updated_at);
+  const recordings = describeRecordings(note);
+  const countdown = note.archived ? purgeCountdown(note.purge_after) : null;
+  const snippet = excerpt ?? note.snippet;
+  const hasMeta = countdown !== null || tags.length > 0 || recordings !== null;
 
   const body = (
     <>
-      <span className="note-row__title">{note.title}</span>
-      {note.snippet && <span className="note-row__snippet">{note.snippet}</span>}
-      <span className="note-row__meta">
-        <time className="note-row__date numeric" dateTime={note.updated_at}>
-          {formatUpdated(note.updated_at, timestamped)}
-        </time>
-        {tags.length > 0 && (
-          <>
-            <span aria-hidden="true">·</span>
-            <span className="note-row__tags">{tags.join(', ')}</span>
-          </>
+      <span className="note-row__head">
+        <span className="note-row__title">{note.title}</span>
+        {time && (
+          <time className="note-row__time numeric" dateTime={note.updated_at}>
+            {time}
+          </time>
         )}
       </span>
+      {snippet && (
+        <span className="note-row__snippet">
+          <Marked text={snippet} term={highlight ?? ''} />
+        </span>
+      )}
+      {hasMeta && (
+        <span className="note-row__meta">
+          {countdown && (
+            <span className="note-row__purge" data-purge={countdown.kind}>
+              {describePurge(countdown)}
+            </span>
+          )}
+          {tags.length > 0 && (
+            <span className="note-row__tags">
+              {tags.map((tag) => (
+                <span key={tag} className="note-row__tag">
+                  {tag}
+                </span>
+              ))}
+            </span>
+          )}
+          {recordings && <span className="note-row__recordings numeric">{recordings}</span>}
+        </span>
+      )}
     </>
   );
 
@@ -80,13 +116,16 @@ export function NoteRow({
   );
 }
 
-function formatUpdated(iso: string, timestamped: boolean): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat(
-    undefined,
-    timestamped
-      ? { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }
-      : { day: 'numeric', month: 'short' },
-  ).format(date);
+/** Renders the match in situ, with the hit marked rather than stripped out. */
+function Marked({ text, term }: { text: string; term: string }) {
+  const index = term ? text.toLowerCase().indexOf(term.toLowerCase()) : -1;
+  if (index === -1) return <>{text}</>;
+
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="search-hit">{text.slice(index, index + term.length)}</mark>
+      {text.slice(index + term.length)}
+    </>
+  );
 }

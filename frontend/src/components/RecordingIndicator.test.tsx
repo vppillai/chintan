@@ -31,14 +31,14 @@ afterEach(() => {
 });
 
 describe('the microphone being open is never invisible', () => {
-  it('says so on Home after backing out of the capture screen', async () => {
+  it('says so on the library after backing out of the capture screen', async () => {
     /*
      * Press system Back while recording — the natural one-handed dismissal, and
      * something a pocket or a steering wheel does by accident — and you landed
-     * on Home showing the ordinary Record hero and "Speak a thought. It files
-     * itself." The recorder kept running, kept writing chunks, kept the wake
-     * lock, and kept counting toward the twenty-minute cap, with no indicator
-     * anywhere. `isCaptureBusy` existed, was documented, and had no call sites.
+     * on the home screen showing the ordinary Record button and nothing else.
+     * The recorder kept running, kept writing chunks, kept the wake lock, and
+     * kept counting toward the twenty-minute cap, with no indicator anywhere.
+     * `isCaptureBusy` existed, was documented, and had no call sites.
      */
     const router = mount(['/']);
     setCaptureState('recording');
@@ -49,14 +49,14 @@ describe('the microphone being open is never invisible', () => {
     expect(router.state.location.pathname).toBe('/capture');
   });
 
-  it('shows on the library too, not just Home', async () => {
-    mount(['/notes']);
+  it('shows on the You screen too, not just the library', async () => {
+    mount(['/settings']);
     setCaptureState('recording');
     expect(await screen.findByRole('button', { name: /tap to return/i })).toBeInTheDocument();
   });
 
   it('covers every busy state, not just a live microphone', async () => {
-    mount(['/notes']);
+    mount(['/settings']);
     for (const state of ['requesting', 'paused', 'stopping', 'uploading'] as CaptureState[]) {
       setCaptureState(state);
       expect(

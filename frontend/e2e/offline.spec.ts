@@ -15,7 +15,7 @@ test('a recording made offline survives and is sent on reconnect', async ({ page
 
   api.offline = true;
 
-  await page.getByRole('button', { name: /record/i }).click();
+  await page.getByRole('button', { name: /^record$/i }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
   await page.waitForTimeout(1_200);
   await page.getByRole('button', { name: 'Stop' }).click();
@@ -73,7 +73,7 @@ test('a stranded recording is offered back after a reload', async ({ page, api }
   await page.goto('/');
   api.offline = true;
 
-  await page.getByRole('button', { name: /record/i }).click();
+  await page.getByRole('button', { name: /^record$/i }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
   await page.waitForTimeout(1_000);
   await page.getByRole('button', { name: 'Stop' }).click();
@@ -88,9 +88,9 @@ test('a stranded recording is offered back after a reload', async ({ page, api }
    * module-level variable, so the audio became unreachable the moment the page
    * went away.
    *
-   * Deliberately not a reload of /capture: the sheet is locked there and the
-   * prompt is correctly suppressed, because that screen is a live recording
-   * surface rather than a place to triage old ones.
+   * Deliberately not a reload of /capture: that screen is a live recording
+   * surface rather than a place to triage old ones, and the prompt lives at
+   * the top of the library.
    */
   await page.goto('/');
 
@@ -189,7 +189,7 @@ test('a note never opened on this device says so, rather than claiming it was pu
   api,
 }) => {
   await withServiceWorker(page);
-  await page.goto('/notes');
+  await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   api.offline = true;
@@ -209,23 +209,20 @@ test('search offline finds a cached note instead of saying it does not exist', a
   context,
   api,
 }) => {
-  await page.goto('/notes');
+  await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   api.offline = true;
   await context.setOffline(true);
 
   /*
-   * Navigated within the app rather than by `page.goto`, which is both the real
-   * scenario — the library is on screen, the connection drops, the user
-   * searches — and the only way to keep `navigator.onLine` false: Chromium
-   * re-initialises it as true on a document loaded from the service worker
-   * while offline emulation is already on.
-   *
-   * Search's corpus query is fetched only when this screen opens, so it has
-   * never run. Everything below comes off the device.
+   * Typed into the library that is already on screen rather than reached by
+   * `page.goto`, which is both the real scenario — the connection drops, the
+   * user searches — and the only way to keep `navigator.onLine` false:
+   * Chromium re-initialises it as true on a document loaded from the service
+   * worker while offline emulation is already on. Everything below comes off
+   * the device.
    */
-  await page.getByRole('link', { name: 'Search' }).click();
   await page.getByRole('searchbox', { name: 'Search notes' }).fill('roof');
 
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
@@ -322,7 +319,7 @@ test('three offline edits to one note are one queued write, not three', async ({
 });
 
 test('the offline banner says the data is cached', async ({ page, context, api }) => {
-  await page.goto('/notes');
+  await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   // Real offline, not a synthetic event: the banner reads navigator.onLine,

@@ -21,9 +21,9 @@ export function createQueryClient(): QueryClient {
         // backoff. Retrying again here would multiply the two budgets.
         retry: false,
         staleTime: 30_000,
-        // A capture completing while the app is backgrounded should be visible
-        // the moment it returns; refetch on focus is how that happens without
-        // a second polling loop.
+        // A note edited on another device should be visible the moment the
+        // app returns to the foreground. The capture list opts out of this
+        // (`usePendingCaptures`): it polls on its own while anything moves.
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,
       },

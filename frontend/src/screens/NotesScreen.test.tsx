@@ -1,17 +1,25 @@
 import { onlineManager } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { NoteWire } from '@/api/schema.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { NotesScreen } from './NotesScreen.tsx';
 
-function mount(fetchImpl: typeof fetch) {
+const ARCHIVED_NOTES = TEST_NOTES.map((note) => ({
+  ...note,
+  id: `${note.id}-archived`,
+  archived: true,
+  purge_after: new Date(Date.now() + 12 * 86_400_000).toISOString(),
+}));
+
+function mount(fetchImpl: typeof fetch, path = '/') {
   return render(
     <TestProviders api={testApiContext(fetchImpl)}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <NotesScreen />
       </MemoryRouter>
     </TestProviders>,
@@ -25,6 +33,34 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
+/**
+ * The stub most tests want: active notes, archived notes and tags, each from
+ * its own endpoint, exactly as the API serves them.
+ */
+function library(
+  overrides: { active?: NoteWire[]; archived?: NoteWire[]; tags?: string[] } = {},
+): typeof fetch {
+  const active = overrides.active ?? TEST_NOTES;
+  const archived = overrides.archived ?? ARCHIVED_NOTES;
+  const tags = overrides.tags ?? ['house', 'books'];
+  return vi.fn<typeof fetch>(async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/v1/tags')) {
+      return json({ items: tags.map((name) => ({ name, count: 1 })) });
+    }
+    if (url.pathname.endsWith('/v1/notes')) {
+      const state = url.searchParams.get('state') ?? 'active';
+      const tag = url.searchParams.get('tag');
+      const items = (state === 'archived' ? archived : active).filter(
+        (note) => !tag || (note.tags ?? []).includes(tag),
+      );
+      return json({ items });
+    }
+    if (url.pathname.endsWith('/v1/search')) return json({ items: [] });
+    return json({ items: [] });
+  });
+}
+
 function goOffline(): void {
   Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
   onlineManager.setOnline(false);
@@ -34,11 +70,10 @@ function goOffline(): void {
 afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
   onlineManager.setOnline(true);
-  window.localStorage.clear();
 });
 
 describe('the library never claims an empty library it cannot see', () => {
-  it('says it is offline rather than "Nothing here yet"', async () => {
+  it('says it is offline rather than inviting a first note', async () => {
     /*
      * TanStack *pauses* an offline query rather than failing it, so neither
      * `isLoading` nor `isError` was ever true and the brand-new-user empty
@@ -47,29 +82,25 @@ describe('the library never claims an empty library it cannot see', () => {
      * entire library appeared to have been deleted.
      */
     goOffline();
-    const fetchImpl = vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES }));
+    const fetchImpl = library();
     mount(fetchImpl);
 
     expect(
       await screen.findByText(/offline and no notes are cached/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/nothing here yet/i)).toBeNull();
+    expect(screen.queryByText(/tap record/i)).toBeNull();
     expect(fetchImpl, 'a paused query must not reach the network').not.toHaveBeenCalled();
   });
 
-  it('keeps showing the empty state for a genuinely empty library', async () => {
-    mount(vi.fn<typeof fetch>(async () => json({ items: [] })));
-    expect(await screen.findByText(/nothing here yet/i)).toBeInTheDocument();
+  it('invites the first recording for a genuinely empty library', async () => {
+    mount(library({ active: [], archived: [], tags: [] }));
+    expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).toBeNull();
   });
 });
 
 describe('a failed load offers a control, not a gesture the app lacks', () => {
   it('renders a Try again button that refetches', async () => {
-    // The copy was "Your notes could not be loaded. Pull down to try again."
-    // There is no pull-to-refresh anywhere in the codebase, and this region
-    // rendered zero buttons: a 300px pull-down did nothing, and the only
-    // escapes were switching tabs to force a remount or reloading.
     const user = userEvent.setup();
     let calls = 0;
     // 403 rather than 500 on purpose: the client retries 5xx with backoff, and
@@ -109,10 +140,214 @@ describe('a failed load offers a control, not a gesture the app lacks', () => {
   });
 });
 
-describe('archiving several notes at once, instead of one at a time from inside each one', () => {
+describe('rows are grouped by the day they were touched', () => {
+  it('files today and yesterday under their own headings, older ones under the month', async () => {
+    const now = Date.now();
+    const notes: NoteWire[] = [
+      { ...TEST_NOTES[0]!, id: 'today', title: 'Today note', updated_at: new Date(now).toISOString() },
+      {
+        ...TEST_NOTES[0]!,
+        id: 'yesterday',
+        title: 'Yesterday note',
+        updated_at: new Date(now - 86_400_000).toISOString(),
+      },
+      {
+        ...TEST_NOTES[0]!,
+        id: 'older',
+        title: 'Older note',
+        updated_at: new Date(now - 40 * 86_400_000).toISOString(),
+      },
+    ];
+    mount(library({ active: notes }));
+
+    const today = await screen.findByRole('region', { name: 'Today' });
+    expect(within(today).getByRole('button', { name: /today note/i })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('region', { name: 'Yesterday' })).getByRole('button', {
+        name: /yesterday note/i,
+      }),
+    ).toBeInTheDocument();
+    // Older than a week: a month heading, never a weekday.
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent);
+    expect(headings[0]).toBe('Today');
+    expect(headings[1]).toBe('Yesterday');
+    expect(headings[2]).not.toMatch(/day$/);
+  });
+
+  it('shows a clock time on a row from today and a date otherwise', async () => {
+    const notes: NoteWire[] = [
+      { ...TEST_NOTES[0]!, id: 'today', title: 'Today note', updated_at: new Date().toISOString() },
+      TEST_NOTES[1]!,
+    ];
+    mount(library({ active: notes }));
+
+    const today = await screen.findByRole('button', { name: /today note/i });
+    expect(within(today).getByText(/^\d{2}:\d{2}/)).toBeInTheDocument();
+    const older = screen.getByRole('button', { name: /reading list/i });
+    expect(within(older).getByText(/Aug/)).toBeInTheDocument();
+  });
+
+  it('shows the tags on the meta line', async () => {
+    mount(library());
+    const row = await screen.findByRole('button', { name: /roof repair/i });
+    expect(within(row).getByText('house')).toBeInTheDocument();
+  });
+});
+
+describe('search narrows the list as you type, from what is already on the device', () => {
+  it('filters to matching notes and marks the hit', async () => {
+    const user = userEvent.setup();
+    mount(library());
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'ridge');
+
+    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reading list/i })).toBeNull();
+    expect(screen.getByText('Ridge', { selector: 'mark' })).toBeInTheDocument();
+    // Ranked, not grouped: the day headings step aside while searching.
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
+  });
+
+  it('says nothing matches, naming the term', async () => {
+    const user = userEvent.setup();
+    mount(library());
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'chimney');
+
+    expect(await screen.findByText(/nothing matches “chimney”/i)).toBeInTheDocument();
+  });
+
+  it('adds what only the server found, after the local hits', async () => {
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/search')) {
+        return json({
+          items: [
+            {
+              note_id: 'page-two',
+              title: 'Chimney flashing',
+              excerpt: '…the chimney flashing was resealed…',
+              matched_in: ['transcript'],
+            },
+          ],
+        });
+      }
+      if (url.pathname.endsWith('/v1/notes')) {
+        return json({ items: url.searchParams.get('state') === 'archived' ? [] : TEST_NOTES });
+      }
+      return json({ items: [] });
+    });
+    mount(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'chimney');
+
+    expect(await screen.findByRole('button', { name: /chimney flashing/i })).toBeInTheDocument();
+    expect(screen.getByText(/1 result/)).toBeInTheDocument();
+  });
+
+  it('says the server search failed rather than that the note does not exist', async () => {
+    /*
+     * Online, but the API is unreachable — a captive portal, or a dead gateway.
+     * The one case where the user most needs to know a note they own was not
+     * actually looked for.
+     */
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/search')) throw new TypeError('Failed to fetch');
+      if (url.pathname.endsWith('/v1/notes')) {
+        return json({ items: url.searchParams.get('state') === 'archived' ? [] : TEST_NOTES });
+      }
+      return json({ items: [] });
+    });
+    mount(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
+
+    // The client retries a network failure with jittered backoff, so the notice
+    // is a few seconds away. That delay is the app's, not the test's.
+    expect(
+      await screen.findByText(/server search did not respond/i, undefined, { timeout: 8_000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+  });
+
+  it('keeps the query in the URL', async () => {
+    mount(library(), '/?q=roof');
+    expect(await screen.findByRole('searchbox', { name: /search notes/i })).toHaveValue('roof');
+    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reading list/i })).toBeNull();
+  });
+});
+
+describe('the chips filter the list', () => {
+  it('offers All, one chip per tag, and Archived with its count', async () => {
+    mount(library());
+    expect(await screen.findByRole('button', { name: 'house' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'books' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      await screen.findByRole('button', { name: `Archived · ${String(ARCHIVED_NOTES.length)}` }),
+    ).toBeInTheDocument();
+  });
+
+  it('narrows to a tag, and All clears it', async () => {
+    const user = userEvent.setup();
+    mount(library());
+    await screen.findByRole('button', { name: /reading list/i });
+
+    await user.click(screen.getByRole('button', { name: 'house' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /reading list/i })).toBeNull();
+    });
+    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'house' })).toHaveAttribute('aria-pressed', 'true');
+
+    await user.click(screen.getByRole('button', { name: 'All' }));
+    expect(await screen.findByRole('button', { name: /reading list/i })).toBeInTheDocument();
+  });
+
+  it('shows the archive, with each row saying when it is purged', async () => {
+    const user = userEvent.setup();
+    mount(library());
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.click(await screen.findByRole('button', { name: /^Archived/ }));
+
+    const rows = await screen.findAllByText(/deletes in 12 days/i);
+    expect(rows).toHaveLength(ARCHIVED_NOTES.length);
+    expect(screen.getByRole('button', { name: /^Archived/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('says so when the archive is empty', async () => {
+    mount(library({ archived: [] }), '/?view=archived');
+    expect(await screen.findByText(/nothing is archived/i)).toBeInTheDocument();
+  });
+
+  it('never divides by a missing purge date', async () => {
+    mount(
+      library({ archived: [{ ...TEST_NOTES[0]!, archived: true, purge_after: null }] }),
+      '/?view=archived',
+    );
+    expect(await screen.findByText(/no deletion date/i)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('NaN');
+  });
+});
+
+describe('doing something to several notes at once', () => {
   it('archives every selected note and leaves selection mode', async () => {
     const user = userEvent.setup();
     const archived: string[] = [];
+    const base = library();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
@@ -120,7 +355,7 @@ describe('archiving several notes at once, instead of one at a time from inside 
         archived.push(decodeURIComponent(url.split('/v1/notes/')[1] ?? ''));
         return json({});
       }
-      return json({ items: TEST_NOTES });
+      return base(input, init);
     });
     mount(fetchImpl);
 
@@ -149,6 +384,7 @@ describe('archiving several notes at once, instead of one at a time from inside 
     const user = userEvent.setup();
     const archived: string[] = [];
     let purged: string[] = [];
+    const base = library();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
       const method = init?.method ?? 'GET';
@@ -159,11 +395,9 @@ describe('archiving several notes at once, instead of one at a time from inside 
       if (method === 'POST' && url.endsWith('/v1/notes/purge')) {
         const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
         purged = body.note_ids;
-        return json({
-          results: purged.map((id) => ({ note_id: id, status: 'purged' })),
-        });
+        return json({ results: purged.map((id) => ({ note_id: id, status: 'purged' })) });
       }
-      return json({ items: TEST_NOTES });
+      return base(input, init);
     });
     mount(fetchImpl);
 
@@ -187,13 +421,13 @@ describe('archiving several notes at once, instead of one at a time from inside 
 
   it('selects and deselects everything with one control', async () => {
     const user = userEvent.setup();
-    mount(vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES })));
+    mount(library());
 
     await user.click(await screen.findByRole('button', { name: 'Select' }));
     await user.click(screen.getByRole('button', { name: 'Select all' }));
     expect(
       await screen.findByText(
-        (_content, el) => el?.textContent === `${TEST_NOTES.length} selected`,
+        (_content, el) => el?.textContent === `${String(TEST_NOTES.length)} selected`,
       ),
     ).toBeInTheDocument();
 
@@ -203,50 +437,78 @@ describe('archiving several notes at once, instead of one at a time from inside 
     ).toBeInTheDocument();
   });
 
+  it('restores every selected archived note', async () => {
+    const user = userEvent.setup();
+    const restored: string[] = [];
+    const base = library();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? 'GET') === 'POST' && url.endsWith('/restore')) {
+        const id = url.split('/v1/notes/')[1]?.split('/restore')[0] ?? '';
+        restored.push(decodeURIComponent(id));
+        return json({});
+      }
+      return base(input, init);
+    });
+    mount(fetchImpl, '/?view=archived');
+
+    await user.click(await screen.findByRole('button', { name: 'Select' }));
+    for (const checkbox of await screen.findAllByRole('checkbox')) {
+      await user.click(checkbox);
+    }
+    // The active list's action is not offered here.
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Restore' }));
+    await user.click(await screen.findByRole('button', { name: 'Restore them' }));
+
+    await waitFor(() => {
+      expect(restored.sort()).toEqual(ARCHIVED_NOTES.map((n) => n.id).sort());
+    });
+  });
+
+  it('empties the archive: select all, then delete forever, in one batch call', async () => {
+    // The feature request this closes: no way to clear the whole archive at
+    // once. "Select all" plus this is that, using the real batch endpoint —
+    // one POST /v1/notes/purge naming every id, not N individual calls.
+    const user = userEvent.setup();
+    let purgeBody: unknown = null;
+    const base = library();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? 'GET') === 'POST' && url.endsWith('/v1/notes/purge')) {
+        purgeBody = JSON.parse(String(init?.body));
+        return json({
+          results: ARCHIVED_NOTES.map((n) => ({ note_id: n.id, status: 'purged' })),
+        });
+      }
+      return base(input, init);
+    });
+    mount(fetchImpl, '/?view=archived');
+
+    await user.click(await screen.findByRole('button', { name: 'Select' }));
+    await user.click(await screen.findByRole('button', { name: 'Select all' }));
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(await screen.findByRole('button', { name: 'Delete them forever' })).toBeDisabled();
+    await user.type(await screen.findByLabelText(/type "delete" to confirm/i), 'delete');
+    await user.click(await screen.findByRole('button', { name: 'Delete them forever' }));
+
+    await waitFor(() => {
+      expect(purgeBody).toEqual({ note_ids: ARCHIVED_NOTES.map((n) => n.id) });
+    });
+    expect(dialog).not.toBeInTheDocument();
+  });
+
   it('leaves the plain list untouched when not selecting', async () => {
     // The default path — a real <button> that navigates — must still be what
     // renders until Select is pressed.
-    mount(vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES })));
+    mount(library());
     await screen.findByText(TEST_NOTES[0]?.title ?? '');
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.getAllByRole('button').some((el) => el.className.includes('note-row'))).toBe(
       true,
     );
-  });
-});
-
-describe('a row shows a date by default, and a time on request', () => {
-  it('adds the time once "Show time" is pressed, and can hide it again', async () => {
-    const user = userEvent.setup();
-    mount(vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES })));
-
-    await screen.findByText(TEST_NOTES[0]?.title ?? '');
-    const dateEl = document.querySelector('time.note-row__date');
-    const dateOnly = dateEl?.textContent;
-
-    await user.click(screen.getByRole('button', { name: 'Show time' }));
-    await waitFor(() => {
-      expect(document.querySelector('time.note-row__date')?.textContent).not.toBe(dateOnly);
-    });
-    const withTime = document.querySelector('time.note-row__date')?.textContent;
-    expect(await screen.findByRole('button', { name: 'Hide time' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Hide time' }));
-    await waitFor(() => {
-      expect(document.querySelector('time.note-row__date')?.textContent).toBe(dateOnly);
-    });
-    expect(document.querySelector('time.note-row__date')?.textContent).not.toBe(withTime);
-  });
-
-  it('remembers the choice across a remount, the way the theme preference does', async () => {
-    const user = userEvent.setup();
-    const { unmount } = mount(vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES })));
-
-    await user.click(await screen.findByRole('button', { name: 'Show time' }));
-    await screen.findByRole('button', { name: 'Hide time' });
-    unmount();
-
-    mount(vi.fn<typeof fetch>(async () => json({ items: TEST_NOTES })));
-    expect(await screen.findByRole('button', { name: 'Hide time' })).toBeInTheDocument();
   });
 });

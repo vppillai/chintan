@@ -11,7 +11,7 @@ import { expect, test, type ApiState } from './fixtures.ts';
  * reported "partially overlapping" UI; the audit in docs/ui-audit.md found four
  * distinct causes, and this spec is the fence around each of them:
  *
- *   1. the shell's chrome (bottom bar / library strip) leaving the viewport,
+ *   1. the shell's chrome (the tab bar) leaving the viewport,
  *   2. the live waveform canvas escaping its panel onto the capture controls,
  *   3. the update prompt floating over the bottom bar and the record button,
  *   4. the confirm dialog running off a short viewport with no way to scroll.
@@ -50,12 +50,11 @@ const THEMES = ['ink', 'nocturne'] as const;
 
 /** Screens that must hold up at every size, in both themes. */
 const ROUTES = [
-  { path: '/', label: 'home (sheet collapsed)' },
-  { path: '/notes', label: 'notes (sheet expanded)' },
+  { path: '/', label: 'library' },
   { path: '/notes/roof-repair', label: 'note detail' },
-  { path: '/archive', label: 'archive' },
-  { path: '/search?q=roof', label: 'search with results' },
-  { path: '/search?q=nothingmatchesthis', label: 'search empty' },
+  { path: '/?view=archived', label: 'archive' },
+  { path: '/?q=roof', label: 'search with results' },
+  { path: '/?q=nothingmatchesthis', label: 'search empty' },
   { path: '/settings', label: 'settings' },
 ];
 
@@ -213,13 +212,13 @@ async function inspect(page: Page): Promise<LayoutReport> {
     }
 
     /*
-     * The bottom bar and the library strip are the app's only navigation and
-     * they carry the record button. They are grid rows in normal flow by
-     * design, which is exactly why they must never be pushed past the fold:
-     * unlike a fixed bar, nothing brings them back.
+     * The tab bar is the app's only navigation and it carries the record
+     * button. It is a grid row in normal flow by design, which is exactly why
+     * it must never be pushed past the fold: unlike a fixed bar, nothing brings
+     * it back.
      */
     const chromeOffscreen: LayoutReport['chromeOffscreen'] = [];
-    for (const selector of ['.bottom-bar', '.strip']) {
+    for (const selector of ['.tab-bar']) {
       const element = document.querySelector(selector);
       if (!element || !isVisible(element)) continue;
       const box = element.getBoundingClientRect();
@@ -239,10 +238,10 @@ async function inspect(page: Page): Promise<LayoutReport> {
      * can cover another; an intersection here means something has floated free
      * of the row it was given.
      */
-    const CHROME = ['.bottom-bar', '.strip'];
+    const CHROME = ['.tab-bar'];
     const LAYERS = [
       '.app__main',
-      '.progress-stack',
+      '.filing',
       '.resume-prompt',
       '.update-prompt',
       '.record-button',
@@ -284,18 +283,22 @@ async function inspect(page: Page): Promise<LayoutReport> {
 
     /*
      * A scroll container hiding the overflow is not a fix. Nothing in this app
-     * is meant to scroll horizontally, so any container that can is a layout
-     * failure that the document-level check would never see.
+     * is meant to scroll horizontally — with one exception, the library's chip
+     * row, which is a single sideways-scrolling line by design — so any other
+     * container that can is a layout failure that the document-level check
+     * would never see.
      */
     const sidewaysScroll: LayoutReport['sidewaysScroll'] = [];
     for (const element of document.querySelectorAll('body *')) {
       if (!isVisible(element)) continue;
       /*
        * A single-line text field scrolls its own value by definition; that is
-       * the control working, not the layout failing. Everything else that can
-       * scroll sideways is a container that should have wrapped.
+       * the control working, not the layout failing. So does a label cut with
+       * an ellipsis (a row's tag chip), and the library's chip row is a
+       * sideways-scrolling line on purpose. Everything else that can scroll
+       * sideways is a container that should have wrapped.
        */
-      if (element.matches('input, textarea, select')) continue;
+      if (element.matches('input, textarea, select, .chips, .note-row__tag')) continue;
       if (element.scrollWidth > element.clientWidth + 1 && element.clientWidth > 0) {
         sidewaysScroll.push({
           selector: describe(element),
@@ -323,9 +326,9 @@ function assertClean(report: LayoutReport, where: string): void {
   expect(report.bleeding, `${where}: elements extend past the viewport`).toEqual([]);
   expect(
     report.chromeOffscreen,
-    `${where}: the bottom bar / library strip is not fully on screen`,
+    `${where}: the tab bar is not fully on screen`,
   ).toEqual([]);
-  expect(report.overlaps, `${where}: the bottom bar / library strip is overlapped`).toEqual([]);
+  expect(report.overlaps, `${where}: the tab bar is overlapped`).toEqual([]);
   expect(report.sidewaysScroll, `${where}: a container scrolls horizontally`).toEqual([]);
 }
 
@@ -352,7 +355,7 @@ for (const theme of THEMES) {
         }
       });
 
-      test('the progress card never displaces the bottom bar', async ({ page, api }) => {
+      test('the filing row never displaces the tab bar', async ({ page, api }) => {
         await withoutServiceWorker(page);
         await useTheme(page, theme);
         api.captures.push(
@@ -374,12 +377,10 @@ for (const theme of THEMES) {
           },
         );
 
-        for (const path of ['/', '/notes']) {
-          await page.goto(path);
-          await expect(page.getByRole('region', { name: /captures in progress/i })).toBeVisible();
-          await shoot(page, `progress${path.replace(/\W+/g, '-')}__${viewport.name}__${theme}`);
-          assertClean(await inspect(page), `progress card on ${path} @ ${viewport.name}/${theme}`);
-        }
+        await page.goto('/');
+        await expect(page.getByRole('region', { name: /recordings being filed/i })).toBeVisible();
+        await shoot(page, `filing__${viewport.name}__${theme}`);
+        assertClean(await inspect(page), `filing row @ ${viewport.name}/${theme}`);
       });
     });
   }
@@ -439,17 +440,17 @@ for (const theme of THEMES) {
 
 /**
  * The update prompt is the app's only toast. It used to be `position: fixed`
- * against the bottom of the viewport with a z-index above the bar, which put it
- * squarely on top of the record button — the one control the product exists to
- * offer.
+ * against the bottom of the viewport with a z-index above the tab bar, which put
+ * it squarely on top of the record button — the one control the product exists
+ * to offer.
  */
 for (const theme of THEMES) {
-  test(`the update prompt does not cover the bottom bar · ${theme}`, async ({ page }) => {
+  test(`the update prompt does not cover the tab bar · ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await withoutServiceWorker(page);
     await useTheme(page, theme);
-    await page.goto('/notes');
-    await expect(page.locator('.bottom-bar')).toBeVisible();
+    await page.goto('/');
+    await expect(page.locator('.tab-bar')).toBeVisible();
 
     // The real prompt only appears when a waiting service worker exists, which
     // no test can conjure reliably. The markup is what is under test, so it is
@@ -465,8 +466,8 @@ for (const theme of THEMES) {
 
     const collision = await page.evaluate(() => {
       const prompt = document.querySelector('.update-prompt')?.getBoundingClientRect();
-      const bar = document.querySelector('.bottom-bar')?.getBoundingClientRect();
-      const record = document.querySelector('.record-button--bar')?.getBoundingClientRect();
+      const bar = document.querySelector('.tab-bar')?.getBoundingClientRect();
+      const record = document.querySelector('.record-button')?.getBoundingClientRect();
       if (!prompt || !bar || !record) return null;
       const over = (other: DOMRect): number =>
         Math.round(
@@ -476,7 +477,7 @@ for (const theme of THEMES) {
     });
 
     expect(collision).not.toBeNull();
-    expect(collision?.bar, 'the update prompt covers the bottom bar').toBeLessThanOrEqual(0);
+    expect(collision?.bar, 'the update prompt covers the tab bar').toBeLessThanOrEqual(0);
     expect(collision?.record, 'the update prompt covers the record button').toBeLessThanOrEqual(0);
     assertClean(await inspect(page), `update prompt @ 390x844/${theme}`);
   });

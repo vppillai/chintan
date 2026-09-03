@@ -18,7 +18,9 @@ import {
 import { useCaptureStore } from './store.ts';
 
 /**
- * The capture surface. The library sheet is locked shut here (§5.2).
+ * The capture surface. Full screen: the shell drops the tab bar here, so the
+ * only way off is Stop, Cancel or system Back — and Back keeps the microphone
+ * open, with the shell's recording indicator saying so on the next screen.
  *
  * Every claim this screen makes is one the machine can back: it says
  * "Starting" while `getUserMedia` is pending and only says "Recording" once
@@ -72,7 +74,7 @@ export function CaptureScreen() {
   }, []);
 
   /*
-   * A finished capture belongs to the progress card from here on, so the
+   * A finished capture belongs to the library's filing row from here on, so the
    * machine is released as this screen goes away. Without it the terminal state
    * outlives the screen and wedges the next recording.
    */
@@ -85,14 +87,19 @@ export function CaptureScreen() {
     [],
   );
 
+  /*
+   * Back to the library, *replacing* this entry rather than pushing over it.
+   * Opening /capture starts a recording, so leaving a `/capture` entry behind
+   * would turn the next Back press into a new recording nobody asked for.
+   */
   const leave = useCallback(() => {
-    void navigate(ROUTES.home);
+    void navigate(ROUTES.home, { replace: true });
   }, [navigate]);
 
   useEffect(() => {
     if (model.state !== 'uploaded') return;
-    // Hand off to the progress card, which lives in the shell and survives
-    // this screen unmounting.
+    // Hand off to the filing row at the top of the library, which shows the
+    // pipeline's progress from here and survives this screen unmounting.
     const timer = setTimeout(leave, 600);
     return () => {
       clearTimeout(timer);
