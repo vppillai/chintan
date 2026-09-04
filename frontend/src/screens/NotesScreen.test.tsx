@@ -512,3 +512,46 @@ describe('doing something to several notes at once', () => {
     );
   });
 });
+
+/**
+ * The instant search matches what the server matches (backlog B5): the words
+ * of every note's body, fetched once as a corpus and written to the device.
+ */
+describe('the search corpus', () => {
+  it('fetches the searchable bodies once, apart from the list, and searches them', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/tags')) return json({ items: [] });
+      if (url.pathname.endsWith('/v1/notes')) {
+        if ((url.searchParams.get('state') ?? 'active') === 'archived') return json({ items: [] });
+        // Only the corpus request carries the body the server searches.
+        const corpus = url.searchParams.get('include') === 'search_text';
+        return json({
+          items: TEST_NOTES.map((note) =>
+            corpus
+              ? { ...note, search_text: `${note.snippet ?? ''} the tiler can start on the fourteenth`.toLowerCase() }
+              : note,
+          ),
+        });
+      }
+      return json({ items: [] });
+    });
+
+    // A word that is in no title, tag or snippet — only deep in the body.
+    mount(fetchImpl, '/?q=fourteenth');
+
+    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.getByText(/2 results/)).toBeInTheDocument();
+
+    const requests = fetchImpl.mock.calls.map(([input]) => new URL(String(input)));
+    const corpus = requests.filter((url) => url.searchParams.get('include') === 'search_text');
+    const lists = requests.filter(
+      (url) => url.pathname.endsWith('/v1/notes') && !url.searchParams.has('include'),
+    );
+    // One corpus request, at the contract's largest page; the list itself
+    // stays small and never asks for the text.
+    expect(corpus).toHaveLength(1);
+    expect(corpus[0]?.searchParams.get('limit')).toBe('200');
+    expect(lists.length).toBeGreaterThan(0);
+  });
+});

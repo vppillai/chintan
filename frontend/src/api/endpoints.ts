@@ -86,7 +86,7 @@ export class ChintanApi {
 
   listNotes(query: NoteListQuery = {}): Promise<Page<NoteWire>> {
     return this.client.request('/v1/notes', {
-      query: { ...pageQuery(query), state: query.state, tag: query.tag },
+      query: { ...pageQuery(query), state: query.state, tag: query.tag, include: query.include },
     });
   }
 

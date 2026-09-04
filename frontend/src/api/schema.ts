@@ -181,6 +181,11 @@ export interface NotePurgeResponseWire {
 export interface NoteListQuery extends PageQuery {
   state?: NoteState;
   tag?: string;
+  /**
+   * `search_text` adds each row's searchable body. Opt-in because the list is
+   * fetched constantly and renders none of it; the offline corpus asks once.
+   */
+  include?: 'search_text';
 }
 
 export interface TagWire {

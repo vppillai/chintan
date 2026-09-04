@@ -410,10 +410,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       // `state` defaults to active, exactly as `openapi.yaml` declares it.
       const wanted = url.searchParams.get('state') ?? 'active';
       const tag = url.searchParams.get('tag');
+      // `include=search_text` adds the lowercased body the server searches.
+      const corpus = url.searchParams.get('include') === 'search_text';
       await json(route, {
         items: Object.values(state.notes)
           .filter((note) => (wanted === 'archived' ? note.archived : !note.archived))
-          .filter((note) => !tag || (note.tags ?? []).includes(tag)),
+          .filter((note) => !tag || (note.tags ?? []).includes(tag))
+          .map((note) => (corpus ? { ...note, search_text: note.body.toLowerCase() } : note)),
       });
       return;
     }

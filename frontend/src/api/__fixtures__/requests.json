@@ -52,6 +52,11 @@
     "path": "/v1/notes?cursor=__CONTRACT_CURSOR__&limit=200"
   },
   {
+    "name": "listNotesCorpus",
+    "method": "GET",
+    "path": "/v1/notes?limit=200&include=search_text"
+  },
+  {
     "name": "getNote",
     "method": "GET",
     "path": "/v1/notes/contract-note"

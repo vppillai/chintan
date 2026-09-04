@@ -89,6 +89,51 @@ export function useNotes(query: NoteListQuery = {}) {
   });
 }
 
+/**
+ * The offline search corpus: every active note with its `search_text`, written
+ * to the device so the instant search matches what `GET /v1/search` matches.
+ *
+ * Its own request, not a flag on the library's list. The list is fetched on
+ * every visit and renders none of the text, so it stays small; this asks once
+ * per session (and again five minutes later, or when a recording is filed —
+ * see `refreshAppendedNote`) for the whole corpus, page by page, and hands
+ * each page to the cache. The key sits outside the `['notes']` prefix on
+ * purpose: archiving one note should not refetch every body.
+ *
+ * The result is a count, not the notes. The screens read the corpus back from
+ * the device (`useCachedNotes`), which is the one place it has to be.
+ */
+export const SEARCH_CORPUS_KEY = ['search-corpus'] as const;
+
+/** A page of two hundred is the contract's maximum. */
+const CORPUS_PAGE = 200;
+
+export function useSearchCorpus(enabled = true) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: SEARCH_CORPUS_KEY,
+    queryFn: async () => {
+      let cursor: string | undefined;
+      let count = 0;
+      do {
+        const page = await api.listNotes({
+          include: 'search_text',
+          limit: CORPUS_PAGE,
+          ...(cursor ? { cursor } : {}),
+        });
+        remember(() => cacheNoteList(page.items), queryClient);
+        count += page.items.length;
+        cursor = page.cursor || undefined;
+      } while (cursor);
+      return { count, fetchedAt: Date.now() };
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export function useNote(noteId: string | undefined) {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -458,6 +503,9 @@ export function newlyAppendedNoteIds(
 export function refreshAppendedNote(queryClient: QueryClient, noteId: string): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
   void queryClient.invalidateQueries({ queryKey: ['notes'] });
+  // The body just grew by a transcript; the corpus on the device should know
+  // the words in it before the user goes looking for them.
+  void queryClient.invalidateQueries({ queryKey: SEARCH_CORPUS_KEY });
 }
 
 export function useRetryCapture(): UseMutationResult<CaptureWire, Error, string> {

@@ -124,6 +124,7 @@ describe('the requests the frontend actually sends', () => {
       api.listNotes({ state: 'archived', tag: 'house', limit: 25 }),
     );
     await call('listNotesPaged', () => api.listNotes({ cursor: CURSOR_PLACEHOLDER, limit: 200 }));
+    await call('listNotesCorpus', () => api.listNotes({ include: 'search_text', limit: 200 }));
     await call('getNote', () => api.getNote(NOTE_ID));
     await call('createNote', () =>
       api.createNote({
