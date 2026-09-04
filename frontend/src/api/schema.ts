@@ -291,6 +291,28 @@ export interface PresignedDownloadWire {
   expires_at: string;
 }
 
+/** POST /v1/captures/{captureId}/move. 200 with the re-pointed capture, 204 when already there. */
+export interface CaptureMoveWire {
+  note_id: string;
+}
+
+/**
+ * One entry of GET /v1/notes/{noteId}/recordings/urls: a presigned GET for a
+ * recording's audio and the filename to save it under,
+ * `<note-title-slug>-<yyyymmdd-hhmm>.<ext>`. The client zips these itself.
+ */
+export interface RecordingUrlWire {
+  capture_id: string;
+  filename: string;
+  url: string;
+  expires_at: string;
+}
+
+/** Every recording of a note that still has its audio, oldest first, at most 200. */
+export interface RecordingUrlsWire {
+  items: RecordingUrlWire[];
+}
+
 /* ---------------------------------------------------------------------------
    Match and search
    --------------------------------------------------------------------------- */

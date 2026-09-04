@@ -33,6 +33,7 @@ import type {
   PresignedDownloadWire,
   ProblemWire,
   ReadinessWire,
+  RecordingUrlsWire,
   SearchHitWire,
   SettingsWire,
   TagWire,
@@ -389,6 +390,56 @@ export const captureCreated: CaptureCreatedWire = {
     "max_bytes": 4194304,
     "url": "https://example.invalid/presigned"
   }
+};
+
+/** POST /v1/captures/{captureId}/move → 200. The re-pointed capture: note_id is the target, and its paragraph went with it. */
+export const captureMoved: CaptureWire = {
+  "appended_at": "2026-01-01T00:00:00.000000000Z",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "duration_ms": null,
+  "error": null,
+  "has_peaks": false,
+  "has_segments": false,
+  "id": "fixture-id",
+  "note_id": "fixture-note-id",
+  "status": "appended",
+  "suggested_note_id": null,
+  "suggested_title": null,
+  "version": 2
+};
+
+/** GET /v1/notes/{noteId}/recordings/urls → 200. One presigned GET per recording that still has its audio, oldest first, with the filename to save it under: <note-title-slug>-<yyyymmdd-hhmm>.<ext>. */
+export const recordingUrls: RecordingUrlsWire = {
+  "items": [
+    {
+      "capture_id": "c_take_1",
+      "expires_at": "2026-01-01T00:00:00.000000000Z",
+      "filename": "kitchen-rebuild-20260101-0930.webm",
+      "url": "https://example.invalid/presigned"
+    },
+    {
+      "capture_id": "c_misfiled",
+      "expires_at": "2026-01-01T00:00:00.000000000Z",
+      "filename": "kitchen-rebuild-20260101-1200.webm",
+      "url": "https://example.invalid/presigned"
+    },
+    {
+      "capture_id": "c_take_2",
+      "expires_at": "2026-01-01T00:00:00.000000000Z",
+      "filename": "kitchen-rebuild-20260101-1506.webm",
+      "url": "https://example.invalid/presigned"
+    }
+  ]
+};
+
+/** POST /v1/captures/{captureId}/move → 503 after a rollback. `type` is the retryable URI: nothing changed, send the same request again. */
+export const problemRetryable: ProblemWire = {
+  "correlation_id": "00000000-0000-4000-8000-000000000000",
+  "detail": "the recording could not be moved and nothing was changed; try again",
+  "instance": "/v1/fixture",
+  "status": 503,
+  "title": "Service Unavailable",
+  "type": "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable"
 };
 
 /** GET /v1/usage?month=2026-01 → 200. The caller's own provider spend for the month in microdollars: totals, the split by pipeline stage, one line per day. */

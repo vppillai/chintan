@@ -24,6 +24,11 @@ type captureTargetRequest struct {
 	NewNoteTitle string `json:"new_note_title"`
 }
 
+// captureMoveRequest is the OpenAPI CaptureMove schema.
+type captureMoveRequest struct {
+	NoteID string `json:"note_id"`
+}
+
 // downloadResponse is the presigned GET a client plays or reads from.
 type downloadResponse struct {
 	URL       string `json:"url"`
@@ -239,4 +244,71 @@ func (rt *router) downloadCapture(w http.ResponseWriter, r *http.Request) {
 		URL:       url,
 		ExpiresAt: model.FormatTime(time.Now().Add(service.DownloadTTL)),
 	})
+}
+
+// deleteCapture removes one recording and the paragraph it dictated.
+//
+// The service cuts the paragraph, refreshes the note index, unlinks the
+// capture's objects and deletes its row, in that order, so a failure part-way
+// leaves the capture visible and the delete retryable. A second call is 404.
+func (rt *router) deleteCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	if err := rt.Captures.DeleteCapture(r.Context(), userID, r.PathValue("captureId")); err != nil {
+		fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// moveCapture relocates one recording, and the paragraph it dictated, to
+// another note. The paragraph lands among the target's recordings in
+// chronological order, not at the end. 200 with the re-pointed capture; 204
+// when it was already there.
+func (rt *router) moveCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	var req captureMoveRequest
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+		return
+	}
+	if req.NoteID == "" {
+		httperr.BadRequest(w, r, "note_id is required")
+		return
+	}
+
+	capture, moved, err := rt.Captures.MoveCapture(r.Context(), userID, r.PathValue("captureId"), req.NoteID)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	if !moved {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, captureOf(*capture))
+}
+
+// noteRecordingURLs is the bulk download manifest: a presigned GET for every
+// recording of the note that still has its audio, with the filename to save
+// each under, so the client can zip them itself in one pass. Capped at
+// service.MaxRecordingURLs, oldest first.
+func (rt *router) noteRecordingURLs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	urls, err := rt.Captures.RecordingURLs(r.Context(), userID, r.PathValue("noteId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, recordingURLsOf(urls))
 }

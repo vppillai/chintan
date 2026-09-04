@@ -50,6 +50,18 @@ func withBrokenObjects() harnessOption {
 	}
 }
 
+// withFailingBodyWrite makes the capture service's conditional body writes
+// fail for one object key, which the test picks after the harness has made its
+// notes. It is how a move is made to fail on its second write.
+func withFailingBodyWrite(key *string) harnessOption {
+	return func(d *handler.Deps, h *harness) {
+		h.captures = service.NewCaptureService(h.store, failingPutIfMatch{Objects: h.objects, key: key}).
+			WithInvoker(h.worker).
+			WithNoteCreator(h.notes)
+		d.Captures = h.captures
+	}
+}
+
 func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	t.Helper()
 
@@ -205,4 +217,18 @@ func TestMain(m *testing.M) {
 	restore := obs.SetMetricOutput(io.Discard)
 	defer restore()
 	os.Exit(m.Run())
+}
+
+// failingPutIfMatch fails the conditional write for the key *key names, and is
+// the memory store otherwise.
+type failingPutIfMatch struct {
+	repository.Objects
+	key *string
+}
+
+func (f failingPutIfMatch) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	if f.key != nil && key == *f.key {
+		return errors.New("s3: 500 InternalError")
+	}
+	return f.Objects.PutIfMatch(ctx, key, body, contentType, etag)
 }

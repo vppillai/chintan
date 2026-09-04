@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -602,6 +603,15 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/notes/match -> 400": send(http.MethodPost, "/v1/notes/match", "user1", map[string]any{"query": ""}),
 		"POST /v1/notes/match -> 401": send(http.MethodPost, "/v1/notes/match", "", map[string]any{"query": "x"}),
 
+		"GET /v1/notes/{noteId}/recordings/urls -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Kitchen", nil)
+			h.seedAppended(t, "user1", note, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodGet, "/v1/notes/"+note.ID+"/recordings/urls", "user1", nil).Code
+		},
+		"GET /v1/notes/{noteId}/recordings/urls -> 401": get("/v1/notes/n1/recordings/urls", ""),
+		"GET /v1/notes/{noteId}/recordings/urls -> 404": get("/v1/notes/missing/recordings/urls", "user1"),
+
 		// ---- tags and search
 		"GET /v1/tags -> 200":   get("/v1/tags", "user1"),
 		"GET /v1/tags -> 401":   get("/v1/tags", ""),
@@ -692,6 +702,56 @@ func statusScenarios() map[string]scenario {
 		},
 		"GET /v1/captures/{captureId}/download -> 401": get("/v1/captures/c_1/download?kind=audio", ""),
 		"GET /v1/captures/{captureId}/download -> 404": get("/v1/captures/missing/download?kind=audio", "user1"),
+		"DELETE /v1/captures/{captureId} -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Kitchen", nil)
+			h.seedAppended(t, "user1", note, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodDelete, "/v1/captures/c_1", "user1", nil).Code
+		},
+		"DELETE /v1/captures/{captureId} -> 401": send(http.MethodDelete, "/v1/captures/c_1", "", nil),
+		"DELETE /v1/captures/{captureId} -> 404": send(http.MethodDelete, "/v1/captures/missing", "user1", nil),
+		"DELETE /v1/captures/{captureId} -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			h.putCapture(t, model.CaptureIndex{ID: "c_1", UserID: "user1", Status: model.StatusTranscribing, CreatedAt: model.Now()})
+			return h.do(t, http.MethodDelete, "/v1/captures/c_1", "user1", nil).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			source := h.createNote(t, "user1", "Source", nil)
+			target := h.createNote(t, "user1", "Target", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			source := h.createNote(t, "user1", "Source", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": source.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{}),
+		"POST /v1/captures/{captureId}/move -> 401": send(http.MethodPost, "/v1/captures/c_1/move", "", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/move -> 404": send(http.MethodPost, "/v1/captures/missing/move", "user1", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/move -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			source := h.createNote(t, "user1", "Source", nil)
+			archived := h.createNote(t, "user1", "Archived", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+archived.ID, "user1", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": archived.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 503": func(t *testing.T) int {
+			var failKey string
+			h := newHarness(t, withFailingBodyWrite(&failKey))
+			source := h.createNote(t, "user1", "Source", nil)
+			target := h.createNote(t, "user1", "Target", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			stored, err := h.store.GetNote(context.Background(), "user1", target.ID)
+			if err != nil {
+				t.Fatalf("GetNote: %v", err)
+			}
+			failKey = stored.S3MarkdownKey
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID}).Code
+		},
 
 		// ---- export
 		"POST /v1/export -> 202":           send(http.MethodPost, "/v1/export", "user1", nil),
