@@ -20,11 +20,13 @@ import {
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
+import { awaitsConnection } from './useResendOnReconnect.ts';
 
 /**
  * A recording being filed, as a row at the top of the library.
@@ -265,10 +267,15 @@ function LocalUploadItem({ model }: { model: CaptureModel }) {
   const queryClient = useQueryClient();
   const send = useCaptureStore((state) => state.send);
   const discard = useCaptureStore((state) => state.discard);
+  const online = useOnline();
 
   const failed = model.state === 'failed';
   const landed = model.state === 'uploaded';
   const percent = Math.round((landed ? 1 : model.uploadProgress) * 100);
+  // The device is offline and this is the recording that will go out on its
+  // own when it is not — say so, rather than leaving "did not finish" as the
+  // last word beside a banner that already says why.
+  const willResend = failed && !online && awaitsConnection(model);
 
   return (
     <article
@@ -304,6 +311,10 @@ function LocalUploadItem({ model }: { model: CaptureModel }) {
         <div className="filing-row__upload" aria-hidden="true">
           <span className="filing-row__upload-fill" style={{ inlineSize: `${percent}%` }} />
         </div>
+      )}
+
+      {willResend && (
+        <p className="filing-row__status">It will be sent when you&rsquo;re back online.</p>
       )}
 
       {failed && (
