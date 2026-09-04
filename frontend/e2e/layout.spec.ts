@@ -246,6 +246,7 @@ async function inspect(page: Page): Promise<LayoutReport> {
       '.record-button',
       '.note-row',
       '.load-more',
+      '.selection-bar',
     ];
     const overlaps: LayoutReport['overlaps'] = [];
     for (const chromeSelector of CHROME) {
@@ -625,6 +626,72 @@ for (const viewport of [
     );
   });
 }
+
+/**
+ * The selection bars — the library's bulk bar and the note screen's recording
+ * bar — sit directly above the tab bar, whatever the list is scrolled to, and
+ * never over it. They used to be a card at the end of the list (QA Q6).
+ */
+test('the selection bars sit above the tab bar on a phone', async ({ page, api }) => {
+  for (let index = 0; index < 20; index += 1) {
+    const id = `filler-${String(index)}`;
+    api.notes[id] = {
+      id,
+      title: `Filler note ${String(index + 1)}`,
+      body: 'Padding for the scroll test.',
+      snippet: 'Padding for the scroll test.',
+      tags: [],
+      aliases: [],
+      updated_at: new Date(Date.UTC(2026, 7, 1 + (index % 28))).toISOString(),
+      version: 1,
+      archived: false,
+      captures: [],
+    };
+  }
+  api.notes['roof-repair']!.captures!.push({
+    id: 'cap-newer',
+    status: 'appended',
+    created_at: '2026-08-06T09:12:00.000Z',
+    version: 1,
+    note_id: 'roof-repair',
+    duration_ms: 8_000,
+    has_peaks: false,
+    has_segments: false,
+  });
+  await withoutServiceWorker(page);
+  await page.setViewportSize({ width: 412, height: 915 });
+
+  // The library, with a selection under way.
+  await page.goto('/');
+  await page.getByRole('button', { name: /roof repair/i }).hover();
+  await page.getByRole('checkbox', { name: /^Select roof repair/i }).click();
+  await page.getByRole('button', { name: 'Select all' }).click();
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
+  await shoot(page, 'library-selecting__412x915__ink');
+  assertClean(await inspect(page), 'library selecting @ 412x915');
+  let bars = await page.evaluate(() => ({
+    bar: document.querySelector('.selection-bar')?.getBoundingClientRect().bottom ?? NaN,
+    tabs: document.querySelector('.tab-bar')?.getBoundingClientRect().top ?? NaN,
+  }));
+  expect(bars.bar).toBeLessThanOrEqual(bars.tabs + 1);
+  expect(bars.bar).toBeGreaterThan(bars.tabs - 200);
+
+  // The note screen, with recordings selected.
+  await page.goto('/notes/roof-repair');
+  await page.getByRole('button', { name: /more for recording from/i }).first().click();
+  await page.getByRole('menuitem', { name: 'Select' }).click();
+  await page.getByRole('button', { name: 'Select all' }).click();
+  await expect(page.getByRole('toolbar', { name: 'Recording actions' })).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await shoot(page, 'note-selecting__412x915__ink');
+  assertClean(await inspect(page), 'note selecting @ 412x915');
+  bars = await page.evaluate(() => ({
+    bar: document.querySelector('.selection-bar')?.getBoundingClientRect().bottom ?? NaN,
+    tabs: document.querySelector('.tab-bar')?.getBoundingClientRect().top ?? NaN,
+  }));
+  expect(bars.bar).toBeLessThanOrEqual(bars.tabs + 1);
+  expect(bars.bar).toBeGreaterThan(bars.tabs - 200);
+});
 
 /**
  * WCAG 2.2 SC 2.5.8 puts the floor at 24×24; the product's own token says 44×44

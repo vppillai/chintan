@@ -54,6 +54,19 @@ type Listener = (event: MediaQueryListEvent) => void;
 
 const listeners = new Map<string, Set<Listener>>();
 let prefersDark = false;
+let canHover = false;
+
+/** Whether `(hover: hover)` matches: a mouse or trackpad rather than a finger. */
+export function setCanHover(next: boolean): void {
+  canHover = next;
+  for (const [query, set] of listeners) {
+    if (!query.includes('hover')) continue;
+    const matches = matchesQuery(query);
+    for (const listener of set) {
+      listener({ matches, media: query } as MediaQueryListEvent);
+    }
+  }
+}
 
 export function setSystemPrefersDark(next: boolean): void {
   prefersDark = next;
@@ -68,6 +81,7 @@ export function setSystemPrefersDark(next: boolean): void {
 function matchesQuery(query: string): boolean {
   if (query.includes('prefers-color-scheme: dark')) return prefersDark;
   if (query.includes('prefers-color-scheme: light')) return !prefersDark;
+  if (query.includes('hover: hover')) return canHover;
   return false;
 }
 
@@ -115,6 +129,7 @@ beforeEach(() => {
 
   listeners.clear();
   prefersDark = false;
+  canHover = false;
   window.localStorage.clear();
   document.documentElement.removeAttribute('data-theme');
   document.documentElement.removeAttribute('data-resolved-theme');

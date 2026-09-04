@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useId, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import {
@@ -18,9 +18,10 @@ import { ApiError } from '@/api/problem.ts';
 import type { NoteState, NoteWire } from '@/api/schema.ts';
 import { ARCHIVED_VIEW } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
-import { NoteRow } from '@/components/NoteRow.tsx';
+import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay } from '@/features/notes/groups.ts';
@@ -42,7 +43,10 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
  * Bulk select carries over from the two screens this replaces. In the active
  * view the actions are Archive and Delete forever; in the archive, Restore and
  * Delete forever. Deleting is gated by a typed word in both, because it is the
- * one thing here that cannot be undone.
+ * one thing here that cannot be undone. Selection starts from a row — a long
+ * press on a phone, a checkbox that appears on hover with a mouse (see
+ * `NoteRow`) — and its bar sits above the tab bar, not at the end of the list
+ * (backlog U2, Q6).
  */
 export function NotesScreen() {
   const [params, setParams] = useSearchParams();
@@ -123,6 +127,8 @@ export function NotesScreen() {
    */
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** The last row toggled, for Shift-click to extend from. */
+  const anchorRef = useRef<string | null>(null);
   const [confirming, setConfirming] = useState<'archive' | 'delete' | 'restore' | 'purge' | null>(
     null,
   );
@@ -133,18 +139,10 @@ export function NotesScreen() {
   const bulkBusy =
     bulkArchive.isPending || bulkDelete.isPending || bulkRestore.isPending || bulkPurge.isPending;
 
-  const toggleSelect = (noteId: string): void => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(noteId)) next.delete(noteId);
-      else next.add(noteId);
-      return next;
-    });
-  };
-
   const exitSelecting = (): void => {
     setSelecting(false);
     setSelectedIds(new Set());
+    anchorRef.current = null;
   };
 
   /*
@@ -237,24 +235,40 @@ export function NotesScreen() {
   const selectableIds = visible.map((note) => note.id);
   const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
 
+  /*
+   * A row asking to be selected — the first one starts the mode. With Shift
+   * held (a mouse), every row between the last one toggled and this one is
+   * selected too, in the order they are on screen; the anchor moves here
+   * either way, so a second Shift-click extends from this row.
+   */
+  const toggleSelect = (noteId: string, { range }: SelectOptions): void => {
+    const anchor = anchorRef.current;
+    anchorRef.current = noteId;
+    setSelecting(true);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (range && anchor) {
+        const from = selectableIds.indexOf(anchor);
+        const to = selectableIds.indexOf(noteId);
+        if (from !== -1 && to !== -1) {
+          for (const id of selectableIds.slice(Math.min(from, to), Math.max(from, to) + 1)) {
+            next.add(id);
+          }
+          return next;
+        }
+      }
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  };
+
   return (
-    <div className="screen library">
+    <div className="screen library" data-selecting={selecting || undefined}>
       <PullToRefresh onRefresh={refresh} />
 
       <header className="screen__header">
         <h1>Notes</h1>
-        {visible.length > 0 && (
-          <button
-            type="button"
-            className="screen__action"
-            onClick={() => {
-              if (selecting) exitSelecting();
-              else setSelecting(true);
-            }}
-          >
-            {selecting ? 'Cancel' : 'Select'}
-          </button>
-        )}
       </header>
 
       <form
@@ -471,23 +485,19 @@ export function NotesScreen() {
       )}
 
       {selecting && (
-        <div className="bulk-bar" role="toolbar" aria-label="Bulk actions">
-          <button
-            type="button"
-            className="screen__action"
-            onClick={() => {
-              setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
-            }}
-          >
-            {allSelected ? 'Deselect all' : 'Select all'}
-          </button>
-          <p className="screen__count" role="status">
-            <span className="numeric">{selectedIds.size}</span> selected
-          </p>
+        <SelectionBar
+          label="Bulk actions"
+          count={selectedIds.size}
+          allSelected={allSelected}
+          onSelectAll={() => {
+            setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
+          }}
+          onCancel={exitSelecting}
+        >
           {view === 'active' ? (
             <button
               type="button"
-              className="screen__action"
+              className="selection-bar__action"
               disabled={selectedIds.size === 0 || bulkBusy}
               onClick={() => {
                 setConfirming('archive');
@@ -498,7 +508,7 @@ export function NotesScreen() {
           ) : (
             <button
               type="button"
-              className="screen__action"
+              className="selection-bar__action"
               disabled={selectedIds.size === 0 || bulkBusy}
               onClick={() => {
                 setConfirming('restore');
@@ -517,7 +527,7 @@ export function NotesScreen() {
           */}
           <button
             type="button"
-            className="screen__action screen__action--destructive"
+            className="selection-bar__action selection-bar__action--destructive"
             disabled={selectedIds.size === 0 || bulkBusy}
             onClick={() => {
               setConfirming(view === 'active' ? 'delete' : 'purge');
@@ -525,7 +535,7 @@ export function NotesScreen() {
           >
             {bulkDelete.isPending || bulkPurge.isPending ? 'Deleting…' : 'Delete forever'}
           </button>
-        </div>
+        </SelectionBar>
       )}
 
       <ConfirmDialog
