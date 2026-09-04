@@ -8,6 +8,7 @@ import {
   useBulkRestoreNotes,
   useNotes,
   useSearch,
+  useSearchCorpus,
   useTags,
 } from '@/api/queries.ts';
 import { ApiError } from '@/api/problem.ts';
@@ -15,6 +16,7 @@ import type { NoteState, NoteWire } from '@/api/schema.ts';
 import { ARCHIVED_VIEW } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { NoteRow } from '@/components/NoteRow.tsx';
+import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay } from '@/features/notes/groups.ts';
@@ -73,6 +75,13 @@ export function NotesScreen() {
    */
   const archived = useNotes({ state: 'archived' });
   const tags = useTags();
+  /*
+   * The search corpus — every active note with its searchable body — fetched
+   * once and written to the device, so the instant search below can find a
+   * sentence from a transcript rather than only a note's first line. Read
+   * back through `cached`; this only fills it.
+   */
+  useSearchCorpus(online);
 
   /*
    * Multi-select, for doing something to several notes at once rather than one
@@ -149,8 +158,22 @@ export function NotesScreen() {
    * connection at all; `GET /v1/search` then extends it with what only the
    * server can see — transcripts. The server is asked only online and only for
    * active notes, which is all it indexes.
+   *
+   * Ranked over the server's rows enriched with what the device holds for
+   * them: the corpus row's `search_text`, or a full note's body. The list
+   * itself never carries either — it is fetched constantly and renders none
+   * of it — so without this the instant search would see only snippets while
+   * online, and only offline would it match what the server matches.
    */
-  const local = useMemo(() => rankLocal(notes, trimmed), [notes, trimmed]);
+  const searchable = useMemo(() => {
+    const device = new Map((cached.data ?? []).map((note) => [note.id, note]));
+    return notes.map((note) => {
+      const held = device.get(note.id);
+      // The server's row wins every field it has; the device supplies the text.
+      return held ? { ...held, ...note } : note;
+    });
+  }, [notes, cached.data]);
+  const local = useMemo(() => rankLocal(searchable, trimmed), [searchable, trimmed]);
   const server = useSearch(trimmed, { enabled: online && view === 'active' });
   const hits = useMemo(
     () => mergeResults(local, server.data?.items ?? []),
@@ -261,6 +284,7 @@ export function NotesScreen() {
       */}
       {!searching && view === 'active' && (
         <>
+          <PasskeyNudge />
           <ResumePrompt />
           <FilingRow />
         </>

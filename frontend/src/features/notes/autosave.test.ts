@@ -33,6 +33,17 @@ describe('editing', () => {
     expect(back.state).toBe('clean');
   });
 
+  it('treats the transcription language as part of the note', () => {
+    // Absent and empty both mean "inherit the default", so neither is a change
+    // from the other; a real code is.
+    const inherit = editorReducer(start(), { type: 'edit', patch: { language: '' } });
+    expect(inherit.state).toBe('clean');
+
+    const malayalam = editorReducer(start(), { type: 'edit', patch: { language: 'ml' } });
+    expect(malayalam.state).toBe('dirty');
+    expect(hasUnsavedWork(malayalam)).toBe(true);
+  });
+
   it('treats list fields by value, not by identity', () => {
     const withTags = editorReducer(start(), { type: 'edit', patch: { tags: ['house'] } });
     const sameTags = editorReducer(withTags, { type: 'edit', patch: { tags: ['house'] } });

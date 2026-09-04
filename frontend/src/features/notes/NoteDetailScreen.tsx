@@ -13,6 +13,7 @@ import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
 import { describeMoment, describeRecordings } from './groups.ts';
 import { useNoteEditor } from './useNoteEditor.ts';
+import { countWords, describeWords } from './words.ts';
 
 /**
  * A note.
@@ -103,7 +104,7 @@ export function NoteDetailScreen() {
         onBlur={() => void editor.saveNow()}
       />
 
-      <NoteMeta note={note} tags={editor.model.draft.tags} />
+      <NoteMeta note={note} tags={editor.model.draft.tags} body={editor.model.draft.body} />
 
       <SaveIndicator editor={editor} />
 
@@ -129,18 +130,28 @@ export function NoteDetailScreen() {
 }
 
 /**
- * "Updated today 14:02 · house · 3 recordings · 4:12".
+ * "Updated today 14:02 · house · 3 recordings · 4:12 · 412 words".
  *
- * The tags shown are the draft's, not the server's, so adding one in the bar
- * shows up here at once rather than after the save lands.
+ * The tags and the word count are the draft's, not the server's, so adding a
+ * tag in the bar or typing a sentence shows up here at once rather than after
+ * the save lands.
  */
-function NoteMeta({ note, tags }: { note: NoteDetailWire; tags: readonly string[] }) {
+function NoteMeta({
+  note,
+  tags,
+  body,
+}: {
+  note: NoteDetailWire;
+  tags: readonly string[];
+  body: string;
+}) {
   const updated = describeMoment(note.updated_at);
   const parts = [
     // "Updated today 14:02", but "Updated 6 Aug 09:14" — a month keeps its case.
     updated ? `Updated ${updated.replace(/^(Today|Yesterday)/, (day) => day.toLowerCase())}` : null,
     ...tags,
     describeRecordings(note),
+    describeWords(countWords(body)),
   ].filter((part): part is string => Boolean(part));
 
   // A real " · " between the facts, not a CSS pseudo-element: a screen reader

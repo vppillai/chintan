@@ -36,6 +36,7 @@ import type {
   SearchHitWire,
   SettingsWire,
   TagWire,
+  UsageWire,
 } from './schema.ts';
 
 type Query = NonNullable<RequestOptions['query']>;
@@ -71,11 +72,21 @@ export class ChintanApi {
     });
   }
 
+  /* ---- Usage ---------------------------------------------------------- */
+
+  /**
+   * The caller's own provider usage for one UTC month, `yyyy-mm`; the current
+   * month when omitted. A month with nothing in it is zeros, not a 404.
+   */
+  getUsage(month?: string): Promise<UsageWire> {
+    return this.client.request('/v1/usage', { query: { month } });
+  }
+
   /* ---- Notes ---------------------------------------------------------- */
 
   listNotes(query: NoteListQuery = {}): Promise<Page<NoteWire>> {
     return this.client.request('/v1/notes', {
-      query: { ...pageQuery(query), state: query.state, tag: query.tag },
+      query: { ...pageQuery(query), state: query.state, tag: query.tag, include: query.include },
     });
   }
 

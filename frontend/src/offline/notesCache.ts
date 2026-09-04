@@ -53,6 +53,19 @@ function supersedes(next: CachedNote, existing: CachedNote | undefined): boolean
     next.note.version > existing.note.version || next.updatedAt > existing.updatedAt;
   if (newer) return true;
   if (existing.detail && !next.detail) return false;
+  /*
+   * Same vintage, both list rows: a row carrying `search_text` (from the
+   * corpus request) is not replaced by the plain library row that arrives on
+   * every visit, or the words the search relies on would vanish between one
+   * corpus fetch and the next.
+   */
+  if (
+    !next.detail &&
+    typeof existing.note.search_text === 'string' &&
+    typeof next.note.search_text !== 'string'
+  ) {
+    return false;
+  }
   return true;
 }
 

@@ -94,3 +94,35 @@ describe('what the device keeps', () => {
     expect(await cachedNotes('active')).toEqual([]);
   });
 });
+
+/**
+ * The corpus rows — `GET /v1/notes?include=search_text` — share the store with
+ * the plain library rows, which arrive on every visit without the text.
+ */
+describe('the searchable body survives the library row', () => {
+  it('keeps the search text when a plain row of the same vintage arrives', async () => {
+    await cacheNoteList([row({ search_text: 'ridge tiles. the tiler can start on the fourteenth.' })]);
+    await cacheNoteList([row()]);
+
+    const kept = await cachedNote('roof-repair');
+    expect(kept?.search_text).toContain('fourteenth');
+  });
+
+  it('lets a newer plain row through — its text is stale by then, and the next corpus fetch refills it', async () => {
+    await cacheNoteList([row({ search_text: 'ridge tiles.' })]);
+    await cacheNoteList([row({ version: 4, title: 'Roof repair — Ellis' })]);
+
+    const kept = await cachedNote('roof-repair');
+    expect(kept?.title).toBe('Roof repair — Ellis');
+    expect(kept?.search_text).toBeUndefined();
+  });
+
+  it('never lets a corpus row displace the full note the device already holds', async () => {
+    await cacheNoteDetail(detail());
+    await cacheNoteList([row({ search_text: 'ridge tiles.' })]);
+
+    const kept = await cachedNote('roof-repair', { requireDetail: true });
+    expect(kept).not.toBeNull();
+    expect((kept as NoteDetailWire).body).toContain('Ridge tiles');
+  });
+});

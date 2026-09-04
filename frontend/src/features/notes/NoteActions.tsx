@@ -2,13 +2,15 @@ import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { useArchiveNote, useDeleteNoteForever, useRestoreNote } from '@/api/queries.ts';
+import { useArchiveNote, useDeleteNoteForever, useRestoreNote, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
+import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
+import { languageName } from '@/features/settings/languages.ts';
 
 import { describePurge, purgeCountdown } from './purge.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -79,6 +81,13 @@ export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: No
               editor.edit({ aliases });
             }}
             onCommit={() => void editor.saveNow()}
+          />
+          <NoteLanguage
+            value={draft.language ?? ''}
+            onChange={(language) => {
+              editor.edit({ language });
+              void editor.saveNow();
+            }}
           />
         </div>
       )}
@@ -228,6 +237,41 @@ export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: No
         }}
       />
     </div>
+  );
+}
+
+/**
+ * The note's transcription language, in the Tags disclosure with the other
+ * facts about the note that are not its text.
+ *
+ * The inherit entry names what it inherits — "Default (Malayalam)" — read from
+ * the You screen's setting, so the choice is between real languages rather
+ * than between a language and a word. The helper line says what the setting
+ * reaches: only a recording made *into* this note. A recording that is routed
+ * here afterwards was transcribed before anyone knew where it was going, so
+ * only the default could apply to it.
+ */
+function NoteLanguage({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const id = useId();
+  const { data: settings } = useSettings();
+  const inherited = settings?.default_language ?? 'en';
+
+  return (
+    <section className="language-field">
+      <label className="tag-editor__label" htmlFor={id}>
+        Language
+      </label>
+      <LanguageSelect
+        id={id}
+        value={value}
+        inherit={{ label: `Default (${languageName(inherited)})` }}
+        onChange={onChange}
+      />
+      <p className="language-field__hint">
+        For recordings made into this note — Record into this, or chosen as the target. A
+        recording filed automatically is transcribed in your default language.
+      </p>
+    </section>
   );
 }
 

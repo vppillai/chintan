@@ -109,9 +109,14 @@ describe('the requests the frontend actually sends', () => {
         cleanup_mode: 'polished',
         retention_days: 30,
         theme: 'nocturne',
+        default_language: 'ml',
         daily_spend_cap_micros: 500_000,
       }),
     );
+
+    /* ---- usage -------------------------------------------------------- */
+    await call('getUsage', () => api.getUsage());
+    await call('getUsageMonth', () => api.getUsage('2026-01'));
 
     /* ---- notes -------------------------------------------------------- */
     await call('listNotes', () => api.listNotes());
@@ -119,6 +124,7 @@ describe('the requests the frontend actually sends', () => {
       api.listNotes({ state: 'archived', tag: 'house', limit: 25 }),
     );
     await call('listNotesPaged', () => api.listNotes({ cursor: CURSOR_PLACEHOLDER, limit: 200 }));
+    await call('listNotesCorpus', () => api.listNotes({ include: 'search_text', limit: 200 }));
     await call('getNote', () => api.getNote(NOTE_ID));
     await call('createNote', () =>
       api.createNote({
@@ -136,6 +142,7 @@ describe('the requests the frontend actually sends', () => {
         aliases: ['kitchen', 'reno'],
         tags: ['house'],
         verbatim: true,
+        language: 'ml',
       }),
     );
     await call('archiveNote', () => api.archiveNote(NOTE_ID));

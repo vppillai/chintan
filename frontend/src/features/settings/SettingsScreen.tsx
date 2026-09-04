@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Link } from 'react-router';
 
 import { useSaveSettings, useSettings } from '@/api/queries.ts';
 import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
+import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon } from '@/components/Icon.tsx';
+import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
 
+import { PasskeyCard } from '@/features/auth/PasskeyCard.tsx';
 import { SignOutSetting } from '@/features/auth/SignOutSetting.tsx';
 
+import { UsageSection } from './UsageSection.tsx';
 import { VersionFootnote } from './VersionFootnote.tsx';
+import { AUTO_LANGUAGE, languageName } from './languages.ts';
 
 const CLEANUP_LABELS: Record<CleanupMode, string> = {
   faithful: 'Faithful — fix only what was clearly misheard',
@@ -20,6 +26,7 @@ const DEFAULTS: SettingsWire = {
   cleanup_mode: 'faithful',
   retention_days: 0,
   theme: 'ink',
+  default_language: 'en',
   daily_spend_cap_micros: 0,
 };
 
@@ -28,6 +35,8 @@ function equalSettings(a: SettingsWire, b: SettingsWire): boolean {
     a.cleanup_mode === b.cleanup_mode &&
     a.retention_days === b.retention_days &&
     a.theme === b.theme &&
+    // A record written before the field existed reads as English, by contract.
+    (a.default_language ?? 'en') === (b.default_language ?? 'en') &&
     (a.daily_spend_cap_micros ?? 0) === (b.daily_spend_cap_micros ?? 0)
   );
 }
@@ -71,7 +80,8 @@ export function SettingsScreen() {
   const appearanceId = useId();
   const cleanupId = useId();
   const retentionId = useId();
-  const spendId = useId();
+  const languageId = useId();
+  const aboutId = useId();
 
   return (
     <div className="screen">
@@ -203,32 +213,53 @@ export function SettingsScreen() {
         </p>
       </section>
 
-      {/* ---- Spend cap --------------------------------------------------- */}
-      <section className="settings-group" aria-labelledby={spendId}>
-        <h2 id={spendId} className="settings-group__title">
-          Daily spending cap
+      {/* ---- Transcription language -------------------------------------- */}
+      <section className="settings-group" aria-labelledby={languageId}>
+        <h2 id={languageId} className="settings-group__title">
+          Transcription language
         </h2>
-        {/*
-          Read-only since v3 step 3: the cap is one number for the whole
-          instance, set in the deploy config (`daily_spend_cap_micros`) and
-          echoed back by the API. Before that it was a per-user field this
-          screen edited, which the server now accepts and ignores — so the
-          input was a control that did nothing.
-        */}
+        <div className="settings-field">
+          <label className="visually-hidden" htmlFor={`${languageId}-select`}>
+            Default transcription language
+          </label>
+          <LanguageSelect
+            id={`${languageId}-select`}
+            value={draft.default_language ?? 'en'}
+            onChange={(default_language) => {
+              update({ default_language });
+            }}
+          />
+        </div>
         <p className="settings-group__note">
-          {(draft.daily_spend_cap_micros ?? 0) === 0 ? (
-            'No cap is set for this instance. Usage is still measured.'
-          ) : (
-            <>
-              <span className="numeric">${microsToDollars(draft.daily_spend_cap_micros ?? 0)}</span>{' '}
-              a day across transcription and cleanup. Captures stop once it is reached, and say
-              so rather than failing vaguely. It is set in the instance configuration, not here.
-            </>
-          )}
+          {(draft.default_language ?? 'en') === AUTO_LANGUAGE
+            ? 'Each recording is transcribed in whatever language it detects. Naming a language is faster and more accurate; a recording that mixes two is detected as one of them.'
+            : `Recordings are transcribed as ${languageName(draft.default_language ?? 'en')} unless the note they are made into says otherwise. A recording filed automatically always uses this, because it is transcribed before anyone knows which note it belongs to.`}
         </p>
       </section>
 
+      {/* ---- Usage ------------------------------------------------------- */}
+      {/*
+        The read-only spend-cap sentence used to be here. Since v3 step 3 the
+        cap is one number for the whole instance, set in the deploy config and
+        echoed by the API, so the line said something about the deploy rather
+        than about the person. Their own usage does; the cap is a footnote to it.
+      */}
+      <UsageSection dailyCapMicros={draft.daily_spend_cap_micros ?? 0} />
+
+      <PasskeyCard />
+
       <SignOutSetting />
+
+      {/* ---- About ------------------------------------------------------- */}
+      <section className="settings-group" aria-labelledby={aboutId}>
+        <h2 id={aboutId} className="settings-group__title">
+          About
+        </h2>
+        <Link to={ROUTES.about} className="option">
+          <span className="option__label">About Chintan</span>
+          <span className="option__hint">What it does, where your data lives</span>
+        </Link>
+      </section>
 
       {isLoading && <p className="screen__count">Loading your settings…</p>}
 
@@ -256,14 +287,4 @@ export function SettingsScreen() {
 function clamp(value: number, low: number, high: number): number {
   if (!Number.isFinite(value)) return low;
   return Math.min(high, Math.max(low, Math.round(value)));
-}
-
-/** The API meters in micros; people think in dollars. */
-export function microsToDollars(micros: number): number {
-  return Math.round(micros / 10_000) / 100;
-}
-
-export function dollarsToMicros(dollars: number): number {
-  if (!Number.isFinite(dollars) || dollars < 0) return 0;
-  return Math.round(dollars * 1_000_000);
 }

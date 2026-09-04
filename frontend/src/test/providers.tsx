@@ -48,7 +48,11 @@ export const TEST_NOTES = [
 export function defaultTestFetch(): typeof fetch {
   return async (input) => {
     const url = String(input);
-    const body = url.includes('/v1/notes') ? { items: TEST_NOTES } : { items: [] };
+    const body = url.includes('/v1/notes')
+      ? { items: TEST_NOTES }
+      : url.includes('/v1/usage')
+        ? { month: '2026-09', cost_micros: 0, calls: 0, ops: {}, days: [] }
+        : { items: [] };
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },

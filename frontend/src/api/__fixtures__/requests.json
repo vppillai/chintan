@@ -22,8 +22,19 @@
       "cleanup_mode": "polished",
       "retention_days": 30,
       "theme": "nocturne",
+      "default_language": "ml",
       "daily_spend_cap_micros": 500000
     }
+  },
+  {
+    "name": "getUsage",
+    "method": "GET",
+    "path": "/v1/usage"
+  },
+  {
+    "name": "getUsageMonth",
+    "method": "GET",
+    "path": "/v1/usage?month=2026-01"
   },
   {
     "name": "listNotes",
@@ -39,6 +50,11 @@
     "name": "listNotesPaged",
     "method": "GET",
     "path": "/v1/notes?cursor=__CONTRACT_CURSOR__&limit=200"
+  },
+  {
+    "name": "listNotesCorpus",
+    "method": "GET",
+    "path": "/v1/notes?limit=200&include=search_text"
   },
   {
     "name": "getNote",
@@ -76,7 +92,8 @@
       "tags": [
         "house"
       ],
-      "verbatim": true
+      "verbatim": true,
+      "language": "ml"
     }
   },
   {
