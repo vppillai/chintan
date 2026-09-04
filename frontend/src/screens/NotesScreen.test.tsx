@@ -209,6 +209,44 @@ describe('search narrows the list as you type, from what is already on the devic
     expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
   });
 
+  it('asks the server for the word once typing pauses, while the device answers every keystroke', async () => {
+    /*
+     * QA D8: "flashing" at 60 ms a key sent eight `GET /v1/search` requests —
+     * one per letter — whose answers landed out of order. The corpus on the
+     * device narrows the list at once; the server is worth one request, for
+     * the word.
+     */
+    const user = userEvent.setup({ delay: null });
+    const asked: string[] = [];
+    const base = library();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/search')) {
+        asked.push(url.searchParams.get('q') ?? '');
+        return json({ items: [] });
+      }
+      return base(input, init);
+    });
+    mount(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'ridge');
+
+    // The device has already answered: only the matching note is on screen,
+    // and the count says the server is still to come.
+    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reading list/i })).toBeNull();
+    expect(screen.getByText(/1 result so far/)).toBeInTheDocument();
+    expect(asked).toEqual([]);
+
+    await waitFor(() => {
+      expect(asked).toEqual(['ridge']);
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/^1 result$/)).toBeInTheDocument();
+    });
+  });
+
   it('says nothing matches, naming the term', async () => {
     const user = userEvent.setup();
     mount(library());

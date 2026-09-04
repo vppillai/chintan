@@ -3,6 +3,7 @@ import { useCallback, useId, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import {
+  SERVER_SEARCH_DEBOUNCE_MS,
   queryKeys,
   useBulkArchiveNotes,
   useBulkDeleteNotes,
@@ -24,6 +25,7 @@ import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
@@ -76,6 +78,16 @@ export function NotesScreen() {
    * into a character-by-character undo, and a chip is a way of looking at the
    * list, not a place the user went — Back from the library should leave the
    * library, not step through every filter they tried on the way.
+   *
+   * `flushSync`, because the next change is built from this render's params.
+   * React Router commits a navigation inside a transition, which React may
+   * hold for tens of milliseconds on a busy device, so a keystroke landing
+   * before that render had committed read the *previous* filter and put it
+   * back: clearing the field and typing the next word produced
+   * "flashingzebra7" once in the QA pass, and pressing All then typing
+   * restored `view=archived`. Committing synchronously closes the window
+   * (`App.tsx` mounts the `react-router/dom` provider, which is what makes
+   * the option do anything).
    */
   const setFilter = (changes: Record<string, string | null>): void => {
     const next = new URLSearchParams(params);
@@ -83,7 +95,7 @@ export function NotesScreen() {
       if (value === null || value === '') next.delete(key);
       else next.set(key, value);
     }
-    setParams(next, { replace: true });
+    setParams(next, { replace: true, flushSync: true });
   };
 
   const list = useNotes({ state: view, ...(tag ? { tag } : {}) });
@@ -194,12 +206,23 @@ export function NotesScreen() {
     });
   }, [notes, cached.data]);
   const local = useMemo(() => rankLocal(searchable, trimmed), [searchable, trimmed]);
-  const server = useSearch(trimmed, { enabled: online && view === 'active' });
+  /*
+   * The server is asked for the word once the typing pauses, not for every
+   * letter on the way to it: a keystroke's worth of results is already on
+   * screen from the corpus above, and eight requests for "flashing" answered
+   * out of order is what a per-keystroke query produced.
+   */
+  const settled = useDebouncedValue(trimmed, SERVER_SEARCH_DEBOUNCE_MS);
+  const server = useSearch(settled, { enabled: online && view === 'active' });
   const hits = useMemo(
     () => mergeResults(local, server.data?.items ?? []),
     [local, server.data],
   );
   const serverUnavailable = view === 'active' && (!online || server.isError);
+  // Still waiting on the server: either the debounce has not let the word
+  // through yet, or the request is in flight.
+  const serverPending =
+    searching && view === 'active' && online && (settled !== trimmed || server.isFetching);
 
   const groups = useMemo(() => groupByDay(notes), [notes]);
   const visible: NoteWire[] = searching ? hits.map((hit) => noteForHit(hit, notes)) : notes;
@@ -327,7 +350,7 @@ export function NotesScreen() {
       {searching && (
         <p className="screen__count" aria-live="polite">
           {`${String(hits.length)} ${hits.length === 1 ? 'result' : 'results'}${
-            server.isFetching ? ' so far…' : ''
+            serverPending ? ' so far…' : ''
           }`}
         </p>
       )}
@@ -374,7 +397,7 @@ export function NotesScreen() {
         </div>
       )}
 
-      {searching && nothingToShow && !server.isFetching && (
+      {searching && nothingToShow && !serverPending && (
         <p className="screen__empty">
           Nothing matches &ldquo;{trimmed}&rdquo;
           {view === 'archived' ? ' in the archive.' : ' in the notes searched.'}

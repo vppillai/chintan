@@ -1,4 +1,8 @@
-import { RouterProvider, createBrowserRouter } from 'react-router';
+import { createBrowserRouter } from 'react-router';
+// The DOM provider, not the core one: it is the one that wires
+// `ReactDOM.flushSync` in, and `flushSync: true` on a navigation is a no-op
+// without it. The library's filters rely on it — see `NotesScreen.setFilter`.
+import { RouterProvider } from 'react-router/dom';
 
 import { ApiProvider } from '@/api/ApiProvider.tsx';
 import { routerBasename, scopedEntryUrl } from '@/app/basePath.ts';

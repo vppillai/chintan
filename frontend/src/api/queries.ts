@@ -408,6 +408,15 @@ export function useBulkDeleteNotes() {
 }
 
 /**
+ * How long the search field has to hold still before the server is asked.
+ *
+ * The device's corpus answers every keystroke; this is only for the request
+ * that costs a round trip. Typing a word at 60 ms a key sent one
+ * `GET /v1/search` per letter, and the answers landed out of order.
+ */
+export const SERVER_SEARCH_DEBOUNCE_MS = 250;
+
+/**
  * `GET /v1/search`. Never what the user waits for: the library filters its
  * cached corpus on every keystroke and this refines and extends the result,
  * because the server can see transcript text the client never downloaded.
