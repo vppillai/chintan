@@ -438,6 +438,20 @@ for (const theme of THEMES) {
 
         await shoot(page, `capture__${viewport.name}__${theme}`);
         assertClean(await inspect(page), `capture @ ${viewport.name}/${theme}`);
+
+        /*
+         * Review: the live canvas gives way to the recording's own waveform,
+         * which is deliberately wider than the screen inside its own scroller
+         * (`.clip-scrubber`, excused from the sideways-scroll check) and must
+         * not push anything else sideways or under the controls.
+         */
+        // A second of audio, so the review draws a waveform rather than a hairline.
+        await page.waitForTimeout(1_100);
+        await page.getByRole('button', { name: 'Stop' }).click();
+        await expect(page.locator('.capture__state')).toHaveText('Ready to send');
+        await expect(page.getByRole('slider', { name: 'Playback position' })).toBeVisible();
+        await shoot(page, `capture-review__${viewport.name}__${theme}`);
+        assertClean(await inspect(page), `capture review @ ${viewport.name}/${theme}`);
       });
     });
   }
