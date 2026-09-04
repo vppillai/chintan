@@ -38,6 +38,16 @@ export interface NoteDraft {
   body: string;
   aliases: string[];
   tags: string[];
+  /**
+   * Transcription language for recordings made into the note: `'auto'`, an
+   * ISO-639-1 code, or `''` to inherit the You screen's default. Part of the
+   * draft rather than its own mutation so it rides the same serialised PATCH
+   * with the same `version` — a separate request bumping the version under a
+   * dirty draft would turn the user's own change into a conflict prompt.
+   * Optional only so a draft built before the field existed still typechecks;
+   * `draftFrom` always sets it.
+   */
+  language?: string;
 }
 
 export interface EditorModel {
@@ -89,7 +99,8 @@ export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
     a.title === b.title &&
     a.body === b.body &&
     sameList(a.aliases, b.aliases) &&
-    sameList(a.tags, b.tags)
+    sameList(a.tags, b.tags) &&
+    (a.language ?? '') === (b.language ?? '')
   );
 }
 

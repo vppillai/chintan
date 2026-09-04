@@ -22,6 +22,7 @@
       "cleanup_mode": "polished",
       "retention_days": 30,
       "theme": "nocturne",
+      "default_language": "ml",
       "daily_spend_cap_micros": 500000
     }
   },
@@ -76,7 +77,8 @@
       "tags": [
         "house"
       ],
-      "verbatim": true
+      "verbatim": true,
+      "language": "ml"
     }
   },
   {

@@ -109,6 +109,7 @@ describe('the requests the frontend actually sends', () => {
         cleanup_mode: 'polished',
         retention_days: 30,
         theme: 'nocturne',
+        default_language: 'ml',
         daily_spend_cap_micros: 500_000,
       }),
     );
@@ -136,6 +137,7 @@ describe('the requests the frontend actually sends', () => {
         aliases: ['kitchen', 'reno'],
         tags: ['house'],
         verbatim: true,
+        language: 'ml',
       }),
     );
     await call('archiveNote', () => api.archiveNote(NOTE_ID));

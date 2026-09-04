@@ -32,6 +32,9 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     body: note.body,
     aliases: note.aliases ?? [],
     tags: note.tags ?? [],
+    // Absent on the wire means "inherits the default", which the contract
+    // spells as the empty string on the way back up.
+    language: note.language ?? '',
   };
 }
 
@@ -166,6 +169,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       body: attempted.body,
       aliases: attempted.aliases,
       tags: attempted.tags,
+      ...(attempted.language !== undefined ? { language: attempted.language } : {}),
     };
     commit({ type: 'saveStart' });
 

@@ -4,6 +4,7 @@ import { useSaveSettings, useSettings } from '@/api/queries.ts';
 import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon } from '@/components/Icon.tsx';
+import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
 
@@ -11,6 +12,7 @@ import { PasskeyCard } from '@/features/auth/PasskeyCard.tsx';
 import { SignOutSetting } from '@/features/auth/SignOutSetting.tsx';
 
 import { VersionFootnote } from './VersionFootnote.tsx';
+import { AUTO_LANGUAGE, languageName } from './languages.ts';
 
 const CLEANUP_LABELS: Record<CleanupMode, string> = {
   faithful: 'Faithful — fix only what was clearly misheard',
@@ -21,6 +23,7 @@ const DEFAULTS: SettingsWire = {
   cleanup_mode: 'faithful',
   retention_days: 0,
   theme: 'ink',
+  default_language: 'en',
   daily_spend_cap_micros: 0,
 };
 
@@ -29,6 +32,8 @@ function equalSettings(a: SettingsWire, b: SettingsWire): boolean {
     a.cleanup_mode === b.cleanup_mode &&
     a.retention_days === b.retention_days &&
     a.theme === b.theme &&
+    // A record written before the field existed reads as English, by contract.
+    (a.default_language ?? 'en') === (b.default_language ?? 'en') &&
     (a.daily_spend_cap_micros ?? 0) === (b.daily_spend_cap_micros ?? 0)
   );
 }
@@ -72,6 +77,7 @@ export function SettingsScreen() {
   const appearanceId = useId();
   const cleanupId = useId();
   const retentionId = useId();
+  const languageId = useId();
   const spendId = useId();
 
   return (
@@ -201,6 +207,30 @@ export function SettingsScreen() {
           {draft.retention_days === 0
             ? 'Recordings are kept indefinitely. Only the source audio is affected — note text is never deleted by this.'
             : `Source audio is deleted after ${draft.retention_days} days. Note text and transcripts are kept.`}
+        </p>
+      </section>
+
+      {/* ---- Transcription language -------------------------------------- */}
+      <section className="settings-group" aria-labelledby={languageId}>
+        <h2 id={languageId} className="settings-group__title">
+          Transcription language
+        </h2>
+        <div className="settings-field">
+          <label className="visually-hidden" htmlFor={`${languageId}-select`}>
+            Default transcription language
+          </label>
+          <LanguageSelect
+            id={`${languageId}-select`}
+            value={draft.default_language ?? 'en'}
+            onChange={(default_language) => {
+              update({ default_language });
+            }}
+          />
+        </div>
+        <p className="settings-group__note">
+          {(draft.default_language ?? 'en') === AUTO_LANGUAGE
+            ? 'Each recording is transcribed in whatever language it detects. Naming a language is faster and more accurate; a recording that mixes two is detected as one of them.'
+            : `Recordings are transcribed as ${languageName(draft.default_language ?? 'en')} unless the note they are made into says otherwise. A recording filed automatically always uses this, because it is transcribed before anyone knows which note it belongs to.`}
         </p>
       </section>
 

@@ -27,6 +27,8 @@ export interface ApiState {
   purged: string[];
   /** The hosted UI, as exercised by the sign-in and sign-out specs. */
   auth: AuthState;
+  /** What `PUT /v1/settings` last stored, as `GET` returns it. */
+  settings: Record<string, unknown>;
 }
 
 /**
@@ -66,6 +68,8 @@ interface NoteRecord {
   archived: boolean;
   /** RFC3339, set by the server when a note is archived. */
   purge_after?: string | null;
+  /** `auto`, an ISO-639-1 code, or absent to inherit `default_language`. */
+  language?: string;
   captures?: CaptureRecord[];
 }
 
@@ -163,6 +167,13 @@ export function freshState(): ApiState {
     },
     captures: [],
     requests: [],
+    settings: {
+      cleanup_mode: 'faithful',
+      retention_days: 0,
+      theme: 'ink',
+      default_language: 'en',
+      daily_spend_cap_micros: 0,
+    },
     offline: false,
     conflictOnce: false,
     rejectPatch: null,
@@ -497,6 +508,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         if (typeof body['title'] === 'string') note.title = body['title'];
         if (typeof body['body'] === 'string') note.body = body['body'];
         if (Array.isArray(body['tags'])) note.tags = body['tags'] as string[];
+        if (typeof body['language'] === 'string') {
+          // The empty string means "inherit again", which the wire spells as absence.
+          if (body['language'] === '') delete note.language;
+          else note.language = body['language'];
+        }
         note.version += 1;
         await json(route, note);
         return;
@@ -521,12 +537,16 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
 
     // ---- Settings and tags ---------------------------------------------
     if (path === '/v1/settings') {
-      await json(route, {
-        cleanup_mode: 'faithful',
-        retention_days: 0,
-        theme: 'ink',
-        daily_spend_cap_micros: 0,
-      });
+      if (method === 'PUT') {
+        // Returns what was stored, as the contract says; the cap is read-only.
+        const body = (request.postDataJSON() ?? {}) as Record<string, unknown>;
+        state.settings = {
+          ...state.settings,
+          ...body,
+          daily_spend_cap_micros: state.settings['daily_spend_cap_micros'],
+        };
+      }
+      await json(route, state.settings);
       return;
     }
     if (path === '/v1/tags') {
