@@ -467,6 +467,34 @@ paths:
               schema: { $ref: '#/components/schemas/Capture' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [captures]
+      summary: Delete one recording and the text it dictated
+      description: |
+        Removes the capture's paragraph from its note — the text from the
+        capture's append marker up to the next marker or the end of the body,
+        whatever the user has since made of it — refreshes the note's snippet
+        and search text, then deletes the audio, transcripts, segments and
+        peaks and finally the capture itself. A capture that never appended
+        (failed, `needs_target`, `no_content`) loses its row and objects only.
+
+        Irreversible, and the API asks for no confirmation: the typed
+        confirmation is the client's. Idempotent in effect — a second call for
+        the same id is 404.
+      responses:
+        '204':
+          description: The recording and its paragraph are gone.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            The capture is still moving through the pipeline. Deleting it
+            while the worker may be writing its paragraph would leave the
+            text behind with nothing pointing at it; wait for a terminal
+            status.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/captures/{captureId}/target:
     parameters:

@@ -240,3 +240,21 @@ func (rt *router) downloadCapture(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: model.FormatTime(time.Now().Add(service.DownloadTTL)),
 	})
 }
+
+// deleteCapture removes one recording and the paragraph it dictated.
+//
+// The service cuts the paragraph, refreshes the note index, unlinks the
+// capture's objects and deletes its row, in that order, so a failure part-way
+// leaves the capture visible and the delete retryable. A second call is 404.
+func (rt *router) deleteCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	if err := rt.Captures.DeleteCapture(r.Context(), userID, r.PathValue("captureId")); err != nil {
+		fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

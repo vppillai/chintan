@@ -553,18 +553,9 @@ func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID st
 	}
 
 	for _, c := range captures {
-		// The peaks key is derived rather than trusted: the worker clears
-		// CaptureIndex.PeaksKey when the client had not uploaded peaks by the
-		// time the pipeline finished (pipeline.verifyPeaks), and a late upload
-		// would otherwise outlive its capture. Deleting a key that names nothing
-		// is a no-op, so the derived key is always unlinked.
-		peaksKey := c.PeaksKey
-		if peaksKey == "" {
-			if derived, err := keys.CapturePeaks(userID, c.ID); err == nil {
-				peaksKey = derived
-			}
-		}
-		for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, peaksKey} {
+		// Every object the capture may own, including a peaks key the row no
+		// longer records; see captureObjectKeys.
+		for _, key := range captureObjectKeys(userID, c) {
 			if err := s.deleteObject(ctx, key); err != nil {
 				return fmt.Errorf("%w: capture %s object: %w", ErrPurgeIncomplete, c.ID, err)
 			}
@@ -587,13 +578,7 @@ func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID st
 // deleteObject removes a key, treating "already gone" as success so a retried
 // purge can make progress.
 func (s *NotesService) deleteObject(ctx context.Context, key string) error {
-	if key == "" {
-		return nil
-	}
-	if err := s.objects.Delete(ctx, key); err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return err
-	}
-	return nil
+	return deleteObjectIfPresent(ctx, s.objects, key)
 }
 
 // MaxPurgeBatch bounds one batch purge.

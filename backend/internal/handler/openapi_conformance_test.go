@@ -692,6 +692,19 @@ func statusScenarios() map[string]scenario {
 		},
 		"GET /v1/captures/{captureId}/download -> 401": get("/v1/captures/c_1/download?kind=audio", ""),
 		"GET /v1/captures/{captureId}/download -> 404": get("/v1/captures/missing/download?kind=audio", "user1"),
+		"DELETE /v1/captures/{captureId} -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Kitchen", nil)
+			h.seedAppended(t, "user1", note, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodDelete, "/v1/captures/c_1", "user1", nil).Code
+		},
+		"DELETE /v1/captures/{captureId} -> 401": send(http.MethodDelete, "/v1/captures/c_1", "", nil),
+		"DELETE /v1/captures/{captureId} -> 404": send(http.MethodDelete, "/v1/captures/missing", "user1", nil),
+		"DELETE /v1/captures/{captureId} -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			h.putCapture(t, model.CaptureIndex{ID: "c_1", UserID: "user1", Status: model.StatusTranscribing, CreatedAt: model.Now()})
+			return h.do(t, http.MethodDelete, "/v1/captures/c_1", "user1", nil).Code
+		},
 
 		// ---- export
 		"POST /v1/export -> 202":           send(http.MethodPost, "/v1/export", "user1", nil),

@@ -41,6 +41,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture has already finished", nil)
 	case errors.Is(err, service.ErrCaptureAlreadyTargeted):
 		httperr.Conflict(w, r, "the capture already has a destination note", nil)
+	case errors.Is(err, service.ErrCaptureInFlight):
+		httperr.Conflict(w, r, "the capture is still being processed; wait for it to finish or fail", nil)
 
 	// ---- client mistakes -------------------------------------------------
 	case errors.Is(err, service.ErrNoteNotArchived):
