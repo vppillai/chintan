@@ -523,6 +523,58 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
 
+  /v1/captures/{captureId}/move:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+    post:
+      tags: [captures]
+      summary: Move a recording and its text to another note
+      description: |
+        Cuts the capture's paragraph out of its note along the same boundary
+        DELETE uses, inserts it into the target **in chronological position**
+        among the target's own recordings (by `created_at`; a target with no
+        recordings gets it at the end), keeps the marker so later edits and
+        the worker's guard still know the paragraph, re-points the capture,
+        and refreshes both notes' snippet and search text. The transcript is
+        not re-run.
+
+        The two note bodies are written one after the other, each under an
+        ETag condition. If the second write fails the first is undone and the
+        answer is a 503 whose `type` is
+        `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable`:
+        nothing changed, repeat the request.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaptureMove' }
+      responses:
+        '200':
+          description: Moved; the capture now names the target note.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capture' }
+        '204':
+          description: The capture was already in that note. Nothing changed.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: No such capture, or no such target note, for this tenant.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: |
+            The target note is archived (restore it first), the capture has no
+            note yet (use `/target`), or the capture is still moving through
+            the pipeline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/Retryable' }
+
   /v1/captures/{captureId}/retry:
     parameters:
       - $ref: '#/components/parameters/CaptureId'
@@ -691,6 +743,20 @@ components:
         That URI is the discriminator, not the title: the gateway's throttling
         429 and this one both read "Too Many Requests", and only one of them
         may be retried.
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Retryable:
+      description: |
+        The operation failed part-way and was rolled back, so nothing changed
+        and the same request can be repeated. The body's `type` is
+        `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable`
+        and a `Retry-After` header is set; a 503 without that type means the
+        instance is not configured for the operation, which repeating will
+        not fix.
+      headers:
+        Retry-After:
+          schema: { type: integer }
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
@@ -1067,6 +1133,14 @@ components:
       oneOf:
         - required: [note_id]
         - required: [new_note_title]
+
+    CaptureMove:
+      type: object
+      required: [note_id]
+      properties:
+        note_id:
+          type: string
+          description: The active note to move the recording into.
 
     MatchResponse:
       type: object

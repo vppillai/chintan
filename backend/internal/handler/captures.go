@@ -24,6 +24,11 @@ type captureTargetRequest struct {
 	NewNoteTitle string `json:"new_note_title"`
 }
 
+// captureMoveRequest is the OpenAPI CaptureMove schema.
+type captureMoveRequest struct {
+	NoteID string `json:"note_id"`
+}
+
 // downloadResponse is the presigned GET a client plays or reads from.
 type downloadResponse struct {
 	URL       string `json:"url"`
@@ -257,4 +262,35 @@ func (rt *router) deleteCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// moveCapture relocates one recording, and the paragraph it dictated, to
+// another note. The paragraph lands among the target's recordings in
+// chronological order, not at the end. 200 with the re-pointed capture; 204
+// when it was already there.
+func (rt *router) moveCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	var req captureMoveRequest
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+		return
+	}
+	if req.NoteID == "" {
+		httperr.BadRequest(w, r, "note_id is required")
+		return
+	}
+
+	capture, moved, err := rt.Captures.MoveCapture(r.Context(), userID, r.PathValue("captureId"), req.NoteID)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	if !moved {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, captureOf(*capture))
 }

@@ -56,6 +56,7 @@ func (rt *router) routes() {
 	// Deleting one recording takes its paragraph out of the note with it. There
 	// is no confirmation step here: the typed confirmation is the client's.
 	rt.handle("DELETE "+p+"/captures/{captureId}", rt.deleteCapture)
+	rt.handle("POST "+p+"/captures/{captureId}/move", rt.moveCapture, idempotent())
 
 	// Export.
 	rt.handle("POST "+p+"/export", rt.startExport, idempotent())

@@ -73,6 +73,15 @@ const TypeURI = "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.
 // behaviour, and the contract fixtures are what make that visible.
 const TypeSpendCapped = TypeURI + "spend-capped"
 
+// TypeRetryable identifies a 503 the client may simply repeat.
+//
+// It is for an operation that writes to more than one place with no
+// transaction across them — moving a recording writes two note bodies — and
+// that failed part-way and rolled back. Nothing changed, so repeating the
+// request is the right response, and `type` says so where the status alone
+// could also mean "this instance is not configured for that".
+const TypeRetryable = TypeURI + "retryable"
+
 // Write emits a problem response. It is the only writer of a non-2xx body.
 func Write(w http.ResponseWriter, r *http.Request, p Problem) {
 	if p.Type == "" {
@@ -169,4 +178,13 @@ func InternalServerError(w http.ResponseWriter, r *http.Request, err error) {
 		Detail:        "the request could not be completed",
 		CorrelationID: id,
 	})
+}
+
+// Retryable writes 503 with TypeRetryable and a Retry-After, for an operation
+// that failed part-way, rolled back, and can be repeated as it was.
+func Retryable(w http.ResponseWriter, r *http.Request, detail string) {
+	w.Header().Set("Retry-After", "1")
+	p := New(http.StatusServiceUnavailable, detail)
+	p.Type = TypeRetryable
+	Write(w, r, p)
 }

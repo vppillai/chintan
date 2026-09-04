@@ -43,6 +43,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture already has a destination note", nil)
 	case errors.Is(err, service.ErrCaptureInFlight):
 		httperr.Conflict(w, r, "the capture is still being processed; wait for it to finish or fail", nil)
+	case errors.Is(err, service.ErrCaptureUnfiled):
+		httperr.Conflict(w, r, "the capture has no note yet; choose one with /target instead of moving it", nil)
 
 	// ---- client mistakes -------------------------------------------------
 	case errors.Is(err, service.ErrNoteNotArchived):
@@ -85,6 +87,13 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.ServiceUnavailable(w, r, "the capture pipeline is not configured on this instance")
 	case errors.Is(err, service.ErrNoteCreationUnavailable):
 		httperr.ServiceUnavailable(w, r, "creating a note from a capture is not configured on this instance")
+
+	// ---- rolled back, repeat the request ----------------------------------
+	case errors.Is(err, service.ErrMoveIncomplete):
+		// The source note was restored and the capture still points at it, so
+		// the same request can simply be sent again. The type URI is what
+		// tells the client that, since a 503 can also mean "not configured".
+		httperr.Retryable(w, r, "the recording could not be moved and nothing was changed; try again")
 
 	// ---- ours ------------------------------------------------------------
 	case errors.Is(err, service.ErrPurgeIncomplete):

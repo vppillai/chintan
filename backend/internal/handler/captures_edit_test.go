@@ -111,3 +111,141 @@ func TestDeleteCaptureIsScopedToTheCaller(t *testing.T) {
 		t.Fatalf("unauthenticated DELETE = %d", w.Code)
 	}
 }
+
+// ---------------------------------------------------------------- move
+
+func TestMoveCaptureRelocatesTheParagraph(t *testing.T) {
+	h := newHarness(t)
+	source := h.createNote(t, "user1", "Source", nil)
+	target := h.createNote(t, "user1", "Target", nil)
+	h.seedAppended(t, "user1", target, "t_1", "2026-01-01T09:00:00.000000000Z", "Nine.")
+	h.seedAppended(t, "user1", target, "t_2", "2026-01-01T11:00:00.000000000Z", "Eleven.")
+	h.seedAppended(t, "user1", source, "c_1", "2026-01-01T10:00:00.000000000Z", "Ten, from elsewhere.")
+
+	w := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID},
+		[2]string{"Idempotency-Key", "move-c1-once"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var moved handler.Capture
+	decodeInto(t, w, &moved)
+	if moved.NoteID == nil || *moved.NoteID != target.ID {
+		t.Errorf("note_id = %v, want the target", moved.NoteID)
+	}
+	if got := h.noteBody(t, "user1", source.ID); got != "" {
+		t.Errorf("source body = %q, want empty", got)
+	}
+	if got, want := h.noteBody(t, "user1", target.ID), "Nine.\n\nTen, from elsewhere.\n\nEleven."; got != want {
+		t.Errorf("target body = %q, want %q", got, want)
+	}
+
+	// The same key replays the same answer rather than moving twice.
+	again := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID},
+		[2]string{"Idempotency-Key", "move-c1-once"})
+	if again.Code != http.StatusOK {
+		t.Errorf("replay = %d", again.Code)
+	}
+	// And without a key, the capture is already there: a no-op.
+	if w := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID}); w.Code != http.StatusNoContent {
+		t.Errorf("moving to where it is = %d, want 204", w.Code)
+	}
+}
+
+func TestMoveCaptureRefusalsOverHTTP(t *testing.T) {
+	h := newHarness(t)
+	source := h.createNote(t, "user1", "Source", nil)
+	archived := h.createNote(t, "user1", "Archived", nil)
+	h.do(t, http.MethodDelete, "/v1/notes/"+archived.ID, "user1", nil)
+	h.seedAppended(t, "user1", source, "c_1", "2026-01-01T10:00:00.000000000Z", "Dictated.")
+	h.putCapture(t, model.CaptureIndex{ID: "c_unfiled", UserID: "user1", Status: model.StatusNeedsTarget, CreatedAt: model.Now()})
+
+	cases := map[string]struct {
+		path string
+		body any
+		want int
+	}{
+		"archived target":      {"/v1/captures/c_1/move", map[string]any{"note_id": archived.ID}, http.StatusConflict},
+		"missing target":       {"/v1/captures/c_1/move", map[string]any{"note_id": "note_missing"}, http.StatusNotFound},
+		"missing capture":      {"/v1/captures/missing/move", map[string]any{"note_id": source.ID}, http.StatusNotFound},
+		"no note_id":           {"/v1/captures/c_1/move", map[string]any{}, http.StatusBadRequest},
+		"unknown field":        {"/v1/captures/c_1/move", map[string]any{"note_id": source.ID, "title": "x"}, http.StatusBadRequest},
+		"capture with no note": {"/v1/captures/c_unfiled/move", map[string]any{"note_id": source.ID}, http.StatusConflict},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := h.do(t, http.MethodPost, tc.path, "user1", tc.body)
+			if w.Code != tc.want {
+				t.Fatalf("status = %d body = %s, want %d", w.Code, w.Body.String(), tc.want)
+			}
+			problemOf(t, w)
+		})
+	}
+	if got := h.noteBody(t, "user1", source.ID); got != "Dictated." {
+		t.Fatalf("a refused move changed the source: %q", got)
+	}
+}
+
+func TestMoveCaptureIsScopedToTheCaller(t *testing.T) {
+	h := newHarness(t)
+	theirs := h.createNote(t, "owner", "Theirs", nil)
+	h.seedAppended(t, "owner", theirs, "c_1", "2026-01-01T10:00:00.000000000Z", "Theirs.")
+	mine := h.createNote(t, "intruder", "Mine", nil)
+	h.seedAppended(t, "intruder", mine, "c_2", "2026-01-01T10:00:00.000000000Z", "Mine.")
+
+	if w := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "intruder", map[string]any{"note_id": mine.ID}); w.Code != http.StatusNotFound {
+		t.Fatalf("another tenant's capture = %d, want 404", w.Code)
+	}
+	if w := h.do(t, http.MethodPost, "/v1/captures/c_2/move", "intruder", map[string]any{"note_id": theirs.ID}); w.Code != http.StatusNotFound {
+		t.Fatalf("another tenant's note as target = %d, want 404", w.Code)
+	}
+	if h.noteBody(t, "owner", theirs.ID) != "Theirs." || h.noteBody(t, "intruder", mine.ID) != "Mine." {
+		t.Fatal("a cross-tenant move changed a body")
+	}
+}
+
+// A move whose second write fails is rolled back and answered with a 503 the
+// client may repeat, marked as such in the problem's type.
+func TestMoveCaptureThatFailsHalfWayIsRolledBackAndRetryable(t *testing.T) {
+	var failKey string
+	h := newHarness(t, withFailingBodyWrite(&failKey))
+	source := h.createNote(t, "user1", "Source", nil)
+	target := h.createNote(t, "user1", "Target", nil)
+	h.seedAppended(t, "user1", source, "c_1", "2026-01-01T10:00:00.000000000Z", "Dictated.")
+	stored, err := h.store.GetNote(context.Background(), "user1", target.ID)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	failKey = stored.S3MarkdownKey
+
+	w := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID})
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	p := problemOf(t, w)
+	if p["type"] != "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable" {
+		t.Errorf("type = %v, want the retryable URI", p["type"])
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Error("no Retry-After on a retryable 503")
+	}
+	if got := h.noteBody(t, "user1", source.ID); got != "Dictated." {
+		t.Errorf("source after rollback = %q", got)
+	}
+	if got := h.noteBody(t, "user1", target.ID); got != "" {
+		t.Errorf("target after a failed move = %q", got)
+	}
+	w = h.do(t, http.MethodGet, "/v1/captures/c_1", "user1", nil)
+	var c handler.Capture
+	decodeInto(t, w, &c)
+	if c.NoteID == nil || *c.NoteID != source.ID {
+		t.Errorf("capture points at %v after a failed move", c.NoteID)
+	}
+
+	failKey = ""
+	if w := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID}); w.Code != http.StatusOK {
+		t.Fatalf("retry = %d body = %s", w.Code, w.Body.String())
+	}
+	if got := h.noteBody(t, "user1", target.ID); got != "Dictated." {
+		t.Errorf("target after retry = %q", got)
+	}
+}

@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -704,6 +705,43 @@ func statusScenarios() map[string]scenario {
 			h := newHarness(t)
 			h.putCapture(t, model.CaptureIndex{ID: "c_1", UserID: "user1", Status: model.StatusTranscribing, CreatedAt: model.Now()})
 			return h.do(t, http.MethodDelete, "/v1/captures/c_1", "user1", nil).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			source := h.createNote(t, "user1", "Source", nil)
+			target := h.createNote(t, "user1", "Target", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			source := h.createNote(t, "user1", "Source", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": source.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{}),
+		"POST /v1/captures/{captureId}/move -> 401": send(http.MethodPost, "/v1/captures/c_1/move", "", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/move -> 404": send(http.MethodPost, "/v1/captures/missing/move", "user1", map[string]any{"note_id": "n1"}),
+		"POST /v1/captures/{captureId}/move -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			source := h.createNote(t, "user1", "Source", nil)
+			archived := h.createNote(t, "user1", "Archived", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+archived.ID, "user1", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": archived.ID}).Code
+		},
+		"POST /v1/captures/{captureId}/move -> 503": func(t *testing.T) int {
+			var failKey string
+			h := newHarness(t, withFailingBodyWrite(&failKey))
+			source := h.createNote(t, "user1", "Source", nil)
+			target := h.createNote(t, "user1", "Target", nil)
+			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
+			stored, err := h.store.GetNote(context.Background(), "user1", target.ID)
+			if err != nil {
+				t.Fatalf("GetNote: %v", err)
+			}
+			failKey = stored.S3MarkdownKey
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": target.ID}).Code
 		},
 
 		// ---- export

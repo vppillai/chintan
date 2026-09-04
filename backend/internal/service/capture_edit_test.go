@@ -285,3 +285,247 @@ func (f failingDeletes) Delete(ctx context.Context, key string) error {
 	}
 	return f.Objects.Delete(ctx, key)
 }
+
+// ---------------------------------------------------------------- move
+
+const (
+	t0900 = "2026-01-01T09:00:00.000000000Z"
+	t1000 = "2026-01-01T10:00:00.000000000Z"
+	t1100 = "2026-01-01T11:00:00.000000000Z"
+	t1200 = "2026-01-01T12:00:00.000000000Z"
+	t1300 = "2026-01-01T13:00:00.000000000Z"
+)
+
+// A target with recordings before and after the moved one: the paragraph
+// lands between them, by created_at, not at the end.
+func TestMoveCapturePlacesTheParagraphChronologically(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", "typed\n\n"+CaptureMarker("c_1")+"\nMoved.\n\n"+CaptureMarker("c_3")+"\nStays.")
+	target := h.note("u1", "Target", CaptureMarker("t_1")+"\nNine.\n\n"+CaptureMarker("t_2")+"\nEleven.\n\n"+CaptureMarker("t_3")+"\nThirteen.")
+	h.appended("u1", source.ID, "c_1", t1000)
+	h.appended("u1", source.ID, "c_3", t1200)
+	h.appended("u1", target.ID, "t_1", t0900)
+	h.appended("u1", target.ID, "t_2", t1100)
+	h.appended("u1", target.ID, "t_3", t1300)
+
+	moved, ok, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", target.ID)
+	if err != nil || !ok {
+		t.Fatalf("MoveCapture = (%v, %v)", ok, err)
+	}
+	if moved.NoteID != target.ID {
+		t.Errorf("capture points at %q, want the target", moved.NoteID)
+	}
+	if got, want := h.body(source), "typed\n\n"+CaptureMarker("c_3")+"\nStays."; got != want {
+		t.Errorf("source body = %q, want %q", got, want)
+	}
+	wantTarget := CaptureMarker("t_1") + "\nNine.\n\n" + CaptureMarker("c_1") + "\nMoved.\n\n" + CaptureMarker("t_2") + "\nEleven.\n\n" + CaptureMarker("t_3") + "\nThirteen."
+	if got := h.body(target); got != wantTarget {
+		t.Errorf("target body = %q, want %q", got, wantTarget)
+	}
+	if got := CaptureMarkerIDs(h.body(target)); strings.Join(got, ",") != "t_1,c_1,t_2,t_3" {
+		t.Errorf("target order = %v", got)
+	}
+
+	// Both indexes follow their bodies.
+	src, _ := h.store.GetNote(h.ctx, "u1", source.ID)
+	dst, _ := h.store.GetNote(h.ctx, "u1", target.ID)
+	if strings.Contains(src.SearchText, "moved") || !strings.Contains(dst.SearchText, "moved") {
+		t.Errorf("indexes not refreshed: source=%q target=%q", src.SearchText, dst.SearchText)
+	}
+	if src.Version <= source.Version || dst.Version <= target.Version {
+		t.Errorf("versions did not advance: source %d→%d target %d→%d", source.Version, src.Version, target.Version, dst.Version)
+	}
+	// The recording now lists under the target.
+	page, _ := h.store.ListCapturesByNote(h.ctx, "u1", target.ID, repository.ListOptions{})
+	if len(page.Items) != 4 {
+		t.Errorf("target has %d captures, want 4", len(page.Items))
+	}
+}
+
+func TestMoveCaptureToTheFirstAndLastPosition(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("old")+"\nOldest.\n\n"+CaptureMarker("new")+"\nNewest.")
+	target := h.note("u1", "Target", CaptureMarker("t_1")+"\nMiddle.")
+	h.appended("u1", source.ID, "old", t0900)
+	h.appended("u1", source.ID, "new", t1300)
+	h.appended("u1", target.ID, "t_1", t1100)
+
+	if _, _, err := h.captures.MoveCapture(h.ctx, "u1", "old", target.ID); err != nil {
+		t.Fatalf("move oldest: %v", err)
+	}
+	if got, want := h.body(target), CaptureMarker("old")+"\nOldest.\n\n"+CaptureMarker("t_1")+"\nMiddle."; got != want {
+		t.Errorf("after moving the oldest: %q, want %q", got, want)
+	}
+	if _, _, err := h.captures.MoveCapture(h.ctx, "u1", "new", target.ID); err != nil {
+		t.Fatalf("move newest: %v", err)
+	}
+	if got, want := h.body(target), CaptureMarker("old")+"\nOldest.\n\n"+CaptureMarker("t_1")+"\nMiddle.\n\n"+CaptureMarker("new")+"\nNewest."; got != want {
+		t.Errorf("after moving the newest: %q, want %q", got, want)
+	}
+	if got := h.body(source); got != "" {
+		t.Errorf("source not emptied: %q", got)
+	}
+}
+
+func TestMoveCaptureIntoANoteWithNoRecordingsAppends(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nDictated.")
+	target := h.note("u1", "Typed only", "Some typed text.")
+	h.appended("u1", source.ID, "c_1", t1000)
+
+	if _, _, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", target.ID); err != nil {
+		t.Fatalf("MoveCapture: %v", err)
+	}
+	if got, want := h.body(target), "Some typed text.\n\n"+CaptureMarker("c_1")+"\nDictated."; got != want {
+		t.Errorf("target = %q, want %q", got, want)
+	}
+	if got := StripCaptureMarkers(h.body(target)); got != "Some typed text.\n\nDictated." {
+		t.Errorf("the user sees %q", got)
+	}
+}
+
+func TestMoveCaptureToItsOwnNoteIsANoOp(t *testing.T) {
+	h := newEditHarness(t)
+	body := CaptureMarker("c_1") + "\nDictated."
+	note := h.note("u1", "Same", body)
+	h.appended("u1", note.ID, "c_1", t1000)
+
+	c, moved, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", note.ID)
+	if err != nil || moved || c == nil || c.NoteID != note.ID {
+		t.Fatalf("MoveCapture = (%+v, %v, %v), want the capture unchanged and moved=false", c, moved, err)
+	}
+	after, _ := h.store.GetNote(h.ctx, "u1", note.ID)
+	if h.body(note) != body || after.Version != note.Version {
+		t.Fatal("a no-op move changed the note")
+	}
+}
+
+func TestMoveCaptureRefusals(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nDictated.")
+	h.appended("u1", source.ID, "c_1", t1000)
+	archived := h.note("u1", "Archived", "")
+	if _, err := h.notes.ArchiveNote(h.ctx, "u1", archived.ID); err != nil {
+		t.Fatalf("ArchiveNote: %v", err)
+	}
+	unfiled := h.appended("u1", "", "c_unfiled", t1000)
+	unfiled.Status = model.StatusNeedsTarget
+	if _, err := h.store.PutCapture(h.ctx, unfiled); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	busy := h.appended("u1", source.ID, "c_busy", t1000)
+	busy.Status = model.StatusCleaning
+	if _, err := h.store.PutCapture(h.ctx, busy); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	other := h.note("u1", "Other", "")
+
+	cases := map[string]struct {
+		capture, target string
+		want            error
+	}{
+		"archived target":       {"c_1", archived.ID, ErrNoteArchived},
+		"missing target":        {"c_1", "note_missing", repository.ErrNotFound},
+		"missing capture":       {"c_missing", other.ID, repository.ErrNotFound},
+		"capture with no note":  {"c_unfiled", other.ID, ErrCaptureUnfiled},
+		"capture still running": {"c_busy", other.ID, ErrCaptureInFlight},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := h.captures.MoveCapture(h.ctx, "u1", tc.capture, tc.target)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("MoveCapture = %v, want %v", err, tc.want)
+			}
+		})
+	}
+	if got := h.body(source); got != CaptureMarker("c_1")+"\nDictated." {
+		t.Fatalf("a refused move changed the source: %q", got)
+	}
+}
+
+// Another tenant's capture id, and another tenant's note as the target, are
+// both simply absent.
+func TestMoveCaptureIsScopedToTheTenant(t *testing.T) {
+	h := newEditHarness(t)
+	theirs := h.note("owner", "Theirs", CaptureMarker("c_1")+"\nTheirs.")
+	h.appended("owner", theirs.ID, "c_1", t1000)
+	mine := h.note("intruder", "Mine", CaptureMarker("c_2")+"\nMine.")
+	h.appended("intruder", mine.ID, "c_2", t1000)
+
+	if _, _, err := h.captures.MoveCapture(h.ctx, "intruder", "c_1", mine.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("moving another tenant's capture = %v, want ErrNotFound", err)
+	}
+	if _, _, err := h.captures.MoveCapture(h.ctx, "intruder", "c_2", theirs.ID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("moving into another tenant's note = %v, want ErrNotFound", err)
+	}
+	if h.body(theirs) != CaptureMarker("c_1")+"\nTheirs." || h.body(mine) != CaptureMarker("c_2")+"\nMine." {
+		t.Fatal("a cross-tenant move changed a body")
+	}
+}
+
+// The target write fails after the source was cut. The paragraph goes back
+// exactly where it was, the row still points at the source, and the error
+// says the request can be repeated.
+func TestMoveCaptureRestoresTheSourceWhenTheTargetWriteFails(t *testing.T) {
+	h := newEditHarness(t)
+	sourceBody := "typed\n\n" + CaptureMarker("c_1") + "\nFirst.\n\n" + CaptureMarker("c_2") + "\nSecond."
+	source := h.note("u1", "Source", sourceBody)
+	targetBody := CaptureMarker("t_1") + "\nTheirs."
+	target := h.note("u1", "Target", targetBody)
+	h.appended("u1", source.ID, "c_1", t1000)
+	h.appended("u1", source.ID, "c_2", t1200)
+	h.appended("u1", target.ID, "t_1", t1100)
+
+	broken := NewCaptureService(h.store, failingPutIfMatch{Objects: h.objects, key: target.S3MarkdownKey})
+	_, moved, err := broken.MoveCapture(h.ctx, "u1", "c_1", target.ID)
+	if moved || !errors.Is(err, ErrMoveIncomplete) {
+		t.Fatalf("MoveCapture = (%v, %v), want ErrMoveIncomplete", moved, err)
+	}
+	if got := h.body(source); got != sourceBody {
+		t.Errorf("source after rollback = %q, want the original %q", got, sourceBody)
+	}
+	if got := h.body(target); got != targetBody {
+		t.Errorf("target changed by a failed move: %q", got)
+	}
+	c, _ := h.store.GetCapture(h.ctx, "u1", "c_1")
+	if c.NoteID != source.ID {
+		t.Errorf("capture points at %q after a failed move", c.NoteID)
+	}
+
+	// And the same request, with the fault gone, goes through.
+	if _, moved, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", target.ID); err != nil || !moved {
+		t.Fatalf("retry = (%v, %v)", moved, err)
+	}
+	if got, want := h.body(target), CaptureMarker("c_1")+"\nFirst.\n\n"+CaptureMarker("t_1")+"\nTheirs."; got != want {
+		t.Errorf("target after retry = %q, want %q", got, want)
+	}
+}
+
+// The first write failing is also a rollback, trivially: nothing was written.
+func TestMoveCaptureThatCannotCutChangesNothing(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.")
+	target := h.note("u1", "Target", "")
+	h.appended("u1", source.ID, "c_1", t1000)
+
+	broken := NewCaptureService(h.store, failingPutIfMatch{Objects: h.objects, key: source.S3MarkdownKey})
+	if _, _, err := broken.MoveCapture(h.ctx, "u1", "c_1", target.ID); !errors.Is(err, ErrMoveIncomplete) {
+		t.Fatalf("MoveCapture = %v, want ErrMoveIncomplete", err)
+	}
+	if h.body(source) != CaptureMarker("c_1")+"\nFirst." || h.body(target) != "" {
+		t.Fatal("a move whose first write failed changed a body")
+	}
+}
+
+// failingPutIfMatch fails the conditional write for one key.
+type failingPutIfMatch struct {
+	repository.Objects
+	key string
+}
+
+func (f failingPutIfMatch) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	if key == f.key {
+		return errors.New("s3: 500 InternalError")
+	}
+	return f.Objects.PutIfMatch(ctx, key, body, contentType, etag)
+}
