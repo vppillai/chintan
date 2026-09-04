@@ -31,6 +31,17 @@ func (m *memCounter) Add(_ context.Context, day string, delta int64) (int64, err
 	return m.totals[day], nil
 }
 
+// total is what every day together was charged.
+func (m *memCounter) total() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var sum int64
+	for _, v := range m.totals {
+		sum += v
+	}
+	return sum
+}
+
 // newBreaker builds a breaker with the given instance-wide cap in
 // microdollars. A cap of 0 counts without enforcing, which is the default for
 // a fresh install.
@@ -120,6 +131,12 @@ type harnessOpts struct {
 	// noNotes builds the pipeline without a note creator, so an unroutable
 	// capture parks at needs_target instead of inventing a note.
 	noNotes bool
+	// routeAttemptTimeout shortens each routing attempt; zero keeps the
+	// pipeline's default.
+	routeAttemptTimeout time.Duration
+	// counter, when set, is the spend counter the breaker adds to, so a test
+	// can read back what the day was charged.
+	counter *memCounter
 }
 
 func newHarness(t *testing.T, opts harnessOpts) *harness {
@@ -149,19 +166,24 @@ func newHarness(t *testing.T, opts harnessOpts) *harness {
 	if opts.store != nil {
 		seen = opts.store
 	}
+	counter := opts.counter
+	if counter == nil {
+		counter = newMemCounter()
+	}
 
 	cfg := Config{
-		Store:       seen,
-		Objects:     objects,
-		STT:         stt,
-		LLM:         llm,
-		Router:      router,
-		Breaker:     newBreaker(opts.capMicros),
-		STTProvider: "groq",
-		STTModel:    "whisper-large-v3-turbo",
-		LLMProvider: "openai",
-		LLMModel:    "test-model",
-		Now:         clock.Now,
+		Store:               seen,
+		Objects:             objects,
+		STT:                 stt,
+		LLM:                 llm,
+		Router:              router,
+		Breaker:             breaker.New(counter, meter.DefaultPrices, opts.capMicros),
+		STTProvider:         "groq",
+		STTModel:            "whisper-large-v3-turbo",
+		LLMProvider:         "openai",
+		LLMModel:            "test-model",
+		RouteAttemptTimeout: opts.routeAttemptTimeout,
+		Now:                 clock.Now,
 	}
 	if !opts.noNotes {
 		cfg.Notes = creator

@@ -153,6 +153,14 @@ type Router struct {
 	// that do not fit keep the whole transcript, as the adapter does.
 	Spans  []routing.Span
 	OnCall func()
+	// HangCalls is how many leading calls block until their context is done and
+	// then return its error, the way a provider that has queued the request
+	// looks from this side.
+	HangCalls int
+	// ErrCalls are returned, in order, by the leading calls; a nil entry answers
+	// normally. It is how a test hands the pipeline a typed provider.StatusError
+	// on the first attempt and a decision on the second.
+	ErrCalls []error
 
 	mu sync.Mutex
 	// Calls records the transcripts the router was asked about.
@@ -164,12 +172,20 @@ type Router struct {
 func (f *Router) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
 	f.mu.Lock()
 	f.Calls = append(f.Calls, transcript)
+	call := len(f.Calls) - 1
 	f.LastCandidates = make([]routing.Candidate, len(candidates))
 	copy(f.LastCandidates, candidates)
 	f.mu.Unlock()
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if call < f.HangCalls {
+		<-ctx.Done()
+		return provider.RouteDecision{}, fmt.Errorf("fake router: llm request: %w", ctx.Err())
+	}
+	if call < len(f.ErrCalls) && f.ErrCalls[call] != nil {
+		return provider.RouteDecision{}, f.ErrCalls[call]
 	}
 	if f.ShouldFail {
 		return provider.RouteDecision{}, fmt.Errorf("fake router failed")

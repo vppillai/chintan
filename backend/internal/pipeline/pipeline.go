@@ -37,6 +37,7 @@ import (
 	"log/slog"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,6 +76,21 @@ const (
 	// stays valid. It has to outlast a long transcription without becoming a
 	// standing grant.
 	audioURLTTL = 60 * time.Minute
+
+	// defaultRouteAttemptTimeout bounds one routing call. The 2026-09-04 log
+	// review found 2 of 19 routing calls queued at the provider for ~60 s while
+	// the other 17 took 0.4-5.8 s on the same prompt shape; a routing answer
+	// that has not arrived in fifteen seconds is far likelier to be stuck in
+	// that queue than to be about to arrive. Routing is a convenience with a
+	// fallback (a new, auto-titled note), so the cap trades a rare mis-filing
+	// for never making the user watch "routing" for a minute.
+	defaultRouteAttemptTimeout = 15 * time.Second
+
+	// routeAttempts is how many times the router is asked before the fallback.
+	// Two: a stall or an overloaded provider clears more often than not on
+	// the second try, and a third would cost another timeout's worth of the
+	// user's patience for a diminishing return.
+	routeAttempts = 2
 )
 
 // NoteCreator creates the destination note for a capture that has none.
@@ -100,6 +116,10 @@ type Config struct {
 	STTModel    string
 	LLMProvider string
 	LLMModel    string
+
+	// RouteAttemptTimeout bounds each of the routeAttempts routing calls. Zero
+	// means defaultRouteAttemptTimeout; tests shorten it.
+	RouteAttemptTimeout time.Duration
 
 	Now func() time.Time
 }
@@ -130,6 +150,9 @@ func New(cfg Config) (*Pipeline, error) {
 	}
 	if cfg.LLMProvider == "" {
 		cfg.LLMProvider = "openai"
+	}
+	if cfg.RouteAttemptTimeout <= 0 {
+		cfg.RouteAttemptTimeout = defaultRouteAttemptTimeout
 	}
 	now := cfg.Now
 	if now == nil {
@@ -517,7 +540,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	}
 	transcript := string(rawBytes)
 
-	decision, err := p.decideTarget(ctx, tenantID, transcript)
+	decision, err := p.decideTarget(ctx, tenantID, capture.ID, transcript)
 	if err != nil {
 		if errors.Is(err, breaker.ErrSpendCapExceeded) {
 			return p.handleProviderError(ctx, capture, "route", err)
@@ -593,7 +616,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	return p.persist(ctx, capture)
 }
 
-func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string) (provider.RouteDecision, error) {
+func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript string) (provider.RouteDecision, error) {
 	if p.cfg.Router == nil {
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
 	}
@@ -628,8 +651,60 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string
 		})
 	}
 
+	// Each attempt is its own breaker.Do, so each reserves before it calls and
+	// settles for itself. An attempt that fails — a timeout included — reports
+	// no usage, and the breaker releases exactly what that attempt reserved,
+	// so two stalls cost the day's budget nothing and a retry that succeeds is
+	// charged once, for what the provider said it consumed. Wrapping both
+	// attempts in one reservation would have charged the estimate for a call
+	// that never answered, or left the breaker's latency metric summing two
+	// calls into one.
+	var lastErr error
+	for attempt := 1; attempt <= routeAttempts; attempt++ {
+		decision, err := p.routeOnce(ctx, tenantID, transcript, candidates)
+		if err == nil {
+			return decision, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			// The invocation itself is ending; this is not a provider stall to
+			// retry, and a fresh context would only borrow time the worker no
+			// longer has.
+			return provider.RouteDecision{}, err
+		}
+		reason, retryable := routeRetryReason(err)
+		if !retryable {
+			return provider.RouteDecision{}, err
+		}
+		if reason == routeRetryTimeout {
+			obs.Count(ctx, "RouterTimedOut", map[string]string{"Attempt": strconv.Itoa(attempt)})
+		}
+		if attempt == routeAttempts {
+			break
+		}
+		// The correlation id rides on the context (obs.Log), so this line joins
+		// the API request that started the capture to the retry it caused.
+		obs.Log(ctx).Warn("routing attempt failed; retrying once with a fresh context",
+			slog.String("capture_id", captureID),
+			slog.Int("attempt", attempt),
+			slog.String("reason", reason),
+			slog.Int64("attempt_timeout_ms", p.cfg.RouteAttemptTimeout.Milliseconds()),
+			slog.String("error", err.Error()))
+		obs.Count(ctx, "RouterRetried", map[string]string{"Reason": reason})
+	}
+	return provider.RouteDecision{}, lastErr
+}
+
+// routeOnce is one reserved, bounded routing call.
+//
+// The attempt's deadline applies to the provider call only. breaker.Do runs on
+// the caller's context, so when the attempt times out the release of its
+// reservation still has a live context to run on; a release attempted on the
+// expired context would fail, and the estimate would stay in the day's total
+// as spend that never happened.
+func (p *Pipeline) routeOnce(ctx context.Context, tenantID, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
 	var decision provider.RouteDecision
-	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
+	_, err := p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.LLMProvider,
 		Model:    p.cfg.LLMModel,
 		Op:       meter.OpRoute,
@@ -639,7 +714,9 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string
 		},
 		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
-		out, err := p.cfg.Router.Route(ctx, transcript, candidates)
+		attemptCtx, cancel := context.WithTimeout(ctx, p.cfg.RouteAttemptTimeout)
+		defer cancel()
+		out, err := p.cfg.Router.Route(attemptCtx, transcript, candidates)
 		if err != nil {
 			return breaker.Result{}, err
 		}
@@ -650,6 +727,35 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string
 		return provider.RouteDecision{}, err
 	}
 	return decision, nil
+}
+
+// Values of the Reason dimension on RouterRetried. Two values, fixed: a
+// dimension is a metric identity and is billed as one.
+const (
+	routeRetryTimeout     = "timeout"
+	routeRetryServerError = "provider_5xx"
+)
+
+// routeRetryReason classifies a failed routing attempt as worth one more try.
+//
+// Only two things are: the attempt hitting its own deadline (the provider-side
+// queueing the timeout exists for) and a 5xx or 529 from the provider (an
+// overloaded moment). A 4xx is our request and will fail identically; a spend
+// cap rejection must not be retried around; an unparseable answer or an
+// unlisted note id is the model's verdict, and the fallback is the right
+// answer to it. The caller has already ruled out its own context ending, so a
+// deadline seen here is the attempt's.
+func routeRetryReason(err error) (string, bool) {
+	switch {
+	case errors.Is(err, breaker.ErrSpendCapExceeded):
+		return "", false
+	case errors.Is(err, context.DeadlineExceeded):
+		return routeRetryTimeout, true
+	case provider.IsServerError(err):
+		return routeRetryServerError, true
+	default:
+		return "", false
+	}
 }
 
 // ---------------------------------------------------------------------------
