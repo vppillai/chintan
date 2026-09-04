@@ -156,6 +156,14 @@ func captureOf(c model.CaptureIndex) Capture {
 		CreatedAt: c.CreatedAt,
 		// A capture created before v2 has neither, and the client renders a
 		// plain player rather than an empty waveform.
+		//
+		// Both keys are set only once the object is known to exist. The worker
+		// writes segments.json itself and records the key after the PUT; peaks
+		// are uploaded by the client, so the API records the key when it issues
+		// the presigned PUT and the worker clears it if the bucket has no such
+		// object once the pipeline is done (pipeline.verifyPeaks). Before that
+		// check existed has_peaks was "a URL was issued", and the note screen
+		// 404'd asking for a waveform nobody had uploaded.
 		HasSegments: c.SegmentsKey != "",
 		HasPeaks:    c.PeaksKey != "",
 		Version:     c.Version,

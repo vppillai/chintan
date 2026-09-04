@@ -199,6 +199,12 @@ type Objects interface {
 	// race returns ErrPreconditionFailed.
 	PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error
 
+	// Exists reports whether key holds an object, without fetching it. It is
+	// what the worker asks about the client-uploaded peaks.json once the
+	// pipeline is done: the API records the peaks key when it *issues* the
+	// presigned PUT, and only the bucket knows whether the client ever used it.
+	Exists(ctx context.Context, key string) (bool, error)
+
 	// MarkProcessed tags the object so the retention lifecycle rule is allowed
 	// to expire it, without disturbing whatever tags it already carries — in
 	// particular the tenant's retention tier, set once at upload and never

@@ -186,6 +186,9 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	// dimension value telling us a number this one already holds.
 	obs.Duration(ctx, "CapturePipelineDuration", elapsed, map[string]string{"Outcome": string(final.Status)})
 	p.markAudioProcessedIfSafe(ctx, &final)
+	if err == nil && service.CaptureIsTerminal(final.Status) {
+		p.verifyPeaks(ctx, &final)
+	}
 	if errors.Is(err, errDeliveryConceded) {
 		// The other delivery is either finished or still running. Either way this
 		// one is done and must succeed, not be retried. If the owner dies
@@ -961,6 +964,55 @@ func (p *Pipeline) markAudioProcessedIfSafe(ctx context.Context, capture *model.
 	}
 	if err := p.cfg.Objects.MarkProcessed(ctx, capture.AudioKey); err != nil {
 		obs.Log(ctx).Warn("could not tag capture audio as processed",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// verifyPeaks makes the capture's peaks key mean what the API reports it as.
+//
+// POST /v1/captures records PeaksKey when it *issues* the presigned PUT for the
+// client-computed waveform, and the API derives `has_peaks` from that key — so
+// a client that never uploaded peaks (an old build, a failed best-effort PUT, a
+// tab closed after the audio landed) was reported as having a waveform, and the
+// note screen's request for it 404'd. The bucket is the only party that knows
+// whether the object exists, and this is the one moment the worker is already
+// running and the answer is almost certainly settled: the client PUTs peaks
+// straight after the audio, and the pipeline has spent seconds on providers
+// since the audio landed.
+//
+// A key that names nothing is cleared rather than annotated, for a reason that
+// is not cosmetic: GSI1 projects `peaks_key` and cannot project a new attribute
+// without an index rebuild, so any second flag would be invisible to every
+// note-detail list. The key is derivable (keys.CapturePeaks) and the cascade
+// delete removes the derived key regardless, so a peaks object that lands after
+// this check is still cleaned up with its capture; it is merely not shown.
+//
+// Only a terminal capture is checked — a failed transcription can finish inside
+// the second the client needs to upload peaks, and a retry would re-check
+// anyway. Failing to check is logged and swallowed: the capture's own outcome
+// is already recorded, and erring toward the old optimistic answer is the
+// safe direction.
+func (p *Pipeline) verifyPeaks(ctx context.Context, capture *model.CaptureIndex) {
+	if capture.PeaksKey == "" {
+		return
+	}
+	present, err := p.cfg.Objects.Exists(ctx, capture.PeaksKey)
+	if err != nil {
+		obs.Log(ctx).Warn("could not check for the capture's peaks object",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+		return
+	}
+	if present {
+		return
+	}
+	obs.Log(ctx).Info("client uploaded no peaks for this capture; clearing the peaks key",
+		slog.String("capture_id", capture.ID))
+	obs.Count(ctx, "CapturePeaksMissing", map[string]string{"Stage": string(capture.Status)})
+	capture.PeaksKey = ""
+	if err := p.persist(ctx, capture); err != nil && !errors.Is(err, errDeliveryConceded) {
+		obs.Log(ctx).Warn("could not clear the capture's peaks key",
 			slog.String("capture_id", capture.ID),
 			slog.String("error", err.Error()))
 	}

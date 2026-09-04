@@ -537,7 +537,18 @@ func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID st
 	}
 
 	for _, c := range captures {
-		for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, c.PeaksKey} {
+		// The peaks key is derived rather than trusted: the worker clears
+		// CaptureIndex.PeaksKey when the client had not uploaded peaks by the
+		// time the pipeline finished (pipeline.verifyPeaks), and a late upload
+		// would otherwise outlive its capture. Deleting a key that names nothing
+		// is a no-op, so the derived key is always unlinked.
+		peaksKey := c.PeaksKey
+		if peaksKey == "" {
+			if derived, err := keys.CapturePeaks(userID, c.ID); err == nil {
+				peaksKey = derived
+			}
+		}
+		for _, key := range []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, peaksKey} {
 			if err := s.deleteObject(ctx, key); err != nil {
 				return fmt.Errorf("%w: capture %s object: %w", ErrPurgeIncomplete, c.ID, err)
 			}

@@ -161,6 +161,33 @@ func isS3PreconditionFailure(err error) bool {
 	return false
 }
 
+// Exists answers with a HEAD, so the check costs one request and no transfer.
+// S3 reports a missing key on HEAD as a bare 404 rather than a NoSuchKey error
+// document, so both shapes are read as "absent".
+func (o *S3Objects) Exists(ctx context.Context, key string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
+	_, err := o.client.HeadObject(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(o.bucket),
+		Key:    aws.String(key),
+	})
+	if err == nil {
+		return true, nil
+	}
+	var notFound *types.NotFound
+	var noSuchKey *types.NoSuchKey
+	if errors.As(err, &notFound) || errors.As(err, &noSuchKey) {
+		return false, nil
+	}
+	var respErr *awshttp.ResponseError
+	if errors.As(err, &respErr) && respErr.HTTPStatusCode() == http.StatusNotFound {
+		return false, nil
+	}
+	return false, fmt.Errorf("s3 head object: %w", err)
+}
+
 func (o *S3Objects) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err

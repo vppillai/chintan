@@ -645,6 +645,16 @@ func (o *Objects) PutIfMatch(ctx context.Context, key string, body []byte, conte
 	return nil
 }
 
+func (o *Objects) Exists(ctx context.Context, key string) (bool, error) {
+	if err := o.checkCtx(ctx); err != nil {
+		return false, err
+	}
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	_, ok := o.objects[key]
+	return ok, nil
+}
+
 // MarkProcessed sets the tag the retention lifecycle rule requires before it
 // will expire an object. A missing key is not an error: there is nothing left
 // to protect or to expire, matching S3Objects' behaviour on a NoSuchKey.
