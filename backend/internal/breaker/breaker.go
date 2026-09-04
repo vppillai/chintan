@@ -27,6 +27,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/obs"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 // ErrSpendCapExceeded is returned when a call would take the instance past its
@@ -50,6 +51,12 @@ type Estimate struct {
 	Model    string
 	Op       meter.Op
 	Usage    meter.Quantities
+	// TenantID is who the call is attributed to in the per-tenant usage rows.
+	// The cap is instance-wide and ignores it; the accounting does not. It is
+	// an explicit field rather than read off the context because the context's
+	// tenant is for log attribution only (obs.WithTenant), and a cost record
+	// should not depend on a logging convenience having been set upstream.
+	TenantID string
 }
 
 // Result is what the call actually consumed. An empty Usage means the caller
@@ -64,6 +71,7 @@ type Breaker struct {
 	prices   meter.PriceTable
 	capMicro int64
 	now      func() time.Time
+	usage    usage.Recorder
 }
 
 // Option configures a Breaker.
@@ -72,6 +80,13 @@ type Option func(*Breaker)
 // WithClock overrides the clock. For tests.
 func WithClock(fn func() time.Time) Option {
 	return func(b *Breaker) { b.now = fn }
+}
+
+// WithUsage attributes every settled call to its tenant through rec, in the
+// same place the breaker writes the usage log line. Without it the breaker
+// counts and caps exactly as before and attributes nothing.
+func WithUsage(rec usage.Recorder) Option {
+	return func(b *Breaker) { b.usage = rec }
 }
 
 // New builds a Breaker. A capMicros of 0 or less disables the cap while still
@@ -170,6 +185,7 @@ func (b *Breaker) Do(ctx context.Context, est Estimate, fn func(context.Context)
 		attrs = append(attrs, slog.Float64(string(unit), quantity))
 	}
 	obs.Log(ctx).Info("provider usage", attrs...)
+	b.record(ctx, day, est, actual, actualUsage)
 	obs.Emit(ctx,
 		map[string]string{"Provider": est.Provider, "Op": string(est.Op)},
 		obs.Metric{Name: "ProviderCostMicros", Value: float64(actual), Unit: obs.UnitCount},
@@ -177,4 +193,39 @@ func (b *Breaker) Do(ctx context.Context, est Estimate, fn func(context.Context)
 	)
 	obs.Duration(ctx, "ProviderLatency", elapsed, map[string]string{"Provider": est.Provider, "Op": string(est.Op), "Outcome": "ok"})
 	return res, nil
+}
+
+// record attributes a settled call to its tenant. It runs after the spend
+// counter is reconciled and the log line is written, and its failure is logged
+// rather than returned: the call has already happened and been paid for, and
+// failing the capture over a missing accounting row would turn a bookkeeping
+// fault into lost dictation. The log line above is the record of last resort.
+//
+// A call with no tenant — there is none today; every pipeline stage sets one —
+// is logged once and skipped rather than written to an anonymous row, because
+// an anonymous row is a number nobody can bill or explain.
+func (b *Breaker) record(ctx context.Context, day string, est Estimate, costMicros int64, used meter.Quantities) {
+	if b.usage == nil {
+		return
+	}
+	if est.TenantID == "" {
+		obs.Log(ctx).Warn("provider call carried no tenant; usage not attributed",
+			slog.String("op", string(est.Op)))
+		return
+	}
+	err := b.usage.Record(ctx, usage.Record{
+		TenantID:   est.TenantID,
+		Day:        day,
+		Provider:   est.Provider,
+		Op:         est.Op,
+		CostMicros: costMicros,
+		Usage:      used,
+	})
+	if err != nil {
+		obs.Log(ctx).Error("failed to record tenant usage",
+			slog.String("error", err.Error()),
+			slog.String("op", string(est.Op)),
+			slog.Int64("cost_micros", costMicros))
+		obs.Count(ctx, "UsageRecordFailures", map[string]string{"Op": string(est.Op)})
+	}
 }

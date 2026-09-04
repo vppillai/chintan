@@ -347,6 +347,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		Model:    p.cfg.STTModel,
 		Op:       meter.OpTranscribe,
 		Usage:    meter.Quantities{meter.UnitAudioSeconds: estimateSeconds},
+		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.STT.Transcribe(ctx, provider.Audio{
 			URL:         audioURL,
@@ -589,6 +590,7 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string
 			meter.UnitInputTokens:  estimateTokens(transcript) + estimateCandidateTokens(candidates),
 			meter.UnitOutputTokens: routeOutputTokensEstimate,
 		},
+		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.Router.Route(ctx, transcript, candidates)
 		if err != nil {
@@ -642,6 +644,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 			// reservation near the bill: output tokens cost four times input.
 			meter.UnitOutputTokens: estimateTokens(source),
 		},
+		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.LLM.Cleanup(ctx, capture.Mode, source)
 		if err != nil {

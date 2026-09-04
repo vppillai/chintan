@@ -24,6 +24,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
 	"github.com/vppillai/chintan/backend/internal/upload"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 var lambdaAdapter *httpadapter.HandlerAdapterV2
@@ -115,6 +116,7 @@ func init() {
 		Export:         service.NewExportService(notesService, captureService, settingsService, objects),
 		Readiness:      service.NewReadinessService(store, objects),
 		Spend:          spendGate,
+		Usage:          usage.NewDynamo(dynamoClient, tableName),
 		Store:          store,
 		Verifier:       verifier,
 		AllowedOrigin:  allowedOrigin,

@@ -41,6 +41,9 @@ func (rt *router) routes() {
 	rt.handle("GET "+p+"/tags", rt.listTags)
 	rt.handle("GET "+p+"/search", rt.search)
 
+	// Usage: the caller's own provider spend, by month.
+	rt.handle("GET "+p+"/usage", rt.getUsage)
+
 	// Captures. POST /v1/captures is synchronous and fast: it writes the row and
 	// returns presigned PUTs. Nothing slow happens on a request path bounded by
 	// the gateway's fixed 30-second integration ceiling.

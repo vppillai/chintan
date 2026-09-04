@@ -1,13 +1,17 @@
 package handler_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
+	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 func TestHealthIsLiveness(t *testing.T) {
@@ -580,5 +584,53 @@ func TestNotesListCarriesSearchTextOnlyWhenIncluded(t *testing.T) {
 	w = h.do(t, http.MethodGet, "/v1/notes?include=everything", "user1", nil)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("include=everything: status = %d, want 400", w.Code)
+	}
+}
+
+func TestUsageAnswersTheCallersOwnMonth(t *testing.T) {
+	h := newHarness(t)
+	for _, rec := range []usage.Record{
+		{TenantID: "user1", Day: "2026-03-02", Provider: "groq", Op: meter.OpTranscribe, CostMicros: 300, Usage: meter.Quantities{meter.UnitAudioSeconds: 30}},
+		{TenantID: "user1", Day: "2026-03-09", Provider: "openai", Op: meter.OpCleanup, CostMicros: 700, Usage: meter.Quantities{meter.UnitInputTokens: 1000, meter.UnitOutputTokens: 200}},
+		{TenantID: "user2", Day: "2026-03-09", Provider: "openai", Op: meter.OpCleanup, CostMicros: 5000},
+	} {
+		if err := h.usage.Record(context.Background(), rec); err != nil {
+			t.Fatalf("seed usage: %v", err)
+		}
+	}
+
+	w := h.do(t, http.MethodGet, "/v1/usage?month=2026-03", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var got handler.Usage
+	decodeInto(t, w, &got)
+	if got.Month != "2026-03" || got.CostMicros != 1000 || got.Calls != 2 {
+		t.Errorf("usage = %+v; another tenant's calls must not be counted", got)
+	}
+	if got.Ops["transcribe"].AudioSeconds != 30 || got.Ops["cleanup"].InputTokens != 1000 {
+		t.Errorf("ops = %+v", got.Ops)
+	}
+	if len(got.Days) != 2 || got.Days[0].Date != "2026-03-02" {
+		t.Errorf("days = %+v", got.Days)
+	}
+
+	// A month with nothing in it is zeros, and the default month is this one.
+	w = h.do(t, http.MethodGet, "/v1/usage?month=2020-01", "user1", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"cost_micros":0`) {
+		t.Errorf("empty month: status = %d body = %s", w.Code, w.Body.String())
+	}
+	w = h.do(t, http.MethodGet, "/v1/usage", "user1", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"month":"`+time.Now().UTC().Format("2006-01")+`"`) {
+		t.Errorf("default month: status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	w = h.do(t, http.MethodGet, "/v1/usage?month=March", "user1", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed month: status = %d, want 400", w.Code)
+	}
+	w = h.do(t, http.MethodGet, "/v1/usage", "", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated: status = %d, want 401", w.Code)
 	}
 }

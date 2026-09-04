@@ -36,6 +36,7 @@ import type {
   SearchHitWire,
   SettingsWire,
   TagWire,
+  UsageWire,
 } from '../schema.ts';
 
 /** GET /v1/health → 200 */
@@ -386,6 +387,61 @@ export const captureCreated: CaptureCreatedWire = {
     "max_bytes": 4194304,
     "url": "https://example.invalid/presigned"
   }
+};
+
+/** GET /v1/usage?month=2026-01 → 200. The caller's own provider spend for the month in microdollars: totals, the split by pipeline stage, one line per day. */
+export const usage: UsageWire = {
+  "audio_seconds": 28.5,
+  "calls": 3,
+  "cost_micros": 1371,
+  "days": [
+    {
+      "audio_seconds": 28.5,
+      "calls": 2,
+      "cost_micros": 951,
+      "date": "2026-01-03",
+      "input_tokens": 900,
+      "output_tokens": 300
+    },
+    {
+      "calls": 1,
+      "cost_micros": 420,
+      "date": "2026-01-04",
+      "input_tokens": 1200,
+      "output_tokens": 100
+    }
+  ],
+  "input_tokens": 2100,
+  "month": "2026-01",
+  "ops": {
+    "cleanup": {
+      "calls": 1,
+      "cost_micros": 640,
+      "input_tokens": 900,
+      "output_tokens": 300
+    },
+    "route": {
+      "calls": 1,
+      "cost_micros": 420,
+      "input_tokens": 1200,
+      "output_tokens": 100
+    },
+    "transcribe": {
+      "audio_seconds": 28.5,
+      "calls": 1,
+      "cost_micros": 311
+    }
+  },
+  "output_tokens": 400
+};
+
+/** GET /v1/usage?month=2025-12 → 200 for a month with no usage: zeros and empty collections, never 404. */
+export const usageEmpty: UsageWire = {
+  "calls": 0,
+  "cost_micros": 0,
+  "days": [],
+  "month": "2025-12",
+  "ops": {}
 };
 
 /** POST /v1/export → 202 */

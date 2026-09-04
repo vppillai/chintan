@@ -317,6 +317,30 @@ export interface SearchHitWire {
 }
 
 /* ---------------------------------------------------------------------------
+   Usage
+   --------------------------------------------------------------------------- */
+
+/** Provider spend counters. Microdollars, the unit the spend cap uses. */
+export interface UsageTotalsWire {
+  cost_micros: number;
+  calls: number;
+  audio_seconds?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+}
+
+/**
+ * `GET /v1/usage?month=yyyy-mm`: the caller's own provider usage for one
+ * month — totals, the same split by pipeline stage, and one line per day. A
+ * month with no usage is all zeros, not an error.
+ */
+export interface UsageWire extends UsageTotalsWire {
+  month: string;
+  ops: Record<string, UsageTotalsWire>;
+  days: Array<UsageTotalsWire & { date: string }>;
+}
+
+/* ---------------------------------------------------------------------------
    Export and auth
    --------------------------------------------------------------------------- */
 
