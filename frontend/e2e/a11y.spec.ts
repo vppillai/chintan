@@ -146,6 +146,9 @@ test('the library is fully traversable by keyboard', async ({ page }) => {
 
 test('the skip link moves focus to main', async ({ page }) => {
   await page.goto('/');
+  // Let the library settle first, for the same reason as the focus-ring test
+  // below: a Tab pressed while the shell is still mounting lands on <body>.
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   await page.keyboard.press('Tab');
   const skip = page.getByRole('link', { name: /skip to content/i });
