@@ -25,6 +25,8 @@ export interface ApiState {
   rejectPatch: { status: number; detail: string } | null;
   /** Ids passed to DELETE /v1/notes/{id}/permanent, in order. */
   purged: string[];
+  /** Ids passed to DELETE /v1/captures/{id}, in order. */
+  deletedCaptures: string[];
   /** The hosted UI, as exercised by the sign-in and sign-out specs. */
   auth: AuthState;
   /** What `PUT /v1/settings` last stored, as `GET` returns it. */
@@ -178,6 +180,7 @@ export function freshState(): ApiState {
     conflictOnce: false,
     rejectPatch: null,
     purged: [],
+    deletedCaptures: [],
     auth: {
       authorize: [],
       token: [],
@@ -305,6 +308,36 @@ function problem(route: Route, status: number, extra: Record<string, unknown> = 
   });
 }
 
+/** Statuses the pipeline will not move on from; a capture in one may be deleted or moved. */
+const TERMINAL = new Set(['appended', 'needs_target', 'no_content', 'failed', 'spend_capped']);
+
+function findCapture(
+  state: ApiState,
+  captureId: string,
+): { note: NoteRecord; capture: CaptureRecord } | null {
+  for (const note of Object.values(state.notes)) {
+    const capture = (note.captures ?? []).find((item) => item.id === captureId);
+    if (capture) return { note, capture };
+  }
+  return null;
+}
+
+/**
+ * Cuts a capture out of its note: the row, and the paragraph at the capture's
+ * chronological position. Returns the paragraph so a move can carry it.
+ */
+function removeCapture(note: NoteRecord, capture: CaptureRecord): string {
+  const ordered = [...(note.captures ?? [])].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const index = ordered.findIndex((item) => item.id === capture.id);
+  const paragraphs = note.body.split('\n\n');
+  const [paragraph = ''] = index >= 0 && index < paragraphs.length ? paragraphs.splice(index, 1) : [];
+  note.body = paragraphs.join('\n\n');
+  note.snippet = note.body.split('\n')[0] ?? '';
+  note.captures = (note.captures ?? []).filter((item) => item.id !== capture.id);
+  note.version += 1;
+  return paragraph;
+}
+
 export async function installApi(page: Page, state: ApiState): Promise<void> {
   /*
    * A token set the client accepts, so no sign-in flow is needed.
@@ -413,6 +446,94 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         url: `${ARTIFACT_ORIGIN}/artifact/${downloadMatch[1]}/${kind}`,
         expires_at: new Date(Date.now() + 900_000).toISOString(),
       });
+      return;
+    }
+
+    /*
+     * One recording out of its note, or into another. Both cut the capture's
+     * paragraph out of the body along the append marker the real server keeps;
+     * the stub has no markers, so it drops the paragraph whose position matches
+     * the capture's position among the note's recordings — the shape the app
+     * sees is the same: a shorter body, a bumped version, one row fewer.
+     */
+    const captureMatch = /^\/v1\/captures\/([^/]+)$/.exec(path);
+    if (captureMatch && method === 'DELETE') {
+      const found = findCapture(state, captureMatch[1] ?? '');
+      if (!found) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      if (!TERMINAL.has(found.capture.status)) {
+        await problem(route, 409, {
+          title: 'Still filing',
+          detail: 'This recording is still moving through the pipeline.',
+        });
+        return;
+      }
+      removeCapture(found.note, found.capture);
+      state.deletedCaptures.push(found.capture.id);
+      await route.fulfill({ status: 204, body: '' });
+      return;
+    }
+
+    const moveMatch = /^\/v1\/captures\/([^/]+)\/move$/.exec(path);
+    if (moveMatch && method === 'POST') {
+      const found = findCapture(state, moveMatch[1] ?? '');
+      const body = (request.postDataJSON() ?? {}) as { note_id?: string };
+      const target = state.notes[body.note_id ?? ''];
+      if (!found || !target) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      if (target.archived) {
+        await problem(route, 409, { title: 'Conflict', detail: 'That note is archived.' });
+        return;
+      }
+      if (!TERMINAL.has(found.capture.status)) {
+        await problem(route, 409, {
+          title: 'Still filing',
+          detail: 'This recording is still moving through the pipeline.',
+        });
+        return;
+      }
+      if (found.note.id === target.id) {
+        await route.fulfill({ status: 204, body: '' });
+        return;
+      }
+      const paragraph = removeCapture(found.note, found.capture);
+      found.capture.note_id = target.id;
+      target.captures = [...(target.captures ?? []), found.capture].sort((a, b) =>
+        a.created_at.localeCompare(b.created_at),
+      );
+      target.body = [target.body, paragraph].filter(Boolean).join('\n\n');
+      target.snippet = target.body.split('\n')[0] ?? '';
+      target.version += 1;
+      await json(route, found.capture);
+      return;
+    }
+
+    /*
+     * The bulk-download manifest: every recording of the note that still has
+     * audio, oldest first, named `<slug>-<yyyymmdd-hhmm>.<ext>`.
+     */
+    const urlsMatch = /^\/v1\/notes\/([^/]+)\/recordings\/urls$/.exec(path);
+    if (urlsMatch && method === 'GET') {
+      const note = state.notes[urlsMatch[1] ?? ''];
+      if (!note) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      const slug = note.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const items = [...(note.captures ?? [])]
+        .filter((capture) => capture.status === 'appended')
+        .sort((a, b) => a.created_at.localeCompare(b.created_at))
+        .map((capture) => ({
+          capture_id: capture.id,
+          filename: `${slug}-${capture.created_at.replace(/[-:]/g, '').slice(0, 8)}-${capture.created_at.replace(/[-:]/g, '').slice(9, 13)}.wav`,
+          url: `${ARTIFACT_ORIGIN}/artifact/${capture.id}/audio`,
+          expires_at: new Date(Date.now() + 900_000).toISOString(),
+        }));
+      await json(route, { items });
       return;
     }
 

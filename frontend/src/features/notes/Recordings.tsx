@@ -1,19 +1,32 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { useRetryCapture } from '@/api/queries.ts';
-import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
-import { DownloadButton } from '@/components/DownloadButton.tsx';
+import { useDeleteCaptures, useMoveCaptures, useRetryCapture } from '@/api/queries.ts';
+import {
+  isTerminalStatus,
+  type CaptureWire,
+  type NoteDetailWire,
+  type NoteWire,
+} from '@/api/schema.ts';
+import { ROUTES } from '@/app/routes.ts';
+import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { DownloadButton, saveBlob } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
+import { OverflowMenu } from '@/components/OverflowMenu.tsx';
+import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { TargetPrompt } from '@/features/capture/FilingRow.tsx';
+import { useLongPress, type LongPress } from '@/hooks/useLongPress.ts';
 
+import { MoveSheet } from './MoveSheet.tsx';
 import { TranscriptPanel, type TranscriptView } from './TranscriptPanel.tsx';
 import { WaveformScrubber } from './WaveformScrubber.tsx';
 import { formatTime, loadCaptureArtifacts } from './artifacts.ts';
 import { describeMoment, formatDurationShort } from './groups.ts';
 import { usePlayer } from './usePlayer.ts';
+import { archiveName, zipRecordings } from './zipRecordings.ts';
 
 /**
  * A note's recordings: the sources it was written from, as dated rows.
@@ -32,9 +45,26 @@ import { usePlayer } from './usePlayer.ts';
  * One row open at a time, which is also what makes "only one recording plays
  * at a time" hold without a registry of audio elements: a collapsed row has no
  * `<audio>` in the document, so it cannot be playing.
+ *
+ * Each row has a More control — Move to…, Delete recording, Download audio,
+ * Select — and a long press (or Select) enters a selection mode in which the
+ * same three actions apply to several rows at once from a bar at the foot of
+ * the screen. Moving and deleting take the paragraph the recording dictated
+ * with them (backlog D2, D3); downloading several is one zip built on the
+ * device from the server's manifest of presigned URLs (D4).
  */
-export function Recordings({ captures }: { captures: readonly CaptureWire[] }) {
+export function Recordings({
+  note,
+  onSelectingChange,
+}: {
+  note: Pick<NoteDetailWire, 'id' | 'title' | 'captures'>;
+  /** Told when selection starts and ends, so the screen can make room for the bar. */
+  onSelectingChange?: (selecting: boolean) => void;
+}) {
+  const api = useApi();
+  const navigate = useNavigate();
   const headingId = useId();
+  const captures = note.captures ?? [];
   const ordered = [...captures].sort((a, b) => b.created_at.localeCompare(a.created_at));
   const newest = ordered[0];
 
@@ -50,46 +80,360 @@ export function Recordings({ captures }: { captures: readonly CaptureWire[] }) {
    */
   const [view, setView] = useState<TranscriptView>('raw');
 
+  /*
+   * Selection. The set outlives nothing: leaving the screen is exactly when
+   * "which recordings were selected" should stop mattering, and a row that
+   * vanishes (deleted, moved) is dropped from the set on the next render.
+   */
+  const [selecting, setSelecting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** What the row's More menu or the bar has asked for, awaiting confirmation. */
+  const [pending, setPending] = useState<{ kind: 'delete' | 'move'; ids: string[] } | null>(null);
+  /** The line under the rows: what the last action did, or why it did not. */
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [download, setDownload] = useState<DownloadProgress>({ phase: 'idle' });
+
+  const deleteCaptures = useDeleteCaptures();
+  const moveCaptures = useMoveCaptures();
+
+  const present = new Set(ordered.map((capture) => capture.id));
+  const selected = new Set([...selectedIds].filter((id) => present.has(id)));
+  const allSelected = ordered.length > 0 && selected.size === ordered.length;
+
+  useEffect(() => {
+    onSelectingChange?.(selecting);
+  }, [selecting, onSelectingChange]);
+
   const onAutoplayed = useCallback(() => {
     setAutoplayId(null);
   }, []);
 
-  return (
-    <section className="recordings" aria-labelledby={headingId}>
-      <div className="recordings__header">
-        <h2 id={headingId} className="recordings__heading">
-          Recordings
-        </h2>
-      </div>
+  const startSelecting = (captureId: string | null): void => {
+    setSelecting(true);
+    // Rows close as selection starts: an open player under a checkbox is
+    // two things to tap where there should be one.
+    setOpenId(null);
+    setNotice(null);
+    if (captureId) setSelectedIds(new Set([captureId]));
+  };
 
-      {ordered.length === 0 ? (
-        <p className="recordings__empty">
-          Nothing recorded into this note yet. “Record into this” below adds one.
-        </p>
-      ) : (
-        <ul className="recordings__list" role="list">
-          {ordered.map((capture) => (
-            <RecordingRow
-              key={capture.id}
-              capture={capture}
-              expanded={openId === capture.id}
-              onToggle={() => {
-                setOpenId((current) => (current === capture.id ? null : capture.id));
-              }}
-              onRequestPlay={() => {
-                setOpenId(capture.id);
-                setAutoplayId(capture.id);
-              }}
-              autoplay={autoplayId === capture.id}
-              onAutoplayed={onAutoplayed}
-              view={view}
-              onViewChange={setView}
-            />
-          ))}
-        </ul>
+  const stopSelecting = (): void => {
+    setSelecting(false);
+    setSelectedIds(new Set());
+  };
+
+  const toggleSelected = (captureId: string): void => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(captureId)) next.delete(captureId);
+      else next.add(captureId);
+      return next;
+    });
+  };
+
+  /*
+   * The recordings to act on, as a list even for one: the mutations take a
+   * batch, and a row's own menu is a batch of one. A recording that is still
+   * moving through the pipeline is refused by the server (409) — the worker
+   * may be writing its paragraph — and the bar says so in words rather than
+   * a status code.
+   */
+  const runDelete = (ids: string[]): void => {
+    setNotice(null);
+    deleteCaptures.mutate(
+      { noteId: note.id, captureIds: ids },
+      {
+        onSuccess: (result) => {
+          setNotice(describeOutcome(result.done.length, result.failed, 'deleted'));
+          if (result.done.length === ids.length) stopSelecting();
+        },
+        onError: (error) => {
+          setNotice({ text: failureText(error), tone: 'error' });
+        },
+      },
+    );
+  };
+
+  const runMove = (ids: string[], target: NoteWire): void => {
+    setNotice(null);
+    moveCaptures.mutate(
+      { noteId: note.id, targetId: target.id, captureIds: ids },
+      {
+        onSuccess: (result) => {
+          setPending(null);
+          const outcome = describeOutcome(result.done.length, result.failed, 'moved');
+          setNotice(
+            result.done.length > 0
+              ? { ...outcome, text: `${outcome.text} to “${target.title}”`, target }
+              : outcome,
+          );
+          if (result.done.length === ids.length) stopSelecting();
+        },
+        onError: (error) => {
+          setNotice({ text: failureText(error), tone: 'error' });
+        },
+      },
+    );
+  };
+
+  /*
+   * Download: one file saved as itself, several as one archive. Either way the
+   * manifest is one request and each file one CORS fetch of the presigned URL;
+   * the zip is built here (`zipRecordings`). Recordings whose audio has since
+   * expired are simply not in the manifest, and the notice says how many that
+   * left out rather than handing over URLs that would 404.
+   */
+  const runDownload = async (ids: string[]): Promise<void> => {
+    setNotice(null);
+    setDownload({ phase: 'working', done: 0, total: ids.length });
+    try {
+      const wanted = new Set(ids);
+      const manifest = await api.recordingUrls(note.id);
+      const items = manifest.items.filter((item) => wanted.has(item.capture_id));
+      if (items.length === 0) {
+        setDownload({ phase: 'idle' });
+        setNotice({
+          text:
+            ids.length === 1
+              ? 'The audio for this recording is no longer stored.'
+              : 'None of those recordings still has its audio.',
+          tone: 'error',
+        });
+        return;
+      }
+      setDownload({ phase: 'working', done: 0, total: items.length });
+      if (items.length === 1) {
+        const [item] = items as [(typeof items)[number]];
+        const response = await fetch(item.url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`audio fetch failed: ${String(response.status)}`);
+        saveBlob(await response.blob(), item.filename);
+      } else {
+        const blob = await zipRecordings(items, (done, total) => {
+          setDownload({ phase: 'working', done, total });
+        });
+        saveBlob(blob, archiveName(note.title));
+      }
+      setDownload({ phase: 'idle' });
+      const missing = ids.length - items.length;
+      setNotice({
+        text:
+          items.length === 1
+            ? 'Downloaded'
+            : `Downloaded ${String(items.length)} recordings as one archive` +
+              (missing > 0 ? `; ${String(missing)} no longer had audio` : ''),
+        tone: 'ok',
+      });
+      stopSelecting();
+    } catch {
+      setDownload({ phase: 'idle' });
+      setNotice({ text: 'Could not download — try again.', tone: 'error' });
+    }
+  };
+
+  const busy = deleteCaptures.isPending || moveCaptures.isPending || download.phase === 'working';
+  const selectedList = [...selected];
+
+  return (
+    <>
+      <section className="recordings" aria-labelledby={headingId} data-selecting={selecting || undefined}>
+        <div className="recordings__header">
+          <h2 id={headingId} className="recordings__heading">
+            Recordings
+          </h2>
+        </div>
+
+        {ordered.length === 0 ? (
+          <p className="recordings__empty">
+            Nothing recorded into this note yet. “Record into this” below adds one.
+          </p>
+        ) : (
+          <ul className="recordings__list" role="list">
+            {ordered.map((capture) => (
+              <RecordingRow
+                key={capture.id}
+                capture={capture}
+                expanded={!selecting && openId === capture.id}
+                onToggle={() => {
+                  setOpenId((current) => (current === capture.id ? null : capture.id));
+                }}
+                onRequestPlay={() => {
+                  setOpenId(capture.id);
+                  setAutoplayId(capture.id);
+                }}
+                autoplay={autoplayId === capture.id}
+                onAutoplayed={onAutoplayed}
+                view={view}
+                onViewChange={setView}
+                selecting={selecting}
+                selected={selected.has(capture.id)}
+                onToggleSelected={() => {
+                  toggleSelected(capture.id);
+                }}
+                onStartSelecting={() => {
+                  startSelecting(capture.id);
+                }}
+                onMove={() => {
+                  setPending({ kind: 'move', ids: [capture.id] });
+                }}
+                onDelete={() => {
+                  setPending({ kind: 'delete', ids: [capture.id] });
+                }}
+                onDownload={() => void runDownload([capture.id])}
+              />
+            ))}
+          </ul>
+        )}
+
+        {notice && !selecting && (
+          <p className="recordings__notice" data-tone={notice.tone} role="status">
+            {notice.text}
+            {notice.target && (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className="recordings__notice-link"
+                  onClick={() => void navigate(ROUTES.note(notice.target?.id ?? ''))}
+                >
+                  Open {notice.target.title}
+                </button>
+              </>
+            )}
+          </p>
+        )}
+      </section>
+
+      {selecting && (
+        <SelectionBar
+          label="Recording actions"
+          count={selected.size}
+          allSelected={allSelected}
+          onSelectAll={() => {
+            setSelectedIds(allSelected ? new Set() : new Set(ordered.map((c) => c.id)));
+          }}
+          onCancel={stopSelecting}
+          status={
+            download.phase === 'working'
+              ? `${String(download.done)} of ${String(download.total)}…`
+              : notice?.text
+          }
+        >
+          <button
+            type="button"
+            className="selection-bar__action"
+            disabled={selected.size === 0 || busy}
+            onClick={() => void runDownload(selectedList)}
+          >
+            {download.phase === 'working' ? 'Downloading…' : 'Download'}
+          </button>
+          <button
+            type="button"
+            className="selection-bar__action"
+            disabled={selected.size === 0 || busy}
+            onClick={() => {
+              setPending({ kind: 'move', ids: selectedList });
+            }}
+          >
+            {moveCaptures.isPending ? 'Moving…' : 'Move'}
+          </button>
+          <button
+            type="button"
+            className="selection-bar__action selection-bar__action--destructive"
+            disabled={selected.size === 0 || busy}
+            onClick={() => {
+              setPending({ kind: 'delete', ids: selectedList });
+            }}
+          >
+            {deleteCaptures.isPending ? 'Deleting…' : 'Delete'}
+          </button>
+        </SelectionBar>
       )}
-    </section>
+
+      <ConfirmDialog
+        open={pending?.kind === 'delete'}
+        title={
+          pending && pending.ids.length > 1
+            ? `Delete ${String(pending.ids.length)} recordings?`
+            : 'Delete this recording?'
+        }
+        body={
+          pending && pending.ids.length > 1
+            ? 'The recordings and the paragraphs they dictated are removed from this note, and the audio and transcripts are destroyed. This cannot be undone.'
+            : 'The recording and the paragraph it dictated are removed from this note, and the audio and transcript are destroyed. This cannot be undone.'
+        }
+        confirmLabel={pending && pending.ids.length > 1 ? 'Delete them' : 'Delete it'}
+        requireText="delete"
+        requireLabel='Type "delete" to confirm'
+        destructive
+        onCancel={() => {
+          setPending(null);
+        }}
+        onConfirm={() => {
+          const ids = pending?.ids ?? [];
+          setPending(null);
+          runDelete(ids);
+        }}
+      />
+
+      <MoveSheet
+        open={pending?.kind === 'move'}
+        count={pending?.ids.length ?? 0}
+        excludeNoteId={note.id}
+        pending={moveCaptures.isPending}
+        error={pending?.kind === 'move' && notice?.tone === 'error' ? notice.text : null}
+        onCancel={() => {
+          setPending(null);
+        }}
+        onChoose={(target) => {
+          runMove(pending?.ids ?? [], target);
+        }}
+      />
+    </>
   );
+}
+
+interface Notice {
+  text: string;
+  tone: 'ok' | 'error';
+  /** The note the recordings went to, offered as "Open <title>". */
+  target?: NoteWire;
+}
+
+type DownloadProgress = { phase: 'idle' } | { phase: 'working'; done: number; total: number };
+
+/** "Wait until it has finished filing" for a 409; the server's own words otherwise. */
+function failureText(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.isConflict) return 'Wait until it has finished filing.';
+    return error.userMessage;
+  }
+  return 'That did not go through. Try again.';
+}
+
+function describeOutcome(
+  done: number,
+  failed: readonly { error: unknown }[],
+  verb: 'deleted' | 'moved',
+): Notice {
+  if (failed.length === 0) {
+    return {
+      text: done === 1 ? `Recording ${verb}` : `${String(done)} recordings ${verb}`,
+      tone: 'ok',
+    };
+  }
+  // One refusal is quoted; several are counted, and the first reason stands
+  // for them — a batch that stalled is almost always stalled for one reason.
+  const reason = failureText(failed[0]?.error);
+  if (done === 0) {
+    return {
+      text: failed.length === 1 ? reason : `${String(failed.length)} could not be ${verb}. ${reason}`,
+      tone: 'error',
+    };
+  }
+  return {
+    text: `${String(done)} ${verb}; ${String(failed.length)} could not be. ${reason}`,
+    tone: 'error',
+  };
 }
 
 /**
@@ -131,6 +475,13 @@ interface RecordingRowProps {
   onAutoplayed: () => void;
   view: TranscriptView;
   onViewChange: (view: TranscriptView) => void;
+  selecting: boolean;
+  selected: boolean;
+  onToggleSelected: () => void;
+  onStartSelecting: () => void;
+  onMove: () => void;
+  onDelete: () => void;
+  onDownload: () => void;
 }
 
 function RecordingRow({
@@ -142,10 +493,21 @@ function RecordingRow({
   onAutoplayed,
   view,
   onViewChange,
+  selecting,
+  selected,
+  onToggleSelected,
+  onStartSelecting,
+  onMove,
+  onDelete,
+  onDownload,
 }: RecordingRowProps) {
   const api = useApi();
   const bodyId = useId();
+  const checkId = useId();
   const retry = useRetryCapture();
+  // Press and hold on a closed row to start selecting it. Off while selecting:
+  // a hold on a checkbox row is a slow tap, not a second gesture.
+  const longPress: LongPress = useLongPress(selecting ? null : onStartSelecting);
 
   /*
    * Artifacts are fetched only for the open row. Every one is a presigned URL
@@ -209,40 +571,98 @@ function RecordingRow({
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const running = !isTerminalStatus(capture.status);
 
-  return (
-    <li className="recording" data-expanded={expanded || undefined} data-status={capture.status}>
-      <div className="recording__head">
-        <button
-          type="button"
-          className="recording__play"
-          aria-label={`${playing ? 'Pause' : 'Play'} recording from ${when}`}
-          disabled={noAudio || unreachable}
-          onClick={() => {
-            if (expanded) player.toggle();
-            else onRequestPlay();
-          }}
-        >
-          <Icon name={playing ? 'stop' : 'play'} size={18} />
-        </button>
+  const summary = (
+    <>
+      <span className="recording__when">{when}</span>{' '}
+      <span className="recording__filed" data-running={running || undefined}>
+        {filedLabel(capture)}
+      </span>{' '}
+      <span className="recording__duration numeric">{durationLabel}</span>
+    </>
+  );
 
-        {/*
-          The row itself is the disclosure. `aria-expanded` on a real button
-          rather than a click handler on the <li>: the transcript beneath is
-          reachable by keyboard, and a screen reader is told there is one.
-        */}
-        <button
-          type="button"
-          className="recording__summary"
-          aria-expanded={expanded}
-          aria-controls={bodyId}
-          onClick={onToggle}
-        >
-          <span className="recording__when">{when}</span>{' '}
-          <span className="recording__filed" data-running={running || undefined}>
-            {filedLabel(capture)}
-          </span>{' '}
-          <span className="recording__duration numeric">{durationLabel}</span>
-        </button>
+  return (
+    <li
+      className="recording"
+      data-expanded={expanded || undefined}
+      data-status={capture.status}
+      data-selected={selected || undefined}
+    >
+      <div className="recording__head">
+        {selecting ? (
+          /*
+           * In selection mode the row is a checkbox and its label — the one
+           * control every screen reader and keyboard already knows — and the
+           * player is closed, so a tap anywhere on the row toggles it.
+           */
+          <label
+            className="recording__select"
+            htmlFor={checkId}
+            onClick={(event) => {
+              // The click that follows the long press which started this mode
+              // lands on this label; letting it through would toggle the
+              // checkbox straight back off. See `NoteRow`.
+              if (longPress.consumeClick()) event.preventDefault();
+            }}
+          >
+            <span className="recording__check">
+              <input
+                id={checkId}
+                type="checkbox"
+                className="recording__checkbox"
+                checked={selected}
+                aria-label={`Select recording from ${when}`}
+                onChange={onToggleSelected}
+              />
+            </span>
+            <span className="recording__summary recording__summary--static">{summary}</span>
+          </label>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="recording__play"
+              aria-label={`${playing ? 'Pause' : 'Play'} recording from ${when}`}
+              disabled={noAudio || unreachable}
+              onClick={() => {
+                if (expanded) player.toggle();
+                else onRequestPlay();
+              }}
+            >
+              <Icon name={playing ? 'stop' : 'play'} size={18} />
+            </button>
+
+            {/*
+              The row itself is the disclosure. `aria-expanded` on a real button
+              rather than a click handler on the <li>: the transcript beneath is
+              reachable by keyboard, and a screen reader is told there is one.
+              Held down, it selects instead (`useLongPress`).
+            */}
+            <button
+              type="button"
+              className="recording__summary"
+              aria-expanded={expanded}
+              aria-controls={bodyId}
+              onClick={() => {
+                if (longPress.consumeClick()) return;
+                onToggle();
+              }}
+              {...longPress.handlers}
+            >
+              {summary}
+            </button>
+
+            <OverflowMenu
+              label={`More for recording from ${when}`}
+              items={[
+                { label: 'Move to…', onSelect: onMove },
+                { label: 'Delete recording', onSelect: onDelete, destructive: true },
+                { label: 'Download audio', onSelect: onDownload },
+                { label: 'Select', onSelect: onStartSelecting },
+              ]}
+            />
+          </>
+        )}
       </div>
 
       {expanded && (

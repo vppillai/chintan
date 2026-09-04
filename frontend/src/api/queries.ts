@@ -653,6 +653,96 @@ export function refreshAppendedNote(queryClient: QueryClient, noteId: string): v
   void queryClient.invalidateQueries({ queryKey: SEARCH_CORPUS_KEY });
 }
 
+/* ---------------------------------------------------------------------------
+   Removing or re-filing a recording
+
+   Both operations rewrite the note body on the server — the capture's
+   paragraph is cut out, and for a move spliced into the target — so what the
+   detail query holds is stale the moment either succeeds. The row is dropped
+   from the cache at once so the screen answers the tap, and the note is then
+   refetched for the body, the snippet and the version the editor adopts.
+
+   Bulk by construction: one recording is a list of one. The endpoints take a
+   single capture, so several are several calls run together; `allSettled`
+   so a 409 on one still-filing recording does not stop the rest, and the
+   caller is told which ones did not go.
+   --------------------------------------------------------------------------- */
+
+export interface CaptureBatchResult {
+  done: string[];
+  failed: { captureId: string; error: unknown }[];
+}
+
+async function settleEach(
+  captureIds: readonly string[],
+  run: (captureId: string) => Promise<unknown>,
+): Promise<CaptureBatchResult> {
+  const outcomes = await Promise.allSettled(captureIds.map((id) => run(id)));
+  const result: CaptureBatchResult = { done: [], failed: [] };
+  outcomes.forEach((outcome, index) => {
+    const captureId = captureIds[index] as string;
+    if (outcome.status === 'fulfilled') result.done.push(captureId);
+    else result.failed.push({ captureId, error: outcome.reason });
+  });
+  return result;
+}
+
+/** The rows that are gone leave the cached note now; the refetch brings the body. */
+function dropCapturesFromNote(
+  queryClient: QueryClient,
+  noteId: string,
+  captureIds: readonly string[],
+): void {
+  if (captureIds.length === 0) return;
+  const gone = new Set(captureIds);
+  queryClient.setQueryData<NoteDetailWire>(queryKeys.note(noteId), (current) =>
+    current?.captures
+      ? { ...current, captures: current.captures.filter((capture) => !gone.has(capture.id)) }
+      : current,
+  );
+}
+
+export function useDeleteCaptures() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ captureIds }: { noteId: string; captureIds: string[] }) =>
+      settleEach(captureIds, (id) => api.deleteCapture(id)),
+    onSuccess: (result, { noteId }) => {
+      dropCapturesFromNote(queryClient, noteId, result.done);
+      if (result.done.length > 0) {
+        refreshAppendedNote(queryClient, noteId);
+        void queryClient.invalidateQueries({ queryKey: ['captures'] });
+      }
+    },
+  });
+}
+
+export function useMoveCaptures() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      captureIds,
+      targetId,
+    }: {
+      noteId: string;
+      targetId: string;
+      captureIds: string[];
+    }) => settleEach(captureIds, (id) => api.moveCapture(id, { note_id: targetId })),
+    onSuccess: (result, { noteId, targetId }) => {
+      dropCapturesFromNote(queryClient, noteId, result.done);
+      if (result.done.length > 0) {
+        // Both bodies changed: the source lost paragraphs, the target gained
+        // them in chronological position.
+        refreshAppendedNote(queryClient, noteId);
+        refreshAppendedNote(queryClient, targetId);
+        void queryClient.invalidateQueries({ queryKey: ['captures'] });
+      }
+    },
+  });
+}
+
 export function useRetryCapture(): UseMutationResult<CaptureWire, Error, string> {
   const api: ChintanApi = useApi();
   const queryClient = useQueryClient();

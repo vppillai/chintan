@@ -112,6 +112,11 @@
     "path": "/v1/notes/contract-archived-note/permanent"
   },
   {
+    "name": "recordingUrls",
+    "method": "GET",
+    "path": "/v1/notes/contract-note/recordings/urls"
+  },
+  {
     "name": "listTags",
     "method": "GET",
     "path": "/v1/tags"
@@ -195,6 +200,19 @@
     "name": "retryCapture",
     "method": "POST",
     "path": "/v1/captures/contract-capture/retry"
+  },
+  {
+    "name": "moveCapture",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/move",
+    "body": {
+      "note_id": "contract-note"
+    }
+  },
+  {
+    "name": "deleteCapture",
+    "method": "DELETE",
+    "path": "/v1/captures/contract-capture"
   },
   {
     "name": "downloadUrl_audio",

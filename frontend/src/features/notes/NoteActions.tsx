@@ -44,7 +44,16 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * controls the app is append-only and the note screen's own "may have been
  * archived or purged" describes states it cannot reach.
  */
-export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: NoteEditor }) {
+export function NoteActions({
+  note,
+  editor,
+  hidden = false,
+}: {
+  note: NoteDetailWire;
+  editor: NoteEditor;
+  /** Stepping aside for another bar at the foot of the screen; state is kept. */
+  hidden?: boolean;
+}) {
   const navigate = useNavigate();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
@@ -60,7 +69,7 @@ export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: No
   const { draft } = editor.model;
 
   return (
-    <div className="note-bar-anchor">
+    <div className="note-bar-anchor" hidden={hidden}>
       {open === 'tags' && (
         <div id={tagsId} className="note-panel">
           <TagEditor

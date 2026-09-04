@@ -43,6 +43,7 @@ export function NoteDetailScreen() {
   const note = served ?? cached.data ?? undefined;
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
+  const [selectingRecordings, setSelectingRecordings] = useState(false);
 
   // The body grows with its text; the page is the one thing that scrolls.
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -176,9 +177,15 @@ export function NoteDetailScreen() {
         onBlur={() => void editor.saveNow()}
       />
 
-      <Recordings captures={note.captures ?? []} />
+      {/*
+        While recordings are being selected their own bar takes the foot of
+        the screen, so the note's action bar steps aside rather than stacking
+        under it. Hidden, not unmounted: an open Tags or Share panel is still
+        there when the selection ends.
+      */}
+      <Recordings note={note} onSelectingChange={setSelectingRecordings} />
 
-      <NoteActions note={note} editor={editor} />
+      <NoteActions note={note} editor={editor} hidden={selectingRecordings} />
     </div>
   );
 }
