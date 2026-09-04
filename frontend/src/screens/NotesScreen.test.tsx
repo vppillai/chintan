@@ -457,6 +457,50 @@ describe('doing something to several notes at once', () => {
     expect(await screen.findByRole('button', { name: 'Select' })).toBeInTheDocument();
   });
 
+  it('drops the chip of a tag whose last note was deleted forever', async () => {
+    /*
+     * QA D16: two notes tagged `bulkmobile`, select all, delete forever. The
+     * notes went, the chip stayed, and pressing it said "No notes are tagged
+     * bulkmobile" until a reload — `['tags']` was never invalidated.
+     */
+    const user = userEvent.setup();
+    let active: NoteWire[] = TEST_NOTES.map((note) => ({ ...note, tags: ['bulkmobile'] }));
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      if (method === 'DELETE' && url.pathname.includes('/v1/notes/')) return json({});
+      if (method === 'POST' && url.pathname.endsWith('/v1/notes/purge')) {
+        const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
+        active = active.filter((note) => !body.note_ids.includes(note.id));
+        return json({ results: body.note_ids.map((id) => ({ note_id: id, status: 'purged' })) });
+      }
+      // Tags are derived from the active notes, as the real endpoint derives them.
+      if (url.pathname.endsWith('/v1/tags')) {
+        const names = new Set(active.flatMap((note) => note.tags ?? []));
+        return json({ items: [...names].map((name) => ({ name, count: 1 })) });
+      }
+      if (url.pathname.endsWith('/v1/notes')) {
+        return json({ items: url.searchParams.get('state') === 'archived' ? [] : active });
+      }
+      return json({ items: [] });
+    });
+    mount(fetchImpl);
+
+    expect(await screen.findByRole('button', { name: 'bulkmobile' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
+    await user.type(screen.getByLabelText('Type "delete" to confirm'), 'delete');
+    await user.click(screen.getByRole('button', { name: 'Delete them forever' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'bulkmobile' })).toBeNull();
+    });
+  });
+
   it('selects and deselects everything with one control', async () => {
     const user = userEvent.setup();
     mount(library());

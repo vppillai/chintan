@@ -251,6 +251,18 @@ function rowOf(row: NoteWire, saved: NoteDetailWire): NoteWire {
   };
 }
 
+/**
+ * What a note moving between states leaves stale: every list under `['notes']`
+ * — active, archived, the device's copies — and the tag chips, which are
+ * derived from the active notes on the server. The chips used to be left out,
+ * so a tag whose last note had just been deleted forever kept its chip, and
+ * pressing it said "No notes are tagged …" until a reload (QA D16).
+ */
+export function invalidateNoteLists(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ['notes'] });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.tags() });
+}
+
 /* ---------------------------------------------------------------------------
    Removing a note: archive → restore, or archive → purge
 
@@ -270,7 +282,7 @@ export function useArchiveNote() {
     mutationFn: (noteId: string) => api.archiveNote(noteId),
     onSuccess: (_result, noteId) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -282,7 +294,7 @@ export function useRestoreNote() {
     mutationFn: (noteId: string) => api.restoreNote(noteId),
     onSuccess: (_result, noteId) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -300,7 +312,7 @@ export function useDeleteNoteForever() {
       // Removed, not invalidated: there is nothing left on the server to
       // refetch, and a refetch would 404 into an error the user cannot act on.
       queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -322,7 +334,7 @@ export function useBulkArchiveNotes() {
     mutationFn: (noteIds: string[]) =>
       Promise.allSettled(noteIds.map((id) => api.archiveNote(id))),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -334,7 +346,7 @@ export function useBulkRestoreNotes() {
     mutationFn: (noteIds: string[]) =>
       Promise.allSettled(noteIds.map((id) => api.restoreNote(id))),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -364,7 +376,7 @@ export function useBulkPurgeNotes() {
       for (const result of results) {
         queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
       }
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -402,7 +414,7 @@ export function useBulkDeleteNotes() {
         remember(() => forgetNote(result.note_id), queryClient);
         queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
       }
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -667,7 +679,7 @@ export function useSetCaptureTarget() {
     onSuccess: (capture) => {
       queryClient.setQueryData(queryKeys.capture(capture.id), capture);
       void queryClient.invalidateQueries({ queryKey: ['captures'] });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
