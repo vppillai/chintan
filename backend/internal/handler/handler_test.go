@@ -634,3 +634,61 @@ func TestUsageAnswersTheCallersOwnMonth(t *testing.T) {
 		t.Errorf("unauthenticated: status = %d, want 401", w.Code)
 	}
 }
+
+// A note's transcription language is set through PATCH and read back on every
+// Note; the tenant default travels with the settings. Both are validated by
+// shape, and "" on the note means "inherit the default again".
+func TestTranscriptionLanguageOnNotesAndSettings(t *testing.T) {
+	h := newHarness(t)
+
+	w := h.do(t, http.MethodGet, "/v1/settings", "user1", nil)
+	var settings handler.Settings
+	decodeInto(t, w, &settings)
+	if settings.DefaultLanguage != "en" {
+		t.Errorf("default_language for a new tenant = %q, want en", settings.DefaultLanguage)
+	}
+
+	w = h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{
+		"cleanup_mode": "faithful", "retention_days": 0, "theme": "ink", "default_language": "auto",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("put settings: status = %d body = %s", w.Code, w.Body.String())
+	}
+	decodeInto(t, w, &settings)
+	if settings.DefaultLanguage != "auto" {
+		t.Errorf("stored default_language = %q, want auto", settings.DefaultLanguage)
+	}
+	w = h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{"default_language": "tamil"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("default_language=tamil: status = %d, want 400", w.Code)
+	}
+
+	note := h.createNote(t, "user1", "Diary", nil)
+	if note.Language != "" {
+		t.Errorf("a new note carries language %q; it should inherit", note.Language)
+	}
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "language": "TA"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch language: status = %d body = %s", w.Code, w.Body.String())
+	}
+	decodeInto(t, w, &note)
+	if note.Language != "ta" {
+		t.Errorf("language = %q, want ta (folded to lower case)", note.Language)
+	}
+	w = h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+	if !strings.Contains(w.Body.String(), `"language":"ta"`) {
+		t.Errorf("note detail does not carry the language: %s", w.Body.String())
+	}
+
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "language": "en-GB"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("language=en-GB: status = %d, want 400", w.Code)
+	}
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "language": ""})
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear language: status = %d body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"language"`) {
+		t.Errorf("a cleared language is still on the wire: %s", w.Body.String())
+	}
+}

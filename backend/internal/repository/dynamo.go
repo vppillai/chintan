@@ -172,7 +172,12 @@ type dynamoItem struct {
 // transfer cost this projection exists to avoid, and `sk` is kept so an item
 // written before the attributes were promoted can be read whole by its key.
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
-	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, version"
+	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version"
+
+// languageAttr is the promoted attribute for NoteIndex.Language. `language` is
+// a DynamoDB reserved word, so the projection names it through an expression
+// attribute name (#lang) rather than directly.
+const languageAttr = "language"
 
 // searchTextAttr is the promoted attribute holding NoteIndex.SearchText. It is
 // not in noteListProjection: at up to 32 KB per note it would multiply the
@@ -313,6 +318,9 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		"version":         numAttr(n.Version),
 		"data":            strAttr(string(blob)),
 	}
+	if n.Language != "" {
+		item[languageAttr] = strAttr(n.Language)
+	}
 	if n.SearchText != "" {
 		// Promoted only. The blob deliberately omits it (model.NoteIndex tags it
 		// json:"-"), so the field is stored once, not twice.
@@ -369,6 +377,9 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	}
 	if _, ok := m[searchTextAttr]; ok {
 		n.SearchText = readString(m, searchTextAttr)
+	}
+	if _, ok := m[languageAttr]; ok {
+		n.Language = readString(m, languageAttr)
 	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}
@@ -454,7 +465,8 @@ func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, includeSe
 				":pk":        strAttr(pk),
 				":sk_prefix": strAttr("NOTE#"),
 			},
-			ProjectionExpression: aws.String(projection),
+			ProjectionExpression:     aws.String(projection),
+			ExpressionAttributeNames: map[string]string{"#lang": languageAttr},
 			// Newest CREATED first, so when the bound bites it drops the oldest
 			// notes rather than the newest.
 			ScanIndexForward:  aws.Bool(false),
@@ -551,6 +563,7 @@ func (s *DynamoStore) ExpiredNotes(ctx context.Context, asOf int64) ([]TenantNot
 			// it on restore, and no other item type writes it.
 			FilterExpression:          aws.String("purge_after_epoch < :now"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{":now": numAttr(asOf)},
+			ExpressionAttributeNames:  map[string]string{"#lang": languageAttr},
 			ProjectionExpression:      aws.String("pk, " + noteListProjection),
 			ExclusiveStartKey:         start,
 		})

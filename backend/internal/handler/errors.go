@@ -59,7 +59,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.BadRequest(w, r, "q is required")
 	case errors.Is(err, service.ErrInvalidCleanupMode),
 		errors.Is(err, service.ErrInvalidRetentionDays),
-		errors.Is(err, service.ErrInvalidTheme):
+		errors.Is(err, service.ErrInvalidTheme),
+		errors.Is(err, service.ErrInvalidLanguage):
 		httperr.BadRequest(w, r, err.Error())
 
 	// ---- limits ----------------------------------------------------------

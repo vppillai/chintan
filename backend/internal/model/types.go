@@ -87,11 +87,49 @@ func RetentionTierFor(days int) int {
 	return tier
 }
 
+// Transcription language. Groq's Whisper endpoint takes an optional ISO-639-1
+// code; supplying it "will improve accuracy and latency" (console.groq.com/docs
+// /speech-to-text), and omitting it leaves the model to guess, which on a
+// short clip is how English dictation comes back transliterated into another
+// script. There is no mixed-language mode: auto-detection is the only option
+// for code-switching, and it decides per request, not per segment.
+const (
+	// LanguageAuto asks the provider to detect the language: the code sends no
+	// `language` field.
+	LanguageAuto = "auto"
+	// DefaultLanguage is what a tenant transcribes in until they say otherwise.
+	DefaultLanguage = "en"
+)
+
+// ValidLanguage reports whether v is LanguageAuto or a lowercase two-letter
+// ISO-639-1 code. It checks the shape, not the list: Whisper's supported set
+// changes with the model and a code it does not know is answered by the
+// provider, not silently mapped to English here.
+func ValidLanguage(v string) bool {
+	if v == LanguageAuto {
+		return true
+	}
+	if len(v) != 2 {
+		return false
+	}
+	for _, r := range v {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
 type Settings struct {
 	CleanupMode   CleanupMode `json:"cleanup_mode"`
 	RetentionDays int         `json:"retention_days"` // 0 = indefinite
 	// Theme is empty on records written before v2; readers substitute ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
+	// DefaultLanguage is the transcription language for a capture whose
+	// destination note sets none, or is not yet known when transcription runs
+	// (a capture without note_id is transcribed before it is routed). Empty on
+	// records written before 2026-09; readers substitute DefaultLanguage.
+	DefaultLanguage string `json:"default_language,omitempty"`
 	// There is no per-tenant spend cap. Records written before 2026-09 may
 	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
 }
@@ -119,6 +157,12 @@ type NoteIndex struct {
 	// must not be reworded — a spec, a quote, a prompt — is otherwise silently
 	// rewritten by polished mode.
 	Verbatim bool `json:"verbatim,omitempty"`
+	// Language is the transcription language for captures recorded INTO this
+	// note (LanguageAuto or an ISO-639-1 code). Empty means the tenant's
+	// Settings.DefaultLanguage. It only applies when the capture was started
+	// with this note as its target: a capture that is routed afterwards was
+	// transcribed before the destination was known.
+	Language string `json:"language,omitempty"`
 	// SearchText is the note body prepared for GET /v1/search: lowercased,
 	// append markers stripped, capped at MaxSearchTextBytes. It lives on the
 	// index row so a search over the tenant's notes is one partition query

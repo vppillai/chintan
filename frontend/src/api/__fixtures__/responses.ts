@@ -73,6 +73,7 @@ export const readyDegraded: ProblemWire = {
 export const settings: SettingsWire = {
   "cleanup_mode": "faithful",
   "daily_spend_cap_micros": 0,
+  "default_language": "en",
   "retention_days": 0,
   "theme": "ink"
 };
@@ -81,6 +82,7 @@ export const settings: SettingsWire = {
 export const settingsStored: SettingsWire = {
   "cleanup_mode": "polished",
   "daily_spend_cap_micros": 0,
+  "default_language": "en",
   "retention_days": 30,
   "theme": "nocturne"
 };

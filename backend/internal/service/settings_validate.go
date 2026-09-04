@@ -14,6 +14,9 @@ var (
 	ErrInvalidRetentionDays = errors.New("retention_days must be between 0 and 3650")
 	// ErrInvalidTheme rejects an unknown theme.
 	ErrInvalidTheme = errors.New("theme must be ink, nocturne or system")
+	// ErrInvalidLanguage rejects a transcription language that is neither
+	// "auto" nor a two-letter ISO-639-1 code.
+	ErrInvalidLanguage = errors.New("language must be auto or a two-letter ISO-639-1 code such as en")
 )
 
 // ValidateSettings checks a settings record and returns the canonical form that
@@ -59,6 +62,15 @@ func ValidateSettings(s model.Settings) (model.Settings, error) {
 		return model.Settings{}, fmt.Errorf("%w", ErrInvalidTheme)
 	}
 
+	switch {
+	case s.DefaultLanguage == "":
+		out.DefaultLanguage = model.DefaultLanguage
+	case model.ValidLanguage(s.DefaultLanguage):
+		out.DefaultLanguage = s.DefaultLanguage
+	default:
+		return model.Settings{}, fmt.Errorf("%w", ErrInvalidLanguage)
+	}
+
 	return out, nil
 }
 
@@ -70,6 +82,9 @@ func NormalizeSettings(s model.Settings) model.Settings {
 	}
 	if s.Theme == "" {
 		s.Theme = model.ThemeInk
+	}
+	if s.DefaultLanguage == "" {
+		s.DefaultLanguage = model.DefaultLanguage
 	}
 	// A record written before retention was expressed in tiers can hold any
 	// number. Reporting it verbatim would tell the user their audio expires on a

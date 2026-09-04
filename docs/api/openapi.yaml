@@ -743,6 +743,20 @@ components:
           type: string
           enum: [ink, nocturne, system]
           default: ink
+        default_language:
+          type: string
+          default: en
+          pattern: '^(auto|[a-z]{2})$'
+          description: |
+            The transcription language for a capture whose destination note
+            sets none — or is not yet known: a capture recorded without a
+            `note_id` is transcribed before it is routed, so only this value
+            can apply to it. `auto` sends no language and lets Whisper detect
+            one per recording (there is no mixed-language mode; a
+            code-switching recording is detected as one language). Any other
+            value is an ISO-639-1 code passed to the provider as-is;
+            supplying one improves accuracy and latency. A record written
+            before this field existed reads as `en`.
         daily_spend_cap_micros:
           type: integer
           minimum: 0
@@ -786,6 +800,16 @@ components:
             returned on every read, because the toggle has to render the state
             it is in. Declared here only after the frontend↔backend contract
             fixtures caught the API sending a field this document did not list.
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})$'
+          description: |
+            The transcription language for captures recorded into this note
+            (`POST /v1/captures` with this `note_id`). `auto` or an ISO-639-1
+            code. Absent when the note inherits the tenant's
+            `default_language`. Settable through `NoteUpdate`. It cannot
+            apply to a capture that is routed to this note after the fact,
+            because routing reads the transcript.
         search_text:
           type: string
           maxLength: 32768
@@ -844,6 +868,13 @@ components:
             Bypass cleanup entirely for this note. Dictated content that must not
             be reworded — a spec, a quote, a prompt — would otherwise be silently
             rewritten by `polished` mode.
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})?$'
+          description: |
+            Transcription language for captures recorded into this note:
+            `auto`, an ISO-639-1 code, or the empty string to inherit the
+            tenant's `default_language` again.
 
     NotePage:
       type: object

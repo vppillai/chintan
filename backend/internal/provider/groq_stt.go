@@ -78,7 +78,7 @@ func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, erro
 	contentType := mw.FormDataContentType()
 
 	go func() {
-		pw.CloseWithError(g.writeMultipart(mw, source, in.ContentType))
+		pw.CloseWithError(g.writeMultipart(mw, source, in.ContentType, in.Language))
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/audio/transcriptions", pr)
@@ -134,12 +134,17 @@ func (g *GroqSTT) openSource(ctx context.Context, in Audio) (io.Reader, func(), 
 // writeMultipart builds the request body incrementally on the writer side of the
 // pipe. verbose_json with both granularities is what produces segments.json and
 // the duration the spend estimate is priced from.
-func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, contentType string) error {
+func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, contentType, language string) error {
 	fields := [][2]string{
 		{"model", g.model},
 		{"response_format", "verbose_json"},
 		{"timestamp_granularities[]", "segment"},
 		{"timestamp_granularities[]", "word"},
+	}
+	// Optional in the API and only sent when the caller chose one: an empty
+	// value is "detect", and the field is omitted rather than sent empty.
+	if language != "" {
+		fields = append(fields, [2]string{"language", language})
 	}
 	for _, f := range fields {
 		if err := mw.WriteField(f[0], f[1]); err != nil {

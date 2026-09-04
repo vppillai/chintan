@@ -341,6 +341,11 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		estimateSeconds = defaultAudioSecondsEstimate
 	}
 
+	language, err := p.transcriptionLanguage(ctx, tenantID, capture)
+	if err != nil {
+		return err
+	}
+
 	var result provider.Transcription
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.STTProvider,
@@ -352,6 +357,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		out, err := p.cfg.STT.Transcribe(ctx, provider.Audio{
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
+			Language:    language,
 		})
 		if err != nil {
 			return breaker.Result{}, err
@@ -403,6 +409,47 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	capture.Status = model.StatusTranscribed
 	capture.Error = ""
 	return p.persist(ctx, capture)
+}
+
+// transcriptionLanguage decides what the speech provider is told the recording
+// is in: the target note's language when the capture was started with one,
+// else the tenant's default, with "auto" becoming "" (send no language).
+//
+// The note wins only when it is already known. Routing runs AFTER
+// transcription — the router reads the transcript to pick the note — so a
+// capture without note_id cannot be transcribed in the language of a note
+// nobody has chosen yet, and gets the tenant's default. That is the honest
+// limit of a per-note setting on this pipeline, and it is why the setting
+// also exists per tenant.
+//
+// A note or settings read that fails is a retryable fault, not a reason to
+// guess: guessing English for a Tamil note and appending the result is the
+// failure this setting exists to prevent.
+func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, capture *model.CaptureIndex) (string, error) {
+	language := ""
+	if capture.NoteID != "" {
+		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return "", fmt.Errorf("pipeline: get target note for language: %w", err)
+		}
+		if err == nil {
+			language = note.Language
+		}
+	}
+	if language == "" {
+		settings, err := p.cfg.Store.GetSettings(ctx, tenantID)
+		if err != nil {
+			return "", fmt.Errorf("pipeline: get settings for language: %w", err)
+		}
+		language = settings.DefaultLanguage
+	}
+	if language == "" {
+		language = model.DefaultLanguage
+	}
+	if language == model.LanguageAuto {
+		return "", nil
+	}
+	return language, nil
 }
 
 // defaultAudioSecondsEstimate is what a transcription is reserved against when

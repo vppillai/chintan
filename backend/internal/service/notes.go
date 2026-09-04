@@ -114,11 +114,16 @@ type NotesService struct {
 // writes vanishing. A nil ExpectedVersion skips the check and is for in-process
 // callers only — every HTTP caller supplies one.
 type NoteUpdates struct {
-	Title           *string
-	Aliases         *[]string
-	Tags            *[]string
-	Body            *string
-	Verbatim        *bool
+	Title    *string
+	Aliases  *[]string
+	Tags     *[]string
+	Body     *string
+	Verbatim *bool
+	// Language is the transcription language for captures recorded into this
+	// note: model.LanguageAuto, an ISO-639-1 code, or "" to fall back to the
+	// tenant's default. Validated here, not only at the handler, because the
+	// worker passes it straight to the provider.
+	Language        *string
 	ExpectedVersion *int64
 }
 
@@ -309,6 +314,13 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	if updates.Verbatim != nil {
 		note.Verbatim = *updates.Verbatim
 	}
+	if updates.Language != nil {
+		lang := strings.ToLower(strings.TrimSpace(*updates.Language))
+		if lang != "" && !model.ValidLanguage(lang) {
+			return model.NoteIndex{}, ErrInvalidLanguage
+		}
+		note.Language = lang
+	}
 
 	// Update timestamp
 	note.UpdatedAt = model.Now()
@@ -343,6 +355,7 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		"aliases":    note.Aliases,
 		"tags":       note.Tags,
 		"verbatim":   note.Verbatim,
+		"language":   note.Language,
 		"updated_at": note.UpdatedAt,
 	}
 	metaBytes, _ := json.Marshal(metaData)

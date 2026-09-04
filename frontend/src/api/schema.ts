@@ -60,6 +60,13 @@ export interface SettingsWire {
   retention_days: number;
   theme: ThemeSetting;
   /**
+   * Transcription language for captures whose note sets none, or whose note
+   * is not yet known (a capture without `note_id` is transcribed before it is
+   * routed). `'auto'` lets Whisper detect; otherwise an ISO-639-1 code.
+   * Defaults to `'en'`.
+   */
+  default_language?: string;
+  /**
    * The instance-wide daily provider budget, read-only. Reported by the
    * server so the app can show the ceiling that is enforced; a value sent on
    * PUT is ignored. The per-tenant cap this used to be went with v3 step 3.
@@ -101,6 +108,11 @@ export interface NoteWire {
    */
   verbatim?: boolean;
   /**
+   * Transcription language for captures recorded into this note: `'auto'` or
+   * an ISO-639-1 code. Absent when the note inherits `default_language`.
+   */
+  language?: string;
+  /**
    * The lowercased, marker-stripped body the server searches (≤ 32 KB). Sent
    * only by `GET /v1/notes?include=search_text`, for an offline corpus that
    * wants to match what the server matches; absent everywhere else.
@@ -127,6 +139,8 @@ export interface NoteUpdateWire {
   aliases?: string[];
   tags?: string[];
   verbatim?: boolean;
+  /** `'auto'`, an ISO-639-1 code, or `''` to inherit the tenant default again. */
+  language?: string;
 }
 
 export type NoteState = 'active' | 'archived';

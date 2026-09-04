@@ -32,6 +32,7 @@ type noteUpdateRequest struct {
 	Aliases  *[]string `json:"aliases"`
 	Tags     *[]string `json:"tags"`
 	Verbatim *bool     `json:"verbatim"`
+	Language *string   `json:"language"`
 }
 
 func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +196,7 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 		Aliases:         req.Aliases,
 		Tags:            req.Tags,
 		Verbatim:        req.Verbatim,
+		Language:        req.Language,
 		ExpectedVersion: req.Version,
 	})
 	if err != nil {
