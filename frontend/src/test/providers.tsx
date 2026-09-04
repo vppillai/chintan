@@ -47,12 +47,19 @@ export const TEST_NOTES = [
 
 export function defaultTestFetch(): typeof fetch {
   return async (input) => {
-    const url = String(input);
-    const body = url.includes('/v1/notes')
-      ? { items: TEST_NOTES }
-      : url.includes('/v1/usage')
-        ? { month: '2026-09', cost_micros: 0, calls: 0, ops: {}, days: [] }
-        : { items: [] };
+    const url = new URL(String(input));
+    // One note, as `GET /v1/notes/{id}` answers: the row plus a body. The
+    // list envelope used to be returned here too, and the note screen threw
+    // the moment it rendered against it.
+    const detail = /\/v1\/notes\/([^/]+)$/.exec(url.pathname);
+    const note = detail ? TEST_NOTES.find((item) => item.id === detail[1]) : undefined;
+    const body = note
+      ? { ...note, body: note.snippet, captures: [] }
+      : url.pathname.endsWith('/v1/notes')
+        ? { items: TEST_NOTES }
+        : url.pathname.endsWith('/v1/usage')
+          ? { month: '2026-09', cost_micros: 0, calls: 0, ops: {}, days: [] }
+          : { items: [] };
     return new Response(JSON.stringify(body), {
       status: 200,
       headers: { 'content-type': 'application/json' },
