@@ -1,101 +1,86 @@
 # Chintan
 
-Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and the system transcribes, lightly cleans up the text, and appends it to the right note. It runs on serverless AWS (Cognito, Lambda, DynamoDB, S3) with a static frontend on GitHub Pages, and each instance gets its own isolated stack.
+Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and it transcribes the recording, cleans up the text and files it into the right note. It runs on serverless AWS — Cognito, API Gateway, two Lambdas, DynamoDB and S3 — with a static frontend on GitHub Pages, and every instance is its own isolated stack. Speech-to-text is **Groq**, and cleanup and routing use an OpenAI-compatible endpoint, **MiniMax** by default, with the API keys in SSM Parameter Store.
 
-The capture pipeline is two Lambdas and no queue: the API Lambda answers HTTP and presigns the upload; S3 invokes the worker Lambda directly when the recording lands, and the worker transcribes, routes, cleans and appends. `POST /v1/captures/{id}/retry` and `/target` invoke the same worker asynchronously. Lambda retries a failed invocation twice on its own, and one that fails all three attempts is written to a dead-letter queue that raises the `capture-dlq` alarm — one message there is one recording that was not filed, and the recovery is the retry button. Once a week an EventBridge rule invokes the same worker with `{"task":"sweep-expired"}`, and it deletes the objects and rows of archived notes whose thirty-day purge deadline has passed; DynamoDB TTL, set a fortnight later, is only the backstop.
-
-Uses **Groq** (speech-to-text) and an OpenAI-compatible endpoint, **MiniMax-M3** by default (text cleanup), with API keys in AWS SSM Parameter Store.
-
-- Architecture, data model and security requirements: [v2 design spec](docs/superpowers/specs/2026-08-07-chintan-v2-design.md)
-- What v1 got wrong and why the rewrite exists: [production readiness audit](docs/audit/2026-08-07-production-readiness-audit.md)
+- [Deploy your own](#deploy-your-own) · [Configure](#configure) · [Operate](#operate) · [Security](#security) · [Develop](#develop)
+- What is planned: [`docs/backlog.md`](docs/backlog.md). The API: [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
 ---
 
 ## Deploy your own
 
-Everything below is CloudFormation. There is no Terraform in this repository.
+Start with the doctor. It checks every prerequisite below, looks at the AWS account and the GitHub repository, and prints the next command to run; run it again after each step.
 
-Naming is uniform: every stack is `chintan-<instance>-<environment>`, every provider secret is `/chintan/<instance>/<key>`, and every physical resource is `chintan-*`. The scripts, the workflows and the templates all derive names from that one rule, and `scripts/lib/common.sh` is the single place it is written down.
+```bash
+scripts/doctor.sh --instance dev --region us-west-2
+```
 
-Every script has `--help`, and every script you run by hand defaults to a **dry run** — nothing changes until you pass `--apply`. `scripts/deploy.sh` additionally refuses a change set that would *replace* the user pool, the table, the bucket or the user pool client, even with `--apply`: `Retain` keeps the old resource, but the stack would switch to an empty one and every note would become unreachable. Pass `--allow-replacement <LogicalId>` per resource once the data migration is planned. The one exception is `scripts/ci-deploy-stack.sh`, the CI wrapper: it is invoked by an already-gated workflow job, takes no flags, and always applies.
+Everything is CloudFormation, every stack is `chintan-<instance>-<environment>`, every secret is `/chintan/<instance>/<key>`, and every script has `--help`. Every script you run by hand is a **dry run until you pass `--apply`**.
 
 ### Prerequisites
 
-- **AWS account with administrative credentials for step 0 only.** Every later step runs as the bounded role step 0 creates.
-- `aws` CLI v2, `gh` (authenticated), `jq`, `python3` with PyYAML, `zip`, and Go 1.25 (for a local build).
-- A GitHub OIDC provider for `token.actions.githubusercontent.com` in the account. `scripts/setup.sh` checks for it and prints the one command that creates it if it is missing. The templates never create it, because it is shared with other projects.
-- API keys:
-  - **Groq**, for speech-to-text — [console.groq.com](https://console.groq.com/)
-  - **MiniMax**, or any OpenAI-compatible endpoint, for cleanup — [api.minimax.io](https://api.minimax.io/)
+- A fork of this repository, cloned, with `gh` authenticated to it.
+- An AWS account. **Administrative credentials for step 1 only**; every later step runs as the bounded role step 1 creates, or from CI.
+- `aws` CLI v2, `gh`, `jq`, `curl`, `zip`, `python3` with PyYAML.
+- Go (the version in `backend/go.mod`) and Bun (the version pinned in `.github/workflows/deploy-frontend.yaml`) — only for a local build, the test suites and a deploy from your own machine. CI has its own.
+- API keys: **Groq** for speech-to-text ([console.groq.com](https://console.groq.com/)) and **MiniMax**, or any OpenAI-compatible endpoint, for cleanup ([api.minimax.io](https://api.minimax.io/)).
 
-### 0. Create the agent principal, the boundary and CloudTrail
+### The sequence
 
 ```bash
-scripts/bootstrap-agent.sh --region us-west-2            # dry run
+# 1. Once, as an administrator: the agent principal, its permissions boundary and CloudTrail.
 scripts/bootstrap-agent.sh --region us-west-2 --apply
-```
 
-**This is a hard prerequisite and it is easy to miss.** `infrastructure/bootstrap.yaml` references the permissions boundary `policy/chintan-agent-boundary`, which only this script creates, so step 1 fails without it. It is also the only thing in the repository that needs administrative credentials: it creates the constraints everything else runs under — a permissions boundary, explicit deny policies, a CloudTrail trail, and an IAM role whose sessions expire in an hour. The four policy documents it applies are the JSON files in `infrastructure/agent-policies/`, edited by hand; nothing in the repository or in CI checks afterwards that what is deployed still matches them.
-
-Run it once, as a human. Everything afterwards runs as `chintan-agent`.
-
-To write the CLI user's access key to a file instead of ever printing it:
-
-```bash
-CHINTAN_KEY_OUT=~/.chintan/agent.env scripts/bootstrap-agent.sh --region us-west-2 --apply
-```
-
-### 1. Bootstrap the account and the repository
-
-```bash
-scripts/setup.sh --region us-west-2                      # dry run; --region is required
+# 2. Once per account and fork: the bootstrap stack (artifact bucket, GitHub OIDC deploy
+#    and build roles), the repository secrets and variables, the environments, Pages.
 scripts/setup.sh --region us-west-2 --apply
+
+# 3. The provider keys, per instance. The Lambdas read them by path at run time.
+aws ssm put-parameter --type SecureString --name /chintan/dev/groq_api_key --value "gsk_..."
+aws ssm put-parameter --type SecureString --name /chintan/dev/llm_api_key  --value "..."
+
+# 4. Deploy. Staging first, smoke-tested; production waits for your approval on the
+#    `production` environment; the frontend follows to Pages on its own.
+gh workflow run deploy-backend.yaml
+
+# 5. The first user. The temporary password goes to ./chintan-invite-<email>, mode 600.
+scripts/invite-user.sh --instance dev --email you@example.com --apply
 ```
 
-This deploys `chintan-bootstrap` (the Lambda artifact bucket, the GitHub Actions deploy role scoped to `chintan-*`, and a separate build role that can only upload artifacts and read stack outputs), sets the `AWS_ACCOUNT_ID` and `AWS_REGION` repository secrets and the `BUILD_ROLE_ARN` and `CFN_DEPLOY_ROLE_ARN` repository variables from the stack's outputs, creates the `production` environment **with you as a required reviewer**, creates `staging`, and switches GitHub Pages to build from Actions.
+Then open `https://<owner>.github.io/<repo>/<site_path>/` — `https://<owner>.github.io/chintan/dev/` for the shipped config.
 
-Re-run it after any change to `infrastructure/bootstrap.yaml`: nothing in CI deploys that template, and the workflows fall back to older behaviour (the build jobs use the deploy role, CloudFormation acts as the CI role) only while the variables it sets are absent.
+What each step needs and leaves behind:
 
-Add `--reviewer <login>` to require someone else's approval for a production deploy.
+1. `bootstrap-agent.sh` is the only script that needs administrative credentials and the only one that touches IAM outside CloudFormation. It creates the `chintan-agent-boundary` managed policy that `infrastructure/bootstrap.yaml` names — so step 2 fails without it — plus the `chintan-agent` role and `chintan-agent-cli` user that everything else can run as, and the `chintan-trail` CloudTrail trail. `CHINTAN_KEY_OUT=~/.chintan/agent.env scripts/bootstrap-agent.sh --apply` also writes the CLI user's access key to that file instead of ever printing it. The policy documents are the JSON files in `infrastructure/agent-policies/`.
+2. `setup.sh` needs the account to have a GitHub OIDC provider for `token.actions.githubusercontent.com`; it checks, and prints the one administrator command that creates it if missing (the templates never create it, because it is shared with other projects). It deploys `chintan-bootstrap`, sets the `AWS_ACCOUNT_ID` and `AWS_REGION` repository secrets and the `BUILD_ROLE_ARN` and `CFN_DEPLOY_ROLE_ARN` variables, makes `production` require your approval, and switches Pages to build from Actions.
+3. The keys are `SecureString`s created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type. They are per instance, so `dev` staging and `dev` prod share them.
+4. `Deploy Backend` runs the tests, builds the two arm64 Lambda packages, deploys `chintan-dev-staging` through a printed change set and smoke-tests it (`/v1/health` and `/v1/health/ready`, which round-trips DynamoDB and S3), then deploys `chintan-dev-prod` once you approve, tags the commit `vX.Y.(Z+1)` and publishes a release. `Deploy Frontend` runs when that completes, builds one Vite bundle per instance from the deployed stacks' outputs and publishes them to Pages. Every later push to `main` does the same.
+   To deploy the backend from your own machine instead — before the pipeline exists, or when it is broken — `scripts/bootstrap.sh --instance dev --region us-west-2 --origin https://<owner>.github.io --apply` targets the same `chintan-dev-prod` stack, so CI takes over from it without colliding. The frontend still needs the workflow (`gh workflow run deploy-frontend.yaml`).
+5. The account is left in `FORCE_CHANGE_PASSWORD`, so the password must be changed at first sign-in. Add `--print-password` to read it off the screen instead of from the file. After signing in with a password, **You → Sign in with a passkey** hands off to Cognito's managed-login page to register one.
 
-### 2. Store the provider keys
+---
 
-Keys are per **instance**, not per environment, so `dev` staging and `dev` prod share them:
+## Configure
 
-```bash
-aws ssm put-parameter --type SecureString \
-  --name "/chintan/dev/groq_api_key" --value "gsk_..."
-
-aws ssm put-parameter --type SecureString \
-  --name "/chintan/dev/llm_api_key"  --value "..."
-```
-
-Both are SecureStrings created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type.
-
-Biometric sign-in is a Cognito **passkey**: the pool allows `WEB_AUTHN` as a first factor and the managed-login page offers to register one after a password sign-in. Nothing in this repository stores or seals a credential for it.
-
-### 3. Declare your instances
-
-`config/instances/*.yaml` is read by `scripts/list-instances.sh`, which produces the deploy matrix for both workflows. This is the real schema — every field except `name` has a default:
+`config/instances/*.yaml` declares the instances; `scripts/list-instances.sh` is the one reader and produces the deploy matrix for both workflows. Every field except `name` has a default. Two files may share a `name` with different `environment`s — that is how a staging copy is expressed, and the repository ships `dev.yaml` (prod) and `dev-staging.yaml`.
 
 | Field | Default | Meaning |
 |---|---|---|
-| `name` | — (required) | The `<instance>` in `chintan-<instance>-<environment>`. Lowercase, digits, hyphens, ≤ 32 chars. |
-| `environment` | `prod` | `prod`, `staging` or `dev`. The `<environment>` in the stack name. |
-| `region` | `us-west-2` | Must match the region of the artifact bucket; CI enforces this. |
-| `site_path` | `<name>` for prod, `<name>-<environment>` otherwise | The GitHub Pages sub-path. |
+| `name` | required | The `<instance>` in `chintan-<instance>-<environment>` and in `/chintan/<instance>/`. Lowercase, digits, hyphens, ≤ 32 chars. |
+| `environment` | `prod` | `prod`, `staging` or `dev`. |
+| `region` | `us-west-2` | Must match the artifact bucket's region; CI enforces it. |
+| `site_path` | `<name>`, or `<name>-<environment>` off prod | The GitHub Pages sub-path the bundle is served from. |
 | `display_name` | `<name>` | Human label. |
-| `alarm_email` | none | Subscribed to the alarm topic and the budget. **This repository is public, so the deployed instance sets it from the `ALARM_EMAIL` repository secret instead** (production only — the budget is account-scoped, and two stacks subscribing one address send two emails per overspend). A config value still wins if present, which is what a private fork wants. |
-| `enable_alarms` | `true` | Create this stack's CloudWatch alarms. There are four — API function errors (five in five minutes), the capture dead-letter queue, a rejected provider key, and the spend cap when one is set — none of which e-mails on the return to OK. CloudWatch's always-free allowance is **ten alarm-months** for the whole account, which this project shares with another, so a second environment's copies are billed at $0.10 each. Shipped `false` for `dev-staging`, whose failures are already caught by the deploy's own smoke test. |
+| `daily_spend_cap_micros` | `0` (count, never enforce) | Instance-wide daily provider spend ceiling in **microdollars** (`1000000` = $1). The worker reserves against one `SPEND#<day>` counter before every paid call; a capture that would cross the cap fails with status `spend_capped`. Non-zero also creates the spend-cap alarm. |
+| `enable_alarms` | `true` | Create this stack's four CloudWatch alarms: API function errors, the capture dead-letter queue, a rejected provider key, and the spend cap. `dev-staging.yaml` sets `false` — its failures are caught by the deploy's smoke test, and CloudWatch's free allowance is ten alarms per account. |
+| `alarm_email` | none | Subscribed to the alarm topic and the budget. Because this repository is public, production reads it from the **`ALARM_EMAIL` repository secret** instead (`gh secret set ALARM_EMAIL`); a value in the file wins if present, which is what a private fork wants. |
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
 | `log_retention_days` | `14` | CloudWatch retention. |
-| `daily_spend_cap_micros` | `0` (count, never enforce) | Instance-wide daily provider spend ceiling, in **microdollars** — `1000000` = $1. One counter for the whole instance (`SPEND#<day>` in the table); the worker reserves against it before every paid call and a capture that would cross it fails with status `spend_capped`. `GET /v1/settings` reports the value so the app can show it. Non-zero also creates the `chintan-<i>-<env>-spend-cap-tripped` alarm. |
-| `refresh_token_validity_days` | `7` | Cognito refresh token lifetime. |
-| `pwa` | none | A mapping (`name`, `short_name`, `description`, `theme_color`, `background_color`) that both shipped configs carry and **nothing currently reads** — `frontend/vite.config.ts` hardcodes the manifest. Setting it has no effect today. |
+| `refresh_token_validity_days` | `30` | Cognito refresh token lifetime. |
 
-Two files may share a `name` as long as their `environment` differs — that is how a staging copy is expressed. The repository ships `dev.yaml` (prod) and `dev-staging.yaml`, which produce `chintan-dev-prod` and `chintan-dev-staging`.
+Per-user preferences — theme, cleanup mode, the default transcription language and each note's language — are settings in the app (**You**), stored per user, not instance configuration.
 
-Check what your configs resolve to before pushing:
+Check what the configs resolve to before pushing:
 
 ```bash
 scripts/list-instances.sh --format text
@@ -103,224 +88,82 @@ scripts/list-instances.sh --format text
 # chintan-dev-prod    us-west-2 dev
 ```
 
-### 4. Deploy
-
-Push to `main`. `Deploy Backend` runs `go test -race`, builds one arm64 binary, deploys every **staging** stack through a printed change set, smoke-tests each one (`/v1/health` and `/v1/health/ready`, which round-trips DynamoDB and S3), and only then deploys the **production** stacks — which wait for your approval on the `production` environment. A successful production deploy is then tagged `vX.Y.(Z+1)` and published as a GitHub release with generated notes. `Deploy Frontend` runs once that whole workflow has completed, so it builds one Vite bundle per instance with `git describe` naming the release just made, and publishes them to Pages.
-
-For a first deploy, or when the pipeline itself is broken, deploy from a workstation:
-
-```bash
-scripts/bootstrap.sh --instance dev --region us-west-2 \
-  --origin https://<owner>.github.io                     # dry run
-scripts/bootstrap.sh --instance dev --region us-west-2 \
-  --origin https://<owner>.github.io --apply
-```
-
-It targets the same `chintan-dev-prod` stack CI targets, so the two do not collide.
-
-`scripts/deploy.sh` — the change-set deploy CI uses — deliberately refuses to run outside CI. Deploys happen from a green pipeline.
-
-### 5. Create the first user
-
-```bash
-scripts/invite-user.sh --instance dev --email you@example.com          # dry run
-scripts/invite-user.sh --instance dev --email you@example.com --apply
-```
-
-The temporary password is generated, written to `./chintan-invite-<email>` with mode 600, and **not printed**. Add `--print-password` if you would rather read it off the screen. The account is left in `FORCE_CHANGE_PASSWORD`, so it must be changed at first sign-in.
-
-Delete the file once you have signed in.
-
-### 6. Open it
-
-`https://<owner>.github.io/<repo>/<site_path>/` — for the shipped configs, `https://<owner>.github.io/chintan/dev/` and `.../dev-staging/`.
-
 ---
 
-## Operations
+## Operate
 
-| Task | Command |
-|---|---|
-| See what would be deployed | `scripts/list-instances.sh` |
-| Deploy one stack by hand | `scripts/bootstrap.sh --instance dev --region us-west-2 --origin https://<owner>.github.io --apply` |
-| Invite or reset a user | `scripts/invite-user.sh --instance dev --email you@example.com --apply` |
-| Check no user content reaches a log | `scripts/check-log-hygiene.sh` |
-| Delete one instance | `scripts/cleanup-aws.sh --instance dev --environment staging --apply` |
-| Delete everything | `scripts/teardown.sh --apply` |
+**Release flow.** Open a pull request; `ci.yaml` runs the gates in [Develop](#develop). Merge to `main`: `Deploy Backend` deploys staging, smoke-tests it, waits for your approval on `production`, deploys prod, tags `vX.Y.(Z+1)` and publishes a release; `Deploy Frontend` then builds and publishes the Pages site, and the You screen shows that tag. `scripts/deploy.sh`, the change-set deploy CI uses, prints the change set before executing it and refuses one that would *replace* the user pool, the table, the bucket or the user pool client — `Retain` would keep the old resource, but the stack would point at an empty one and every note would become unreachable. Pass `--allow-replacement <LogicalId>` once a migration is planned.
 
-### Owner actions outside the repository
+**Smoke test.** `GET /v1/health` (liveness) and `GET /v1/health/ready` (round-trips DynamoDB and S3 under the Lambda's own role). CI runs both against staging before prod and against prod after; run them by hand with `curl "$(aws cloudformation describe-stacks --stack-name chintan-dev-prod --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)/v1/health/ready"`.
 
-Things the account's owner does by hand, with administrative credentials, that no script or workflow here will do:
+**Rollback.** Every deploy publishes an immutable Lambda version and moves the `live` alias; the deploy log and the job summary print the exact `aws lambda update-alias … --function-version <N>` that puts the previous one back. To roll the whole stack back, redeploy the previous commit.
 
-- **Activate the cost-allocation tags.** `Project`, `Instance` and `Environment` are on every resource but do nothing in Billing until they are activated there (Billing → Cost allocation tags; ~24 h to take effect, no backfill).
-- **Decide about the CloudTrail trail.** `chintan-trail` is multi-region with log-file validation, and its hourly digest files across idle regions are the largest single line on the bill at about $0.13/month (`docs/review-2026-09-03/cost-alarms-logs.md`, item 2). Delete it, or make it single-region without digests, or keep it as the record of what was done to the account — it is the one thing `teardown.sh` leaves alone, and the agent principal's deny policy keeps it from stopping or deleting the trail, so this needs the owner's credentials.
-- **Delete the dead invite.** A second Cognito user has sat in `FORCE_CHANGE_PASSWORD` since 2026-08-06 with a three-day temporary password (`docs/review-2026-09-03/aws-live-audit.md`); `aws cognito-idp admin-delete-user`, or re-invite with `scripts/invite-user.sh`.
-- **Delete the `token_vault_key` SSM parameters.** `/chintan/<instance>/token_vault_key` belonged to the custom WebAuthn vault removed in v3 step 1; nothing reads it now. `aws ssm delete-parameter --name /chintan/dev/token_vault_key`.
-- **Remove the agent principal's boundary and deny policies** when the agent stops holding AWS credentials. They are left in the account because removing them needs the same administrative credentials that created them; see `scripts/bootstrap-agent.sh`.
+**Alarms.** Four per stack when `enable_alarms` is true (API errors, the capture dead-letter queue, a rejected provider key, the spend cap), e-mailed to `ALARM_EMAIL`. One message in the dead-letter queue is one recording that was not filed after three attempts; the recovery is the app's Retry. A weekly EventBridge rule runs the worker's expiry sweep, which deletes the objects and rows of archived notes past their thirty-day purge deadline; DynamoDB TTL is the backstop.
 
-### The sign-in page
-
-The hosted sign-in page is branded to match the app, and the branding deploys with the stack — there is nothing to click in the console, and a fresh clone gets the same page.
-
-Two resources in `infrastructure/template.yaml` do it:
-
-- `UserPoolDomain` sets `ManagedLoginVersion: 2`, which selects **managed login** over the classic hosted UI. Without it the branding below applies cleanly and then renders nothing.
-- `ManagedLoginBranding` carries the palette and the logo.
-
-**The two go together.** A version 2 domain with no branding for the app client does not fall back to the classic UI — it serves *"Login pages unavailable. Please contact an administrator."*, and sign-in is down. `UserPoolDomain` therefore declares `DependsOn: ManagedLoginBranding`, so the branding always exists before the domain serves it. If you ever delete the branding by hand, put the domain back to `ManagedLoginVersion: 1` in the same breath:
-
-```bash
-aws cognito-idp update-user-pool-domain \
-  --user-pool-id <pool> --domain <prefix> --managed-login-version 1
-```
-
-Every colour is a token from `frontend/src/styles/tokens.css`, so the sign-in page and the app cannot drift apart without someone editing both. `colorSchemeMode: DYNAMIC` follows `prefers-color-scheme`, so **Ink & Paper** and **Nocturne** are both covered and a dark-theme user does not get a white flash at night.
-
-Managed login is included at the `ESSENTIALS` tier the pool already runs on, so this costs nothing. It styles the page; it does not change how sign-in works. The domain name, the OAuth endpoints, the callback URLs and the app client are all untouched.
-
-What it cannot do: the page's typeface is fixed, so headings render in the managed-login sans rather than the app's serif. That is the one visible difference from the app's own screens.
-
-The `Assets` blobs are the shipped app icon (`frontend/public/icon-192.png`), not a separate mark. The icon has an opaque `--color-ground` square baked in, so each variant carries the same artwork with that ground recovered to transparency and the foreground remapped to its theme's `--color-ink` and `--color-accent`. Changing the app icon does **not** regenerate them; that is a manual step, and the derivation is described above the resource.
-
-### Rollback
-
-Every successful deploy publishes an immutable Lambda version and moves the `live` alias to it. The exact command that puts the previous version back is printed in the deploy log and in the job summary:
-
-```bash
-aws lambda update-alias \
-  --function-name chintan-api-dev-prod --name live --function-version <N>
-```
-
-To roll the whole stack back, redeploy the previous commit: the workflow is change-set based, so you can read what it will do before it happens.
-
-### Teardown
-
-```bash
-scripts/teardown.sh                # dry run: prints the plan
-scripts/teardown.sh --apply        # asks for a typed confirmation
-scripts/teardown.sh --apply --yes  # unattended
-```
-
-It deletes every `chintan-<instance>-<environment>` stack, then `chintan-bootstrap`. For each stack it empties the content bucket, disables Cognito deletion protection, deletes the stack, and then deletes the resources the template deliberately retains — the DynamoDB table (turning its deletion protection off first, by name, in the log), the content bucket and the user pool.
-
-Provider secrets under `/chintan/<instance>/` are removed only when no other stack for that instance still needs them.
-
-**What it deliberately does not touch:** the CloudTrail trail, the CloudTrail bucket, and the agent IAM principal. Those are the record of what was done to the account, including by teardown itself. Anything else left behind is reported as an orphan and never deleted automatically. Remove the agent principal separately, by hand, if you are decommissioning the account.
-
-**⚠️ This deletes every note and audio recording. It cannot be undone.**
-
-### `chintanctl` — the operator CLI
-
-A Go CLI under `backend/cmd/chintanctl`. It closes the audit finding that **nothing backed up S3 content at all** — DynamoDB has point-in-time recovery; the notes, transcripts and audio in S3 had nothing.
-
-```bash
-cd backend && go build -o chintanctl ./cmd/chintanctl
-```
+**`chintanctl`**, the operator CLI (`cd backend && go build -o chintanctl ./cmd/chintanctl`). Dry run is the default for everything destructive; `--json` puts results on stdout and diagnostics on stderr; no note content ever reaches a log line.
 
 | Subcommand | What it does |
 |---|---|
-| `export --instance <i> --out <dir\|tar.gz>` | Every note as markdown with YAML front matter (title, aliases, tags, timestamps, capture list), beside each capture's `audio.*`, `raw.txt`, `clean.txt`, `segments.json` and `peaks.json`, in a layout Obsidian opens as a vault. Re-running into the same directory skips objects whose ETag has not moved. |
-| `backup --instance <i> --out <dir>` | Full fidelity: `items.jsonl` with the DynamoDB items verbatim, `objects/<key>` with the S3 bodies, `objects.jsonl` with a sha256 per object, and `backup.json` — written last, so its presence means the backup finished. |
-| `restore --instance <i> --in <dir> [--apply]` | Inverse of `backup`. Verifies both manifests and re-hashes every object body **before** writing anything, and refuses on any mismatch. Dry run by default. |
-| `reconcile --instance <i> [--apply]` | Reports every disagreement between the table and the bucket in both directions: index rows whose objects are gone, objects whose owning row is gone, objects nothing references, and captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row — never a row, never an object it does not understand. |
-| `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere and reports every key it removed. `--apply` requires the tenant id typed exactly, interactively or via `--confirm`. |
+| `export --instance <i> --out <dir\|tar.gz>` | Every note as markdown with YAML front matter, beside each capture's `audio.*`, `raw.txt`, `clean.txt`, `segments.json` and `peaks.json`, in a layout Obsidian opens as a vault. Re-running skips unchanged objects. |
+| `backup --instance <i> --out <dir>` | Full fidelity: the DynamoDB items verbatim, every S3 body, a sha256 per object, and `backup.json` written last so its presence means the backup finished. |
+| `restore --instance <i> --in <dir> [--apply]` | Inverse of `backup`; verifies both manifests and re-hashes every body before writing anything. |
+| `reconcile --instance <i> [--apply]` | Every disagreement between the table and the bucket in both directions, plus captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row. |
+| `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere; `--apply` requires the tenant id typed exactly. |
+| `backfill-search-text --instance <i> [--apply]` | Fills the searchable body text for notes written before it existed. |
 
-The table has one secondary index, `gsi1` (note → captures). The notes list orders by `updated_at` in Go after reading the tenant's partition, so there is no index to backfill and no two-step deploy; `chintanctl reindex` and the `gsi2` it served are gone.
+The table name is derived from the instance; the bucket is read from the stack's `ContentBucketName` output, so the principal needs `cloudformation:DescribeStacks` on `chintan-*`. Both can be overridden with `--table` / `--bucket`.
 
-Every subcommand takes `--json` for machine-readable results on stdout, with diagnostics on stderr. The table name is derived from the instance (`chintan-<i>-<env>`); the **bucket is read from the stack's `ContentBucketName` output**, not re-derived, because a fourth hand-written copy of a naming convention is a fourth place for it to go stale. Both can be overridden with `--table` / `--bucket`. The principal running `chintanctl` therefore needs `cloudformation:DescribeStacks` on `chintan-*`; without it the tool warns and falls back to the convention.
+**Other commands.**
 
-`erase` and `export` refuse to report success when the index rows reference S3 keys and the bucket returns zero objects — that combination means the wrong bucket, and it previously produced a deletion request that exited 0 having deleted no recordings.
-
-Design constraints it holds to: enumeration is by **S3 prefix and DynamoDB partition**, never by entity type, so a future schema addition cannot silently fall out of the export; no object body is ever held in memory; dry run is the default for everything destructive; and no note body, title or transcript ever reaches a log line.
-
----
-
-## Continuous integration
-
-`.github/workflows/ci.yaml` runs on every pull request, and on pushes to `main` and `feat/v2`:
-
-| Job | Gate | Run it locally |
-|---|---|---|
-| `backend-test` | `gofmt`, `go vet`, `go test -race ./...` | `cd backend && go test -race ./...` |
-| `backend-lint` | `golangci-lint` | `cd backend && golangci-lint run ./...` |
-| `backend-vuln` | `govulncheck` (reachable vulnerabilities only) | `cd backend && govulncheck ./...` |
-| `infrastructure-lint` | `cfn-lint` on both templates | `uvx cfn-lint infrastructure/*.yaml` |
-| `shell` | `shellcheck`, `shfmt -d -i 4 -ci`, `bash -n` on every script | `shellcheck --severity=warning scripts/*.sh` |
-| `log-hygiene` | no provider adapter logs a response body, plus a self-test | `scripts/check-log-hygiene.sh` |
-| `vite-env` | the `VITE_*` names the deploy exports are the ones the bundle reads | `scripts/check-vite-env.sh` |
-| `instance-configs` | every `config/instances/*.yaml` resolves to a unique stack | `scripts/list-instances.sh --format text` |
-| `frontend` | `bun install --frozen-lockfile`, `bun run typecheck`, **`bun run lint`**, `bun run test`, `bun run build` | `cd frontend && bun run lint` |
-| `contract` | the committed frontend↔backend fixtures are the ones both sides actually produce — it fails on stale fixtures | `cd backend && CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract` |
-| `e2e` | Playwright, Chromium only (`playwright.config.ts` defines one project) | `cd frontend && bunx playwright install chromium && bun run e2e` |
-
-`bun run lint` is eslint **plus** `scripts/check-tokens.mjs`, which forbids literal colours and font sizes outside the design tokens. A change with `color: #1B4332` passes typecheck, test and build, and is blocked here.
-
-The frontend toolchain is **Bun**, not npm. The lockfile is `bun.lock`.
-
-### What stands between a change and production
-
-CI runs on every pull request. A merge to `main` deploys to `chintan-dev-staging` and smoke-tests it, and the `production` environment then waits for the owner's approval before the same artifact reaches `chintan-dev-prod`; `scripts/deploy.sh` refuses a change set that would replace the pool, the table, the bucket or the client. `main` itself has no branch protection: for a repository with one committer, the environment reviewer is the human gate, and requiring pull-request review would block every PR its owner opens. There is no CODEOWNERS file for the same reason.
-
-The two deploy workflows pin every action to a commit SHA (the version is the trailing comment), pin Bun to the version the lockfile was written with, and `.github/dependabot.yml` opens weekly pull requests for the actions, the Go modules and the Bun lockfile.
-
----
-
-## Local development
-
-```bash
-# Backend
-export PATH=/usr/local/go/bin:$PATH
-cd backend && go build ./... && go vet ./... && go test -race ./...
-
-# Frontend
-cd frontend && bun install && bun run dev
-```
-
-For a local backend, use environment variables instead of SSM:
-
-```bash
-# .env — never commit this; .gitignore already excludes it
-GROQ_API_KEY=...
-LLM_API_KEY=...
-LLM_BASE_URL=https://api.minimax.io/v1
-LLM_MODEL=MiniMax-M3
-```
-
-The frontend reads its per-instance configuration from build-time `VITE_*` variables, which CI derives from the deployed stack's CloudFormation outputs:
-
-| Variable | Source |
+| Task | Command |
 |---|---|
-| `VITE_BASE` | `/<repo>/<site_path>/` |
-| `VITE_API_URL` | stack output `ApiEndpoint` |
-| `VITE_USER_POOL_ID` | stack output `UserPoolId` |
-| `VITE_CLIENT_ID` | stack output `UserPoolClientId` — note the names differ |
-| `VITE_COGNITO_DOMAIN` | stack output `UserPoolDomainName` |
-| `VITE_INSTANCE` | the instance config |
+| Readiness of this machine and account | `scripts/doctor.sh --instance dev` |
+| What would be deployed | `scripts/list-instances.sh --format text` |
+| Invite or reset a user | `scripts/invite-user.sh --instance dev --email you@example.com --apply` |
+| Delete one stack and what it retains | `scripts/cleanup-aws.sh --instance dev --environment staging --apply` |
+| Clear the wreckage of a failed create | `scripts/clean-instance-orphans.sh --instance dev --environment staging --apply` |
+| Delete everything | `scripts/teardown.sh --apply` — every note and recording; the CloudTrail trail, its bucket and the agent principal are left alone |
 
-`frontend/src/config/env.ts` is the authority on that list. A missing variable becomes an empty string there and only warns in dev, so a wrong name produces a bundle that builds green, deploys green, and cannot sign in.
-
-Nothing is written into the bundle at deploy time, so a service worker cannot pin an installed client to a stale endpoint.
+**Costs.** At single-user volume the AWS side is a few cents a month — Lambda, DynamoDB, S3, SNS, EventBridge and CloudWatch sit inside the always-free tiers, the alarms and the CloudTrail digests are the lines that do not — and the transcription and cleanup providers are the real bill, from under a dollar a month for light use to the daily spend cap you set. Every resource carries `Project`, `Instance` and `Environment` tags, and the budget is defined in `infrastructure/template.yaml`; activate the tags once in Billing → Cost allocation tags to see the per-instance view.
 
 ---
 
 ## Security
 
-This is a **public repository**.
+This is a public repository; nothing in it is secret.
 
-- **API keys** live in SSM Parameter Store as `SecureString`, referenced by path and never by value.
-- **The frontend bundle** contains only public endpoints and the Cognito client ID.
-- **Authentication** is Cognito with real JWKS signature verification; identity comes from the verified token and from nothing else.
-- **CORS** is restricted to your Pages origin.
-- **Deploys** happen only from CI. The staging and production jobs assume `chintan-github-actions`, scoped to `chintan-*` and trusted only from those two environments; production waits for the owner's approval. The build jobs assume `chintan-github-build`, which can upload artifacts and read stack outputs and nothing else. `main` has no branch protection — the owner's choice, see above.
-- **The agent principal** created by `scripts/bootstrap-agent.sh` runs under a permissions boundary, cannot read provider secrets, and cannot write to the CloudTrail bucket. Those policies are applied once, by hand, and nothing checks them afterwards.
-- **Never commit** real API keys, `.env` files, or secrets.
+- **Authentication** is Cognito. Sign-in goes through the hosted managed-login page, which is branded from the app's own tokens by the template; passkeys are registered there too (**You → Sign in with a passkey**). The JWT is verified at the API Gateway authorizer and again in the service against the pool's JWKS; identity comes from the verified token and from nothing else.
+- **Isolation** is per tenant: every DynamoDB key is prefixed by the verified user id, every S3 key sits under `tenants/<id>/`, and the repository tests assert that one tenant cannot read another.
+- **Provider keys** live in SSM Parameter Store as `SecureString`, referenced by path, read by the Lambdas at run time, never by CloudFormation and never in a log. Nothing in the repository or the bundle holds a plaintext secret; the frontend carries only public endpoints and the Cognito client id.
+- **Deploys** run from CI as `chintan-github-actions`, scoped to `chintan-*` and trusted only from the `staging` and `production` environments; production requires your approval. The build jobs assume `chintan-github-build`, which can upload artifacts and read stack outputs and nothing else.
+- **Nothing derived from speech reaches a log.** `scripts/check-log-hygiene.sh` enforces it in CI.
+- **The agent principal** from `scripts/bootstrap-agent.sh` runs under a permissions boundary, cannot read the provider keys, and cannot write to or stop the CloudTrail trail.
+- **CORS** is restricted to your Pages origin. Never commit `.env` files or keys; `.gitignore` already excludes them.
 
 ---
 
-## Spend
+## Develop
 
-All resources carry `Project=chintan`, `Instance=<instance>` and `Environment=<prod|staging|dev>`, and the budget is defined in `infrastructure/template.yaml` rather than clicked into the console — set `monthly_budget_usd` and `alarm_email` in the instance config.
+```bash
+# Backend
+cd backend && go build ./... && go vet ./... && go test -race ./...
 
-Typical monthly cost per instance: **$0.00 idle, and cents under use** on the AWS side — Lambda, DynamoDB, S3, SNS, EventBridge, CloudWatch and the dead-letter queue all sit inside always-free tiers at single-user volume; the four alarms are the one line that leaves a free tier, and only when a second environment or another project shares the account. The transcription and cleanup providers are the real bill (~$0.70/month light, ~$17 heavy). A staging instance adds nothing fixed.
+# Frontend (the toolchain is Bun; the lockfile is bun.lock)
+cd frontend && bun install && bun run dev
+cd frontend && bun run typecheck && bun run lint && bun run test && bun run build
 
-This was $1.00/month idle until the customer-managed KMS key was removed — it was the entire idle cost, and it bought separation that an SSM SecureString provides for free. `docs/cost-analysis.md` has the itemised figures against the AWS Price List, and the earlier README claim of "$1–10, nearly all of it per-recording" was structurally wrong: the per-recording AWS cost is approximately zero and the fixed cost was everything.
+# End-to-end
+cd frontend && bunx playwright install chromium && bun run e2e -- --project=chromium
+```
+
+For a local backend, put the keys in the environment instead of SSM (`GROQ_API_KEY`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`) in a `.env` that is never committed.
+
+**The e2e projects.** `frontend/playwright.config.ts` defines two: `chromium` runs every spec; `webkit` runs the auth, archive, playback, a11y, manifest and a reduced layout matrix with the service worker blocked, because Playwright's route interception does not see requests that pass through a worker outside Chromium; the worker's own behaviour is proven in `offline.spec.ts` on Chromium. `LAYOUT_SHOTS=1 bun run e2e -- layout` writes the ~280-image layout sweep to `frontend/e2e/__screenshots__/sweep/` (gitignored) for a human to page through.
+
+**The QA scripts.** `scripts/check-log-hygiene.sh` (no provider adapter logs a response body; includes a self-test), `scripts/check-vite-env.sh` (the `VITE_*` names the deploy exports are the ones the bundle reads), `frontend/scripts/check-tokens.mjs` (run by `bun run lint`; forbids literal colours and font sizes outside the design tokens), `scripts/list-instances.sh --format text` (every config resolves to a unique stack). `docs/qa/` holds the exploratory QA reports.
+
+**CI** (`ci.yaml`, every pull request): `gofmt`, `go vet`, `go test -race`, `golangci-lint`, `govulncheck`, `cfn-lint` on both templates, `shellcheck` + `shfmt -d -i 4 -ci` + `bash -n` on every script, the two check scripts, the instance configs, the frontend typecheck/lint/test/build, the contract fixtures (`cd backend && CHINTAN_UPDATE_FIXTURES=1 go test ./internal/handler/ -run Contract` regenerates `frontend/src/api/__fixtures__/responses.ts`; CI fails on a stale one), and the Playwright e2e on Chromium.
+
+The frontend reads its per-instance configuration from build-time `VITE_*` variables that CI derives from the stack outputs (`frontend/src/config/env.ts` is the list). Nothing is written into the bundle at deploy time, so a service worker cannot pin an installed client to a stale endpoint.
+
+More: [`docs/backlog.md`](docs/backlog.md) · [`docs/api/openapi.yaml`](docs/api/openapi.yaml) · [`docs/design/`](docs/design/) · [`docs/ops/`](docs/ops/) · [`docs/qa/`](docs/qa/) · [`docs/history/`](docs/history/) (dated reports, not current).
