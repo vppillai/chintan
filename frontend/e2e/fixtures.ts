@@ -213,6 +213,17 @@ const SEGMENTS = {
 /** Must match `VITE_COGNITO_DOMAIN` in `playwright.config.ts`. */
 export const COGNITO_ORIGIN = 'https://cognito.e2e.test';
 
+/**
+ * Where the presigned artifact URLs point: another origin, as the S3 bucket is.
+ *
+ * They used to be served from the app's own origin, which hid the one
+ * behaviour that matters about them — the `<audio>` element and the download
+ * `fetch` are cross-origin requests, and whether the second succeeds depends
+ * on how the first was made. The stub answers like a bucket with a CORS rule:
+ * `Access-Control-Allow-Origin` only when the request carried an `Origin`.
+ */
+export const ARTIFACT_ORIGIN = 'https://artifacts.e2e.test';
+
 /** What cleanup produced, and what became the note body. */
 const CLEANED =
   'Ridge tiles on the south slope have slipped.\n\nGet two quotes before the autumn rain; Ellis quoted nine hundred.';
@@ -399,7 +410,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     if (downloadMatch) {
       const kind = url.searchParams.get('kind');
       await json(route, {
-        url: `${url.origin}/artifact/${downloadMatch[1]}/${kind}`,
+        url: `${ARTIFACT_ORIGIN}/artifact/${downloadMatch[1]}/${kind}`,
         expires_at: new Date(Date.now() + 900_000).toISOString(),
       });
       return;
@@ -688,12 +699,24 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     await route.fulfill({ status: 200, body: '' });
   });
 
-  await page.route('**/artifact/**', async (route) => {
+  await page.route(`${ARTIFACT_ORIGIN}/artifact/**`, async (route) => {
     const url = route.request().url();
+    /*
+     * S3's CORS rule, as the bucket applies it: the allow-origin header is
+     * written only in answer to a request that named its origin. A no-cors
+     * media request gets a response with no such header — which is exactly the
+     * response a later CORS `fetch` must not be served from the cache.
+     */
+    const origin = route.request().headers()['origin'];
+    const cors: Record<string, string> = origin
+      ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' }
+      : {};
+
     if (url.endsWith('/peaks')) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
+        headers: cors,
         body: JSON.stringify(PEAKS),
       });
       return;
@@ -702,13 +725,14 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
+        headers: cors,
         body: JSON.stringify(SEGMENTS),
       });
       return;
     }
     if (url.endsWith('/clean')) {
       // text/plain, matching what the pipeline writes to `clean.txt`.
-      await route.fulfill({ status: 200, contentType: 'text/plain', body: CLEANED });
+      await route.fulfill({ status: 200, contentType: 'text/plain', headers: cors, body: CLEANED });
       return;
     }
     /*
@@ -729,6 +753,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         status: 206,
         contentType: 'audio/wav',
         headers: {
+          ...cors,
           'Accept-Ranges': 'bytes',
           'Content-Range': `bytes ${start}-${end}/${audio.length}`,
           'Content-Length': String(slice.length),
@@ -742,6 +767,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       status: 200,
       contentType: 'audio/wav',
       headers: {
+        ...cors,
         'Accept-Ranges': 'bytes',
         'Content-Length': String(audio.length),
       },
