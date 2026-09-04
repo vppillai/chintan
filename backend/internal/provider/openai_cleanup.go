@@ -62,7 +62,7 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 	if err != nil {
 		return Cleaned{}, err
 	}
-	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(mode), userPrompt)
+	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(mode), userPrompt, 0)
 	if err != nil {
 		return Cleaned{}, err
 	}
@@ -70,8 +70,10 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 }
 
 // complete runs a single chat completion and returns the assistant message text
-// together with what it consumed.
-func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string) (string, TokenUsage, error) {
+// together with what it consumed. A positive maxTokens caps the completion;
+// zero leaves the provider's default, which cleanup needs because its output is
+// as long as the recording.
+func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, TokenUsage, error) {
 	payload := map[string]any{
 		"model": c.model,
 		"messages": []map[string]string{
@@ -80,6 +82,9 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 		},
 		// MiniMax-M3 enables thinking by default; disable for deterministic cleanup text.
 		"thinking": map[string]string{"type": "disabled"},
+	}
+	if maxTokens > 0 {
+		payload["max_tokens"] = maxTokens
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -148,7 +148,11 @@ type Router struct {
 	// NoContent means the recording held nothing but an app instruction, so an empty
 	// Decision.Content is deliberate rather than a test that did not set it.
 	NoContent bool
-	OnCall    func()
+	// Spans, when set and Decision.Content is empty, derives the content the way the
+	// real adapter does: by deleting these word ranges from the transcript. Spans
+	// that do not fit keep the whole transcript, as the adapter does.
+	Spans  []routing.Span
+	OnCall func()
 
 	mu sync.Mutex
 	// Calls records the transcripts the router was asked about.
@@ -177,7 +181,13 @@ func (f *Router) Route(ctx context.Context, transcript string, candidates []rout
 		decision.Title = "Fake routed note"
 		decision.Confidence = 1
 	}
-	if decision.Content == "" && !f.NoContent {
+	if decision.Content == "" && f.Spans != nil {
+		content, err := routing.RemoveSpans(transcript, f.Spans)
+		if err != nil {
+			content = transcript
+		}
+		decision.Content = content
+	} else if decision.Content == "" && !f.NoContent {
 		decision.Content = transcript
 	}
 	decision.Usage = provider.TokenUsage{InputTokens: len(strings.Fields(transcript)), OutputTokens: 8}
