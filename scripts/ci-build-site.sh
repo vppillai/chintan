@@ -45,7 +45,7 @@ done
 [ -n "${PAGES_BASE:-}" ] || die "PAGES_BASE is required (e.g. /chintan)"
 require_cmd bun jq aws
 
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || die "cannot enter $REPO_ROOT"
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
@@ -129,7 +129,7 @@ while IFS= read -r entry; do
 
     info "building $site_path from $stack"
     (
-        cd frontend
+        cd frontend || exit 1
         VITE_BASE="${PAGES_BASE}/${site_path}/" \
             VITE_API_URL="$api_endpoint" \
             VITE_USER_POOL_ID="$user_pool_id" \

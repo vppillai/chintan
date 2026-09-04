@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
             export AWS_REGION
             shift
             ;;
-        --yes) ASSUME_YES=1 ;;
+        --yes) export ASSUME_YES=1 ;;
         --apply) APPLY=1 ;;
         --dry-run) APPLY=0 ;;
         -h | --help)
