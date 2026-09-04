@@ -15,10 +15,13 @@ interface Tab {
 
 const TABS: readonly Tab[] = [
   {
-    label: 'Notes',
+    // "Home", not "Notes": the tab is the way back to the start of the app,
+    // and the library's own heading already says "Notes". Two controls with
+    // the same word on one screen read as two different places.
+    label: 'Home',
     to: ROUTES.notes,
     icon: 'notes',
-    // A note is stacked on the library, so the Notes tab stays lit while
+    // A note is stacked on the library, so the Home tab stays lit while
     // reading one — the tab names the section, not the exact URL.
     matches: (pathname) => pathname === ROUTES.home || pathname.startsWith('/notes'),
   },
@@ -31,7 +34,7 @@ const TABS: readonly Tab[] = [
 ];
 
 /**
- * The bottom tab bar: Notes · Record · You.
+ * The bottom tab bar: Home · Record · You.
  *
  * The record button is centred *in the bar* and is a grid child like the two
  * tabs — not a floating action button. A FAB overlays the last note row in the
@@ -43,11 +46,11 @@ const TABS: readonly Tab[] = [
  */
 export function TabBar() {
   const { pathname } = useLocation();
-  const [notes, you] = TABS as [Tab, Tab];
+  const [home, you] = TABS as [Tab, Tab];
 
   return (
     <nav className="tab-bar" aria-label="Main">
-      <TabLink tab={notes} current={notes.matches(pathname)} />
+      <TabLink tab={home} current={home.matches(pathname)} />
       <div className="tab-bar__record">
         <RecordButton />
       </div>

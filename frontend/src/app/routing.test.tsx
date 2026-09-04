@@ -67,8 +67,18 @@ describe('notes first', () => {
     expect(shell()).toHaveAttribute('data-screen', 'library');
     expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'You' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('calls the first tab Home while the library is still headed Notes', () => {
+    // Two controls reading "Notes" on one screen — the heading and the tab —
+    // read as two different places. The tab is the way home; the heading
+    // names what is there (a later design pass restyles the header).
+    mount();
+    expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Notes' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
   });
 
   it('seats the record button in the tab bar, not floating over content', () => {
@@ -79,13 +89,13 @@ describe('notes first', () => {
     expect(record.closest('.tab-bar')).not.toBeNull();
   });
 
-  it('keeps the Notes tab lit while reading a note', async () => {
+  it('keeps the Home tab lit while reading a note', async () => {
     const user = userEvent.setup();
     const { router } = mount();
     await user.click(await screen.findByRole('button', { name: /roof repair/i }));
     expect(path(router)).toBe('/notes/roof-repair');
     expect(shell()).toHaveAttribute('data-screen', 'note');
-    expect(screen.getByRole('link', { name: 'Notes' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('lights the You tab on settings', async () => {
