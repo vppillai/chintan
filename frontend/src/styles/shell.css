@@ -1957,18 +1957,25 @@
 /*
  * The running build, at the foot of the You screen.
  *
- * `--color-faint` is the palette's quietest text and is documented in
- * tokens.css as meeting AA in both themes — "faded" must still be legible to
- * whoever is reading it out over a phone call to report a bug.
+ * Two weights of quiet. The release tag is `--color-muted`; the build detail
+ * after it (`+14 (abcdef)`) is `--color-faint`, the palette's quietest text,
+ * so the eye lands on the release and the commit is there for whoever needs
+ * it. Both are documented in tokens.css as meeting AA in both themes —
+ * "faded" must still be legible to whoever is reading it out over a phone
+ * call to report a bug.
  */
 .version-footnote {
   margin-block-start: var(--space-8);
   padding-block-end: var(--space-4);
   font-size: var(--font-size-sm);
-  color: var(--color-faint);
+  color: var(--color-muted);
   text-align: center;
   /* Selectable on purpose: it exists to be copied into a bug report. */
   user-select: text;
+}
+
+.version-footnote__build {
+  color: var(--color-faint);
 }
 
 /* ==========================================================================
