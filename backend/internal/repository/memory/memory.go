@@ -169,7 +169,14 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 	}
 
 	return paginate(tenantID, keys, opts, func(k string) model.NoteIndex {
-		return copyNote(s.notes[tenantID][byKey[k]])
+		n := copyNote(s.notes[tenantID][byKey[k]])
+		if !opts.IncludeSearchText {
+			// The DynamoDB store's list projection omits search_text unless
+			// asked; the double drops it too, so a caller that forgot to ask
+			// fails here rather than only in production.
+			n.SearchText = ""
+		}
+		return n
 	})
 }
 

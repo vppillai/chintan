@@ -122,6 +122,45 @@ export const notesPage: Page<NoteWire> = {
   ]
 };
 
+/** GET /v1/notes?include=search_text → 200. Each item carries search_text, the lowercased body the server searches, so an offline corpus can match what GET /v1/search matches. Absent without the include. */
+export const notesPageWithSearchText: Page<NoteWire> = {
+  "items": [
+    {
+      "aliases": [],
+      "archived": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
+      "version": 2
+    },
+    {
+      "aliases": [
+        "kitchen",
+        "reno"
+      ],
+      "archived": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "purge_after": null,
+      "search_text": "quotes are in. the tiler can start on the fourteenth.",
+      "snippet": "Quotes are in. The tiler can start on the fourteenth.",
+      "tags": [
+        "house",
+        "money"
+      ],
+      "title": "Kitchen rebuild",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 2
+    }
+  ]
+};
+
 /** GET /v1/notes/{noteId} → 200, with body and captures */
 export const noteDetail: NoteDetailWire = {
   "aliases": [

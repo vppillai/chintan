@@ -100,6 +100,12 @@ export interface NoteWire {
    * OpenAPI document listed it on `NoteUpdate` only.
    */
   verbatim?: boolean;
+  /**
+   * The lowercased, marker-stripped body the server searches (≤ 32 KB). Sent
+   * only by `GET /v1/notes?include=search_text`, for an offline corpus that
+   * wants to match what the server matches; absent everywhere else.
+   */
+  search_text?: string;
 }
 
 export interface NoteDetailWire extends NoteWire {

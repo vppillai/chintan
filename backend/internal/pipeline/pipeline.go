@@ -884,11 +884,12 @@ func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallb
 		if err != nil {
 			return err
 		}
+		body := fallbackBody
 		if existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey); err == nil {
-			note.Snippet = service.Snippet(string(existing))
-		} else {
-			note.Snippet = service.Snippet(fallbackBody)
+			body = string(existing)
 		}
+		note.Snippet = service.Snippet(body)
+		note.SearchText = service.SearchText(body)
 		note.UpdatedAt = model.FormatTime(p.now())
 
 		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {

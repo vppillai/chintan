@@ -96,6 +96,13 @@ type Settings struct {
 	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
 }
 
+// MaxSearchTextBytes caps NoteIndex.SearchText. DynamoDB's item limit is
+// 400 KB, the rest of a note row is well under 10 KB, and 32 KB of lowercased
+// text is roughly 5,000 words — more than any dictation session produces
+// before the note is split. The cap is on bytes because that is what the
+// table charges for and enforces; the cut lands on a rune boundary.
+const MaxSearchTextBytes = 32 << 10
+
 type NoteIndex struct {
 	ID            string   `json:"id"`
 	Title         string   `json:"title"`
@@ -112,6 +119,19 @@ type NoteIndex struct {
 	// must not be reworded — a spec, a quote, a prompt — is otherwise silently
 	// rewritten by polished mode.
 	Verbatim bool `json:"verbatim,omitempty"`
+	// SearchText is the note body prepared for GET /v1/search: lowercased,
+	// append markers stripped, capped at MaxSearchTextBytes. It lives on the
+	// index row so a search over the tenant's notes is one partition query
+	// rather than one S3 GET per note, and it is written wherever the body is
+	// (service.NotesService.UpdateNote, the worker's index refresh, the
+	// chintanctl backfill).
+	//
+	// It is deliberately kept out of the JSON blob the DynamoDB store keeps in
+	// `data`: the blob duplicates every promoted attribute, and duplicating a
+	// 32 KB field doubles the write units of every note save for nothing a
+	// reader needs. The store promotes it as its own attribute and reads it back
+	// only when a list asks for it (repository.ListOptions.IncludeSearchText).
+	SearchText string `json:"-"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.

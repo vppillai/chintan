@@ -600,3 +600,50 @@ type listErrStore struct {
 func (s listErrStore) ListNotes(context.Context, string, repository.ListOptions) (repository.Page[model.NoteIndex], error) {
 	return repository.Page[model.NoteIndex]{}, s.err
 }
+
+// The owner searched for a word several transcripts contained and got nothing:
+// the body match was the 500-rune snippet only. The stored search text is the
+// whole body (capped), so a term past the snippet is a hit.
+func TestSearchMatchesTheStoredSearchTextBeyondTheSnippet(t *testing.T) {
+	body := strings.Repeat("filler ", 200) + "There is a Bug in the recorder."
+	svc := searchFixture(t,
+		model.NoteIndex{ID: "n_deep", Title: "Recorder", Snippet: Snippet(body), SearchText: SearchText(body)},
+		model.NoteIndex{ID: "n_none", Title: "Kitchen", Snippet: "tiles", SearchText: "the tiles are cracked"},
+	)
+
+	page, err := svc.Search(context.Background(), "user1", "BUG", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	got := hitIDs(page)
+	if len(got) != 1 || got[0] != "n_deep" {
+		t.Fatalf("results = %v, want only n_deep", got)
+	}
+	hit := page.Items[0]
+	if !slices.Equal(hit.MatchedIn, []string{MatchBody}) {
+		t.Errorf("matched_in = %v, want [body]", hit.MatchedIn)
+	}
+	if !strings.Contains(hit.Excerpt, "bug in the recorder") {
+		t.Errorf("excerpt = %q, want the search-text context around the term", hit.Excerpt)
+	}
+}
+
+// Search must ask the store for the search text. The in-memory store, like the
+// DynamoDB projection, drops it unless asked — so a search that forgot would
+// silently degrade to snippet-only matching.
+func TestSearchAsksTheStoreForSearchText(t *testing.T) {
+	store := memory.NewStore()
+	if _, err := store.PutNote(context.Background(), "user1", model.NoteIndex{
+		ID: "n1", Title: "Plain", SearchText: "a needle only the search text holds",
+	}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	svc := NewSearchService(NewNotesService(store, memory.NewObjects()))
+	page, err := svc.Search(context.Background(), "user1", "needle", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if got := hitIDs(page); len(got) != 1 {
+		t.Fatalf("results = %v, want the search-text hit", got)
+	}
+}

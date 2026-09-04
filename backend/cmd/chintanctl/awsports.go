@@ -69,6 +69,53 @@ func (d *dynamoPartition) Put(ctx context.Context, it Item) error {
 	return nil
 }
 
+func (d *dynamoPartition) Update(ctx context.Context, pk, sk string, set Item, expectVersion int64) error {
+	if len(set) == 0 {
+		return nil
+	}
+	names := map[string]string{}
+	values := map[string]dynamotypes.AttributeValue{}
+	clauses := make([]string, 0, len(set))
+	i := 0
+	for name, v := range set {
+		placeholder := fmt.Sprintf("#a%d", i)
+		valueKey := fmt.Sprintf(":v%d", i)
+		names[placeholder] = name
+		values[valueKey] = attrToSDK(v)
+		clauses = append(clauses, placeholder+" = "+valueKey)
+		i++
+	}
+	sort.Strings(clauses)
+
+	condition := "attribute_exists(pk) AND "
+	if expectVersion == 0 {
+		condition += "(attribute_not_exists(version) OR version = :expected)"
+	} else {
+		condition += "version = :expected"
+	}
+	values[":expected"] = &dynamotypes.AttributeValueMemberN{Value: fmt.Sprintf("%d", expectVersion)}
+
+	_, err := d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]dynamotypes.AttributeValue{
+			"pk": &dynamotypes.AttributeValueMemberS{Value: pk},
+			"sk": &dynamotypes.AttributeValueMemberS{Value: sk},
+		},
+		UpdateExpression:          aws.String("SET " + strings.Join(clauses, ", ")),
+		ConditionExpression:       aws.String(condition),
+		ExpressionAttributeNames:  names,
+		ExpressionAttributeValues: values,
+	})
+	if err != nil {
+		var cond *dynamotypes.ConditionalCheckFailedException
+		if errors.As(err, &cond) {
+			return ErrItemChanged
+		}
+		return fmt.Errorf("update item %s/%s: %w", pk, sk, err)
+	}
+	return nil
+}
+
 func (d *dynamoPartition) Delete(ctx context.Context, pk, sk string) error {
 	_, err := d.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(d.table),

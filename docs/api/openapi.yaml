@@ -137,6 +137,17 @@ paths:
           in: query
           description: Restrict to notes carrying this tag.
           schema: { type: string, maxLength: 40 }
+        - name: include
+          in: query
+          description: |
+            `search_text` adds each note's `search_text` to the items — the
+            lowercased, marker-stripped body the server searches, capped at
+            32 KB per note. Opt-in because the list is fetched constantly and
+            renders none of it; a client building an offline full-text corpus
+            asks once. Omitted from every other Note response.
+          schema:
+            type: string
+            enum: [search_text]
       responses:
         '200':
           description: A page of notes.
@@ -340,7 +351,14 @@ paths:
   /v1/search:
     get:
       tags: [search]
-      summary: Full-text search across titles, aliases, tags, bodies, and transcripts
+      summary: Full-text search across titles, aliases, tags and bodies
+      description: |
+        Matches every term against the note index: title, aliases, tags, the
+        snippet and the stored `search_text` (the lowercased body, capped at
+        32 KB). `matched_in` reports `body` for a snippet or search-text hit.
+        Bodies are never fetched from object storage per query. Transcripts
+        are not indexed separately: the cleaned text of every capture is in
+        the note body, so it is covered by `body`.
       parameters:
         - name: q
           in: query
@@ -739,6 +757,16 @@ components:
             returned on every read, because the toggle has to render the state
             it is in. Declared here only after the frontend↔backend contract
             fixtures caught the API sending a field this document did not list.
+        search_text:
+          type: string
+          maxLength: 32768
+          description: |
+            The note body as the server searches it: append markers removed,
+            lowercased, whitespace collapsed, cut to 32 KB on a rune boundary.
+            Present only on `GET /v1/notes?include=search_text`. It is derived
+            from the body on every write (editor save, worker append,
+            `chintanctl backfill-search-text`), so a client may search it
+            offline and trust that a hit is also a hit on `GET /v1/search`.
 
     NoteDetail:
       allOf:

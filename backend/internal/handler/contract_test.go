@@ -197,6 +197,9 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 
 	add("notesPage", "Page<NoteWire>", "GET /v1/notes → 200. The envelope is {items, cursor}; a bare array plus X-Next-Cursor was the v1 shape and is gone.",
 		h.do(t, http.MethodGet, "/v1/notes", contractUser, nil))
+	add("notesPageWithSearchText", "Page<NoteWire>",
+		"GET /v1/notes?include=search_text → 200. Each item carries search_text, the lowercased body the server searches, so an offline corpus can match what GET /v1/search matches. Absent without the include.",
+		h.do(t, http.MethodGet, "/v1/notes?include=search_text", contractUser, nil))
 	add("noteDetail", "NoteDetailWire", "GET /v1/notes/{noteId} → 200, with body and captures",
 		h.do(t, http.MethodGet, "/v1/notes/"+tagged.ID, contractUser, nil))
 	add("noteCreated", "NoteWire", "POST /v1/notes → 201",

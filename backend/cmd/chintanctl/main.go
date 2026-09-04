@@ -12,6 +12,7 @@
 //	chintanctl restore   --instance <name> --in <dir> [--apply]
 //	chintanctl reconcile --instance <name> [--apply]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
+//	chintanctl backfill-search-text --instance <name> [--tenant <id>] [--apply]
 //
 // Three conventions are load-bearing and shared with scripts/:
 //
@@ -46,6 +47,10 @@ Commands:
   reconcile  Report orphans in both directions: objects with no index row, and
              index rows whose objects are gone.
   erase      Irreversibly delete one tenant everywhere, and report what went.
+  backfill-search-text
+             Fill in the search_text attribute of every note row from its
+             body in the bucket, so GET /v1/search matches notes written
+             before the attribute existed. Skips rows that are already current.
 
 Run "chintanctl <command> --help" for the flags of one command.
 `
@@ -153,6 +158,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdReconcile(ctx, rest, stdout, stderr, stdin)
 	case "erase":
 		return cmdErase(ctx, rest, stdout, stderr, stdin)
+	case "backfill-search-text":
+		return cmdBackfillSearchText(ctx, rest, stdout, stderr, stdin)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)

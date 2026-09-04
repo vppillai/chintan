@@ -977,8 +977,11 @@ func TestListedNoteCarriesEveryField(t *testing.T) {
 		}
 		want.Version = 1
 
-		// populatedNote sets DeletedAt, so the note is archived.
-		page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{})
+		// populatedNote sets DeletedAt, so the note is archived. SearchText is
+		// the one field a list carries only on request (it is up to 32 KB per
+		// note), so the list asks for it here and the plain list is checked to
+		// omit exactly that field and nothing else.
+		page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{IncludeSearchText: true})
 		if err != nil {
 			t.Fatalf("ListArchivedNotes: %v", err)
 		}
@@ -987,6 +990,16 @@ func TestListedNoteCarriesEveryField(t *testing.T) {
 		}
 		if diffs := noteFieldDiffs(want, page.Items[0]); len(diffs) > 0 {
 			t.Fatalf("the listed note lost fields:\n\t%s", strings.Join(diffs, "\n\t"))
+		}
+
+		plain, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{})
+		if err != nil {
+			t.Fatalf("ListArchivedNotes (plain): %v", err)
+		}
+		withoutSearchText := want
+		withoutSearchText.SearchText = ""
+		if diffs := noteFieldDiffs(withoutSearchText, plain.Items[0]); len(diffs) > 0 {
+			t.Fatalf("the plain list differs from the full one in more than search_text:\n\t%s", strings.Join(diffs, "\n\t"))
 		}
 	})
 }
@@ -1477,5 +1490,78 @@ func TestCapturesComeBackNewestFirstAcrossPages(t *testing.T) {
 					order, fmt.Sprintf("c_%03d", total-1))
 			}
 		})
+	}
+}
+
+// search_text is up to 32 KB per note and only search and the offline corpus
+// read it, so the list projects it only when asked — and never puts it in the
+// record blob, which would store every byte of it twice.
+func TestListNotesProjectsSearchTextOnlyWhenAsked(t *testing.T) {
+	store, api := newTestStore(t)
+	if _, err := store.PutNote(context.Background(), "tenant-a", model.NoteIndex{
+		ID: "note_1", Title: "Roof", UpdatedAt: model.Now(), SearchText: "the gutter is leaking",
+	}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	projectionOf := func(t *testing.T) string {
+		t.Helper()
+		if len(api.queries) == 0 {
+			t.Fatal("the list issued no query")
+		}
+		return *api.queries[len(api.queries)-1].ProjectionExpression
+	}
+
+	api.queries = nil
+	plain, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if strings.Contains(projectionOf(t), "search_text") {
+		t.Errorf("a list that did not ask projected search_text: %q", projectionOf(t))
+	}
+	if plain.Items[0].SearchText != "" {
+		t.Errorf("a list that did not ask carried search text %q", plain.Items[0].SearchText)
+	}
+
+	api.queries = nil
+	with, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{IncludeSearchText: true})
+	if err != nil {
+		t.Fatalf("ListNotes(include): %v", err)
+	}
+	if !strings.Contains(projectionOf(t), "search_text") {
+		t.Errorf("the list asked for search text but did not project it: %q", projectionOf(t))
+	}
+	if with.Items[0].SearchText != "the gutter is leaking" {
+		t.Errorf("search text = %q, want the stored value", with.Items[0].SearchText)
+	}
+
+	got, err := store.GetNote(context.Background(), "tenant-a", "note_1")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if got.SearchText != "the gutter is leaking" {
+		t.Errorf("GetNote search text = %q", got.SearchText)
+	}
+
+	// The blob must not carry it: json:"-" on the model is what keeps a 32 KB
+	// field from being written twice per save.
+	table := tableName
+	raw, err := api.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: &table,
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+			"sk": &types.AttributeValueMemberS{Value: "NOTE#note_1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	blob, _ := raw.Item["data"].(*types.AttributeValueMemberS)
+	if blob == nil || strings.Contains(blob.Value, "gutter") {
+		t.Errorf("the record blob carries the search text: %v", raw.Item["data"])
+	}
+	if _, ok := raw.Item["search_text"].(*types.AttributeValueMemberS); !ok {
+		t.Errorf("search_text was not promoted to its own attribute: %v", raw.Item)
 	}
 }

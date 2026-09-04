@@ -185,6 +185,7 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 		Aliases:       aliases,
 		Tags:          normalizeTags(tags),
 		Snippet:       "", // No content initially
+		SearchText:    "",
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		S3MarkdownKey: markdownKey,
@@ -330,8 +331,10 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 			return model.NoteIndex{}, fmt.Errorf("failed to update markdown: %w", err)
 		}
 
-		// Update snippet (first ~500 chars)
+		// Update snippet (first ~500 chars) and the search text, which are the
+		// two derivations of the body the index row carries.
 		note.Snippet = generateSnippet(*updates.Body)
+		note.SearchText = SearchText(*updates.Body)
 	}
 
 	// Update metadata

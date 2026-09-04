@@ -43,6 +43,12 @@ const (
 type ListOptions struct {
 	Limit  int32  // 0 => DefaultListLimit; clamped to MaxListLimit
 	Cursor string // opaque, base64 of LastEvaluatedKey
+	// IncludeSearchText asks a NOTE list to carry NoteIndex.SearchText. Only
+	// ListNotes and ListArchivedNotes honour it. It is opt-in because the field
+	// is up to 32 KB per note and the notes list is fetched constantly by a
+	// client that renders none of it; search and the offline corpus are the two
+	// readers that want it.
+	IncludeSearchText bool
 }
 
 func (o ListOptions) limit() int32 {

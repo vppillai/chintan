@@ -45,6 +45,18 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// include=search_text is the one way the 32 KB-per-note search text reaches
+	// a client. The notes list is fetched constantly and renders none of it;
+	// the offline corpus fetches it once.
+	switch include := r.URL.Query().Get("include"); include {
+	case "":
+	case "search_text":
+		opts.IncludeSearchText = true
+	default:
+		httperr.BadRequest(w, r, "include must be search_text")
+		return
+	}
+
 	state := r.URL.Query().Get("state")
 	var got repository.Page[model.NoteIndex]
 	switch state {
@@ -82,7 +94,13 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 		items = filtered
 	}
 
-	writeJSON(w, http.StatusOK, page(notesOf(items), got.Cursor))
+	out := notesOf(items)
+	if opts.IncludeSearchText {
+		for i := range out {
+			out[i].SearchText = items[i].SearchText
+		}
+	}
+	writeJSON(w, http.StatusOK, page(out, got.Cursor))
 }
 
 func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {

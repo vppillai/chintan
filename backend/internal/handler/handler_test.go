@@ -544,3 +544,41 @@ func listNotes(t *testing.T, h *harness, userID, path string) []handler.Note {
 	decodeInto(t, w, &got)
 	return got.Items
 }
+
+// search_text is up to 32 KB per note, so it rides on the notes list only when
+// asked for, and on nothing else.
+func TestNotesListCarriesSearchTextOnlyWhenIncluded(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "user1", "Recorder", map[string]any{
+		"body": "There is a BUG in the recorder.",
+	})
+
+	w := h.do(t, http.MethodGet, "/v1/notes", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "search_text") {
+		t.Errorf("a plain list carries search_text: %s", w.Body.String())
+	}
+
+	w = h.do(t, http.MethodGet, "/v1/notes?include=search_text", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list with include: status = %d body = %s", w.Code, w.Body.String())
+	}
+	var page handler.Page[handler.Note]
+	decodeInto(t, w, &page)
+	if len(page.Items) != 1 || page.Items[0].SearchText != "there is a bug in the recorder." {
+		t.Errorf("items = %+v, want the lowercased body as search_text", page.Items)
+	}
+
+	// Detail, create and update responses never carry it.
+	w = h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+	if strings.Contains(w.Body.String(), "search_text") {
+		t.Errorf("note detail carries search_text: %s", w.Body.String())
+	}
+
+	w = h.do(t, http.MethodGet, "/v1/notes?include=everything", "user1", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("include=everything: status = %d, want 400", w.Code)
+	}
+}

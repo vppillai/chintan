@@ -61,12 +61,14 @@ type SearchHit struct {
 // stops scaling the replacement is a per-tenant inverted index in the same
 // table, not an external cluster.
 //
-// It searches the note index — titles, aliases, tags and the stored snippet.
-// It deliberately does not fetch note bodies or transcripts from object
-// storage: that would be one S3 GET per candidate note per keystroke-driven
-// request, which is the shape of an accidental denial of service against your
-// own bucket. The client's IndexedDB corpus covers full-text offline; this
-// refines and extends it.
+// It searches the note index — titles, aliases, tags, the stored snippet and
+// the stored search text (NoteIndex.SearchText: the body, lowercased and
+// capped at 32 KB, written by every writer of the body). It deliberately does
+// not fetch note bodies or transcripts from object storage: that would be one
+// S3 GET per candidate note per keystroke-driven request, which is the shape
+// of an accidental denial of service against your own bucket. Until the search
+// text existed the "body" match was the 500-rune snippet only, and a word that
+// appeared in several transcripts but in no opening paragraph found nothing.
 type SearchService struct {
 	notes *NotesService
 }
@@ -167,8 +169,9 @@ func (s *SearchService) Search(ctx context.Context, userID, q string, opts repos
 	cursor := from.Start
 	for page := 0; page < searchScanPages; page++ {
 		got, err := s.notes.ListNotes(ctx, userID, repository.ListOptions{
-			Limit:  repository.MaxListLimit,
-			Cursor: cursor,
+			Limit:             repository.MaxListLimit,
+			Cursor:            cursor,
+			IncludeSearchText: true,
 		})
 		if err != nil {
 			return repository.Page[SearchHit]{}, err
@@ -251,6 +254,10 @@ func searchTerms(q string) []string {
 func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 	title := strings.ToLower(note.Title)
 	snippet := strings.ToLower(note.Snippet)
+	// Already lowercased when it was stored. A note written before the field
+	// existed has none, and falls back to the snippet alone until the
+	// chintanctl backfill or its next body write fills it in.
+	body := note.SearchText
 
 	fields := map[string]bool{}
 	score := 0
@@ -278,7 +285,7 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 				break
 			}
 		}
-		if strings.Contains(snippet, term) {
+		if strings.Contains(snippet, term) || strings.Contains(body, term) {
 			fields[MatchBody] = true
 			score++
 			found = true
@@ -302,7 +309,17 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 		score:     score,
 	}
 	if fields[MatchBody] {
+		// The snippet keeps the body's original case, so it is preferred for
+		// the excerpt; a hit that only the search text holds is shown from
+		// that, lowercased, which is still the user's own words in context.
 		hit.Excerpt = excerpt(note.Snippet, terms[0])
+		if hit.Excerpt == "" {
+			for _, term := range terms {
+				if hit.Excerpt = excerpt(body, term); hit.Excerpt != "" {
+					break
+				}
+			}
+		}
 	}
 	return hit, true
 }

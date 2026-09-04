@@ -49,6 +49,11 @@ type Note struct {
 	Archived   bool     `json:"archived"`
 	PurgeAfter *string  `json:"purge_after"`
 	Verbatim   bool     `json:"verbatim,omitempty"`
+	// SearchText is the lowercased, marker-stripped body the server searches
+	// (capped at 32 KB). Sent only by GET /v1/notes?include=search_text, so
+	// the client's offline corpus can search the same text the server does
+	// without fetching every body; every other Note response omits it.
+	SearchText string `json:"search_text,omitempty"`
 }
 
 func noteOf(n model.NoteIndex) Note {
