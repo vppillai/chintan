@@ -21,8 +21,13 @@ import { tokenSetFromWire, type TokenSet } from '@/api/tokens.ts';
 
 import { CODE_CHALLENGE_METHOD } from './pkce.ts';
 
-/** What the hosted UI is asked for. `openid` is what mints the id_token. */
-const SCOPES = ['openid', 'email', 'profile'] as const;
+/**
+ * What the hosted UI is asked for. `openid` is what mints the id_token.
+ * `aws.cognito.signin.user.admin` is what lets the access token call the
+ * user-facing Cognito APIs — listing and removing the user's own passkeys —
+ * from the app; without it those calls are refused with NotAuthorizedException.
+ */
+const SCOPES = ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'] as const;
 
 /**
  * Where Cognito sends the browser back to.

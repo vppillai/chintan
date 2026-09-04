@@ -292,6 +292,11 @@ Resources:
         - openid
         - email
         - profile
+        # Lets the app call the user-facing Cognito APIs with its own access
+        # token — ListWebAuthnCredentials and DeleteWebAuthnCredential for
+        # the passkey list on You. Registration still happens on the managed
+        # login page (see B7 in docs/backlog.md).
+        - aws.cognito.signin.user.admin
       CallbackURLs:
         - !Sub
           - 'https://${PagesHost}/${RepoName}/${Path}/'
