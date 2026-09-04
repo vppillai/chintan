@@ -1,5 +1,5 @@
 import { onlineManager } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -553,6 +553,9 @@ describe('the search corpus', () => {
     expect(corpus).toHaveLength(1);
     expect(corpus[0]?.searchParams.get('limit')).toBe('200');
     expect(lists.length).toBeGreaterThan(0);
+  });
+});
+
 describe('pull to refresh', () => {
   /** A finger on the shell's scroll container, which the test wraps the screen in. */
   function touch(type: string, clientY: number): Event {
