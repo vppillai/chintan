@@ -256,6 +256,53 @@
   justify-content: flex-start;
 }
 
+/*
+ * The library's heading: "NOTES · 12" as a small-caps line, the day beneath
+ * it in the notes' serif. The wordmark lives in the banner; the screen says
+ * where — or rather when — you are.
+ */
+.library-header {
+  padding-block-end: var(--space-3);
+}
+
+.library-heading {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+}
+
+.library-heading__eyebrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+/* The count is a numeral, so it takes the serif figures and none of the
+   caps treatment; right-aligned by the eyebrow's `space-between`. */
+.library-heading__count {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: var(--letter-spacing-normal);
+  text-transform: none;
+  color: var(--color-muted);
+}
+
+.library-heading__date {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-tight);
+  color: var(--color-ink);
+}
+
 .screen__count,
 .screen__meta {
   font-size: var(--font-size-sm);

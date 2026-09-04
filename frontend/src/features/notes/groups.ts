@@ -104,6 +104,20 @@ export function describeMoment(iso: string, now: number = Date.now()): string {
   return `${formatRowTime(iso, now)} ${time}`;
 }
 
+/**
+ * Today, for the library's heading: "Thursday, 4 September" in the device's
+ * locale — weekday, day and month, never the year, because the heading is a
+ * place to be rather than a timestamp. The date the notes are grouped under
+ * is the same clock, so "Today" in the list and this line cannot disagree.
+ */
+export function describeToday(now: number = Date.now()): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(now));
+}
+
 /** `M:SS`, for the total audio behind a note. */
 export function formatDurationShort(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));

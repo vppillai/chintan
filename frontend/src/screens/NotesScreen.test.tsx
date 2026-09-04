@@ -88,6 +88,27 @@ async function startSelecting(
   await screen.findByRole('toolbar', { name: 'Bulk actions' });
 }
 
+describe('the heading is the day, with Notes and the count above it', () => {
+  it('is one h1 whose text starts with Notes, then the count, then today in words', async () => {
+    mount(library());
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date());
+    expect(heading).toHaveAccessibleName(/^Notes/);
+    expect(heading).toHaveTextContent(weekday);
+    expect(within(heading).getByText(String(TEST_NOTES.length))).toHaveClass('numeric');
+    // And only the one h1 on the screen.
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  it('holds the count back until something has answered', () => {
+    mount(library());
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(within(heading).queryByText(/^\d+\+?$/)).toBeNull();
+  });
+});
+
 describe('the library never claims an empty library it cannot see', () => {
   it('says it is offline rather than inviting a first note', async () => {
     /*

@@ -25,7 +25,7 @@ import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
-import { groupByDay } from '@/features/notes/groups.ts';
+import { describeToday, groupByDay } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -239,6 +239,8 @@ export function NotesScreen() {
 
   const selectableIds = visible.map((note) => note.id);
   const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
+  // Known once something — the server or the device — has answered.
+  const count = serverNotes !== undefined || fromCache ? notes.length : undefined;
 
   /*
    * A row asking to be selected — the first one starts the mode. With Shift
@@ -272,8 +274,27 @@ export function NotesScreen() {
     <div className="screen library" data-selecting={selecting || undefined}>
       <PullToRefresh onRefresh={refresh} />
 
-      <header className="screen__header">
-        <h1>Notes</h1>
+      {/*
+        The wordmark is in the banner above; the screen's own heading is the
+        day, in the notes' serif, with "Notes" and how many as a small-caps
+        line above it (backlog U5). All of it is the one h1 — a screen reader
+        hears "Notes, 12, Thursday 4 September" — and the text still starts
+        with "Notes", which is what the a11y sweep and the route tests look
+        for. The count is what has been loaded, with "+" while there is more.
+      */}
+      <header className="screen__header library-header">
+        <h1 className="library-heading">
+          <span className="library-heading__eyebrow">
+            <span>Notes</span>{' '}
+            {count !== undefined && (
+              <span className="library-heading__count numeric">
+                {count}
+                {list.hasNextPage ? '+' : ''}
+              </span>
+            )}
+          </span>{' '}
+          <span className="library-heading__date">{describeToday()}</span>
+        </h1>
       </header>
 
       <form

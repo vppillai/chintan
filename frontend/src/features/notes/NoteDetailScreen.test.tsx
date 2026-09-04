@@ -171,7 +171,7 @@ describe('what was just saved is what the app shows next', () => {
     );
 
     await user.click(screen.getByRole('button', { name: /back to\s*notes/i }));
-    await screen.findByRole('heading', { name: 'Notes' });
+    await screen.findByRole('heading', { name: /^Notes/ });
     // QA D3: the library row is stale after an edit.
     const row = await screen.findByRole('button', { name: /roof repair/i });
     expect(within(row).getByText('v1 body more words here.')).toBeInTheDocument();
