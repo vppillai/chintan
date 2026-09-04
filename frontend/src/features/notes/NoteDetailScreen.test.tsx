@@ -2,12 +2,16 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { onlineManager } from '@tanstack/react-query';
 
 import { CAPTURE_POLL_FAST_MS, queryKeys } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 import { routes } from '@/app/router.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
+
+import { LOADING_PATIENCE_MS } from './NoteDetailScreen.tsx';
 
 /**
  * The note screen against a small stateful server: PATCH checks the version
@@ -307,5 +311,58 @@ describe('the note screen is shaped for reading', () => {
     } finally {
       scrollHeight.mockRestore();
     }
+  });
+});
+
+/**
+ * A note never opened on this device, with no connection. QA D17 saw
+ * "Loading…" for sixteen seconds and counting in two runs out of four —
+ * the browser reporting a connection over a dead link, and a request that
+ * hung rather than failed.
+ */
+describe('an uncached note offline is not an endless Loading', () => {
+  afterEach(() => {
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+    onlineManager.setOnline(true);
+    vi.useRealTimers();
+  });
+
+  it('says at once that the note is not on this device when the browser is offline', async () => {
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    onlineManager.setOnline(false);
+    window.dispatchEvent(new Event('offline'));
+    const api = server([]);
+    mount(api.fetchImpl, '/notes/reading-list');
+
+    expect(
+      await screen.findByText(/you’re offline and this note isn’t saved on this device/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).toBeNull();
+    expect(api.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('stops waiting on a request that hangs, says what it knows, and offers to try again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    // Online as far as the browser can tell; the server never answers.
+    const hanging = vi.fn<typeof fetch>(() => new Promise<Response>(() => {}));
+    const { router } = mount(hanging, '/notes/reading-list');
+
+    // The back guard seeds the library beneath a deep link and pushes the note
+    // back on top; the screen under test is the one mounted after that.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/notes/reading-list');
+      expect(router.state.location.key).not.toBe('default');
+    });
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(LOADING_PATIENCE_MS + 50);
+    });
+
+    expect(screen.getByText(/the server hasn’t answered yet/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.queryByText('Loading…')).toBeNull();
   });
 });

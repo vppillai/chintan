@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -60,7 +60,21 @@ export function NoteDetailScreen() {
   // waiting for it would be waiting forever.
   const paused = fetchStatus === 'paused';
 
-  if ((isLoading || cached.isLoading) && !paused && !note) {
+  /*
+   * "Loading…" is said only while an answer can still be expected: the
+   * browser reports a connection, the query is running, and the device has
+   * no copy to show instead. With no connection there is nothing to wait for
+   * and the offline sentence is shown at once. And the wait is bounded: a
+   * request that hangs rather than failing — the browser insisting it is
+   * online on a dead link — sat on "Loading…" for the client's whole retry
+   * budget, sixteen seconds and counting in the QA pass (D17), with no way
+   * out. After `LOADING_PATIENCE_MS` the screen says what it knows and offers
+   * Try again.
+   */
+  const waiting = (isLoading || cached.isLoading) && !paused && online && !note;
+  const patienceOver = useTimedOut(waiting, LOADING_PATIENCE_MS);
+
+  if (waiting && !patienceOver) {
     return (
       <div className="screen">
         <p className="screen__empty" role="status">
@@ -72,25 +86,40 @@ export function NoteDetailScreen() {
 
   if (!note) {
     /*
-     * Two different sentences, because they are two different situations and
-     * the screen used to say the first one for both. A note that is simply not
-     * on this device was reported as one that "may have been archived or
+     * Three different sentences, because they are three different situations
+     * and the screen used to say one of them for all. A note that is simply
+     * not on this device was reported as one that "may have been archived or
      * purged" — describing a deletion that never happened, to a user who could
      * see the note one screen earlier.
      */
-    const unreachable = paused || !online || (error instanceof ApiError && error.isOffline);
+    const offline = paused || !online || (error instanceof ApiError && error.isOffline);
+    const unanswered = !offline && (patienceOver || (error instanceof ApiError && error.isRetryable));
 
     return (
       <div className="screen">
         <header className="screen__header screen__header--detail">
           <BackLink />
-          <h1>{unreachable ? 'Not on this device' : 'Note not found'}</h1>
+          <h1>{offline || unanswered ? 'Not on this device' : 'Note not found'}</h1>
         </header>
-        <p className="screen__empty">
-          {unreachable
-            ? 'This note has not been opened on this device, so there is no copy here to read. It will be here once you have a connection.'
-            : 'No note with that identifier. It may have been archived or purged.'}
+        <p className="screen__empty" role="status">
+          {offline
+            ? 'You’re offline and this note isn’t saved on this device. It will be here once you have a connection.'
+            : unanswered
+              ? 'This note isn’t saved on this device, and the server hasn’t answered yet.'
+              : 'No note with that identifier. It may have been archived or purged.'}
         </p>
+        {unanswered && (
+          <div className="screen__actions">
+            <button
+              type="button"
+              className="screen__action"
+              onClick={() => void refresh()}
+              disabled={fetchStatus === 'fetching' && !patienceOver}
+            >
+              Try again
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -152,6 +181,32 @@ export function NoteDetailScreen() {
       <NoteActions note={note} editor={editor} />
     </div>
   );
+}
+
+/** How long "Loading…" is allowed to stand before the screen says what it knows. */
+export const LOADING_PATIENCE_MS = 6_000;
+
+/**
+ * True once `active` has been continuously true for `ms`. Falls back to false
+ * the moment `active` does, so a wait that ends is forgotten and the next one
+ * starts its own clock.
+ */
+function useTimedOut(active: boolean, ms: number): boolean {
+  const [timedOut, setTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (!active) return;
+    const timer = setTimeout(() => {
+      setTimedOut(true);
+    }, ms);
+    return () => {
+      clearTimeout(timer);
+      // The wait this clock measured is over; the next one starts at zero.
+      setTimedOut(false);
+    };
+  }, [active, ms]);
+
+  return active && timedOut;
 }
 
 /**
