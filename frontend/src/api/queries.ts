@@ -381,8 +381,34 @@ const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
 /** Newest-first, and twenty is more than one person records before the first has filed. */
 const CAPTURE_LIST_LIMIT = 20;
 
-/** How often to ask while something is still moving through the pipeline. */
+/**
+ * How often to ask while something is still moving through the pipeline.
+ *
+ * Two cadences. A capture's first half-minute is when it is most likely to
+ * flip — the median pipeline is ~4 s with a target note and 4–9 s when routed
+ * (docs/ops/log-review-2026-09-04.md §3) — and a fixed 4 s poll added a median
+ * 2 s of pure waiting on top of that. So a young capture is asked after every
+ * 1.5 s, and once nothing in flight is younger than thirty seconds the poll
+ * relaxes to 4 s: a capture that old is waiting on a provider, and asking
+ * more often would only spend the user's battery watching it not move.
+ */
+export const CAPTURE_POLL_FAST_MS = 1_500;
+export const CAPTURE_POLL_FAST_WINDOW_MS = 30_000;
 export const CAPTURE_POLL_INTERVAL_MS = 4_000;
+
+/**
+ * The next poll delay for a set of captures, or `false` when nothing is
+ * moving. Pure, so the cadence is testable without a query client.
+ */
+export function capturePollInterval(
+  items: readonly CaptureWire[],
+  now: number = Date.now(),
+): number | false {
+  const moving = items.filter((capture) => !isTerminalStatus(capture.status));
+  if (moving.length === 0) return false;
+  const young = moving.some((capture) => within(capture.created_at, CAPTURE_POLL_FAST_WINDOW_MS, now));
+  return young ? CAPTURE_POLL_FAST_MS : CAPTURE_POLL_INTERVAL_MS;
+}
 
 function within(iso: string | null | undefined, windowMs: number, now: number): boolean {
   if (!iso) return false;
@@ -456,11 +482,7 @@ export function usePendingCaptures(enabled = true) {
       return { items };
     },
     enabled,
-    refetchInterval: (query) => {
-      const items = query.state.data?.items ?? [];
-      const active = items.some((capture) => !isTerminalStatus(capture.status));
-      return active ? CAPTURE_POLL_INTERVAL_MS : false;
-    },
+    refetchInterval: (query) => capturePollInterval(query.state.data?.items ?? []),
     refetchOnWindowFocus: false,
     staleTime: 0,
   });

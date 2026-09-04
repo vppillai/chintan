@@ -259,20 +259,35 @@ export function presignExpired(
 }
 
 /**
+ * How long one PUT attempt may run before it is abandoned and retried.
+ *
+ * Forty-five seconds is generous for a 4 MB ceiling on any connection worth
+ * uploading over, and short enough that a stalled cellular socket costs one
+ * retry rather than the whole recording session. The production log review
+ * (docs/ops/log-review-2026-09-04.md §3) found ten uploads of 67–250 KB that
+ * took 5–19 s in one bad stretch with no per-attempt bound at all: one hung
+ * connection was waited on until the browser gave up on it.
+ */
+export const PUT_ATTEMPT_TIMEOUT_MS = 45_000;
+
+/**
  * Uploads bytes to a presigned URL.
  *
  * Deliberately not routed through `ApiClient`: a presigned PUT is
  * pre-authorised, and attaching our bearer would break the S3 signature. It
- * still gets a timeout and bounded retry, because a capture upload dying on a
- * cellular blip is the one failure the product cannot absorb.
+ * still gets a per-attempt timeout and bounded retry, because a capture upload
+ * dying on a cellular blip is the one failure the product cannot absorb.
  */
 export async function putPresigned(
   upload: PresignedUploadWire,
   body: Blob | ArrayBuffer | string,
   options: {
     contentType?: string;
+    /** The caller giving up. Distinct from the per-attempt timeout, which retries. */
     signal?: AbortSignal;
     maxRetries?: number;
+    /** Per attempt, not per call. `0` disables it. */
+    attemptTimeoutMs?: number;
     fetchImpl?: typeof fetch;
     onAttempt?: (attempt: number) => void;
   } = {},
@@ -280,6 +295,7 @@ export async function putPresigned(
   const fetchImpl = options.fetchImpl ?? ((...args: Parameters<typeof fetch>) =>
     globalThis.fetch(...args));
   const maxRetries = options.maxRetries ?? 4;
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? PUT_ATTEMPT_TIMEOUT_MS;
   const headers = new Headers(upload.headers);
   if (options.contentType) headers.set('Content-Type', options.contentType);
 
@@ -287,12 +303,32 @@ export async function putPresigned(
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     if (options.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     options.onAttempt?.(attempt);
+
+    /*
+     * One controller per attempt, fed by two sources: the caller's signal,
+     * which ends the whole upload, and a timer, which ends only this attempt.
+     * The two are told apart afterwards by asking the caller's signal — an
+     * abort that the caller did not ask for is a stall, and a stall is retried
+     * like any other transient failure.
+     */
+    const attemptController = new AbortController();
+    const onCallerAbort = () => {
+      attemptController.abort();
+    };
+    options.signal?.addEventListener('abort', onCallerAbort, { once: true });
+    const timer =
+      attemptTimeoutMs > 0
+        ? setTimeout(() => {
+            attemptController.abort();
+          }, attemptTimeoutMs)
+        : null;
+
     try {
       const response = await fetchImpl(upload.url, {
         method: 'PUT',
         headers,
         body,
-        ...(options.signal ? { signal: options.signal } : {}),
+        signal: attemptController.signal,
       });
       if (response.ok) return;
       /*
@@ -312,9 +348,19 @@ export async function putPresigned(
       }
       lastError = new Error(`Upload failed with ${response.status}`);
     } catch (error) {
-      if ((error as Error)?.name === 'AbortError') throw error;
-      if (error instanceof PresignRejected) throw error;
-      lastError = error;
+      if ((error as Error)?.name === 'AbortError') {
+        // The caller's abort ends everything. The timer's abort is a stall on
+        // one attempt, recorded and retried like a dropped connection.
+        if (options.signal?.aborted) throw error;
+        lastError = new Error(`Upload attempt timed out after ${attemptTimeoutMs} ms`);
+      } else if (error instanceof PresignRejected) {
+        throw error;
+      } else {
+        lastError = error;
+      }
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onCallerAbort);
     }
     if (attempt < maxRetries) {
       await new Promise((resolve) =>

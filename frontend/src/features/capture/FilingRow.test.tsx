@@ -3,7 +3,16 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isFilingRelevant, newlyAppendedNoteIds, queryKeys, useNote } from '@/api/queries.ts';
+import {
+  CAPTURE_POLL_FAST_MS,
+  CAPTURE_POLL_FAST_WINDOW_MS,
+  CAPTURE_POLL_INTERVAL_MS,
+  capturePollInterval,
+  isFilingRelevant,
+  newlyAppendedNoteIds,
+  queryKeys,
+  useNote,
+} from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
@@ -379,6 +388,61 @@ describe('the row says where it thinks the recording goes', () => {
  * the just-finished one the user wants to tap through to — without dragging
  * old history back to the top of the library.
  */
+describe('how often the one poll asks', () => {
+  const NOW = Date.parse('2026-09-04T12:00:00.000Z');
+  const seconds = (n: number) => new Date(NOW - n * 1000).toISOString();
+
+  it('asks every 1.5 s while a capture is in its first half-minute', () => {
+    /*
+     * The median pipeline is ~4 s with a target note. A fixed 4 s poll added a
+     * median 2 s of waiting on top of it, which is what the owner felt as
+     * "even tiny recordings take a while".
+     */
+    expect(capturePollInterval([capture({ status: 'uploaded', created_at: seconds(2) })], NOW)).toBe(
+      CAPTURE_POLL_FAST_MS,
+    );
+    expect(
+      capturePollInterval([capture({ status: 'transcribing', created_at: seconds(29) })], NOW),
+    ).toBe(CAPTURE_POLL_FAST_MS);
+    expect(CAPTURE_POLL_FAST_WINDOW_MS).toBe(30_000);
+  });
+
+  it('relaxes to 4 s once nothing in flight is that young', () => {
+    expect(
+      capturePollInterval([capture({ status: 'routing', created_at: seconds(31) })], NOW),
+    ).toBe(CAPTURE_POLL_INTERVAL_MS);
+  });
+
+  it('is driven by the youngest moving capture, not by anything settled', () => {
+    expect(
+      capturePollInterval(
+        [
+          capture({ id: 'old', status: 'cleaning', created_at: seconds(120) }),
+          capture({ id: 'new', status: 'uploaded', created_at: seconds(3) }),
+        ],
+        NOW,
+      ),
+    ).toBe(CAPTURE_POLL_FAST_MS);
+    // A capture that has just appended is young but not moving.
+    expect(
+      capturePollInterval(
+        [
+          capture({ id: 'done', status: 'appended', created_at: seconds(3) }),
+          capture({ id: 'slow', status: 'routing', created_at: seconds(90) }),
+        ],
+        NOW,
+      ),
+    ).toBe(CAPTURE_POLL_INTERVAL_MS);
+  });
+
+  it('stops asking when nothing is moving', () => {
+    expect(capturePollInterval([capture({ status: 'appended', created_at: seconds(1) })], NOW)).toBe(
+      false,
+    );
+    expect(capturePollInterval([], NOW)).toBe(false);
+  });
+});
+
 describe('what the one poll keeps and what it drops', () => {
   const NOW = Date.parse('2026-09-03T12:00:00.000Z');
   const recent = new Date(NOW - 60_000).toISOString();

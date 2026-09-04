@@ -6,18 +6,18 @@
  *   1. `POST /v1/captures` keyed by the recording's local id, so a retry after
  *      a flaky response replays and returns the *same* upload URL rather than
  *      creating a second capture.
- *   2. PUT the audio to the presigned URL.
- *   3. PUT the client-computed peaks, best effort.
- *   4. Only then prune the local audio.
+ *   2. PUT the audio to the presigned URL, and alongside it — not after it —
+ *      PUT the client-computed peaks, best effort.
+ *   3. Only then prune the local audio.
  *
- * Step 4 last is the rule the product cannot get wrong. Anything that fails
+ * Step 3 last is the rule the product cannot get wrong. Anything that fails
  * before it leaves the recording on the device, which is what makes the
  * failure recoverable instead of terminal.
  */
 
 import { ApiError } from '@/api/problem.ts';
 import type { ChintanApi } from '@/api/endpoints.ts';
-import { presignExpired, putPresigned } from '@/api/endpoints.ts';
+import { PUT_ATTEMPT_TIMEOUT_MS, presignExpired, putPresigned } from '@/api/endpoints.ts';
 import type { CaptureContentType, CaptureCreatedWire } from '@/api/schema.ts';
 
 import { assembleBlob, confirmUploaded, saveCaptureRecord } from './buffer.ts';
@@ -42,6 +42,15 @@ export const OFFLINE_MESSAGE =
  */
 export const EXPIRED_MESSAGE =
   'That could not be sent: the upload link had expired. The recording is still on this device — try again.';
+
+/**
+ * Per-attempt bounds on the two PUTs. A stalled cellular socket used to be
+ * waited on until the browser gave up; now it costs one retry. The audio gets
+ * the library default; the peaks document is ~2 KB and either lands in a few
+ * seconds or is not worth waiting for.
+ */
+export const AUDIO_ATTEMPT_TIMEOUT_MS = PUT_ATTEMPT_TIMEOUT_MS;
+export const PEAKS_ATTEMPT_TIMEOUT_MS = 15_000;
 
 export interface UploadRequest {
   localId: string;
@@ -243,14 +252,47 @@ export async function uploadCapture(
       /* A failed bookkeeping write must not abort a good upload. */
     });
 
+  // The audio goes first — it is the recording — and the peaks leave right
+  // behind it rather than after it, so both are in flight together.
+  const audioPut = deps.put(created.upload, blob, {
+    contentType: request.contentType,
+    attemptTimeoutMs: AUDIO_ATTEMPT_TIMEOUT_MS,
+    ...(signal ? { signal } : {}),
+    onAttempt: (attempt) => {
+      // A retry dips the bar rather than freezing it, so a stalled attempt
+      // being abandoned reads as "trying again" and not as "stuck".
+      emit({ type: 'uploadProgress', progress: attempt === 0 ? 0.4 : 0.35 });
+    },
+  });
+
+  /*
+   * Peaks are optional by contract: a capture without them renders a plain
+   * player. Failing the whole upload over a waveform would be absurd, so the
+   * PUT is fire-and-forget — and it goes out *with* the audio rather than
+   * after it. It is a couple of kilobytes on its own connection and used to
+   * land a second after the audio purely because it waited its turn, which on
+   * a slow link was a second the user watched "Sending" for nothing.
+   */
+  const peaksPut: Promise<void> =
+    created.peaks_upload && request.peaks.length > 0
+      ? deps
+          .put(
+            created.peaks_upload,
+            JSON.stringify(peaksDocument(request.peaks, request.durationMs)),
+            {
+              contentType: 'application/json',
+              maxRetries: 1,
+              attemptTimeoutMs: PEAKS_ATTEMPT_TIMEOUT_MS,
+              ...(signal ? { signal } : {}),
+            },
+          )
+          .catch(() => {
+            /* No waveform on the note screen. Nothing else is affected. */
+          })
+      : Promise.resolve();
+
   try {
-    await deps.put(created.upload, blob, {
-      contentType: request.contentType,
-      ...(signal ? { signal } : {}),
-      onAttempt: (attempt) => {
-        emit({ type: 'uploadProgress', progress: attempt === 0 ? 0.4 : 0.35 });
-      },
-    });
+    await audioPut;
   } catch (error) {
     if ((error as Error)?.name === 'AbortError') return;
     // S3 refused the signature rather than the connection refusing the
@@ -266,19 +308,9 @@ export async function uploadCapture(
 
   emit({ type: 'uploadProgress', progress: 0.85 });
 
-  // Peaks are optional by contract: a capture without them renders a plain
-  // player. Failing the whole upload over a waveform would be absurd.
-  if (created.peaks_upload && request.peaks.length > 0) {
-    try {
-      await deps.put(
-        created.peaks_upload,
-        JSON.stringify(peaksDocument(request.peaks, request.durationMs)),
-        { contentType: 'application/json', maxRetries: 1, ...(signal ? { signal } : {}) },
-      );
-    } catch {
-      /* No waveform on the note screen. Nothing else is affected. */
-    }
-  }
+  // Usually already settled by now; waited on so the confirm below is the
+  // last thing that happens, as the ordering at the top of this file says.
+  await peaksPut;
 
   // Last, and only now: the server has the audio.
   await deps.confirm(request.localId);
