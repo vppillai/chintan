@@ -8,6 +8,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
+import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
@@ -202,7 +203,8 @@ export function NoteActions({
               className="note-bar__action note-bar__action--primary"
               onClick={() => void navigate(ROUTES.captureInto(note.id))}
             >
-              <span aria-hidden="true">＋ </span>Record into this
+              <Icon name="plus" size={16} className="note-bar__icon" />
+              Record into this
             </button>
           </>
         )}

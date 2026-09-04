@@ -2791,6 +2791,12 @@
   border-color: var(--color-accent);
 }
 
+/* The drawn plus before "Record into this": the same stroke as every other
+   glyph, where a text "＋" was a different weight in every font. */
+.note-bar__icon {
+  margin-inline-end: var(--space-1);
+}
+
 /* --------------------------------------------------------------------------
    Passkeys — the library nudge and the You screen's outcome line
    -------------------------------------------------------------------------- */
