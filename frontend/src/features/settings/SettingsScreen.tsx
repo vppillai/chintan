@@ -11,6 +11,7 @@ import { useTheme } from '@/theme/useTheme.ts';
 import { PasskeyCard } from '@/features/auth/PasskeyCard.tsx';
 import { SignOutSetting } from '@/features/auth/SignOutSetting.tsx';
 
+import { UsageSection } from './UsageSection.tsx';
 import { VersionFootnote } from './VersionFootnote.tsx';
 import { AUTO_LANGUAGE, languageName } from './languages.ts';
 
@@ -78,7 +79,6 @@ export function SettingsScreen() {
   const cleanupId = useId();
   const retentionId = useId();
   const languageId = useId();
-  const spendId = useId();
 
   return (
     <div className="screen">
@@ -234,30 +234,14 @@ export function SettingsScreen() {
         </p>
       </section>
 
-      {/* ---- Spend cap --------------------------------------------------- */}
-      <section className="settings-group" aria-labelledby={spendId}>
-        <h2 id={spendId} className="settings-group__title">
-          Daily spending cap
-        </h2>
-        {/*
-          Read-only since v3 step 3: the cap is one number for the whole
-          instance, set in the deploy config (`daily_spend_cap_micros`) and
-          echoed back by the API. Before that it was a per-user field this
-          screen edited, which the server now accepts and ignores — so the
-          input was a control that did nothing.
-        */}
-        <p className="settings-group__note">
-          {(draft.daily_spend_cap_micros ?? 0) === 0 ? (
-            'No cap is set for this instance. Usage is still measured.'
-          ) : (
-            <>
-              <span className="numeric">${microsToDollars(draft.daily_spend_cap_micros ?? 0)}</span>{' '}
-              a day across transcription and cleanup. Captures stop once it is reached, and say
-              so rather than failing vaguely. It is set in the instance configuration, not here.
-            </>
-          )}
-        </p>
-      </section>
+      {/* ---- Usage ------------------------------------------------------- */}
+      {/*
+        The read-only spend-cap sentence used to be here. Since v3 step 3 the
+        cap is one number for the whole instance, set in the deploy config and
+        echoed by the API, so the line said something about the deploy rather
+        than about the person. Their own usage does; the cap is a footnote to it.
+      */}
+      <UsageSection dailyCapMicros={draft.daily_spend_cap_micros ?? 0} />
 
       <PasskeyCard />
 
@@ -289,14 +273,4 @@ export function SettingsScreen() {
 function clamp(value: number, low: number, high: number): number {
   if (!Number.isFinite(value)) return low;
   return Math.min(high, Math.max(low, Math.round(value)));
-}
-
-/** The API meters in micros; people think in dollars. */
-export function microsToDollars(micros: number): number {
-  return Math.round(micros / 10_000) / 100;
-}
-
-export function dollarsToMicros(dollars: number): number {
-  if (!Number.isFinite(dollars) || dollars < 0) return 0;
-  return Math.round(dollars * 1_000_000);
 }

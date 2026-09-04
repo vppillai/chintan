@@ -27,6 +27,16 @@
     }
   },
   {
+    "name": "getUsage",
+    "method": "GET",
+    "path": "/v1/usage"
+  },
+  {
+    "name": "getUsageMonth",
+    "method": "GET",
+    "path": "/v1/usage?month=2026-01"
+  },
+  {
     "name": "listNotes",
     "method": "GET",
     "path": "/v1/notes"

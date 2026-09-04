@@ -535,6 +535,29 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    // ---- Usage ----------------------------------------------------------
+    if (path === '/v1/usage') {
+      // The current UTC month, so the You screen's chart marks a "today".
+      const now = new Date();
+      const month = `${String(now.getUTCFullYear())}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+      const today = `${month}-${String(now.getUTCDate()).padStart(2, '0')}`;
+      await json(route, {
+        month,
+        cost_micros: 40_791,
+        calls: 118,
+        audio_seconds: 1391.2,
+        input_tokens: 84_210,
+        output_tokens: 15_332,
+        ops: {
+          transcribe: { cost_micros: 20_230, calls: 50, audio_seconds: 1391.2 },
+          route: { cost_micros: 9_497, calls: 18, input_tokens: 23_188, output_tokens: 2_201 },
+          cleanup: { cost_micros: 11_842, calls: 50, input_tokens: 61_022, output_tokens: 13_131 },
+        },
+        days: [{ date: today, cost_micros: 40_791, calls: 118, audio_seconds: 1391.2 }],
+      });
+      return;
+    }
+
     // ---- Settings and tags ---------------------------------------------
     if (path === '/v1/settings') {
       if (method === 'PUT') {

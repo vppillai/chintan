@@ -114,6 +114,10 @@ describe('the requests the frontend actually sends', () => {
       }),
     );
 
+    /* ---- usage -------------------------------------------------------- */
+    await call('getUsage', () => api.getUsage());
+    await call('getUsageMonth', () => api.getUsage('2026-01'));
+
     /* ---- notes -------------------------------------------------------- */
     await call('listNotes', () => api.listNotes());
     await call('listNotesFiltered', () =>

@@ -2342,3 +2342,86 @@
   line-height: var(--line-height-normal);
   color: var(--color-muted);
 }
+
+/* --------------------------------------------------------------------------
+   Usage this month — total, split by stage, a bar per day
+   -------------------------------------------------------------------------- */
+
+.usage {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.usage__total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+/* The month's one figure, in the serif numerals the note titles use. */
+.usage__figure {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-ink);
+}
+
+.usage__month,
+.usage__summary {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.usage__ops {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.usage__op {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.usage__op-label {
+  color: var(--color-muted);
+}
+
+.usage__op-figures {
+  margin: 0;
+  color: var(--color-ink);
+}
+
+/* Bars stretch to the row's width; the height stays what the viewBox says. */
+.usage__spark {
+  display: block;
+  inline-size: 100%;
+  block-size: 2rem;
+  margin-block-start: var(--space-2);
+  overflow: visible;
+}
+
+.usage__baseline {
+  stroke: var(--color-line);
+  stroke-width: 1;
+}
+
+/* Ink at 60%, so the strip reads as a de-emphasised trend beneath the figure;
+   today alone takes the accent, the live/record colour, because today is the
+   one day still being written. */
+.usage__bar {
+  fill: var(--color-ink);
+  opacity: 0.6;
+}
+
+.usage__bar[data-today] {
+  fill: var(--color-accent);
+  opacity: 1;
+}

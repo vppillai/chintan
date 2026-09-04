@@ -36,6 +36,7 @@ export const queryKeys = {
   search: (q: string) => ['search', q] as const,
   tags: () => ['tags'] as const,
   settings: () => ['settings'] as const,
+  usage: (month: string | undefined) => ['usage', month ?? 'current'] as const,
 };
 
 /* ---------------------------------------------------------------------------
@@ -299,6 +300,24 @@ export function useSaveSettings() {
     onSuccess: (stored) => {
       queryClient.setQueryData(queryKeys.settings(), stored);
     },
+  });
+}
+
+/* ---------------------------------------------------------------------------
+   Usage
+   --------------------------------------------------------------------------- */
+
+/**
+ * `GET /v1/usage` for one month — the current one when none is given. Stale
+ * after a minute: the counters move only when a capture finishes, and a
+ * screen someone is looking at while one is filing should catch up.
+ */
+export function useUsage(month?: string) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.usage(month),
+    queryFn: () => api.getUsage(month),
+    staleTime: 60_000,
   });
 }
 

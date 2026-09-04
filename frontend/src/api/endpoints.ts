@@ -36,6 +36,7 @@ import type {
   SearchHitWire,
   SettingsWire,
   TagWire,
+  UsageWire,
 } from './schema.ts';
 
 type Query = NonNullable<RequestOptions['query']>;
@@ -69,6 +70,16 @@ export class ChintanApi {
       body,
       idempotencyKey,
     });
+  }
+
+  /* ---- Usage ---------------------------------------------------------- */
+
+  /**
+   * The caller's own provider usage for one UTC month, `yyyy-mm`; the current
+   * month when omitted. A month with nothing in it is zeros, not a 404.
+   */
+  getUsage(month?: string): Promise<UsageWire> {
+    return this.client.request('/v1/usage', { query: { month } });
   }
 
   /* ---- Notes ---------------------------------------------------------- */
