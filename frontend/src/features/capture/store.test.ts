@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { readCaptureRecord, unconfirmedCaptures } from './buffer.ts';
+import { openChintanDB } from '@/offline/db.ts';
+
+import { appendChunk, readCaptureRecord, unconfirmedCaptures } from './buffer.ts';
 import { INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
@@ -131,5 +133,86 @@ describe('the capture record', () => {
 
     await useCaptureStore.getState().discard();
     expect(await readCaptureRecord(localId!)).toBeUndefined();
+  });
+});
+
+/**
+ * MediaRecorder hands over its final chunk *after* `stop()` returns. A
+ * recorder that does the same, so Cancel can be tested against the timing
+ * that produced the orphans.
+ */
+class LateChunkRecorder extends FakeRecorder {
+  override stop(): void {
+    this.state = 'inactive';
+    queueMicrotask(() => {
+      this.emitChunk(512);
+      this.onstop?.();
+    });
+  }
+}
+
+describe('Cancel leaves nothing behind on the device', () => {
+  it('drops the chunk the recorder delivers after stop, and prunes the ones before it', async () => {
+    /*
+     * QA D15: four cancels, `captureChunks` 1 → 2 → 3 → 4 while `captures`
+     * stayed 0. The last chunk arrived after the prune, so it was never
+     * pruned; nothing lists it and nothing ever removes it.
+     */
+    useCaptureStore.getState().__configure({
+      recorder: {
+        ...fakeDeps(),
+        createRecorder: () => {
+          recorder = new LateChunkRecorder();
+          return recorder as unknown as MediaRecorder;
+        },
+        // The real buffer, so the count is what a device would hold.
+        persistChunk: appendChunk,
+      },
+    });
+    const store = useCaptureStore.getState();
+    await store.start();
+    recorder.emitChunk(1_024);
+    await flush();
+
+    await store.discard();
+    // Let the recorder's late chunk arrive and any write settle.
+    await flush();
+    await flush();
+
+    const db = await openChintanDB();
+    expect(await db.count('captureChunks')).toBe(0);
+    expect(await db.count('captures')).toBe(0);
+    expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+
+  it('leaves nothing when Cancel comes while the microphone is still being asked for', async () => {
+    let release: (stream: MediaStream) => void = () => {};
+    useCaptureStore.getState().__configure({
+      recorder: {
+        ...fakeDeps(),
+        requestMicrophone: () =>
+          new Promise<MediaStream>((resolve) => {
+            release = resolve;
+          }),
+        createRecorder: () => {
+          recorder = new LateChunkRecorder();
+          return recorder as unknown as MediaRecorder;
+        },
+        persistChunk: appendChunk,
+      },
+    });
+    const store = useCaptureStore.getState();
+    const started = store.start();
+    expect(useCaptureStore.getState().model.state).toBe('requesting');
+
+    await store.discard();
+    release(new FakeStream() as unknown as MediaStream);
+    await started;
+    await flush();
+
+    const db = await openChintanDB();
+    expect(await db.count('captureChunks')).toBe(0);
+    expect(await db.count('captures')).toBe(0);
+    expect(recorder.state).toBe('inactive');
   });
 });

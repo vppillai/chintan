@@ -159,6 +159,9 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
     async discard() {
       const { localId } = get().model;
       controller?.cancel();
+      // A chunk handed over just before Cancel may still be on its way to
+      // disk; the prune has to run after it lands or it would survive it.
+      await controller?.flushed();
       if (localId) {
         await discardCapture(localId).catch(() => {
           /* Nothing on disk. */
