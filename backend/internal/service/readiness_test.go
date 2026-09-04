@@ -11,9 +11,9 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-// Both dependencies answering is the only thing that may report ok. v1's health
-// check returned a static {"status":"ok"} and stayed green through a DynamoDB
-// outage, which is a fine liveness answer and a lie about readiness.
+// Both dependencies answering is the only thing that may report ok. A static
+// {"status":"ok"} stays green through a DynamoDB outage, which is a fine
+// liveness answer and a lie about readiness.
 func TestReadinessReportsOKWhenEveryDependencyAnswers(t *testing.T) {
 	svc := NewReadinessService(memory.NewStore(), memory.NewObjects())
 

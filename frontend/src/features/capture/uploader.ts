@@ -120,8 +120,8 @@ export const defaultUploadDeps: UploadDeps = {
  *
  * Progress is coarse — three steps, not a byte counter — because `fetch` gives
  * no upload progress without XHR, and a fake determinate bar is worse than an
- * honest coarse one. v1 set a determinate bar to 100% and pulsed its opacity,
- * which reads as "stuck".
+ * honest coarse one: a determinate bar pinned at 100% with pulsing opacity
+ * reads as "stuck".
  */
 export async function uploadCapture(
   api: ChintanApi,

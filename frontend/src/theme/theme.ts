@@ -1,5 +1,5 @@
 /**
- * Theme preferences (spec §5.6).
+ * Theme preferences.
  *
  * `ink` and `nocturne` are explicit choices. `system` defers to
  * `prefers-color-scheme`, resolving to `ink` under light and `nocturne` under

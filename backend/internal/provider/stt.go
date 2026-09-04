@@ -7,10 +7,10 @@ import (
 
 // Audio is one recording handed to a transcription provider.
 //
-// It is deliberately not a []byte. v1 read the whole object into the Lambda
-// heap and re-POSTed it, which made the 512MB heap — not the microphone — the
-// real cap on recording length. An adapter is expected to stream: either from
-// URL, or from Body, and never to hold the whole recording at once.
+// It is deliberately not a []byte. Reading the whole object into the Lambda
+// heap and re-POSTing it makes the 512MB heap — not the microphone — the real
+// cap on recording length. An adapter is expected to stream: either from URL,
+// or from Body, and never to hold the whole recording at once.
 type Audio struct {
 	// URL is a short-lived presigned GET for the stored object. Preferred: the
 	// adapter fetches and forwards it without buffering.

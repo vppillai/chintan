@@ -64,8 +64,8 @@ func (g *GroqSTT) Model() string { return g.model }
 //
 // The source is a presigned GET: the object goes S3 -> this process -> Groq
 // through an io.Pipe, so peak allocation is one copy buffer regardless of how
-// long the recording is. v1 did objects.Get followed by part.Write(audio), which
-// is why a long drive could not be transcribed at all.
+// long the recording is. An objects.Get followed by part.Write(audio) would
+// hold the whole recording, and a long drive could not be transcribed at all.
 func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, error) {
 	source, closeSource, err := g.openSource(ctx, in)
 	if err != nil {

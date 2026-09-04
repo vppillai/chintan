@@ -298,8 +298,8 @@ describe('chunks reach the disk as they are produced', () => {
 
 describe('interruption', () => {
   it('turns an ended track into a saved partial recording', async () => {
-    // An incoming call. v1 registered no track handler, so the recording
-    // truncated in silence while the timer kept counting.
+    // An incoming call. Without a track handler the recording would truncate
+    // in silence while the timer kept counting.
     const h = harness();
     await h.start();
     h.recorder.emitChunk(5_000);

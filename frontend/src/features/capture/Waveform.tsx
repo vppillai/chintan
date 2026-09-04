@@ -4,9 +4,8 @@ import { useEffect, useRef } from 'react';
  * The live waveform.
  *
  * Real amplitudes from the `AnalyserNode`, drawn to canvas on an animation
- * frame. It is deliberately not a progress bar: v1 rendered a determinate bar,
- * set it to 100%, and pulsed its opacity, which is indistinguishable from a
- * stuck upload and was the single worst thing in the old UI.
+ * frame. It is deliberately not a progress bar: a determinate bar pinned at
+ * 100% with pulsing opacity is indistinguishable from a stuck upload.
  *
  * This draws only what the microphone is actually hearing, so silence looks
  * like silence — which is the one piece of feedback that tells a user their

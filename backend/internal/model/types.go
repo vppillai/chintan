@@ -123,7 +123,8 @@ func ValidLanguage(v string) bool {
 type Settings struct {
 	CleanupMode   CleanupMode `json:"cleanup_mode"`
 	RetentionDays int         `json:"retention_days"` // 0 = indefinite
-	// Theme is empty on records written before v2; readers substitute ThemeInk.
+	// Theme is empty on records written before it existed; readers substitute
+	// ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
 	// DefaultLanguage is the transcription language for a capture whose
 	// destination note sets none, or is not yet known when transcription runs

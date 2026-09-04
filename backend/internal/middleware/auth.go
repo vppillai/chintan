@@ -11,8 +11,8 @@ import (
 
 // WithUserID puts a single-tenant identity in the context.
 //
-// This is in-process wiring only. Unlike the request header the v1 build
-// trusted, a context value cannot be supplied by a remote caller.
+// This is in-process wiring only. Unlike a request header, a context value
+// cannot be supplied by a remote caller.
 func WithUserID(ctx context.Context, userID string) context.Context {
 	return auth.WithIdentity(ctx, auth.Identity{UserID: userID, TenantID: userID})
 }
@@ -28,9 +28,9 @@ func GetUserID(ctx context.Context) (string, bool) {
 
 // Auth verifies the bearer token and stores the resulting identity.
 //
-// There is deliberately no header-based identity path. v1 read an unverified
-// `X-User-ID` header and preferred it over the token, which let any caller
-// holding one valid token act as any other user.
+// There is deliberately no header-based identity path. An unverified
+// `X-User-ID` header preferred over the token would let any caller holding one
+// valid token act as any other user.
 //
 // A nil verifier fails closed: every request without an in-process identity is
 // rejected. cmd/api refuses to start without one, so this can only be reached

@@ -170,7 +170,7 @@ func TestSearchExcerptOmitsTheEllipsisWhenNothingWasCut(t *testing.T) {
 }
 
 // The cut is by rune. A byte slice here halves a multi-byte rune and puts
-// invalid UTF-8 on the wire, which is what v1's snippet code did.
+// invalid UTF-8 on the wire.
 func TestSearchExcerptCutsOnRuneBoundaries(t *testing.T) {
 	svc := searchFixture(t, model.NoteIndex{
 		ID:      "n_utf8",

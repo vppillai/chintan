@@ -1,10 +1,9 @@
 // Package usage keeps per-tenant provider usage, so the question "what did
 // this user's captures cost this month" has an answer that is not a log query.
 //
-// It is deliberately small. The 2026-09-03 review removed the per-tenant USAGE
-// rows, the resolver interface and the sink nothing constructed, because they
-// guarded a cap that the instance-wide SPEND# counter already enforced. What
-// comes back here is accounting, not enforcement: two atomic ADDs per provider
+// It is deliberately small. There is no per-tenant cap, resolver interface or
+// usage sink here: the instance-wide SPEND# counter is the enforcement. What
+// lives here is accounting, not enforcement: two atomic ADDs per provider
 // call — onto the tenant's month row and the tenant's day row — written by the
 // breaker in the same place it writes the usage log line, so a cost is never
 // logged without being attributed. Nothing here refuses a call, and nothing

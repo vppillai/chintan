@@ -12,21 +12,19 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-// This session found a capture uploaded on 2026-08-08 that had sat at
-// `uploaded` for six days: the S3 event that should have driven the worker
-// never arrived. By the time something finally retried it, the retention
-// lifecycle rule — which back then required only the artifact and
-// retention-tier tags, both set once at upload and never touched again — had
-// already deleted the audio, on a clock that had no idea the pipeline had
-// never run at all. The capture correctly failed with a 404 fetching its own
-// source, and the thought in it was gone.
+// A capture can sit at `uploaded` for days when the S3 event that should drive
+// the worker never arrives. If the retention lifecycle rule matched only the
+// artifact and retention-tier tags — both set once at upload and never touched
+// again — it would delete the audio on a clock that has no idea the pipeline
+// never ran, and the eventual retry would correctly fail with a 404 fetching
+// its own source, the thought in it gone.
 //
-// MarkProcessed and the lifecycle rule's new third tag close that: the rule
-// now also requires ProcessedTagKey, and markAudioProcessedIfSafe is the one
-// place that sets it — gated on RawKey rather than on the capture reaching a
-// terminal status, because that is the actual point past which the audio
-// object is no longer needed for anything (resumeStatusFor prefers RawKey
-// explicitly, so a retry from any later stage never re-reads it).
+// MarkProcessed and the lifecycle rule's third tag close that: the rule also
+// requires ProcessedTagKey, and markAudioProcessedIfSafe is the one place that
+// sets it — gated on RawKey rather than on the capture reaching a terminal
+// status, because that is the actual point past which the audio object is no
+// longer needed for anything (resumeStatusFor prefers RawKey explicitly, so a
+// retry from any later stage never re-reads it).
 
 func TestAudioStaysProtectedWhileTranscriptionHasNotSucceeded(t *testing.T) {
 	objects := memory.NewObjects()

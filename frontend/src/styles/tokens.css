@@ -1,8 +1,6 @@
 /*
  * Chintan design tokens.
  *
- * Spec: docs/superpowers/specs/2026-08-07-chintan-v2-design.md §5.6.
- *
  * This is the ONLY file in the codebase permitted to contain a literal colour
  * or a literal font size. `bun run lint` enforces that (scripts/check-tokens.mjs).
  *
@@ -16,12 +14,12 @@
  */
 
 /* ==========================================================================
-   1. Primitives — theme-independent
+   Primitives — theme-independent
    ========================================================================== */
 
 :root {
   /* ---- Type families -------------------------------------------------- */
-  /* Grotesk for UI chrome; serif for note titles and numerals (§5.6). */
+  /* Grotesk for UI chrome; serif for note titles and numerals. */
   --font-sans:
     'Inter var', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
@@ -31,7 +29,7 @@
   --font-mono:
     ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
     'Liberation Mono', monospace;
-  /* Numerals are serif per §5.6 and always tabular so timers do not jitter. */
+  /* Numerals are serif and always tabular so timers do not jitter. */
   --font-numeric: var(--font-serif);
 
   /* ---- Type scale ------------------------------------------------------
@@ -92,8 +90,8 @@
 
   /* ---- Motion ----------------------------------------------------------
      Every animation in the app references these. `prefers-reduced-motion`
-     collapses all of them to a single frame in one place (see §4 below), so
-     no component can forget to honour the preference. */
+     collapses all of them to a single frame in one place (see 'Reduced
+     motion' below), so no component can forget to honour the preference. */
   --motion-duration-instant: 80ms;
   --motion-duration-fast: 140ms;
   --motion-duration-base: 220ms;
@@ -143,7 +141,7 @@
 }
 
 /* ==========================================================================
-   2. Theme — Ink & Paper (default, light)
+   Theme — Ink & Paper (default, light)
    ==========================================================================
 
    Palette
@@ -169,9 +167,10 @@
      accent (as fill)  4.92       4.47        4.59      3.0 (1.4.11) pass
      ground on accent  4.92          —           —      4.5 (AA)     pass
 
-   v1 shipped muted at #8A8478 (3.53:1) and faint at #A39C8D (2.59:1), both
-   below AA. They are darkened here to #534F48 and #716A5B, preserving hue and
-   saturation. #8A8478 survives as `line-strong`, where 3:1 is the bar.
+   `muted` (#534F48) and `faint` (#716A5B) are darkened from the palette's
+   natural #8A8478 (3.53:1) and #A39C8D (2.59:1), which fall below AA as text,
+   preserving hue and saturation. #8A8478 survives as `line-strong`, where 3:1
+   is the bar.
 
    `accent` is a FILL, never body text: as text it is 4.47:1 on surface, which
    misses AA by a hair. `accent-strong` is the text-safe variant and is still
@@ -205,7 +204,7 @@
 }
 
 /* ==========================================================================
-   3. Theme — Nocturne (dark)
+   Theme — Nocturne (dark)
    ==========================================================================
 
    Palette
@@ -230,8 +229,8 @@
      line-strong       3.64       3.33        3.03      3.0 (1.4.11) pass
      ground on accent 14.64          —           —      4.5 (AA)     pass
 
-   v1's dark muted #6B7570 (4.11:1) and faint #5E6B63 (3.51:1) both missed AA;
-   they are lightened to #A4ACA8 and #7C8C82. #5E6B63 survives, nudged to
+   `muted` (#A4ACA8) and `faint` (#7C8C82) are lightened from #6B7570 (4.11:1)
+   and #5E6B63 (3.51:1), which miss AA as text. #5E6B63 survives, nudged to
    #5E6E66, as `line-strong`.
 
    The Nocturne accent clears AA as text on every ground, so `accent-strong`
@@ -298,7 +297,7 @@
 }
 
 /* ==========================================================================
-   4. Reduced motion — §5.6, honoured for every animation
+   Reduced motion — honoured for every animation
    ==========================================================================
    Because every transition and animation in the app reads its duration from a
    motion token, zeroing the tokens here disables motion app-wide. The

@@ -249,9 +249,9 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 	// upload cannot quietly omit them and escape expiry.
 	//
 	// The tenant's own retention is what decides the second tag, and this is the
-	// only place in the request path that reads it. Without it the setting was
-	// validated, stored and returned while nothing acted on it — the v1 defect,
-	// fixed for the instance and reintroduced for the user.
+	// only place in the request path that reads it. Without it the setting is
+	// validated, stored and returned while nothing acts on it — a control that
+	// does nothing.
 	audioUpload, err := s.uploads.PresignPut(ctx, audioKey, contentType, upload.CaptureAudioTags(settings.RetentionDays), maxBytes, uploadTTL)
 	if err != nil {
 		return CaptureCreated{}, fmt.Errorf("failed to generate upload URL: %w", err)
@@ -271,9 +271,8 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 }
 
 // RetryCapture hands a capture back to the worker so it resumes from its last
-// good stage. It does no work inline: v1's retry ran the whole pipeline on the
-// request path, which is what turned a gateway timeout into duplicated note
-// content.
+// good stage. It does no work inline: running the whole pipeline on the request
+// path turns a gateway timeout into duplicated note content.
 func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
@@ -422,8 +421,8 @@ func (s *CaptureService) GetDownloadURL(ctx context.Context, userID, captureID, 
 	}
 
 	if key == "" {
-		// Captures recorded before v2 have no segments and no peaks. The artifact
-		// genuinely does not exist, which is a 404 and not a fault.
+		// A capture recorded before segments and peaks were stored has neither.
+		// The artifact genuinely does not exist: a 404, not a fault.
 		return "", fmt.Errorf("%w: %s", repository.ErrNotFound, kind)
 	}
 

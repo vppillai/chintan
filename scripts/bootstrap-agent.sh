@@ -33,13 +33,13 @@
 # The policy documents it applies are the four JSON files in
 # infrastructure/agent-policies/ — boundary.json, deny.json, permissions.json and
 # trust.json — with ACCOUNT_ID and REGION substituted at apply time. They are
-# hand-maintained now: the generator that derived boundary.json and deny.json
-# from a shared source, and the drift check that compared the deployed boundary
-# against the repository, were removed with the rest of the guardrail tooling
-# (docs/review-2026-09-03.md §4, §5.1 step 5). Edit the JSON directly, keep the
-# boundary under IAM's 6144-character cap (this script measures it), and re-run
-# with --apply; each policy is updated as a new default version rather than
-# recreated, so there is no window in which it does not exist.
+# hand-maintained: edit the JSON directly, keep boundary.json and deny.json in
+# step with each other (they share their deny statements and nothing checks
+# that for you), keep the boundary under IAM's 6144-character cap (this script
+# measures it and refuses an oversized document), and re-run with --apply. Each
+# policy is updated as a new default version rather than recreated, so there is
+# no window in which it does not exist. Nothing in CI compares the deployed
+# policies against the repository; a re-run after every edit is the check.
 #
 # WHY BOTH A ROLE AND A MINIMAL USER
 #
@@ -59,10 +59,10 @@
 # session.
 #
 # The trail costs about $0.13/month in S3 PUTs for hourly digest files across
-# every region (docs/review-2026-09-03/cost-alarms-logs.md item 2); deleting it or
-# making it single-region is an owner decision, taken with the same credentials
-# this script needs. scripts/teardown.sh deliberately leaves the trail, its bucket
-# and the agent principal alone.
+# every region. Deleting it or making it single-region is an owner decision,
+# taken with the same credentials this script needs; scripts/teardown.sh
+# deliberately leaves the trail, its bucket and the agent principal alone, so
+# the record of what teardown did survives teardown.
 #
 # Usage:
 #   scripts/bootstrap-agent.sh                 # dry run — prints the plan, changes nothing
@@ -119,7 +119,7 @@ USER_NAME="chintan-agent-cli"
 command -v aws >/dev/null 2>&1 || die "aws CLI not found"
 
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text 2>/dev/null)" ||
-    die "no AWS credentials. This script needs administrative credentials; it creates the constraints everything else runs under (§0.8 item 1)."
+    die "no AWS credentials. This script needs administrative credentials; it creates the constraints everything else runs under."
 CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
 
 TRAIL_BUCKET="chintan-cloudtrail-${ACCOUNT_ID}-${REGION}"
@@ -132,7 +132,7 @@ info "caller:   $CALLER_ARN"
 # yourself mid-run leaves a half-configured principal that may not be able to
 # finish or to undo.
 if printf '%s' "$CALLER_ARN" | grep -q "$ROLE_NAME"; then
-    die "running as $ROLE_NAME itself. This script must be run by an administrator, not by the agent principal it configures (I17)."
+    die "running as $ROLE_NAME itself. This script must be run by an administrator, not by the agent principal it configures."
 fi
 
 # ---------------------------------------------------------------------------
@@ -165,11 +165,11 @@ render() {
 
 # Pre-flight every document through IAM Access Analyzer before creating anything.
 #
-# This is not ceremony. It caught two real errors in these very policies: the
-# wildcard-service action form that §9.5's own snippet uses is invalid IAM syntax,
-# and several service namespaces in the runaway-cost deny do not exist. It also
-# reports where a tag condition is silently unsupported, which is G-047's failure
-# mode and is otherwise invisible.
+# This is not ceremony. Access Analyzer catches the errors IAM accepts silently:
+# a wildcard-service action form that is invalid IAM syntax, a service namespace
+# in the runaway-cost deny that does not exist, and a tag condition the service
+# ignores. A deny that can never match is otherwise invisible until the day it
+# was supposed to fire.
 validate_policy() {
     local name="$1" ptype="${2:-IDENTITY_POLICY}"
     local errors
@@ -302,7 +302,7 @@ create_policy() {
 }
 
 create_policy "$BOUNDARY_NAME" "Chintan agent permissions boundary (ceiling). See infrastructure/agent-policies/boundary.json."
-create_policy "$DENY_NAME" "Chintan agent explicit denies. Overrides any allow. See §9.5."
+create_policy "$DENY_NAME" "Chintan agent explicit denies. Overrides any allow. See infrastructure/agent-policies/deny.json."
 create_policy "$PERMS_NAME" "Chintan agent grants, scoped to chintan-* resources in the deploy region."
 
 if exists_role "$ROLE_NAME"; then
@@ -318,7 +318,7 @@ else
     # principal exists, and a window is all a mistake needs.
     aws iam create-role \
         --role-name "$ROLE_NAME" \
-        --description "Chintan implementing agent. Operates under a permissions boundary; holds no key-creation rights and cannot read provider secrets (§9.4)." \
+        --description "Chintan implementing agent. Operates under a permissions boundary; holds no key-creation rights and cannot read provider secrets." \
         --assume-role-policy-document "file://${RENDER_DIR}/trust.json" \
         --permissions-boundary "$(policy_arn "$BOUNDARY_NAME")" \
         --max-session-duration 3600 \
@@ -328,7 +328,7 @@ aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$(policy_arn "
 aws iam attach-role-policy --role-name "$ROLE_NAME" --policy-arn "$(policy_arn "$DENY_NAME")" >/dev/null
 ok "role $ROLE_NAME configured"
 
-# --- Minimal CLI user (G-064) ----------------------------------------------
+# --- Minimal CLI user ------------------------------------------------------
 # Root cannot assume a role, so this user is the only way to reach the bounded role.
 # Its single permission is sts:AssumeRole on that role, and the boundary is attached
 # as well, so even a mistaken policy attachment cannot lift it above the ceiling.
@@ -389,9 +389,9 @@ until aws iam update-assume-role-policy --role-name "$ROLE_NAME" \
 done
 ok "trust policy scoped to $USER_NAME alone"
 
-# --- CloudTrail (§9.5) ------------------------------------------------------
-# "CloudTrail enabled, delivering to a bucket the agent cannot write to or delete
-# from. Every agent action is attributable to its principal."
+# --- CloudTrail -------------------------------------------------------------
+# CloudTrail is enabled, delivering to a bucket the agent cannot write to or
+# delete from, so every agent action is attributable to its principal.
 #
 # The first trail's management events are free; this account had none, so there is
 # no second-trail charge (checked before creating).
@@ -401,7 +401,7 @@ ok "trust policy scoped to $USER_NAME alone"
 # showed on the second run: the bucket existed, so the whole block was skipped, and
 # trail creation then failed with InsufficientS3BucketPolicyException — an error that
 # points at the bucket policy rather than at the branch that skipped writing it.
-# §11.3 asks for idempotency; every call below is safe to repeat.
+# Every call below is idempotent and safe to repeat.
 if ! exists_bucket "$TRAIL_BUCKET"; then
     info "creating audit bucket $TRAIL_BUCKET"
     if [ "$REGION" = "us-east-1" ]; then
@@ -518,7 +518,7 @@ if [ -n "${CHINTAN_KEY_OUT:-}" ]; then
     # An access key is the one piece of long-lived material this bootstrap creates.
     # It is written to the path given, mode 600, and **never printed** — a secret
     # echoed to a terminal is a secret in a scrollback buffer, a CI log, or an agent's
-    # context (§9.7, G-050).
+    # context.
     if [ "$(aws iam list-access-keys --user-name "$USER_NAME" --query 'length(AccessKeyMetadata)' --output text)" != "0" ]; then
         warn "$USER_NAME already has an access key; not creating a second."
         warn "Rotate deliberately with: aws iam delete-access-key --user-name $USER_NAME --access-key-id <id>"
@@ -544,7 +544,7 @@ fi
 
 log ""
 info "assume the agent role with:"
-dim "  # as ${USER_NAME}, not as an administrator — root cannot assume a role (G-064)"
+dim "  # as ${USER_NAME}, not as an administrator — root cannot assume a role"
 dim "  aws sts assume-role \\"
 dim "    --role-arn arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME} \\"
 dim "    --role-session-name chintan-agent"

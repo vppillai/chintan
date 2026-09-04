@@ -9,12 +9,11 @@
 // means the presigner has to know about tags, and repository.Objects.PresignPut
 // does not.
 //
-// In v1 RetentionDays was stored, returned, rendered in the UI, and read by
-// nothing. This is the piece that stops that being true — for the TENANT's
-// setting, not merely for a deploy-time stack parameter. The first version of
-// this package tagged every object with one constant value and took the expiry
-// period from CloudFormation, which fixed the defect one level up and left it
-// exactly as it was one level down.
+// This is the piece that makes RetentionDays act rather than merely be stored,
+// returned and rendered in the UI — for the TENANT's setting, not merely for a
+// deploy-time stack parameter. Tagging every object with one constant value and
+// taking the expiry period from CloudFormation would bound retention one level
+// up and leave it unbounded one level down.
 package upload
 
 import (

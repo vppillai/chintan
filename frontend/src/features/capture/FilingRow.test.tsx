@@ -239,12 +239,13 @@ describe('the upload this device is still making has a row of its own', () => {
 describe('the filing row is server state, not a JavaScript variable', () => {
   it('renders from one GET /v1/captures, filtered here', async () => {
     /*
-     * This is what makes it survive navigation, reload, and app restart. v1
-     * held the in-flight capture id in a module-level field, so a refresh
-     * stranded the audio with no UI able to find it.
+     * This is what makes it survive navigation, reload, and app restart. An
+     * in-flight capture id held in a module-level field is lost on refresh,
+     * stranding the audio with no UI able to find it.
      *
-     * One request, not four. The card this replaces fired `pending`, `failed`,
-     * `needs_target` and `all` in parallel every four seconds.
+     * One request, not four: polling `pending`, `failed`, `needs_target` and
+     * `all` separately every four seconds would quadruple the traffic for the
+     * same rows.
      */
     const { calls } = mount([capture()]);
 
@@ -277,8 +278,7 @@ describe('the filing row is server state, not a JavaScript variable', () => {
     // Routing and cleaning are one segment to the user — the third.
     expect(strip.querySelectorAll('[data-state="done"]')).toHaveLength(2);
     expect(strip.querySelector('[data-state="active"]')).toHaveTextContent(/filing in progress/i);
-    // No determinate bar: v1 pinned one at 100% and pulsed it, which reads as
-    // stuck.
+    // No determinate bar: one pinned at 100% and pulsing reads as stuck.
     expect(screen.queryByRole('progressbar')).toBeNull();
   });
 
@@ -301,8 +301,8 @@ describe('the filing row is server state, not a JavaScript variable', () => {
 
 describe('a failed capture has a Retry that is actually wired', () => {
   it('calls POST /v1/captures/{id}/retry', async () => {
-    // In v1 the client method for this existed and was called from nowhere, so
-    // a failed capture was a dead end with a toast.
+    // The client method has to be reachable from the UI; a Retry that nothing
+    // calls leaves a failed capture as a dead end with a toast.
     const user = userEvent.setup();
     const { calls } = mount([capture({ id: 'srv-9', status: 'failed', error: 'Timed out' })]);
 
@@ -446,11 +446,9 @@ describe('a terminal capture is something the user can act on', () => {
 /**
  * The routing suggestion the pipeline pays an LLM call for.
  *
- * `SuggestedNoteID` and `SuggestedTitle` have always been computed and stored,
- * and `handler/wire.go` dropped both before the response left the API — so the
- * "where should this go?" prompt could only offer an unranked list of every
- * note the user has, with no indication of what the router thought. v1 led with
- * `Add to "<note>"`.
+ * `SuggestedNoteID` and `SuggestedTitle` are computed, stored and returned by
+ * the API, so the "where should this go?" prompt must lead with what the router
+ * thought rather than an unranked list of every note the user has.
  */
 describe('the row says where it thinks the recording goes', () => {
   it('leads with the note the router proposed', async () => {

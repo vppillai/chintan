@@ -1,7 +1,7 @@
 import type { SVGProps } from 'react';
 
 /**
- * Icons are SVG. No emoji as iconography (spec §5.6).
+ * Icons are SVG. No emoji as iconography.
  *
  * Every icon is `aria-hidden`: the accessible name always comes from the
  * control's own text or `aria-label`, never from the glyph.

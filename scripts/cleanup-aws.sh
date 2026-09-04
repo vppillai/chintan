@@ -8,19 +8,17 @@
 # belonging to chintan-dev-staging and deleting every table in the account whose
 # name happens to start with "chintan-".
 #
-# Two v1 defects are fixed here beyond the naming:
+# Two rules beyond the naming:
 #
-#   * v1 built the stack name as chintan-<instance>, found no such stack because
-#     CI deploys chintan-<instance>-prod, warned, returned — and then went on to
-#     delete /chintan/<instance>/groq_api_key and /chintan/<instance>/llm_api_key
-#     unconditionally. It broke the running application and cleaned up nothing.
-#     Secrets are now deleted only after the stack is actually gone, and only when
-#     no other stack for that instance still needs them.
+#   * The provider secrets (/chintan/<instance>/groq_api_key and
+#     /chintan/<instance>/llm_api_key) are deleted only after the stack is
+#     actually gone, and only when no other stack for that instance still needs
+#     them: deleting them first would break a running application while
+#     cleaning up nothing.
 #
-#   * v1 prompted on stdin with no way to answer. teardown.sh exported
-#     SKIP_CONFIRMATION=true, which this script never read, so an automated
-#     teardown blocked on an invisible prompt. --yes is now a real flag, and
-#     ASSUME_YES is honoured from the environment so a nested run inherits it.
+#   * --yes is a real flag and ASSUME_YES is honoured from the environment so a
+#     nested run (teardown.sh calls this once per stack) inherits it. A script
+#     that blocks on an invisible prompt cannot be automated.
 #
 # Usage:
 #   scripts/cleanup-aws.sh --instance dev [--environment prod] [--region R]
@@ -119,7 +117,7 @@ for g in $LOG_GROUPS; do dim "  log group     $g"; done
 # teardown must not take prod's keys with it.
 # Fail CLOSED. This guard decides whether prod's provider API keys are deleted,
 # so "the enumeration failed" and "there are no siblings" must not look alike.
-# An empty answer from a failed list-stacks call previously read as "nothing
+# An empty answer from a failed list-stacks call must never read as "nothing
 # else uses these secrets, delete them".
 if ! ALL_STACKS="$(list_chintan_stacks)"; then
     die "could not enumerate stacks, so it is not known whether /chintan/${INSTANCE}/* is still in use — refusing to delete the provider secrets"

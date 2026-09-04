@@ -15,8 +15,8 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// v1 truncated snippets with body[:500], a byte slice. Anything non-ASCII in the
-// 500th byte was cut in half, and the invalid UTF-8 went into DynamoDB and then
+// Truncating a snippet with body[:500], a byte slice, cuts anything non-ASCII
+// at the 500th byte in half, and the invalid UTF-8 goes into DynamoDB and then
 // into the routing prompt.
 func TestSnippetTruncationDoesNotCorruptMultiByteText(t *testing.T) {
 	ctx := context.Background()
@@ -93,9 +93,9 @@ func (o *failingDeleteObjects) Delete(ctx context.Context, key string) error {
 	return o.Objects.Delete(ctx, key)
 }
 
-// v1 logged and ignored every cascade failure and then deleted the note index
-// anyway, so the UI reported "purged" while the audio survived in S3 with
-// nothing left pointing at it.
+// Logging a cascade failure and deleting the note index anyway would have the
+// UI report "purged" while the audio survived in S3 with nothing left pointing
+// at it.
 func TestPermanentDeleteFailsLoudlyAndLeavesTheNoteForRetry(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewStore()

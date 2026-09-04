@@ -9,17 +9,17 @@
  * update strategy that does *not* call `skipWaiting`. Owning ~130 lines is
  * cheaper than working around a generator for each of them.
  *
- * Two rules, each fixing something v1 got wrong:
+ * Two rules:
  *
- * 1. **Network-first for navigations.** v1 was cache-first including its
- *    generated `config.js`, so recreating the stack permanently bricked every
- *    installed client — the app kept serving a config pointing at an API that
- *    no longer existed, with no path to self-heal.
- * 2. **One update strategy.** v1 called `skipWaiting()` and `clients.claim()`
- *    on install *and* showed a "refresh to update" toast, so a session could be
- *    served half the old bundle and half the new one. Here the new worker waits
- *    until the user accepts; `skipWaiting` runs only in response to that
- *    explicit message.
+ * 1. **Network-first for navigations.** A cache-first shell pins every
+ *    installed client to whatever configuration it last fetched; recreating
+ *    the stack would then leave the app serving a config pointing at an API
+ *    that no longer exists, with no path to self-heal.
+ * 2. **One update strategy.** The new worker waits until the user accepts;
+ *    `skipWaiting` runs only in response to that explicit message. Calling
+ *    `skipWaiting()` and `clients.claim()` at install while also showing a
+ *    "refresh to update" prompt would let a session be served half the old
+ *    bundle and half the new one.
  *
  * There is deliberately no Background Sync here. The worker has no session and
  * no API client, so all a `sync` event could ever do was post a message to an
@@ -142,8 +142,7 @@ self.addEventListener('fetch', (event: FetchEvent) => {
 
   // API traffic is never cached by the worker. The app's own IndexedDB is the
   // offline store, and it knows what is stale; an opaque HTTP cache in front of
-  // it would serve stale notes with no way to label them as such — which is
-  // exactly the X-Offline header v1 set and nothing read.
+  // it would serve stale notes with no way to label them as such.
   if (url.pathname.startsWith('/v1/')) return;
 
   // Cross-origin (presigned S3 audio, Cognito) is left alone.

@@ -2,15 +2,14 @@
 // deadline has passed: the S3 objects it and its captures name, and then the
 // row itself.
 //
-// Archiving a note stamps it with a deadline thirty days out. Before this
-// existed the row was left to DynamoDB TTL, and TTL deletes the index row and
-// nothing else — so an archived note reaching its deadline lost its row and
-// kept every object it named: audio, raw transcript, routed transcript, cleaned
-// text, segments and peaks, billed monthly, referenced by nothing and reachable
-// by nothing. The first fix was a second Lambda on the table's stream, acting
-// on the REMOVE record TTL produced; the 2026-09-03 review found that a
-// function, an event-source mapping, a dead-letter queue, two alarms and a
-// stream to keep for what is one scan and one cascade a week.
+// Archiving a note stamps it with a deadline thirty days out. DynamoDB TTL
+// alone is not enough: TTL deletes the index row and nothing else, so an
+// archived note reaching its deadline would lose its row and keep every object
+// it named — audio, raw transcript, routed transcript, cleaned text, segments
+// and peaks, billed monthly, referenced by nothing and reachable by nothing. A
+// Lambda on the table's stream acting on the REMOVE record TTL produces would
+// close that too, but costs a function, an event-source mapping, a dead-letter
+// queue, two alarms and a stream for what is one scan and one cascade a week.
 //
 // This is that scan. An EventBridge rule invokes the worker weekly with
 // {"task":"sweep-expired"}; Sweep asks the store for every note past its

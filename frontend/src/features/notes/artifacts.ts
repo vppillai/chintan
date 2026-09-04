@@ -4,9 +4,9 @@
  *
  * All three are fetched through short-lived presigned URLs from
  * `GET /v1/captures/{id}/download?kind=…`. The URLs are never navigated to —
- * they feed an `<audio>` element and two `fetch` calls. v1 opened the audio URL
- * with `window.open`, which either downloaded the file or navigated the user
- * out of the app, losing whatever they were doing.
+ * they feed an `<audio>` element and two `fetch` calls. Opening the audio URL
+ * with `window.open` would either download the file or navigate the user out
+ * of the app, losing whatever they were doing.
  */
 
 import type { ChintanApi } from '@/api/endpoints.ts';
@@ -135,10 +135,10 @@ export interface CaptureArtifacts {
 /**
  * Loads everything the player needs for one capture.
  *
- * Peaks and segments are optional by contract: captures recorded before v2 have
- * neither, and `has_peaks` / `has_segments` say so. A missing artifact
- * downgrades to a plain player rather than failing the screen — there is no
- * backfill and there never will be.
+ * Peaks and segments are optional by contract: captures recorded before
+ * segments and peaks were stored have neither, and `has_peaks` / `has_segments`
+ * say so. A missing artifact downgrades to a plain player rather than failing
+ * the screen — there is no backfill and there never will be.
  */
 export async function loadCaptureArtifacts(
   api: ChintanApi,

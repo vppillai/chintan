@@ -16,10 +16,9 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
-// The v1 tests here asserted that userPK("user123") == "USER#user123" and that
-// calling it twice returned the same string. Nothing they covered could break.
 // These exercise the behaviour that actually loses data: pagination, cursors,
-// conditional writes, index usage, and idempotency.
+// conditional writes, index usage, and idempotency. Asserting key formats
+// (userPK("user123") == "USER#user123") covers nothing that can break.
 
 const tableName = "chintan-test"
 
@@ -806,11 +805,12 @@ func (d *putRetryingDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInp
 	return d.fakeDynamo.PutItem(ctx, in, opts...)
 }
 
-// TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted: a note written by
-// v1 is nothing but a `data` blob, so the projected read returns only its key,
-// and the list has to fetch it whole rather than drop it. No migration is
-// needed to make it appear — which is the point of ordering in Go rather than
-// through an index that only holds items carrying its key attributes.
+// TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted: a note written
+// before attributes were promoted is nothing but a `data` blob, so the
+// projected read returns only its key, and the list has to fetch it whole
+// rather than drop it. No migration is needed to make it appear — which is the
+// point of ordering in Go rather than through an index that only holds items
+// carrying its key attributes.
 func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 	api := newFakeDynamo()
 	store := repository.NewDynamoStore(api, tableName)
@@ -932,12 +932,12 @@ func noteFieldDiffs(want, got model.NoteIndex) []string {
 
 // A note read back has to be the note that was written, field for field.
 //
-// The v1 assertions here checked ID, Title and Version only, which is why
-// `verbatim` and `created_at` could be dropped on every single read without a
-// test noticing: the store rebuilt the model from promoted attributes and those
-// two were never promoted. `verbatim` in particular is the flag that says "do
-// not reword this dictation", so losing it silently sends content through
-// cleanup the user explicitly excluded.
+// Checking ID, Title and Version alone would let `verbatim` and `created_at` be
+// dropped on every single read without a test noticing: a store that rebuilds
+// the model from promoted attributes loses any field it never promoted.
+// `verbatim` in particular is the flag that says "do not reword this
+// dictation", so losing it silently sends content through cleanup the user
+// explicitly excluded.
 func TestNoteRoundTripPreservesEveryField(t *testing.T) {
 	eachStore(t, func(t *testing.T) {
 		store := newStore()

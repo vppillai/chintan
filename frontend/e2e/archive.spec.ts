@@ -3,15 +3,15 @@ import { expect, test } from './fixtures.ts';
 /**
  * Removing a note: archive, see the archive, restore, delete forever.
  *
- * v2 shipped append-only. The backend served all four operations, `endpoints.ts`
- * wrapped all four, and not one was wired to a control — so every mis-dictated
- * note, every duplicate the router created and every private thing said by
- * accident was permanent and always on the list. The note screen even told the
- * user a note "may have been archived or purged", describing two states the UI
- * could neither produce nor show.
+ * All four operations the backend serves and `endpoints.ts` wraps must be
+ * reachable from a control. Without them the app is append-only: every
+ * mis-dictated note, every duplicate the router creates and every private
+ * thing said by accident is permanent and always on the list, while the note
+ * screen's "may have been archived or purged" describes two states the UI can
+ * neither produce nor show.
  *
- * These run against the stubbed API in `fixtures.ts`, which now implements the
- * same four operations `openapi.yaml` declares.
+ * These run against the stubbed API in `fixtures.ts`, which implements the same
+ * four operations `openapi.yaml` declares.
  */
 
 test('a note can be archived from its own screen', async ({ page, api }) => {
@@ -49,8 +49,8 @@ test('the archive is a chip on the library, and says when each note is purged', 
   // Active notes are not in here.
   await expect(page.getByRole('button', { name: /roof repair/i })).toHaveCount(0);
 
-  // v1 rendered "Deletes in NaN days" whenever `purge_after` was absent, which
-  // is every note archived before retention was configured.
+  // An absent `purge_after` — every note archived before retention was
+  // configured — must read as "no deletion date", never "Deletes in NaN days".
   await expect(page.locator('.screen')).not.toContainText('NaN');
   await expect(page.getByText(/deletes in/i).first()).toBeVisible();
   await expect(page.getByText(/no deletion date/i)).toBeVisible();

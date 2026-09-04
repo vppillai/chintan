@@ -7,11 +7,10 @@
 # The agent principal, its permissions boundary, the deny policies, the CloudTrail
 # trail and the CloudTrail bucket are created by scripts/bootstrap-agent.sh and
 # are deliberately out of scope here. They are the record of what was done to the
-# account, including by this script. v1 swept for buckets whose name began with
-# "chintan-" and emptied every match, which included
-# chintan-cloudtrail-<account>-<region>: the first thing teardown did was destroy
-# the audit trail that would have shown what teardown did. Removing the agent
-# principal is a deliberate, separate, human act.
+# account, including by this script: a sweep by name prefix would match
+# chintan-cloudtrail-<account>-<region> and destroy that record first, before
+# it could show anything. Removing the agent principal is a deliberate,
+# separate, human act.
 #
 # HOW RESOURCES ARE FOUND
 #
@@ -20,10 +19,10 @@
 # deleted because its name looked like ours.
 #
 # A chintan-* stack whose name does not parse as chintan-<instance>-<environment>
-# is reported and skipped rather than guessed at. v1 stripped only "chintan-" from
-# "chintan-dev-prod", derived the instance name "dev-prod", and deleted SSM
-# parameters under /chintan/dev-prod/ — a path that had never existed — leaving the
-# live keys at /chintan/dev/ untouched while reporting success.
+# is reported and skipped rather than guessed at. A guessed instance name —
+# "dev-prod" from "chintan-dev-prod" — would delete SSM parameters under a path
+# that never existed and leave the live keys at /chintan/dev/ untouched while
+# reporting success.
 #
 # Usage:
 #   scripts/teardown.sh [--region R] [--yes] [--apply]
@@ -161,7 +160,8 @@ fi
 # Anything left that carries the chintan- prefix but belonged to no stack is
 # REPORTED, never deleted. An orphan means CloudFormation lost track of a
 # resource, and the right response to that is a human look, not a wider blast
-# radius. This is the section that used to delete the audit bucket.
+# radius. A prefix sweep here would match the audit bucket, which belongs to no
+# stack by design.
 
 log ""
 info "orphan report (nothing below is deleted)"

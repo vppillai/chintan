@@ -12,9 +12,10 @@ import (
 //
 // It deliberately does NOT advertise the tagging header. Returning a header the
 // signature does not cover would produce a 403 on every upload; returning it and
-// having S3 ignore it would silently lose retention, which is the v1 defect this
-// work exists to close. Failing to tag loudly beats failing to tag quietly, so
-// this type is for the in-memory store in tests and for local development only.
+// having S3 ignore it would silently lose retention, which is the defect this
+// package exists to close. Failing to tag loudly beats failing to tag quietly,
+// so this type is for the in-memory store in tests and for local development
+// only.
 type ObjectsPresigner struct {
 	objects repository.Objects
 	now     func() time.Time

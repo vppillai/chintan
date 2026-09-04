@@ -6,10 +6,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * Not a plain `<a href download>`: the audio lives behind a presigned,
  * cross-origin S3 URL, and the `download` attribute is silently ignored on a
  * cross-origin link with no `Content-Disposition: attachment` — clicking one
- * just plays or displays the resource instead of saving it, which is exactly
- * the failure mode `Player`'s own doc comment already names for v1's
- * `window.open`. Fetching the bytes and downloading a same-origin `blob:` URL
- * is what actually works regardless of origin.
+ * just plays or displays the resource instead of saving it — the same failure
+ * mode `Player`'s own doc comment names for `window.open`. Fetching the bytes
+ * and downloading a same-origin `blob:` URL is what actually works regardless
+ * of origin.
  *
  * Mirrors `CopyButton`'s idle/settled state machine on purpose: this screen
  * already teaches "click, then read the one line below the button" for

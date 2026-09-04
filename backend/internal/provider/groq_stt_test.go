@@ -283,10 +283,10 @@ func TestGroqSTTFetchesFromAPresignedURL(t *testing.T) {
 // that were ever outstanding — produced by the source but not yet consumed by
 // the destination.
 //
-// This is the property that matters. v1 read the whole object into a []byte and
-// then wrote it into a bytes.Buffer, so the outstanding window was the whole
-// file and the Lambda heap was the real cap on recording length. Streaming keeps
-// the window at one copy buffer no matter how long the recording is.
+// This is the property that matters. Reading the whole object into a []byte and
+// writing it into a bytes.Buffer makes the outstanding window the whole file,
+// and the Lambda heap the real cap on recording length. Streaming keeps the
+// window at one copy buffer no matter how long the recording is.
 type windowedReader struct {
 	remaining int64
 	produced  *atomic.Int64

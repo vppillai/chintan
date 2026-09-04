@@ -167,7 +167,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("settings", "SettingsWire", "GET /v1/settings → 200, the defaults a new tenant gets",
 		h.do(t, http.MethodGet, "/v1/settings", contractUser, nil))
 	add("settingsStored", "SettingsWire",
-		"PUT /v1/settings → 200. This is what was STORED, not what was sent: v1 echoed the request back and hid every coercion.",
+		"PUT /v1/settings → 200. The body is what was STORED, not what was sent, so a coerced value is visible to the client.",
 		h.do(t, http.MethodPut, "/v1/settings", contractUser, map[string]any{
 			"cleanup_mode": "polished", "retention_days": 30, "theme": "nocturne",
 		}))
@@ -197,7 +197,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		PeaksKey:    "tenants/user1/captures/c_note_1/peaks.json",
 	})
 
-	add("notesPage", "Page<NoteWire>", "GET /v1/notes → 200. The envelope is {items, cursor}; a bare array plus X-Next-Cursor was the v1 shape and is gone.",
+	add("notesPage", "Page<NoteWire>", "GET /v1/notes → 200. The envelope is {items, cursor}; the cursor is in the body, never in a header.",
 		h.do(t, http.MethodGet, "/v1/notes", contractUser, nil))
 	add("notesPageWithSearchText", "Page<NoteWire>",
 		"GET /v1/notes?include=search_text → 200. Each item carries search_text, the lowercased body the server searches, so an offline corpus can match what GET /v1/search matches. Absent without the include.",
@@ -232,11 +232,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		ID: "c_needs_target", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedTitle: "Kitchen rebuild", RouteConfidence: 0.41,
 	})
-	// The other half of a routing suggestion, and the one v1 led with: an
-	// existing note the router named but was not confident enough to write to
-	// unasked. Exactly one of the two fields is ever set, so a fixture carrying
-	// only SuggestedTitle would leave the frontend's handling of this branch
-	// unchecked.
+	// The other half of a routing suggestion: an existing note the router named
+	// but was not confident enough to write to unasked. Exactly one of the two
+	// fields is ever set, so a fixture carrying only SuggestedTitle would leave
+	// the frontend's handling of this branch unchecked.
 	//
 	// The destination is written with a fixed id rather than through
 	// createNote, whose ids embed the creation instant: a fixture is compared

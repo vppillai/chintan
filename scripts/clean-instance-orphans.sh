@@ -18,9 +18,10 @@
 # That guardrail is correct and this script does not work around it: it is run by
 # a human with elevated credentials, like scripts/bootstrap-agent.sh.
 #
-# An earlier attempt put this cleanup inside scripts/deploy.sh. Every call was
-# denied, every denial was swallowed by `|| true`, and the deploy reported that
-# it had cleaned up. Silent failure was worse than no attempt.
+# It is not folded into scripts/deploy.sh because CI runs under that boundary:
+# every delete from there is denied, and a deploy that swallowed the denials
+# would report a cleanup that did not happen. Silent failure is worse than no
+# attempt.
 #
 # Usage:
 #   scripts/clean-instance-orphans.sh --instance dev --environment staging

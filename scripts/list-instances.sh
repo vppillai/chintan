@@ -2,15 +2,12 @@
 #
 # Resolve config/instances/*.yaml into the deployment matrix.
 #
-# Until now nothing read these files. The deploy workflow used only the FILENAME
-# and hardcoded Environment=prod, and the README documented a schema
-# (aws_region, allowed_origin, llm_model) that no file used and no code consumed.
-# A config that nothing reads is documentation that cannot go stale because it was
-# never true.
-#
-# This script is the one reader. Both deploy workflows call it, so a field added
-# here is a field that reaches CloudFormation, and a field removed from a config
-# breaks the deploy rather than being silently ignored.
+# This script is the one reader of config/instances/*.yaml. Both deploy
+# workflows call it, so a field added here is a field that reaches
+# CloudFormation, and a field removed from a config breaks the deploy rather
+# than being silently ignored. A config that nothing reads is documentation that
+# cannot go stale because it was never true; a single reader is what keeps the
+# schema below honest.
 #
 # Schema — every field except `name` has a default:
 #
@@ -27,7 +24,6 @@
 #
 #   alarm_email                    subscribed to the alarm topic and the budget
 #   monthly_budget_usd             AWS Budgets limit for this stack
-#   retention_days                 audio expiry; 0 or absent means indefinite
 #   log_retention_days             CloudWatch retention
 #   daily_spend_cap_micros         INSTANCE-WIDE daily provider spend ceiling,
 #                                  in MICRODOLLARS (1000000 = $1); 0 or absent

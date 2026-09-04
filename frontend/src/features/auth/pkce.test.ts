@@ -11,8 +11,8 @@ import {
 describe('the flow is seeded from a CSPRNG, not Math.random', () => {
   it('draws the verifier from crypto.getRandomValues', () => {
     /*
-     * v1 built its OAuth `state` from `Math.random().toString(36)` — a
-     * predictable PRNG, seeded per page load — which makes the one parameter
+     * `Math.random().toString(36)` is a predictable PRNG, seeded per page
+     * load; drawing the verifier or `state` from it makes the one parameter
      * whose whole job is to be unguessable, guessable.
      */
     const random = vi.spyOn(Math, 'random');

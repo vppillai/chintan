@@ -19,9 +19,8 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
-// DynamoAPI is the seam that makes DynamoStore testable. The v1 store held a
-// concrete *dynamodb.Client, which made the whole type untestable by
-// construction.
+// DynamoAPI is the seam that makes DynamoStore testable. Holding a concrete
+// *dynamodb.Client would make the whole type untestable by construction.
 type DynamoAPI interface {
 	GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	PutItem(ctx context.Context, in *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
@@ -612,7 +611,7 @@ func (s *DynamoStore) GetNote(ctx context.Context, tenantID, noteID string) (mod
 }
 
 // PutNote writes conditionally on the version the caller read. An unconditional
-// PutItem is how v1 lost a voice append that landed while the editor was open.
+// PutItem loses a voice append that lands while the editor is open.
 func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.NoteIndex) (model.NoteIndex, error) {
 	if err := ctx.Err(); err != nil {
 		return model.NoteIndex{}, err
@@ -814,9 +813,9 @@ func (s *DynamoStore) GetCapture(ctx context.Context, tenantID, captureID string
 	return c, nil
 }
 
-// ListCapturesByNote queries GSI1 for exactly this note's captures. v1 read the
-// tenant's entire capture partition and filtered in Go, so cost grew with total
-// captures rather than captures for this note.
+// ListCapturesByNote queries GSI1 for exactly this note's captures. Reading the
+// tenant's entire capture partition and filtering in Go would make cost grow
+// with total captures rather than captures for this note.
 //
 // GSI1 is an INCLUDE projection — deliberately not ALL, because ALL would carry
 // the `data` blob, the largest attribute on the item and the whole cost the

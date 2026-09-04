@@ -23,11 +23,9 @@ describe('the offline banner only claims data that is really there', () => {
   it('does not say "showing saved notes" on an offline cold start', async () => {
     /*
      * There is no query persister, so an offline cold start has an empty cache.
-     * The banner said "Offline — showing saved notes." unconditionally, which
-     * on the notes screen put it directly above "You are offline and no notes
-     * are cached on this device yet." Its own doc comment criticises v1 for
-     * presenting stale data as live data; this presented absent data as saved
-     * data.
+     * An unconditional "Offline — showing saved notes." would sit, on the notes
+     * screen, directly above "You are offline and no notes are cached on this
+     * device yet." — absent data presented as saved data.
      */
     goOffline();
     render(

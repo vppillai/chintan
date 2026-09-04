@@ -232,8 +232,8 @@ func TestSetCaptureTarget(t *testing.T) {
 	})
 }
 
-// segments and peaks are the two kinds v1 could not serve, and they are what
-// tap-to-seek and the waveform read.
+// segments and peaks are the two kinds tap-to-seek and the waveform read, so
+// download has to serve them alongside the audio and the transcripts.
 func TestDownloadServesEveryKind(t *testing.T) {
 	h := newHarness(t)
 	note := h.createNote(t, "user1", "Playback", nil)
@@ -269,9 +269,10 @@ func TestDownloadServesEveryKind(t *testing.T) {
 		}
 	})
 
-	// A capture recorded before v2 has neither artifact. The client renders a
-	// plain player rather than an empty waveform.
-	t.Run("a pre-v2 capture reports the artifact absent", func(t *testing.T) {
+	// A capture recorded before segments and peaks were stored has neither
+	// artifact; the client renders a plain player rather than an empty
+	// waveform.
+	t.Run("a capture without stored artifacts reports them absent", func(t *testing.T) {
 		old := h.putCapture(t, model.CaptureIndex{
 			ID: "c_old", UserID: "user1", NoteID: note.ID, Status: model.StatusAppended,
 			CreatedAt: model.Now(), AudioKey: "tenants/user1/captures/c_old/audio.webm",
@@ -284,7 +285,7 @@ func TestDownloadServesEveryKind(t *testing.T) {
 		detail := h.do(t, http.MethodGet, "/v1/captures/"+old.ID, "user1", nil)
 		decodeInto(t, detail, &got)
 		if got.HasSegments || got.HasPeaks {
-			t.Errorf("a pre-v2 capture claims artifacts it has not got: %+v", got)
+			t.Errorf("a capture without stored artifacts claims to have them: %+v", got)
 		}
 	})
 }

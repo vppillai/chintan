@@ -75,8 +75,8 @@ export interface RecorderSession {
  * Drives one recording from microphone request to final chunk.
  *
  * Deliberately not a React hook: a recording must outlive any particular
- * component, and tying its lifetime to a render tree is how v1 lost recordings
- * on navigation.
+ * component, and tying its lifetime to a render tree loses the recording on
+ * navigation.
  */
 export class RecorderController {
   private stream: MediaStream | null = null;
@@ -260,8 +260,8 @@ export class RecorderController {
     };
 
     recorder.onerror = () => {
-      // v1 registered no error handler at all, so an encoder fault presented
-      // as a timer that kept counting over a dead recorder.
+      // Without this handler an encoder fault presents as a timer that keeps
+      // counting over a dead recorder.
       this.emit({ type: 'recorderError' });
       void this.stop();
     };
@@ -369,8 +369,8 @@ export class RecorderController {
 
   private attachTrackHandlers(stream: MediaStream): void {
     for (const track of stream.getAudioTracks()) {
-      // An incoming call ends the track. v1 handled neither of these, so the
-      // recording truncated in silence while the UI kept counting up.
+      // An incoming call ends the track. Left unhandled, the recording
+      // truncates in silence while the UI keeps counting up.
       track.addEventListener('ended', () => {
         this.emit({ type: 'trackEnded', now: this.deps.now() });
         void this.stop();

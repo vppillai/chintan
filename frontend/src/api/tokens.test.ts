@@ -33,9 +33,8 @@ describe('tokenSetFromWire — the one place snake_case is read', () => {
   });
 
   it('carries the previous refresh token forward when the response omits it', () => {
-    // This is the v1 defect in miniature: Cognito's refresh grant does not
-    // return a refresh_token, and dropping it logs the user out one window
-    // later, apparently at random.
+    // Cognito's refresh grant does not return a refresh_token, and dropping it
+    // logs the user out one window later, apparently at random.
     const previous = tokenSetFromWire(WIRE, NOW);
     const refreshed = tokenSetFromWire(
       { id_token: 'id-2', access_token: 'access-2', expires_in: 3600, token_type: 'Bearer' },

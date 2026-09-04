@@ -2,8 +2,8 @@
  * How long an archived note has left.
  *
  * `purge_after` is optional in the contract — a note archived before an
- * instance had retention configured carries none — and v1 fed the absent value
- * straight into arithmetic and rendered **"Deletes in NaN days"** on the
+ * instance had retention configured carries none — and feeding the absent
+ * value straight into arithmetic renders **"Deletes in NaN days"** on the
  * archive list. The absence is a real state with a real answer ("no deletion
  * date"), so it is modelled rather than divided by.
  *

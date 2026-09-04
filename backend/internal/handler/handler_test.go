@@ -28,7 +28,7 @@ func TestHealthIsLiveness(t *testing.T) {
 	}
 }
 
-// Readiness is a real probe, not the static answer v1 served for both questions.
+// Readiness is a real probe, not one static answer serving both questions.
 func TestReadinessProbesDependencies(t *testing.T) {
 	t.Run("reachable", func(t *testing.T) {
 		h := newHarness(t)
@@ -112,8 +112,8 @@ func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
 		}
 	})
 
-	// v1 stored whatever it was sent and echoed the request back, so a value the
-	// server did not understand looked accepted.
+	// Storing whatever is sent and echoing the request back would make a value
+	// the server did not understand look accepted.
 	t.Run("an unknown value is refused, not coerced silently", func(t *testing.T) {
 		for _, body := range []map[string]any{
 			{"theme": "purple"},
@@ -467,8 +467,8 @@ func TestMethodNotAllowedSetsAllow(t *testing.T) {
 	}
 }
 
-// Every error on this API is problem+json. v1 had four shapes, two of which were
-// not JSON at all.
+// Every error on this API is problem+json, including the two statuses ServeMux
+// produces by itself; a client parses one shape, never several.
 func TestUnknownRoutesUseTheOneErrorEnvelope(t *testing.T) {
 	h := newHarness(t)
 	w := h.do(t, http.MethodGet, "/v1/nope", "user1", nil)

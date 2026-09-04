@@ -220,10 +220,9 @@ test('a failed capture offers a retry that reaches the API', async ({ page, api 
  * Where the app thinks a recording goes.
  *
  * The pipeline pays for an LLM routing call and stores its answer on the
- * capture; `handler/wire.go` dropped `suggested_note_id` and `suggested_title`
- * before the response left the API, and neither field was in `openapi.yaml`. So
- * the "where should this go?" prompt could only offer an unranked list of every
- * note the user owns. v1 led with `Add to "<note>"`.
+ * capture as `suggested_note_id` / `suggested_title`, both declared in
+ * `openapi.yaml`. The "where should this go?" prompt leads with that answer
+ * rather than an unranked list of every note the user owns.
  */
 test('leads with the note the router picked, and files into it', async ({ page, api }) => {
   api.captures.push({

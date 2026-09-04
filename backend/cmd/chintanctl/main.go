@@ -1,11 +1,10 @@
 // Command chintanctl is the operator CLI for a Chintan instance.
 //
 // It exists because DynamoDB has point-in-time recovery and S3 has nothing:
-// before this command there was no backup, no export and no recovery path for
-// the notes, transcripts and audio that are the product. That is the audit
-// finding it closes (docs/audit/2026-08-07-production-readiness-audit.md §5)
-// and the success criterion it satisfies — "every note, transcript, and audio
-// file is recoverable through chintanctl export without console access".
+// without this command there is no backup, no export and no recovery path for
+// the notes, transcripts and audio that are the product. The criterion it
+// satisfies: every note, transcript, and audio file is recoverable through
+// chintanctl export without console access.
 //
 //	chintanctl export    --instance <name> --out <dir|tar.gz>
 //	chintanctl backup    --instance <name> --out <dir>

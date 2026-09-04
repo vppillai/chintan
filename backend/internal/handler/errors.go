@@ -11,10 +11,10 @@ import (
 
 // fail maps a domain error to a status code.
 //
-// This is the only place the mapping exists. v1 spread it across eight
-// strings.Contains(err.Error(), "not found") checks, which meant that rewording
-// an error message silently changed an HTTP status code — and that a wrapped
-// error mentioning a missing S3 object turned an unrelated failure into a 404.
+// This is the only place the mapping exists, and it never inspects error text.
+// A strings.Contains(err.Error(), "not found") check means rewording an error
+// message silently changes an HTTP status code — and a wrapped error mentioning
+// a missing S3 object turns an unrelated failure into a 404.
 //
 // Every arm matches a typed sentinel with errors.Is, so wrapping is safe and
 // the compiler notices when a sentinel is removed. Anything unrecognised is a

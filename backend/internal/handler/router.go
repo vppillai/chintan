@@ -16,9 +16,8 @@ import (
 	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
-// APIPrefix is the one place the version lives. v1 hardcoded "/v1" in three
-// separate hand-parsed path splitters, so moving the version meant finding all
-// three.
+// APIPrefix is the one place the version lives. Hardcoding "/v1" into more than
+// one path pattern makes moving the version a hunt for every copy.
 const APIPrefix = "/v1"
 
 // Deps is everything the HTTP surface needs.
@@ -148,9 +147,9 @@ func (rt *router) bodyLimit(r *http.Request) int64 {
 // error envelope.
 //
 // ServeMux produces both by itself — and produces the Allow header on 405,
-// which RFC 9110 requires and no v1 handler set. Rewriting the body here keeps
-// that behaviour and stops the API having a fifth error shape for exactly the
-// two statuses a client is most likely to meet by accident.
+// which RFC 9110 requires. Rewriting the body here keeps that behaviour and
+// stops the API having a second error shape for exactly the two statuses a
+// client is most likely to meet by accident.
 func problemFallback(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(&fallbackWriter{ResponseWriter: w, request: r}, r)

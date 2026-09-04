@@ -329,7 +329,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     void saveRef.current();
   }, []);
 
-  // The safety net v1 had no equivalent of. It only fires when work is
+  // The safety net for a tab closed mid-edit. It only fires when work is
   // genuinely unsaved, so it never nags on a clean note.
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {

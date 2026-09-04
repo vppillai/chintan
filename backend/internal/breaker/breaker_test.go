@@ -158,10 +158,9 @@ func TestDoReconcilesUnderAndOverEstimates(t *testing.T) {
 }
 
 // A completion is charged for its output tokens as well as its input tokens.
-// The 2026-09-03 review found the pipeline reporting only input, so cleanup —
-// whose output is about as long as its input and priced four times higher —
-// was understated roughly five-fold, and the cap bound at a fraction of the
-// dollars the operator set.
+// Pricing input alone understates cleanup — whose output is about as long as
+// its input and priced four times higher — roughly five-fold, so the cap would
+// bind at a fraction of the dollars the operator set.
 func TestDoPricesOutputTokensToo(t *testing.T) {
 	counter := newMemCounter()
 	b := newTestBreaker(counter, 0)

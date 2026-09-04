@@ -1,26 +1,27 @@
 // Package httperr writes the one error envelope this API has.
 //
 // It is RFC 9457 `application/problem+json`, and it is the only shape a non-2xx
-// response takes. v1 had four on the same API: a bare `{"error":…}`, text/plain
-// from http.Error, "404 page not found" from http.NotFound, and empty-body bare
-// statuses. A client had to parse all four to find out what went wrong.
+// response takes. Nothing writes a bare `{"error":…}`, text/plain from
+// http.Error, "404 page not found" from http.NotFound, or an empty-body bare
+// status: a client that has to parse several shapes to find out what went wrong
+// will get one of them wrong.
 //
 // Two rules hold here and are the reason the package exists:
 //
-//  1. Infrastructure error text is logged, never serialised. v1's WriteJSON put
-//     err.Error() on the wire, which shipped wrapped DynamoDB and S3 messages —
-//     including table and bucket names — to anyone who could provoke a failure.
+//  1. Infrastructure error text is logged, never serialised. Putting
+//     err.Error() on the wire ships wrapped DynamoDB and S3 messages —
+//     including table and bucket names — to anyone who can provoke a failure.
 //     Detail is a sentence written for a person, chosen by the caller.
 //
-//  2. Every 500 logs. v1's InternalServerError took an error parameter and
-//     discarded it, so the most serious class of failure produced no log line at
-//     all. Here the error is logged with the request's correlation id, which is
-//     also returned to the client so a user can quote it.
+//  2. Every 500 logs. An InternalServerError that discards its error parameter
+//     leaves the most serious class of failure with no log line at all. Here
+//     the error is logged with the request's correlation id, which is also
+//     returned to the client so a user can quote it.
 //
 // The package deliberately imports no repository or service package. Mapping a
 // domain error to a status code is the handler's job and happens in exactly one
 // place; a layering inversion here — httperr reaching into repository to
-// recognise ErrNotFound, as v1 did — puts that decision in two.
+// recognise ErrNotFound — puts that decision in two.
 package httperr
 
 import (

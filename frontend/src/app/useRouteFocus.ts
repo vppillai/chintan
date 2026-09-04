@@ -2,7 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { useLocation } from 'react-router';
 
 /**
- * Moves focus to the routed region on navigation (spec §5.7).
+ * Moves focus to the routed region on navigation.
  *
  * Without this a screen reader stays parked wherever the user tapped and a
  * keyboard user's next Tab resumes at the top of the document, which in a

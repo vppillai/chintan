@@ -218,8 +218,8 @@ describe('a 401 refreshes before anything reaches the user', () => {
   });
 
   it('never touches window.location', async () => {
-    // v1 did `window.location.reload()` two seconds after any 401, destroying
-    // unsaved edits and in-flight recordings.
+    // A `window.location.reload()` after a 401 would destroy unsaved edits and
+    // in-flight recordings.
     const reload = vi.fn();
     const assign = vi.fn();
     vi.stubGlobal('location', { ...window.location, reload, assign });
@@ -371,8 +371,8 @@ describe('retry and errors', () => {
   });
 
   it('does not surface an upstream HTML body as an error message', async () => {
-    // v1 rendered raw upstream bodies, which is how DynamoDB table names
-    // reached the screen.
+    // Rendering raw upstream bodies is how DynamoDB table names reach the
+    // screen.
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>
         new Response('<html>ResourceNotFoundException: table chintan-dev-prod</html>', {

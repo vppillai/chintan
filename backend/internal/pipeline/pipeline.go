@@ -348,9 +348,9 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		return err
 	}
 
-	// A presigned GET, not the bytes. v1 pulled the whole object into the Lambda
-	// heap and re-POSTed it, which made the heap — rather than the microphone —
-	// the real cap on how long a recording could be.
+	// A presigned GET, not the bytes. Pulling the whole object into the Lambda
+	// heap and re-POSTing it would make the heap — rather than the microphone —
+	// the real cap on how long a recording can be.
 	audioURL, err := p.cfg.Objects.PresignGet(ctx, capture.AudioKey, audioURLTTL)
 	if err != nil {
 		return fmt.Errorf("pipeline: presign audio: %w", err)
@@ -632,9 +632,9 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 	}
 
 	// Most recently touched notes are the likeliest destinations. Compare parsed
-	// instants: v1 compared RFC3339Nano strings, and Go trims trailing fractional
-	// zeros, so "…:00Z" sorted above "…:00.1Z" because 'Z' > '.' and the router
-	// was handed the wrong fifty notes.
+	// instants, never RFC3339Nano strings: Go trims trailing fractional zeros,
+	// so "…:00Z" sorts above "…:00.1Z" because 'Z' > '.' and the router would
+	// be handed the wrong fifty notes.
 	sort.SliceStable(active, func(i, j int) bool {
 		return noteTouchedAt(active[i]).After(noteTouchedAt(active[j]))
 	})
@@ -839,12 +839,12 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	}
 	cleanedText := string(cleanBytes)
 
-	// The append is the one step that must happen exactly once. v1 appended, then
-	// updated the index, then set the status, with nothing tying the three
-	// together: a failure after the append left the capture in `cleaned`, and the
-	// retry path re-appended the same text.
+	// The append is the one step that must happen exactly once. Append, index
+	// update and status flip are three writes with nothing tying them together:
+	// a failure after the append leaves the capture in `cleaned`, and an
+	// unguarded retry re-appends the same text.
 	//
-	// Two things guard it now, and they do different jobs. The claim is a
+	// Two things guard it, and they do different jobs. The claim is a
 	// mutex: one attempt at a time writes to the note, and a holder that dies
 	// releases it when AppendClaimLease runs out. The marker is the idempotency
 	// guard: appendToNote writes "<!-- chintan:capture:<id> -->" into the body
@@ -973,10 +973,10 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 // appendToNote adds text to the end of a note body under a conditional write,
 // preceded by the capture's marker.
 //
-// v1 did read-concat-write with no concurrency control, so a voice append
-// landing while the editor was saving silently discarded one of the two. Here
-// the write carries the ETag that was read; a lost race re-reads and retries so
-// both edits survive.
+// A bare read-concat-write with no concurrency control silently discards one of
+// a voice append and an editor save that land together. Here the write carries
+// the ETag that was read; a lost race re-reads and retries so both edits
+// survive.
 //
 // The marker and the paragraph go into the body in one PUT, so there is no
 // state in which one is present without the other. The API keeps the marker

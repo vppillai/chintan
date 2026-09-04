@@ -76,7 +76,7 @@ Parameters:
       S3 key for the worker Lambda deployment package, built from
       backend/cmd/worker. Required, and deliberately without a default.
 
-      It used to default to '' and be read as "share LambdaCodeKey with the API
+      An empty default would be read as "share LambdaCodeKey with the API
       function". The API entrypoint is Handler(ctx,
       events.APIGatewayV2HTTPRequest): fed the S3 notification for a recording it
       returns {"statusCode":404} with a nil error, which Lambda reads as a
@@ -209,9 +209,9 @@ Resources:
             Priority: 1
       # Passkeys, natively. The hosted managed-login page offers "sign in with a
       # passkey" once one is registered, and the browser's platform
-      # authenticator (Face ID, Touch ID, Windows Hello) does the rest. This
-      # replaces ~2,600 lines of custom WebAuthn, a sealed refresh-token vault
-      # and an SSM key the app used to carry for the same tap. The relying
+      # authenticator (Face ID, Touch ID, Windows Hello) does the rest. Nothing
+      # in the app implements WebAuthn, holds a refresh-token vault or carries
+      # an SSM key for the same tap: the pool owns the ceremony. The relying
       # party id has to be the domain the ceremony runs on, which is the user
       # pool's managed-login domain — not the Pages host the app is served
       # from; see the PasskeyRelyingPartyID parameter for why it arrives as one.
@@ -331,8 +331,8 @@ Resources:
   # runs on (see UserPoolTier above) and costs nothing extra.
   #
   # Every colour below is a token from frontend/src/styles/tokens.css, whose
-  # contrast ratios were computed rather than estimated after v1 shipped four
-  # tokens that failed AA. Nothing here invents a hue. In particular:
+  # contrast ratios are computed, not estimated: an estimated pair can fail AA
+  # while looking fine. Nothing here invents a hue. In particular:
   #
   #   * The primary button is --color-ink, not --color-accent. shell.css says
   #     the record button is "the only element permitted to use --color-accent",
@@ -920,7 +920,7 @@ Resources:
                     Value: 'tenants/'
                   - Name: suffix
                     Value: '/audio.bin'
-      # §4.9. Retention expires source audio only. The prefix cannot isolate
+      # Retention expires source audio only. The prefix cannot isolate
       # captures either, so the rules are keyed on the object tags the presigned
       # PUT carries; an untagged object is never expired, which fails safe.
       #
@@ -932,13 +932,12 @@ Resources:
       # is the same list on the Go side. TestEveryRetentionTierHasALifecycleRule
       # fails if the two drift.
       #
-      # This replaces a single rule whose period came from a stack parameter,
-      # which meant the per-user `retention_days` setting was validated, stored,
-      # returned and rendered while nothing expired anything on account of it —
-      # the v1 defect, fixed at the instance level and reintroduced at the user
-      # level. An object carrying no chintan-retention tag matches none of these
-      # and is kept indefinitely, which is what a retention of 0 means and is
-      # now the only thing it means.
+      # The rules are keyed on the tag, not on a stack parameter: a single rule
+      # with a stack-wide period would let the per-user `retention_days`
+      # setting be validated, stored, returned and rendered while nothing
+      # expired anything on account of it. An object carrying no
+      # chintan-retention tag matches none of these and is kept indefinitely,
+      # which is what a retention of 0 means and the only thing it means.
       #
       # chintan-processed is the third, newer condition. A capture whose upload
       # event never reached the worker — the S3 notification lost, the worker
@@ -1064,7 +1063,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub 'chintan-lambda-${InstanceName}-${Environment}'
-      # Bound by the same ceiling as the agent so privilege cannot escalate through Lambda (G-046).
+      # Bound by the same ceiling as the agent so privilege cannot escalate through Lambda.
       PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -1425,13 +1424,13 @@ Resources:
   # the row. TTL, set a fortnight after the deadline by the store, is only the
   # backstop for a sweep that did not run.
   #
-  # This replaced a third Lambda function consuming the table's stream, with
-  # its own event-source mapping, dead-letter queue, log group, alias, two
-  # alarms and four stream permissions on the role — ~260 lines of Go and
-  # template for what is one scan and one cascade a week (review 2026-09-03,
-  # §4). A week is the cadence because the objects are already invisible: the
-  # archived list filters on the same deadline, so nothing the user can reach
-  # changes between the deadline and the sweep, only the bucket's bill.
+  # A scheduled task in the existing worker, not a third Lambda function on
+  # the table's stream: a stream consumer brings its own event-source mapping,
+  # dead-letter queue, log group, alias, alarms and stream permissions for
+  # what is one scan and one cascade a week. A week is the cadence because the
+  # objects are already invisible: the archived list filters on the same
+  # deadline, so nothing the user can reach changes between the deadline and
+  # the sweep, only the bucket's bill.
   #
   # The target is the live alias, like every other way into the worker, so a
   # rollback that moves the alias moves the sweep too. The invocation is
@@ -1760,14 +1759,13 @@ Resources:
         - !Ref AlarmTopic
 
   # There are deliberately no Throttles alarms, no worker Errors alarm and no
-  # API 5xx-rate alarm. Cost review 2026-09-03: of ten alarms, five had never
-  # left OK, two fired only while the developer was watching in August, and
-  # twelve of the eighteen e-mails ever sent were OK transitions or creation
-  # notices. The throttles alarms watched a reserved-concurrency ceiling one
-  # browser tab cannot reach; the worker's Errors alarm fired before the DLQ
-  # alarm said the same thing; and the 5xx-rate alarm, an average over a quiet
-  # five minutes, tripped on a single 500 in ten requests. Four remain, and
-  # none notifies on OK.
+  # API 5xx-rate alarm. Each would be an alarm-month billed to say nothing
+  # useful: a throttles alarm watches a reserved-concurrency ceiling one
+  # browser tab cannot reach; a worker Errors alarm fires just before the DLQ
+  # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
+  # five minutes, trips on a single 500 in ten requests. Four alarms exist,
+  # and none notifies on OK: an OK transition is not something anyone needs
+  # an e-mail about.
   #
   # A single message here is one recording the user believes was filed and was
   # not — an asynchronous invocation of the worker failed all three attempts
@@ -1797,16 +1795,14 @@ Resources:
   # ---------------------------------------------------------------------------
   # Provider credentials. A rejected key does not resolve itself and every
   # capture fails the same way until it is replaced, so it is worth an e-mail
-  # on the first occurrence. Provider throttling (429) used to have a sibling
-  # alarm here; it never fired outside development and ordinary throttling
-  # clears on its own, so it is gone.
+  # on the first occurrence. Provider throttling (429) has no alarm: ordinary
+  # throttling clears on its own, and an alarm on it would e-mail about nothing.
   #
   # This reads a DIMENSIONLESS metric. obs.EmitWithRollup publishes the counter
   # under two identities — {Provider} for the answer, and no dimensions for the
-  # alarm — precisely so this can be a plain metric alarm. SpendCapRejectionsAlarm
-  # below does the same; it was once a Metrics Insights query alarm, and that
-  # form is billed per metric analysed with no free tier. See
-  # docs/cost-analysis.md §5.3.
+  # alarm — precisely so this can be a plain metric alarm rather than a Metrics
+  # Insights query alarm, a form that is billed per metric analysed with no
+  # free tier. SpendCapRejectionsAlarm below does the same.
   #
   # Neither the pipeline nor the handler notifies anybody directly. The email is
   # the alarm's own OK -> ALARM transition, which is what makes a revoked key

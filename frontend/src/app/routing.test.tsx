@@ -173,7 +173,7 @@ describe('Back always means back', () => {
     expect(shell()).toHaveAttribute('data-screen', 'library');
   });
 
-  it('seeds the library beneath a cold-start deep link, where v1 would have exited', async () => {
+  it('seeds the library beneath a cold-start deep link so Back stays in the app', async () => {
     // Entering directly at a note gives the app one history entry, so Back
     // would leave the tab. useBackGuard seeds home beneath it.
     const { router } = mount(['/notes/roof-repair']);

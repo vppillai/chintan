@@ -4,16 +4,15 @@
  * Four stores, four jobs:
  *
  *   captureChunks  audio as it is produced, so a crash or a killed tab does not
- *                  lose the recording. v1 accumulated chunks in a JS array,
- *                  which meant the recording existed only in the tab.
+ *                  lose the recording. Chunks accumulated in a JS array exist
+ *                  only in the tab.
  *   captures       per-recording metadata, so the progress card can be rebuilt
  *                  from disk on a cold start.
  *   mutations      the offline mutation queue.
  *   notes          the note corpus, for reading and searching with no
- *                  connection. Spec §5.5 promised this from the start; without
- *                  it, opening a note in a tunnel reported that it "may have
- *                  been archived or purged" — about a note the user had been
- *                  looking at one screen earlier.
+ *                  connection. Without it, opening a note in a tunnel reports
+ *                  that it "may have been archived or purged" — about a note
+ *                  the user was looking at one screen earlier.
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';

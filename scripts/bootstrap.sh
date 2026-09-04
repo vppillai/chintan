@@ -8,15 +8,10 @@
 # anything to deploy, and recovery when the pipeline itself is broken.
 #
 # It targets the SAME stack CI targets — chintan-<instance>-<environment> — so a
-# stack created here is subsequently updated by CI rather than colliding with it.
-# v1 deployed `chintan-dev` while CI deployed `chintan-dev-prod`, and because both
-# templates create identically named physical resources, the second stack failed
-# with AlreadyExists after partially creating the rest.
-#
-# It also queries the bootstrap stack output `LambdaDeploymentBucketName`. v1
-# asked for `LambdaArtifactBucketName`, which infrastructure/bootstrap.yaml has
-# never exported, so the query returned empty and the guard below exited: the
-# script could not succeed on any input.
+# stack created here is subsequently updated by CI rather than colliding with it
+# (both templates create identically named physical resources, so a second
+# stack for the same instance fails with AlreadyExists after partially creating
+# the rest).
 #
 # Usage:
 #   scripts/bootstrap.sh --instance dev --region us-west-2 \
@@ -118,14 +113,14 @@ ok "artifact bucket: $BUCKET"
 # Two packages, not one. cmd/api serves HTTP and cmd/worker runs the capture
 # pipeline; they are separate main packages and must be separate artifacts.
 #
-# This script used to build and upload one zip and pass only LambdaCodeKey,
-# which the template reads as "the worker shares the API zip". The API
-# entrypoint is Handler(ctx, events.APIGatewayV2HTTPRequest): fed the S3
-# notification for a recording it returns {"statusCode":404} with a nil error,
-# which Lambda reads as a successful asynchronous invocation and never retries.
-# No retry, no DLQ message, no Errors datapoint, no alarm — and the
-# GET /v1/health smoke test below still passes, so the deploy reports success
-# while every recording is silently discarded.
+# Both zips are built and both keys are passed; the worker must never be given
+# the API zip. The API entrypoint is Handler(ctx,
+# events.APIGatewayV2HTTPRequest): fed the S3 notification for a recording it
+# returns {"statusCode":404} with a nil error, which Lambda reads as a
+# successful asynchronous invocation and never retries. No retry, no DLQ
+# message, no Errors datapoint, no alarm — and the GET /v1/health smoke test
+# below still passes, so the deploy would report success while every recording
+# is silently discarded.
 info "building the Lambda packages (api and worker)"
 ZIP="$REPO_ROOT/backend/lambda-function.zip"
 WORKER_ZIP="$REPO_ROOT/backend/worker-function.zip"

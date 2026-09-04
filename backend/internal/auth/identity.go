@@ -2,8 +2,8 @@
 //
 // Verification happens in-process even though API Gateway also runs a JWT
 // authorizer. The gateway is not guaranteed to be the only ingress, and it does
-// not strip request headers — the v1 build trusted an `X-User-ID` header over
-// the token precisely because it assumed otherwise.
+// not strip request headers, so nothing here may trust a caller-supplied
+// identity header over the token.
 package auth
 
 import "context"
@@ -11,7 +11,7 @@ import "context"
 // Identity is the authenticated caller.
 //
 // TenantID is the data-ownership boundary and is what storage keys are derived
-// from. In v2 it always equals UserID; making Chintan multi-user means
+// from. For now it always equals UserID; making Chintan multi-user means
 // populating it from a claim instead of the subject, with no storage or API
 // change. Nothing below this package may key data on UserID directly.
 type Identity struct {

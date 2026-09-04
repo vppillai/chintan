@@ -70,10 +70,10 @@ export class Session {
   }
 
   /**
-   * Drops the session. Deliberately does *not* navigate or reload: v1 called
-   * `window.location.reload()` two seconds after any 401, which destroyed
-   * unsaved note edits and killed in-flight recordings. Sign-out is the UI's
-   * decision to make, from a rendered state, not a side effect of a fetch.
+   * Drops the session. Deliberately does *not* navigate or reload: a
+   * `window.location.reload()` after a 401 destroys unsaved note edits and
+   * kills in-flight recordings. Sign-out is the UI's decision to make, from a
+   * rendered state, not a side effect of a fetch.
    */
   clear(): void {
     this.generation += 1;
@@ -156,8 +156,7 @@ export class Session {
  * The real refresher: Cognito's hosted-UI token endpoint, `refresh_token` grant.
  *
  * The response omits `refresh_token`; `tokenSetFromWire` carries the previous
- * one forward. v1 handled that correctly here and then undid it by reading the
- * wrong field elsewhere.
+ * one forward. Dropping it logs the user out one window later.
  */
 export class CognitoRefresher implements TokenRefresher {
   constructor(

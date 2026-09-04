@@ -1,9 +1,9 @@
 /**
  * Capture and UI state (Zustand), deliberately outside React's tree.
  *
- * A recording must survive navigation between screens. Holding it in component
- * state — which is what v1 did, in module-level variables belonging to a page
- * script — is why navigating away mid-capture lost the recording.
+ * A recording must survive navigation between screens. Held in component state
+ * or in variables belonging to a page script, it is lost the moment the user
+ * navigates away mid-capture.
  */
 
 import { create } from 'zustand';

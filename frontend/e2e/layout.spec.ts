@@ -7,9 +7,8 @@ import { expect, test, type ApiState } from './fixtures.ts';
 /**
  * Layout regressions, measured rather than eyeballed.
  *
- * Every assertion here exists because the running app failed it. The owner
- * reported "partially overlapping" UI; the audit in docs/ui-audit.md found four
- * distinct causes, and this spec is the fence around each of them:
+ * Four distinct ways the UI can end up "partially overlapping", and this spec
+ * is the fence around each of them:
  *
  *   1. the shell's chrome (the tab bar) leaving the viewport,
  *   2. the live waveform canvas escaping its panel onto the capture controls,
@@ -104,8 +103,7 @@ async function withoutServiceWorker(page: Page): Promise<void> {
  * The numbers below say whether a layout is broken; only a picture says whether
  * it is any good. `LAYOUT_SHOTS=1 bun run e2e layout` writes the whole matrix to
  * e2e/__screenshots__/sweep/ for a human to page through — about 280 images, so
- * it is opt-in and the directory is gitignored. The curated before/after pairs
- * that docs/ui-audit.md cites are committed alongside it.
+ * it is opt-in and the directory is gitignored.
  */
 const SHOTS = process.env['LAYOUT_SHOTS'] === '1';
 
@@ -629,9 +627,9 @@ for (const viewport of [
 }
 
 /**
- * WCAG 2.2 §2.5.8 puts the floor at 24×24; the product's own token says 44×44
+ * WCAG 2.2 SC 2.5.8 puts the floor at 24×24; the product's own token says 44×44
  * (`--layout-touch-target-min`) and every control in the app is meant to meet
- * it. v1 shipped a 24px download button, which is how that token came to exist.
+ * it — a small icon button such as Download is the likeliest to fall short.
  */
 test('every control meets the 44px touch target on the narrowest phone', async ({
   page,

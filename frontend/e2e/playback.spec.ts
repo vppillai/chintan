@@ -21,7 +21,7 @@ test('plays inline, never in a new tab', async ({ page, context }) => {
   const pagesBefore = context.pages().length;
   await page.getByRole('button', { name: 'Play' }).click();
 
-  // v1 opened the presigned S3 URL with window.open. Nothing here may.
+  // Nothing here may hand the presigned S3 URL to window.open or a new tab.
   expect(context.pages()).toHaveLength(pagesBefore);
   await expect(page).toHaveURL(/\/notes\/roof-repair$/);
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();

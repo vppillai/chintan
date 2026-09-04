@@ -3,9 +3,10 @@ name: CI
 # Every gate that must be green before a change reaches main, in one workflow so
 # there is one place to look and one place to add the next one.
 #
-# v1 ran `go test` + `gofmt` + `go vet` and nothing else: no -race, no linter, no
-# vulnerability scan, no template validation, no shell checks, and no frontend
-# job at all against ~1,900 lines of JavaScript.
+# Go tests run with -race; golangci-lint, govulncheck, cfn-lint, shellcheck and
+# shfmt, the log-hygiene and env-contract checks, and the frontend typecheck,
+# lint and tests each catch a class of defect none of the others does. A gate
+# that is not in this file is a gate that does not exist.
 
 on:
   pull_request:

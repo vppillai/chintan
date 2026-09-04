@@ -189,8 +189,9 @@ function RecordingRow({
 
   const segments = artifacts.data?.segments ?? [];
   const peaks = artifacts.data?.peaks ?? [];
-  // A pre-v2 capture has neither artifact and gets a plain player. There is no
-  // backfill, so this is a permanent branch, not a migration window.
+  // A capture recorded before segments and peaks were stored has neither and
+  // gets a plain player. There is no backfill, so this is a permanent branch,
+  // not a migration window.
   const hasSegments = (capture.has_segments ?? false) && segments.length > 0;
   const audioUrl = artifacts.data?.audioUrl ?? null;
 
@@ -290,9 +291,9 @@ function RecordingRow({
             </p>
           ) : audioUrl ? (
             /*
-             * Inline playback. Never `window.open`, never a new tab — v1 handed
-             * the presigned S3 URL to the browser, which downloaded the file on
-             * desktop and navigated out of the app on mobile.
+             * Inline playback. Never `window.open`, never a new tab — handing
+             * the presigned S3 URL to the browser downloads the file on desktop
+             * and navigates out of the app on mobile.
              */
             <section className="player" aria-label="Recording">
               {/*

@@ -47,9 +47,9 @@ export interface ApiErrorInit {
 /**
  * The single error type every call in this client throws.
  *
- * Callers branch on `status` or the predicates below, never on message text.
- * v1 classified errors by `strings.Contains` on both sides of the wire; a
- * rewording of an AWS message changed behaviour.
+ * Callers branch on `status` or the predicates below, never on message text:
+ * classifying errors by substring match means a rewording of an AWS message
+ * changes behaviour.
  */
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
@@ -136,8 +136,7 @@ export class ApiError extends Error {
     if (this.problemType === SPEND_CAP_PROBLEM_TYPE) return true;
     // A body with no such type is still read for the words, because a gateway
     // or an older deploy can produce one. It is a fallback, not the rule:
-    // classifying by prose is what made a reworded message a behaviour change
-    // in v1.
+    // classifying by prose makes a reworded message a behaviour change.
     return /spend|cap|budget/i.test(`${this.problemType} ${this.title}`);
   }
 
@@ -175,9 +174,8 @@ const STATUS_TITLES: Record<number, string> = {
  *
  * A body that is not a problem document is not an error in itself — a gateway
  * can return HTML for a 502 — so this degrades to a status-derived title
- * rather than surfacing whatever text happened to arrive. v1 rendered raw
- * upstream bodies to the user, which is how DynamoDB table names reached the
- * screen.
+ * rather than surfacing whatever text happened to arrive. Rendering raw
+ * upstream bodies to the user is how DynamoDB table names reach the screen.
  */
 export async function problemFromResponse(response: Response): Promise<ApiError> {
   const correlationId =

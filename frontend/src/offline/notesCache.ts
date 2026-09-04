@@ -1,11 +1,11 @@
 /**
  * The cached note corpus.
  *
- * Spec §5.5: "IndexedDB holds … the note corpus for offline reading and instant
- * search". It held nothing of the kind. There was no notes store at all, so
- * opening a note with no connection reported "No note with that identifier. It
- * may have been archived or purged" about a note the user had been looking at
- * one screen earlier, and searching for it said it did not exist.
+ * IndexedDB holds the note corpus for offline reading and instant search.
+ * Without a notes store, opening a note with no connection reports "No note
+ * with that identifier. It may have been archived or purged" about a note the
+ * user was looking at one screen earlier, and searching for it says it does
+ * not exist.
  *
  * Everything the app reads from the server passes through here on the way to
  * the screen, so the cache is a side effect of using the app rather than a sync

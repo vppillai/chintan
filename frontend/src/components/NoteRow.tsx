@@ -25,9 +25,9 @@ export interface NoteRowProps {
 }
 
 /**
- * A note row is a real <button> (spec §5.7), not a clickable div. v1 shipped
- * divs, which made the entire library unreachable by keyboard and invisible to
- * assistive technology as an actionable thing.
+ * A note row is a real <button>, not a clickable div. Divs would make the
+ * entire library unreachable by keyboard and invisible to assistive technology
+ * as an actionable thing.
  *
  * Serif title with the time on the right in tabular serif numerals, two lines
  * of the note, then a meta line: the purge countdown for an archived note, the

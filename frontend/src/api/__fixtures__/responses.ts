@@ -79,7 +79,7 @@ export const settings: SettingsWire = {
   "theme": "ink"
 };
 
-/** PUT /v1/settings → 200. This is what was STORED, not what was sent: v1 echoed the request back and hid every coercion. */
+/** PUT /v1/settings → 200. The body is what was STORED, not what was sent, so a coerced value is visible to the client. */
 export const settingsStored: SettingsWire = {
   "cleanup_mode": "polished",
   "daily_spend_cap_micros": 0,
@@ -88,7 +88,7 @@ export const settingsStored: SettingsWire = {
   "theme": "nocturne"
 };
 
-/** GET /v1/notes → 200. The envelope is {items, cursor}; a bare array plus X-Next-Cursor was the v1 shape and is gone. */
+/** GET /v1/notes → 200. The envelope is {items, cursor}; the cursor is in the body, never in a header. */
 export const notesPage: Page<NoteWire> = {
   "items": [
     {

@@ -509,11 +509,11 @@ const CAPTURE_LIST_LIMIT = 20;
  *
  * Two cadences. A capture's first half-minute is when it is most likely to
  * flip — the median pipeline is ~4 s with a target note and 4–9 s when routed
- * (docs/ops/log-review-2026-09-04.md §3) — and a fixed 4 s poll added a median
- * 2 s of pure waiting on top of that. So a young capture is asked after every
- * 1.5 s, and once nothing in flight is younger than thirty seconds the poll
- * relaxes to 4 s: a capture that old is waiting on a provider, and asking
- * more often would only spend the user's battery watching it not move.
+ * (docs/ops/log-review-2026-09-04.md, section 3) — and a fixed 4 s poll adds
+ * a median 2 s of pure waiting on top of that. So a young capture is asked
+ * after every 1.5 s, and once nothing in flight is younger than thirty seconds
+ * the poll relaxes to 4 s: a capture that old is waiting on a provider, and
+ * asking more often would only spend the user's battery watching it not move.
  */
 export const CAPTURE_POLL_FAST_MS = 1_500;
 export const CAPTURE_POLL_FAST_WINDOW_MS = 30_000;
@@ -570,13 +570,13 @@ export function isFilingRelevant(capture: CaptureWire, now: number = Date.now())
  * Every capture the library's filing row has something to say about.
  *
  * This is what makes the row survive a reload: the set is server state, not a
- * JavaScript variable. v1 held the in-flight capture id in a module-level
- * field, so a refresh stranded the audio with no UI able to find it again.
+ * JavaScript variable. An in-flight capture id held in a module-level field is
+ * lost on refresh, stranding the audio with no UI able to find it again.
  *
- * ONE request per poll. This used to fire `pending`, `failed`, `needs_target`
- * and `all` in parallel every four seconds, plus all four again on every
- * window focus — ~120 invocations for a two-minute pipeline, while the user
- * was most likely driving on cellular. The newest twenty captures contain
+ * ONE request per poll. Firing `pending`, `failed`, `needs_target` and `all`
+ * in parallel every four seconds, plus all four again on every window focus,
+ * comes to ~120 invocations for a two-minute pipeline, while the user is most
+ * likely driving on cellular. The newest twenty captures contain
  * everything those filters would have returned that is worth showing (see
  * `isFilingRelevant`), so the filtering happens here. Focus refetch is off
  * for this query alone: while anything is moving the interval already asks,

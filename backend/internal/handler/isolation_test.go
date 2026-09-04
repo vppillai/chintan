@@ -8,9 +8,10 @@ import (
 	"github.com/vppillai/chintan/backend/internal/handler"
 )
 
-// The v1 defect was reachable over HTTP, so the isolation property is asserted
-// here as well as in the repository. Two distinct authenticated identities, one
-// router, no shared visibility.
+// Tenant isolation is asserted here as well as in the repository: a leak in the
+// middleware or the handlers is reachable over HTTP and would never be seen by
+// a store-level test. Two distinct authenticated identities, one router, no
+// shared visibility.
 
 func TestHTTPCrossTenantNoteIsNotReadable(t *testing.T) {
 	h := newHarness(t)
