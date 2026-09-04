@@ -1103,6 +1103,13 @@
   border-radius: var(--radius-lg);
 }
 
+/* The receipts past the cap, as one quiet line rather than more cards. */
+.filing__more {
+  padding-inline: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
 .filing-row[data-status='failed'],
 .filing-row[data-status='spend_capped'],
 .filing-row[data-status='upload-failed'],
