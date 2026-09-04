@@ -260,6 +260,30 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  /v1/notes/{noteId}/recordings/urls:
+    parameters:
+      - $ref: '#/components/parameters/NoteId'
+    get:
+      tags: [notes]
+      summary: Presigned download URLs for every recording of a note
+      description: |
+        The bulk download manifest. One entry per capture of the note whose
+        audio still exists (retention expiry removes audio from finished
+        captures, and those are left out rather than handed over as URLs that
+        404), oldest first, each with a presigned GET valid for fifteen
+        minutes and the filename to save it under:
+        `<note-title-slug>-<yyyymmdd-hhmm>.<ext>`, with `-2`, `-3` for two
+        recordings in the same minute. The client zips them itself; nothing
+        here needs a round trip per recording. At most 200 entries.
+      responses:
+        '200':
+          description: The manifest. `items` is empty, never null, for a note with no audio.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RecordingURLs' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/notes/purge:
     post:
       tags: [notes]
@@ -1022,6 +1046,26 @@ components:
         results:
           type: array
           items: { $ref: '#/components/schemas/NotePurgeResult' }
+
+    RecordingURL:
+      type: object
+      required: [capture_id, filename, url, expires_at]
+      properties:
+        capture_id: { type: string }
+        filename:
+          type: string
+          description: '`<note-title-slug>-<yyyymmdd-hhmm>.<ext>`, unique within the manifest.'
+        url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+
+    RecordingURLs:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: '#/components/schemas/RecordingURL' }
 
     CaptureStatus:
       type: string

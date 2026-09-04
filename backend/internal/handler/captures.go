@@ -294,3 +294,21 @@ func (rt *router) moveCapture(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, captureOf(*capture))
 }
+
+// noteRecordingURLs is the bulk download manifest: a presigned GET for every
+// recording of the note that still has its audio, with the filename to save
+// each under, so the client can zip them itself in one pass. Capped at
+// service.MaxRecordingURLs, oldest first.
+func (rt *router) noteRecordingURLs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	urls, err := rt.Captures.RecordingURLs(r.Context(), userID, r.PathValue("noteId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, recordingURLsOf(urls))
+}

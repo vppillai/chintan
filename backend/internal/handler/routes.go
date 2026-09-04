@@ -36,6 +36,9 @@ func (rt *router) routes() {
 	rt.handle("DELETE "+p+"/notes/{noteId}", rt.archiveNote)
 	rt.handle("POST "+p+"/notes/{noteId}/restore", rt.restoreNote, idempotent())
 	rt.handle("DELETE "+p+"/notes/{noteId}/permanent", rt.purgeNote)
+	// One manifest of presigned audio URLs, so "download all" is one request
+	// and a client-side zip rather than a round trip per recording.
+	rt.handle("GET "+p+"/notes/{noteId}/recordings/urls", rt.noteRecordingURLs)
 
 	// Tags and search.
 	rt.handle("GET "+p+"/tags", rt.listTags)

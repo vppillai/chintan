@@ -249,3 +249,53 @@ func TestMoveCaptureThatFailsHalfWayIsRolledBackAndRetryable(t *testing.T) {
 		t.Errorf("target after retry = %q", got)
 	}
 }
+
+// ---------------------------------------------------------------- manifest
+
+func TestNoteRecordingURLsIsOneManifestOldestFirst(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "user1", "Kitchen rebuild", nil)
+	h.seedAppended(t, "user1", note, "c_new", "2026-03-04T15:06:00.000000000Z", "Later.")
+	h.seedAppended(t, "user1", note, "c_old", "2026-03-04T09:30:00.000000000Z", "Earlier.")
+	// No audio: never in the manifest.
+	h.putCapture(t, model.CaptureIndex{ID: "c_failed", UserID: "user1", NoteID: note.ID, Status: model.StatusFailed, CreatedAt: model.Now()})
+
+	w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID+"/recordings/urls", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var manifest handler.RecordingURLs
+	decodeInto(t, w, &manifest)
+	if len(manifest.Items) != 2 {
+		t.Fatalf("items = %+v, want two", manifest.Items)
+	}
+	if manifest.Items[0].CaptureID != "c_old" || manifest.Items[1].CaptureID != "c_new" {
+		t.Errorf("order = %s, %s; want oldest first", manifest.Items[0].CaptureID, manifest.Items[1].CaptureID)
+	}
+	if got := manifest.Items[0].Filename; got != "kitchen-rebuild-20260304-0930.webm" {
+		t.Errorf("filename = %q", got)
+	}
+	for _, item := range manifest.Items {
+		if item.URL == "" || item.ExpiresAt == "" {
+			t.Errorf("%s: url=%q expires_at=%q", item.CaptureID, item.URL, item.ExpiresAt)
+		}
+	}
+	// An empty manifest is an empty list, never null.
+	empty := h.createNote(t, "user1", "Nothing yet", nil)
+	w = h.do(t, http.MethodGet, "/v1/notes/"+empty.ID+"/recordings/urls", "user1", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"items":[]`) {
+		t.Errorf("empty manifest: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNoteRecordingURLsIsScopedToTheCaller(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "owner", "Mine", nil)
+	h.seedAppended(t, "owner", note, "c_1", "2026-03-04T09:30:00.000000000Z", "Mine.")
+	if w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID+"/recordings/urls", "intruder", nil); w.Code != http.StatusNotFound {
+		t.Fatalf("another tenant's manifest = %d, want 404", w.Code)
+	}
+	if w := h.do(t, http.MethodGet, "/v1/notes/"+note.ID+"/recordings/urls", "", nil); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated manifest = %d", w.Code)
+	}
+}

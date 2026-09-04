@@ -213,6 +213,34 @@ func capturesOf(in []model.CaptureIndex) []Capture {
 	return out
 }
 
+// RecordingURL is one entry of the OpenAPI RecordingURLs schema: a presigned
+// GET for one recording's audio and the filename to save it under.
+type RecordingURL struct {
+	CaptureID string `json:"capture_id"`
+	Filename  string `json:"filename"`
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// RecordingURLs is the OpenAPI RecordingURLs schema: every recording of a note
+// that still has its audio, oldest first, in one response.
+type RecordingURLs struct {
+	Items []RecordingURL `json:"items"`
+}
+
+func recordingURLsOf(in []service.RecordingURL) RecordingURLs {
+	out := RecordingURLs{Items: make([]RecordingURL, 0, len(in))}
+	for _, u := range in {
+		out.Items = append(out.Items, RecordingURL{
+			CaptureID: u.CaptureID,
+			Filename:  u.Filename,
+			URL:       u.URL,
+			ExpiresAt: model.FormatTime(u.ExpiresAt),
+		})
+	}
+	return out
+}
+
 // Upload is one presigned PUT the client must perform verbatim.
 //
 // Headers reaches the client unmodified. Every entry is inside the signature —

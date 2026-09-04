@@ -603,6 +603,15 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/notes/match -> 400": send(http.MethodPost, "/v1/notes/match", "user1", map[string]any{"query": ""}),
 		"POST /v1/notes/match -> 401": send(http.MethodPost, "/v1/notes/match", "", map[string]any{"query": "x"}),
 
+		"GET /v1/notes/{noteId}/recordings/urls -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Kitchen", nil)
+			h.seedAppended(t, "user1", note, "c_1", model.Now(), "Dictated.")
+			return h.do(t, http.MethodGet, "/v1/notes/"+note.ID+"/recordings/urls", "user1", nil).Code
+		},
+		"GET /v1/notes/{noteId}/recordings/urls -> 401": get("/v1/notes/n1/recordings/urls", ""),
+		"GET /v1/notes/{noteId}/recordings/urls -> 404": get("/v1/notes/missing/recordings/urls", "user1"),
+
 		// ---- tags and search
 		"GET /v1/tags -> 200":   get("/v1/tags", "user1"),
 		"GET /v1/tags -> 401":   get("/v1/tags", ""),
