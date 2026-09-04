@@ -1,8 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { useApi } from '@/api/ApiProvider.tsx';
 import {
+  queryKeys,
   refreshAppendedNote,
   useNotes,
   useRetryCapture,
@@ -19,7 +21,10 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 
+import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
+import { canRetryUpload, type CaptureModel } from './machine.ts';
+import { useCaptureStore } from './store.ts';
 
 /**
  * A recording being filed, as a row at the top of the library.
@@ -94,10 +99,71 @@ function describe(capture: CaptureWire, stuck: boolean): string {
   }
 }
 
+/**
+ * How long a landed upload's local row waits for the server's row to replace
+ * it before giving up its place. The poll is asked for at once, so normally
+ * this is a few hundred milliseconds; the bound is for a connection that died
+ * between the PUT landing and the poll, where the row would otherwise sit at
+ * "Uploaded" for ever.
+ */
+const HANDOFF_GRACE_MS = 10_000;
+
+/**
+ * The upload in progress, read from the capture store rather than the server.
+ *
+ * Send hands off to the library at once, so for the seconds between the tap
+ * and `POST /v1/captures` returning there is no server row to show — and the
+ * server never knows about the PUT at all until the object lands. This row
+ * covers that gap: "Uploading… 40%" from the store's own progress, then
+ * "Uploaded" until the poll returns the real row, which replaces it and
+ * releases the machine. A failed upload stays here with Retry and Discard,
+ * because the bytes are still on this device and only this device can act.
+ */
+function useLocalUpload(serverItems: readonly CaptureWire[]): CaptureModel | null {
+  const model = useCaptureStore((state) => state.model);
+  const reset = useCaptureStore((state) => state.reset);
+  const queryClient = useQueryClient();
+
+  const uploading = model.state === 'uploading';
+  const landed = model.state === 'uploaded';
+  const failed =
+    model.state === 'failed' &&
+    (model.failure?.kind === 'upload-failed' || model.failure?.kind === 'spend-capped');
+  const serverHasIt =
+    landed &&
+    model.serverCaptureId !== null &&
+    serverItems.some((capture) => capture.id === model.serverCaptureId);
+
+  useEffect(() => {
+    if (!landed) return;
+    // The server has the audio: ask for its row now rather than at the poll's
+    // next tick, and the device's list of unsent recordings is one shorter.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.pendingCaptures() });
+    void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
+  }, [landed, queryClient]);
+
+  useEffect(() => {
+    if (!landed) return;
+    if (serverHasIt) {
+      // The server's row is on screen; the machine has nothing left to say.
+      reset();
+      return;
+    }
+    const timer = setTimeout(reset, HANDOFF_GRACE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [landed, serverHasIt, reset]);
+
+  if (uploading || failed || (landed && !serverHasIt)) return model;
+  return null;
+}
+
 export function FilingRow() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data } = usePendingCaptures();
+  const local = useLocalUpload(data?.items ?? []);
   const retry = useRetryCapture();
   /*
    * Rows the user has closed, read from the device on mount. The library
@@ -112,10 +178,11 @@ export function FilingRow() {
   };
 
   const captures = (data?.items ?? []).filter((capture) => !dismissed.has(capture.id));
-  if (captures.length === 0) return null;
+  if (captures.length === 0 && !local) return null;
 
   return (
     <section className="filing" aria-label="Recordings being filed">
+      {local && <LocalUploadItem model={local} />}
       {captures.map((capture) => (
         <FilingItem
           key={capture.id}
@@ -140,6 +207,81 @@ export function FilingRow() {
         />
       ))}
     </section>
+  );
+}
+
+/** The row for an upload this device is still making. See `useLocalUpload`. */
+function LocalUploadItem({ model }: { model: CaptureModel }) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const send = useCaptureStore((state) => state.send);
+  const discard = useCaptureStore((state) => state.discard);
+
+  const failed = model.state === 'failed';
+  const landed = model.state === 'uploaded';
+  const percent = Math.round((landed ? 1 : model.uploadProgress) * 100);
+
+  return (
+    <article
+      className="filing-row"
+      data-status={failed ? 'upload-failed' : model.state}
+      data-local="true"
+    >
+      <div className="filing-row__head">
+        <p className="filing-row__title" role="status" aria-live="polite">
+          {failed ? (
+            model.failure?.message
+          ) : landed ? (
+            'Uploaded'
+          ) : (
+            <>
+              Uploading… <span className="numeric">{percent}</span>%
+            </>
+          )}
+        </p>
+        {model.elapsedMs > 0 && (
+          <span className="filing-row__duration numeric">
+            {formatDurationShort(model.elapsedMs)}
+          </span>
+        )}
+      </div>
+
+      {/*
+        A determinate bar, because for once the client does know the shape of
+        the work: the uploader's coarse steps. It hands over to the stage strip
+        of the server row as soon as that exists.
+      */}
+      {!failed && (
+        <div className="filing-row__upload" aria-hidden="true">
+          <span className="filing-row__upload-fill" style={{ inlineSize: `${percent}%` }} />
+        </div>
+      )}
+
+      {failed && (
+        <div className="filing-row__actions">
+          {canRetryUpload(model) && (
+            <button
+              type="button"
+              className="filing-row__action filing-row__action--primary"
+              onClick={() => void send(api)}
+            >
+              <span>Retry</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="filing-row__action"
+            onClick={() => {
+              void discard().then(() => {
+                void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
+              });
+            }}
+          >
+            <span>Discard</span>
+          </button>
+        </div>
+      )}
+    </article>
   );
 }
 

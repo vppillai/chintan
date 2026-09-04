@@ -294,11 +294,15 @@ async function inspect(page: Page): Promise<LayoutReport> {
       /*
        * A single-line text field scrolls its own value by definition; that is
        * the control working, not the layout failing. So does a label cut with
-       * an ellipsis (a row's tag chip), and the library's chip row is a
-       * sideways-scrolling line on purpose. Everything else that can scroll
-       * sideways is a container that should have wrapped.
+       * an ellipsis (a row's tag chip); the library's chip row and the review
+       * player's waveform are sideways-scrolling lines on purpose. Everything
+       * else that can scroll sideways is a container that should have wrapped.
        */
-      if (element.matches('input, textarea, select, .chips, .note-row__tag')) continue;
+      if (
+        element.matches('input, textarea, select, .chips, .note-row__tag, .clip-scrubber')
+      ) {
+        continue;
+      }
       if (element.scrollWidth > element.clientWidth + 1 && element.clientWidth > 0) {
         sidewaysScroll.push({
           selector: describe(element),

@@ -23,9 +23,14 @@ test('a recording made offline survives and is sent on reconnect', async ({ page
 
   await page.getByRole('button', { name: 'Send' }).click();
 
-  // Fails honestly, and says where the recording is.
-  await expect(page.getByText(/safe on this device/i)).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  // Send hands off to the library at once; the failure lands in the upload's
+  // row there, honestly, and says where the recording is.
+  await expect(page).toHaveURL(/\/$/);
+  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  await expect(filing.getByText(/safe on this device/i)).toBeVisible({ timeout: 15_000 });
+  await expect(filing.getByRole('button', { name: 'Retry' })).toBeVisible();
+  // Not doubled by the "unsent recording" prompt: this row is the offer.
+  await expect(page.getByRole('region', { name: 'Unsent recording' })).toHaveCount(0);
 
   // The audio is genuinely on disk, not just in a JS variable.
   const bufferedChunks = await page.evaluate(async () => {
@@ -43,7 +48,7 @@ test('a recording made offline survives and is sent on reconnect', async ({ page
   expect(bufferedChunks).toBeGreaterThan(0);
 
   api.offline = false;
-  await page.getByRole('button', { name: 'Try again' }).click();
+  await filing.getByRole('button', { name: 'Retry' }).click();
 
   await expect.poll(() => api.captures.length, { timeout: 15_000 }).toBeGreaterThan(0);
 

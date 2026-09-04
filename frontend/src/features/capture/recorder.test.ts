@@ -415,6 +415,48 @@ describe('interruption', () => {
   });
 });
 
+describe('the buffer is readable the moment the recording is finished', () => {
+  it('flushed() waits for chunk writes still in flight', async () => {
+    /*
+     * `ondataavailable` tells the machine about a chunk synchronously; the
+     * IndexedDB write behind it is not. The final chunk arrives just before
+     * `onstop`, so the review player — which mounts on `finalised` — read an
+     * empty buffer and offered a Play button that could play nothing.
+     */
+    let releaseWrite: () => void = () => {};
+    let written = false;
+    const h = harness({
+      persistChunk: () =>
+        new Promise<void>((resolve) => {
+          releaseWrite = () => {
+            written = true;
+            resolve();
+          };
+        }),
+    });
+    await h.start();
+    h.recorder.emitChunk(500);
+
+    let flushed = false;
+    const waiting = h.controller.flushed().then(() => {
+      flushed = true;
+    });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    releaseWrite();
+    await waiting;
+    expect(written).toBe(true);
+    expect(flushed).toBe(true);
+  });
+
+  it('flushed() resolves at once when nothing is pending', async () => {
+    const h = harness();
+    await h.start();
+    await expect(h.controller.flushed()).resolves.toBeUndefined();
+  });
+});
+
 describe('pause, resume, stop, cancel', () => {
   it('pauses and resumes the underlying recorder', async () => {
     const clock = { value: 1_000 };

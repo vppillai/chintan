@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
@@ -6,6 +6,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
+import { ReviewPlayer } from './ReviewPlayer.tsx';
 import { TargetChooser } from './TargetChooser.tsx';
 import { Waveform } from './Waveform.tsx';
 import {
@@ -41,9 +42,12 @@ export function CaptureScreen() {
   const resume = useCaptureStore((state) => state.resume);
   const stop = useCaptureStore((state) => state.stop);
   const discard = useCaptureStore((state) => state.discard);
+  const rerecord = useCaptureStore((state) => state.rerecord);
   const send = useCaptureStore((state) => state.send);
   const reset = useCaptureStore((state) => state.reset);
   const amplitudes = useCaptureStore((state) => state.amplitudes);
+  const clip = useCaptureStore((state) => state.clip);
+  const envelope = useCaptureStore((state) => state.envelope);
 
   const noteId = params.get('note');
 
@@ -98,10 +102,13 @@ export function CaptureScreen() {
     void navigate(ROUTES.home, { replace: true });
   }, [navigate]);
 
+  /*
+   * Only reachable by coming back to this screen mid-upload (the indicator on
+   * another screen, or Record tapped again): Send itself leaves at once. Once
+   * the upload lands there is nothing left here to look at.
+   */
   useEffect(() => {
     if (model.state !== 'uploaded') return;
-    // Hand off to the filing row at the top of the library, which shows the
-    // pipeline's progress from here and survives this screen unmounting.
     const timer = setTimeout(leave, 600);
     return () => {
       clearTimeout(timer);
@@ -109,6 +116,26 @@ export function CaptureScreen() {
   }, [model.state, leave]);
 
   const read = useCallback((count: number) => amplitudes(count), [amplitudes]);
+
+  /*
+   * Send does not wait. The upload lives in the store, outside this tree, and
+   * the library's filing row shows it from "Uploading… 40%" through to
+   * "Filed" — so the only thing keeping the user on a screen that said
+   * "Sending" was the screen. The promise is deliberately not awaited: its
+   * outcome is reported through the machine, which the row reads.
+   */
+  const handOff = useCallback(() => {
+    void send(api);
+    leave();
+  }, [send, api, leave]);
+
+  // The envelope is read once per review, not per render: the recorder has
+  // finished, so it will not change, and the player redraws on its own clock.
+  const reviewEnvelope = useMemo(
+    () => (model.state === 'review' ? envelope() : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [model.state, model.localId],
+  );
 
   return (
     <div className="capture">
@@ -138,14 +165,27 @@ export function CaptureScreen() {
         {formatElapsed(model.elapsedMs)}
       </p>
 
-      <div className="capture__waveform">
-        <Waveform
-          read={read}
-          active={model.state === 'recording'}
-          reducedMotion={reducedMotion}
-          label={model.state === 'recording' ? 'Live audio level' : 'Audio level'}
+      {model.state === 'review' ? (
+        /*
+          Listen back before it goes anywhere. The live canvas gives way to the
+          recording's own waveform, scrollable and seekable, with play/pause.
+        */
+        <ReviewPlayer
+          key={model.localId}
+          clip={clip}
+          envelope={reviewEnvelope}
+          durationMs={model.elapsedMs}
         />
-      </div>
+      ) : (
+        <div className="capture__waveform">
+          <Waveform
+            read={read}
+            active={model.state === 'recording'}
+            reducedMotion={reducedMotion}
+            label={model.state === 'recording' ? 'Live audio level' : 'Audio level'}
+          />
+        </div>
+      )}
 
       {(model.state === 'requesting' ||
         model.state === 'recording' ||
@@ -195,7 +235,8 @@ export function CaptureScreen() {
         onDiscard={() => {
           void discard().then(leave);
         }}
-        onSend={() => void send(api)}
+        onRerecord={() => void rerecord()}
+        onSend={handOff}
         onLeave={leave}
       />
     </div>
@@ -235,6 +276,7 @@ interface ControlsProps {
   onResume: () => void;
   onStop: () => void;
   onDiscard: () => void;
+  onRerecord: () => void;
   onSend: () => void;
   onLeave: () => void;
 }
@@ -246,6 +288,7 @@ function Controls({
   onResume,
   onStop,
   onDiscard,
+  onRerecord,
   onSend,
   onLeave,
 }: ControlsProps) {
@@ -285,6 +328,10 @@ function Controls({
       <div className="capture__controls">
         <button type="button" className="capture__control" onClick={onDiscard}>
           <span>Discard</span>
+        </button>
+        {/* Discard and start again into the same note, in one tap. */}
+        <button type="button" className="capture__control" onClick={onRerecord}>
+          <span>Re-record</span>
         </button>
         <button type="button" className="capture__control capture__control--primary" onClick={onSend}>
           <span>Send</span>

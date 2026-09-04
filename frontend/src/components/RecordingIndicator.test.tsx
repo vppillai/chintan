@@ -66,6 +66,18 @@ describe('the microphone being open is never invisible', () => {
     }
   });
 
+  it('stands aside on the library while uploading, where the filing row already says so', async () => {
+    // Send hands off to the library at once and the upload's own row shows
+    // "Uploading… N%" at the top of it; a second line saying the same thing
+    // above the tab bar would be noise. Every other screen still gets it.
+    mount(['/']);
+    setCaptureState('uploading');
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();
+  });
+
   it('is absent when nothing is being captured', () => {
     mount(['/']);
     expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();

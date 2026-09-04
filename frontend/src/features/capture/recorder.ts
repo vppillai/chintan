@@ -95,6 +95,14 @@ export class RecorderController {
    * theirs to end.
    */
   private pausedByMute = false;
+  /**
+   * Chunk writes not yet on disk. `ondataavailable` fires and the machine is
+   * told at once, but the IndexedDB put behind it is asynchronous — and the
+   * final chunk arrives a moment before `onstop`, so anything that reads the
+   * buffer straight after `finalised` (the review player, a quick Send) would
+   * otherwise miss it. `flushed()` waits for these.
+   */
+  private readonly pendingWrites = new Set<Promise<void>>();
 
   constructor(
     private readonly emit: EventSink,
@@ -237,13 +245,17 @@ export class RecorderController {
       this.emit({ type: 'data', bytes: blob.size });
       // Written to disk immediately. The recording must exist somewhere other
       // than this tab from the first chunk onward.
-      void this.deps.persistChunk(localId, index, blob).catch(() => {
+      const write = this.deps.persistChunk(localId, index, blob).catch(() => {
         // Recording into nothing is worse than stopping: the machine moves to
         // `review` on this event, and if the recorder is left running the
         // microphone stays open — OS indicator on, wake lock held — behind a
         // screen that says the recording has ended.
         this.emit({ type: 'recorderError', message: 'Could not save audio to this device.' });
         void this.stop();
+      });
+      this.pendingWrites.add(write);
+      void write.finally(() => {
+        this.pendingWrites.delete(write);
       });
     };
 
@@ -330,6 +342,13 @@ export class RecorderController {
       /* Already stopped. */
     }
     this.teardown();
+  }
+
+  /** Resolves once every chunk handed over so far is on disk. */
+  async flushed(): Promise<void> {
+    while (this.pendingWrites.size > 0) {
+      await Promise.all([...this.pendingWrites]);
+    }
   }
 
   /** The finished envelope for `peaks.json`. */

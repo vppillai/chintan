@@ -18,10 +18,13 @@ import { TestProviders, testApiContext, testQueryClient } from '@/test/providers
 
 import { FilingRow } from './FilingRow.tsx';
 import { DISMISSED_KEY, DISMISSED_LIMIT, dismissCapture, loadDismissed } from './dismissed.ts';
+import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
+import { useCaptureStore } from './store.ts';
 
 beforeEach(() => {
   // Dismissals are kept on the device; each test starts with none.
   localStorage.clear();
+  useCaptureStore.setState({ model: INITIAL_CAPTURE });
 });
 
 function capture(overrides: Partial<CaptureWire> = {}): CaptureWire {
@@ -61,6 +64,19 @@ function mount(items: CaptureWire[]) {
     if (url.includes('/v1/captures/') && url.endsWith('/target')) {
       return json(capture({ status: 'appending' }));
     }
+    if (url.endsWith('/v1/captures') && method === 'POST') {
+      return json(
+        {
+          capture: capture({ id: 'srv-new', status: 'uploaded' }),
+          upload: {
+            url: 'https://s3.test/audio',
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            max_bytes: 1_000_000,
+          },
+        },
+        201,
+      );
+    }
     if (url.includes('/v1/captures')) {
       return json({ items });
     }
@@ -90,6 +106,135 @@ function mount(items: CaptureWire[]) {
 
   return { view, calls, fetchImpl };
 }
+
+describe('the upload this device is still making has a row of its own', () => {
+  /*
+   * Send hands off to the library at once, so for the seconds before
+   * `POST /v1/captures` answers there is no server row — and the server never
+   * sees the PUT at all. The store knows, and the row reads it.
+   */
+  function sending(overrides: Partial<CaptureModel> = {}): void {
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploading',
+          localId: 'cap-local',
+          bytes: 20_000,
+          chunks: 7,
+          elapsedMs: 41_000,
+          uploadProgress: 0.4,
+          ...overrides,
+        },
+      });
+    });
+  }
+
+  it('shows "Uploading… N%" from the store when the server has nothing yet', async () => {
+    sending();
+    mount([]);
+
+    const row = await screen.findByRole('status');
+    expect(row).toHaveTextContent('Uploading… 40%');
+    expect(screen.getByText('0:41')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /recordings being filed/i })).toBeInTheDocument();
+  });
+
+  it('follows the store as the upload progresses', async () => {
+    sending({ uploadProgress: 0.1 });
+    mount([]);
+    expect(await screen.findByText(/uploading/i)).toHaveTextContent('10%');
+
+    act(() => {
+      useCaptureStore.getState().dispatch({ type: 'uploadProgress', progress: 0.85 });
+    });
+    expect(screen.getByText(/uploading/i)).toHaveTextContent('85%');
+  });
+
+  it('is replaced by the server row once the poll returns it, and releases the machine', async () => {
+    sending({ state: 'uploaded', uploadProgress: 1, serverCaptureId: 'srv-1' });
+    mount([capture({ id: 'srv-1', status: 'transcribing' })]);
+
+    expect(await screen.findByText('Filing your recording')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+    // One row, not two, for the one recording — and it is the server's.
+    expect(document.querySelectorAll('.filing-row[data-local]')).toHaveLength(0);
+    expect(document.querySelectorAll('.filing-row')).toHaveLength(1);
+  });
+
+  it('says "Uploaded" while the server row is still on its way', async () => {
+    sending({ state: 'uploaded', uploadProgress: 1, serverCaptureId: 'srv-late' });
+    mount([]);
+    expect(await screen.findByRole('status')).toHaveTextContent('Uploaded');
+    expect(useCaptureStore.getState().model.state).toBe('uploaded');
+  });
+
+  it('offers Retry and Discard when the upload failed, since only this device can act', async () => {
+    sending({
+      state: 'failed',
+      failure: {
+        kind: 'upload-failed',
+        message: 'The upload did not finish. Your recording is safe on this device.',
+        recoverable: true,
+      },
+    });
+    // The bytes are "on disk" as far as the uploader is concerned.
+    useCaptureStore.getState().__configure({
+      upload: {
+        assemble: async () => new Blob(['audio']),
+        put: async () => {},
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+    const { calls } = mount([]);
+
+    expect(await screen.findByText(/safe on this device/i)).toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+
+    // Retry is the store's send, not the server's retry endpoint: there is no
+    // server capture to retry yet.
+    await userEvent.setup().click(retry);
+    await waitFor(() => {
+      expect(calls.some((call) => call.method === 'POST' && call.url.endsWith('/v1/captures'))).toBe(
+        true,
+      );
+    });
+    expect(calls.some((call) => call.url.endsWith('/retry'))).toBe(false);
+  });
+
+  it('Discard on a failed upload drops the recording and the row', async () => {
+    sending({
+      state: 'failed',
+      failure: { kind: 'upload-failed', message: 'The upload did not finish.', recoverable: true },
+    });
+    mount([]);
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
+  it('shows nothing of its own for a recording that failed before any upload', async () => {
+    // A refused microphone is the capture screen's to explain, not the library's.
+    sending({
+      state: 'failed',
+      bytes: 0,
+      failure: { kind: 'permission-denied', message: 'No microphone access.', recoverable: false },
+    });
+    mount([]);
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+});
 
 describe('the filing row is server state, not a JavaScript variable', () => {
   it('renders from one GET /v1/captures, filtered here', async () => {

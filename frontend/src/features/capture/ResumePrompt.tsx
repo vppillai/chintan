@@ -6,6 +6,8 @@ import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import type { StoredCapture } from '@/offline/db.ts';
 
 import { discardCapture, unconfirmedCaptures } from './buffer.ts';
+import { isCaptureBusy } from './machine.ts';
+import { useCaptureStore } from './store.ts';
 import { uploadCapture } from './uploader.ts';
 
 export const UNSENT_CAPTURES_KEY = ['captures', 'unsent'] as const;
@@ -24,6 +26,7 @@ export const UNSENT_CAPTURES_KEY = ['captures', 'unsent'] as const;
 export function ResumePrompt() {
   const api = useApi();
   const queryClient = useQueryClient();
+  const active = useCaptureStore((state) => state.model);
   const [busy, setBusy] = useState<string | null>(null);
   const [pendingDiscard, setPendingDiscard] = useState<StoredCapture | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +45,22 @@ export function ResumePrompt() {
     void queryClient.invalidateQueries({ queryKey: ['captures'] });
   }, [queryClient]);
 
-  const stranded = data ?? [];
+  /*
+   * The recording the store is sending right now is on disk with no
+   * confirmation yet — exactly the shape this prompt looks for. Since Send
+   * hands off to the library at once, this list is often read mid-upload, so
+   * that recording has to be excluded by its id or the library would offer to
+   * resend the very upload it is showing progress for one row below. The same
+   * goes for a failed upload, which the filing row already offers to retry.
+   * A recording left at review (Back from the capture screen) is not excluded:
+   * this prompt is then the way back to it.
+   */
+  const owned =
+    active.localId &&
+    (isCaptureBusy(active) || active.state === 'uploaded' || active.state === 'failed')
+      ? active.localId
+      : null;
+  const stranded = (data ?? []).filter((record) => record.localId !== owned);
   const oldest = stranded[0];
   if (!oldest) return null;
 
