@@ -56,6 +56,53 @@ for (const theme of THEMES) {
   }
 }
 
+/**
+ * A heading to land on, on every screen. The note screen had none: its title
+ * is an input (axe `page-has-heading-one`, the one finding of the QA pass's
+ * scans), so the label is now the page's h1 as well.
+ */
+for (const route of ROUTES) {
+  test(`${route} has exactly one h1`, async ({ page }) => {
+    await page.goto(route);
+    await expect(page.locator('main')).toBeVisible();
+    await expect(page.locator('h1')).toHaveCount(1);
+  });
+}
+
+/**
+ * WCAG 2.5.8: every control at least 24 by 24 CSS pixels. The selection
+ * checkboxes were 20 and the plain playback slider 16 tall.
+ */
+test('selection checkboxes and the playback slider are at least 24 px', async ({ page, api }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Select' }).click();
+  const box = page.getByRole('checkbox').first();
+  const checkbox = await box.boundingBox();
+  expect(checkbox?.width ?? 0).toBeGreaterThanOrEqual(24);
+  expect(checkbox?.height ?? 0).toBeGreaterThanOrEqual(24);
+  // And the thumb has a 44 px target around it, without the row growing.
+  const target = await page.locator('.note-row__check').first().boundingBox();
+  expect(target?.width ?? 0).toBeGreaterThanOrEqual(44);
+  expect(target?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+  // The plain slider: a capture with no peaks to draw.
+  api.notes['reading-list']!.captures = [
+    {
+      id: 'cap-plain',
+      status: 'appended',
+      created_at: '2026-01-01T00:00:00.000Z',
+      version: 1,
+      note_id: 'reading-list',
+      duration_ms: 5_000,
+      has_peaks: false,
+      has_segments: false,
+    },
+  ];
+  await page.goto('/notes/reading-list');
+  const slider = await page.getByRole('slider', { name: 'Playback position' }).boundingBox();
+  expect(slider?.height ?? 0).toBeGreaterThanOrEqual(24);
+});
+
 test('the library is fully traversable by keyboard', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();

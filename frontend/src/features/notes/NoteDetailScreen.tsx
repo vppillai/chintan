@@ -109,9 +109,15 @@ export function NoteDetailScreen() {
         </p>
       )}
 
-      <label className="visually-hidden" htmlFor="note-title">
-        Note title
-      </label>
+      {/*
+        The screen's heading is the title field's label. The title itself is an
+        input, so without this the note screen had no h1 at all (QA D14: axe
+        `page-has-heading-one`); the label names the field for the input and
+        heads the page for a screen reader, hidden from sight in both roles.
+      */}
+      <h1 className="visually-hidden">
+        <label htmlFor="note-title">Note title</label>
+      </h1>
       <input
         id="note-title"
         className="note-title-input"

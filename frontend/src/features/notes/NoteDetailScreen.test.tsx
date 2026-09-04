@@ -262,6 +262,21 @@ describe('a note whose recording is still filing keeps asking', () => {
 });
 
 describe('the note screen is shaped for reading', () => {
+  it('has one h1, which names the title field', async () => {
+    // axe `page-has-heading-one`: the title is an input, so the screen had no
+    // heading at all. The label is the heading; the input keeps its name.
+    const api = server([ROOF]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+
+    const title = await screen.findByRole('textbox', { name: 'Note title' });
+    await waitFor(() => {
+      expect(title).toHaveValue('Roof repair');
+    });
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Note title');
+  });
+
   it('grows the body with its text rather than scrolling inside a fixed box', async () => {
     /*
      * QA D18: twelve fixed rows with an inner scrollbar — a long note scrolled
