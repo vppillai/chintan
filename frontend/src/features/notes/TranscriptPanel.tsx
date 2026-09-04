@@ -30,7 +30,7 @@ export interface TranscriptPanelProps {
   onViewChange: (view: TranscriptView) => void;
   currentTime: number;
   onSeek: (seconds: number) => void;
-  /** False for pre-v2 captures, which have no segments.json and no backfill. */
+  /** False when the capture has no usable `segments.json` — there is no backfill. */
   hasSegments: boolean;
 }
 
@@ -99,11 +99,13 @@ export function TranscriptPanel({
         {/*
           Named for the view it copies, because "copy" on this screen could mean
           three different things — the note, what was said, or the rewrite — and
-          a button that might mean any of them means none of them.
+          a button that might mean any of them means none of them. "This",
+          because the button sits inside one recording's row and copies that
+          recording only; the whole note is copied from Share.
         */}
         <CopyButton
           className="transcript__copy"
-          label={effectiveView === 'raw' ? 'Copy transcript' : 'Copy cleaned text'}
+          label={effectiveView === 'raw' ? 'Copy this transcript' : 'Copy this cleaned text'}
           text={() =>
             effectiveView === 'raw'
               ? segments.map((segment) => segment.text).join('\n')
@@ -158,9 +160,13 @@ export function TranscriptPanel({
             })}
           </ol>
         ) : (
+          // Stated as a fact about this recording, not a guess about its age.
+          // This used to say the recording was "made before timestamps were
+          // captured", which was wrong for every capture the app had ever made:
+          // the worker had always written timestamps and the parser dropped them.
           <p className="transcript__empty">
-            This recording was made before timestamps were captured, so there is nothing
-            to jump to. The cleaned text is in the note above.
+            No timestamps are available for this recording, so there is nothing to jump
+            to. The cleaned text is in the note above.
           </p>
         )
       ) : (

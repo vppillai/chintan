@@ -77,6 +77,63 @@ describe('rankLocal', () => {
   });
 });
 
+/**
+ * Transcript text. The snippet is the first line of a note; a sentence said
+ * three recordings in was only ever findable by the server. The backend is
+ * adding the lowercased body to list items as `search_text`, and a cached full
+ * note already carries `body`; both are optional, and both count as a body
+ * match.
+ */
+describe('rankLocal over the body, when the corpus carries it', () => {
+  const withText: NoteWire[] = [
+    ...CORPUS,
+    note({
+      id: 'talk',
+      title: 'Ideas for the talk',
+      snippet: 'Open with the failure, not the fix.',
+      tags: ['work'],
+      search_text:
+        'open with the failure, not the fix. the point is that the retry passed while the promise was false. mention the downpipe story.',
+    }),
+    note({
+      id: 'cached-full',
+      title: 'Dentist',
+      snippet: 'Book the hygienist for the week after Portugal.',
+      // A `NoteDetailWire` read back from the device carries the body itself.
+      ...({ body: 'Book the hygienist for the week after Portugal. Ask about the crown.' } as object),
+    }),
+  ];
+
+  it('finds a note by text that appears only in search_text', () => {
+    const results = rankLocal(withText, 'downpipe');
+    expect(results.map((hit) => hit.noteId)).toEqual(['talk']);
+    expect(results[0]?.matchedIn).toEqual(['body']);
+    // The row shows where it matched, not the unrelated first line.
+    expect(results[0]?.excerpt).toContain('downpipe');
+  });
+
+  it('finds a cached full note by its body', () => {
+    expect(rankLocal(withText, 'crown').map((hit) => hit.noteId)).toEqual(['cached-full']);
+  });
+
+  it('ranks a body match below a tag match', () => {
+    const tagged = note({ id: 'tagged', title: 'Plumbing', tags: ['downpipe'] });
+    const results = rankLocal([...withText, tagged], 'downpipe');
+    expect(results.map((hit) => hit.noteId)).toEqual(['tagged', 'talk']);
+  });
+
+  it('counts a snippet hit and a body hit as one body match', () => {
+    const [hit] = rankLocal(withText, 'failure');
+    expect(hit?.noteId).toBe('talk');
+    expect(hit?.matchedIn).toEqual(['body']);
+  });
+
+  it('keeps working for a corpus with no body text at all', () => {
+    expect(rankLocal(CORPUS, 'downpipe')).toEqual([]);
+    expect(rankLocal(CORPUS, 'roof').map((hit) => hit.noteId)).toEqual(['roof', 'garden']);
+  });
+});
+
 describe('excerptAround', () => {
   it('returns short text unchanged', () => {
     expect(excerptAround('short text', 'text')).toBe('short text');

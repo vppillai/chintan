@@ -1897,6 +1897,24 @@
   color: var(--color-accent);
 }
 
+/*
+ * The scratch textarea behind the selection-copy fallback. In the document for
+ * one tick and never seen. Not `display: none` or `visibility: hidden` — a
+ * hidden control cannot hold a selection, so the copy would silently take
+ * nothing.
+ */
+.copy__scratch {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .note-copy {
   display: flex;
   flex-wrap: wrap;
@@ -1939,18 +1957,25 @@
 /*
  * The running build, at the foot of the You screen.
  *
- * `--color-faint` is the palette's quietest text and is documented in
- * tokens.css as meeting AA in both themes — "faded" must still be legible to
- * whoever is reading it out over a phone call to report a bug.
+ * Two weights of quiet. The release tag is `--color-muted`; the build detail
+ * after it (`+14 (abcdef)`) is `--color-faint`, the palette's quietest text,
+ * so the eye lands on the release and the commit is there for whoever needs
+ * it. Both are documented in tokens.css as meeting AA in both themes —
+ * "faded" must still be legible to whoever is reading it out over a phone
+ * call to report a bug.
  */
 .version-footnote {
   margin-block-start: var(--space-8);
   padding-block-end: var(--space-4);
   font-size: var(--font-size-sm);
-  color: var(--color-faint);
+  color: var(--color-muted);
   text-align: center;
   /* Selectable on purpose: it exists to be copied into a bug report. */
   user-select: text;
+}
+
+.version-footnote__build {
+  color: var(--color-faint);
 }
 
 /* ==========================================================================

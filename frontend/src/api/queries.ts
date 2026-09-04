@@ -307,11 +307,10 @@ export function useSaveSettings() {
    --------------------------------------------------------------------------- */
 
 /**
- * How long a just-filed capture keeps its "Filed" row once appended, and how
- * long a recording that produced nothing keeps saying so. `status=all` is
- * newest-first and otherwise unbounded — this is what stops a note filed weeks
- * ago from resurfacing at the top of the library forever just because its
- * capture happens to be near the top of that list.
+ * How long a recording that produced nothing keeps saying so. A `no_content`
+ * row has nothing to open and nothing to retry, so it is the one receipt that
+ * is allowed to expire on its own; every other stopped capture stays until
+ * the user acts on it (see `isFilingRelevant`).
  */
 const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
 
@@ -333,17 +332,20 @@ function within(iso: string | null | undefined, windowMs: number, now: number): 
  * Anything still moving, obviously. Of the stopped ones: `failed`,
  * `spend_capped` and `needs_target` always, because each has an action the
  * user must take and a capture waiting on the user must not vanish silently;
- * `appended` and `no_content` only briefly, because they are done and the row
- * is a receipt, not a history.
+ * `appended` always too — the row is the one place that says "your recording
+ * is in this note, here it is", and it stays until the user opens the note or
+ * dismisses it (`FilingRow` remembers which, per device). It used to fade
+ * after ten minutes, which meant a recording made on the walk home had no
+ * receipt by the time the user sat down to read it. `no_content` alone
+ * expires on its own: there is nothing to open and nothing to do.
  */
 export function isFilingRelevant(capture: CaptureWire, now: number = Date.now()): boolean {
   switch (capture.status) {
     case 'failed':
     case 'spend_capped':
     case 'needs_target':
-      return true;
     case 'appended':
-      return within(capture.appended_at, RECENTLY_SETTLED_MS, now);
+      return true;
     case 'no_content':
       return within(capture.created_at, RECENTLY_SETTLED_MS, now);
     default:
@@ -372,11 +374,22 @@ export function isFilingRelevant(capture: CaptureWire, now: number = Date.now())
  */
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
       const page = await api.listCaptures({ status: 'all', limit: CAPTURE_LIST_LIMIT });
-      return { items: page.items.filter((capture) => isFilingRelevant(capture)) };
+      const items = page.items.filter((capture) => isFilingRelevant(capture));
+      // Read from the cache rather than closed over: the library remounts on
+      // every visit and the comparison has to be with the last poll, not the
+      // last render.
+      const previous = queryClient.getQueryData<{ items: CaptureWire[] }>(
+        queryKeys.pendingCaptures(),
+      );
+      for (const noteId of newlyAppendedNoteIds(previous?.items, items)) {
+        refreshAppendedNote(queryClient, noteId);
+      }
+      return { items };
     },
     enabled,
     refetchInterval: (query) => {
@@ -387,6 +400,45 @@ export function usePendingCaptures(enabled = true) {
     refetchOnWindowFocus: false,
     staleTime: 0,
   });
+}
+
+/**
+ * Notes whose text just changed under the app: captures that were not
+ * `appended` on the previous poll and are now.
+ *
+ * Nothing else tells the note screen. The append is written by the worker,
+ * not by this client, so no mutation here ever invalidated `['note', id]` —
+ * and a note the user had open while recording into it (or opened from the
+ * filing row's "Open the note") kept showing the body from before the
+ * recording until a second visit. Restricted to transitions: a capture that
+ * was already `appended` on the last poll has nothing new to say, and the
+ * first poll after a cold start — with no previous answer — invalidates
+ * nothing, because there is no cache yet to be stale.
+ */
+export function newlyAppendedNoteIds(
+  previous: readonly CaptureWire[] | undefined,
+  current: readonly CaptureWire[],
+): string[] {
+  if (!previous) return [];
+  const before = new Map(previous.map((capture) => [capture.id, capture.status]));
+  const noteIds = new Set<string>();
+  for (const capture of current) {
+    if (capture.status !== 'appended' || !capture.note_id) continue;
+    if (before.get(capture.id) === 'appended') continue;
+    noteIds.add(capture.note_id);
+  }
+  return Array.from(noteIds);
+}
+
+/**
+ * A note the pipeline has just written to is stale everywhere the app holds
+ * it: the detail query, every list under `['notes']` (snippet, updated_at,
+ * ordering) and the device's copy, which lives under the same prefix and is
+ * rewritten as a side effect of the detail refetch.
+ */
+export function refreshAppendedNote(queryClient: QueryClient, noteId: string): void {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+  void queryClient.invalidateQueries({ queryKey: ['notes'] });
 }
 
 export function useRetryCapture(): UseMutationResult<CaptureWire, Error, string> {

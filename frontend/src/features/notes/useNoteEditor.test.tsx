@@ -241,3 +241,67 @@ describe('one PATCH at a time', () => {
     expect(patches).toHaveLength(2);
   });
 });
+
+describe('a note appended to on the server reaches the screen', () => {
+  /*
+   * The editor loaded a note once per id and ignored every later copy. So when
+   * a recording was filed into the note the user had open — or the one they
+   * opened from the filing row — the cache handed over the stale body first,
+   * the refetch landed a moment later, and the textarea kept the old text
+   * until a second visit.
+   */
+  it('adopts a newer server version when nothing has been typed', async () => {
+    const { wrapper } = harness();
+    const view = renderHook((note: NoteDetailWire) => useNoteEditor(note), {
+      wrapper,
+      initialProps: NOTE,
+    });
+    expect(view.result.current.model.draft.body).toBe(NOTE.body);
+
+    view.rerender({
+      ...NOTE,
+      version: NOTE.version + 1,
+      body: `${NOTE.body}\n\nEllis quoted nine hundred pounds.`,
+    });
+
+    await waitFor(() => {
+      expect(view.result.current.model.draft.body).toContain('Ellis quoted nine hundred pounds.');
+    });
+    expect(view.result.current.model.version).toBe(NOTE.version + 1);
+    expect(view.result.current.model.state).toBe('clean');
+  });
+
+  it('keeps a draft the user is still typing, and leaves the conflict to the save', async () => {
+    const { wrapper } = harness();
+    const view = renderHook((note: NoteDetailWire) => useNoteEditor(note), {
+      wrapper,
+      initialProps: NOTE,
+    });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    view.rerender({ ...NOTE, version: NOTE.version + 1, body: 'Appended by a recording.' });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(view.result.current.model.draft.body).toBe('My own words.');
+    // The version it will PATCH with is still the one it loaded, so the
+    // server's 409 — not a silent overwrite in either direction — decides.
+    expect(view.result.current.model.version).toBe(NOTE.version);
+  });
+
+  it('ignores a refetch that carries the same version', () => {
+    const { wrapper } = harness();
+    const view = renderHook((note: NoteDetailWire) => useNoteEditor(note), {
+      wrapper,
+      initialProps: NOTE,
+    });
+    act(() => {
+      view.result.current.edit({ title: 'Roof repair — Ellis' });
+    });
+    view.rerender({ ...NOTE });
+    expect(view.result.current.model.draft.title).toBe('Roof repair — Ellis');
+  });
+});

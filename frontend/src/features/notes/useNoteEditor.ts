@@ -115,10 +115,29 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
   useEffect(() => {
     if (!note) return;
-    if (loadedId.current === note.id) return;
-    loadedId.current = note.id;
-    dispatch({ type: 'reset', draft: draftFrom(note), version: note.version });
-  }, [note]);
+    if (loadedId.current !== note.id) {
+      loadedId.current = note.id;
+      commit({ type: 'reset', draft: draftFrom(note), version: note.version });
+      return;
+    }
+    /*
+     * The same note, newer on the server than what is on screen: a voice
+     * capture the worker appended while this was open, arriving by refetch.
+     *
+     * Loading once per id was how the screen came to show the pre-recording
+     * body until a second visit — the cache handed over the stale copy first,
+     * the fresh one landed a moment later, and nothing looked at it. It is
+     * adopted only when there is nothing of the user's to lose: no edit
+     * pending, none on the wire, and nothing typed since the last save. A
+     * dirty draft keeps its text, and the version check on its next PATCH
+     * turns the divergence into the conflict prompt, as it always has.
+     */
+    const current = latest.current;
+    const settled = current.state === 'clean' || current.state === 'saved';
+    if (!settled || inFlight.current || timer.current) return;
+    if (note.version <= current.version) return;
+    commit({ type: 'reset', draft: draftFrom(note), version: note.version });
+  }, [note, commit]);
 
   const performSave = useCallback(async () => {
     const current = latest.current;

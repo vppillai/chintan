@@ -32,31 +32,67 @@ export interface SegmentsDocument {
   segments: TranscriptSegment[];
 }
 
-function isSegment(value: unknown): value is TranscriptSegment {
-  if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate['start'] === 'number' &&
-    typeof candidate['end'] === 'number' &&
-    typeof candidate['text'] === 'string'
-  );
+/**
+ * One segment as it appears on the wire, in either of the two shapes the
+ * pipeline has written.
+ *
+ * The worker's `segments.json` carries `start_ms` / `end_ms` (integers), and
+ * has since transcripts were first stored. This parser only ever accepted
+ * `start` / `end` in seconds — a shape nothing produced — so every segment was
+ * dropped, every transcript panel showed its empty state, and every "Copy
+ * transcript" copied nothing. Both are read now, and milliseconds are
+ * converted at the boundary so the rest of the player keeps thinking in
+ * seconds like the `<audio>` element does.
+ */
+interface WireSegment {
+  id?: unknown;
+  start?: unknown;
+  end?: unknown;
+  start_ms?: unknown;
+  end_ms?: unknown;
+  text?: unknown;
 }
 
-/** Tolerates a bare array as well as the enveloped form. */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/** The segment's span in seconds, or null when neither shape is present. */
+function segmentSpan(candidate: WireSegment): { start: number; end: number } | null {
+  if (isFiniteNumber(candidate.start_ms) && isFiniteNumber(candidate.end_ms)) {
+    return { start: candidate.start_ms / 1000, end: candidate.end_ms / 1000 };
+  }
+  if (isFiniteNumber(candidate.start) && isFiniteNumber(candidate.end)) {
+    return { start: candidate.start, end: candidate.end };
+  }
+  return null;
+}
+
+/** Tolerates a bare array as well as the enveloped form, and both time shapes. */
 export function parseSegments(raw: unknown): TranscriptSegment[] {
-  const list = Array.isArray(raw)
+  const list: unknown = Array.isArray(raw)
     ? raw
-    : ((raw as SegmentsDocument | null)?.segments ?? []);
-  return list
-    .filter(isSegment)
-    .map((segment, index) => ({
-      id: typeof segment.id === 'number' ? segment.id : index,
-      start: segment.start,
-      end: segment.end,
-      text: segment.text.trim(),
-    }))
-    .filter((segment) => segment.text.length > 0)
-    .sort((a, b) => a.start - b.start);
+    : (raw as { segments?: unknown } | null)?.segments;
+  if (!Array.isArray(list)) return [];
+
+  const parsed: TranscriptSegment[] = [];
+  list.forEach((value, index) => {
+    if (typeof value !== 'object' || value === null) return;
+    const candidate = value as WireSegment;
+    if (typeof candidate.text !== 'string') return;
+    const span = segmentSpan(candidate);
+    if (!span) return;
+    const text = candidate.text.trim();
+    if (text.length === 0) return;
+    parsed.push({
+      id: typeof candidate.id === 'number' ? candidate.id : index,
+      start: span.start,
+      end: span.end,
+      text,
+    });
+  });
+
+  return parsed.sort((a, b) => a.start - b.start);
 }
 
 export function parsePeaks(raw: unknown): number[] {

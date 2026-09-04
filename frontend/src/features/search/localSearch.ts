@@ -62,12 +62,28 @@ interface Scored extends MergedHit {
 }
 
 /**
+ * What the corpus knows of a note's text beyond its snippet.
+ *
+ * `search_text` is the list item's lowercased body, when the backend sends it.
+ * A cached full note (`NoteDetailWire`, read back from the device) carries the
+ * body itself. Either lets the instant search find a sentence from a
+ * transcript rather than only the first line of the note; neither is required,
+ * and a corpus with only snippets ranks exactly as it did.
+ */
+function bodyText(note: NoteWire): string {
+  if (typeof note.search_text === 'string') return note.search_text;
+  const body = (note as { body?: unknown }).body;
+  return typeof body === 'string' ? body : '';
+}
+
+/**
  * Ranks cached notes against a query.
  *
  * Weighting is deliberately crude and explainable: a title match beats an
- * alias, which beats a tag, which beats body text. A prefix match on the title
- * outranks a mid-word one, because that is what someone typing a note's name
- * expects to see first.
+ * alias, which beats a tag, which beats body text — the snippet or, when the
+ * corpus carries it, the whole body. A prefix match on the title outranks a
+ * mid-word one, because that is what someone typing a note's name expects to
+ * see first.
  */
 export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[] {
   const term = query.trim().toLowerCase();
@@ -99,7 +115,10 @@ export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[
     }
 
     const snippet = note.snippet ?? '';
-    if (snippet.toLowerCase().includes(term)) {
+    const inSnippet = snippet.toLowerCase().includes(term);
+    const body = bodyText(note);
+    const inBody = !inSnippet && body.toLowerCase().includes(term);
+    if (inSnippet || inBody) {
       score += 15;
       matchedIn.push('body');
     }
@@ -110,10 +129,14 @@ export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[
       noteId: note.id,
       title: note.title,
       // Prefer showing the body context: the title is already the row's
-      // heading, so repeating it as the excerpt wastes the line.
-      excerpt: snippet.toLowerCase().includes(term)
+      // heading, so repeating it as the excerpt wastes the line. A hit deeper
+      // in the body than the snippet reaches is excerpted from where it was
+      // found, so the row shows why it matched.
+      excerpt: inSnippet
         ? excerptAround(snippet, query.trim())
-        : excerptAround(snippet, ''),
+        : inBody
+          ? excerptAround(body, query.trim())
+          : excerptAround(snippet, ''),
       matchedIn,
       score,
       updatedAt: note.updated_at,

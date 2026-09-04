@@ -435,3 +435,47 @@ describe('pause, resume, stop, cancel', () => {
     expect(h.wakeLockReleased()).toBe(true);
   });
 });
+
+describe('the live waveform starts empty', () => {
+  it('reads no amplitudes from the previous recording while the microphone is pending', async () => {
+    /*
+     * The capture screen draws the waveform from its first frame by calling
+     * `recentAmplitudes()`. The new session — with its empty PeakCollector —
+     * used to be created only after `getUserMedia` resolved, so for that whole
+     * wait the canvas was fed the previous recording's peaks: a new recording
+     * opened on the tail of the last one's bars, which then vanished.
+     */
+    let resolveStream: (stream: MediaStream) => void = () => {};
+    let requests = 0;
+    const h = harness({
+      requestMicrophone: () => {
+        requests += 1;
+        if (requests === 1) return Promise.resolve(new FakeStream() as unknown as MediaStream);
+        return new Promise<MediaStream>((resolve) => {
+          resolveStream = resolve;
+        });
+      },
+    });
+
+    // First recording, with something on its envelope.
+    await h.start('cap-1');
+    const loud = new Uint8Array(64).fill(255);
+    h.controller.current()?.peaks.push(loud);
+    h.controller.current()?.peaks.push(loud);
+    expect(h.controller.recentAmplitudes(8)).toHaveLength(2);
+    h.recorder.emitChunk(10);
+    await h.controller.stop();
+
+    // Second recording: the microphone has been asked for and has not answered.
+    const starting = h.controller.start('cap-2');
+    expect(h.controller.recentAmplitudes(8)).toEqual([]);
+    expect(h.controller.envelope()).toEqual([]);
+
+    resolveStream(new FakeStream() as unknown as MediaStream);
+    await starting;
+
+    // And once it has, the new session is the one being read.
+    expect(h.controller.current()?.localId).toBe('cap-2');
+    expect(h.controller.recentAmplitudes(8)).toEqual([]);
+  });
+});

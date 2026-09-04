@@ -1,13 +1,19 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isFilingRelevant } from '@/api/queries.ts';
+import { isFilingRelevant, newlyAppendedNoteIds, queryKeys, useNote } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
-import { TestProviders, testApiContext } from '@/test/providers.tsx';
+import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { FilingRow } from './FilingRow.tsx';
+import { DISMISSED_KEY, DISMISSED_LIMIT, dismissCapture, loadDismissed } from './dismissed.ts';
+
+beforeEach(() => {
+  // Dismissals are kept on the device; each test starts with none.
+  localStorage.clear();
+});
 
 function capture(overrides: Partial<CaptureWire> = {}): CaptureWire {
   return {
@@ -392,24 +398,27 @@ describe('what the one poll keeps and what it drops', () => {
     }
   });
 
-  it('keeps a just-filed capture, so there is something to tap through to', () => {
+  it('keeps a filed capture until the user acts on it, however long ago it filed', () => {
+    // The row used to fade ten minutes after the append. A recording made on
+    // the walk home had no receipt by the time the user sat down to read it,
+    // and the owner asked for rows that stay until opened or dismissed.
     expect(
       isFilingRelevant(capture({ status: 'appended', appended_at: recent }), NOW),
     ).toBe(true);
+    expect(isFilingRelevant(capture({ status: 'appended', appended_at: old }), NOW)).toBe(true);
+    expect(isFilingRelevant(capture({ status: 'appended' }), NOW)).toBe(true);
   });
 
-  it('drops a capture filed long ago, and one that produced nothing long ago', () => {
-    expect(isFilingRelevant(capture({ status: 'appended', appended_at: old }), NOW)).toBe(false);
-    expect(isFilingRelevant(capture({ status: 'appended' }), NOW)).toBe(false);
+  it('still lets a recording that produced nothing expire on its own', () => {
+    // Nothing to open and nothing to retry: the one receipt with no action.
     expect(isFilingRelevant(capture({ status: 'no_content', created_at: old }), NOW)).toBe(false);
     expect(isFilingRelevant(capture({ status: 'no_content', created_at: recent }), NOW)).toBe(true);
   });
 
-  it('shows Filed for a capture appended a moment ago, and lets it be dismissed', async () => {
-    // Unlike failed/needs_target, `done` had no Dismiss at all before this —
-    // and once the last active capture appends, polling stops entirely
+  it('shows Filed for an appended capture, and lets it be dismissed', async () => {
+    // Once the last active capture appends, polling stops entirely
     // (refetchInterval returns false), so nothing would ever refetch this row
-    // away on its own.
+    // away on its own. Dismiss is one of the two ways it leaves.
     const user = userEvent.setup();
     mount([
       capture({
@@ -428,7 +437,7 @@ describe('what the one poll keeps and what it drops', () => {
     });
   });
 
-  it('does not resurface a capture appended long ago', async () => {
+  it('shows a capture appended long ago, since nobody has acted on it', async () => {
     mount([
       capture({
         id: 'srv-old',
@@ -438,8 +447,211 @@ describe('what the one poll keeps and what it drops', () => {
       }),
     ]);
 
+    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open the note/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Acting on a row is what removes it, and the removal has to outlive the
+ * screen: the library remounts on every trip into a note, and a reload must
+ * not bring back a row the user closed a minute earlier.
+ */
+describe('a row leaves when it is acted on, and stays gone', () => {
+  const filed = capture({
+    id: 'srv-read',
+    status: 'appended',
+    note_id: 'roof-repair',
+    appended_at: new Date().toISOString(),
+  });
+
+  it('is dismissed by "Open the note", and does not come back on remount', async () => {
+    const user = userEvent.setup();
+    const { view } = mount([filed]);
+
+    await user.click(await screen.findByRole('button', { name: /open the note/i }));
+    await waitFor(() => {
+      expect(screen.queryByText('Filed')).toBeNull();
+    });
+
+    // Back to the library: a fresh mount, reading the device.
+    view.unmount();
+    mount([filed]);
     await waitFor(() => {
       expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
     });
+    expect(JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]')).toEqual(['srv-read']);
+  });
+
+  it('is dismissed by Dismiss across a remount too', async () => {
+    const user = userEvent.setup();
+    const { view } = mount([filed]);
+
+    await user.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    view.unmount();
+    mount([filed]);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
+  it('hides only the dismissed row, not its neighbours', async () => {
+    const user = userEvent.setup();
+    mount([filed, capture({ id: 'srv-other', status: 'failed', error: 'Timed out' })]);
+
+    // Two rows, two Dismiss buttons: the first belongs to the filed row, which
+    // the list renders first because the fixture does.
+    const [first] = await screen.findAllByRole('button', { name: 'Dismiss' });
+    await user.click(first as HTMLElement);
+    await waitFor(() => {
+      expect(screen.queryByText('Filed')).toBeNull();
+    });
+    expect(screen.getByText('Timed out')).toBeInTheDocument();
+  });
+
+  it('survives a reload, which is what the device store is for', () => {
+    let ids = loadDismissed();
+    expect(ids.size).toBe(0);
+    ids = dismissCapture('a', ids);
+    ids = dismissCapture('b', ids);
+    expect(Array.from(loadDismissed())).toEqual(['a', 'b']);
+  });
+
+  it('keeps only the most recent two hundred', () => {
+    let ids = loadDismissed();
+    for (let index = 0; index < DISMISSED_LIMIT + 5; index += 1) {
+      ids = dismissCapture(`cap-${index}`, ids);
+    }
+    const stored = loadDismissed();
+    expect(stored.size).toBe(DISMISSED_LIMIT);
+    expect(stored.has('cap-0')).toBe(false);
+    expect(stored.has(`cap-${DISMISSED_LIMIT + 4}`)).toBe(true);
+  });
+
+  it('treats unreadable storage as nothing dismissed rather than failing', () => {
+    localStorage.setItem(DISMISSED_KEY, '{not json');
+    expect(loadDismissed().size).toBe(0);
+  });
+});
+
+/**
+ * The append is written by the worker, not by this client, so no mutation ever
+ * invalidated the note. A note the user had open while recording into it — or
+ * opened from this row's "Open the note" — showed the body from before the
+ * recording until a second visit.
+ */
+describe('a capture that has just been filed refreshes its note', () => {
+  /** The note screen's own query, so an invalidation has an observer to refetch. */
+  function NoteProbe() {
+    const { data } = useNote('roof-repair');
+    return <p>{data ? `body: ${data.body}` : 'no note'}</p>;
+  }
+
+  /** Serves a different capture list on each poll, and counts note reads. */
+  function mountWithPolls(polls: CaptureWire[][]) {
+    let poll = 0;
+    let noteReads = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes('/v1/captures')) {
+        const items = polls[Math.min(poll, polls.length - 1)] ?? [];
+        poll += 1;
+        return json({ items });
+      }
+      if (url.endsWith('/v1/notes/roof-repair')) {
+        noteReads += 1;
+        return json({
+          id: 'roof-repair',
+          title: 'Roof repair',
+          body: noteReads === 1 ? 'before' : 'after the recording',
+          updated_at: '2026-08-06T09:14:00.000Z',
+          version: noteReads,
+          archived: false,
+        });
+      }
+      return json({ items: [] });
+    });
+    const queryClient = testQueryClient();
+    render(
+      <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
+        <MemoryRouter>
+          <NoteProbe />
+          <FilingRow />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    const refetchCaptures = () =>
+      act(() => queryClient.refetchQueries({ queryKey: queryKeys.pendingCaptures() }));
+    return { queryClient, refetchCaptures, noteReads: () => noteReads };
+  }
+
+  const filing = capture({ id: 'srv-f', status: 'uploaded', note_id: 'roof-repair' });
+  const filed = capture({
+    id: 'srv-f',
+    status: 'appended',
+    note_id: 'roof-repair',
+    appended_at: new Date().toISOString(),
+  });
+
+  it('refetches the note detail when a capture goes uploaded → appended', async () => {
+    const { refetchCaptures, noteReads } = mountWithPolls([[filing], [filed]]);
+
+    expect(await screen.findByText('body: before')).toBeInTheDocument();
+    await screen.findByText('Filing your recording');
+    expect(noteReads()).toBe(1);
+
+    // The next poll sees the capture appended. That is the moment the note's
+    // text changed on the server.
+    await refetchCaptures();
+
+    expect(await screen.findByText('body: after the recording')).toBeInTheDocument();
+    expect(noteReads()).toBe(2);
+  });
+
+  it('does not refetch for a capture that was already appended last time', async () => {
+    const { refetchCaptures, noteReads } = mountWithPolls([[filed], [filed]]);
+
+    await screen.findByText('body: before');
+    await screen.findByText('Filed');
+    await refetchCaptures();
+
+    // Same answer twice; nothing changed, nothing to refresh.
+    await waitFor(() => {
+      expect(screen.getByText('Filed')).toBeInTheDocument();
+    });
+    expect(noteReads()).toBe(1);
+  });
+
+  it('refetches the note when "Open the note" is tapped', async () => {
+    // The poll may have first seen the capture already appended, in which case
+    // no transition was observed — but the row is still saying the note has
+    // just been written to, so opening it must not hand over the old body.
+    const user = userEvent.setup();
+    const { noteReads } = mountWithPolls([[filed]]);
+
+    await screen.findByText('body: before');
+    await user.click(await screen.findByRole('button', { name: /open the note/i }));
+
+    expect(await screen.findByText('body: after the recording')).toBeInTheDocument();
+    expect(noteReads()).toBe(2);
+  });
+
+  it('names only the notes whose captures crossed into appended', () => {
+    const before = [
+      capture({ id: 'a', status: 'transcribing', note_id: 'n1' }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2' }),
+    ];
+    const after = [
+      capture({ id: 'a', status: 'appended', note_id: 'n1' }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2' }),
+      // Not seen before, appended now: the poll missed the transition, but the
+      // note is no less changed for that.
+      capture({ id: 'c', status: 'appended', note_id: 'n3' }),
+      capture({ id: 'd', status: 'appended' }),
+    ];
+    expect(newlyAppendedNoteIds(before, after)).toEqual(['n1', 'n3']);
+    // A cold start has no cache to be stale.
+    expect(newlyAppendedNoteIds(undefined, after)).toEqual([]);
   });
 });
