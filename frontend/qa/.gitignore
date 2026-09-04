@@ -1,0 +1,7 @@
+# Run artefacts of the exploratory QA scripts; only the config and tests are kept.
+results/
+shots/
+shots-*/
+state/
+speech.wav
+*.log
