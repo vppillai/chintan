@@ -3,6 +3,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
+import { recordSavedNote } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { enqueueReplacing } from '@/offline/queue.ts';
 import {
@@ -183,6 +184,25 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
        */
       await clearQueuedEdit(note.id).catch(() => {});
       queryClient.setQueryData(queuedEditKey(note.id), null);
+      /*
+       * What the server now holds, written into the caches this screen reads
+       * from next time. The response is a list row — no body — so the text is
+       * the draft that was sent, which is by definition what was stored; the
+       * version, timestamp and snippet are the server's. Without this the
+       * note reopened within `staleTime` showed the pre-edit body and its
+       * next save lost a version check to the user's own edit.
+       */
+      const { language: _previous, ...base } = { ...note, ...stored };
+      recordSavedNote(queryClient, {
+        ...base,
+        title: attempted.title,
+        body: attempted.body,
+        aliases: attempted.aliases,
+        tags: attempted.tags,
+        // `''` means "inherits the default", which the wire spells as absence.
+        ...(attempted.language ? { language: attempted.language } : {}),
+        ...(note.captures ? { captures: note.captures } : {}),
+      });
       // The version is the server's, not `current.version + 1`. The two agree
       // today, but the guess is exactly the kind of thing that stops being true
       // quietly — a server-side normalisation that bumps twice, a replayed

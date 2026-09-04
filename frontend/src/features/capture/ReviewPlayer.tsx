@@ -101,7 +101,7 @@ export function ReviewPlayer({ clip, envelope, durationMs }: ReviewPlayerProps) 
 
   return (
     <div className="review-player" data-testid="review-player">
-      {src && <audio ref={audioRef} src={src} preload="auto" />}
+      {src && <audio ref={audioRef} src={src} preload="auto" crossOrigin="anonymous" />}
 
       <div className="review-player__row">
         <button

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { ARTIFACT_ORIGIN, expect, test } from './fixtures.ts';
 
 /**
  * Inline playback with tap-to-seek, and the raw/cleaned distinction.
@@ -25,6 +25,34 @@ test('plays inline, never in a new tab', async ({ page, context }) => {
   expect(context.pages()).toHaveLength(pagesBefore);
   await expect(page).toHaveURL(/\/notes\/roof-repair$/);
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+});
+
+/**
+ * "Download audio" never worked on the live app. The bucket is another origin;
+ * the `<audio>` element fetched the presigned URL in no-cors mode, S3 answered
+ * without `Access-Control-Allow-Origin`, and Chromium handed that cached
+ * response to the download's CORS `fetch`, which failed its check every time.
+ * The stub bucket behaves the same way (see `ARTIFACT_ORIGIN`), so this only
+ * passes if both requests are made as CORS requests and the download does not
+ * read from the element's cache.
+ */
+test('downloads the recording it has just loaded, from the cross-origin bucket', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'the download event is asserted in Chromium only');
+  await page.goto('/notes/roof-repair');
+
+  const audio = page.locator('audio');
+  await expect(audio).toHaveAttribute('src', new RegExp(`^${ARTIFACT_ORIGIN}/`));
+  await expect(audio).toHaveAttribute('crossorigin', 'anonymous');
+  // The element has fetched the media: the cache now holds its answer.
+  await waitForAudioReady(page);
+
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download audio' }).click();
+  expect((await download).suggestedFilename()).toBe('chintan-cap-old.webm');
+  await expect(page.getByText('Downloaded')).toBeVisible();
 });
 
 test('renders the peaks waveform to canvas', async ({ page }) => {

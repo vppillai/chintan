@@ -210,6 +210,67 @@ describe('Back always means back', () => {
   });
 });
 
+/**
+ * The deploy is a sub-path: `/chintan/dev/`, which is also the manifest's
+ * `scope` and the service worker's. Every URL the app writes has to stay
+ * under it. With the slash stripped from the basename, React Router's home
+ * URL was the basename verbatim — `/chintan/dev` — so leaving a note,
+ * pressing Archived or typing a search all landed outside the installed app
+ * and outside the worker, where an offline reload is a browser error page.
+ */
+describe('every in-app URL stays inside the deploy scope', () => {
+  const BASE = '/chintan/dev/';
+
+  function mountScoped(entry = BASE) {
+    const router = createMemoryRouter(routes, { initialEntries: [entry], basename: BASE });
+    render(
+      <TestProviders>
+        <RouterProvider router={router} />
+      </TestProviders>,
+    );
+    return router;
+  }
+
+  /** The address bar, not the basename-stripped location the screens see. */
+  const address = (router: Router) =>
+    `${router.state.location.pathname}${router.state.location.search}`;
+
+  it('keeps the trailing slash on the library and its filters', async () => {
+    const user = userEvent.setup();
+    const router = mountScoped();
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.click(screen.getByRole('button', { name: /^Archived/ }));
+    expect(address(router)).toBe('/chintan/dev/?view=archived');
+
+    await user.click(screen.getByRole('button', { name: 'All' }));
+    expect(address(router)).toBe('/chintan/dev/');
+  });
+
+  it('puts notes, settings and the capture screen under the scope', async () => {
+    const user = userEvent.setup();
+    const router = mountScoped();
+
+    await user.click(await screen.findByRole('button', { name: /roof repair/i }));
+    expect(address(router)).toBe('/chintan/dev/notes/roof-repair');
+
+    await user.click(screen.getByRole('button', { name: /back to\s*notes/i }));
+    expect(address(router)).toBe('/chintan/dev/');
+
+    expect(screen.getByRole('link', { name: 'You' })).toHaveAttribute('href', '/chintan/dev/settings');
+    await user.click(screen.getByRole('button', { name: /record/i }));
+    expect(address(router)).toBe('/chintan/dev/capture');
+  });
+
+  it('seeds the library under a deep link at its scoped address', async () => {
+    const router = mountScoped('/chintan/dev/notes/roof-repair');
+    await settle();
+    expect(address(router)).toBe('/chintan/dev/notes/roof-repair');
+    await goBack(router);
+    expect(address(router)).toBe('/chintan/dev/');
+  });
+});
+
 describe('accessibility of the library', () => {
   it('renders note rows as real buttons, not clickable divs', async () => {
     mount();

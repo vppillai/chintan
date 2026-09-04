@@ -20,11 +20,13 @@ import {
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
+import { awaitsConnection } from './useResendOnReconnect.ts';
 
 /**
  * A recording being filed, as a row at the top of the library.
@@ -159,6 +161,37 @@ function useLocalUpload(serverItems: readonly CaptureWire[]): CaptureModel | nul
   return null;
 }
 
+/**
+ * How many "Filed" receipts are shown at once.
+ *
+ * A receipt stays until the user acts on it, and on a device that has never
+ * dismissed any — a second phone, cleared storage, the QA account after a day
+ * of recordings — that is every appended capture among the newest twenty: the
+ * QA pass saw nineteen full-height cards above the first note. Three is enough
+ * to say "your last recordings landed, here they are"; the rest are counted.
+ * Rows that still need something — moving, failed, asking for a target — are
+ * never hidden behind the cap.
+ */
+export const FILED_ROWS_MAX = 3;
+
+/**
+ * The rows to draw, and how many receipts were left out. Order is kept — the
+ * server's, newest first — so the receipts shown are the most recent and the
+ * hidden ones are older. Pure, so the cap is testable without a poll.
+ */
+export function capFiledRows(
+  captures: readonly CaptureWire[],
+  max: number = FILED_ROWS_MAX,
+): { visible: CaptureWire[]; filedHidden: number } {
+  let filed = 0;
+  const visible = captures.filter((capture) => {
+    if (capture.status !== 'appended') return true;
+    filed += 1;
+    return filed <= max;
+  });
+  return { visible, filedHidden: Math.max(0, filed - max) };
+}
+
 export function FilingRow() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -173,17 +206,30 @@ export function FilingRow() {
    */
   const [dismissed, setDismissed] = useState(loadDismissed);
 
+  /*
+   * The device is written here, in the handler, and the state follows. This
+   * used to be one call — `setDismissed((current) => dismissCapture(id,
+   * current))` — with the `localStorage` write inside the updater. React runs
+   * an updater when it renders, not when it is queued: "Open the note" queues
+   * it and navigates in the same tick, and a fiber that unmounts before its
+   * next render never runs its updaters, so the dismissal could be lost
+   * exactly when the user acted on the row. (Strict mode also runs updaters
+   * twice.) A side effect belongs in the handler.
+   */
   const dismiss = (captureId: string): void => {
-    setDismissed((current) => dismissCapture(captureId, current));
+    setDismissed(dismissCapture(captureId, dismissed));
   };
 
   const captures = (data?.items ?? []).filter((capture) => !dismissed.has(capture.id));
   if (captures.length === 0 && !local) return null;
 
+  // Everything that still needs something is shown; the receipts are capped.
+  const { visible, filedHidden } = capFiledRows(captures);
+
   return (
     <section className="filing" aria-label="Recordings being filed">
       {local && <LocalUploadItem model={local} />}
-      {captures.map((capture) => (
+      {visible.map((capture) => (
         <FilingItem
           key={capture.id}
           capture={capture}
@@ -206,6 +252,11 @@ export function FilingRow() {
           }}
         />
       ))}
+      {filedHidden > 0 && (
+        <p className="filing__more" role="status">
+          <span className="numeric">{filedHidden}</span> more filed
+        </p>
+      )}
     </section>
   );
 }
@@ -216,10 +267,15 @@ function LocalUploadItem({ model }: { model: CaptureModel }) {
   const queryClient = useQueryClient();
   const send = useCaptureStore((state) => state.send);
   const discard = useCaptureStore((state) => state.discard);
+  const online = useOnline();
 
   const failed = model.state === 'failed';
   const landed = model.state === 'uploaded';
   const percent = Math.round((landed ? 1 : model.uploadProgress) * 100);
+  // The device is offline and this is the recording that will go out on its
+  // own when it is not — say so, rather than leaving "did not finish" as the
+  // last word beside a banner that already says why.
+  const willResend = failed && !online && awaitsConnection(model);
 
   return (
     <article
@@ -255,6 +311,10 @@ function LocalUploadItem({ model }: { model: CaptureModel }) {
         <div className="filing-row__upload" aria-hidden="true">
           <span className="filing-row__upload-fill" style={{ inlineSize: `${percent}%` }} />
         </div>
+      )}
+
+      {willResend && (
+        <p className="filing-row__status">It will be sent when you&rsquo;re back online.</p>
       )}
 
       {failed && (

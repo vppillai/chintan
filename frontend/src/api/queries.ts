@@ -10,7 +10,9 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type InfiniteData,
   type QueryClient,
+  type QueryKey,
   type UseMutationResult,
 } from '@tanstack/react-query';
 
@@ -22,7 +24,9 @@ import { isTerminalStatus } from './schema.ts';
 import type {
   CaptureListQuery,
   CaptureWire,
+  NoteDetailWire,
   NoteListQuery,
+  NoteWire,
   Page,
   SettingsWire,
 } from './schema.ts';
@@ -146,13 +150,117 @@ export function useNote(noteId: string | undefined) {
   return useQuery({
     queryKey: queryKeys.note(noteId ?? ''),
     queryFn: async () => {
+      const previous = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(noteId ?? ''));
       const note = await api.getNote(noteId as string);
       // The only place a full note — body and captures — enters the device.
       remember(() => cacheNoteDetail(note), queryClient);
+      /*
+       * A capture of this note crossed into `appended` since the last read:
+       * the body on screen just grew, and so did the list's snippet and the
+       * corpus. The same reconciliation the library's poll does, because the
+       * library's poll is not running while this screen is.
+       */
+      if (
+        previous &&
+        newlyAppendedNoteIds(previous.captures ?? [], note.captures ?? []).length > 0
+      ) {
+        void queryClient.invalidateQueries({ queryKey: ['notes'] });
+        void queryClient.invalidateQueries({ queryKey: SEARCH_CORPUS_KEY });
+      }
       return note;
     },
     enabled: Boolean(noteId),
+    /*
+     * A note with a recording still moving through the pipeline is about to
+     * change under the reader, and nothing else on this screen would notice:
+     * the filing row's poll lives on the library and stops when the user
+     * leaves it. A note opened while its own capture was still at "Uploaded"
+     * sat on the pre-recording body indefinitely — one GET, then silence. So
+     * while any of its captures is non-terminal the note asks again on the
+     * filing cadence, and stops the moment the last one settles.
+     */
+    refetchInterval: (query) => capturePollInterval(query.state.data?.captures ?? []),
   });
+}
+
+/**
+ * Writes a note the user has just saved into every place the app holds it.
+ *
+ * The PATCH's answer used to go nowhere but the editor's own reducer. With the
+ * provider's thirty-second `staleTime`, leaving the note and opening it again
+ * handed the editor the cached pre-edit body; the next save carried the old
+ * version and was answered 409, and the screen accused "a voice capture or
+ * another device" of a change the user had made themselves a moment earlier —
+ * offering, as "Keep my edits", to overwrite that edit with the stale text.
+ * The library rows kept the old title and snippet for the same reason.
+ *
+ * So the saved note replaces the detail query, its row is rewritten in every
+ * cached list (the offline keys under the same prefix hold arrays, not pages,
+ * and are refreshed through the device cache instead), the device's copy is
+ * updated, and the lists are marked stale so the next visit re-sorts them —
+ * the row's `updated_at` moved, and only the server knows the true order.
+ */
+export function recordSavedNote(queryClient: QueryClient, saved: NoteDetailWire): void {
+  queryClient.setQueryData<NoteDetailWire>(queryKeys.note(saved.id), (current) =>
+    // The captures are the cache's: a save changes none of them, and the
+    // caller may not have carried them.
+    current
+      ? { ...current, ...saved, ...(current.captures ? { captures: current.captures } : {}) }
+      : saved,
+  );
+  queryClient.setQueriesData<InfiniteData<Page<NoteWire>>>(
+    { queryKey: ['notes'], predicate: (query) => isNoteListKey(query.queryKey) },
+    (data) =>
+      data
+        ? {
+            ...data,
+            pages: data.pages.map((page) => ({
+              ...page,
+              items: page.items.map((item) => (item.id === saved.id ? rowOf(item, saved) : item)),
+            })),
+          }
+        : data,
+  );
+  remember(() => cacheNoteDetail(saved), queryClient);
+  void queryClient.invalidateQueries({ queryKey: ['notes'] });
+  // A tag added or removed changes the chips as well as the row.
+  void queryClient.invalidateQueries({ queryKey: queryKeys.tags() });
+}
+
+/** `['notes', { …NoteListQuery }]` — the server lists, not the device's `['notes', 'offline', …]`. */
+function isNoteListKey(key: QueryKey): boolean {
+  return key[0] === 'notes' && typeof key[1] === 'object' && key[1] !== null;
+}
+
+/** A list row rewritten from the saved note. The body itself never sits in a list. */
+function rowOf(row: NoteWire, saved: NoteDetailWire): NoteWire {
+  // An absent language means "inherits the default" again, so the row's
+  // previous value must go rather than survive the spread.
+  const { language: _previous, ...rest } = row;
+  return {
+    ...rest,
+    title: saved.title,
+    updated_at: saved.updated_at,
+    version: saved.version,
+    ...(saved.aliases ? { aliases: saved.aliases } : {}),
+    ...(saved.tags ? { tags: saved.tags } : {}),
+    // The server derives the snippet; when its answer omits one, the row's
+    // stands until the list is refetched.
+    ...(saved.snippet ? { snippet: saved.snippet } : {}),
+    ...(saved.language ? { language: saved.language } : {}),
+  };
+}
+
+/**
+ * What a note moving between states leaves stale: every list under `['notes']`
+ * — active, archived, the device's copies — and the tag chips, which are
+ * derived from the active notes on the server. The chips used to be left out,
+ * so a tag whose last note had just been deleted forever kept its chip, and
+ * pressing it said "No notes are tagged …" until a reload (QA D16).
+ */
+export function invalidateNoteLists(queryClient: QueryClient): void {
+  void queryClient.invalidateQueries({ queryKey: ['notes'] });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.tags() });
 }
 
 /* ---------------------------------------------------------------------------
@@ -174,7 +282,7 @@ export function useArchiveNote() {
     mutationFn: (noteId: string) => api.archiveNote(noteId),
     onSuccess: (_result, noteId) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -186,7 +294,7 @@ export function useRestoreNote() {
     mutationFn: (noteId: string) => api.restoreNote(noteId),
     onSuccess: (_result, noteId) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -204,7 +312,7 @@ export function useDeleteNoteForever() {
       // Removed, not invalidated: there is nothing left on the server to
       // refetch, and a refetch would 404 into an error the user cannot act on.
       queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -226,7 +334,7 @@ export function useBulkArchiveNotes() {
     mutationFn: (noteIds: string[]) =>
       Promise.allSettled(noteIds.map((id) => api.archiveNote(id))),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -238,7 +346,7 @@ export function useBulkRestoreNotes() {
     mutationFn: (noteIds: string[]) =>
       Promise.allSettled(noteIds.map((id) => api.restoreNote(id))),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -268,7 +376,7 @@ export function useBulkPurgeNotes() {
       for (const result of results) {
         queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
       }
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
@@ -306,10 +414,19 @@ export function useBulkDeleteNotes() {
         remember(() => forgetNote(result.note_id), queryClient);
         queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
       }
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }
+
+/**
+ * How long the search field has to hold still before the server is asked.
+ *
+ * The device's corpus answers every keystroke; this is only for the request
+ * that costs a round trip. Typing a word at 60 ms a key sent one
+ * `GET /v1/search` per letter, and the answers landed out of order.
+ */
+export const SERVER_SEARCH_DEBOUNCE_MS = 250;
 
 /**
  * `GET /v1/search`. Never what the user waits for: the library filters its
@@ -562,7 +679,7 @@ export function useSetCaptureTarget() {
     onSuccess: (capture) => {
       queryClient.setQueryData(queryKeys.capture(capture.id), capture);
       void queryClient.invalidateQueries({ queryKey: ['captures'] });
-      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+      invalidateNoteLists(queryClient);
     },
   });
 }

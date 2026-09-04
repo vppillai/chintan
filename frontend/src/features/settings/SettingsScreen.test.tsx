@@ -56,8 +56,14 @@ export function mountSettings(
   return { puts, fetchImpl };
 }
 
-describe('the default transcription language', () => {
-  it('shows what is stored, and saves a change through PUT /v1/settings', async () => {
+describe('every control saves itself when it is changed', () => {
+  /*
+   * QA D9: "Keep recordings for" set to 7 read "Unsaved changes"; tapping the
+   * Home tab and coming back showed 0, with no prompt — only `beforeunload`
+   * was guarded, and an in-app navigation is not an unload. There is no
+   * draft to lose now: a change is a PUT.
+   */
+  it('saves a language change as soon as it is chosen, with no Save button to find', async () => {
     const { puts } = mountSettings();
 
     const select = (await screen.findByRole('combobox', {
@@ -66,15 +72,10 @@ describe('the default transcription language', () => {
     await waitFor(() => {
       expect(select.value).toBe('en');
     });
-    expect(screen.getByText(/all changes saved/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByText(/unsaved/i)).toBeNull();
 
     await userEvent.selectOptions(select, 'ml');
-
-    // A draft change, not a save: the screen says so and offers the save.
-    expect(screen.getByText(/unsaved changes/i)).toBeInTheDocument();
-    expect(screen.getByText(/transcribed as Malayalam/i)).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
       expect(puts).toHaveLength(1);
@@ -82,9 +83,122 @@ describe('the default transcription language', () => {
     expect(puts[0]?.default_language).toBe('ml');
     // The rest of the record rides along unchanged: PUT replaces the whole thing.
     expect(puts[0]?.cleanup_mode).toBe('faithful');
-    await screen.findByText(/all changes saved/i);
+    expect(screen.getByText(/transcribed as Malayalam/i)).toBeInTheDocument();
+    // A brief tick, not a permanent claim.
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
   });
 
+  it('saves a cleanup mode on tap', async () => {
+    const { puts } = mountSettings();
+    await screen.findByRole('combobox', { name: /default transcription language/i });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /polished/i }));
+
+    await waitFor(() => {
+      expect(puts).toHaveLength(1);
+    });
+    expect(puts[0]?.cleanup_mode).toBe('polished');
+    expect(screen.getByRole('button', { name: /polished/i })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('applies a theme on the device at once and saves it like the rest', async () => {
+    /*
+     * QA D13: Nocturne applied and persisted on the device, the status read
+     * "Unsaved changes", and after a reload "All changes saved" while the
+     * server still said `ink` — no PUT had ever gone out.
+     */
+    const { puts } = mountSettings();
+    await screen.findByRole('combobox', { name: /default transcription language/i });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Nocturne' }));
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'nocturne');
+    await waitFor(() => {
+      expect(puts).toHaveLength(1);
+    });
+    expect(puts[0]?.theme).toBe('nocturne');
+    expect(screen.queryByText(/unsaved/i)).toBeNull();
+  });
+
+  it('saves the retention once the typing pauses, as one PUT', async () => {
+    const user = userEvent.setup({ delay: null });
+    const { puts } = mountSettings();
+    const input = await screen.findByRole('spinbutton', { name: /days to keep source audio/i });
+    await waitFor(() => {
+      expect(input).toBeEnabled();
+    });
+
+    await user.clear(input);
+    await user.type(input, '30');
+    expect(input).toHaveValue(30);
+    // Not yet: "3" on the way to "30" must not be stored.
+    expect(puts).toHaveLength(0);
+
+    await waitFor(() => {
+      expect(puts).toHaveLength(1);
+    });
+    expect(puts[0]?.retention_days).toBe(30);
+    expect(screen.getByText(/deleted after 30 days/i)).toBeInTheDocument();
+  });
+
+  it('says when a save failed and offers to try again, keeping the choice on screen', async () => {
+    let refuse = true;
+    const puts: SettingsWire[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/usage')) return json(NO_USAGE);
+      if (url.pathname.endsWith('/v1/settings')) {
+        if ((init?.method ?? 'GET') === 'PUT') {
+          const body = JSON.parse(String(init?.body)) as SettingsWire;
+          puts.push(body);
+          // 403 rather than 500: the client retries 5xx on its own.
+          if (refuse) {
+            return new Response(
+              JSON.stringify({ type: 'about:blank', title: 'Not permitted', status: 403 }),
+              { status: 403, headers: { 'content-type': 'application/problem+json' } },
+            );
+          }
+          return json(body);
+        }
+        return json(STORED);
+      }
+      return json({ items: [] });
+    });
+    render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter initialEntries={['/settings']}>
+          <SettingsScreen />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: /polished/i }));
+
+    expect(await screen.findByText(/couldn.t save your settings/i)).toBeInTheDocument();
+    // The choice stays where the user put it.
+    expect(screen.getByRole('button', { name: /polished/i })).toHaveAttribute('aria-pressed', 'true');
+
+    refuse = false;
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await waitFor(() => {
+      expect(puts).toHaveLength(2);
+    });
+    expect(puts[1]?.cleanup_mode).toBe('polished');
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+  });
+});
+
+describe('the default transcription language', () => {
   it('explains auto-detect honestly, including what it cannot do', async () => {
     mountSettings({ settings: { ...STORED, default_language: 'auto' } });
 
@@ -97,9 +211,9 @@ describe('the default transcription language', () => {
     expect(screen.getByText(/mixes two is detected as one of them/i)).toBeInTheDocument();
   });
 
-  it('reads a record from before the field existed as English', async () => {
+  it('reads a record from before the field existed as English, and saves nothing for it', async () => {
     const { default_language: _absent, ...legacy } = STORED;
-    mountSettings({ settings: legacy });
+    const { puts } = mountSettings({ settings: legacy });
 
     const select = (await screen.findByRole('combobox', {
       name: /default transcription language/i,
@@ -107,8 +221,7 @@ describe('the default transcription language', () => {
     await waitFor(() => {
       expect(select.value).toBe('en');
     });
-    // Not dirty: the absent field and English are the same stored state.
-    expect(screen.getByText(/all changes saved/i)).toBeInTheDocument();
+    expect(puts).toHaveLength(0);
   });
 });
 

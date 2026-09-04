@@ -295,7 +295,17 @@ function RecordingRow({
              * desktop and navigated out of the app on mobile.
              */
             <section className="player" aria-label="Recording">
-              <audio ref={audioRef} src={audioUrl} preload="metadata" />
+              {/*
+                `crossOrigin="anonymous"` is load-bearing, not hygiene. Without
+                it the element fetches the presigned URL in no-cors mode, S3
+                answers without `Access-Control-Allow-Origin` (no `Origin` was
+                sent), and Chromium keeps that response in the HTTP cache — so
+                the CORS `fetch()` behind "Download audio" was served the
+                cached no-cors response and failed its CORS check on every
+                attempt. With the attribute both requests are CORS requests to
+                a bucket whose rule already allows this origin.
+              */}
+              <audio ref={audioRef} src={audioUrl} preload="metadata" crossOrigin="anonymous" />
 
               <div className="player__controls">
                 {peaks.length > 0 ? (
@@ -337,7 +347,9 @@ function RecordingRow({
                   label="Download audio"
                   filename={() => `chintan-${capture.id}${audioExtension(audioUrl)}`}
                   blob={async () => {
-                    const response = await fetch(audioUrl);
+                    // `no-store`: never the media element's cached response,
+                    // whatever mode it was fetched in — see the element above.
+                    const response = await fetch(audioUrl, { cache: 'no-store' });
                     if (!response.ok) throw new Error(`audio fetch failed: ${response.status}`);
                     return response.blob();
                   }}

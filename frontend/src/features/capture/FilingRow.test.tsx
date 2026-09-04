@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,7 +16,7 @@ import {
 import type { CaptureWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { FilingRow } from './FilingRow.tsx';
+import { FILED_ROWS_MAX, FilingRow } from './FilingRow.tsx';
 import { DISMISSED_KEY, DISMISSED_LIMIT, dismissCapture, loadDismissed } from './dismissed.ts';
 import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
@@ -692,6 +692,45 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     expect(JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]')).toEqual(['srv-read']);
   });
 
+  it('is dismissed by "Open the note" when the library unmounts in the same tick, as it does', async () => {
+    /*
+     * The QA pass's steps, with the real navigation in between: the click
+     * navigates, the library and this row unmount before React renders again,
+     * and the user comes Back to a fresh mount. The dismissal used to be
+     * written inside a `setState` updater, which React runs on the next
+     * render — a render this fiber never gets.
+     */
+    const user = userEvent.setup();
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes('/v1/captures')) return json({ items: [filed] });
+      return json({ id: 'roof-repair', title: 'Roof repair', body: '', version: 1, archived: false, updated_at: '' });
+    });
+    render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter initialEntries={['/']}>
+          <Routes>
+            <Route path="/" element={<FilingRow />} />
+            <Route path="/notes/:id" element={<Link to="/">Back to Notes</Link>} />
+          </Routes>
+        </MemoryRouter>
+      </TestProviders>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /open the note/i }));
+    // On the device before the note screen has even drawn.
+    expect(JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]')).toEqual(['srv-read']);
+
+    await user.click(await screen.findByRole('link', { name: /back to notes/i }));
+    // The library is back, the poll has answered again, and the row is not offered.
+    await waitFor(() => {
+      expect(fetchImpl.mock.calls.filter(([input]) => String(input).includes('/v1/captures')).length)
+        .toBeGreaterThan(1);
+    });
+    expect(screen.queryByText('Filed')).toBeNull();
+    expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+  });
+
   it('is dismissed by Dismiss across a remount too', async () => {
     const user = userEvent.setup();
     const { view } = mount([filed]);
@@ -717,6 +756,38 @@ describe('a row leaves when it is acted on, and stays gone', () => {
       expect(screen.queryByText('Filed')).toBeNull();
     });
     expect(screen.getByText('Timed out')).toBeInTheDocument();
+  });
+
+  it('shows the three newest receipts and counts the rest, never hiding a row that needs something', async () => {
+    /*
+     * On a device that has dismissed nothing, every appended capture among the
+     * newest twenty is a full-height card: the QA account showed nineteen of
+     * them above the first note.
+     */
+    const user = userEvent.setup();
+    const appended = Array.from({ length: 5 }, (_, index) =>
+      capture({
+        id: `srv-filed-${index}`,
+        status: 'appended',
+        note_id: 'roof-repair',
+        appended_at: new Date(Date.now() - index * 60_000).toISOString(),
+      }),
+    );
+    mount([capture({ id: 'srv-moving', status: 'transcribing' }), ...appended]);
+
+    expect(await screen.findAllByRole('button', { name: /open the note/i })).toHaveLength(
+      FILED_ROWS_MAX,
+    );
+    expect(screen.getByText('Filing your recording')).toBeInTheDocument();
+    expect(screen.getByText(/more filed/)).toHaveTextContent('2 more filed');
+
+    // Acting on one of the three lets the next oldest through.
+    const [first] = screen.getAllByRole('button', { name: 'Dismiss' });
+    await user.click(first as HTMLElement);
+    await waitFor(() => {
+      expect(screen.getByText(/more filed/)).toHaveTextContent('1 more filed');
+    });
+    expect(screen.getAllByRole('button', { name: /open the note/i })).toHaveLength(FILED_ROWS_MAX);
   });
 
   it('survives a reload, which is what the device store is for', () => {

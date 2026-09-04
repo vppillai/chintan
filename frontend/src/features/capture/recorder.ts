@@ -329,14 +329,25 @@ export class RecorderController {
     }
   }
 
-  /** Abandons the recording. The buffer is dropped by the caller. */
+  /**
+   * Abandons the recording. The buffer is dropped by the caller.
+   *
+   * Every handler comes off before `stop()`, not just `onstop`. MediaRecorder
+   * delivers its final `dataavailable` *after* `stop()` returns, so with the
+   * data handler still attached the last chunk was written to IndexedDB a
+   * beat after the caller had pruned the buffer — one orphan row in
+   * `captureChunks` per Cancel, referenced by nothing and never removed
+   * (QA D15). A cancelled recording's trailing bytes are not wanted.
+   */
   cancel(): void {
     this.stopping = true;
     this.stopTicking();
     try {
-      if (this.recorder && this.recorder.state !== 'inactive') {
+      if (this.recorder) {
+        this.recorder.ondataavailable = null;
+        this.recorder.onerror = null;
         this.recorder.onstop = null;
-        this.recorder.stop();
+        if (this.recorder.state !== 'inactive') this.recorder.stop();
       }
     } catch {
       /* Already stopped. */

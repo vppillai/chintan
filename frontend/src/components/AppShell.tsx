@@ -7,6 +7,7 @@ import { useRouteFocus } from '@/app/useRouteFocus.ts';
 import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
 import { useAuthGate } from '@/features/auth/useAuth.ts';
 import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
+import { useResendOnReconnect } from '@/features/capture/useResendOnReconnect.ts';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 
@@ -56,6 +57,9 @@ export function AppShell() {
   useBackGuard();
   usePasskeyReturn();
   useRouteFocus(mainRef);
+  // A recording sent while offline goes out when the connection returns,
+  // whichever screen the user is on by then.
+  useResendOnReconnect();
 
   const screen = screenForPath(location.pathname);
 

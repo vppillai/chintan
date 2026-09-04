@@ -2,6 +2,9 @@ import process from 'node:process';
 
 import { defineConfig, devices } from '@playwright/test';
 
+/** Where the sub-path build is served; `scope.spec.ts` sets it as its baseURL. */
+export const SCOPED_BASE_URL = 'http://127.0.0.1:4174/chintan/dev/';
+
 /**
  * End-to-end configuration.
  *
@@ -76,32 +79,59 @@ export default defineConfig({
     },
   ],
 
-  webServer: {
-    // `--host 127.0.0.1` is load-bearing: vite preview otherwise binds
-    // `localhost`, which resolves to ::1 here, and Playwright's readiness probe
-    // on 127.0.0.1 never connects — the run then sits until the timeout.
-    command: 'bun run build && bun run preview -- --port 4173 --strictPort --host 127.0.0.1',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env['CI'],
-    timeout: 120_000,
-    env: {
-      VITE_API_URL: 'http://127.0.0.1:4173/api',
-      VITE_CLIENT_ID: 'e2e-client',
-      VITE_USER_POOL_ID: 'e2e-pool',
-      /*
-       * A different origin, as the real hosted UI is.
-       *
-       * It was a path on the app's own origin, which is not merely unrealistic:
-       * `sw.ts` claims every same-origin navigation, so the service worker
-       * intercepted the redirect to `/cognito/logout`, served the SPA shell for
-       * it, and the app landed on its own Not Found screen instead of Cognito.
-       * Playwright fulfils the route without DNS, so nothing is ever resolved.
-       */
-      VITE_COGNITO_DOMAIN: 'https://cognito.e2e.test',
-      VITE_INSTANCE: 'e2e',
-      // Injected in CI from the git SHA. Pinned here so the footnote spec can
-      // assert the value actually reaches the screen.
-      VITE_VERSION: 'e2e-abc1234',
+  webServer: [
+    {
+      // `--host 127.0.0.1` is load-bearing: vite preview otherwise binds
+      // `localhost`, which resolves to ::1 here, and Playwright's readiness probe
+      // on 127.0.0.1 never connects — the run then sits until the timeout.
+      command: 'bun run build && bun run preview -- --port 4173 --strictPort --host 127.0.0.1',
+      url: 'http://127.0.0.1:4173',
+      reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+      env: {
+        VITE_API_URL: 'http://127.0.0.1:4173/api',
+        VITE_CLIENT_ID: 'e2e-client',
+        VITE_USER_POOL_ID: 'e2e-pool',
+        /*
+         * A different origin, as the real hosted UI is.
+         *
+         * It was a path on the app's own origin, which is not merely unrealistic:
+         * `sw.ts` claims every same-origin navigation, so the service worker
+         * intercepted the redirect to `/cognito/logout`, served the SPA shell for
+         * it, and the app landed on its own Not Found screen instead of Cognito.
+         * Playwright fulfils the route without DNS, so nothing is ever resolved.
+         */
+        VITE_COGNITO_DOMAIN: 'https://cognito.e2e.test',
+        VITE_INSTANCE: 'e2e',
+        // Injected in CI from the git SHA. Pinned here so the footnote spec can
+        // assert the value actually reaches the screen.
+        VITE_VERSION: 'e2e-abc1234',
+      },
     },
-  },
+    /*
+     * The same app built for a sub-path, as every real instance is
+     * (`https://<owner>.github.io/chintan/<instance>/`).
+     *
+     * The root build above cannot show a scope bug: with `base: '/'` there is
+     * no slash to lose. `scope.spec.ts` runs against this one and asserts that
+     * every URL the app writes stays under `/chintan/dev/` — the manifest's
+     * scope and the worker's — and that a filtered library reloads offline.
+     */
+    {
+      command:
+        'bun run build -- --outDir dist-scoped && bun run preview -- --outDir dist-scoped --port 4174 --strictPort --host 127.0.0.1',
+      url: SCOPED_BASE_URL,
+      reuseExistingServer: !process.env['CI'],
+      timeout: 120_000,
+      env: {
+        VITE_BASE: '/chintan/dev/',
+        VITE_API_URL: 'http://127.0.0.1:4174/api',
+        VITE_CLIENT_ID: 'e2e-client',
+        VITE_USER_POOL_ID: 'e2e-pool',
+        VITE_COGNITO_DOMAIN: 'https://cognito.e2e.test',
+        VITE_INSTANCE: 'e2e',
+        VITE_VERSION: 'e2e-abc1234',
+      },
+    },
+  ],
 });

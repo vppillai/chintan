@@ -90,14 +90,21 @@ export function NoteRow({
   if (selectable) {
     return (
       <label className="note-row note-row--selectable">
-        <input
-          type="checkbox"
-          className="note-row__checkbox"
-          checked={selected}
-          onChange={() => {
-            onToggleSelect?.(note.id);
-          }}
-        />
+        {/*
+          A 24 px box inside a 44 px one: the control itself meets the WCAG
+          2.5.8 minimum (it was 20 px), and the wrapper is the thumb's target.
+          The whole row is the label, so a tap anywhere toggles it regardless.
+        */}
+        <span className="note-row__check">
+          <input
+            type="checkbox"
+            className="note-row__checkbox"
+            checked={selected}
+            onChange={() => {
+              onToggleSelect?.(note.id);
+            }}
+          />
+        </span>
         <span className="note-row__body">{body}</span>
       </label>
     );

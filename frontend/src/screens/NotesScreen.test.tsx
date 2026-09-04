@@ -209,6 +209,44 @@ describe('search narrows the list as you type, from what is already on the devic
     expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
   });
 
+  it('asks the server for the word once typing pauses, while the device answers every keystroke', async () => {
+    /*
+     * QA D8: "flashing" at 60 ms a key sent eight `GET /v1/search` requests —
+     * one per letter — whose answers landed out of order. The corpus on the
+     * device narrows the list at once; the server is worth one request, for
+     * the word.
+     */
+    const user = userEvent.setup({ delay: null });
+    const asked: string[] = [];
+    const base = library();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/search')) {
+        asked.push(url.searchParams.get('q') ?? '');
+        return json({ items: [] });
+      }
+      return base(input, init);
+    });
+    mount(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'ridge');
+
+    // The device has already answered: only the matching note is on screen,
+    // and the count says the server is still to come.
+    expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reading list/i })).toBeNull();
+    expect(screen.getByText(/1 result so far/)).toBeInTheDocument();
+    expect(asked).toEqual([]);
+
+    await waitFor(() => {
+      expect(asked).toEqual(['ridge']);
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/^1 result$/)).toBeInTheDocument();
+    });
+  });
+
   it('says nothing matches, naming the term', async () => {
     const user = userEvent.setup();
     mount(library());
@@ -417,6 +455,50 @@ describe('doing something to several notes at once', () => {
     // Every note was archived first, because the server only purges archived notes.
     expect([...archived].sort()).toEqual(TEST_NOTES.map((note) => note.id).sort());
     expect(await screen.findByRole('button', { name: 'Select' })).toBeInTheDocument();
+  });
+
+  it('drops the chip of a tag whose last note was deleted forever', async () => {
+    /*
+     * QA D16: two notes tagged `bulkmobile`, select all, delete forever. The
+     * notes went, the chip stayed, and pressing it said "No notes are tagged
+     * bulkmobile" until a reload — `['tags']` was never invalidated.
+     */
+    const user = userEvent.setup();
+    let active: NoteWire[] = TEST_NOTES.map((note) => ({ ...note, tags: ['bulkmobile'] }));
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? 'GET';
+      if (method === 'DELETE' && url.pathname.includes('/v1/notes/')) return json({});
+      if (method === 'POST' && url.pathname.endsWith('/v1/notes/purge')) {
+        const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
+        active = active.filter((note) => !body.note_ids.includes(note.id));
+        return json({ results: body.note_ids.map((id) => ({ note_id: id, status: 'purged' })) });
+      }
+      // Tags are derived from the active notes, as the real endpoint derives them.
+      if (url.pathname.endsWith('/v1/tags')) {
+        const names = new Set(active.flatMap((note) => note.tags ?? []));
+        return json({ items: [...names].map((name) => ({ name, count: 1 })) });
+      }
+      if (url.pathname.endsWith('/v1/notes')) {
+        return json({ items: url.searchParams.get('state') === 'archived' ? [] : active });
+      }
+      return json({ items: [] });
+    });
+    mount(fetchImpl);
+
+    expect(await screen.findByRole('button', { name: 'bulkmobile' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
+    await user.type(screen.getByLabelText('Type "delete" to confirm'), 'delete');
+    await user.click(screen.getByRole('button', { name: 'Delete them forever' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'bulkmobile' })).toBeNull();
+    });
   });
 
   it('selects and deselects everything with one control', async () => {

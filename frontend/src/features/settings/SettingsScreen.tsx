@@ -4,7 +4,6 @@ import { Link } from 'react-router';
 import { useSaveSettings, useSettings } from '@/api/queries.ts';
 import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
-import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
@@ -30,52 +29,118 @@ const DEFAULTS: SettingsWire = {
   daily_spend_cap_micros: 0,
 };
 
-function equalSettings(a: SettingsWire, b: SettingsWire): boolean {
-  return (
-    a.cleanup_mode === b.cleanup_mode &&
-    a.retention_days === b.retention_days &&
-    a.theme === b.theme &&
-    // A record written before the field existed reads as English, by contract.
-    (a.default_language ?? 'en') === (b.default_language ?? 'en') &&
-    (a.daily_spend_cap_micros ?? 0) === (b.daily_spend_cap_micros ?? 0)
-  );
-}
+/**
+ * How long the retention field waits after a keystroke before it is saved.
+ * The other controls are one tap and save at once; a number being typed
+ * would otherwise PUT "3" on the way to "30".
+ */
+export const RETENTION_SAVE_DELAY_MS = 600;
 
+/** How long the "Saved" tick stays. */
+const SAVED_TICK_MS = 2_500;
+
+/**
+ * You.
+ *
+ * Every control saves itself the moment it is changed — a tap on Polished is
+ * a PUT, a theme is applied and then saved, a retention number goes once the
+ * typing pauses. There is no Save button and nothing is ever "unsaved": the
+ * screen used to hold a draft behind a Save/Discard pair, and tapping another
+ * tab with the draft dirty lost it silently (QA D9), while the theme —
+ * applied on the device at once — read "Unsaved changes" and then, after a
+ * reload, "All changes saved" for a value the server had never been sent
+ * (QA D13). The status line now only ever says what is happening: Saving…, a
+ * brief Saved, or the failure with a way to try again.
+ */
 export function SettingsScreen() {
   const { preference, resolved, setPreference } = useTheme();
   const { data: stored, isLoading } = useSettings();
   const save = useSaveSettings();
 
+  /*
+   * What the controls show: the stored record, plus whatever the user has
+   * changed since — a change is on screen before its PUT returns, and stays
+   * there if the PUT fails, with the failure said beside it.
+   */
   const [draft, setDraft] = useState<SettingsWire>(DEFAULTS);
-  const [pendingDiscard, setPendingDiscard] = useState(false);
   const loadedRef = useRef(false);
-
+  const latest = useRef(draft);
   useEffect(() => {
     if (!stored || loadedRef.current) return;
     loadedRef.current = true;
+    latest.current = stored;
     setDraft(stored);
   }, [stored]);
 
-  const baseline = stored ?? DEFAULTS;
-  const dirty = !equalSettings(draft, baseline);
-
-  const update = useCallback((patch: Partial<SettingsWire>) => {
-    setDraft((previous) => ({ ...previous, ...patch }));
+  const [savedTick, setSavedTick] = useState(false);
+  const tickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showSaved = useCallback(() => {
+    setSavedTick(true);
+    if (tickTimer.current) clearTimeout(tickTimer.current);
+    tickTimer.current = setTimeout(() => {
+      setSavedTick(false);
+    }, SAVED_TICK_MS);
   }, []);
 
-  // Warn before the tab closes on unsaved settings, for the same reason the
-  // note editor does: a silent loss is worse than an interruption.
+  const { mutate } = save;
+  const commit = useCallback(
+    (next: SettingsWire) => {
+      setSavedTick(false);
+      mutate(next, { onSuccess: showSaved });
+    },
+    [mutate, showSaved],
+  );
+
+  /** A retention value typed but not yet sent, and the timer that will send it. */
+  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<SettingsWire | null>(null);
+
+  const flush = useCallback(() => {
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = null;
+    const waiting = pending.current;
+    pending.current = null;
+    if (waiting) commit(waiting);
+  }, [commit]);
+
+  /**
+   * Applies a change to the screen and saves it — at once, or after the
+   * retention field's pause. Nothing is saved before the stored record has
+   * arrived: a PUT replaces the whole record, and one built on the defaults
+   * would overwrite settings this device had not yet read.
+   */
+  const change = useCallback(
+    (patch: Partial<SettingsWire>, { debounced = false }: { debounced?: boolean } = {}) => {
+      const next = { ...latest.current, ...patch };
+      latest.current = next;
+      setDraft(next);
+      if (!loadedRef.current) return;
+      if (debounce.current) clearTimeout(debounce.current);
+      if (!debounced) {
+        pending.current = null;
+        commit(next);
+        return;
+      }
+      pending.current = next;
+      debounce.current = setTimeout(flush, RETENTION_SAVE_DELAY_MS);
+    },
+    [commit, flush],
+  );
+
+  // A number half-typed when the screen goes away — another tab, the app
+  // backgrounded — is sent rather than dropped, the same way the note editor
+  // flushes its debounce.
   useEffect(() => {
-    if (!dirty) return;
-    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
-      event.preventDefault();
-      event.returnValue = '';
+    const onHidden = (): void => {
+      if (document.visibilityState === 'hidden') flush();
     };
-    window.addEventListener('beforeunload', onBeforeUnload);
+    document.addEventListener('visibilitychange', onHidden);
     return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
+      document.removeEventListener('visibilitychange', onHidden);
+      flush();
+      if (tickTimer.current) clearTimeout(tickTimer.current);
     };
-  }, [dirty]);
+  }, [flush]);
 
   const appearanceId = useId();
   const cleanupId = useId();
@@ -90,47 +155,35 @@ export function SettingsScreen() {
       </header>
 
       {/*
-        A real, rendered indicator. v1 toggled a `.btn-warning` class that had
-        no CSS rule behind it, so the unsaved state was invisible on every
-        screen and people navigated away believing they had saved.
+        What the last change did. Empty when there is nothing to say: the
+        controls below are the state, and a line reading "All changes saved"
+        under a theme the server had never seen was the misleading part.
       */}
-      <div className="settings-status" data-dirty={dirty || undefined} role="status" aria-live="polite">
-        <span className="settings-status__text">
-          {save.isPending
-            ? 'Saving…'
-            : save.isError
-              ? "Couldn't save your settings"
-              : dirty
-                ? 'Unsaved changes'
-                : 'All changes saved'}
-        </span>
-
-        {dirty && (
-          <span className="settings-status__actions">
+      <div className="settings-status" role="status" aria-live="polite">
+        {save.isPending ? (
+          <span className="settings-status__text">Saving…</span>
+        ) : save.isError ? (
+          <>
+            <span className="settings-status__text">Couldn&rsquo;t save your settings</span>
             <button
               type="button"
               className="settings-status__action"
               onClick={() => {
-                setPendingDiscard(true);
+                commit(latest.current);
               }}
             >
-              Discard
+              Try again
             </button>
-            <button
-              type="button"
-              className="settings-status__action settings-status__action--primary"
-              onClick={() => {
-                save.mutate(draft);
-              }}
-              disabled={save.isPending}
-            >
-              Save
-            </button>
+          </>
+        ) : savedTick ? (
+          <span className="settings-status__text settings-status__text--saved">
+            <Icon name="check" size={16} className="settings-status__tick" />
+            Saved
           </span>
-        )}
+        ) : null}
       </div>
 
-      {/* ---- Appearance: applied immediately, not part of the draft ------ */}
+      {/* ---- Appearance: applied on the device at once, and saved -------- */}
       <section className="settings-group" aria-labelledby={appearanceId}>
         <h2 id={appearanceId} className="settings-group__title">
           Appearance
@@ -143,8 +196,9 @@ export function SettingsScreen() {
                 className="option"
                 aria-pressed={option === preference}
                 onClick={() => {
+                  // On the device at once, then to the server like the rest.
                   setPreference(option);
-                  update({ theme: option });
+                  change({ theme: option });
                 }}
               >
                 <span className="option__label">{THEME_LABELS[option]}</span>
@@ -170,8 +224,9 @@ export function SettingsScreen() {
                 type="button"
                 className="option"
                 aria-pressed={draft.cleanup_mode === mode}
+                disabled={!stored}
                 onClick={() => {
-                  update({ cleanup_mode: mode });
+                  change({ cleanup_mode: mode });
                 }}
               >
                 <span className="option__label">{CLEANUP_LABELS[mode]}</span>
@@ -200,9 +255,14 @@ export function SettingsScreen() {
             min={0}
             max={3650}
             value={draft.retention_days}
+            disabled={!stored}
             onChange={(event) => {
-              update({ retention_days: clamp(Number(event.target.value), 0, 3650) });
+              change(
+                { retention_days: clamp(Number(event.target.value), 0, 3650) },
+                { debounced: true },
+              );
             }}
+            onBlur={flush}
           />
           <span className="settings-field__suffix">days</span>
         </div>
@@ -225,8 +285,9 @@ export function SettingsScreen() {
           <LanguageSelect
             id={`${languageId}-select`}
             value={draft.default_language ?? 'en'}
+            disabled={!stored}
             onChange={(default_language) => {
-              update({ default_language });
+              change({ default_language });
             }}
           />
         </div>
@@ -262,22 +323,6 @@ export function SettingsScreen() {
       </section>
 
       {isLoading && <p className="screen__count">Loading your settings…</p>}
-
-      <ConfirmDialog
-        open={pendingDiscard}
-        title="Discard your changes?"
-        body="Your unsaved settings will be reset to the last saved values."
-        confirmLabel="Discard changes"
-        destructive
-        onCancel={() => {
-          setPendingDiscard(false);
-        }}
-        onConfirm={() => {
-          setPendingDiscard(false);
-          setDraft(baseline);
-          setPreference(baseline.theme);
-        }}
-      />
 
       <VersionFootnote />
     </div>
