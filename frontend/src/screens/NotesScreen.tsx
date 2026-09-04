@@ -18,6 +18,7 @@ import { ApiError } from '@/api/problem.ts';
 import type { NoteState, NoteWire } from '@/api/schema.ts';
 import { ARCHIVED_VIEW } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { LoadMore } from '@/components/LoadMore.tsx';
 import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
@@ -104,6 +105,10 @@ export function NotesScreen() {
 
   const list = useNotes({ state: view, ...(tag ? { tag } : {}) });
   const cached = useCachedNotes(view);
+  const { fetchNextPage, hasNextPage, isFetchingNextPage } = list;
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
   /*
    * The archive, fetched alongside the active list so the Archived chip can
    * carry its count. In the archived view this is the same query as `list`
@@ -471,17 +476,17 @@ export function NotesScreen() {
 
       {/*
         Cursor pagination is on every list endpoint by contract, so the library
-        loads a page at a time rather than assuming the corpus is small.
+        loads a page at a time rather than assuming the corpus is small — and
+        asks for the next one as the reader nears the end of this one, so the
+        day groups run on without a button to press (backlog U3). The button
+        is still there, for a keyboard and a screen reader.
       */}
-      {!searching && list.hasNextPage && (
-        <button
-          type="button"
-          className="load-more"
-          onClick={() => void list.fetchNextPage()}
-          disabled={list.isFetchingNextPage}
-        >
-          {list.isFetchingNextPage ? 'Loading…' : 'Load more'}
-        </button>
+      {!searching && (
+        <LoadMore
+          hasMore={list.hasNextPage}
+          loading={list.isFetchingNextPage}
+          onLoad={loadMore}
+        />
       )}
 
       {selecting && (

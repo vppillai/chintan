@@ -1782,6 +1782,24 @@
   color: var(--color-ink);
 }
 
+/* The observer's target: nothing to see, one line after the last row. */
+.load-more-sentinel {
+  block-size: 0;
+}
+
+/* Where the observer does the loading, the button is for the keyboard and
+   the screen reader alone: hidden until it is focused, then a real button. */
+.load-more.visually-hidden:focus-visible {
+  position: static;
+  inline-size: 100%;
+  block-size: auto;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-2) var(--space-4);
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+}
+
 /* --------------------------------------------------------------------------
    Settings
    -------------------------------------------------------------------------- */

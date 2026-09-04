@@ -701,6 +701,129 @@ describe('doing something to several notes at once', () => {
 });
 
 /**
+ * Infinite scroll (backlog U3): the next page is asked for as the reader
+ * nears the end of this one, and the day groups run on across pages. The
+ * button survives for the keyboard and the screen reader, hidden until it is
+ * focused; where there is no observer at all it is simply shown.
+ */
+describe('the next page arrives as the list is scrolled', () => {
+  const PAGE_ONE = TEST_NOTES.map((note) => ({ ...note, updated_at: new Date().toISOString() }));
+  const PAGE_TWO: NoteWire[] = [
+    {
+      ...TEST_NOTES[0]!,
+      id: 'older-page',
+      title: 'Older page note',
+      updated_at: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+    },
+  ];
+
+  function pagedLibrary() {
+    const cursors: (string | null)[] = [];
+    const base = library({ active: PAGE_ONE });
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/notes') && (url.searchParams.get('state') ?? 'active') === 'active' && !url.searchParams.has('include')) {
+        const cursor = url.searchParams.get('cursor');
+        cursors.push(cursor);
+        return cursor === 'page-2' ? json({ items: PAGE_TWO }) : json({ items: PAGE_ONE, cursor: 'page-2' });
+      }
+      return base(input, init);
+    });
+    return { fetchImpl, cursors };
+  }
+
+  /** A controllable IntersectionObserver: the test decides when the sentinel is near. */
+  function stubObserver() {
+    const instances: {
+      callback: IntersectionObserverCallback;
+      options?: IntersectionObserverInit | undefined;
+      observed: Element[];
+    }[] = [];
+    class FakeObserver {
+      observed: Element[] = [];
+      constructor(
+        public callback: IntersectionObserverCallback,
+        public options?: IntersectionObserverInit,
+      ) {
+        instances.push(this);
+      }
+      observe(element: Element) {
+        this.observed.push(element);
+      }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    return {
+      instances,
+      near: () => {
+        const live = instances.at(-1);
+        if (!live) throw new Error('nothing is observing');
+        act(() => {
+          live.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            live as unknown as IntersectionObserver,
+          );
+        });
+      },
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches the next page when the sentinel comes within a viewport, and the groups continue', async () => {
+    const observer = stubObserver();
+    const api = pagedLibrary();
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    // Nothing asked for yet: the sentinel is observed, not yet near.
+    await waitFor(() => {
+      expect(observer.instances.at(-1)?.observed.length).toBe(1);
+    });
+    expect(api.cursors).toEqual([null]);
+    // One viewport of margin below the scroll container.
+    expect(observer.instances.at(-1)?.options?.rootMargin).toBe('0px 0px 100% 0px');
+    // The button is still there for the keyboard, out of sight.
+    const button = screen.getByRole('button', { name: 'Load more' });
+    expect(button).toHaveClass('visually-hidden');
+
+    observer.near();
+
+    expect(await screen.findByRole('button', { name: /older page note/i })).toBeInTheDocument();
+    expect(api.cursors).toEqual([null, 'page-2']);
+    // The new rows file under their own day group beneath today's.
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent);
+    expect(headings[0]).toBe('Today');
+    expect(headings.length).toBe(2);
+    // The last page: nothing left to load, so nothing left to press.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    });
+  });
+
+  it('shows the button outright where there is no observer', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined);
+    const user = userEvent.setup();
+    const api = pagedLibrary();
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    const button = await screen.findByRole('button', { name: 'Load more' });
+    expect(button).not.toHaveClass('visually-hidden');
+    await user.click(button);
+
+    expect(await screen.findByRole('button', { name: /older page note/i })).toBeInTheDocument();
+    expect(api.cursors).toEqual([null, 'page-2']);
+  });
+});
+
+/**
  * The instant search matches what the server matches (backlog B5): the words
  * of every note's body, fetched once as a corpus and written to the device.
  */
