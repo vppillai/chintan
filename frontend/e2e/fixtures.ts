@@ -176,12 +176,17 @@ const PEAKS = {
   peaks: Array.from({ length: 40 }, (_, index) => Math.abs(Math.sin(index / 4))),
 };
 
+/** The shape the worker writes: milliseconds, with a word list the app ignores. */
 const SEGMENTS = {
+  version: 1,
+  language: 'English',
+  duration_ms: 12_000,
   segments: [
-    { id: 0, start: 0, end: 4, text: 'Ridge tiles on the south slope have slipped.' },
-    { id: 1, start: 4, end: 8, text: 'Get two quotes before the autumn rain.' },
-    { id: 2, start: 8, end: 12, text: 'Ellis quoted nine hundred.' },
+    { start_ms: 0, end_ms: 4_000, text: ' Ridge tiles on the south slope have slipped.' },
+    { start_ms: 4_000, end_ms: 8_000, text: ' Get two quotes before the autumn rain.' },
+    { start_ms: 8_000, end_ms: 12_000, text: ' Ellis quoted nine hundred.' },
   ],
+  words: [{ start_ms: 0, end_ms: 400, text: 'Ridge' }],
 };
 
 /** Must match `VITE_COGNITO_DOMAIN` in `playwright.config.ts`. */

@@ -67,7 +67,7 @@ describe('the Cleaned view is only offered when there is cleaned text', () => {
   });
 });
 
-describe('a pre-v2 capture with no segments does not contradict itself', () => {
+describe('a capture with no segments does not contradict itself', () => {
   it('does not tell the reader to tap a line when there is nothing to tap', () => {
     // Previously the header note always said "Tap any line to jump there" in
     // raw view, regardless of whether any lines existed — directly above the
@@ -75,6 +75,14 @@ describe('a pre-v2 capture with no segments does not contradict itself', () => {
     // instructions.
     mount({ segments: [], hasSegments: false });
     expect(screen.queryByText(/tap any line to jump/i)).toBeNull();
-    expect(screen.getByText(/there is nothing\s+to jump to/i)).toBeInTheDocument();
+    expect(screen.getByText(/there is nothing to jump\s+to/i)).toBeInTheDocument();
+  });
+
+  it('does not claim the recording predates timestamps', () => {
+    // Every capture the app ever made had timestamps; the parser was dropping
+    // them. The empty state now states what is missing, not why it thinks so.
+    mount({ segments: [], hasSegments: false });
+    expect(screen.queryByText(/before timestamps were captured/i)).toBeNull();
+    expect(screen.getByText(/no timestamps are available for this recording/i)).toBeInTheDocument();
   });
 });

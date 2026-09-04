@@ -145,7 +145,7 @@ test('a capture with no artifacts falls back to a plain player', async ({ page, 
 
   await expect(page.getByRole('slider', { name: 'Playback position' })).toBeVisible();
   await expect(page.locator('.scrubber__canvas')).toHaveCount(0);
-  await expect(page.getByText(/before timestamps were captured/i)).toBeVisible();
+  await expect(page.getByText(/no timestamps are available/i)).toBeVisible();
 });
 
 test('an edit conflict is surfaced rather than clobbering', async ({ page, api }) => {

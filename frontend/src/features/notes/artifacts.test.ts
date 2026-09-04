@@ -45,6 +45,56 @@ describe('parseSegments', () => {
   it('is empty for a missing document', () => {
     expect(parseSegments(null)).toEqual([]);
     expect(parseSegments(undefined)).toEqual([]);
+    expect(parseSegments({ segments: 'nope' })).toEqual([]);
+  });
+
+  it('reads the document the worker actually writes', () => {
+    /*
+     * Verbatim from a real `segments.json`. The worker has always written
+     * `start_ms` / `end_ms`; this parser only ever accepted `start` / `end` in
+     * seconds, so every segment was dropped and every transcript panel showed
+     * its empty state — "Copy transcript" copied nothing, on every capture.
+     */
+    const document = {
+      version: 1,
+      language: 'English',
+      duration_ms: 7661,
+      segments: [
+        { start_ms: 0, end_ms: 2280, text: ' Create a note about the roof.' },
+        { start_ms: 2280, end_ms: 5100, text: ' The gutter on the north side is leaking.' },
+        { start_ms: 5100, end_ms: 7661, text: ' Ask the roofer about the flashing.' },
+      ],
+      words: [
+        { start_ms: 0, end_ms: 400, text: 'Create' },
+        { start_ms: 400, end_ms: 600, text: 'a' },
+      ],
+    };
+
+    const parsed = parseSegments(document);
+
+    expect(parsed).toHaveLength(3);
+    // Seconds from here on, like the <audio> element.
+    expect(parsed.map((segment) => [segment.start, segment.end])).toEqual([
+      [0, 2.28],
+      [2.28, 5.1],
+      [5.1, 7.661],
+    ]);
+    expect(parsed[0]?.text).toBe('Create a note about the roof.');
+    expect(parsed.map((segment) => segment.id)).toEqual([0, 1, 2]);
+  });
+
+  it('still reads the legacy seconds shape', () => {
+    expect(parseSegments([{ start: 1.5, end: 2.5, text: 'legacy' }])).toEqual([
+      { id: 0, start: 1.5, end: 2.5, text: 'legacy' },
+    ]);
+  });
+
+  it('prefers the millisecond fields when a segment carries both', () => {
+    // A future writer that emits both must not have its seconds misread as
+    // milliseconds or the other way round.
+    const [segment] = parseSegments([{ start_ms: 3000, end_ms: 4000, start: 99, end: 100, text: 'x' }]);
+    expect(segment?.start).toBe(3);
+    expect(segment?.end).toBe(4);
   });
 });
 
