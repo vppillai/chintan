@@ -5,7 +5,13 @@ import { ApiError } from '@/api/problem.ts';
 import type { CaptureCreatedWire, CaptureWire } from '@/api/schema.ts';
 
 import type { CaptureEvent } from './machine.ts';
-import { uploadCapture, type UploadDeps, type UploadRequest } from './uploader.ts';
+import {
+  AUDIO_ATTEMPT_TIMEOUT_MS,
+  PEAKS_ATTEMPT_TIMEOUT_MS,
+  uploadCapture,
+  type UploadDeps,
+  type UploadRequest,
+} from './uploader.ts';
 
 const REQUEST: UploadRequest = {
   localId: 'cap-1',
@@ -121,6 +127,46 @@ describe('a successful upload', () => {
     await uploadCapture(h.api, REQUEST, emitInto(h.events), h.deps);
 
     expect(h.events).toContainEqual({ type: 'captureCreated', serverCaptureId: 'srv-1' });
+  });
+
+  it('sends the peaks alongside the audio rather than after it', async () => {
+    /*
+     * The peaks document is ~2 KB and used to wait for the audio PUT to finish
+     * before it left — landing a second later in the log review for no reason
+     * but its place in the queue. On a slow link that was a second of
+     * "Sending" the user watched for a waveform they had not asked about.
+     */
+    let inFlight = 0;
+    let mostInFlight = 0;
+    const h = harness({
+      put: async () => {
+        inFlight += 1;
+        mostInFlight = Math.max(mostInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+      },
+    });
+
+    await uploadCapture(h.api, REQUEST, emitInto(h.events), h.deps);
+
+    expect(mostInFlight).toBe(2);
+    // Still confirmed only once both have settled.
+    expect(h.confirmed).toEqual(['cap-1']);
+  });
+
+  it('bounds every PUT attempt, more tightly for the peaks', async () => {
+    const bounds: Record<string, number | undefined> = {};
+    const h = harness({
+      put: async (upload, _body, options) => {
+        bounds[upload.url] = options?.attemptTimeoutMs;
+      },
+    });
+
+    await uploadCapture(h.api, REQUEST, emitInto(h.events), h.deps);
+
+    expect(bounds['https://s3.test/audio']).toBe(AUDIO_ATTEMPT_TIMEOUT_MS);
+    expect(bounds['https://s3.test/peaks']).toBe(PEAKS_ATTEMPT_TIMEOUT_MS);
+    expect(PEAKS_ATTEMPT_TIMEOUT_MS).toBeLessThan(AUDIO_ATTEMPT_TIMEOUT_MS);
   });
 
   it('skips peaks when the instance did not offer an upload for them', async () => {

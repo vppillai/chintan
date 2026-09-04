@@ -23,7 +23,7 @@
  *     through `problemFromResponse`, the function the app actually uses.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   BACKEND_CAPTURE_CONTENT_TYPES,
@@ -238,6 +238,71 @@ describe('CaptureCreated', () => {
     });
 
     expect(attempts).toBe(3);
+  });
+
+  it('abandons an attempt that stalls, and retries it', async () => {
+    /*
+     * The production log review found uploads of 67–250 KB taking 5–19 s in
+     * one bad stretch: a hung connection was waited on until the browser gave
+     * up on it, because no attempt had a bound of its own. Now one does, and
+     * a stall costs a retry rather than the session.
+     */
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const aborted: boolean[] = [];
+      const upload = putPresigned(captureCreated.upload, 'audio-bytes', {
+        attemptTimeoutMs: 1_000,
+        maxRetries: 2,
+        fetchImpl: (_input, init) => {
+          attempts += 1;
+          if (attempts === 1) {
+            // Never answers. Only the abort signal can end it.
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => {
+                aborted.push(true);
+                reject(new DOMException('Aborted', 'AbortError'));
+              });
+            });
+          }
+          return Promise.resolve(new Response(null, { status: 200 }));
+        },
+      });
+
+      // The stalled attempt is cut off at the bound, then the backoff elapses.
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(aborted).toEqual([true]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await upload;
+
+      expect(attempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry the caller's own abort", async () => {
+    // The timer's abort and the caller's look the same to fetch. Only one of
+    // them means "try again".
+    const controller = new AbortController();
+    let attempts = 0;
+    const upload = putPresigned(captureCreated.upload, 'audio-bytes', {
+      signal: controller.signal,
+      maxRetries: 3,
+      fetchImpl: (_input, init) => {
+        attempts += 1;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      },
+    });
+
+    controller.abort();
+
+    await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
+    expect(attempts).toBe(1);
   });
 
   it('offers a peaks upload that is not tagged for audio retention', () => {

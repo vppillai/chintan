@@ -41,8 +41,48 @@ test('records, uploads, and hands off to the filing row', async ({ page, api }) 
   await page.getByRole('button', { name: 'Stop' }).click();
   await expect(page.getByText('Ready to send')).toBeVisible();
 
+  // Review: the recording itself, playable and seekable, before it goes anywhere.
+  const slider = page.getByRole('slider', { name: 'Playback position' });
+  await expect(slider).toBeVisible();
+  await expect(slider).toHaveAttribute('aria-valuemax', /^[1-9]\d*$/);
+  // Playable: the button enables once the chunks are reassembled, playback
+  // runs, and — the clip being about a second long — ends by itself.
+  await page.getByRole('button', { name: 'Play recording' }).click();
+  await expect(page.getByRole('button', { name: 'Pause recording' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play recording' })).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByRole('button', { name: 'Re-record' })).toBeVisible();
+
+  /*
+   * Send must not wait. The create is held back so the hand-off is observable
+   * before the server has answered anything: the library, with the upload's
+   * own row at the top of it.
+   */
+  let releaseCreate: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  await page.route('**/api/v1/captures', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+    await held;
+    await route.fallback();
+  });
+
   await page.getByRole('button', { name: 'Send' }).click();
 
+  await expect(page).toHaveURL(/\/$/);
+  const filing = page.getByRole('region', { name: /recordings being filed/i });
+  await expect(filing).toBeVisible();
+  await expect(filing.getByText(/uploading… \d+%/i)).toBeVisible();
+  expect(api.captures).toHaveLength(0);
+  // Not offered back as "unsent" while it is being sent one row below.
+  await expect(page.getByRole('region', { name: 'Unsent recording' })).toHaveCount(0);
+
+  releaseCreate();
   await expect
     .poll(() => api.captures.length, { message: 'capture created' })
     .toBeGreaterThan(0);
@@ -54,11 +94,13 @@ test('records, uploads, and hands off to the filing row', async ({ page, api }) 
   expect(create?.headers['idempotency-key']).toBeTruthy();
   expect(create?.headers['authorization']).toBe('Bearer e2e-id-token');
 
-  // Handed off: back on the library, with the filing row at the top of it.
+  // The server's row takes over from the local one, and follows the pipeline.
   api.captures[0]!.status = 'transcribing';
-  await expect(page).toHaveURL(/\/$/, { timeout: 10_000 });
-  await expect(page.getByRole('region', { name: /recordings being filed/i })).toBeVisible();
-  await expect(page.getByText('Filing your recording')).toBeVisible();
+  await expect(filing.getByText('Filing your recording')).toBeVisible({ timeout: 10_000 });
+  await expect(filing.locator('.filing-row')).toHaveCount(1);
+  api.captures[0]!.status = 'appended';
+  api.captures[0]!.note_id = 'roof-repair';
+  await expect(filing.getByText('Filed')).toBeVisible({ timeout: 10_000 });
   // And Back does not walk into a fresh recording: the capture entry was replaced.
   await page.goBack();
   await expect(page).not.toHaveURL(/\/capture$/);
@@ -87,14 +129,15 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
     await page.getByRole('button', { name: 'Stop' }).click();
     await expect(page.getByText('Ready to send')).toBeVisible();
     await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 10_000 });
 
     await expect
       .poll(() => api.captures.length, { message: `capture ${attempt} created`, timeout: 15_000 })
       .toBe(attempt);
 
-    // Filed, so the row settles and the library is back with the tab bar.
+    // Filed, so the row settles and the machine is released for the next take.
     api.captures.at(-1)!.status = 'appended';
-    await expect(page).toHaveURL(/\/$/, { timeout: 10_000 });
+    await expect(page.getByText('Filed').first()).toBeVisible({ timeout: 10_000 });
   }
 });
 

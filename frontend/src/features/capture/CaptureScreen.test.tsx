@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { TestProviders } from '@/test/providers.tsx';
+import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
+import type { ApiContextValue } from '@/api/ApiProvider.tsx';
 
 import { CaptureScreen } from './CaptureScreen.tsx';
 import { INITIAL_CAPTURE } from './machine.ts';
@@ -78,9 +79,9 @@ function fakeDeps(): RecorderDeps {
   };
 }
 
-function mount(path = '/capture') {
+function mount(path = '/capture', api?: ApiContextValue) {
   return render(
-    <TestProviders>
+    <TestProviders {...(api ? { api } : {})}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/capture" element={<CaptureScreen />} />
@@ -204,6 +205,171 @@ describe('opening /capture arms a recording', () => {
     view.unmount();
 
     expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+});
+
+describe('review before send', () => {
+  /** Puts the machine at review with a recording of the given length. */
+  function reviewed(elapsedMs = 8_000) {
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'review',
+          localId: 'cap-review',
+          bytes: 12_000,
+          chunks: 4,
+          elapsedMs,
+          noteId: 'roof-repair',
+        },
+      });
+    });
+  }
+
+  it('shows a player for the recording, with the length from the machine clock', async () => {
+    reviewed(95_000);
+    mount();
+
+    // A slider, so the position is reachable without a pointer; its range is
+    // the recording's length from the machine, not from the audio element,
+    // which cannot know the duration of a WebM straight out of MediaRecorder.
+    const slider = await screen.findByRole('slider', { name: 'Playback position' });
+    expect(slider).toHaveAttribute('aria-valuemax', '95');
+    expect(screen.getByText('1:35')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /play recording/i })).toBeInTheDocument();
+    // The live canvas is gone: this is the recording, not the microphone.
+    expect(document.querySelector('canvas.waveform')).toBeNull();
+  });
+
+  it('offers Send, Re-record and Discard', async () => {
+    reviewed();
+    mount();
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Re-record' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  });
+
+  it('Send hands off to the library at once, with the upload still running in the store', async () => {
+    /*
+     * The upload has always lived in the store, outside the tree; the only
+     * thing that kept the user watching "Sending 40%" was the screen waiting
+     * for it. Now Send is a tap and a navigation, and the library's filing
+     * row shows the progress.
+     */
+    useCaptureStore.getState().__configure({
+      upload: {
+        assemble: async () => new Blob(['audio']),
+        put: async () => {},
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+    // A create that does not answer until the test lets it.
+    let releaseCreate: () => void = () => {};
+    const created = new Promise<void>((resolve) => {
+      releaseCreate = resolve;
+    });
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const body = (payload: unknown, status = 200) =>
+        new Response(JSON.stringify(payload), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (url.includes('/v1/captures') && init?.method === 'POST') {
+        await created;
+        return body(
+          {
+            capture: { id: 'srv-1', status: 'uploaded', created_at: '', version: 1 },
+            upload: {
+              url: 'https://s3.test/audio',
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              max_bytes: 1_000_000,
+            },
+          },
+          201,
+        );
+      }
+      if (url.includes('/v1/notes')) return body({ items: TEST_NOTES });
+      return body({ items: [] });
+    };
+
+    reviewed();
+    mount('/capture', testApiContext(fetchImpl));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+
+    // Home, immediately — before the server has even answered the create.
+    expect(await screen.findByText('Home')).toBeInTheDocument();
+    expect(useCaptureStore.getState().model.state).toBe('uploading');
+
+    releaseCreate();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('uploaded');
+    });
+    expect(useCaptureStore.getState().model.serverCaptureId).toBe('srv-1');
+  });
+
+  it('Re-record discards the take and opens the microphone again into the same note', async () => {
+    reviewed();
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Re-record' }));
+
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    expect(micRequests).toBe(1);
+    expect(useCaptureStore.getState().model.localId).not.toBe('cap-review');
+    // The target survives the retake; the audio does not.
+    expect(useCaptureStore.getState().model.noteId).toBe('roof-repair');
+    expect(useCaptureStore.getState().model.bytes).toBe(0);
+  });
+});
+
+describe('the capture route does not wait on the library', () => {
+  it('asks for no notes until the microphone is live', async () => {
+    /*
+     * On a cold launch of the shortcut the notes request left with the
+     * microphone request and the two shared a slow link's first seconds. The
+     * list is for the target pill, and the pill can wait until "Recording".
+     */
+    let releaseMic: () => void = () => {};
+    const deps = fakeDeps();
+    deps.requestMicrophone = () =>
+      new Promise((resolve) => {
+        releaseMic = () => {
+          resolve(new FakeStream() as unknown as MediaStream);
+        };
+      });
+    useCaptureStore.getState().__configure({ recorder: deps });
+
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url.pathname);
+      return new Response(JSON.stringify({ items: TEST_NOTES }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    mount('/capture', testApiContext(fetchImpl));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('requesting');
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(requested.filter((path) => path.endsWith('/v1/notes'))).toEqual([]);
+
+    releaseMic();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await waitFor(() => {
+      expect(requested.some((path) => path.endsWith('/v1/notes'))).toBe(true);
+    });
   });
 });
 

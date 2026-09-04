@@ -1,5 +1,5 @@
 import { onlineManager } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -553,5 +553,55 @@ describe('the search corpus', () => {
     expect(corpus).toHaveLength(1);
     expect(corpus[0]?.searchParams.get('limit')).toBe('200');
     expect(lists.length).toBeGreaterThan(0);
+  });
+});
+
+describe('pull to refresh', () => {
+  /** A finger on the shell's scroll container, which the test wraps the screen in. */
+  function touch(type: string, clientY: number): Event {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'touches', {
+      value: type === 'touchend' ? [] : [{ clientY }],
+    });
+    Object.defineProperty(event, 'changedTouches', { value: [{ clientY }] });
+    return event;
+  }
+
+  it('asks for the notes, tags and captures again when pulled down at the top', async () => {
+    const fetchImpl = library();
+    render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter initialEntries={['/']}>
+          <main className="app__main">
+            <NotesScreen />
+          </main>
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    await screen.findByText('Roof repair');
+    const before = vi.mocked(fetchImpl).mock.calls.length;
+    const main = document.querySelector('.app__main') as HTMLElement;
+
+    act(() => {
+      main.dispatchEvent(touch('touchstart', 0));
+      main.dispatchEvent(touch('touchmove', 200));
+    });
+    expect(screen.getByText('Release to refresh')).toBeInTheDocument();
+    act(() => {
+      main.dispatchEvent(touch('touchend', 200));
+    });
+    expect(screen.getByText('Refreshing…')).toBeInTheDocument();
+
+    await waitFor(() => {
+      const urls = vi
+        .mocked(fetchImpl)
+        .mock.calls.slice(before)
+        .map((call) => new URL(String(call[0])).pathname);
+      expect(urls.some((url) => url.endsWith('/v1/notes'))).toBe(true);
+      expect(urls.some((url) => url.endsWith('/v1/tags'))).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('Refreshing…')).toBeNull();
+    });
   });
 });

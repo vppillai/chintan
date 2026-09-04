@@ -68,3 +68,25 @@ test('the document icon links resolve from a deep link, not from its directory',
     expect((await request.get(href)).status(), `${href} does not exist`).toBe(200);
   }
 });
+
+/**
+ * The document opens its connections to the API and to Cognito while the
+ * module graph is still downloading, rather than after React has mounted and
+ * asked for the notes. On a cold launch of the capture shortcut over a slow
+ * link that is a DNS lookup and two handshakes taken off the first request.
+ * The hints are emitted at build time from the same VITE_* the bundle bakes in.
+ */
+test('the document preconnects to the API and Cognito origins', async ({ page }) => {
+  await page.goto('/');
+  const hrefs = await page
+    .locator('link[rel="preconnect"]')
+    .evaluateAll((links) => links.map((link) => link.getAttribute('href')));
+  // Matches VITE_API_URL / VITE_COGNITO_DOMAIN in playwright.config.ts.
+  expect(hrefs).toContain('http://127.0.0.1:4173');
+  expect(hrefs).toContain('https://cognito.e2e.test');
+  // CORS fetches can only reuse a connection opened with `crossorigin`.
+  const crossorigin = await page
+    .locator('link[rel="preconnect"]')
+    .evaluateAll((links) => links.every((link) => link.hasAttribute('crossorigin')));
+  expect(crossorigin).toBe(true);
+});

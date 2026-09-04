@@ -29,6 +29,10 @@ export function RecordingIndicator() {
   // On /capture the screen itself is the indicator.
   if (location.pathname === ROUTES.capture) return null;
   if (!isCaptureBusy(model)) return null;
+  // On the library an upload is already shown as the filing row at the top,
+  // with its percentage; a second line saying the same thing is noise. Every
+  // other screen still says so, because nothing else on them does.
+  if (model.state === 'uploading' && location.pathname === ROUTES.home) return null;
 
   return (
     <button

@@ -37,6 +37,7 @@ const VIEWPORTS: readonly Viewport[] = [
   { name: '375x667 iphone-8', width: 375, height: 667 },
   { name: '390x844 iphone-14', width: 390, height: 844 },
   { name: '393x873 pixel', width: 393, height: 873 },
+  { name: '412x915 pixel-7', width: 412, height: 915 },
   { name: '844x390 phone-landscape', width: 844, height: 390 },
   { name: '768x1024 ipad-portrait', width: 768, height: 1024 },
   { name: '1024x768 ipad-landscape', width: 1024, height: 768 },
@@ -294,11 +295,15 @@ async function inspect(page: Page): Promise<LayoutReport> {
       /*
        * A single-line text field scrolls its own value by definition; that is
        * the control working, not the layout failing. So does a label cut with
-       * an ellipsis (a row's tag chip), and the library's chip row is a
-       * sideways-scrolling line on purpose. Everything else that can scroll
-       * sideways is a container that should have wrapped.
+       * an ellipsis (a row's tag chip); the library's chip row and the review
+       * player's waveform are sideways-scrolling lines on purpose. Everything
+       * else that can scroll sideways is a container that should have wrapped.
        */
-      if (element.matches('input, textarea, select, .chips, .note-row__tag')) continue;
+      if (
+        element.matches('input, textarea, select, .chips, .note-row__tag, .clip-scrubber')
+      ) {
+        continue;
+      }
       if (element.scrollWidth > element.clientWidth + 1 && element.clientWidth > 0) {
         sidewaysScroll.push({
           selector: describe(element),
@@ -433,6 +438,20 @@ for (const theme of THEMES) {
 
         await shoot(page, `capture__${viewport.name}__${theme}`);
         assertClean(await inspect(page), `capture @ ${viewport.name}/${theme}`);
+
+        /*
+         * Review: the live canvas gives way to the recording's own waveform,
+         * which is deliberately wider than the screen inside its own scroller
+         * (`.clip-scrubber`, excused from the sideways-scroll check) and must
+         * not push anything else sideways or under the controls.
+         */
+        // A second of audio, so the review draws a waveform rather than a hairline.
+        await page.waitForTimeout(1_100);
+        await page.getByRole('button', { name: 'Stop' }).click();
+        await expect(page.locator('.capture__state')).toHaveText('Ready to send');
+        await expect(page.getByRole('slider', { name: 'Playback position' })).toBeVisible();
+        await shoot(page, `capture-review__${viewport.name}__${theme}`);
+        assertClean(await inspect(page), `capture review @ ${viewport.name}/${theme}`);
       });
     });
   }
@@ -534,6 +553,78 @@ for (const height of [390, 300, 240]) {
       'the confirm button sits below the fold with no way to scroll to it',
     ).toBeLessThanOrEqual(reach!.viewport + 1);
     expect(reach!.confirmTop, 'the confirm button sits above the fold').toBeGreaterThanOrEqual(-1);
+  });
+}
+
+/**
+ * The record button is 76px, and the library's last row is never under the
+ * bar. The bar is in normal flow and cannot overlay anything, but the list used
+ * to end 32px from the edge, hard against it; a thumb resting on Record covered
+ * the lower half of the last row. Measured on the two phones the owner uses.
+ */
+for (const viewport of [
+  { name: '320x568', width: 320, height: 568 },
+  { name: '412x915', width: 412, height: 915 },
+]) {
+  test(`the record button is 76px and the last row clears the tab bar at ${viewport.name}`, async ({
+    page,
+    api,
+  }) => {
+    // Enough notes that the library scrolls at any phone height.
+    for (let index = 0; index < 30; index += 1) {
+      const id = `filler-${String(index)}`;
+      api.notes[id] = {
+        id,
+        title: `Filler note ${String(index + 1)}`,
+        body: 'Padding for the scroll test.',
+        snippet: 'Padding for the scroll test.',
+        tags: [],
+        aliases: [],
+        updated_at: new Date(Date.UTC(2026, 7, 1 + (index % 28))).toISOString(),
+        version: 1,
+        archived: false,
+        captures: [],
+      };
+    }
+    await withoutServiceWorker(page);
+    await page.setViewportSize(viewport);
+    await page.goto('/');
+    await expect(page.locator('.note-row').first()).toBeVisible();
+
+    const measured = await page.evaluate(() => {
+      const main = document.querySelector('.app__main');
+      if (!main) return null;
+      main.scrollTop = main.scrollHeight;
+      const rows = document.querySelectorAll('.note-row');
+      const last = rows[rows.length - 1]?.getBoundingClientRect();
+      const bar = document.querySelector('.tab-bar')?.getBoundingClientRect();
+      const record = document.querySelector('.record-button')?.getBoundingClientRect();
+      if (!last || !bar || !record) return null;
+      return {
+        scrolls: main.scrollHeight > main.clientHeight,
+        lastBottom: Math.round(last.bottom),
+        barTop: Math.round(bar.top),
+        barBottom: Math.round(bar.bottom),
+        viewport: document.documentElement.clientHeight,
+        record: { width: Math.round(record.width), height: Math.round(record.height) },
+      };
+    });
+
+    expect(measured, 'the library rendered no rows, bar or record button').not.toBeNull();
+    expect(measured!.scrolls, 'the list must be long enough to scroll for this to mean anything').toBe(
+      true,
+    );
+    expect(measured!.record.width).toBeGreaterThanOrEqual(76);
+    expect(measured!.record.height).toBeGreaterThanOrEqual(76);
+    // Scrolled to the very end, the last row sits above the bar with the
+    // list's bottom padding (a bar's height) between them.
+    expect(
+      measured!.barTop - measured!.lastBottom,
+      'the last row does not clear the tab bar',
+    ).toBeGreaterThanOrEqual(measured!.barBottom - measured!.barTop - 1);
+    expect(measured!.barBottom, 'the bar is not fully on screen').toBeLessThanOrEqual(
+      measured!.viewport + 1,
+    );
   });
 }
 

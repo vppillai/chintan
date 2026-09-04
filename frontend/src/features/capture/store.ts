@@ -10,7 +10,7 @@ import { create } from 'zustand';
 
 import type { ChintanApi } from '@/api/endpoints.ts';
 
-import { discardCapture, saveCaptureRecord } from './buffer.ts';
+import { assembleBlob, discardCapture, saveCaptureRecord } from './buffer.ts';
 import { errorFeedback, startFeedback, stopFeedback } from './feedback.ts';
 import {
   INITIAL_CAPTURE,
@@ -41,8 +41,17 @@ export interface CaptureStore {
   stop: () => Promise<void>;
   /** Abandon: stops the recorder and deletes the buffered audio. */
   discard: () => Promise<void>;
+  /** Discard, then start again into the same target. The review screen's "Re-record". */
+  rerecord: () => Promise<void>;
   send: (api: ChintanApi) => Promise<void>;
   reset: () => void;
+  /**
+   * The recording as one playable Blob, reassembled from the chunks on disk.
+   * For the review player; the uploader assembles its own copy when sending.
+   */
+  clip: () => Promise<Blob>;
+  /** The finished amplitude envelope, for drawing the recording before it is sent. */
+  envelope: () => number[];
   /** Test seam. */
   __configure: (deps: { recorder?: RecorderDeps; upload?: UploadDeps }) => void;
 }
@@ -158,9 +167,32 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
       dispatch({ type: 'discard' });
     },
 
+    async rerecord() {
+      // Read before the discard resets it: the target is the one thing about
+      // the abandoned take worth keeping.
+      const { noteId } = get().model;
+      await get().discard();
+      await get().start(noteId);
+    },
+
+    async clip() {
+      const { localId } = get().model;
+      const contentType = controller?.current()?.encoder.contentType ?? 'audio/webm';
+      // The last chunk lands on disk a beat after `finalised`; read after it.
+      await controller?.flushed();
+      return assembleBlob(localId, contentType);
+    },
+
+    envelope() {
+      return controller?.envelope() ?? [];
+    },
+
     async send(api) {
       const { model } = get();
       const encoder = controller?.current()?.encoder;
+      // A Send the instant Stop finishes must not assemble a buffer that is
+      // still being written.
+      await controller?.flushed();
       await uploadCapture(
         api,
         {
