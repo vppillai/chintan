@@ -19,6 +19,8 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 
+import { dismissCapture, loadDismissed } from './dismissed.ts';
+
 /**
  * A recording being filed, as a row at the top of the library.
  *
@@ -92,23 +94,22 @@ function describe(capture: CaptureWire, stuck: boolean): string {
   }
 }
 
-/**
- * Rows the user has closed.
- *
- * Module-level on purpose: the library remounts every time the user opens a
- * note and comes back, so component state would resurrect a row the user had
- * just dismissed. There is no server-side "seen" flag to sync with — `failed`
- * and `no_content` stay in the list by contract — so this is a per-session
- * client decision and nothing more.
- */
-const dismissed = new Set<string>();
-
 export function FilingRow() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data } = usePendingCaptures();
   const retry = useRetryCapture();
-  const [, forceRender] = useState(0);
+  /*
+   * Rows the user has closed, read from the device on mount. The library
+   * remounts every time a note is opened and closed, so component state alone
+   * would resurrect a row the user had just dismissed; a module-level set did
+   * that job for one session and forgot it on reload. See `dismissed.ts`.
+   */
+  const [dismissed, setDismissed] = useState(loadDismissed);
+
+  const dismiss = (captureId: string): void => {
+    setDismissed((current) => dismissCapture(captureId, current));
+  };
 
   const captures = (data?.items ?? []).filter((capture) => !dismissed.has(capture.id));
   if (captures.length === 0) return null;
@@ -126,13 +127,15 @@ export function FilingRow() {
             // read. The poll usually caught the transition already; this is
             // for when it did not (a poll that first saw the capture appended).
             refreshAppendedNote(queryClient, capture.note_id);
+            // Opening the note is acting on the row: it has been read, and the
+            // library the user comes back to should not offer it again.
+            dismiss(capture.id);
             void navigate(ROUTES.note(capture.note_id));
           }}
           onRetry={() => retry.mutate(capture.id)}
           retrying={retry.isPending && retry.variables === capture.id}
           onDismiss={() => {
-            dismissed.add(capture.id);
-            forceRender((tick) => tick + 1);
+            dismiss(capture.id);
           }}
         />
       ))}
@@ -236,12 +239,11 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
           )}
 
           {/*
-            Terminal and unactionable statuses need a way off the screen. `done`
-            is included too: the list keeps showing a "Filed" row for a while
-            after the fact, and polling stops the moment nothing left is
-            non-terminal — so once the last capture appends, nothing else will
-            ever refetch this away. Dismiss (or Open, which navigates off this
-            screen) is the only way it leaves.
+            Terminal statuses need a way off the screen. `done` is included
+            too: a "Filed" row stays until the user acts on it, and polling
+            stops the moment nothing left is non-terminal — so once the last
+            capture appends, nothing else will ever refetch this away. Dismiss
+            or Open (which also dismisses) is how it leaves.
           */}
           <button type="button" className="filing-row__action" onClick={onDismiss}>
             <span>Dismiss</span>

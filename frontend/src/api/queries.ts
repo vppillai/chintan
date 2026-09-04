@@ -307,11 +307,10 @@ export function useSaveSettings() {
    --------------------------------------------------------------------------- */
 
 /**
- * How long a just-filed capture keeps its "Filed" row once appended, and how
- * long a recording that produced nothing keeps saying so. `status=all` is
- * newest-first and otherwise unbounded — this is what stops a note filed weeks
- * ago from resurfacing at the top of the library forever just because its
- * capture happens to be near the top of that list.
+ * How long a recording that produced nothing keeps saying so. A `no_content`
+ * row has nothing to open and nothing to retry, so it is the one receipt that
+ * is allowed to expire on its own; every other stopped capture stays until
+ * the user acts on it (see `isFilingRelevant`).
  */
 const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
 
@@ -333,17 +332,20 @@ function within(iso: string | null | undefined, windowMs: number, now: number): 
  * Anything still moving, obviously. Of the stopped ones: `failed`,
  * `spend_capped` and `needs_target` always, because each has an action the
  * user must take and a capture waiting on the user must not vanish silently;
- * `appended` and `no_content` only briefly, because they are done and the row
- * is a receipt, not a history.
+ * `appended` always too — the row is the one place that says "your recording
+ * is in this note, here it is", and it stays until the user opens the note or
+ * dismisses it (`FilingRow` remembers which, per device). It used to fade
+ * after ten minutes, which meant a recording made on the walk home had no
+ * receipt by the time the user sat down to read it. `no_content` alone
+ * expires on its own: there is nothing to open and nothing to do.
  */
 export function isFilingRelevant(capture: CaptureWire, now: number = Date.now()): boolean {
   switch (capture.status) {
     case 'failed':
     case 'spend_capped':
     case 'needs_target':
-      return true;
     case 'appended':
-      return within(capture.appended_at, RECENTLY_SETTLED_MS, now);
+      return true;
     case 'no_content':
       return within(capture.created_at, RECENTLY_SETTLED_MS, now);
     default:
