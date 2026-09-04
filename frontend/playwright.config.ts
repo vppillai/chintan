@@ -72,7 +72,7 @@ export default defineConfig({
       use: { ...devices['Desktop Safari'], serviceWorkers: 'block' },
       testMatch: /(auth|archive|playback|a11y|manifest|layout)\.spec\.ts/,
       grepInvert:
-        /layout\.spec\.ts.*(320x568|375x667|393x873|844x390|768x1024|1024x768|1280x800|1440x900|1920x1080|2560x1080|nocturne|capture ·)/,
+        /layout\.spec\.ts.*(320x568|375x667|393x873|412x915|844x390|768x1024|1024x768|1280x800|1440x900|1920x1080|2560x1080|nocturne|capture ·|record button)/,
     },
   ],
 

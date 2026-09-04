@@ -105,8 +105,8 @@
 .record-button {
   display: grid;
   place-items: center;
-  inline-size: 3.75rem;
-  block-size: 3.75rem;
+  inline-size: var(--layout-record-button-size);
+  block-size: var(--layout-record-button-size);
   border-radius: var(--radius-full);
   background-color: var(--color-accent);
   color: var(--color-on-accent);
@@ -185,6 +185,17 @@
   max-inline-size: var(--layout-content-max);
   margin-inline: auto;
   padding: var(--space-4) var(--layout-gutter) var(--space-8);
+}
+
+/*
+ * The library's list ends a full bar's height above the bottom of its scroll
+ * container, safe area included. The tab bar is a grid row in normal flow and
+ * cannot overlay a row — but the last row used to stop 32px from the edge,
+ * right against the bar, and on a phone the thumb resting on Record covered
+ * its lower half. Now it always clears the bar with room to spare.
+ */
+.library {
+  padding-block-end: calc(var(--layout-bottom-bar-height) + var(--safe-bottom));
 }
 
 .screen__header {

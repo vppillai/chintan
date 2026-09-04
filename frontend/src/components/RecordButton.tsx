@@ -21,7 +21,7 @@ export function RecordButton() {
         void navigate(ROUTES.capture);
       }}
     >
-      <Icon name="mic" size={26} className="record-button__icon" />
+      <Icon name="mic" size={30} className="record-button__icon" />
       <span className="visually-hidden">Record</span>
     </button>
   );

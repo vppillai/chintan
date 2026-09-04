@@ -124,7 +124,12 @@
      update) so its edges line up with the note rows inside `.screen`. */
   --layout-card-max: calc(var(--layout-content-max) - 2 * var(--layout-gutter));
   --layout-strip-height: 4rem;
-  --layout-bottom-bar-height: 5.25rem;
+  /* The record button, 76px: the one control the product exists to offer,
+     and the one most often tapped one-handed while walking. The bar's height
+     is derived from it — button plus its block padding — so the two cannot
+     drift apart. */
+  --layout-record-button-size: 4.75rem;
+  --layout-bottom-bar-height: calc(var(--layout-record-button-size) + 2 * var(--space-2));
   --layout-touch-target-min: 2.75rem; /* 44px */
   --layout-focus-ring-width: 3px;
   --layout-focus-ring-offset: 2px;
