@@ -99,11 +99,13 @@ export function TranscriptPanel({
         {/*
           Named for the view it copies, because "copy" on this screen could mean
           three different things — the note, what was said, or the rewrite — and
-          a button that might mean any of them means none of them.
+          a button that might mean any of them means none of them. "This",
+          because the button sits inside one recording's row and copies that
+          recording only; the whole note is copied from Share.
         */}
         <CopyButton
           className="transcript__copy"
-          label={effectiveView === 'raw' ? 'Copy transcript' : 'Copy cleaned text'}
+          label={effectiveView === 'raw' ? 'Copy this transcript' : 'Copy this cleaned text'}
           text={() =>
             effectiveView === 'raw'
               ? segments.map((segment) => segment.text).join('\n')

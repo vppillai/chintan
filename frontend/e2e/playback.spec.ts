@@ -181,8 +181,9 @@ test('copies the note as its title and body', async ({ page, context, browserNam
   await page.getByRole('button', { name: 'Share' }).click();
   await page.getByRole('button', { name: 'Copy note' }).click();
 
-  // A copy with no confirmation cannot be told from one that failed.
-  await expect(page.getByText('Copied')).toBeVisible();
+  // A copy with no confirmation cannot be told from one that failed: the
+  // button itself says so for a moment.
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
 
   const clipboard = await page.evaluate(() => navigator.clipboard.readText());
   // Title first: a body pasted elsewhere with no title loses what it was about.
@@ -203,10 +204,12 @@ test('copies the transcript separately, and names which one', async ({
   await page.goto('/notes/roof-repair');
 
   // Three different things could be meant by "copy" on this screen, so no
-  // control is allowed to be called just "Copy".
+  // control is allowed to be called just "Copy" — and the one inside a
+  // recording's row says it copies that recording, not the note.
   await page.getByRole('button', { name: 'Share' }).click();
   await expect(page.getByRole('button', { name: 'Copy note' })).toBeVisible();
-  await page.getByRole('button', { name: 'Copy transcript' }).click();
+  await page.getByRole('button', { name: 'Copy this transcript' }).click();
+  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
 
   const raw = await page.evaluate(() => navigator.clipboard.readText());
   expect(raw).toContain('Get two quotes before the autumn rain.');
@@ -214,7 +217,7 @@ test('copies the transcript separately, and names which one', async ({
   expect(raw).not.toContain('Ellis quoted nine hundred.\n\n');
 
   await page.getByRole('button', { name: 'Cleaned' }).click();
-  await page.getByRole('button', { name: 'Copy cleaned text' }).click();
+  await page.getByRole('button', { name: 'Copy this cleaned text' }).click();
 
   const cleaned = await page.evaluate(() => navigator.clipboard.readText());
   expect(cleaned).toContain('Ellis quoted nine hundred');

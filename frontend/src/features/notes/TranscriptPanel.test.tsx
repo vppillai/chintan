@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TranscriptPanel } from './TranscriptPanel.tsx';
@@ -84,5 +85,24 @@ describe('a capture with no segments does not contradict itself', () => {
     mount({ segments: [], hasSegments: false });
     expect(screen.queryByText(/before timestamps were captured/i)).toBeNull();
     expect(screen.getByText(/no timestamps are available for this recording/i)).toBeInTheDocument();
+  });
+});
+
+describe('the copy control names its scope', () => {
+  it('copies this recording\'s transcript, and says so', async () => {
+    // The button sits inside one recording's row. "Copy transcript" read as the
+    // note's transcript; a whole-note copy already exists under Share, so this
+    // one says which recording it copies.
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+
+    mount();
+    await user.click(screen.getByRole('button', { name: 'Copy this transcript' }));
+
+    expect(writeText).toHaveBeenCalledWith(
+      'Ridge tiles on the south slope have slipped.\nEllis quoted nine hundred.',
+    );
+    expect(screen.queryByRole('button', { name: 'Copy transcript' })).toBeNull();
   });
 });
