@@ -77,6 +77,16 @@ export interface NoteWire {
   aliases?: string[];
   tags?: string[];
   snippet?: string;
+  /**
+   * The note's body, lowercased and cut at 32 KB, for the client-side search.
+   *
+   * Optional and only on list items: the backend is adding it to the note
+   * index and to `GET /v1/notes` so that the instant search over the cached
+   * corpus can match transcript text, which until now only the server search
+   * could see. Absent from older responses and from every other endpoint;
+   * nothing here depends on it being present.
+   */
+  search_text?: string;
   updated_at: string;
   created_at?: string;
   version: number;
