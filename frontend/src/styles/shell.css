@@ -1572,10 +1572,19 @@
   border-block-end-color: var(--color-line-strong);
 }
 
+/*
+ * As tall as its text, never taller than it needs to be and never scrolling
+ * inside itself: the page scrolls. Six lines of the prose leading plus the
+ * padding is the floor, so an empty note still reads as a place to write.
+ * `field-sizing: content` does this natively; `useAutoGrow` measures where
+ * it is not understood.
+ */
 .note-body-input {
   inline-size: 100%;
-  min-block-size: 12rem;
-  resize: vertical;
+  min-block-size: calc(6 * var(--line-height-relaxed) * var(--font-size-md) + 2 * var(--space-3) + 2px);
+  field-sizing: content;
+  resize: none;
+  overflow-y: hidden;
   padding: var(--space-3);
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);

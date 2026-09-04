@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -8,6 +8,7 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
@@ -42,6 +43,10 @@ export function NoteDetailScreen() {
   const note = served ?? cached.data ?? undefined;
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
+
+  // The body grows with its text; the page is the one thing that scrolls.
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(bodyRef, editor.model.draft.body);
 
   // Pull down at the top to re-read this note — the one thing on this screen
   // that another device, or the pipeline appending a recording, can change.
@@ -126,9 +131,10 @@ export function NoteDetailScreen() {
       </label>
       <textarea
         id="note-body"
+        ref={bodyRef}
         className="note-body-input prose"
         value={editor.model.draft.body}
-        rows={12}
+        rows={6}
         onChange={(event) => {
           editor.edit({ body: event.target.value });
         }}

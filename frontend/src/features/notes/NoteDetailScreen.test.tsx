@@ -260,3 +260,37 @@ describe('a note whose recording is still filing keeps asking', () => {
     expect(api.gets).toBe(after);
   });
 });
+
+describe('the note screen is shaped for reading', () => {
+  it('grows the body with its text rather than scrolling inside a fixed box', async () => {
+    /*
+     * QA D18: twelve fixed rows with an inner scrollbar — a long note scrolled
+     * inside a box inside the scrolling page, and a short note wasted three
+     * hundred pixels. Where `field-sizing: content` is missing (jsdom, older
+     * WebKit) the hook measures the scroll height and sets the height to it.
+     */
+    const lineHeight = 24;
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this.value.split('\n').length * lineHeight + 2 * 12;
+      });
+    try {
+      const user = userEvent.setup({ delay: null });
+      const api = server([ROOF]);
+      mount(api.fetchImpl, '/notes/roof-repair');
+
+      const body = await screen.findByRole('textbox', { name: 'Note body' });
+      await waitFor(() => {
+        expect(body).toHaveValue('v1 body');
+      });
+      expect(body).toHaveAttribute('rows', '6');
+      expect(body.style.blockSize).toBe(`${String(lineHeight + 24)}px`);
+
+      await user.type(body, '{Enter}two{Enter}three{Enter}four');
+      expect(body.style.blockSize).toBe(`${String(4 * lineHeight + 24)}px`);
+    } finally {
+      scrollHeight.mockRestore();
+    }
+  });
+});
