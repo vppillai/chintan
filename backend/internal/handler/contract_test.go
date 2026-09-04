@@ -288,6 +288,36 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 			"content_type": "audio/webm", "size_bytes": 4 << 20, "duration_ms": 12_000,
 		}))
 
+	// ---- recording edits: delete, move, and the download manifest
+	edits := newHarness(t)
+	wrong := edits.createNote(t, contractUser, "Filed wrong", nil)
+	right := edits.createNote(t, contractUser, "Kitchen rebuild", nil)
+	edits.seedAppended(t, contractUser, right, "c_take_1", "2026-01-01T09:30:00.000000000Z", "First take.")
+	edits.seedAppended(t, contractUser, right, "c_take_2", "2026-01-01T15:06:00.000000000Z", "Second take.")
+	edits.seedAppended(t, contractUser, wrong, "c_misfiled", "2026-01-01T12:00:00.000000000Z", "Belongs with the kitchen.")
+	add("captureMoved", "CaptureWire",
+		"POST /v1/captures/{captureId}/move → 200. The re-pointed capture: note_id is the target, and its paragraph went with it.",
+		edits.do(t, http.MethodPost, "/v1/captures/c_misfiled/move", contractUser, map[string]any{"note_id": right.ID}))
+	add("recordingUrls", "RecordingUrlsWire",
+		"GET /v1/notes/{noteId}/recordings/urls → 200. One presigned GET per recording that still has its audio, oldest first, "+
+			"with the filename to save it under: <note-title-slug>-<yyyymmdd-hhmm>.<ext>.",
+		edits.do(t, http.MethodGet, "/v1/notes/"+right.ID+"/recordings/urls", contractUser, nil))
+	add("problemRetryable", "ProblemWire",
+		"POST /v1/captures/{captureId}/move → 503 after a rollback. `type` is the retryable URI: nothing changed, send the same request again.",
+		func() *httptest.ResponseRecorder {
+			var failKey string
+			rolled := newHarness(t, withFailingBodyWrite(&failKey))
+			src := rolled.createNote(t, contractUser, "Source", nil)
+			dst := rolled.createNote(t, contractUser, "Target", nil)
+			rolled.seedAppended(t, contractUser, src, "c_1", contractTime, "Dictated.")
+			stored, err := rolled.store.GetNote(context.Background(), contractUser, dst.ID)
+			if err != nil {
+				t.Fatalf("GetNote: %v", err)
+			}
+			failKey = stored.S3MarkdownKey
+			return rolled.do(t, http.MethodPost, "/v1/captures/c_1/move", contractUser, map[string]any{"note_id": dst.ID})
+		}())
+
 	// ---- usage
 	h = newHarness(t)
 	for _, rec := range []usage.Record{
@@ -508,7 +538,7 @@ func neededSchemaTypes(fixtures []contractFixture) []string {
 		"MatchResponseWire": true, "NoteDetailWire": true, "NoteWire": true,
 		"NotePurgeResponseWire": true,
 		"Page":                  true, "PresignedDownloadWire": true, "ProblemWire": true,
-		"ReadinessWire": true, "SearchHitWire": true, "SettingsWire": true,
+		"ReadinessWire": true, "RecordingUrlsWire": true, "SearchHitWire": true, "SettingsWire": true,
 		"TagWire": true, "UsageWire": true,
 	}
 	seen := map[string]bool{}
