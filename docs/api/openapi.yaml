@@ -5,7 +5,7 @@ info:
   version: 2.0.0
   summary: Voice brain-dump capture, routing, and notes.
   description: |
-    v2 of the Chintan API.
+    The Chintan API.
 
     Three rules hold across every endpoint and are not repeated per-operation:
 
@@ -72,8 +72,8 @@ paths:
       tags: [health]
       summary: Readiness probe
       description: |
-        Probes DynamoDB and S3. Distinct from liveness: v1 returned a static
-        `{"status":"ok"}` that was useful as liveness and misleading as readiness.
+        Probes DynamoDB and S3. Distinct from liveness: a static answer would
+        report healthy while every write failed.
       security: []
       responses:
         '200':
@@ -102,8 +102,8 @@ paths:
       tags: [settings]
       summary: Replace settings
       description: |
-        Returns what was stored, not what was sent. v1 echoed the request body
-        back, which hid validation coercion from the client.
+        Returns what was stored, not what was sent: echoing the request body
+        back would hide validation coercion from the client.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -200,8 +200,8 @@ paths:
       description: |
         Optimistic concurrency. `version` is required and must match the stored
         version; a mismatch returns 409 with the current state so the client can
-        reconcile. v1 had no version, so a voice append landing while the editor
-        was open silently discarded one of the two writes.
+        reconcile. Without a version, a voice append landing while the editor is
+        open would be overwritten by the next save.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -253,7 +253,7 @@ paths:
       description: |
         Cascades to every capture, audio file, and transcript. A partial cascade
         failure returns 500 and leaves the note marked for retry — it does not
-        report success while orphaning audio, which is what v1 did.
+        report success while orphaning audio.
       responses:
         '204': { description: Purged. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -434,8 +434,9 @@ paths:
       summary: List captures
       description: |
         `status=pending` backs the progress card, which must survive navigation
-        and reload. v1 held the in-flight capture id in a JavaScript variable, so
-        a refresh stranded the audio with no UI anywhere to recover it.
+        and reload. An in-flight capture id held only in a JavaScript variable
+        would be lost on refresh, stranding the audio with no UI anywhere to
+        recover it.
       parameters:
         - name: status
           in: query
@@ -643,7 +644,8 @@ paths:
         `peaks` is a precomputed amplitude envelope so drawing a waveform does
         not require downloading the whole audio file.
 
-        Captures created before v2 have neither and return 404 for those kinds.
+        Captures created before segments and peaks were stored have neither and
+        return 404 for those kinds.
       responses:
         '200':
           description: A presigned URL.
@@ -803,7 +805,7 @@ components:
           type: string
           description: |
             Safe to show a user. Never contains wrapped infrastructure errors —
-            v1 serialised DynamoDB and S3 messages, including table names.
+            serialising upstream messages would leak table names.
         instance: { type: string }
         correlation_id:
           type: string
@@ -854,9 +856,9 @@ components:
             The tiers are fixed because the expiry is performed by an S3
             lifecycle rule, and a rule carries its own period rather than
             reading one out of this record: the upload tags the object with its
-            tier and one rule per tier matches it. In v1 — and, until the tag
-            existed, in v2 — this field was stored, returned, shown in the UI,
-            and read by nothing.
+            tier and one rule per tier matches it. The tag is what connects this
+            field to the bucket: without it the value would be stored, returned
+            and shown in the UI while nothing expired anything.
         theme:
           type: string
           enum: [ink, nocturne, system]

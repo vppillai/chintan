@@ -3,20 +3,17 @@
 #
 # Sourced, never executed.
 #
-# This file is the merge of what used to be two mutually incompatible libraries:
-# lib/common.sh (log_info/DRY_RUN/execute_cmd+eval) and lib/agent-common.sh
-# (info/APPLY/confirm_apply). Two libraries meant two conventions for the same
-# thing, and every script picked one at random — which is how teardown.sh came to
-# export SKIP_CONFIRMATION for a cleanup-aws.sh that never read it.
+# One library, one set of conventions. Two libraries would mean two conventions
+# for the same thing, with every script picking one — and a flag exported under
+# one convention is silently ignored by a script that reads the other.
 #
-# The conventions that survived, and why:
+# The conventions, and why:
 #
 #   APPLY=0 is the default          A mistaken invocation prints a plan instead of
-#                                   destroying data. v1 got this right in four
-#                                   scripts and it is kept verbatim.
-#   run() takes argv, not a string  execute_cmd built a command string and eval'd
-#                                   it, so every interpolated bucket name, ARN and
-#                                   instance name was an injection surface. Nothing
+#                                   destroying data. Every script honours it.
+#   run() takes argv, not a string  A command built as a string and eval'd makes
+#                                   every interpolated bucket name, ARN and
+#                                   instance name an injection surface. Nothing
 #                                   in this file calls eval.
 #   Diagnostics go to stderr        so --json output on stdout stays parseable.
 #
@@ -57,10 +54,10 @@ CHINTAN_BOOTSTRAP_STACK="${CHINTAN_PREFIX}bootstrap"
 export SYSTEM_ID CHINTAN_PREFIX CHINTAN_BOOTSTRAP_STACK
 
 # The environments a stack name may end in. Stack naming is
-# chintan-<instance>-<environment>, unified across the scripts and the workflows;
-# v1 had the scripts assume chintan-<instance> while CI deployed
-# chintan-<instance>-prod, so teardown derived the instance name "dev-prod" and
-# deleted SSM parameters under a path that had never existed.
+# chintan-<instance>-<environment>, unified across the scripts and the
+# workflows: a script that assumed a different shape would derive the wrong
+# instance name ("dev-prod" from chintan-dev-prod) and act on SSM paths that
+# never existed.
 CHINTAN_ENVIRONMENTS="prod staging dev"
 
 # ---------------------------------------------------------------------------
@@ -197,8 +194,8 @@ confirm_apply() {
 #
 # ASSUME_YES (set by --yes, and exported by teardown.sh so a nested cleanup run
 # does not stop to ask again) skips the prompt. Without a TTY and without
-# ASSUME_YES it FAILS rather than blocking: v1 read from stdin unconditionally,
-# so an automated teardown hung forever on a prompt nobody could see.
+# ASSUME_YES it FAILS rather than blocking: a read from stdin with nobody there
+# to answer would hang an automated teardown forever on an invisible prompt.
 confirm_destructive() {
     local phrase="$1"
     shift
@@ -412,11 +409,11 @@ list_chintan_stacks_with_status() {
 # stack_resources_of_type prints the physical IDs of every resource of a given
 # type that BELONGS TO the named stack.
 #
-# This function is the whole fix for the teardown blast radius. v1 answered
-# "which buckets should I empty?" with `s3api list-buckets | starts_with(chintan-)`,
-# which matches chintan-cloudtrail-<account>-<region> — the audit bucket
+# This function is what bounds the teardown blast radius. Answering "which
+# buckets should I empty?" with `s3api list-buckets | starts_with(chintan-)`
+# would match chintan-cloudtrail-<account>-<region> — the audit bucket
 # bootstrap-agent.sh creates precisely so that a destructive action is
-# attributable. Teardown's first act was to destroy the record of it.
+# attributable — and teardown's first act would be to destroy the record of it.
 stack_resources_of_type() {
     local stack="$1" type="$2"
     aws_cli cloudformation describe-stack-resources --stack-name "$stack" \
@@ -578,17 +575,19 @@ probe_kms_alias() {
 
 # empty_s3_bucket deletes every object version and delete marker in a bucket.
 #
-# Two defects in the v1 implementation are fixed here.
+# Delete markers are deleted as well as versions: a versioned bucket with a
+# marker left behind is not empty and cannot be removed. Two rules govern the
+# loop below.
 #
-#   1. It piped the output of list-object-versions straight into delete-objects.
-#      On an already-empty bucket that produces {"Objects": []}, which the CLI
-#      rejects — and under `set -euo pipefail` the rejection killed teardown
-#      mid-run, after some resources were gone and before others were. The loop
-#      below breaks on an empty page and never calls delete-objects with nothing.
+#   1. Never call delete-objects with nothing. On an already-empty bucket
+#      list-object-versions yields {"Objects": []}, which the CLI rejects — and
+#      under `set -euo pipefail` that rejection would kill teardown mid-run,
+#      after some resources were gone and before others were. The loop breaks
+#      on an empty page instead.
 #
-#   2. list-object-versions returns at most 1000 keys, and v1 called it once. A
-#      bucket of audio recordings exceeds that on the first day. The loop re-lists
-#      after each delete — the deleted versions are gone, so the next page is the
+#   2. Paginate. list-object-versions returns at most 1000 keys, and a bucket of
+#      audio recordings exceeds that on the first day. The loop re-lists after
+#      each delete — the deleted versions are gone, so the next page is the
 #      next 1000 — and terminates when nothing is left.
 empty_s3_bucket() {
     local bucket="$1"

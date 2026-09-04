@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState, type RefObject } from 'react';
 /**
  * Inline audio playback.
  *
- * The audio element is owned here and never leaves the page. v1 handed the
- * presigned S3 URL to `window.open`, which on desktop downloads the file and on
- * mobile navigates out of the app — taking any unsaved edit with it.
+ * The audio element is owned here and never leaves the page. Handing the
+ * presigned S3 URL to `window.open` downloads the file on desktop and navigates
+ * out of the app on mobile — taking any unsaved edit with it.
  */
 
 export interface PlayerState {

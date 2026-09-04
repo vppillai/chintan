@@ -1,5 +1,5 @@
 /**
- * The single polite live region (spec §5.7).
+ * The single polite live region.
  *
  * Capture pipeline progress and route announcements are written here so they
  * are spoken rather than merely drawn. It is always mounted — a live region

@@ -174,9 +174,9 @@ ok "AWS_ACCOUNT_ID and AWS_REGION set; BUILD_ROLE_ARN and CFN_DEPLOY_ROLE_ARN se
 # Environments
 # ---------------------------------------------------------------------------
 #
-# v1 created `production` with wait_timer=0 and no reviewers, which is an
-# environment in name only: it gated nothing while appearing in the UI as
-# protection. A production deploy now waits for a human.
+# The production environment requires a human reviewer. An environment with no
+# reviewers gates nothing while appearing in the UI as protection, so a
+# production deploy waits for an approval before it runs.
 
 reviewer_ids="$(
     for login in "${REVIEWERS[@]}"; do
@@ -203,8 +203,8 @@ ok "staging configured (no reviewer: staging exists to be deployed to freely)"
 #
 # actions/deploy-pages@v4 requires the job to target the `github-pages`
 # environment, which GitHub creates itself the first time Pages is set to build
-# from a workflow. deploy-frontend.yaml names that environment; v1 named
-# `production`, so the deployment was rejected.
+# from a workflow. deploy-frontend.yaml names that environment; a job that
+# targets any other name is rejected by the Pages service.
 
 info "enabling GitHub Pages with Actions as the build source"
 if gh api -X POST "repos/${REPO}/pages" -f build_type=workflow >/dev/null 2>&1; then

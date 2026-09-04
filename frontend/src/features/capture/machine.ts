@@ -5,16 +5,16 @@
  * `getUserMedia`, `MediaRecorder`, the wake lock, IndexedDB, the upload — is
  * driven by the controller in `recorder.ts` and reported back here as an
  * event. That is what makes interruption, cap, and offline behaviour testable
- * without a browser, and those are precisely the paths that were untested and
- * broken in v1.
+ * without a browser, and those are precisely the paths a browser-driven test
+ * struggles to reach.
  *
  * Two invariants the machine exists to hold:
  *
  * 1. **Nothing claims recording has started before the microphone is live.**
  *    `requesting` is a distinct state; `isLive` is false in it.
  * 2. **An interruption produces a saved partial recording, never a discard.**
- *    A phone call ends the track. v1 handled no track event at all, so the
- *    recording silently truncated and the UI kept counting.
+ *    A phone call ends the track; left unhandled, the recording silently
+ *    truncates while the UI keeps counting.
  */
 
 export type CaptureState =

@@ -174,10 +174,10 @@ func (o *failingObjects) Delete(ctx context.Context, key string) error {
 	return o.Objects.Delete(ctx, key)
 }
 
-// TestPurgeNotesReportsAPartialCascadeAsFailed is the property v1 got wrong: it
-// logged every cascade failure, deleted the index row anyway, and left audio in
-// the bucket that the UI had already reported as purged. The row has to survive
-// so the delete can be retried, and the batch has to say so.
+// TestPurgeNotesReportsAPartialCascadeAsFailed: logging a cascade failure and
+// deleting the index row anyway leaves audio in the bucket that the UI has
+// already reported as purged. The row has to survive so the delete can be
+// retried, and the batch has to say so.
 func TestPurgeNotesReportsAPartialCascadeAsFailed(t *testing.T) {
 	f := newPurgeFixture(t)
 	ctx := context.Background()

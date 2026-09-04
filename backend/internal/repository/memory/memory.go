@@ -2,9 +2,9 @@
 // for tests and local development.
 //
 // It is a separate package so it is never linked into the API binary: nothing
-// under cmd/ imports it, and a guard test asserts that stays true. In v1 these
-// doubles lived in the production package alongside the real DynamoDB and S3
-// implementations.
+// under cmd/ imports it, and a guard test asserts that stays true. Doubles
+// living in the production package alongside the real DynamoDB and S3
+// implementations would be one wiring mistake away from serving production.
 package memory
 
 import (

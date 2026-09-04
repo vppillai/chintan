@@ -182,9 +182,9 @@ func (rt *router) setCaptureTarget(w http.ResponseWriter, r *http.Request) {
 
 // retryCapture hands a failed capture back to the worker and returns 202.
 //
-// It does no work inline. v1 ran the whole pipeline on the request path here,
-// which is exactly how a gateway timeout turned into duplicated note content:
-// the Lambda kept going, the client retried, and the append ran twice.
+// It does no work inline. Running the pipeline on the request path turns a
+// gateway timeout into duplicated note content: the Lambda keeps going, the
+// client retries, and the append runs twice.
 func (rt *router) retryCapture(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {

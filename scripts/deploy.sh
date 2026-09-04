@@ -8,15 +8,16 @@
 # gates. bootstrap.sh remains for a first-time or disaster-recovery deploy and
 # says so in its own header.
 #
-# What this does that `aws cloudformation deploy` did not:
+# What this does beyond a one-shot `aws cloudformation deploy`, and why:
 #
-#   * Creates the change set, PRINTS it, and only then executes it. The previous
-#     workflow's one-shot deploy meant the first time anyone saw what was
-#     changing was in the resource events, after it had started.
+#   * Creates the change set, PRINTS it, and only then executes it, so what is
+#     about to change is visible before it starts rather than discovered in
+#     the resource events after it has.
 #   * Passes --role-arn when CFN_DEPLOY_ROLE_ARN is set, so CloudFormation acts
 #     under a scoped service role rather than under the (broader) CI role.
 #   * Publishes a Lambda version and moves the `live` alias to it, and prints the
-#     exact command that moves it back. v1 had no rollback path at all.
+#     exact command that moves it back, so a bad deploy has a one-command
+#     rollback.
 #   * Runs the smoke test itself, so the caller can gate prod on staging's result
 #     instead of discovering a bad deploy after it is live.
 #
@@ -126,7 +127,7 @@ FAILURE_EVENT_JQ='
 '
 
 # ---------------------------------------------------------------------------
-# Self-test (§0.5A): prove the failure report reports the failure
+# Self-test: prove the failure report reports the failure
 # ---------------------------------------------------------------------------
 #
 # This runs before the CI guard because its whole point is to be runnable from a
@@ -296,13 +297,12 @@ fi
 
 # CloudFormation's waiter reports only "the stack reached a failure state". The
 # reason lives in the events, and without printing them every failed deploy costs
-# a round trip into the console or the CLI to learn what actually broke. Six
-# deploys were debugged that way before this existed.
+# a round trip into the console or the CLI to learn what actually broke.
 show_failure_events() {
     local events
     warn "deploy failed; the failing resources were:"
-    # Not silenced. A denied describe-stack-events used to print the heading
-    # above and nothing under it, which reads as "no resource failed" — the
+    # Not silenced. A denied describe-stack-events that printed the heading
+    # above and nothing under it would read as "no resource failed" — the
     # single most misleading thing this function could say, at the exact moment
     # the operator is trying to find out what broke.
     if ! events="$(aws_cli cloudformation describe-stack-events --stack-name "$STACK" --output json 2>&1)"; then
@@ -332,9 +332,9 @@ show_failure_events() {
 # This deliberately does NOT delete them. The permissions boundary denies
 # irreversible deletes to any principal not acting through CloudFormation
 # (DenyIrreversibleDeletesOutsideCloudFormation), so a cleanup here is denied by
-# design -- and an earlier version of this function swallowed those denials and
-# reported success, which is worse than not trying. Destroying data is a human
-# action with elevated credentials, same as scripts/bootstrap-agent.sh.
+# design -- and a function that swallowed those denials would report a cleanup
+# that did not happen, which is worse than not trying. Destroying data is a
+# human action with elevated credentials, same as scripts/bootstrap-agent.sh.
 report_retained_orphans() {
     local account name found=0 blind=0 r
     if ! account="$(aws_cli sts get-caller-identity --query Account --output text 2>/dev/null)" ||

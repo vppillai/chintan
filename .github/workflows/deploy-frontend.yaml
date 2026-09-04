@@ -2,14 +2,15 @@ name: Deploy Frontend
 
 # Builds one Vite bundle per instance and publishes them all to GitHub Pages.
 #
-# Two v1 defects are fixed here.
+# Two constraints shape this workflow.
 #
-#   * The deploy job targeted the `production` environment. actions/deploy-pages
-#     requires `github-pages`, so the deployment was rejected by the Pages service
-#     regardless of what the rest of the job did.
-#   * The build copied static files and generated js/config.js at deploy time. The
-#     frontend is now Vite + React + TypeScript, built with Bun, and the
-#     per-instance configuration is compiled in.
+#   * The deploy job targets the `github-pages` environment. actions/deploy-pages
+#     requires that exact name; the Pages service rejects a deployment from any
+#     other environment regardless of what the rest of the job does.
+#   * The frontend is Vite + React + TypeScript, built with Bun, one bundle per
+#     instance with the per-instance configuration compiled in. Nothing is
+#     generated at deploy time, so there is no runtime config file for the
+#     service worker to cache past the lifetime of the stack it points at.
 
 on:
   workflow_run:
@@ -104,8 +105,8 @@ jobs:
     name: Publish to Pages
     runs-on: ubuntu-latest
     needs: build
-    # actions/deploy-pages requires this exact environment name. v1 named
-    # `production` here, which the Pages service does not accept.
+    # actions/deploy-pages requires this exact environment name; the Pages
+    # service rejects a deployment from any other environment.
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

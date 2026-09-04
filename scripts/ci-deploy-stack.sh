@@ -28,8 +28,9 @@
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-# README claims every script has --help. It did not: `--help` fell through to
-# the required-environment loop below and printed "INSTANCE is required".
+# --help is handled before the required-environment loop so it works with no
+# environment set; otherwise it would fall through and print "INSTANCE is
+# required".
 case "${1:-}" in
     -h | --help)
         usage_from_header "${BASH_SOURCE[0]}"
@@ -50,8 +51,8 @@ TEMPLATE="${TEMPLATE:-infrastructure/template.yaml}"
 ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://${PAGES_HOST}}"
 
 # The worker is a SEPARATE main package (backend/cmd/worker) and needs its own
-# artifact. An empty WorkerCodeKey used to mean "share the API zip", and the API
-# entrypoint fed an S3 notification returns {"statusCode":404} with a nil error,
+# artifact. Were the worker given the API zip instead, the API entrypoint fed
+# an S3 notification would return {"statusCode":404} with a nil error,
 # which Lambda reads as a successful invocation and never retries. That
 # failure is silent all the way through — the health smoke test still passes.
 # So it is required here, by name, before anything is deployed.

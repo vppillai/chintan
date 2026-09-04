@@ -5,9 +5,8 @@ import { expect, test } from './fixtures.ts';
 /**
  * Accessibility, in both themes.
  *
- * v1 contained zero `aria-*`, `role`, `tabindex`, or `:focus-visible`, and its
- * muted text failed AA. The contrast rule is included deliberately: it is the
- * one that would have caught the palette.
+ * The contrast rule is included deliberately: it is the one that catches a
+ * palette whose muted text slips below AA.
  */
 
 const ROUTES = [
@@ -130,7 +129,7 @@ test('the library is fully traversable by keyboard', async ({ page }) => {
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   // Tab until a note row has focus, proving rows are real buttons rather than
-  // clickable divs — the defect that made v1's library keyboard-unreachable.
+  // clickable divs, which would leave the library keyboard-unreachable.
   let reached = false;
   for (let step = 0; step < 25 && !reached; step += 1) {
     await page.keyboard.press('Tab');
@@ -147,6 +146,9 @@ test('the library is fully traversable by keyboard', async ({ page }) => {
 
 test('the skip link moves focus to main', async ({ page }) => {
   await page.goto('/');
+  // Let the library settle first, for the same reason as the focus-ring test
+  // below: a Tab pressed while the shell is still mounting lands on <body>.
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
 
   await page.keyboard.press('Tab');
   const skip = page.getByRole('link', { name: /skip to content/i });

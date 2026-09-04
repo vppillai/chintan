@@ -242,9 +242,8 @@ func (rt *router) restoreNote(w http.ResponseWriter, r *http.Request) {
 // purgeNote deletes a note and every artifact it owns, irreversibly.
 //
 // A partial cascade returns 500 and leaves the note index in place so the
-// delete can be retried. v1 logged each cascade failure, ignored it, and
-// deleted the index anyway — reporting "purged" over audio that survived in S3
-// with nothing left pointing at it.
+// delete can be retried. Deleting the index over a failed cascade would report
+// "purged" while audio survived in S3 with nothing left pointing at it.
 func (rt *router) purgeNote(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {

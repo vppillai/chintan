@@ -43,6 +43,5 @@ daily_spend_cap_micros: 2000000
 #
 # Staging is not left unwatched: every deploy reaches it before prod and its
 # smoke test gates the prod job, so a broken Lambda or template fails the
-# pipeline here, loudly, before an alarm would have had anything to say. It did
-# exactly that twice on 2026-09-03.
+# pipeline here, loudly, before an alarm would have had anything to say.
 enable_alarms: false

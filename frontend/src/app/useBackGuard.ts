@@ -6,11 +6,10 @@ import { ROUTES, legacyRedirect } from './routes.ts';
 /**
  * Guarantees that Back always has somewhere to go inside the app.
  *
- * The v1 build's worst bug: opening the library and pressing Android Back left
- * the app, because the library was a DOM state with no history entry. Every
- * state is now a real URL, which fixes Back *within* a session — but not a cold
- * start on a deep link, where the app's first history entry is also the tab's
- * first history entry, so Back exits.
+ * Android Back from any screen below the library must stay in the app. Every
+ * screen is a real URL with its own history entry, which covers Back *within*
+ * a session — but not a cold start on a deep link, where the app's first
+ * history entry is also the tab's first history entry, so Back exits.
  *
  * So on first mount at any URL other than the library we seed the stack:
  * replace the entry with home, then push the requested route. Back from a

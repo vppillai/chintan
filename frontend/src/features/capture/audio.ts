@@ -1,11 +1,11 @@
 /**
  * Microphone acquisition and encoder selection.
  *
- * The constraints matter more than they look. v1 requested 44.1 kHz stereo,
- * which is a music-recording profile: two to three times the bytes over
- * cellular for content that a speech-to-text model downsamples to 16 kHz mono
- * before it looks at it. Nothing is gained and an upload on a weak connection
- * is three times more likely to fail.
+ * The constraints matter more than they look. 44.1 kHz stereo is a
+ * music-recording profile: two to three times the bytes over cellular for
+ * content that a speech-to-text model downsamples to 16 kHz mono before it
+ * looks at it. Nothing would be gained and an upload on a weak connection
+ * would be three times more likely to fail.
  */
 
 import type { CaptureContentType } from '@/api/schema.ts';

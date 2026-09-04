@@ -69,8 +69,8 @@ func tenantPK(tenantID string) string {
 // discoverTenants lists the tenant ids that have objects in the bucket.
 //
 // Tenants are discovered from S3 rather than from DynamoDB because finding
-// every partition key in a single-table design needs a Scan, and the v2
-// infrastructure deliberately removed dynamodb:Scan. A tenant that has index
+// every partition key in a single-table design needs a Scan, and the
+// infrastructure deliberately grants no dynamodb:Scan. A tenant that has index
 // rows but no objects at all is therefore invisible here; pass --tenant to
 // address one explicitly.
 func discoverTenants(ctx context.Context, blobs Blobs) ([]string, error) {

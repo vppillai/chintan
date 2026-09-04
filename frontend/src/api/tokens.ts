@@ -1,13 +1,12 @@
 /**
  * The one and only place token field names exist.
  *
- * v1 spread them across three files with two spellings. `auth.js` stored the
- * raw Cognito response, checked `tokens.id_token` for validity, returned
- * `tokens.id_token` as the bearer — and then, in the refresh path, decoded
- * `tokens.access_token` to decide whether a refresh was needed. One login path
- * populated only some of those fields, so `access_token` was undefined, the
- * decode threw, refresh was skipped, and the user was silently logged out on
- * the next foreground.
+ * Spreading them across files with two spellings is how a client ends up
+ * checking `id_token` for validity, sending `id_token` as the bearer, and then
+ * decoding `access_token` to decide whether a refresh is due — so a login path
+ * that populates only some of those fields leaves `access_token` undefined,
+ * the decode throws, refresh is skipped, and the user is silently logged out
+ * on the next foreground.
  *
  * The fix is not "be careful". It is that the wire shape is parsed exactly
  * once, at the boundary, into a single internal type with camelCase names that

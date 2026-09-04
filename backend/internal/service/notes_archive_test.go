@@ -329,9 +329,9 @@ func TestExpiredArchivedNoteIsInvisibleInBothLists(t *testing.T) {
 		}
 	}
 
-	// The index row itself survives until DynamoDB TTL removes it. v1 deleted it
-	// inline on the read path, which turned a GET into an unbounded cascade of
-	// S3 and DynamoDB deletes.
+	// The index row itself survives until DynamoDB TTL removes it. Deleting it
+	// inline on the read path would turn a GET into an unbounded cascade of S3
+	// and DynamoDB deletes.
 	if _, err := store.GetNote(ctx, userID, note.ID); err != nil {
 		t.Errorf("expired note should still be readable by id until TTL collects it, got %v", err)
 	}

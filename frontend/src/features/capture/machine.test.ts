@@ -112,8 +112,8 @@ describe('elapsed time', () => {
 
 describe('interruption produces a saved partial, never a discard', () => {
   it('stops cleanly and keeps the audio when the track ends mid-recording', () => {
-    // An incoming call. v1 handled no track event, so the recording truncated
-    // silently and the timer kept counting over a dead stream.
+    // An incoming call. Left unhandled, the recording would truncate silently
+    // while the timer kept counting over a dead stream.
     const model = run([
       ...requestAndStart,
       { type: 'data', bytes: 40_000 },

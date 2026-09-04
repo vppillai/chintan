@@ -3,9 +3,9 @@
  *
  * Chunks are written to IndexedDB as `ondataavailable` produces them and are
  * pruned only after the server confirms the upload. That ordering is the whole
- * point: v1 accumulated chunks in a JavaScript array, so a backgrounded tab
+ * point: chunks accumulated in a JavaScript array die with a backgrounded tab
  * reclaimed by the OS — routine on a phone during a twenty-minute recording —
- * took the recording with it, and there was nothing on disk to recover.
+ * and leave nothing on disk to recover.
  */
 
 import { openChintanDB, type CaptureChunkRecord, type StoredCapture } from '@/offline/db.ts';

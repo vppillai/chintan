@@ -2,11 +2,11 @@ name: Deploy Backend
 
 # Staging first, smoke-tested, then production.
 #
-# v1 deployed straight to prod and ran the smoke test afterwards, so a failing
-# smoke test reported a red build over a live bad version with no way back. The
-# order here is the fix: every change reaches chintan-<instance>-staging first,
-# the smoke test there gates the production job, and the production job is behind
-# an environment that requires a human.
+# Every change reaches chintan-<instance>-staging first, the smoke test there
+# gates the production job, and the production job is behind an environment
+# that requires a human. The order matters: a smoke test run only after a
+# production deploy would report a red build over a live bad version with no
+# way back.
 #
 # All matrix and repository values reach the shell through `env:` rather than
 # through ${{ }} inside a run block. An expression interpolated into a script is
@@ -65,9 +65,9 @@ jobs:
           python-version: '3.12'
       - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
       # scripts/list-instances.sh is the single reader of config/instances/*.yaml.
-      # v1 derived the instance name from the FILENAME and hardcoded
-      # Environment=prod, so the config files were decorative and there was no way
-      # to express a staging stack at all.
+      # The instance name and environment come from each file's contents, not
+      # its filename: a config that nothing reads is decorative, and a staging
+      # stack can only be expressed by a field that reaches the deploy.
       - id: instances
         run: |
           set -euo pipefail

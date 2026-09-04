@@ -84,8 +84,8 @@ describe('saving', () => {
   });
 
   it('surfaces a failure rather than swallowing it', () => {
-    // v1 was fire-and-forget: a failed autosave produced no UI at all and the
-    // user closed the tab believing the edit was stored.
+    // A fire-and-forget save that fails produces no UI at all, and the user
+    // closes the tab believing the edit was stored.
     const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'new' } });
     const failed = editorReducer(dirty, { type: 'saveError', message: 'No connection' });
 
@@ -112,8 +112,8 @@ describe('conflict', () => {
   }
 
   it('holds both copies and writes neither', () => {
-    // A voice append landing while the editor is open silently discarded one
-    // of the two writes in v1. Now it is a decision the user makes.
+    // A voice append landing while the editor is open must not silently
+    // discard either write. It is a decision the user makes.
     const model = conflicted();
 
     expect(model.state).toBe('conflict');

@@ -5,9 +5,9 @@ import { useEffect, useRef, useState } from 'react';
  *
  * A new worker installs and *waits*. This prompt is the only thing that lets it
  * through, by messaging `SKIP_WAITING`; the page reloads once on
- * `controllerchange`. v1 called `skipWaiting()` at install while also showing a
- * refresh toast, so the two raced and a session could be served half of each
- * build.
+ * `controllerchange`. Calling `skipWaiting()` at install while also showing a
+ * refresh prompt would let the two race, and a session could be served half of
+ * each build.
  */
 export function UpdatePrompt() {
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);

@@ -143,7 +143,7 @@ export function CopyButton({ text, label, className }: CopyButtonProps) {
 
       {/*
         Polite, and only visible when it has something the button does not
-        already say. Spec §5.7 puts sighted feedback inline, so the failure
+        already say. Sighted feedback lives inline, so the failure
         renders where the user is looking; the success is already on the
         button and is announced from here without being shown twice.
       */}

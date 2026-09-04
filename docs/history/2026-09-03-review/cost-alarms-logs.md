@@ -4,7 +4,7 @@ Date: 2026-09-03 (UTC). Account `<account>`, region us-west-2. Repo HEAD `136519
 
 Access: `ssh ubuntu@orb`. Configuration reads ran as `chintan-agent` (`aws --profile chintan`). The reads that role is denied — `cloudwatch:DescribeAlarms`/`DescribeAlarmHistory`/`GetMetricStatistics`/`ListMetrics`, `ce:GetCostAndUsage`, `cloudtrail:DescribeTrails`, `budgets:*`, `sns:ListSubscriptionsByTopic`, `xray:GetSamplingRules` — used the box's own session, read-only, with the owner's permission. Nothing was created, modified or deleted; no SSM value was read; no log line containing user content exists (by design) and none was found. Cost Explorer was called **3 times** ($0.03).
 
-This report does not repeat [`aws-live-audit.md`](aws-live-audit.md) (inventory, stacks, IAM, Cognito) or [`review-2026-09-03.md`](../review-2026-09-03.md) §2–§4. It adds what those could not read: alarm states and history, metric volumes, the custom-metric bill, and a line-item cost attribution.
+This report does not repeat [`aws-live-audit.md`](aws-live-audit.md) (inventory, stacks, IAM, Cognito) or [`review-2026-09-03.md`](review.md) §2–§4. It adds what those could not read: alarm states and history, metric volumes, the custom-metric bill, and a line-item cost attribution.
 
 ---
 

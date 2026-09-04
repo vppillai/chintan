@@ -1,10 +1,10 @@
 // Package obs provides structured logging, request correlation, and CloudWatch
 // metrics.
 //
-// v1 had none of this: 21 unstructured log.Printf calls, no request ids, and no
-// way to follow one capture across transcribe, route, cleanup and append. It did
-// have one good instinct — it never logged user content — and this package keeps
-// that property enforceable rather than incidental. See Redact.
+// Every log line is structured and carries a request id, so one capture can be
+// followed across transcribe, route, cleanup and append. User content is never
+// logged, and this package keeps that property enforceable rather than
+// incidental. See Redact.
 package obs
 
 import (

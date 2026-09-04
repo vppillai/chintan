@@ -2,18 +2,18 @@
 #
 # Invite (or reset) a Cognito user for a Chintan instance.
 #
-# The temporary password is NOT printed. v1's header said the same thing while
-# line 54 echoed it unconditionally, so every invitation left the credential in a
-# scrollback buffer and, when run from an agent, in a transcript.
+# The temporary password is NOT printed. A credential echoed to the terminal
+# ends up in a scrollback buffer and, when the script is run from an agent, in a
+# transcript.
 #
 # It is written to a file, mode 600, the same way scripts/bootstrap-agent.sh
 # handles the one access key it creates. --print-password overrides that when a
 # human is sitting at the terminal and wants to read it off the screen; that is a
 # deliberate act, not the default.
 #
-# The password is also genuinely temporary. v1 passed --permanent on both paths,
-# so the forced change at first login that the README promised never happened and
-# the invitation password was the account password indefinitely.
+# The password is also genuinely temporary: the account is left in
+# FORCE_CHANGE_PASSWORD so it must be changed at first sign-in. A --permanent
+# password would make the invitation password the account password indefinitely.
 #
 # Usage:
 #   scripts/invite-user.sh --instance dev --email you@example.com [--apply]
@@ -78,8 +78,8 @@ done
 validate_instance_name "$INSTANCE"
 validate_environment "$ENVIRONMENT"
 
-# No AWS_PROFILE is set here. v1 exported AWS_PROFILE=chintan, so a clone with a
-# correctly configured default profile failed with an opaque profile-not-found
+# No AWS_PROFILE is set here. A hardcoded profile name makes a clone with a
+# correctly configured default profile fail with an opaque profile-not-found
 # error. Pass --profile through the environment if you use one.
 require_aws
 require_cmd openssl
@@ -149,8 +149,8 @@ fi
 
 log ""
 info "the user must change this password at first sign-in."
-# The app URL is derived, not hardcoded. v1 printed https://vppillai.github.io/chintan/...
-# to every operator of every fork.
+# The app URL is derived from the repository, not hardcoded: a fixed URL would
+# point every operator of every fork at the original owner's deployment.
 if repo="$(github_repo 2>/dev/null)"; then
     site_path="$INSTANCE"
     [ "$ENVIRONMENT" = "prod" ] || site_path="${INSTANCE}-${ENVIRONMENT}"

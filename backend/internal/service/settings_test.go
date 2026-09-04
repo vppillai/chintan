@@ -76,8 +76,9 @@ func TestUpdateSettingsRoundTripsThroughTheStore(t *testing.T) {
 }
 
 // ValidateSettings returns the record that will be stored, and the caller must
-// use that value. v1 echoed the request body back, which hid every coercion: a
-// theme of "" stored as ink came back as "" and the client kept sending it.
+// use that value. Echoing the request body back hides every coercion: a theme
+// of "" stored as ink would come back as "" and the client would keep sending
+// it.
 func TestValidateSettingsReturnsWhatWillBeStoredNotWhatWasSent(t *testing.T) {
 	sent := model.Settings{RetentionDays: 30}
 
@@ -158,10 +159,10 @@ func TestValidateSettingsRejectsValuesOutsideTheDeclaredSets(t *testing.T) {
 	}
 }
 
-// A record written before v2 carries no theme and no cleanup mode. A GET must
-// still answer the shape the contract declares rather than empty strings the
-// client has no case for.
-func TestNormalizeSettingsFillsTheFieldsAPreV2RecordDoesNotCarry(t *testing.T) {
+// A record written before theme and cleanup mode existed carries neither. A GET
+// must still answer the shape the contract declares rather than empty strings
+// the client has no case for.
+func TestNormalizeSettingsFillsTheFieldsAnOldRecordDoesNotCarry(t *testing.T) {
 	got := NormalizeSettings(model.Settings{RetentionDays: -5})
 
 	if got.CleanupMode != model.CleanupFaithful {

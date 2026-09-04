@@ -270,8 +270,9 @@ function BackLink() {
 /**
  * Autosave state, rendered.
  *
- * v1 swallowed autosave failures entirely, and its "unsaved" indicator was a
- * `.btn-warning` class with no CSS behind it — invisible on every screen.
+ * Every autosave state is rendered, failures included, with real CSS behind
+ * it. An "unsaved" indicator that is only a class with no rule is invisible on
+ * every screen.
  */
 function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> }) {
   const { model } = editor;

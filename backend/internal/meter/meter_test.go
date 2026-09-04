@@ -60,7 +60,7 @@ func TestPriceTableRejectsNonsenseQuantities(t *testing.T) {
 }
 
 // A completion is charged for what it read and what it wrote. Pricing input
-// alone is the understatement the 2026-09-03 review measured at ~5× on cleanup.
+// alone understates cleanup — long output, priced higher — by roughly 5×.
 func TestCostSumsEveryUnitTheCallConsumed(t *testing.T) {
 	p := PriceTable{Key("openai", "*"): {UnitInputTokens: 1, UnitOutputTokens: 4}}
 	got := p.Cost("openai", "m", Quantities{UnitInputTokens: 1000, UnitOutputTokens: 500})

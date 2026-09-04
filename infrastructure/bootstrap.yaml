@@ -142,11 +142,11 @@ Resources:
               # not exist yet, so there is no ARN and no tag to match on. The
               # justification stops there.
               #
-              # It used to cover this whole block, which meant the deploy role
-              # could Delete, Update or SetMfaConfig on EVERY user pool in the
-              # account: add a permissive callback URL or enable implicit grant
-              # on another app's client, or turn its MFA off. The boundary does
-              # not stop it — its Cognito deny carries
+              # The wildcard must not spread to the rest of this block: it would
+              # let the deploy role Delete, Update or SetMfaConfig on EVERY user
+              # pool in the account — add a permissive callback URL or enable
+              # implicit grant on another app's client, or turn its MFA off.
+              # The boundary does not stop it — its Cognito deny carries
               # Null aws:ResourceTag/Project = "false", so it only applies to
               # pools that ALREADY carry a Project tag, and an untagged foreign
               # pool falls straight through. DeleteUserPool is additionally
@@ -882,8 +882,8 @@ Resources:
                   ForAnyValue:StringEquals:
                     aws:CalledVia: ['cloudformation.amazonaws.com']
 
-              # The budget the README used to ask a human to click. Budgets is a
-              # global service; its ARNs carry no region.
+              # The budget is created by the stack, not clicked into place by a
+              # human. Budgets is a global service; its ARNs carry no region.
               # Budgets has no per-verb actions: ViewBudget reads and
               # ModifyBudget covers create, update and delete alike.
               - Effect: Allow
@@ -1101,9 +1101,9 @@ Resources:
   # zips and uploads them to the artifact bucket; deploy-frontend.yaml's `build`
   # reads each stack's outputs to bake the API endpoint and Cognito IDs into the
   # bundle. That is everything either job does with AWS, so that is everything
-  # this role can do. It used to be GitHubActionsRole, which can create, update
-  # and delete every chintan-* stack and move the live Lambda alias, from an
-  # environment with no protection rules at all.
+  # this role can do. The build jobs must not run as GitHubActionsRole, which
+  # can create, update and delete every chintan-* stack and move the live
+  # Lambda alias — from a job that sits behind no protection rules at all.
   #
   # The workflows read the ARN from the BUILD_ROLE_ARN repository variable
   # (scripts/setup.sh sets it from the GitHubBuildRoleArn output) and fall back

@@ -6,16 +6,12 @@ import { useOfflineQueue } from './useOfflineQueue.ts';
 /**
  * Says plainly when the app is offline and how much is waiting.
  *
- * v1's service worker set an `X-Offline` header on cached responses that
- * nothing read, so stale data was presented as live data with no indication
- * either way.
- *
- * The banner is state-driven for the same reason. It used to claim "Offline —
- * showing saved notes." unconditionally, so an offline cold start — there is no
- * query persister, so the cache is empty until something fetches — put that
- * sentence directly above "You are offline and no notes are cached on this
- * device yet.". Presenting absent data as saved data is the same failure the
- * comment above criticises v1 for, pointing the other way.
+ * Stale data is never presented as live data, and absent data is never
+ * presented as saved data. The banner is state-driven for that reason: there
+ * is no query persister, so on an offline cold start the cache is empty until
+ * something fetches, and an unconditional "Offline — showing saved notes."
+ * would sit directly above "You are offline and no notes are cached on this
+ * device yet.".
  */
 export function OfflineBanner() {
   const { online, queued, flushing } = useOfflineQueue();

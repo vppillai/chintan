@@ -81,10 +81,11 @@ func TestCaptureService_BeginCapture(t *testing.T) {
 	}
 }
 
-// The presigned audio PUT must carry the retention tag. In v1 RetentionDays was
-// stored, returned, shown in the UI, and read by nothing; an S3 lifecycle filter
-// takes one prefix and one suffix with no wildcards, so tenants/*/captures/
-// cannot be expressed and the rule matches this tag instead.
+// The presigned audio PUT must carry the retention tag. Without it
+// RetentionDays is stored, returned, shown in the UI, and read by nothing: an
+// S3 lifecycle filter takes one prefix and one suffix with no wildcards, so
+// tenants/*/captures/ cannot be expressed and the rule matches this tag
+// instead.
 func TestBeginCaptureRequiresTheRetentionTagOnTheAudioUpload(t *testing.T) {
 	presigner := &recordingPresigner{}
 	svc := NewCaptureService(memory.NewStore(), memory.NewObjects()).WithUploads(presigner)
@@ -169,8 +170,8 @@ func TestBeginCaptureWritesAKeyTheBucketNotifiesOn(t *testing.T) {
 	}
 }
 
-// Retry hands the capture back to the worker. v1 ran the whole pipeline inline,
-// which is what turned a gateway timeout into duplicated note content.
+// Retry hands the capture back to the worker. Running the whole pipeline inline
+// turns a gateway timeout into duplicated note content.
 func TestRetryCaptureInvokesTheWorkerRatherThanRunningTheWorkInline(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()
@@ -267,13 +268,12 @@ func TestGetDownloadURLServesTimestampsAndPeaks(t *testing.T) {
 // TestTheUploadCarriesTheTenantsOwnRetention is the request-path half of making
 // `retention_days` mean something.
 //
-// The setting was validated, stored, returned and rendered in the UI while
-// nothing on the way to S3 read it: every recording was tagged with the same
-// constant and the expiry period came from a CloudFormation parameter. That is
-// the v1 defect — a control that does nothing — fixed at the instance level and
-// left in place at the user level, and this is the only line of code that can
-// close it, because the presigned PUT is the last moment a per-tenant value can
-// reach the object.
+// A setting that is validated, stored, returned and rendered in the UI while
+// nothing on the way to S3 reads it — every recording tagged with the same
+// constant, the expiry period from a CloudFormation parameter — is a control
+// that does nothing. This is the only line of code that can make it real,
+// because the presigned PUT is the last moment a per-tenant value can reach the
+// object.
 func TestTheUploadCarriesTheTenantsOwnRetention(t *testing.T) {
 	cases := map[string]struct {
 		saved int

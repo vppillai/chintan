@@ -20,14 +20,13 @@ func (rt *router) health(w http.ResponseWriter, r *http.Request) {
 
 // ready probes the dependencies a request cannot be served without.
 //
-// This is the check v1 did not have. Its health endpoint returned a static
-// {"status":"ok"} that stayed green through a DynamoDB outage — fine as
-// liveness, misleading as readiness, and the reason an alarm on it would never
-// have fired.
+// Readiness is a real probe of DynamoDB and S3, not a static answer: a static
+// {"status":"ok"} stays green through a DynamoDB outage — fine as liveness,
+// misleading as readiness, and an alarm on it would never fire.
 func (rt *router) ready(w http.ResponseWriter, r *http.Request) {
 	if rt.Readiness == nil {
 		// Nothing to probe means nothing can be claimed. Reporting ok here would
-		// reintroduce exactly the static answer this endpoint replaces.
+		// be exactly the static answer this endpoint exists not to give.
 		httperr.ServiceUnavailable(w, r, "readiness probing is not configured on this instance")
 		return
 	}

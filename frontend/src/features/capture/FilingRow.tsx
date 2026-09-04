@@ -32,10 +32,10 @@ import { awaitsConnection } from './useResendOnReconnect.ts';
  * A recording being filed, as a row at the top of the library.
  *
  * Backed by `GET /v1/captures` rather than a JavaScript variable, so it
- * survives navigation, reload, and app restart. v1 held the in-flight capture
- * id in a module-level field; a refresh stranded the audio with no UI anywhere
- * able to find it again. It used to be a card floating in the shell over every
- * screen; it is a list row now, because a recording on its way into the
+ * survives navigation, reload, and app restart. An in-flight capture id held
+ * in a module-level field is lost on refresh, stranding the audio with no UI
+ * anywhere able to find it again. It is a list row rather than a card floating
+ * in the shell over every screen, because a recording on its way into the
  * library belongs at the top of the library.
  *
  * Four segments — uploaded, transcribing, filing, saving — and no percentage,
@@ -422,12 +422,12 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
           )}
 
           {/*
-            A real Retry, wired to POST /v1/captures/{id}/retry. In v1 the client
-            method existed and was called from nowhere, so a failed capture was a
-            dead end with a toast. Also offered once a non-terminal capture has
-            sat past STUCK_AFTER_MS with no status change — RetryCapture resumes
-            from whichever artifact already exists, so it is safe to call on a
-            capture that never actually failed, only stalled.
+            A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
+            capture is never a dead end with a toast. Also offered once a
+            non-terminal capture has sat past STUCK_AFTER_MS with no status
+            change — RetryCapture resumes from whichever artifact already
+            exists, so it is safe to call on a capture that never actually
+            failed, only stalled.
           */}
           {actionable && (
             <button
@@ -471,10 +471,9 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
  * Answers "which note should this go in?", leading with the router's answer.
  *
  * The pipeline pays for an LLM call to decide this and stores the result on the
- * capture; `handler/wire.go` used to strip both fields before the response left
- * the API, so the only thing this prompt could offer was an unranked list of
- * every note the user has — with no indication that anything had been computed
- * at all. v1 led with `Add to "<note>"`.
+ * capture, so the prompt leads with that answer. Offering an unranked list of
+ * every note the user has, or a bare `Add to "<note>"`, would hide that
+ * anything had been computed at all.
  *
  * Exactly one of the two fields is ever set. `suggested_note_id` names an
  * existing note the router was confident enough to propose but not confident

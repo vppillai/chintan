@@ -1,11 +1,11 @@
 /**
  * Build-time configuration.
  *
- * v1 generated a `config.js` at deploy time and loaded it as a separate script.
- * Combined with a cache-first service worker that precached it, an installed
- * client could be pinned to a dead API endpoint permanently, with no way to
- * update it short of clearing site data. Baking these into the hashed bundle
- * removes that class of failure entirely: a new endpoint is a new bundle hash.
+ * Baked into the hashed bundle, never loaded from a separate `config.js` at
+ * runtime. A separately fetched config file that the service worker precaches
+ * can pin an installed client to a dead API endpoint permanently, with no way
+ * to update it short of clearing site data. With the values in the bundle, a
+ * new endpoint is a new bundle hash.
  */
 
 export interface AppConfig {

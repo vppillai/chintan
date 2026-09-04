@@ -14,13 +14,12 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// Body and field caps, from the design's §4.2.
+// Body and field caps.
 //
-// v1 had none of these anywhere. An unbounded PATCH body went into a 512MB
-// Lambda, and aliases were uncapped in both count and length while every alias
-// is rendered into the routing prompt for every future capture — a stored
-// token-cost amplifier that the person who dictated one long alias pays for
-// forever.
+// Every request body and every free-text field is bounded. An unbounded PATCH
+// body goes straight into a 512MB Lambda, and an uncapped alias list is a
+// stored token-cost amplifier: every alias is rendered into the routing prompt
+// for every future capture, so one long alias is paid for forever.
 const (
 	// MaxNoteBodyBytes is the largest note body accepted.
 	MaxNoteBodyBytes = 1 << 20

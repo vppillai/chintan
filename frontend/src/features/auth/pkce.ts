@@ -1,10 +1,10 @@
 /**
  * PKCE, the way RFC 7636 specifies it.
  *
- * Every value here is generated with `crypto.getRandomValues`. v1 built its
- * OAuth `state` from `Math.random().toString(36)` — a predictable PRNG seeded
- * per page load — which makes the one parameter whose entire job is to be
- * unguessable, guessable. `Math.random` must not appear in this file.
+ * Every value here is generated with `crypto.getRandomValues`, and
+ * `Math.random` must not appear in this file: it is a predictable PRNG seeded
+ * per page load, and drawing `state` from it makes the one parameter whose
+ * entire job is to be unguessable, guessable.
  *
  * The verifier is the secret half of the exchange. Without it, an authorization
  * code intercepted in transit (a shared device's history, a malicious app
@@ -18,7 +18,7 @@ const VERIFIER_BYTES = 32;
 const STATE_BYTES = 16;
 
 /**
- * base64url without padding, as §4.2 requires.
+ * base64url without padding, as RFC 7636 section 4.2 requires.
  *
  * Plain base64 would round-trip through a query string as `+` → space and `/`
  * → a path separator, and the server would compare a different string than the

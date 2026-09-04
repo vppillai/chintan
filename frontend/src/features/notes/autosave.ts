@@ -1,16 +1,15 @@
 /**
  * Autosave state, as a pure machine.
  *
- * Two things v1 got wrong and this exists to fix:
+ * Two rules this exists to hold:
  *
- * 1. **Failures were swallowed.** The save was fire-and-forget; if it failed,
- *    nothing said so and there was no `beforeunload`, so the user closed the
- *    tab believing their edit was stored. Every state here is one the UI
- *    renders verbatim.
- * 2. **There was no version.** A voice append landing while the editor was open
- *    silently discarded one of the two writes. `PATCH` now carries `version`,
- *    and a 409 is a state the user resolves — never an automatic clobber in
- *    either direction.
+ * 1. **Failures are never swallowed.** A fire-and-forget save that fails with
+ *    nothing said and no `beforeunload` lets the user close the tab believing
+ *    their edit was stored. Every state here is one the UI renders verbatim.
+ * 2. **Every write carries a version.** Without one, a voice append landing
+ *    while the editor is open silently discards one of the two writes. `PATCH`
+ *    carries `version`, and a 409 is a state the user resolves — never an
+ *    automatic clobber in either direction.
  */
 
 export type SaveState =

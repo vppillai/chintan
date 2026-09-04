@@ -1,7 +1,7 @@
 # Chintan review — 2026-09-03
 
 **Scope:** every non-test file in `backend/`, `frontend/src`, `infrastructure/`, `scripts/`, `.github/`; the live AWS account (read-only, as `chintan-agent`); the GitHub repository settings; and the previous reviews, to separate what is still open from what was fixed.
-**Method:** five parallel deep reads with file:line evidence, each finding re-verified against the code before it was accepted, plus the full build and test suites run on a Linux box. The per-area reports are in [`review-2026-09-03/`](review-2026-09-03/) and carry the Medium and Low items this summary only names.
+**Method:** five parallel deep reads with file:line evidence, each finding re-verified against the code before it was accepted, plus the full build and test suites run on a Linux box. The per-area reports are in [`review-2026-09-03/`](./) and carry the Medium and Low items this summary only names.
 **Tree reviewed:** `9aa4435` (the deployed commit). **Fixes shipped with this review:** the three commits before this document on the same branch.
 
 ---
@@ -24,7 +24,7 @@ The code is careful. Identity comes only from a verified Cognito token, every Dy
 | Alarm state, DLQ depth, error rate | **Not readable by the agent role** — `cloudwatch:DescribeAlarms`, `GetMetricData`, `sqs:GetQueueAttributes` are denied to it | IAM |
 | GitHub | `main` unprotected; no rulesets; `production` environment had **no required reviewer** until this review set one; three unattended prod deploys (Aug 13/15/17), the last starting 3 s after staging finished | GitHub API |
 
-The full audit, with every command's result, is in [`aws-live-audit.md`](review-2026-09-03/aws-live-audit.md).
+The full audit, with every command's result, is in [`aws-live-audit.md`](aws-live-audit.md).
 
 ## 3. Findings
 
@@ -71,7 +71,7 @@ Severity is about consequence for the one user's recordings, notes and wallet. *
 
 ### Previously recommended, still not done
 
-From [`prior-reviews-digest.md`](review-2026-09-03/prior-reviews-digest.md): five backend capabilities with client wrappers and **no UI** (create a note manually, match-by-description, record into a chosen note, export, tag filter); the prod bucket rename's migration story (the orphan bucket above is its residue); tokens out of `localStorage` + CSP; correcting `DefaultPrices` against an invoice; the audit log "required before a second user"; a WebKit Playwright project; reconciling `cost-analysis.md` with itself.
+From [`prior-reviews-digest.md`](prior-reviews-digest.md): five backend capabilities with client wrappers and **no UI** (create a note manually, match-by-description, record into a chosen note, export, tag filter); the prod bucket rename's migration story (the orphan bucket above is its residue); tokens out of `localStorage` + CSP; correcting `DefaultPrices` against an invoice; the audit log "required before a second user"; a WebKit Playwright project; reconciling `cost-analysis.md` with itself.
 
 ## 4. What is over-built, and by how much
 

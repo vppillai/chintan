@@ -12,14 +12,14 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-// These tests assert the property the v1 build shipped without: one tenant's
-// identifier must never reach another tenant's data. They sit below the HTTP
-// layer deliberately — the impersonation defect lived in middleware, so a test
-// that goes through the router could have been fooled by the same bug.
+// These tests assert tenant isolation: one tenant's identifier must never reach
+// another tenant's data. They sit below the HTTP layer deliberately — an
+// impersonation defect in middleware would fool a test that goes through the
+// router, because the same bug would grant the access the test checks.
 //
-// They also pin the invariant across the Phase 2 repository rewrite, and now run
-// against every Store implementation rather than only the in-memory double —
-// the property has to hold in the code that actually talks to DynamoDB.
+// They run against every Store implementation rather than only the in-memory
+// double — the property has to hold in the code that actually talks to
+// DynamoDB.
 
 const (
 	owner     = "tenant-owner"

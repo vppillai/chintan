@@ -1,7 +1,7 @@
 import { test as base, type Page, type Route } from '@playwright/test';
 
 /**
- * A stub of the v2 API, driven by route interception.
+ * A stub of the Chintan API, driven by route interception.
  *
  * Every response here matches `docs/api/openapi.yaml` — envelopes, problem+json,
  * the capture lifecycle. That is the point of the specs: they assert the
@@ -148,9 +148,9 @@ export function freshState(): ApiState {
         captures: [],
       },
       /*
-       * Archived with no purge date. v1 rendered "Deletes in NaN days" for this
-       * exact row — `purge_after` is optional in the contract and a note
-       * archived before retention was configured has none.
+       * Archived with no purge date. `purge_after` is optional in the contract
+       * and a note archived before retention was configured has none; this is
+       * the row that renders "Deletes in NaN days" if the absence is divided by.
        */
       'stray-thought': {
         id: 'stray-thought',

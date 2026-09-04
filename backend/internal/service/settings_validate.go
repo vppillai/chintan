@@ -22,10 +22,10 @@ var (
 // ValidateSettings checks a settings record and returns the canonical form that
 // will be stored.
 //
-// The caller stores and returns this value, not the request body. v1 echoed the
-// request straight back, which hid every coercion from the client: a retention
-// of "30" that was stored as 30 and a theme of "purple" that was stored as
-// nothing both came back looking accepted.
+// The caller stores and returns this value, not the request body. Echoing the
+// request straight back hides every coercion from the client: a retention of
+// "30" stored as 30 and a theme of "purple" stored as nothing would both come
+// back looking accepted.
 func ValidateSettings(s model.Settings) (model.Settings, error) {
 	out := model.Settings{}
 
@@ -74,8 +74,8 @@ func ValidateSettings(s model.Settings) (model.Settings, error) {
 	return out, nil
 }
 
-// NormalizeSettings fills in the fields a record written before v2 does not
-// carry, so a GET always answers the shape the contract declares.
+// NormalizeSettings fills in the fields an older record does not carry, so a
+// GET always answers the shape the contract declares.
 func NormalizeSettings(s model.Settings) model.Settings {
 	if s.CleanupMode == "" {
 		s.CleanupMode = model.CleanupFaithful

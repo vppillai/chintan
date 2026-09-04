@@ -14,8 +14,7 @@ import (
 )
 
 // LambdaAPI is the seam that keeps the invoker testable. A concrete
-// *lambda.Client here would make every caller untestable by construction,
-// which is the mistake the v1 repository made.
+// *lambda.Client here would make every caller untestable by construction.
 type LambdaAPI interface {
 	Invoke(ctx context.Context, in *lambda.InvokeInput, opts ...func(*lambda.Options)) (*lambda.InvokeOutput, error)
 }

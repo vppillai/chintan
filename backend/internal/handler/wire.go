@@ -22,8 +22,8 @@ import (
 // Page is the envelope every collection returns.
 //
 // Items is never null: a client iterating the response should not have to
-// special-case an empty collection, and v1's bare array plus an X-Next-Cursor
-// header meant a caller had to read the headers to know there was more.
+// special-case an empty collection. The cursor is in the body rather than a
+// header, so a caller never has to read headers to know there is more.
 type Page[T any] struct {
 	Items  []T    `json:"items"`
 	Cursor string `json:"cursor,omitempty"`
@@ -164,16 +164,16 @@ func captureOf(c model.CaptureIndex) Capture {
 		ID:        c.ID,
 		Status:    string(c.Status),
 		CreatedAt: c.CreatedAt,
-		// A capture created before v2 has neither, and the client renders a
-		// plain player rather than an empty waveform.
+		// A capture recorded before segments and peaks were stored has neither,
+		// and the client renders a plain player rather than an empty waveform.
 		//
 		// Both keys are set only once the object is known to exist. The worker
 		// writes segments.json itself and records the key after the PUT; peaks
 		// are uploaded by the client, so the API records the key when it issues
 		// the presigned PUT and the worker clears it if the bucket has no such
-		// object once the pipeline is done (pipeline.verifyPeaks). Before that
-		// check existed has_peaks was "a URL was issued", and the note screen
-		// 404'd asking for a waveform nobody had uploaded.
+		// object once the pipeline is done (pipeline.verifyPeaks). Without that
+		// check has_peaks would mean "a URL was issued", and the note screen
+		// would 404 asking for a waveform nobody uploaded.
 		HasSegments: c.SegmentsKey != "",
 		HasPeaks:    c.PeaksKey != "",
 		Version:     c.Version,
@@ -273,8 +273,8 @@ type CaptureCreated struct {
 //
 // DailySpendCapMicros is the one field that is not the tenant's: it is the
 // instance-wide daily provider budget from the template, reported so the UI can
-// show the ceiling that is actually enforced. There is no per-tenant cap any
-// more — the 2026-09-03 review collapsed the two caps into one counter.
+// show the ceiling that is actually enforced. There is no per-tenant cap: one
+// instance-wide counter is the whole enforcement.
 type Settings struct {
 	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`

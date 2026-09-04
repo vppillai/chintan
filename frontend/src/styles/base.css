@@ -19,7 +19,7 @@ body {
 }
 
 /* --------------------------------------------------------------------------
-   Focus. §5.7 requires a visible :focus-visible on every interactive element.
+   Focus. Every interactive element has a visible :focus-visible ring.
    Applied to the element wholesale rather than per-component so nothing can
    be added later without one.
    -------------------------------------------------------------------------- */
@@ -65,7 +65,7 @@ a {
   text-underline-offset: 0.18em;
 }
 
-/* Tabular serif numerals — timers, durations, counts (§5.6). */
+/* Tabular serif numerals — timers, durations, counts. */
 .numeric {
   font-family: var(--font-numeric);
   font-variant-numeric: tabular-nums lining-nums;
@@ -81,7 +81,7 @@ a {
 }
 
 /* --------------------------------------------------------------------------
-   Skip link (§5.7)
+   Skip link
    -------------------------------------------------------------------------- */
 
 .skip-link {

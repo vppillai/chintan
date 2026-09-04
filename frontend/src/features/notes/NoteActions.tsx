@@ -39,10 +39,10 @@ import type { NoteEditor } from './useNoteEditor.ts';
  *   ever          with it, so it names what goes and requires the note's title
  *                 to be typed before the control unlocks.
  *
- * v2 had no control for any of this. The backend served archive, restore and
- * purge, `endpoints.ts` wrapped all three, and nothing called them — so the app
- * was append-only and the note screen's own "may have been archived or purged"
- * described states it could not reach.
+ * All three operations — archive, restore and purge — are served by the
+ * backend, wrapped in `endpoints.ts`, and reachable from here. Without these
+ * controls the app is append-only and the note screen's own "may have been
+ * archived or purged" describes states it cannot reach.
  */
 export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: NoteEditor }) {
   const navigate = useNavigate();

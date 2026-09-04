@@ -7,10 +7,9 @@
 # /chintan/dev-staging/ would request its assets from /chintan/dev/assets/. The
 # per-instance configuration is passed as VITE_* variables and compiled in.
 #
-# The v1 workflow copied static files and wrote js/config.js, which the service
-# worker then cached first-and-forever: recreating a stack changed the API
-# endpoint and installed clients were pinned to the dead one. A content-hashed
-# build has no such file.
+# Nothing is written into the bundle at deploy time: a runtime config file
+# cached by the service worker would pin installed clients to a dead endpoint
+# when a stack is recreated. A content-hashed build has no such file.
 #
 # Usage:
 #   scripts/ci-build-site.sh --out site

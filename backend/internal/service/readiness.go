@@ -41,11 +41,10 @@ const (
 // ReadinessService probes the dependencies the API cannot serve a request
 // without.
 //
-// v1's health check returned a static {"status":"ok"}, which is a fine liveness
-// answer and a misleading readiness one: it stayed green through a DynamoDB
-// outage. These probes do a real round trip to each dependency, and a "not
-// found" counts as success — reaching the service is the question, not finding
-// the object.
+// A static {"status":"ok"} is a fine liveness answer and a misleading readiness
+// one: it stays green through a DynamoDB outage. These probes do a real round
+// trip to each dependency, and a "not found" counts as success — reaching the
+// service is the question, not finding the object.
 type ReadinessService struct {
 	store   repository.Store
 	objects repository.Objects

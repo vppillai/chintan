@@ -418,8 +418,7 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 // generateSnippet creates a snippet from a note body.
 //
 // The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
-// writes invalid UTF-8 into DynamoDB and into the routing prompt, which is what
-// v1 did.
+// writes invalid UTF-8 into DynamoDB and into the routing prompt.
 //
 // The worker's append markers are removed first: the snippet is shown in the
 // notes list and handed to the router as a summary of the note, and neither
@@ -514,10 +513,10 @@ func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID
 
 // hardDeleteNote removes a note's captures, its objects, and finally its index.
 //
-// It fails loudly. v1 logged and ignored every cascade failure and then deleted
-// the index anyway, permanently orphaning audio that the UI reported as purged.
-// Here the index survives any failure, so the note stays visible as archived and
-// the delete can be retried.
+// It fails loudly. Logging a cascade failure and deleting the index anyway
+// permanently orphans audio the UI has reported as purged. Here the index
+// survives any failure, so the note stays visible as archived and the delete
+// can be retried.
 func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
 	if err := s.PurgeNoteArtifacts(ctx, userID, noteID, note); err != nil {
 		return err
@@ -690,8 +689,8 @@ func (s *NotesService) purgeOne(ctx context.Context, userID, noteID string) Purg
 	if err := s.hardDeleteNote(ctx, userID, noteID, note); err != nil {
 		// The index row survives a failed cascade by design, so the note is
 		// still listed as archived and the purge can be retried. Reporting
-		// success here is what v1 did, and it left audio in the bucket that the
-		// UI had already said was deleted.
+		// success here would leave audio in the bucket that the UI had already
+		// said was deleted.
 		//
 		// The detail is fixed text: the underlying error carries bucket and
 		// table names, and it is logged rather than returned.

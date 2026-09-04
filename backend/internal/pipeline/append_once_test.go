@@ -21,8 +21,9 @@ const (
 	appendedText   = "the one and only dictated sentence"
 )
 
-// appendFixture is a capture parked at `cleaned`, exactly where the v1 defect
-// left it: the text is cleaned and ready, and the append has not happened.
+// appendFixture is a capture parked at `cleaned`, the state a failed finish
+// leaves behind: the text is cleaned and ready, and the append has not
+// happened.
 type appendFixture struct {
 	store   *memory.Store
 	objects repository.Objects
@@ -87,7 +88,7 @@ func (f *appendFixture) body(t *testing.T) string {
 }
 
 // failOnceOnPutNote interrupts the pipeline between the append and the status
-// flip — the exact window the v1 retry path re-entered and re-appended through.
+// flip — the exact window an unguarded retry re-enters and re-appends through.
 type failOnceOnPutNote struct {
 	repository.Store
 	mu     sync.Mutex
@@ -111,9 +112,9 @@ func (s *failOnceOnPutNote) didFail() bool {
 	return s.failed
 }
 
-// This is the defect the audit calls B3, and which handler/captures.go called
-// "idempotent". A gateway timeout makes the client retry; without a guard the
-// retry appends the same text a second time.
+// Retry has to be idempotent in fact, not just in name. A gateway timeout makes
+// the client retry; without a guard the retry appends the same text a second
+// time.
 func TestRetryAfterAFailedFinishAppendsExactlyOnce(t *testing.T) {
 	var interrupt *failOnceOnPutNote
 	f := newAppendFixture(t, memory.NewObjects(), func(s repository.Store) repository.Store {
@@ -213,8 +214,8 @@ func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	}
 }
 
-// A concurrent editor save and voice append must both survive. v1's bare
-// read-concat-write dropped one of them.
+// A concurrent editor save and voice append must both survive. A bare
+// read-concat-write drops one of them.
 func TestConcurrentEditAndVoiceAppendBothSurvive(t *testing.T) {
 	objects := memory.NewObjects()
 	f := newAppendFixture(t, objects, nil)
@@ -290,9 +291,9 @@ func (o *raceOnceObjects) didRace() bool {
 	return o.raced
 }
 
-// Note recency decides which fifty notes the router is shown. v1 compared
-// RFC3339Nano strings, and Go trims trailing fractional zeros, so a whole
-// second sorted above a fraction of it because 'Z' > '.'.
+// Note recency decides which fifty notes the router is shown. Comparing
+// RFC3339Nano strings gets it wrong: Go trims trailing fractional zeros, so a
+// whole second sorts above a fraction of it because 'Z' > '.'.
 func TestNoteRecencyOrderingIsChronological(t *testing.T) {
 	base := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
 	older := model.FormatTime(base)                             // exactly on the second
@@ -301,7 +302,7 @@ func TestNoteRecencyOrderingIsChronological(t *testing.T) {
 	if older >= newer {
 		t.Fatalf("stored form does not sort chronologically: %q should sort below %q", older, newer)
 	}
-	// The v1 layout got this backwards, which is the bug being pinned.
+	// RFC3339Nano gets this backwards, which is the bug being pinned.
 	if legacyOlder, legacyNewer := base.Format(time.RFC3339Nano), base.Add(100*time.Millisecond).Format(time.RFC3339Nano); legacyOlder < legacyNewer {
 		t.Fatalf("RFC3339Nano unexpectedly sorted correctly (%q < %q); the fixed-width layout is no longer motivated", legacyOlder, legacyNewer)
 	}

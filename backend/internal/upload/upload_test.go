@@ -31,7 +31,7 @@ func testPresigner(t *testing.T) *S3Presigner {
 // S3 rejects a presigned request that sends an unsigned x-amz-* header, so a
 // signed x-amz-tagging is the only construction in which the client can neither
 // omit the tag nor change it. Without the tag the lifecycle rule matches
-// nothing, RetentionDays does nothing, and the v1 defect is intact.
+// nothing and RetentionDays does nothing.
 func TestPresignedAudioPutSignsTheRetentionTag(t *testing.T) {
 	got, err := testPresigner(t).PresignPut(context.Background(),
 		"tenants/user1/captures/c_1/audio.webm", "audio/webm",
@@ -133,11 +133,11 @@ func TestPresignRejectsAnEmptyKey(t *testing.T) {
 
 // TestTheRetentionTagCarriesTheTenantsChoice is the defect this closes.
 //
-// `retention_days` was validated, stored, returned and rendered in the UI while
-// nothing in the request path read it: every object got the same constant tag
-// and the expiry period came from a CloudFormation parameter. A user asking for
-// thirty days kept their audio forever and was told otherwise, which is
-// precisely the v1 defect the package comment claims to have fixed.
+// If `retention_days` is validated, stored, returned and rendered in the UI
+// while nothing in the request path reads it — every object given the same
+// constant tag, the expiry period from a CloudFormation parameter — a user
+// asking for thirty days keeps their audio forever and is told otherwise, which
+// is precisely the defect the package comment claims to close.
 func TestTheRetentionTagCarriesTheTenantsChoice(t *testing.T) {
 	cases := []struct {
 		requested int

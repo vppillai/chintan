@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// In v1 the in-memory store (435 lines) and the fake providers shipped inside
-// the production package, one wiring mistake away from being used for real.
-// They now live in packages of their own, and this asserts the property that
-// makes that worth anything: the API binary does not link them.
+// The in-memory store and the fake providers live in packages of their own, not
+// inside the production package where they would be one wiring mistake away
+// from being used for real. This asserts the property that makes that worth
+// anything: the API binary does not link them.
 //
 // A Go binary contains exactly the packages reachable from main, so "not in the
 // import graph" is "not in the binary".

@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { describePurge, purgeCountdown } from './purge.ts';
 
 /**
- * The regression these exist for is v1's "Deletes in NaN days", which is what
+ * The failure these guard against is "Deletes in NaN days", which is what
  * `Math.ceil((Date.parse(undefined) - now) / 86400000)` renders. Every branch
- * that produced it is a case below.
+ * that can produce it is a case below.
  */
 
 const NOW = Date.parse('2026-08-08T12:00:00.000Z');

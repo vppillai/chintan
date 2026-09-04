@@ -66,9 +66,8 @@ func TestConflictCarriesCurrentVersion(t *testing.T) {
 	}
 }
 
-// The v1 defect: WriteJSON serialised err.Error(), which put wrapped DynamoDB
-// and S3 messages — table names included — in front of anyone who could
-// provoke a failure.
+// Serialising err.Error() would put wrapped DynamoDB and S3 messages — table
+// names included — in front of anyone who could provoke a failure.
 func TestInternalServerErrorDoesNotSerialiseTheError(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/v1/notes", nil)
 	w := httptest.NewRecorder()
@@ -86,8 +85,8 @@ func TestInternalServerErrorDoesNotSerialiseTheError(t *testing.T) {
 	}
 }
 
-// The other half of the v1 defect: InternalServerError discarded its error
-// argument entirely, so the most serious class of failure produced no log line.
+// The other half: an InternalServerError that discards its error argument
+// leaves the most serious class of failure with no log line.
 func TestInternalServerErrorLogsTheErrorWithTheCorrelationID(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()

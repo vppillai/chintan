@@ -3,9 +3,9 @@ package handler
 // routes is the whole HTTP surface, in one readable table.
 //
 // Every pattern is a Go 1.22 method-and-wildcard pattern, so the router matches
-// the method and extracts the identifier. v1 hand-parsed each path with
-// strings.TrimPrefix and strings.Split inside three separate handlers, which is
-// how "/v1/captures/{id}/complete" and "/v1/captures/{id}/retry" ended up
+// the method and extracts the identifier. Nothing hand-parses a path: with
+// strings.TrimPrefix and strings.Split spread across handlers, two routes such
+// as "/v1/captures/{id}/complete" and "/v1/captures/{id}/retry" can end up
 // dispatching to the same function by accident.
 //
 // The version prefix appears once, here.
@@ -13,8 +13,8 @@ func (rt *router) routes() {
 	p := APIPrefix
 
 	// Health. Liveness answers whether the process is up; readiness probes the
-	// dependencies. v1 had one static answer serving as both, which stayed
-	// green through a DynamoDB outage.
+	// dependencies. One static answer serving as both would stay green through
+	// a DynamoDB outage.
 	rt.handle("GET "+p+"/health", rt.health, public())
 	rt.handle("GET "+p+"/health/ready", rt.ready, public())
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 /**
- * The app's only modal, and it is a real one (spec §5.7): `role="dialog"`,
+ * The app's only modal, and it is a real one: `role="dialog"`,
  * `aria-modal`, a focus trap, Escape to dismiss, an inert background, and
  * focus restored to whatever opened it.
  *

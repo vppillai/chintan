@@ -213,9 +213,8 @@ func TestAnOrdinaryProviderFaultRaisesNeitherCounter(t *testing.T) {
 // obs.Emit declares one dimension set, so a metric dimensioned by Provider has
 // no identity an alarm can name without naming every provider. The rollup is
 // that identity. Without it the alarms silently never receive a datapoint and,
-// under TreatMissingData: notBreaching, sit green through a dead key —
-// docs/cost-analysis.md §5.3 records exactly that failure for
-// SpendCapRejections.
+// under TreatMissingData: notBreaching, sit green through a dead key; a
+// SpendCapRejections alarm with no rollup fails in exactly that way.
 func TestBothAlarmMetricsCarryADimensionlessRollup(t *testing.T) {
 	cases := map[string]struct {
 		err  error

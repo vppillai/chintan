@@ -89,9 +89,8 @@ test('a stranded recording is offered back after a reload', async ({ page, api }
   /*
    * Reopen the app at its manifest `start_url`, which is what launching the
    * installed icon does — a completely fresh document with no JS state carried
-   * over. This is the case v1 could not survive: the capture id lived in a
-   * module-level variable, so the audio became unreachable the moment the page
-   * went away.
+   * over. A capture id held in a module-level variable would not survive this:
+   * the audio would become unreachable the moment the page went away.
    *
    * Deliberately not a reload of /capture: that screen is a live recording
    * surface rather than a place to triage old ones, and the prompt lives at
@@ -141,12 +140,11 @@ for (const path of ['/settings', '/capture']) {
 /**
  * Reading, searching and editing with no connection.
  *
- * Spec §5.5 promised "IndexedDB holds … the note corpus for offline reading and
- * instant search" and "a queue of pending mutations … flushed on reconnect".
- * None of the three existed: there was no notes store at all, and
- * `offline/queue.ts` had no caller outside its own test. Driven offline, opening
- * a note the user had been looking at one screen earlier reported that it "may
- * have been archived or purged", and searching for it said nothing matched.
+ * IndexedDB holds the note corpus for offline reading and instant search, and a
+ * queue of pending mutations is flushed on reconnect. Without the notes store,
+ * opening a note the user was looking at one screen earlier reports that it
+ * "may have been archived or purged" and searching for it says nothing matched;
+ * a queue with no caller drops every offline edit on the floor.
  *
  * Each case reloads the document before going offline, on purpose. Without the
  * reload the in-memory query cache answers and the test proves nothing about

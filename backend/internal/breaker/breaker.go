@@ -1,8 +1,8 @@
 // Package breaker bounds third-party spend per day, for the whole instance.
 //
-// v1 had nothing bounding Groq or OpenAI spend. Reserved Lambda concurrency
-// caps AWS, not provider APIs, so a stuck retry loop or a leaked login billed
-// without limit.
+// Something has to bound Groq and OpenAI spend: reserved Lambda concurrency
+// caps AWS, not provider APIs, so without this a stuck retry loop or a leaked
+// login bills without limit.
 //
 // The design point worth preserving: Do owns the provider call. There is no way
 // to reach the provider without reserving against the day's counter first, and
@@ -11,11 +11,9 @@
 //
 // There is one cap and one counter. The instance's operator sets the cap in the
 // template (DailySpendCapMicros) and every paid call on the instance reserves
-// against the same SPEND#<day> row. The 2026-09-03 review found the previous
-// design — a per-tenant cap read from the settings record, a resolver
-// interface, a "lower of the two" rule, and a usage sink nothing in production
-// constructed — guarding complexity rather than a requirement: the thing that
-// stops a runaway loop is the ADD-and-compare, and this is it.
+// against the same SPEND#<day> row. There is deliberately no per-tenant cap, no
+// resolver interface and no "lower of the two" rule: the thing that stops a
+// runaway loop is the ADD-and-compare, and this is it.
 package breaker
 
 import (

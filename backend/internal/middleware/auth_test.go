@@ -34,8 +34,8 @@ func handlerCapturing(seen *auth.Identity, ran *bool) http.Handler {
 	})
 }
 
-// The v1 build trusted X-User-ID over the verified token, so any authenticated
-// caller could act as any other user. This asserts the header is inert.
+// Trusting an X-User-ID header over the verified token would let any
+// authenticated caller act as any other user. This asserts the header is inert.
 func TestAuthIgnoresUserIDHeader(t *testing.T) {
 	v := &stubVerifier{id: auth.Identity{UserID: "real-owner", TenantID: "real-owner"}}
 	var seen auth.Identity
