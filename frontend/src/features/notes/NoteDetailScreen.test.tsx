@@ -215,6 +215,8 @@ describe('what was just saved is what the app shows next', () => {
 });
 
 describe('a note whose recording is still filing keeps asking', () => {
+  // Waits through two real poll ticks (CAPTURE_POLL_FAST_MS each); the default
+  // 5 s budget is enough on a laptop and not on the CI runner.
   it('shows the appended text once the pipeline writes it, without leaving the screen', async () => {
     /*
      * QA D7: "Record into this", then open the note while the filing row still
@@ -262,7 +264,7 @@ describe('a note whose recording is still filing keeps asking', () => {
     const after = api.gets;
     await new Promise((resolve) => setTimeout(resolve, CAPTURE_POLL_FAST_MS + 200));
     expect(api.gets).toBe(after);
-  });
+  }, 20_000);
 });
 
 describe('the note screen is shaped for reading', () => {
