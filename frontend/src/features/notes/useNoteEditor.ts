@@ -94,9 +94,23 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    * the first one just superseded and manufacture the very 409 this guards
    * against. `edit()` already does the same for the same reason.
    */
+  /**
+   * A save that settles after the screen has gone must not dispatch into a
+   * component that no longer exists. React would only warn, but a test runner
+   * tearing down its window mid-flight surfaced it as a crash, and the mirror
+   * below is the only thing the late arrival could still usefully update.
+   */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const commit = useCallback((event: EditorEvent) => {
     latest.current = editorReducer(latest.current, event);
-    dispatch(event);
+    if (mounted.current) dispatch(event);
   }, []);
 
   /** The PATCH currently on the wire, if any. */

@@ -186,6 +186,9 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	// dimension value telling us a number this one already holds.
 	obs.Duration(ctx, "CapturePipelineDuration", elapsed, map[string]string{"Outcome": string(final.Status)})
 	p.markAudioProcessedIfSafe(ctx, &final)
+	if err == nil && service.CaptureIsTerminal(final.Status) {
+		p.verifyPeaks(ctx, &final)
+	}
 	if errors.Is(err, errDeliveryConceded) {
 		// The other delivery is either finished or still running. Either way this
 		// one is done and must succeed, not be retried. If the owner dies
@@ -338,16 +341,23 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		estimateSeconds = defaultAudioSecondsEstimate
 	}
 
+	language, err := p.transcriptionLanguage(ctx, tenantID, capture)
+	if err != nil {
+		return err
+	}
+
 	var result provider.Transcription
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.STTProvider,
 		Model:    p.cfg.STTModel,
 		Op:       meter.OpTranscribe,
 		Usage:    meter.Quantities{meter.UnitAudioSeconds: estimateSeconds},
+		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.STT.Transcribe(ctx, provider.Audio{
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
+			Language:    language,
 		})
 		if err != nil {
 			return breaker.Result{}, err
@@ -399,6 +409,47 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	capture.Status = model.StatusTranscribed
 	capture.Error = ""
 	return p.persist(ctx, capture)
+}
+
+// transcriptionLanguage decides what the speech provider is told the recording
+// is in: the target note's language when the capture was started with one,
+// else the tenant's default, with "auto" becoming "" (send no language).
+//
+// The note wins only when it is already known. Routing runs AFTER
+// transcription — the router reads the transcript to pick the note — so a
+// capture without note_id cannot be transcribed in the language of a note
+// nobody has chosen yet, and gets the tenant's default. That is the honest
+// limit of a per-note setting on this pipeline, and it is why the setting
+// also exists per tenant.
+//
+// A note or settings read that fails is a retryable fault, not a reason to
+// guess: guessing English for a Tamil note and appending the result is the
+// failure this setting exists to prevent.
+func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, capture *model.CaptureIndex) (string, error) {
+	language := ""
+	if capture.NoteID != "" {
+		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return "", fmt.Errorf("pipeline: get target note for language: %w", err)
+		}
+		if err == nil {
+			language = note.Language
+		}
+	}
+	if language == "" {
+		settings, err := p.cfg.Store.GetSettings(ctx, tenantID)
+		if err != nil {
+			return "", fmt.Errorf("pipeline: get settings for language: %w", err)
+		}
+		language = settings.DefaultLanguage
+	}
+	if language == "" {
+		language = model.DefaultLanguage
+	}
+	if language == model.LanguageAuto {
+		return "", nil
+	}
+	return language, nil
 }
 
 // defaultAudioSecondsEstimate is what a transcription is reserved against when
@@ -586,6 +637,7 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, transcript string
 			meter.UnitInputTokens:  estimateTokens(transcript) + estimateCandidateTokens(candidates),
 			meter.UnitOutputTokens: routeOutputTokensEstimate,
 		},
+		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.Router.Route(ctx, transcript, candidates)
 		if err != nil {
@@ -639,6 +691,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 			// reservation near the bill: output tokens cost four times input.
 			meter.UnitOutputTokens: estimateTokens(source),
 		},
+		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
 		out, err := p.cfg.LLM.Cleanup(ctx, capture.Mode, source)
 		if err != nil {
@@ -881,11 +934,12 @@ func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallb
 		if err != nil {
 			return err
 		}
+		body := fallbackBody
 		if existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey); err == nil {
-			note.Snippet = service.Snippet(string(existing))
-		} else {
-			note.Snippet = service.Snippet(fallbackBody)
+			body = string(existing)
 		}
+		note.Snippet = service.Snippet(body)
+		note.SearchText = service.SearchText(body)
 		note.UpdatedAt = model.FormatTime(p.now())
 
 		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {
@@ -961,6 +1015,55 @@ func (p *Pipeline) markAudioProcessedIfSafe(ctx context.Context, capture *model.
 	}
 	if err := p.cfg.Objects.MarkProcessed(ctx, capture.AudioKey); err != nil {
 		obs.Log(ctx).Warn("could not tag capture audio as processed",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// verifyPeaks makes the capture's peaks key mean what the API reports it as.
+//
+// POST /v1/captures records PeaksKey when it *issues* the presigned PUT for the
+// client-computed waveform, and the API derives `has_peaks` from that key — so
+// a client that never uploaded peaks (an old build, a failed best-effort PUT, a
+// tab closed after the audio landed) was reported as having a waveform, and the
+// note screen's request for it 404'd. The bucket is the only party that knows
+// whether the object exists, and this is the one moment the worker is already
+// running and the answer is almost certainly settled: the client PUTs peaks
+// straight after the audio, and the pipeline has spent seconds on providers
+// since the audio landed.
+//
+// A key that names nothing is cleared rather than annotated, for a reason that
+// is not cosmetic: GSI1 projects `peaks_key` and cannot project a new attribute
+// without an index rebuild, so any second flag would be invisible to every
+// note-detail list. The key is derivable (keys.CapturePeaks) and the cascade
+// delete removes the derived key regardless, so a peaks object that lands after
+// this check is still cleaned up with its capture; it is merely not shown.
+//
+// Only a terminal capture is checked — a failed transcription can finish inside
+// the second the client needs to upload peaks, and a retry would re-check
+// anyway. Failing to check is logged and swallowed: the capture's own outcome
+// is already recorded, and erring toward the old optimistic answer is the
+// safe direction.
+func (p *Pipeline) verifyPeaks(ctx context.Context, capture *model.CaptureIndex) {
+	if capture.PeaksKey == "" {
+		return
+	}
+	present, err := p.cfg.Objects.Exists(ctx, capture.PeaksKey)
+	if err != nil {
+		obs.Log(ctx).Warn("could not check for the capture's peaks object",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+		return
+	}
+	if present {
+		return
+	}
+	obs.Log(ctx).Info("client uploaded no peaks for this capture; clearing the peaks key",
+		slog.String("capture_id", capture.ID))
+	obs.Count(ctx, "CapturePeaksMissing", map[string]string{"Stage": string(capture.Status)})
+	capture.PeaksKey = ""
+	if err := p.persist(ctx, capture); err != nil && !errors.Is(err, errDeliveryConceded) {
+		obs.Log(ctx).Warn("could not clear the capture's peaks key",
 			slog.String("capture_id", capture.ID),
 			slog.String("error", err.Error()))
 	}

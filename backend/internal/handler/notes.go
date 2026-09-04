@@ -32,6 +32,7 @@ type noteUpdateRequest struct {
 	Aliases  *[]string `json:"aliases"`
 	Tags     *[]string `json:"tags"`
 	Verbatim *bool     `json:"verbatim"`
+	Language *string   `json:"language"`
 }
 
 func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +43,18 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	opts, err := listOptions(r)
 	if answerValidation(w, r, err) {
+		return
+	}
+
+	// include=search_text is the one way the 32 KB-per-note search text reaches
+	// a client. The notes list is fetched constantly and renders none of it;
+	// the offline corpus fetches it once.
+	switch include := r.URL.Query().Get("include"); include {
+	case "":
+	case "search_text":
+		opts.IncludeSearchText = true
+	default:
+		httperr.BadRequest(w, r, "include must be search_text")
 		return
 	}
 
@@ -82,7 +95,13 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 		items = filtered
 	}
 
-	writeJSON(w, http.StatusOK, page(notesOf(items), got.Cursor))
+	out := notesOf(items)
+	if opts.IncludeSearchText {
+		for i := range out {
+			out[i].SearchText = items[i].SearchText
+		}
+	}
+	writeJSON(w, http.StatusOK, page(out, got.Cursor))
 }
 
 func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +196,7 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 		Aliases:         req.Aliases,
 		Tags:            req.Tags,
 		Verbatim:        req.Verbatim,
+		Language:        req.Language,
 		ExpectedVersion: req.Version,
 	})
 	if err != nil {

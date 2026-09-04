@@ -105,7 +105,7 @@ scripts/list-instances.sh --format text
 
 ### 4. Deploy
 
-Push to `main`. `Deploy Backend` runs `go test -race`, builds one arm64 binary, deploys every **staging** stack through a printed change set, smoke-tests each one (`/v1/health` and `/v1/health/ready`, which round-trips DynamoDB and S3), and only then deploys the **production** stacks — which wait for your approval on the `production` environment. `Deploy Frontend` then builds one Vite bundle per instance and publishes them to Pages.
+Push to `main`. `Deploy Backend` runs `go test -race`, builds one arm64 binary, deploys every **staging** stack through a printed change set, smoke-tests each one (`/v1/health` and `/v1/health/ready`, which round-trips DynamoDB and S3), and only then deploys the **production** stacks — which wait for your approval on the `production` environment. A successful production deploy is then tagged `vX.Y.(Z+1)` and published as a GitHub release with generated notes. `Deploy Frontend` runs once that whole workflow has completed, so it builds one Vite bundle per instance with `git describe` naming the release just made, and publishes them to Pages.
 
 For a first deploy, or when the pipeline itself is broken, deploy from a workstation:
 

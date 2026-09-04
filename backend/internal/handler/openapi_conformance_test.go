@@ -609,6 +609,11 @@ func statusScenarios() map[string]scenario {
 		"GET /v1/search -> 400": get("/v1/search", "user1"),
 		"GET /v1/search -> 401": get("/v1/search?q=anything", ""),
 
+		// ---- usage
+		"GET /v1/usage -> 200": get("/v1/usage?month=2026-01", "user1"),
+		"GET /v1/usage -> 400": get("/v1/usage?month=January", "user1"),
+		"GET /v1/usage -> 401": get("/v1/usage", ""),
+
 		// ---- captures
 		"GET /v1/captures -> 200":  get("/v1/captures", "user1"),
 		"GET /v1/captures -> 401":  get("/v1/captures", ""),

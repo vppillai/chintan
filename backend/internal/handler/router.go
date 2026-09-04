@@ -13,6 +13,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 // APIPrefix is the one place the version lives. v1 hardcoded "/v1" in three
@@ -39,6 +40,9 @@ type Deps struct {
 	Export    *service.ExportService
 	Readiness *service.ReadinessService
 	Spend     SpendGate
+	// Usage answers GET /v1/usage from the per-tenant rows the worker's
+	// breaker writes. Nil answers 503, like the other optional services.
+	Usage usage.Reader
 
 	// Store backs idempotent replay. It is the raw store rather than a service
 	// because idempotency is a property of the request, not of any one domain.

@@ -43,6 +43,12 @@ const (
 type ListOptions struct {
 	Limit  int32  // 0 => DefaultListLimit; clamped to MaxListLimit
 	Cursor string // opaque, base64 of LastEvaluatedKey
+	// IncludeSearchText asks a NOTE list to carry NoteIndex.SearchText. Only
+	// ListNotes and ListArchivedNotes honour it. It is opt-in because the field
+	// is up to 32 KB per note and the notes list is fetched constantly by a
+	// client that renders none of it; search and the offline corpus are the two
+	// readers that want it.
+	IncludeSearchText bool
 }
 
 func (o ListOptions) limit() int32 {
@@ -198,6 +204,12 @@ type Objects interface {
 	// empty etag means "the object must not exist" (If-None-Match: *). A lost
 	// race returns ErrPreconditionFailed.
 	PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error
+
+	// Exists reports whether key holds an object, without fetching it. It is
+	// what the worker asks about the client-uploaded peaks.json once the
+	// pipeline is done: the API records the peaks key when it *issues* the
+	// presigned PUT, and only the bucket knows whether the client ever used it.
+	Exists(ctx context.Context, key string) (bool, error)
 
 	// MarkProcessed tags the object so the retention lifecycle rule is allowed
 	// to expire it, without disturbing whatever tags it already carries — in

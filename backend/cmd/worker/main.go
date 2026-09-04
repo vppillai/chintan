@@ -49,6 +49,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/purge"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 var (
@@ -117,10 +118,16 @@ func setup() {
 	// binary in which a paid API is reachable without reserving against the
 	// day's counter. One counter, one cap: DAILY_SPEND_CAP_MICROS from the
 	// template, compared against the instance-wide SPEND#<day> row.
+	//
+	// WithUsage is the per-tenant accounting: two ADDs per settled call onto
+	// the tenant's USAGE#<month> and USAGE#<day> rows, in the same place the
+	// breaker writes the usage log line. It enforces nothing; GET /v1/usage
+	// reads it.
 	spend := breaker.New(
 		pipeline.NewDynamoCounter(dynamoClient, tableName),
 		meter.DefaultPrices,
 		envInt64("DAILY_SPEND_CAP_MICROS", 0),
+		breaker.WithUsage(usage.NewDynamo(dynamoClient, tableName)),
 	)
 
 	notes := service.NewNotesService(store, objects)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/meter"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 // memCounter is an atomic accumulator, matching the contract the DynamoDB
@@ -258,5 +259,100 @@ func TestConcurrentCallsAccountExactly(t *testing.T) {
 
 	if got := counter.total(testDay); got != 20*100 {
 		t.Fatalf("total=%d, want %d", got, 20*100)
+	}
+}
+
+// recordingUsage is a usage.Recorder that remembers what it was handed.
+type recordingUsage struct {
+	mu      sync.Mutex
+	records []usage.Record
+	err     error
+}
+
+func (r *recordingUsage) Record(_ context.Context, rec usage.Record) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.err != nil {
+		return r.err
+	}
+	r.records = append(r.records, rec)
+	return nil
+}
+
+// A settled call is attributed once, to the tenant on the estimate, with the
+// reconciled cost and quantities — the same numbers the log line carries.
+func TestDoAttributesSettledCallsToTheTenant(t *testing.T) {
+	rec := &recordingUsage{}
+	b := New(newMemCounter(), testPrices, 0, WithClock(fixedClock()), WithUsage(rec))
+
+	est := estimate(30) // reserves 300
+	est.TenantID = "tenant-a"
+	if _, err := b.Do(context.Background(), est, func(context.Context) (Result, error) {
+		return seconds(12), nil // actually 120
+	}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+
+	if len(rec.records) != 1 {
+		t.Fatalf("records = %d, want 1", len(rec.records))
+	}
+	got := rec.records[0]
+	if got.TenantID != "tenant-a" || got.Day != testDay || got.Provider != "groq" || got.Op != meter.OpTranscribe {
+		t.Errorf("record = %+v", got)
+	}
+	if got.CostMicros != 120 {
+		t.Errorf("cost = %d, want the reconciled 120, not the reserved 300", got.CostMicros)
+	}
+	if got.Usage[meter.UnitAudioSeconds] != 12 {
+		t.Errorf("usage = %v, want the provider's 12 s", got.Usage)
+	}
+}
+
+func TestDoDoesNotAttributeAFailedOrRefusedCall(t *testing.T) {
+	rec := &recordingUsage{}
+	b := New(newMemCounter(), testPrices, 250, WithClock(fixedClock()), WithUsage(rec))
+
+	est := estimate(10)
+	est.TenantID = "tenant-a"
+	if _, err := b.Do(context.Background(), est, func(context.Context) (Result, error) {
+		return Result{}, errors.New("provider down")
+	}); err == nil {
+		t.Fatal("a failed call succeeded")
+	}
+	over := estimate(100) // 1000 > cap
+	over.TenantID = "tenant-a"
+	if _, err := b.Do(context.Background(), over, func(context.Context) (Result, error) {
+		t.Fatal("the provider was called over the cap")
+		return Result{}, nil
+	}); !errors.Is(err, ErrSpendCapExceeded) {
+		t.Fatalf("err = %v, want ErrSpendCapExceeded", err)
+	}
+	if len(rec.records) != 0 {
+		t.Errorf("a failed or refused call was attributed: %+v", rec.records)
+	}
+}
+
+// Accounting must never fail the call it accounts for, and a call with no
+// tenant is not attributed to an anonymous row.
+func TestDoSurvivesARecorderThatFailsAndSkipsAnonymousCalls(t *testing.T) {
+	rec := &recordingUsage{err: errors.New("table throttled")}
+	b := New(newMemCounter(), testPrices, 0, WithClock(fixedClock()), WithUsage(rec))
+
+	est := estimate(1)
+	est.TenantID = "tenant-a"
+	if _, err := b.Do(context.Background(), est, func(context.Context) (Result, error) {
+		return seconds(1), nil
+	}); err != nil {
+		t.Fatalf("a recorder failure surfaced as a call failure: %v", err)
+	}
+
+	rec.err = nil
+	if _, err := b.Do(context.Background(), estimate(1), func(context.Context) (Result, error) {
+		return seconds(1), nil
+	}); err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if len(rec.records) != 0 {
+		t.Errorf("a call without a tenant was attributed: %+v", rec.records)
 	}
 }

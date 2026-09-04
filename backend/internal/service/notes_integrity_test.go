@@ -215,3 +215,40 @@ func TestMatchNotesSeesBeyondOnePage(t *testing.T) {
 		t.Fatalf("match did not reach past the first page: %+v", result.Candidates)
 	}
 }
+
+// The worker clears a capture's peaks key when the client had uploaded no
+// peaks by the time the pipeline finished. A peaks object that arrives after
+// that check is named by no attribute, so the cascade has to unlink it by the
+// derived key or a purge leaves it behind.
+func TestPermanentDeleteUnlinksPeaksTheCaptureNoLongerNames(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	notes := service.NewNotesService(store, objects)
+
+	note, err := notes.CreateNote(ctx, "user1", "Late peaks", nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	const latePeaks = "tenants/user1/captures/c_late/peaks.json"
+	if err := objects.Put(ctx, latePeaks, []byte(`{"peaks":[0]}`), "application/json"); err != nil {
+		t.Fatalf("seed peaks: %v", err)
+	}
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_late", UserID: "user1", NoteID: note.ID, CreatedAt: model.Now(),
+		AudioKey: "tenants/user1/captures/c_late/audio.webm",
+		// PeaksKey deliberately empty: the worker found nothing at check time.
+	}); err != nil {
+		t.Fatalf("seed capture: %v", err)
+	}
+
+	if _, err := notes.ArchiveNote(ctx, "user1", note.ID); err != nil {
+		t.Fatalf("ArchiveNote: %v", err)
+	}
+	if err := notes.PermanentlyDeleteNote(ctx, "user1", note.ID); err != nil {
+		t.Fatalf("PermanentlyDeleteNote: %v", err)
+	}
+	if _, err := objects.Get(ctx, latePeaks); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("a peaks object the capture no longer named survived the purge: %v", err)
+	}
+}

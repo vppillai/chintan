@@ -107,8 +107,9 @@ func TestValidateSettingsKeepsAValueTheCallerActuallyChose(t *testing.T) {
 		// a different thing, now that retention is stored as the tier that will
 		// actually expire the audio. 3650 is still accepted and is still not
 		// rejected; it now comes back as 365, which is asserted below.
-		RetentionDays: 365,
-		Theme:         model.ThemeSystem,
+		RetentionDays:   365,
+		Theme:           model.ThemeSystem,
+		DefaultLanguage: "ta",
 	}
 
 	got, err := ValidateSettings(sent)
@@ -140,6 +141,9 @@ func TestValidateSettingsRejectsValuesOutsideTheDeclaredSets(t *testing.T) {
 	}{
 		{"unknown cleanup mode", model.Settings{CleanupMode: model.CleanupMode("tidy")}, ErrInvalidCleanupMode},
 		{"unknown theme", model.Settings{Theme: model.Theme("purple")}, ErrInvalidTheme},
+		{"language that is a name", model.Settings{DefaultLanguage: "english"}, ErrInvalidLanguage},
+		{"language in upper case", model.Settings{DefaultLanguage: "EN"}, ErrInvalidLanguage},
+		{"language with a region", model.Settings{DefaultLanguage: "en-US"}, ErrInvalidLanguage},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,13 +173,37 @@ func TestNormalizeSettingsFillsTheFieldsAPreV2RecordDoesNotCarry(t *testing.T) {
 	if got.RetentionDays != 0 {
 		t.Errorf("retention days = %d, want a negative stored value floored at 0", got.RetentionDays)
 	}
+	if got.DefaultLanguage != model.DefaultLanguage {
+		t.Errorf("default language = %q, want %q for a record from before the field existed", got.DefaultLanguage, model.DefaultLanguage)
+	}
+}
+
+// The transcription language is validated by shape: "auto", or two lowercase
+// letters. An empty request field becomes the default rather than "detect",
+// because a tenant who never chose is an English speaker on this instance and
+// Whisper left to guess on a short clip answers in the wrong script.
+func TestValidateSettingsDefaultsAndAcceptsTranscriptionLanguages(t *testing.T) {
+	got, err := ValidateSettings(model.Settings{})
+	if err != nil {
+		t.Fatalf("ValidateSettings: %v", err)
+	}
+	if got.DefaultLanguage != model.DefaultLanguage {
+		t.Errorf("default language = %q, want %q", got.DefaultLanguage, model.DefaultLanguage)
+	}
+	for _, lang := range []string{model.LanguageAuto, "en", "ta", "hi"} {
+		got, err := ValidateSettings(model.Settings{DefaultLanguage: lang})
+		if err != nil || got.DefaultLanguage != lang {
+			t.Errorf("ValidateSettings(language=%q) = %q, %v; want it kept", lang, got.DefaultLanguage, err)
+		}
+	}
 }
 
 func TestNormalizeSettingsLeavesACompleteRecordAlone(t *testing.T) {
 	want := model.Settings{
-		CleanupMode:   model.CleanupPolished,
-		RetentionDays: 7,
-		Theme:         model.ThemeNocturne,
+		CleanupMode:     model.CleanupPolished,
+		RetentionDays:   7,
+		Theme:           model.ThemeNocturne,
+		DefaultLanguage: "auto",
 	}
 	if got := NormalizeSettings(want); got != want {
 		t.Fatalf("NormalizeSettings(%+v) = %+v, want it unchanged", want, got)

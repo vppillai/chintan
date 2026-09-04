@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strconv"
 )
@@ -118,9 +119,21 @@ type Partition interface {
 	Scan(ctx context.Context, pk, skPrefix string, fn func(Item) error) error
 	// Put writes an item verbatim, overwriting whatever is there.
 	Put(ctx context.Context, it Item) error
+	// Update sets the given attributes on one existing item, conditionally on
+	// its `version` attribute still being expectVersion (0 means the item
+	// carries no version). It touches nothing else on the item, so a derived
+	// attribute can be filled in behind a live API without rewriting the
+	// record blob or bumping the version the API's optimistic concurrency
+	// compares. A missing item or a moved version returns ErrItemChanged.
+	Update(ctx context.Context, pk, sk string, set Item, expectVersion int64) error
 	// Delete removes one item. Deleting an absent item is not an error.
 	Delete(ctx context.Context, pk, sk string) error
 }
+
+// ErrItemChanged is returned by Partition.Update when the item is gone or its
+// version is no longer the one the caller read. The caller re-reads or skips;
+// it never overwrites.
+var ErrItemChanged = errors.New("chintanctl: item changed since it was read")
 
 // ObjectInfo is what a listing reports about one object. It is metadata only —
 // the body is never part of a listing.

@@ -297,7 +297,7 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 		if in.IndexName != nil {
 			item = applyIndexProjection(item, f.projected[*in.IndexName], pkAttr, skAttr)
 		}
-		out.Items = append(out.Items, project(item, in.ProjectionExpression, pkAttr, skAttr))
+		out.Items = append(out.Items, project(item, in.ProjectionExpression, in.ExpressionAttributeNames, pkAttr, skAttr))
 	}
 	out.Count = int32(len(out.Items))
 
@@ -368,7 +368,7 @@ func (f *fakeDynamo) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func
 				continue
 			}
 		}
-		out.Items = append(out.Items, project(item, in.ProjectionExpression, "pk", "sk"))
+		out.Items = append(out.Items, project(item, in.ProjectionExpression, in.ExpressionAttributeNames, "pk", "sk"))
 	}
 	out.Count = int32(len(out.Items))
 	if evaluate < len(candidates) {
@@ -396,13 +396,24 @@ func applyIndexProjection(item map[string]types.AttributeValue, projected map[st
 	return out
 }
 
-func project(item map[string]types.AttributeValue, projection *string, pkAttr, skAttr string) map[string]types.AttributeValue {
+// project applies a ProjectionExpression. A name beginning with # is an
+// expression attribute name and is resolved through names, the way DynamoDB
+// resolves a reserved word such as `language`.
+func project(item map[string]types.AttributeValue, projection *string, names map[string]string, pkAttr, skAttr string) map[string]types.AttributeValue {
 	if projection == nil {
 		return cloneItem(item)
 	}
 	keep := map[string]bool{pkAttr: true, skAttr: true}
 	for _, name := range strings.Split(*projection, ",") {
-		keep[strings.TrimSpace(name)] = true
+		name = strings.TrimSpace(name)
+		if strings.HasPrefix(name, "#") {
+			resolved, ok := names[name]
+			if !ok {
+				panic("fake dynamo: projection names " + name + " but ExpressionAttributeNames does not define it")
+			}
+			name = resolved
+		}
+		keep[name] = true
 	}
 	out := make(map[string]types.AttributeValue, len(keep))
 	for k, v := range item {

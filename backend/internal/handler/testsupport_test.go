@@ -30,6 +30,7 @@ type harness struct {
 	captures *service.CaptureService
 	worker   *recordingInvoker
 	spend    *fakeSpend
+	usage    *memory.Usage
 }
 
 type harnessOption func(*handler.Deps, *harness)
@@ -57,6 +58,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		objects: memory.NewObjects(),
 		worker:  &recordingInvoker{},
 		spend:   &fakeSpend{},
+		usage:   memory.NewUsage(),
 	}
 	h.notes = service.NewNotesService(h.store, h.objects)
 	h.captures = service.NewCaptureService(h.store, h.objects).
@@ -73,6 +75,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Export:        service.NewExportService(h.notes, h.captures, settings, h.objects),
 		Readiness:     service.NewReadinessService(h.store, h.objects),
 		Spend:         h.spend,
+		Usage:         h.usage,
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
 	}

@@ -26,6 +26,7 @@ type fakePartition struct {
 	mu      sync.Mutex
 	items   map[string]map[string]Item
 	puts    int
+	updates int
 	deletes int
 	scans   int
 }
@@ -77,6 +78,24 @@ func (f *fakePartition) Put(ctx context.Context, it Item) error {
 	}
 	f.items[pk][sk] = cloneItem(it)
 	f.puts++
+	return nil
+}
+
+func (f *fakePartition) Update(ctx context.Context, pk, sk string, set Item, expectVersion int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	it, ok := f.items[pk][sk]
+	if !ok || it.Num("version") != expectVersion {
+		return ErrItemChanged
+	}
+	for name, v := range set {
+		it[name] = v
+	}
+	f.items[pk][sk] = it
+	f.updates++
 	return nil
 }
 

@@ -1,13 +1,17 @@
 package handler_test
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
+	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 func TestHealthIsLiveness(t *testing.T) {
@@ -543,4 +547,148 @@ func listNotes(t *testing.T, h *harness, userID, path string) []handler.Note {
 	var got handler.Page[handler.Note]
 	decodeInto(t, w, &got)
 	return got.Items
+}
+
+// search_text is up to 32 KB per note, so it rides on the notes list only when
+// asked for, and on nothing else.
+func TestNotesListCarriesSearchTextOnlyWhenIncluded(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "user1", "Recorder", map[string]any{
+		"body": "There is a BUG in the recorder.",
+	})
+
+	w := h.do(t, http.MethodGet, "/v1/notes", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: status = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "search_text") {
+		t.Errorf("a plain list carries search_text: %s", w.Body.String())
+	}
+
+	w = h.do(t, http.MethodGet, "/v1/notes?include=search_text", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list with include: status = %d body = %s", w.Code, w.Body.String())
+	}
+	var page handler.Page[handler.Note]
+	decodeInto(t, w, &page)
+	if len(page.Items) != 1 || page.Items[0].SearchText != "there is a bug in the recorder." {
+		t.Errorf("items = %+v, want the lowercased body as search_text", page.Items)
+	}
+
+	// Detail, create and update responses never carry it.
+	w = h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+	if strings.Contains(w.Body.String(), "search_text") {
+		t.Errorf("note detail carries search_text: %s", w.Body.String())
+	}
+
+	w = h.do(t, http.MethodGet, "/v1/notes?include=everything", "user1", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("include=everything: status = %d, want 400", w.Code)
+	}
+}
+
+func TestUsageAnswersTheCallersOwnMonth(t *testing.T) {
+	h := newHarness(t)
+	for _, rec := range []usage.Record{
+		{TenantID: "user1", Day: "2026-03-02", Provider: "groq", Op: meter.OpTranscribe, CostMicros: 300, Usage: meter.Quantities{meter.UnitAudioSeconds: 30}},
+		{TenantID: "user1", Day: "2026-03-09", Provider: "openai", Op: meter.OpCleanup, CostMicros: 700, Usage: meter.Quantities{meter.UnitInputTokens: 1000, meter.UnitOutputTokens: 200}},
+		{TenantID: "user2", Day: "2026-03-09", Provider: "openai", Op: meter.OpCleanup, CostMicros: 5000},
+	} {
+		if err := h.usage.Record(context.Background(), rec); err != nil {
+			t.Fatalf("seed usage: %v", err)
+		}
+	}
+
+	w := h.do(t, http.MethodGet, "/v1/usage?month=2026-03", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var got handler.Usage
+	decodeInto(t, w, &got)
+	if got.Month != "2026-03" || got.CostMicros != 1000 || got.Calls != 2 {
+		t.Errorf("usage = %+v; another tenant's calls must not be counted", got)
+	}
+	if got.Ops["transcribe"].AudioSeconds != 30 || got.Ops["cleanup"].InputTokens != 1000 {
+		t.Errorf("ops = %+v", got.Ops)
+	}
+	if len(got.Days) != 2 || got.Days[0].Date != "2026-03-02" {
+		t.Errorf("days = %+v", got.Days)
+	}
+
+	// A month with nothing in it is zeros, and the default month is this one.
+	w = h.do(t, http.MethodGet, "/v1/usage?month=2020-01", "user1", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"cost_micros":0`) {
+		t.Errorf("empty month: status = %d body = %s", w.Code, w.Body.String())
+	}
+	w = h.do(t, http.MethodGet, "/v1/usage", "user1", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"month":"`+time.Now().UTC().Format("2006-01")+`"`) {
+		t.Errorf("default month: status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	w = h.do(t, http.MethodGet, "/v1/usage?month=March", "user1", nil)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("malformed month: status = %d, want 400", w.Code)
+	}
+	w = h.do(t, http.MethodGet, "/v1/usage", "", nil)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated: status = %d, want 401", w.Code)
+	}
+}
+
+// A note's transcription language is set through PATCH and read back on every
+// Note; the tenant default travels with the settings. Both are validated by
+// shape, and "" on the note means "inherit the default again".
+func TestTranscriptionLanguageOnNotesAndSettings(t *testing.T) {
+	h := newHarness(t)
+
+	w := h.do(t, http.MethodGet, "/v1/settings", "user1", nil)
+	var settings handler.Settings
+	decodeInto(t, w, &settings)
+	if settings.DefaultLanguage != "en" {
+		t.Errorf("default_language for a new tenant = %q, want en", settings.DefaultLanguage)
+	}
+
+	w = h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{
+		"cleanup_mode": "faithful", "retention_days": 0, "theme": "ink", "default_language": "auto",
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("put settings: status = %d body = %s", w.Code, w.Body.String())
+	}
+	decodeInto(t, w, &settings)
+	if settings.DefaultLanguage != "auto" {
+		t.Errorf("stored default_language = %q, want auto", settings.DefaultLanguage)
+	}
+	w = h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{"default_language": "tamil"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("default_language=tamil: status = %d, want 400", w.Code)
+	}
+
+	note := h.createNote(t, "user1", "Diary", nil)
+	if note.Language != "" {
+		t.Errorf("a new note carries language %q; it should inherit", note.Language)
+	}
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "language": "TA"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch language: status = %d body = %s", w.Code, w.Body.String())
+	}
+	decodeInto(t, w, &note)
+	if note.Language != "ta" {
+		t.Errorf("language = %q, want ta (folded to lower case)", note.Language)
+	}
+	w = h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil)
+	if !strings.Contains(w.Body.String(), `"language":"ta"`) {
+		t.Errorf("note detail does not carry the language: %s", w.Body.String())
+	}
+
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "language": "en-GB"})
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("language=en-GB: status = %d, want 400", w.Code)
+	}
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "language": ""})
+	if w.Code != http.StatusOK {
+		t.Fatalf("clear language: status = %d body = %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"language"`) {
+		t.Errorf("a cleared language is still on the wire: %s", w.Body.String())
+	}
 }

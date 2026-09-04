@@ -172,7 +172,19 @@ type dynamoItem struct {
 // transfer cost this projection exists to avoid, and `sk` is kept so an item
 // written before the attributes were promoted can be read whole by its key.
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
-	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, version"
+	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version"
+
+// languageAttr is the promoted attribute for NoteIndex.Language. `language` is
+// a DynamoDB reserved word, so the projection names it through an expression
+// attribute name (#lang) rather than directly.
+const languageAttr = "language"
+
+// searchTextAttr is the promoted attribute holding NoteIndex.SearchText. It is
+// not in noteListProjection: at up to 32 KB per note it would multiply the
+// transfer of every notes list by an order of magnitude, and only search and
+// the offline corpus read it. A list asks for it explicitly
+// (ListOptions.IncludeSearchText).
+const searchTextAttr = "search_text"
 
 func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
 
@@ -306,6 +318,14 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		"version":         numAttr(n.Version),
 		"data":            strAttr(string(blob)),
 	}
+	if n.Language != "" {
+		item[languageAttr] = strAttr(n.Language)
+	}
+	if n.SearchText != "" {
+		// Promoted only. The blob deliberately omits it (model.NoteIndex tags it
+		// json:"-"), so the field is stored once, not twice.
+		item[searchTextAttr] = strAttr(n.SearchText)
+	}
 	if n.PurgeAfterEpoch > 0 {
 		item["purge_after_epoch"] = numAttr(n.PurgeAfterEpoch)
 		// The table has one TTL attribute, `ttl`, shared with idempotency
@@ -355,6 +375,12 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	if _, ok := m["verbatim"]; ok {
 		n.Verbatim = readBool(m, "verbatim")
 	}
+	if _, ok := m[searchTextAttr]; ok {
+		n.SearchText = readString(m, searchTextAttr)
+	}
+	if _, ok := m[languageAttr]; ok {
+		n.Language = readString(m, languageAttr)
+	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}
 	}
@@ -381,7 +407,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		return Page[model.NoteIndex]{}, err
 	}
 
-	all, err := s.drainNotes(ctx, tenantID)
+	all, err := s.drainNotes(ctx, tenantID, opts.IncludeSearchText)
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
@@ -422,10 +448,14 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 
 // drainNotes reads up to maxNotesListed of the tenant's note items, following
 // LastEvaluatedKey: an unpaginated Query silently truncates at ~1 MB.
-func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string) ([]model.NoteIndex, error) {
+func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, includeSearchText bool) ([]model.NoteIndex, error) {
 	pk := userPK(tenantID)
 	var start map[string]types.AttributeValue
 	notes := make([]model.NoteIndex, 0, 64)
+	projection := noteListProjection
+	if includeSearchText {
+		projection += ", " + searchTextAttr
+	}
 
 	for len(notes) < maxNotesListed {
 		out, err := s.client.Query(ctx, &dynamodb.QueryInput{
@@ -435,7 +465,8 @@ func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string) ([]model.
 				":pk":        strAttr(pk),
 				":sk_prefix": strAttr("NOTE#"),
 			},
-			ProjectionExpression: aws.String(noteListProjection),
+			ProjectionExpression:     aws.String(projection),
+			ExpressionAttributeNames: map[string]string{"#lang": languageAttr},
 			// Newest CREATED first, so when the bound bites it drops the oldest
 			// notes rather than the newest.
 			ScanIndexForward:  aws.Bool(false),
@@ -532,6 +563,7 @@ func (s *DynamoStore) ExpiredNotes(ctx context.Context, asOf int64) ([]TenantNot
 			// it on restore, and no other item type writes it.
 			FilterExpression:          aws.String("purge_after_epoch < :now"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{":now": numAttr(asOf)},
+			ExpressionAttributeNames:  map[string]string{"#lang": languageAttr},
 			ProjectionExpression:      aws.String("pk, " + noteListProjection),
 			ExclusiveStartKey:         start,
 		})

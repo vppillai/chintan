@@ -49,6 +49,15 @@ type Note struct {
 	Archived   bool     `json:"archived"`
 	PurgeAfter *string  `json:"purge_after"`
 	Verbatim   bool     `json:"verbatim,omitempty"`
+	// Language is the transcription language for captures recorded into this
+	// note: "auto" or an ISO-639-1 code. Absent means the tenant's
+	// default_language applies.
+	Language string `json:"language,omitempty"`
+	// SearchText is the lowercased, marker-stripped body the server searches
+	// (capped at 32 KB). Sent only by GET /v1/notes?include=search_text, so
+	// the client's offline corpus can search the same text the server does
+	// without fetching every body; every other Note response omits it.
+	SearchText string `json:"search_text,omitempty"`
 }
 
 func noteOf(n model.NoteIndex) Note {
@@ -63,6 +72,7 @@ func noteOf(n model.NoteIndex) Note {
 		Version:   n.Version,
 		Archived:  !service.NoteIsActive(n),
 		Verbatim:  n.Verbatim,
+		Language:  n.Language,
 	}
 	if out.Aliases == nil {
 		out.Aliases = []string{}
@@ -156,6 +166,14 @@ func captureOf(c model.CaptureIndex) Capture {
 		CreatedAt: c.CreatedAt,
 		// A capture created before v2 has neither, and the client renders a
 		// plain player rather than an empty waveform.
+		//
+		// Both keys are set only once the object is known to exist. The worker
+		// writes segments.json itself and records the key after the PUT; peaks
+		// are uploaded by the client, so the API records the key when it issues
+		// the presigned PUT and the worker clears it if the bucket has no such
+		// object once the pipeline is done (pipeline.verifyPeaks). Before that
+		// check existed has_peaks was "a URL was issued", and the note screen
+		// 404'd asking for a waveform nobody had uploaded.
 		HasSegments: c.SegmentsKey != "",
 		HasPeaks:    c.PeaksKey != "",
 		Version:     c.Version,
@@ -233,6 +251,7 @@ type Settings struct {
 	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
 	Theme               string `json:"theme"`
+	DefaultLanguage     string `json:"default_language"`
 	DailySpendCapMicros int64  `json:"daily_spend_cap_micros"`
 }
 
@@ -247,14 +266,16 @@ type SettingsUpdate struct {
 	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
 	Theme               string `json:"theme"`
+	DefaultLanguage     string `json:"default_language"`
 	DailySpendCapMicros int64  `json:"daily_spend_cap_micros"`
 }
 
 func (u SettingsUpdate) settings() model.Settings {
 	return model.Settings{
-		CleanupMode:   model.CleanupMode(u.CleanupMode),
-		RetentionDays: u.RetentionDays,
-		Theme:         model.Theme(u.Theme),
+		CleanupMode:     model.CleanupMode(u.CleanupMode),
+		RetentionDays:   u.RetentionDays,
+		Theme:           model.Theme(u.Theme),
+		DefaultLanguage: u.DefaultLanguage,
 	}
 }
 
@@ -263,6 +284,7 @@ func settingsOf(s model.Settings, spendCapMicros int64) Settings {
 		CleanupMode:         string(s.CleanupMode),
 		RetentionDays:       s.RetentionDays,
 		Theme:               string(s.Theme),
+		DefaultLanguage:     s.DefaultLanguage,
 		DailySpendCapMicros: spendCapMicros,
 	}
 }

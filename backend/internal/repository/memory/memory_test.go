@@ -277,3 +277,38 @@ func TestObjectsPresignPutGet(t *testing.T) {
 		t.Fatal("PresignGet returned empty URL")
 	}
 }
+
+// The DynamoDB store's list projection omits search_text unless the caller
+// asks; the double must agree, or a caller that forgot to ask passes every
+// test and matches nothing in production.
+func TestListNotesCarriesSearchTextOnlyWhenAsked(t *testing.T) {
+	ctx := context.Background()
+	s := memory.NewStore()
+	if _, err := s.PutNote(ctx, "t1", model.NoteIndex{ID: "n1", Title: "T", SearchText: "the body"}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	plain, err := s.ListNotes(ctx, "t1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if plain.Items[0].SearchText != "" {
+		t.Errorf("a list that did not ask carried search text %q", plain.Items[0].SearchText)
+	}
+
+	with, err := s.ListNotes(ctx, "t1", repository.ListOptions{IncludeSearchText: true})
+	if err != nil {
+		t.Fatalf("ListNotes(include): %v", err)
+	}
+	if with.Items[0].SearchText != "the body" {
+		t.Errorf("search text = %q, want the stored value", with.Items[0].SearchText)
+	}
+
+	got, err := s.GetNote(ctx, "t1", "n1")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if got.SearchText != "the body" {
+		t.Errorf("GetNote dropped the search text: %q", got.SearchText)
+	}
+}

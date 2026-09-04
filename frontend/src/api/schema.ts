@@ -60,6 +60,13 @@ export interface SettingsWire {
   retention_days: number;
   theme: ThemeSetting;
   /**
+   * Transcription language for captures whose note sets none, or whose note
+   * is not yet known (a capture without `note_id` is transcribed before it is
+   * routed). `'auto'` lets Whisper detect; otherwise an ISO-639-1 code.
+   * Defaults to `'en'`.
+   */
+  default_language?: string;
+  /**
    * The instance-wide daily provider budget, read-only. Reported by the
    * server so the app can show the ceiling that is enforced; a value sent on
    * PUT is ignored. The per-tenant cap this used to be went with v3 step 3.
@@ -77,16 +84,6 @@ export interface NoteWire {
   aliases?: string[];
   tags?: string[];
   snippet?: string;
-  /**
-   * The note's body, lowercased and cut at 32 KB, for the client-side search.
-   *
-   * Optional and only on list items: the backend is adding it to the note
-   * index and to `GET /v1/notes` so that the instant search over the cached
-   * corpus can match transcript text, which until now only the server search
-   * could see. Absent from older responses and from every other endpoint;
-   * nothing here depends on it being present.
-   */
-  search_text?: string;
   updated_at: string;
   created_at?: string;
   version: number;
@@ -100,6 +97,17 @@ export interface NoteWire {
    * OpenAPI document listed it on `NoteUpdate` only.
    */
   verbatim?: boolean;
+  /**
+   * Transcription language for captures recorded into this note: `'auto'` or
+   * an ISO-639-1 code. Absent when the note inherits `default_language`.
+   */
+  language?: string;
+  /**
+   * The lowercased, marker-stripped body the server searches (≤ 32 KB). Sent
+   * only by `GET /v1/notes?include=search_text`, for an offline corpus that
+   * wants to match what the server matches; absent everywhere else.
+   */
+  search_text?: string;
 }
 
 export interface NoteDetailWire extends NoteWire {
@@ -121,6 +129,8 @@ export interface NoteUpdateWire {
   aliases?: string[];
   tags?: string[];
   verbatim?: boolean;
+  /** `'auto'`, an ISO-639-1 code, or `''` to inherit the tenant default again. */
+  language?: string;
 }
 
 export type NoteState = 'active' | 'archived';
@@ -308,6 +318,30 @@ export interface SearchHitWire {
   title: string;
   excerpt?: string;
   matched_in?: SearchField[];
+}
+
+/* ---------------------------------------------------------------------------
+   Usage
+   --------------------------------------------------------------------------- */
+
+/** Provider spend counters. Microdollars, the unit the spend cap uses. */
+export interface UsageTotalsWire {
+  cost_micros: number;
+  calls: number;
+  audio_seconds?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+}
+
+/**
+ * `GET /v1/usage?month=yyyy-mm`: the caller's own provider usage for one
+ * month — totals, the same split by pipeline stage, and one line per day. A
+ * month with no usage is all zeros, not an error.
+ */
+export interface UsageWire extends UsageTotalsWire {
+  month: string;
+  ops: Record<string, UsageTotalsWire>;
+  days: Array<UsageTotalsWire & { date: string }>;
 }
 
 /* ---------------------------------------------------------------------------

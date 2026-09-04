@@ -23,6 +23,10 @@ type Audio struct {
 	// SizeBytes is the object's length when known, 0 otherwise. It is metadata,
 	// not an allocation hint.
 	SizeBytes int64
+	// Language is the ISO-639-1 code the speech is in, or "" to let the
+	// provider detect it. Whisper is faster and more accurate when told; left
+	// to guess on a short clip it can answer in the wrong script entirely.
+	Language string
 }
 
 // Segment is one timestamped span of the raw transcript.

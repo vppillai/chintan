@@ -44,6 +44,7 @@ tags:
   - name: notes
   - name: captures
   - name: search
+  - name: usage
   - name: export
 
 security:
@@ -137,6 +138,17 @@ paths:
           in: query
           description: Restrict to notes carrying this tag.
           schema: { type: string, maxLength: 40 }
+        - name: include
+          in: query
+          description: |
+            `search_text` adds each note's `search_text` to the items — the
+            lowercased, marker-stripped body the server searches, capped at
+            32 KB per note. Opt-in because the list is fetched constantly and
+            renders none of it; a client building an offline full-text corpus
+            asks once. Omitted from every other Note response.
+          schema:
+            type: string
+            enum: [search_text]
       responses:
         '200':
           description: A page of notes.
@@ -340,7 +352,14 @@ paths:
   /v1/search:
     get:
       tags: [search]
-      summary: Full-text search across titles, aliases, tags, bodies, and transcripts
+      summary: Full-text search across titles, aliases, tags and bodies
+      description: |
+        Matches every term against the note index: title, aliases, tags, the
+        snippet and the stored `search_text` (the lowercased body, capped at
+        32 KB). `matched_in` reports `body` for a snippet or search-text hit.
+        Bodies are never fetched from object storage per query. Transcripts
+        are not indexed separately: the cleaned text of every capture is in
+        the note body, so it is covered by `body`.
       parameters:
         - name: q
           in: query
@@ -354,6 +373,34 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SearchPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/usage:
+    get:
+      tags: [usage]
+      summary: The caller's own provider usage for one month
+      description: |
+        What this account's captures cost, from the per-tenant rows the
+        worker writes on every priced provider call (transcription, routing,
+        cleanup): the month's totals, the same split by operation, and one
+        line per day with any usage. Microdollars throughout — the unit the
+        spend cap uses. A month with no usage answers zeros, not 404.
+
+        This is the caller's own usage only. There is no cross-tenant view on
+        this API; see docs/design/usage-accounting.md for how an admin listing
+        would be added.
+      parameters:
+        - name: month
+          in: query
+          description: Calendar month, UTC, as `yyyy-mm`. Defaults to the current month.
+          schema: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200':
+          description: The month's usage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Usage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
@@ -696,6 +743,20 @@ components:
           type: string
           enum: [ink, nocturne, system]
           default: ink
+        default_language:
+          type: string
+          default: en
+          pattern: '^(auto|[a-z]{2})$'
+          description: |
+            The transcription language for a capture whose destination note
+            sets none — or is not yet known: a capture recorded without a
+            `note_id` is transcribed before it is routed, so only this value
+            can apply to it. `auto` sends no language and lets Whisper detect
+            one per recording (there is no mixed-language mode; a
+            code-switching recording is detected as one language). Any other
+            value is an ISO-639-1 code passed to the provider as-is;
+            supplying one improves accuracy and latency. A record written
+            before this field existed reads as `en`.
         daily_spend_cap_micros:
           type: integer
           minimum: 0
@@ -739,6 +800,26 @@ components:
             returned on every read, because the toggle has to render the state
             it is in. Declared here only after the frontend↔backend contract
             fixtures caught the API sending a field this document did not list.
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})$'
+          description: |
+            The transcription language for captures recorded into this note
+            (`POST /v1/captures` with this `note_id`). `auto` or an ISO-639-1
+            code. Absent when the note inherits the tenant's
+            `default_language`. Settable through `NoteUpdate`. It cannot
+            apply to a capture that is routed to this note after the fact,
+            because routing reads the transcript.
+        search_text:
+          type: string
+          maxLength: 32768
+          description: |
+            The note body as the server searches it: append markers removed,
+            lowercased, whitespace collapsed, cut to 32 KB on a rune boundary.
+            Present only on `GET /v1/notes?include=search_text`. It is derived
+            from the body on every write (editor save, worker append,
+            `chintanctl backfill-search-text`), so a client may search it
+            offline and trust that a hit is also a hit on `GET /v1/search`.
 
     NoteDetail:
       allOf:
@@ -787,6 +868,13 @@ components:
             Bypass cleanup entirely for this note. Dictated content that must not
             be reworded — a spec, a quote, a prompt — would otherwise be silently
             rewritten by `polished` mode.
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})?$'
+          description: |
+            Transcription language for captures recorded into this note:
+            `auto`, an ISO-639-1 code, or the empty string to inherit the
+            tenant's `default_language` again.
 
     NotePage:
       type: object
@@ -997,6 +1085,49 @@ components:
                 type: array
                 items: { type: string, enum: [title, alias, tag, body, transcript] }
         cursor: { type: string }
+
+    UsageTotals:
+      type: object
+      required: [cost_micros, calls]
+      properties:
+        cost_micros:
+          type: integer
+          description: Reconciled provider cost in microdollars (1000000 = $1).
+        calls: { type: integer }
+        audio_seconds:
+          type: number
+          description: Seconds of audio transcribed. Absent when zero.
+        input_tokens:
+          type: integer
+          description: Prompt tokens billed. Absent when zero.
+        output_tokens:
+          type: integer
+          description: Completion tokens billed. Absent when zero.
+
+    Usage:
+      allOf:
+        - $ref: '#/components/schemas/UsageTotals'
+        - type: object
+          required: [month, ops, days]
+          properties:
+            month: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+            ops:
+              type: object
+              description: |
+                The month's totals split by operation. Keys are the pipeline
+                stages that call a provider: `transcribe`, `route`, `cleanup`.
+                A stage that made no call in the month is absent.
+              additionalProperties: { $ref: '#/components/schemas/UsageTotals' }
+            days:
+              type: array
+              description: One entry per day with any usage, ascending.
+              items:
+                allOf:
+                  - $ref: '#/components/schemas/UsageTotals'
+                  - type: object
+                    required: [date]
+                    properties:
+                      date: { type: string, format: date }
 
     ExportJob:
       type: object

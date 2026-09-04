@@ -374,3 +374,56 @@ func humanBytes(n int64) string {
 		return fmt.Sprintf("%d B", n)
 	}
 }
+
+// The language field is optional on Groq's side and is sent only when the
+// caller chose one: "" means detect, and the field is omitted rather than sent
+// empty, which the API would reject.
+func TestGroqSTTSendsTheLanguageOnlyWhenGiven(t *testing.T) {
+	t.Parallel()
+
+	fieldsOf := func(t *testing.T, language string) map[string]string {
+		t.Helper()
+		got := map[string]string{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil {
+				t.Fatalf("parse Content-Type: %v", err)
+			}
+			mr := multipart.NewReader(r.Body, params["boundary"])
+			for {
+				part, err := mr.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatalf("read part: %v", err)
+				}
+				b, _ := io.ReadAll(part)
+				if part.FormName() != "file" {
+					got[part.FormName()] = string(b)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"text":"ok","duration":1}`))
+		}))
+		t.Cleanup(srv.Close)
+
+		stt, err := NewGroqSTT("k", srv.URL, "", srv.Client())
+		if err != nil {
+			t.Fatalf("NewGroqSTT: %v", err)
+		}
+		if _, err := stt.Transcribe(context.Background(), Audio{
+			Body: bytes.NewReader([]byte("audio")), ContentType: "audio/webm", Language: language,
+		}); err != nil {
+			t.Fatalf("Transcribe: %v", err)
+		}
+		return got
+	}
+
+	if got := fieldsOf(t, "ta"); got["language"] != "ta" {
+		t.Errorf("language field = %q, want ta", got["language"])
+	}
+	if got := fieldsOf(t, ""); got["language"] != "" {
+		t.Errorf("an unset language was sent as %q; the field must be omitted so Whisper detects", got["language"])
+	}
+}

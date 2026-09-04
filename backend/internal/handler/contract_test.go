@@ -15,9 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
+	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 // The frontend↔backend contract check, backend half.
@@ -197,6 +199,9 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 
 	add("notesPage", "Page<NoteWire>", "GET /v1/notes → 200. The envelope is {items, cursor}; a bare array plus X-Next-Cursor was the v1 shape and is gone.",
 		h.do(t, http.MethodGet, "/v1/notes", contractUser, nil))
+	add("notesPageWithSearchText", "Page<NoteWire>",
+		"GET /v1/notes?include=search_text → 200. Each item carries search_text, the lowercased body the server searches, so an offline corpus can match what GET /v1/search matches. Absent without the include.",
+		h.do(t, http.MethodGet, "/v1/notes?include=search_text", contractUser, nil))
 	add("noteDetail", "NoteDetailWire", "GET /v1/notes/{noteId} → 200, with body and captures",
 		h.do(t, http.MethodGet, "/v1/notes/"+tagged.ID, contractUser, nil))
 	add("noteCreated", "NoteWire", "POST /v1/notes → 201",
@@ -282,6 +287,27 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		tagged2.do(t, http.MethodPost, "/v1/captures", contractUser, map[string]any{
 			"content_type": "audio/webm", "size_bytes": 4 << 20, "duration_ms": 12_000,
 		}))
+
+	// ---- usage
+	h = newHarness(t)
+	for _, rec := range []usage.Record{
+		{TenantID: contractUser, Day: "2026-01-03", Provider: "groq", Op: meter.OpTranscribe, CostMicros: 311,
+			Usage: meter.Quantities{meter.UnitAudioSeconds: 28.5}},
+		{TenantID: contractUser, Day: "2026-01-03", Provider: "openai", Op: meter.OpCleanup, CostMicros: 640,
+			Usage: meter.Quantities{meter.UnitInputTokens: 900, meter.UnitOutputTokens: 300}},
+		{TenantID: contractUser, Day: "2026-01-04", Provider: "openai", Op: meter.OpRoute, CostMicros: 420,
+			Usage: meter.Quantities{meter.UnitInputTokens: 1200, meter.UnitOutputTokens: 100}},
+	} {
+		if err := h.usage.Record(context.Background(), rec); err != nil {
+			t.Fatalf("seed usage: %v", err)
+		}
+	}
+	add("usage", "UsageWire",
+		"GET /v1/usage?month=2026-01 → 200. The caller's own provider spend for the month in microdollars: totals, the split by pipeline stage, one line per day.",
+		h.do(t, http.MethodGet, "/v1/usage?month=2026-01", contractUser, nil))
+	add("usageEmpty", "UsageWire",
+		"GET /v1/usage?month=2025-12 → 200 for a month with no usage: zeros and empty collections, never 404.",
+		h.do(t, http.MethodGet, "/v1/usage?month=2025-12", contractUser, nil))
 
 	// ---- export
 	h = newHarness(t)
@@ -483,7 +509,7 @@ func neededSchemaTypes(fixtures []contractFixture) []string {
 		"NotePurgeResponseWire": true,
 		"Page":                  true, "PresignedDownloadWire": true, "ProblemWire": true,
 		"ReadinessWire": true, "SearchHitWire": true, "SettingsWire": true,
-		"TagWire": true,
+		"TagWire": true, "UsageWire": true,
 	}
 	seen := map[string]bool{}
 	for _, f := range fixtures {

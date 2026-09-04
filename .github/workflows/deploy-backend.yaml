@@ -12,6 +12,12 @@ name: Deploy Backend
 # through ${{ }} inside a run block. An expression interpolated into a script is
 # substituted before bash sees it, so a value containing a quote is executed
 # rather than read.
+#
+# A successful production deploy is tagged and released by the `release` job at
+# the end of this workflow. Deploy Frontend runs on this workflow's `completed`
+# event, which fires only once every job here — the release included — has
+# finished, so the tag exists before the frontend's `git describe` runs and the
+# You screen names the release rather than a bare SHA.
 
 on:
   push:
@@ -242,3 +248,88 @@ jobs:
           # subscription, which is what a clone gets.
           ALARM_EMAIL: ${{ secrets.ALARM_EMAIL }}
         run: scripts/ci-deploy-stack.sh
+
+  # Tag what just reached production and publish a release for it.
+  #
+  # The You screen shows `git describe --tags --always` from the frontend
+  # build. Deploys were never tagged, so that read as a bare commit SHA — the
+  # value the footnote was meant to improve on. This job gives every
+  # production deploy a `vX.Y.(Z+1)` tag on the commit that was deployed and a
+  # GitHub release with generated notes, so the footnote, the release page and
+  # the deployed code agree on one name.
+  #
+  # Ordering, because it is the whole point: Deploy Frontend is triggered by
+  # `workflow_run: completed` on this workflow, and GitHub fires that event
+  # only when the entire run — every job, this one included — has finished.
+  # The frontend's checkout (fetch-depth: 0, which fetches tags) therefore
+  # sees the tag this job pushed, and `git describe` on the same commit
+  # answers exactly `vX.Y.Z`. A frontend-only push to main runs Deploy
+  # Frontend without a backend deploy and so without a new tag; there
+  # `describe` answers `vX.Y.Z-N-g<sha>`, N commits past the last release,
+  # which is the truthful description of that build.
+  #
+  # `contents: write` is granted to this job only; every other job keeps the
+  # workflow's read-only default. GITHUB_TOKEN is enough for a tag push and
+  # `gh release create`, and a push made with it does not trigger other
+  # workflows — none of ours listen to tags anyway.
+  release:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    needs: [deploy-prod]
+    if: needs.deploy-prod.result == 'success'
+    permissions:
+      contents: write
+    steps:
+      # Full history and tags: the next version is derived from the latest
+      # existing `v*` tag, and a depth-1 clone has none.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Tag the deployed commit and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+
+          # A re-run (workflow_dispatch, or a retried job) must not mint a
+          # second release for a commit that already has one.
+          if existing="$(git describe --exact-match --tags "$DEPLOYED_SHA" 2>/dev/null)"; then
+            echo "commit ${DEPLOYED_SHA} is already tagged ${existing}; nothing to release"
+            exit 0
+          fi
+
+          # Latest v* tag by version order, not by date: a hotfix tag made
+          # from an older commit must not be mistaken for the newest release.
+          latest="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [ -z "$latest" ]; then
+            latest="v0.0.0"
+          fi
+          if ! [[ "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "latest tag ${latest} is not vX.Y.Z; refusing to guess the next version" >&2
+            exit 1
+          fi
+          next="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "$next" "$DEPLOYED_SHA" \
+            --message "Release ${next}: deployed to production by Deploy Backend run ${GITHUB_RUN_ID}"
+          git push origin "refs/tags/${next}"
+
+          # Notes run from the previous release; on the very first release
+          # there is no previous tag to start from and gh generates them from
+          # the beginning of history.
+          notes_from=()
+          if [ "$latest" != "v0.0.0" ]; then
+            notes_from=(--notes-start-tag "$latest")
+          fi
+          gh release create "$next" \
+            --target "$DEPLOYED_SHA" \
+            --title "$next" \
+            --generate-notes \
+            "${notes_from[@]}"
+          echo "released ${next} (previous ${latest})"
