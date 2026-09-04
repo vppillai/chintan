@@ -57,6 +57,26 @@ Owner's manual-trial notes from 2026-09-04, triaged. One line per item; status i
 | D11 | Docs cleanup: remove v1/v2 history; a single-script deploy for a fresh clone | **next** | Delete `docs/audit`, `docs/superpowers`, the August reviews, `parity-audit`, `ui-audit`, `cost-analysis`; keep the 2026-09 review as a dated report under `docs/history/`. Rewrite README as: what it is · deploy in 3 commands · configure · operate. Verify by cloning into a fresh AWS account? Not possible here; will verify with a fresh checkout + dry-run. |
 | D12 | Prompt-injection safety for AI features | **next** | D1/D5 add LLM calls over user content; they reuse the fenced-transcript pattern and the router's output verifier. |
 
+## From the QA pass (docs/qa/2026-09-04/report.md)
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| Q1 | Download audio never works (CORS: the `<audio>` element's no-CORS cached response poisons the later `fetch`) | **next** | `crossOrigin="anonymous"` on the element or `cache: 'no-store'` on the fetch. |
+| Q2 | Re-open a note within ~30 s of editing shows the pre-edit text; next save 409s with a false "changed elsewhere" | **next** | The PATCH result is never written to the note/list query cache. Write-through on save; same root cause as Q3. |
+| Q3 | Library rows stale after editing a note | **next** | See Q2. |
+| Q4 | Filed receipts accumulate; dismissal not persisted | **verify** | PR #22 was meant to fix this; QA ran on that build and still saw it. Re-test, then fix. |
+| Q5 | In-app URLs drop the trailing slash → outside the PWA scope; offline reload of such a URL is a browser error page | **next** | Router `basename` normalisation. Check installed-PWA behaviour on a real device after. |
+| Q6 | Bulk-action bar sits below the last row (6,400 px down on a phone) | **design** | Folded into U2 (sticky bar above the tab bar). |
+| Q7 | Note opened mid-filing never refreshes | **next** | Same fix family as B2/Q2. |
+| Q8 | One `GET /v1/search` per keystroke | **next** | Debounce 250 ms; the local corpus stays instant. |
+| Q9 | Unsaved settings silently lost on navigation | **next** | Save on change (each control), no Save button. |
+| Q10 | Same speech, six runs, four outcomes, including a duplicate "Roof repair" note | **fixing** (backend) | Router redesign in progress; add "an existing note with the same title is the destination" rule. |
+| Q11 | Offline recording waits for a manual Send after reconnect | **next** | Queue the send; see D8. |
+| Q12 | Passkey enrolment never offered | **fixing** | See B7. |
+| Q13–Q21 | Theme "Unsaved" flag, no `h1` on note, 20 px checkboxes, orphan chunk row per Cancel, tag chip outlives its notes, offline "Loading…" forever, fixed 12-row textarea, skip-link shadow, `has_peaks` on a peak-less capture (fixed server-side in #23) | **next** | Batch of small fixes. |
+
+Performance (cold, Fast 3G + 4× CPU): library interactive ~2.95 s, `/capture` ~3.05 s; one 136 KB gzip JS chunk; four API calls on the library, one only for the "Archived · n" count.
+
 ## Order of work
 
 1. B1–B6, B10 and U6 (frontend and backend branches in progress).
