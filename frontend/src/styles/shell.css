@@ -1711,31 +1711,33 @@
    Settings
    -------------------------------------------------------------------------- */
 
+/*
+ * One quiet line for what the last change did — Saving…, a brief Saved, or
+ * the failure and a way to try again. It keeps its height while empty so the
+ * groups below do not jump when it speaks. The bordered card this used to be
+ * framed a Save/Discard pair and an "Unsaved changes" state; every control
+ * saves itself now, so there is nothing to frame.
+ */
 .settings-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  margin-block-end: var(--space-4);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  background-color: var(--color-raised);
+  min-block-size: var(--layout-touch-target-min);
+  margin-block-end: var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
 
-/* The indicator v1 never rendered: it toggled a class with no CSS behind it. */
-.settings-status[data-dirty] {
-  border-color: var(--color-accent);
+.settings-status__text--saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   color: var(--color-ink);
-  font-weight: var(--font-weight-medium);
 }
 
-.settings-status__actions {
-  display: flex;
-  gap: var(--space-2);
+.settings-status__tick {
+  flex-shrink: 0;
 }
 
 .settings-status__action {
@@ -1744,8 +1746,10 @@
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-full);
   font-size: var(--font-size-sm);
+  color: var(--color-ink);
 }
 
+/* The passkey card's one primary action shares the pill. */
 .settings-status__action--primary {
   background-color: var(--color-ink);
   border-color: var(--color-ink);
