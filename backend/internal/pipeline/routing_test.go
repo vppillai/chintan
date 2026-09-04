@@ -9,6 +9,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -138,6 +139,36 @@ func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "existing line") {
 		t.Errorf("existing note content was lost: %q", body)
+	}
+}
+
+// The router answers with word positions, not content; the words that reach
+// cleanup are the transcript with exactly those positions deleted.
+func TestCompleteCaptureDerivesContentFromInstructionSpans(t *testing.T) {
+	f := newRoutingFixture(t,
+		"add this to my roof repair note the gutter is also leaking",
+		provider.RouteDecision{Action: provider.RouteAppend, NoteID: "n1", Confidence: 0.95}, false)
+	f.router.Spans = []routing.Span{{StartWord: 0, EndWord: 7}}
+
+	ctx := context.Background()
+	capture, err := f.run(ctx, "c_1")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if capture.Status != model.StatusAppended || capture.NoteID != "n1" {
+		t.Fatalf("capture = %+v, want appended to n1", capture)
+	}
+
+	routed, err := f.objects.Get(ctx, capture.RoutedKey)
+	if err != nil {
+		t.Fatalf("Get routed text: %v", err)
+	}
+	if string(routed) != "the gutter is also leaking" {
+		t.Errorf("routed text = %q, want the instruction span removed", routed)
+	}
+	body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
+	if strings.Contains(string(body), "add this to my roof repair note") {
+		t.Errorf("routing instruction leaked into note body: %q", body)
 	}
 }
 

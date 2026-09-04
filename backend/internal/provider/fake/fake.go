@@ -148,7 +148,19 @@ type Router struct {
 	// NoContent means the recording held nothing but an app instruction, so an empty
 	// Decision.Content is deliberate rather than a test that did not set it.
 	NoContent bool
-	OnCall    func()
+	// Spans, when set and Decision.Content is empty, derives the content the way the
+	// real adapter does: by deleting these word ranges from the transcript. Spans
+	// that do not fit keep the whole transcript, as the adapter does.
+	Spans  []routing.Span
+	OnCall func()
+	// HangCalls is how many leading calls block until their context is done and
+	// then return its error, the way a provider that has queued the request
+	// looks from this side.
+	HangCalls int
+	// ErrCalls are returned, in order, by the leading calls; a nil entry answers
+	// normally. It is how a test hands the pipeline a typed provider.StatusError
+	// on the first attempt and a decision on the second.
+	ErrCalls []error
 
 	mu sync.Mutex
 	// Calls records the transcripts the router was asked about.
@@ -160,12 +172,20 @@ type Router struct {
 func (f *Router) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
 	f.mu.Lock()
 	f.Calls = append(f.Calls, transcript)
+	call := len(f.Calls) - 1
 	f.LastCandidates = make([]routing.Candidate, len(candidates))
 	copy(f.LastCandidates, candidates)
 	f.mu.Unlock()
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if call < f.HangCalls {
+		<-ctx.Done()
+		return provider.RouteDecision{}, fmt.Errorf("fake router: llm request: %w", ctx.Err())
+	}
+	if call < len(f.ErrCalls) && f.ErrCalls[call] != nil {
+		return provider.RouteDecision{}, f.ErrCalls[call]
 	}
 	if f.ShouldFail {
 		return provider.RouteDecision{}, fmt.Errorf("fake router failed")
@@ -177,7 +197,13 @@ func (f *Router) Route(ctx context.Context, transcript string, candidates []rout
 		decision.Title = "Fake routed note"
 		decision.Confidence = 1
 	}
-	if decision.Content == "" && !f.NoContent {
+	if decision.Content == "" && f.Spans != nil {
+		content, err := routing.RemoveSpans(transcript, f.Spans)
+		if err != nil {
+			content = transcript
+		}
+		decision.Content = content
+	} else if decision.Content == "" && !f.NoContent {
 		decision.Content = transcript
 	}
 	decision.Usage = provider.TokenUsage{InputTokens: len(strings.Fields(transcript)), OutputTokens: 8}

@@ -333,7 +333,7 @@ func TestRouterSeesTheMostRecentlyTouchedNotes(t *testing.T) {
 		}
 	}
 
-	if _, err := h.pipeline.decideTarget(ctx, "user1", "some words"); err != nil {
+	if _, err := h.pipeline.decideTarget(ctx, "user1", "c_probe", "some words"); err != nil {
 		t.Fatalf("decideTarget: %v", err)
 	}
 	if len(h.router.LastCandidates) != 2 {

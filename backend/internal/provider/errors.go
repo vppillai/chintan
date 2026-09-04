@@ -64,3 +64,12 @@ func IsRateLimited(err error) bool {
 	code, ok := statusOf(err)
 	return ok && code == http.StatusTooManyRequests
 }
+
+// IsServerError reports whether a provider failed on its own side: any 5xx,
+// including MiniMax's 529 "overloaded". These are the rejections a second
+// attempt a moment later has a real chance of clearing, which is what makes
+// them worth one retry where a 4xx (our request, our key, our prompt) is not.
+func IsServerError(err error) bool {
+	code, ok := statusOf(err)
+	return ok && code >= 500
+}

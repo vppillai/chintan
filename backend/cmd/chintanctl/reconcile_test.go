@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/model"
@@ -162,5 +163,107 @@ func TestReconcileIsCleanOnAConsistentInstance(t *testing.T) {
 	}
 	if len(res.Findings) != 0 {
 		t.Errorf("a consistent instance produced findings: %+v", res.Findings)
+	}
+}
+
+// seedDanglingCapture lays down a capture filed into a note that has no row —
+// the shape August's pre-cascade note deletion left behind — with every
+// artifact the pipeline writes plus one no attribute names.
+func seedDanglingCapture(t *testing.T, part *fakePartition, blobs *fakeBlobs, tenantID, captureID string) []string {
+	t.Helper()
+	base := "tenants/" + tenantID + "/captures/" + captureID
+	put(t, part, captureItem(model.CaptureIndex{
+		ID: captureID, NoteID: "note_deleted_in_august", UserID: tenantID,
+		Status:    model.StatusAppended,
+		AudioKey:  base + "/audio.webm",
+		RawKey:    base + "/raw.txt",
+		CleanKey:  base + "/clean.txt",
+		CreatedAt: "2026-08-08T09:00:00.000000000Z",
+	}))
+	keys := []string{base + "/audio.webm", base + "/raw.txt", base + "/clean.txt", base + "/peaks.json"}
+	for _, k := range keys {
+		blobs.seed(t, k, "x", "application/octet-stream")
+	}
+	return keys
+}
+
+func TestReconcileReportsCapturesWhoseNoteIsGone(t *testing.T) {
+	ctx := context.Background()
+	e, part, blobs := newTestEnv(nil)
+	seedTenant(t, part, blobs, "tenantA")
+	keys := seedDanglingCapture(t, part, blobs, "tenantA", "c_dangling")
+
+	// Not dangling: a capture that has not been routed yet has no note to be
+	// missing, and one whose note exists is the normal case.
+	put(t, part, captureItem(model.CaptureIndex{
+		ID: "c_unrouted", UserID: "tenantA", Status: model.StatusNeedsTarget,
+		CreatedAt: "2026-08-08T10:00:00.000000000Z",
+	}))
+
+	res, err := runReconcile(ctx, e, nil, false)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	dangling := findingsOfKind(res, findingDanglingCapture)
+	if len(dangling) != 1 {
+		t.Fatalf("dangling_capture findings = %+v, want exactly one", dangling)
+	}
+	f := dangling[0]
+	if f.SK != "CAPTURE#c_dangling" || f.Owner != "NOTE#note_deleted_in_august" || !f.Repairable {
+		t.Errorf("finding = %+v", f)
+	}
+	if len(f.Objects) != len(keys) {
+		t.Errorf("finding names %d objects %v, want all %d under the capture", len(f.Objects), f.Objects, len(keys))
+	}
+
+	// Its objects are accounted for by this finding alone: not orphaned (the
+	// row exists), not unreferenced (they go with the row), not missing.
+	for _, kind := range []string{findingOrphanObject, findingUnreferencedObject, findingMissingObject} {
+		if got := findingsOfKind(res, kind); len(got) != 0 {
+			t.Errorf("%s findings = %+v, want none for a dangling capture's objects", kind, got)
+		}
+	}
+	if blobs.deletes != 0 || part.deletes != 0 {
+		t.Errorf("dry run mutated: %d object deletes, %d item deletes", blobs.deletes, part.deletes)
+	}
+	if !strings.Contains(res.repairPlan(), "1 dangling capture row(s) with 4 object(s)") {
+		t.Errorf("repair plan = %q", res.repairPlan())
+	}
+}
+
+func TestReconcileApplyDeletesDanglingCaptureRowAndObjects(t *testing.T) {
+	ctx := context.Background()
+	e, part, blobs := newTestEnv(nil)
+	seedTenant(t, part, blobs, "tenantA")
+	keys := seedDanglingCapture(t, part, blobs, "tenantA", "c_dangling")
+
+	before := part.count()
+	res, err := runReconcile(ctx, e, nil, true)
+	if err != nil {
+		t.Fatalf("reconcile --apply: %v", err)
+	}
+	if res.Repaired != 1 {
+		t.Fatalf("repaired = %d, want 1", res.Repaired)
+	}
+	for _, k := range keys {
+		if blobs.has(k) {
+			t.Errorf("%s survived --apply", k)
+		}
+	}
+	if part.count() != before-1 || part.deletes != 1 {
+		t.Errorf("index rows %d -> %d (%d deletes), want exactly the dangling row gone", before, part.count(), part.deletes)
+	}
+	// The healthy capture and its note are untouched.
+	if !blobs.has("tenants/tenantA/captures/c1/audio.webm") || !blobs.has("tenants/tenantA/notes/n1/note.md") {
+		t.Error("--apply deleted an object that belongs to a live note")
+	}
+
+	again, err := runReconcile(ctx, e, nil, false)
+	if err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if len(again.Findings) != 0 {
+		t.Errorf("findings after repair = %+v, want none", again.Findings)
 	}
 }
