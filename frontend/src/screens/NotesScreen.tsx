@@ -15,6 +15,7 @@ import type { NoteState, NoteWire } from '@/api/schema.ts';
 import { ARCHIVED_VIEW } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { NoteRow } from '@/components/NoteRow.tsx';
+import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay } from '@/features/notes/groups.ts';
@@ -261,6 +262,7 @@ export function NotesScreen() {
       */}
       {!searching && view === 'active' && (
         <>
+          <PasskeyNudge />
           <ResumePrompt />
           <FilingRow />
         </>

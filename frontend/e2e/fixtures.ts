@@ -44,6 +44,14 @@ export interface AuthState {
   rejectExchange: boolean;
   /** Set to send the user back with `error=access_denied` instead of a code. */
   denyLogin: boolean;
+  /** What `/passkeys/add` was asked with, per visit. */
+  passkeyAdd: Record<string, string>[];
+  /**
+   * Whether the managed login still holds its own session. It does not for a
+   * user who has been refreshing tokens for days, and then `/passkeys/add`
+   * bounces straight back with `result=invalid_session`.
+   */
+  passkeySession: boolean;
 }
 
 interface NoteRecord {
@@ -165,6 +173,8 @@ export function freshState(): ApiState {
       logout: [],
       rejectExchange: false,
       denyLogin: false,
+      passkeyAdd: [],
+      passkeySession: true,
     },
   };
 }
@@ -287,6 +297,12 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
   await page.addInitScript(() => {
     if (sessionStorage.getItem('e2e.auth.seeded')) return;
     sessionStorage.setItem('e2e.auth.seeded', '1');
+    /*
+     * The library's passkey nudge is answered up front, so it appears in the
+     * one spec about it (`passkey.spec.ts`, which clears this) and in none of
+     * the others, whose layouts, focus order and screenshots predate it.
+     */
+    localStorage.setItem('chintan.passkey.nudge.v1', 'not-now');
     localStorage.setItem(
       'chintan.tokens.v2',
       JSON.stringify({
@@ -592,6 +608,25 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       const params = Object.fromEntries(url.searchParams);
       state.auth.logout.push(params);
       await redirect(route, params['logout_uri'] ?? '/');
+      return;
+    }
+
+    /*
+     * The managed login's passkey page, as observed against prod: with a live
+     * session it runs the ceremony on its own origin and returns to the
+     * redirect with `result=success`; without one it returns at once with
+     * `result=invalid_session`. The ceremony itself is Cognito's to prove.
+     */
+    if (path === '/passkeys/add') {
+      const params = Object.fromEntries(url.searchParams);
+      state.auth.passkeyAdd.push(params);
+      if (!params['redirect_uri']) {
+        await route.fulfill({ status: 400, body: 'Missing required parameter redirect_uri' });
+        return;
+      }
+      const back = new URL(params['redirect_uri']);
+      back.searchParams.set('result', state.auth.passkeySession ? 'success' : 'invalid_session');
+      await redirect(route, back.href);
       return;
     }
 

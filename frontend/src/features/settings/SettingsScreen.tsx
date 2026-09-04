@@ -7,6 +7,7 @@ import { Icon } from '@/components/Icon.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
 
+import { PasskeyCard } from '@/features/auth/PasskeyCard.tsx';
 import { SignOutSetting } from '@/features/auth/SignOutSetting.tsx';
 
 import { VersionFootnote } from './VersionFootnote.tsx';
@@ -227,6 +228,8 @@ export function SettingsScreen() {
           )}
         </p>
       </section>
+
+      <PasskeyCard />
 
       <SignOutSetting />
 

@@ -6,6 +6,7 @@ import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
 import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
 import { useAuthGate } from '@/features/auth/useAuth.ts';
+import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 
@@ -51,6 +52,7 @@ export function AppShell() {
   const auth = useAuthGate();
 
   useBackGuard();
+  usePasskeyReturn();
   useRouteFocus(mainRef);
 
   const screen = screenForPath(location.pathname);

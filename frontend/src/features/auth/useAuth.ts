@@ -137,27 +137,10 @@ export function useAuthGate(): AuthGateState {
     setError(null);
     setFlow('redirecting');
 
-    void (async () => {
-      try {
-        const state = createState();
-        const verifier = createVerifier();
-        const challenge = await challengeFor(verifier);
-
-        rememberPending({
-          state,
-          verifier,
-          returnTo: `${window.location.pathname}${window.location.search}`,
-          startedAt: Date.now(),
-        });
-
-        window.location.assign(
-          authorizeUrl({ state, challenge, redirectUri: redirectUri() }),
-        );
-      } catch {
-        setError('This browser could not start a secure sign-in.');
-        setFlow('idle');
-      }
-    })();
+    beginSignIn().catch(() => {
+      setError('This browser could not start a secure sign-in.');
+      setFlow('idle');
+    });
   }, []);
 
   /*
@@ -181,6 +164,34 @@ export function useAuthGate(): AuthGateState {
     signIn,
     configured: config.cognitoDomain.length > 0 && config.clientId.length > 0,
   };
+}
+
+/**
+ * Starts the authorization-code flow: mints the PKCE pair, remembers it for the
+ * callback, and sends the browser to the hosted UI.
+ *
+ * A plain function rather than part of the hook so a second surface can start
+ * a sign-in — the passkey card, when the managed login reports its session has
+ * ended — without mounting a second gate that would also try to redeem the
+ * code on the way back. Rejects when the browser cannot do the crypto.
+ */
+export async function beginSignIn(
+  navigate: (url: string) => void = (url) => {
+    window.location.assign(url);
+  },
+): Promise<void> {
+  const state = createState();
+  const verifier = createVerifier();
+  const challenge = await challengeFor(verifier);
+
+  rememberPending({
+    state,
+    verifier,
+    returnTo: `${window.location.pathname}${window.location.search}`,
+    startedAt: Date.now(),
+  });
+
+  navigate(authorizeUrl({ state, challenge, redirectUri: redirectUri() }));
 }
 
 function describeFailure(cause: unknown): string {
