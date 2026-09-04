@@ -372,11 +372,22 @@ export function isFilingRelevant(capture: CaptureWire, now: number = Date.now())
  */
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.pendingCaptures(),
     queryFn: async () => {
       const page = await api.listCaptures({ status: 'all', limit: CAPTURE_LIST_LIMIT });
-      return { items: page.items.filter((capture) => isFilingRelevant(capture)) };
+      const items = page.items.filter((capture) => isFilingRelevant(capture));
+      // Read from the cache rather than closed over: the library remounts on
+      // every visit and the comparison has to be with the last poll, not the
+      // last render.
+      const previous = queryClient.getQueryData<{ items: CaptureWire[] }>(
+        queryKeys.pendingCaptures(),
+      );
+      for (const noteId of newlyAppendedNoteIds(previous?.items, items)) {
+        refreshAppendedNote(queryClient, noteId);
+      }
+      return { items };
     },
     enabled,
     refetchInterval: (query) => {
@@ -387,6 +398,45 @@ export function usePendingCaptures(enabled = true) {
     refetchOnWindowFocus: false,
     staleTime: 0,
   });
+}
+
+/**
+ * Notes whose text just changed under the app: captures that were not
+ * `appended` on the previous poll and are now.
+ *
+ * Nothing else tells the note screen. The append is written by the worker,
+ * not by this client, so no mutation here ever invalidated `['note', id]` —
+ * and a note the user had open while recording into it (or opened from the
+ * filing row's "Open the note") kept showing the body from before the
+ * recording until a second visit. Restricted to transitions: a capture that
+ * was already `appended` on the last poll has nothing new to say, and the
+ * first poll after a cold start — with no previous answer — invalidates
+ * nothing, because there is no cache yet to be stale.
+ */
+export function newlyAppendedNoteIds(
+  previous: readonly CaptureWire[] | undefined,
+  current: readonly CaptureWire[],
+): string[] {
+  if (!previous) return [];
+  const before = new Map(previous.map((capture) => [capture.id, capture.status]));
+  const noteIds = new Set<string>();
+  for (const capture of current) {
+    if (capture.status !== 'appended' || !capture.note_id) continue;
+    if (before.get(capture.id) === 'appended') continue;
+    noteIds.add(capture.note_id);
+  }
+  return Array.from(noteIds);
+}
+
+/**
+ * A note the pipeline has just written to is stale everywhere the app holds
+ * it: the detail query, every list under `['notes']` (snippet, updated_at,
+ * ordering) and the device's copy, which lives under the same prefix and is
+ * rewritten as a side effect of the detail refetch.
+ */
+export function refreshAppendedNote(queryClient: QueryClient, noteId: string): void {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+  void queryClient.invalidateQueries({ queryKey: ['notes'] });
 }
 
 export function useRetryCapture(): UseMutationResult<CaptureWire, Error, string> {

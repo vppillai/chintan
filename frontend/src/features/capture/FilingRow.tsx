@@ -1,7 +1,9 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import {
+  refreshAppendedNote,
   useNotes,
   useRetryCapture,
   useSetCaptureTarget,
@@ -103,6 +105,7 @@ const dismissed = new Set<string>();
 
 export function FilingRow() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data } = usePendingCaptures();
   const retry = useRetryCapture();
   const [, forceRender] = useState(0);
@@ -117,7 +120,13 @@ export function FilingRow() {
           key={capture.id}
           capture={capture}
           onOpen={() => {
-            if (capture.note_id) void navigate(ROUTES.note(capture.note_id));
+            if (!capture.note_id) return;
+            // The row says the note has just been written to, so the copy the
+            // app holds is by definition older than what the user is about to
+            // read. The poll usually caught the transition already; this is
+            // for when it did not (a poll that first saw the capture appended).
+            refreshAppendedNote(queryClient, capture.note_id);
+            void navigate(ROUTES.note(capture.note_id));
           }}
           onRetry={() => retry.mutate(capture.id)}
           retrying={retry.isPending && retry.variables === capture.id}

@@ -1,11 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { isFilingRelevant } from '@/api/queries.ts';
+import { isFilingRelevant, newlyAppendedNoteIds, queryKeys, useNote } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
-import { TestProviders, testApiContext } from '@/test/providers.tsx';
+import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { FilingRow } from './FilingRow.tsx';
 
@@ -441,5 +441,126 @@ describe('what the one poll keeps and what it drops', () => {
     await waitFor(() => {
       expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
     });
+  });
+});
+
+/**
+ * The append is written by the worker, not by this client, so no mutation ever
+ * invalidated the note. A note the user had open while recording into it — or
+ * opened from this row's "Open the note" — showed the body from before the
+ * recording until a second visit.
+ */
+describe('a capture that has just been filed refreshes its note', () => {
+  /** The note screen's own query, so an invalidation has an observer to refetch. */
+  function NoteProbe() {
+    const { data } = useNote('roof-repair');
+    return <p>{data ? `body: ${data.body}` : 'no note'}</p>;
+  }
+
+  /** Serves a different capture list on each poll, and counts note reads. */
+  function mountWithPolls(polls: CaptureWire[][]) {
+    let poll = 0;
+    let noteReads = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      if (url.includes('/v1/captures')) {
+        const items = polls[Math.min(poll, polls.length - 1)] ?? [];
+        poll += 1;
+        return json({ items });
+      }
+      if (url.endsWith('/v1/notes/roof-repair')) {
+        noteReads += 1;
+        return json({
+          id: 'roof-repair',
+          title: 'Roof repair',
+          body: noteReads === 1 ? 'before' : 'after the recording',
+          updated_at: '2026-08-06T09:14:00.000Z',
+          version: noteReads,
+          archived: false,
+        });
+      }
+      return json({ items: [] });
+    });
+    const queryClient = testQueryClient();
+    render(
+      <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
+        <MemoryRouter>
+          <NoteProbe />
+          <FilingRow />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    const refetchCaptures = () =>
+      act(() => queryClient.refetchQueries({ queryKey: queryKeys.pendingCaptures() }));
+    return { queryClient, refetchCaptures, noteReads: () => noteReads };
+  }
+
+  const filing = capture({ id: 'srv-f', status: 'uploaded', note_id: 'roof-repair' });
+  const filed = capture({
+    id: 'srv-f',
+    status: 'appended',
+    note_id: 'roof-repair',
+    appended_at: new Date().toISOString(),
+  });
+
+  it('refetches the note detail when a capture goes uploaded → appended', async () => {
+    const { refetchCaptures, noteReads } = mountWithPolls([[filing], [filed]]);
+
+    expect(await screen.findByText('body: before')).toBeInTheDocument();
+    await screen.findByText('Filing your recording');
+    expect(noteReads()).toBe(1);
+
+    // The next poll sees the capture appended. That is the moment the note's
+    // text changed on the server.
+    await refetchCaptures();
+
+    expect(await screen.findByText('body: after the recording')).toBeInTheDocument();
+    expect(noteReads()).toBe(2);
+  });
+
+  it('does not refetch for a capture that was already appended last time', async () => {
+    const { refetchCaptures, noteReads } = mountWithPolls([[filed], [filed]]);
+
+    await screen.findByText('body: before');
+    await screen.findByText('Filed');
+    await refetchCaptures();
+
+    // Same answer twice; nothing changed, nothing to refresh.
+    await waitFor(() => {
+      expect(screen.getByText('Filed')).toBeInTheDocument();
+    });
+    expect(noteReads()).toBe(1);
+  });
+
+  it('refetches the note when "Open the note" is tapped', async () => {
+    // The poll may have first seen the capture already appended, in which case
+    // no transition was observed — but the row is still saying the note has
+    // just been written to, so opening it must not hand over the old body.
+    const user = userEvent.setup();
+    const { noteReads } = mountWithPolls([[filed]]);
+
+    await screen.findByText('body: before');
+    await user.click(await screen.findByRole('button', { name: /open the note/i }));
+
+    expect(await screen.findByText('body: after the recording')).toBeInTheDocument();
+    expect(noteReads()).toBe(2);
+  });
+
+  it('names only the notes whose captures crossed into appended', () => {
+    const before = [
+      capture({ id: 'a', status: 'transcribing', note_id: 'n1' }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2' }),
+    ];
+    const after = [
+      capture({ id: 'a', status: 'appended', note_id: 'n1' }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2' }),
+      // Not seen before, appended now: the poll missed the transition, but the
+      // note is no less changed for that.
+      capture({ id: 'c', status: 'appended', note_id: 'n3' }),
+      capture({ id: 'd', status: 'appended' }),
+    ];
+    expect(newlyAppendedNoteIds(before, after)).toEqual(['n1', 'n3']);
+    // A cold start has no cache to be stale.
+    expect(newlyAppendedNoteIds(undefined, after)).toEqual([]);
   });
 });
