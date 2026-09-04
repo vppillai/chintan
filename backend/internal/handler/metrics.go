@@ -83,6 +83,9 @@ func (s *statusWriter) Flush() {
 // something the query side does for free.
 func instrument(pattern string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Tell the access log, which is written outside the mux and cannot see
+		// r.Pattern, which route this was.
+		obs.SetRoutePattern(r.Context(), pattern)
 		ctx := context.WithValue(r.Context(), routeKey{}, pattern)
 		r = r.WithContext(ctx)
 

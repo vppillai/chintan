@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,12 +77,105 @@ func TestCorrelateGeneratesIDWhenHostile(t *testing.T) {
 	}
 }
 
-// A note id or search query in a log line is unbounded cardinality, and for
-// search it is user content.
-func TestRoutePatternDoesNotLeakPathDetail(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/notes/note_secret_12345", nil)
-	if got := routePattern(req); strings.Contains(got, "note_secret_12345") {
-		t.Fatalf("route %q leaked the note id", got)
+// captureLogs routes the package logger into a buffer for one test and returns
+// the access lines it wrote, decoded.
+func captureLogs(t *testing.T, run func()) []map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	run()
+
+	var lines []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not JSON: %v (%s)", err, line)
+		}
+		if rec["msg"] == "request" {
+			lines = append(lines, rec)
+		}
+	}
+	return lines
+}
+
+// The access line names the matched ServeMux pattern, so POST /v1/notes/purge
+// is distinguishable from POST /v1/notes and GET /v1/captures/{id}/download from
+// the list — which the old two-segment prefix could not do. The pattern is
+// recorded from inside the mux, because outside it r.Pattern is empty.
+func TestCorrelateLogsTheMatchedRoutePattern(t *testing.T) {
+	mux := http.NewServeMux()
+	for _, pattern := range []string{"POST /v1/notes", "POST /v1/notes/purge", "GET /v1/captures/{id}/download"} {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			SetRoutePattern(r.Context(), r.Pattern)
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}
+	// A middleware that copies the request, as the real chain does, so the
+	// mux's annotation never reaches Correlate's own *Request.
+	copying := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(r.Context()))
+	})
+	h := Correlate(copying)
+
+	tests := []struct {
+		method, path, want string
+	}{
+		{http.MethodPost, "/v1/notes", "POST /v1/notes"},
+		{http.MethodPost, "/v1/notes/purge", "POST /v1/notes/purge"},
+		{http.MethodGet, "/v1/captures/c_18d1eef7f15ea266/download?kind=peaks", "GET /v1/captures/{id}/download"},
+	}
+	for _, tt := range tests {
+		lines := captureLogs(t, func() {
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tt.method, tt.path, nil))
+		})
+		if len(lines) != 1 {
+			t.Fatalf("%s %s: %d access lines, want 1", tt.method, tt.path, len(lines))
+		}
+		if got := lines[0]["route"]; got != tt.want {
+			t.Errorf("%s %s: route = %v, want %q", tt.method, tt.path, got, tt.want)
+		}
+	}
+}
+
+// A request no route served is labelled as such. Nothing of the path — not a
+// note id, not a search query, not a probe for /wp-admin — reaches the line.
+func TestCorrelateLabelsUnmatchedRequestsWithoutThePath(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/notes", func(w http.ResponseWriter, r *http.Request) {
+		SetRoutePattern(r.Context(), r.Pattern)
+	})
+	h := Correlate(mux)
+
+	for _, path := range []string{"/v1/notes/note_secret_12345", "/v1/search?q=my+secret+plans", "/wp-admin"} {
+		lines := captureLogs(t, func() {
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		})
+		if len(lines) != 1 {
+			t.Fatalf("%s: %d access lines, want 1", path, len(lines))
+		}
+		route, _ := lines[0]["route"].(string)
+		if route != unmatchedRoute {
+			t.Errorf("%s: route = %q, want %q", path, route, unmatchedRoute)
+		}
+		for _, leak := range []string{"note_secret_12345", "secret", "wp-admin"} {
+			if strings.Contains(route, leak) {
+				t.Errorf("route %q leaked %q", route, leak)
+			}
+		}
+	}
+}
+
+func TestRoutePatternIsInertWithoutCorrelate(t *testing.T) {
+	ctx := context.Background()
+	SetRoutePattern(ctx, "GET /v1/notes")
+	if got := RoutePattern(ctx); got != "" {
+		t.Errorf("RoutePattern = %q on a context Correlate never saw", got)
 	}
 }
 
