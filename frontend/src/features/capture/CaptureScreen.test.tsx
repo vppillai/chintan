@@ -327,6 +327,52 @@ describe('review before send', () => {
   });
 });
 
+describe('the capture route does not wait on the library', () => {
+  it('asks for no notes until the microphone is live', async () => {
+    /*
+     * On a cold launch of the shortcut the notes request left with the
+     * microphone request and the two shared a slow link's first seconds. The
+     * list is for the target pill, and the pill can wait until "Recording".
+     */
+    let releaseMic: () => void = () => {};
+    const deps = fakeDeps();
+    deps.requestMicrophone = () =>
+      new Promise((resolve) => {
+        releaseMic = () => {
+          resolve(new FakeStream() as unknown as MediaStream);
+        };
+      });
+    useCaptureStore.getState().__configure({ recorder: deps });
+
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      requested.push(url.pathname);
+      return new Response(JSON.stringify({ items: TEST_NOTES }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    mount('/capture', testApiContext(fetchImpl));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('requesting');
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(requested.filter((path) => path.endsWith('/v1/notes'))).toEqual([]);
+
+    releaseMic();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await waitFor(() => {
+      expect(requested.some((path) => path.endsWith('/v1/notes'))).toBe(true);
+    });
+  });
+});
+
 describe('the target chooser', () => {
   it('files into a new note by default', async () => {
     mount();

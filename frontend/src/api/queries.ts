@@ -68,10 +68,16 @@ function remember(write: () => Promise<void>, queryClient?: QueryClient): void {
     });
 }
 
-export function useNotes(query: NoteListQuery = {}) {
+/**
+ * `enabled: false` holds the request back without unmounting the hook — the
+ * capture screen's target chooser uses it so the notes list does not compete
+ * with `getUserMedia` for the first seconds of a launch.
+ */
+export function useNotes(query: NoteListQuery = {}, { enabled = true }: { enabled?: boolean } = {}) {
   const api = useApi();
   const queryClient = useQueryClient();
   return useInfiniteQuery({
+    enabled,
     queryKey: queryKeys.notes(query),
     queryFn: async ({ pageParam }) => {
       const page = await api.listNotes({

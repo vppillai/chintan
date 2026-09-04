@@ -29,13 +29,25 @@ export interface TargetChooserProps {
   onChoose: (noteId: string | null) => void;
   /** After Send the target has left the device and cannot be changed here. */
   disabled?: boolean;
+  /**
+   * Whether to fetch the list yet. The capture screen holds it back until the
+   * microphone is live: on a cold launch of the shortcut the request competed
+   * with `getUserMedia` for a slow link's first seconds, and the list is not
+   * needed until the user reaches for the pill.
+   */
+  fetchList?: boolean;
 }
 
-export function TargetChooser({ noteId, onChoose, disabled = false }: TargetChooserProps) {
+export function TargetChooser({
+  noteId,
+  onChoose,
+  disabled = false,
+  fetchList = true,
+}: TargetChooserProps) {
   const [open, setOpen] = useState(false);
   const listId = useId();
 
-  const served = useNotes({ state: 'active' });
+  const served = useNotes({ state: 'active' }, { enabled: fetchList });
   const cached = useCachedNotes('active');
   // The note this screen was opened from may not be among the recent twenty,
   // and its own screen has just cached the full record — so its title is on

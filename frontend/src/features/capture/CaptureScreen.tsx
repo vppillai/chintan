@@ -156,6 +156,9 @@ export function CaptureScreen() {
         disabled={
           model.state === 'idle' || model.state === 'uploading' || model.state === 'uploaded'
         }
+        // Nothing but the microphone request goes out until the stream is
+        // live; the list is for the pill, and the pill can wait a second.
+        fetchList={model.state !== 'idle' && model.state !== 'requesting'}
       />
 
       <p
