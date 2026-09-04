@@ -146,17 +146,6 @@ describe('interruption produces a saved partial, never a discard', () => {
     expect(model.failure?.kind).toBe('recorder-failed');
   });
 
-  it('treats a muted track as recoverable, flagging rather than stopping', () => {
-    const model = run([
-      ...requestAndStart,
-      { type: 'data', bytes: 1_000 },
-      { type: 'trackMuted' },
-    ]);
-
-    expect(model.state).toBe('recording');
-    expect(model.interrupted).toBe(true);
-  });
-
   it('keeps buffered audio when the recorder itself errors', () => {
     const model = run([
       ...requestAndStart,
@@ -172,6 +161,108 @@ describe('interruption produces a saved partial, never a discard', () => {
   it('fails when the recorder errors with nothing buffered', () => {
     const model = run([...requestAndStart, { type: 'recorderError' }]);
     expect(model.state).toBe('failed');
+  });
+});
+
+describe('the microphone being taken by another app pauses, and its return resumes', () => {
+  /*
+   * An incoming call on iOS mutes the track rather than ending it. This used
+   * to be a flag on a recording that carried on: the clock kept counting and
+   * the recorder kept encoding silence for as long as the call lasted, under a
+   * screen that still said "Recording".
+   */
+  it('pauses on mute, settling the clock, and says the microphone was taken', () => {
+    const model = run([
+      ...requestAndStart,
+      { type: 'data', bytes: 1_000 },
+      { type: 'tick', now: T0 + 4_000 },
+      { type: 'trackMuted', now: T0 + 5_000 },
+    ]);
+
+    expect(model.state).toBe('paused');
+    expect(model.micTaken).toBe(true);
+    expect(model.elapsedMs).toBe(5_000);
+    expect(model.startedAt).toBeNull();
+    // Not "interrupted": nothing was lost and nothing has stopped.
+    expect(model.interrupted).toBe(false);
+  });
+
+  it('resumes by itself on unmute, from where the clock left off', () => {
+    const model = run([
+      ...requestAndStart,
+      { type: 'trackMuted', now: T0 + 5_000 },
+      { type: 'trackUnmuted', now: T0 + 65_000 },
+      { type: 'tick', now: T0 + 66_000 },
+    ]);
+
+    expect(model.state).toBe('recording');
+    expect(model.micTaken).toBe(false);
+    expect(model.micReturned).toBe(true);
+    // The minute of the call is not part of the recording.
+    expect(model.elapsedMs).toBe(6_000);
+  });
+
+  it('does not resume a pause the user asked for, whatever the track does', () => {
+    const model = run([
+      ...requestAndStart,
+      { type: 'pause', now: T0 + 5_000 },
+      { type: 'trackMuted', now: T0 + 6_000 },
+      { type: 'trackUnmuted', now: T0 + 30_000 },
+    ]);
+
+    expect(model.state).toBe('paused');
+    expect(model.micTaken).toBe(false);
+    expect(model.micReturned).toBe(false);
+    expect(model.elapsedMs).toBe(5_000);
+  });
+
+  it('lets the user resume during a mute, after which the unmute changes nothing', () => {
+    const model = run([
+      ...requestAndStart,
+      { type: 'trackMuted', now: T0 + 5_000 },
+      { type: 'resume', now: T0 + 8_000 },
+      { type: 'trackUnmuted', now: T0 + 9_000 },
+      { type: 'tick', now: T0 + 10_000 },
+    ]);
+
+    expect(model.state).toBe('recording');
+    expect(model.micTaken).toBe(false);
+    expect(model.micReturned).toBe(false);
+    expect(model.elapsedMs).toBe(7_000);
+  });
+
+  it('clears the "resumed" notice at the next pause or stop', () => {
+    const resumed = run([
+      ...requestAndStart,
+      { type: 'trackMuted', now: T0 + 5_000 },
+      { type: 'trackUnmuted', now: T0 + 6_000 },
+    ]);
+    expect(resumed.micReturned).toBe(true);
+
+    expect(run([{ type: 'pause', now: T0 + 7_000 }], resumed).micReturned).toBe(false);
+    expect(run([{ type: 'stop', now: T0 + 7_000 }], resumed).micReturned).toBe(false);
+  });
+
+  it('ignores an unmute while recording, and a mute while stopping', () => {
+    const recording = run(requestAndStart);
+    expect(run([{ type: 'trackUnmuted', now: T0 + 1_000 }], recording)).toBe(recording);
+
+    const stopping = run([...requestAndStart, { type: 'stop', now: T0 + 1_000 }]);
+    expect(run([{ type: 'trackMuted', now: T0 + 2_000 }], stopping)).toBe(stopping);
+  });
+
+  it('still stops and saves when the track ends outright', () => {
+    // A mute is a loan; an end is final. The two must stay distinct.
+    const model = run([
+      ...requestAndStart,
+      { type: 'data', bytes: 1_000 },
+      { type: 'trackMuted', now: T0 + 5_000 },
+      { type: 'trackEnded', now: T0 + 6_000 },
+    ]);
+
+    expect(model.state).toBe('stopping');
+    expect(model.interrupted).toBe(true);
+    expect(hasBufferedAudio({ ...model, state: 'review' })).toBe(true);
   });
 });
 

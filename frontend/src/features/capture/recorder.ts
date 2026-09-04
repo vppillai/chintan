@@ -89,6 +89,12 @@ export class RecorderController {
   private chunkIndex = 0;
   private session: RecorderSession | null = null;
   private stopping = false;
+  /**
+   * The recorder is paused because the track muted, not because the user
+   * asked. Only this kind of pause is undone by `unmute`; a user's pause is
+   * theirs to end.
+   */
+  private pausedByMute = false;
 
   constructor(
     private readonly emit: EventSink,
@@ -284,6 +290,9 @@ export class RecorderController {
 
   resume(): void {
     if (this.recorder?.state !== 'paused') return;
+    // The user's Resume wins over the OS: whatever muted the track, they have
+    // chosen to carry on, so the pause is no longer the mute's to undo.
+    this.pausedByMute = false;
     this.recorder.resume();
     this.startTicking();
     this.emit({ type: 'resume', now: this.deps.now() });
@@ -336,11 +345,37 @@ export class RecorderController {
         this.emit({ type: 'trackEnded', now: this.deps.now() });
         void this.stop();
       });
+      /*
+       * A muted track is a live track producing nothing: the OS has lent the
+       * microphone to a call or another app and will give it back. Left alone,
+       * MediaRecorder encodes silence for the duration and the clock keeps
+       * counting — so the recorder is paused here and resumed on `unmute`,
+       * and only when the pause was this one's. A pause the user asked for
+       * before the mute stays paused; ending a call must not restart them.
+       */
       track.addEventListener('mute', () => {
-        this.emit({ type: 'trackMuted' });
+        if (this.recorder?.state === 'recording') {
+          this.pausedByMute = true;
+          try {
+            this.recorder.pause();
+          } catch {
+            /* Already inactive; the machine settles the clock regardless. */
+          }
+          this.stopTicking();
+        }
+        this.emit({ type: 'trackMuted', now: this.deps.now() });
       });
       track.addEventListener('unmute', () => {
-        this.emit({ type: 'trackUnmuted' });
+        if (this.pausedByMute && this.recorder?.state === 'paused') {
+          try {
+            this.recorder.resume();
+          } catch {
+            /* Already inactive. */
+          }
+          this.startTicking();
+        }
+        this.pausedByMute = false;
+        this.emit({ type: 'trackUnmuted', now: this.deps.now() });
       });
     }
   }
@@ -387,6 +422,7 @@ export class RecorderController {
 
   private teardown(): void {
     this.stopTicking();
+    this.pausedByMute = false;
     for (const track of this.stream?.getTracks() ?? []) {
       try {
         track.stop();

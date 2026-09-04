@@ -78,8 +78,16 @@ export interface CaptureModel {
   elapsedMs: number;
   bytes: number;
   chunks: number;
-  /** Set when a track ended or muted mid-recording; the audio is still good. */
+  /** Set when a track ended mid-recording; the audio is still good. */
   interrupted: boolean;
+  /**
+   * Paused because the OS muted the track — an incoming call, Siri, another
+   * app claiming the microphone. Distinct from a pause the user asked for,
+   * because this one is undone automatically when the track unmutes.
+   */
+  micTaken: boolean;
+  /** Recording again after a `micTaken` pause. Cleared by the next pause or stop. */
+  micReturned: boolean;
   /** Which cap stopped the recording, if either did. */
   capReached: CapReason | null;
   nearDurationLimit: boolean;
@@ -109,8 +117,9 @@ export type CaptureEvent =
   | { type: 'recorderError'; message?: string }
   /** A track ended — an incoming call, a disconnected headset. */
   | { type: 'trackEnded'; now: number }
-  | { type: 'trackMuted' }
-  | { type: 'trackUnmuted' }
+  /** The OS took the microphone without ending the track. Timed: it pauses. */
+  | { type: 'trackMuted'; now: number }
+  | { type: 'trackUnmuted'; now: number }
   | { type: 'uploadStart' }
   | { type: 'uploadProgress'; progress: number }
   | { type: 'captureCreated'; serverCaptureId: string }
@@ -135,6 +144,8 @@ export const INITIAL_CAPTURE: CaptureModel = {
   bytes: 0,
   chunks: 0,
   interrupted: false,
+  micTaken: false,
+  micReturned: false,
   capReached: null,
   nearDurationLimit: false,
   nearSizeLimit: false,
@@ -277,15 +288,28 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
 
     case 'pause':
       if (model.state !== 'recording') return model;
-      return { ...settle(model, event.now), state: 'paused' };
+      return { ...settle(model, event.now), state: 'paused', micReturned: false };
 
     case 'resume':
+      // A Resume the user asked for outranks the OS: even if the track is
+      // still muted, they chose to carry on, so the automatic resume is off.
       if (model.state !== 'paused') return model;
-      return { ...model, state: 'recording', startedAt: event.now };
+      return {
+        ...model,
+        state: 'recording',
+        startedAt: event.now,
+        micTaken: false,
+        micReturned: false,
+      };
 
     case 'stop':
       if (!RECORDING_STATES.has(model.state)) return model;
-      return { ...settle(model, event.now), state: 'stopping' };
+      return {
+        ...settle(model, event.now),
+        state: 'stopping',
+        micTaken: false,
+        micReturned: false,
+      };
 
     case 'finalised':
       if (model.state !== 'stopping') return model;
@@ -326,13 +350,29 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
     }
 
     case 'trackMuted':
-      // Muting is recoverable — the OS does it during a call and undoes it
-      // after — so it is a flag, not a stop.
-      if (!RECORDING_STATES.has(model.state)) return model;
-      return { ...model, interrupted: true };
+      /*
+       * The OS took the microphone but left the track alive — a call coming
+       * in, Siri, another app. Recoverable, so not a stop; but not merely a
+       * flag either, which is what this used to be: the clock kept counting
+       * and the recorder kept encoding silence for as long as the call lasted,
+       * and the screen said "Recording" over a microphone that was not.
+       *
+       * So it is a pause, of the kind the machine undoes itself on `unmute`.
+       * A pause the user already asked for is left exactly as it is: they
+       * chose to stop, and a call ending must not restart them.
+       */
+      if (model.state !== 'recording') return model;
+      return { ...settle(model, event.now), state: 'paused', micTaken: true, micReturned: false };
 
     case 'trackUnmuted':
-      return model;
+      if (model.state !== 'paused' || !model.micTaken) return model;
+      return {
+        ...model,
+        state: 'recording',
+        startedAt: event.now,
+        micTaken: false,
+        micReturned: true,
+      };
 
     case 'uploadStart':
       if (model.state !== 'review' && model.state !== 'failed') return model;

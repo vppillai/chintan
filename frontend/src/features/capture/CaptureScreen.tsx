@@ -169,6 +169,12 @@ export function CaptureScreen() {
         </p>
       )}
 
+      {model.micReturned && model.state === 'recording' && (
+        <p className="capture__notice" role="status">
+          Resumed — the microphone is back.
+        </p>
+      )}
+
       {model.interrupted && model.state !== 'recording' && (
         <p className="capture__warning">
           The recording was interrupted. What was captured before that is here.
@@ -205,7 +211,9 @@ function statusLabel(model: CaptureModel): string {
     case 'recording':
       return 'Recording';
     case 'paused':
-      return 'Paused';
+      // The OS lent the microphone to a call or another app. Said plainly, and
+      // undone by itself when the track unmutes — see the machine.
+      return model.micTaken ? 'Paused — the microphone was taken by another app' : 'Paused';
     case 'stopping':
       return 'Finishing…';
     case 'review':

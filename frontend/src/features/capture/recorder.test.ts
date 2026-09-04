@@ -22,6 +22,9 @@ class FakeTrack extends EventTarget {
   mute(): void {
     this.dispatchEvent(new Event('mute'));
   }
+  unmute(): void {
+    this.dispatchEvent(new Event('unmute'));
+  }
 }
 
 class FakeStream {
@@ -310,15 +313,93 @@ describe('interruption', () => {
     expect(h.model().state).toBe('review');
   });
 
-  it('flags a muted track without stopping the recording', async () => {
-    const h = harness();
+  it('pauses the recorder when the track mutes, and resumes it when the track unmutes', async () => {
+    /*
+     * An incoming call on iOS mutes the track and unmutes it when the call
+     * ends. The handler used to only raise a flag, so MediaRecorder encoded
+     * silence for the whole call and the clock kept counting over it.
+     */
+    const clock = { value: 1_000 };
+    const h = harness({}, clock);
     await h.start();
     h.recorder.emitChunk(100);
 
+    clock.value = 6_000;
     h.stream.track.mute();
 
+    expect(h.recorder.state).toBe('paused');
+    expect(h.model().state).toBe('paused');
+    expect(h.model().micTaken).toBe(true);
+    expect(h.model().elapsedMs).toBe(5_000);
+
+    clock.value = 66_000;
+    h.stream.track.unmute();
+
+    expect(h.recorder.state).toBe('recording');
     expect(h.model().state).toBe('recording');
+    expect(h.model().micReturned).toBe(true);
+    clock.value = 68_000;
+    h.controller.stop();
+    // The minute on the call is not in the recording.
+    expect(h.model().elapsedMs).toBe(7_000);
+  });
+
+  it('stops the tick while muted and restarts it on unmute', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.start();
+
+    h.stream.track.mute();
+    const before = kinds(h.events).filter((kind) => kind === 'tick').length;
+    vi.advanceTimersByTime(2_000);
+    expect(kinds(h.events).filter((kind) => kind === 'tick').length).toBe(before);
+
+    h.stream.track.unmute();
+    vi.advanceTimersByTime(1_000);
+    expect(kinds(h.events).filter((kind) => kind === 'tick').length).toBeGreaterThan(before);
+    vi.useRealTimers();
+  });
+
+  it('leaves a pause the user asked for alone when the track mutes and unmutes', async () => {
+    const h = harness();
+    await h.start();
+    h.controller.pause();
+
+    h.stream.track.mute();
+    h.stream.track.unmute();
+
+    expect(h.recorder.state).toBe('paused');
+    expect(h.model().state).toBe('paused');
+    expect(h.model().micTaken).toBe(false);
+  });
+
+  it('lets the user resume during a mute, and the later unmute does not double-resume', async () => {
+    const h = harness();
+    await h.start();
+
+    h.stream.track.mute();
+    expect(h.recorder.state).toBe('paused');
+    h.controller.resume();
+    expect(h.recorder.state).toBe('recording');
+
+    h.stream.track.unmute();
+    expect(h.recorder.state).toBe('recording');
+    expect(kinds(h.events).filter((kind) => kind === 'resume')).toHaveLength(1);
+    expect(h.model().micReturned).toBe(false);
+  });
+
+  it('still stops and saves when the track ends after a mute', async () => {
+    const h = harness();
+    await h.start();
+    h.recorder.emitChunk(4_000);
+
+    h.stream.track.mute();
+    h.stream.track.end();
+    await Promise.resolve();
+
+    expect(h.model().state).toBe('review');
     expect(h.model().interrupted).toBe(true);
+    expect(h.model().bytes).toBe(4_000);
   });
 
   it('keeps buffered audio when the encoder faults', async () => {

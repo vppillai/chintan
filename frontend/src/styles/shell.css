@@ -913,6 +913,13 @@
   color: var(--color-ink);
 }
 
+/* "Resumed — the microphone is back." Quiet: good news needs no emphasis. */
+.capture__notice {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
 .capture__progress {
   font-size: var(--font-size-sm);
   color: var(--color-muted);
