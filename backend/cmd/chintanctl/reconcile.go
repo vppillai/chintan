@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -32,6 +33,12 @@ const (
 	findingUnknownObject = "unknown_object"
 	// findingStuckCapture is a capture left in a non-terminal state.
 	findingStuckCapture = "stuck_capture"
+	// findingDanglingCapture is a capture row filed into a note that has no
+	// row. Before note deletion cascaded through GSI1 (August 2026), deleting a
+	// note left its captures behind; the app lists captures through their
+	// note, so these are unreachable and cost storage for nothing. It is the
+	// one finding whose repair deletes an index row — see runReconcile.
+	findingDanglingCapture = "dangling_capture"
 )
 
 type finding struct {
@@ -41,6 +48,9 @@ type finding struct {
 	SK       string `json:"sk,omitempty"`
 	Owner    string `json:"owner,omitempty"`
 	Detail   string `json:"detail"`
+	// Objects are the keys --apply deletes along with the row, for findings
+	// whose subject is a row rather than an object.
+	Objects []string `json:"objects,omitempty"`
 	// Repairable is whether --apply would act on this finding.
 	Repairable bool `json:"repairable"`
 	Repaired   bool `json:"repaired,omitempty"`
@@ -113,13 +123,29 @@ func cmdReconcile(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	if err := report(stdout, g.jsonOut, res); err != nil {
 		return err
 	}
-	repairable := 0
-	for _, f := range res.Findings {
-		if f.Repairable {
-			repairable++
+	return dryRunBanner(stdout, g.apply, res.repairPlan())
+}
+
+// repairPlan says what --apply would do, in the words the banner prints.
+func (r *reconcileResult) repairPlan() string {
+	orphans, dangling, danglingObjects := 0, 0, 0
+	for _, f := range r.Findings {
+		if !f.Repairable {
+			continue
+		}
+		switch f.Kind {
+		case findingDanglingCapture:
+			dangling++
+			danglingObjects += len(f.Objects)
+		default:
+			orphans++
 		}
 	}
-	return dryRunBanner(stdout, g.apply, fmt.Sprintf("delete %d orphaned object(s)", repairable))
+	plan := fmt.Sprintf("delete %d orphaned object(s)", orphans)
+	if dangling > 0 {
+		plan += fmt.Sprintf(" and %d dangling capture row(s) with %d object(s)", dangling, danglingObjects)
+	}
+	return plan
 }
 
 // runReconcile is the documented backstop for the dual-write window and for
@@ -128,10 +154,15 @@ func cmdReconcile(ctx context.Context, args []string, stdout, stderr io.Writer, 
 // to find the orphan afterwards. hardDeleteNote's TODO points here.
 //
 // Reporting is the default in both directions. Repair, under --apply, is
-// deliberately narrow: it deletes only objects whose owning note or capture has
-// no index row at all. It never deletes an index row — a row whose object is
-// missing is the last evidence the object existed, and throwing it away turns a
-// recoverable incident into an unrecoverable one.
+// deliberately narrow: it deletes objects whose owning note or capture has no
+// index row at all, and capture rows (with their objects) whose note has no
+// row. It never deletes a row whose object is missing — that row is the last
+// evidence the object existed, and throwing it away turns a recoverable
+// incident into an unrecoverable one. A dangling capture is the opposite
+// shape: the row is complete and its objects are all there, but the note it
+// was filed into is gone, and the app reaches captures only through their
+// note, so nothing can ever show it. Keeping it preserves bytes nobody can
+// read.
 func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply bool) (*reconcileResult, error) {
 	tenants, err := resolveTenants(ctx, e.Blobs, explicitTenants)
 	if err != nil {
@@ -149,6 +180,20 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 		res.Items += idx.ItemCount
 		refs := referencedKeys(idx)
 
+		// Captures filed into a note that has no row. Every object under such
+		// a capture goes with the row under --apply, whether or not an
+		// attribute names it: once the row is gone they would be orphans on
+		// the next run anyway.
+		dangling := make(map[string][]string)
+		for id, c := range idx.Captures {
+			if c.NoteID == "" {
+				continue
+			}
+			if _, ok := idx.Notes[c.NoteID]; !ok {
+				dangling[id] = nil
+			}
+		}
+
 		// The present set is keys only — never bodies. It is the one
 		// unavoidable accumulation in this command, and it is bounded by the
 		// object count, not by the corpus size.
@@ -157,10 +202,16 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 		err = e.Blobs.List(tctx, tenantPrefix(tenantID), func(info ObjectInfo) error {
 			res.Objects++
 			present[info.Key] = true
+			ref := parseObjectKey(info.Key)
+			if ref.Group == "captures" {
+				if _, isDangling := dangling[ref.EntityID]; isDangling {
+					dangling[ref.EntityID] = append(dangling[ref.EntityID], info.Key)
+					return nil
+				}
+			}
 			if _, referenced := refs[info.Key]; referenced {
 				return nil
 			}
-			ref := parseObjectKey(info.Key)
 			switch ref.Group {
 			case "notes":
 				if _, ok := idx.Notes[ref.EntityID]; !ok {
@@ -202,9 +253,15 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			return nil, err
 		}
 
-		// The other direction: a row whose object is gone.
+		// The other direction: a row whose object is gone. A dangling
+		// capture's objects are its own finding, not this one's.
 		missing := make([]string, 0)
-		for key := range refs {
+		for key, owner := range refs {
+			if id, ok := strings.CutPrefix(owner, "CAPTURE#"); ok {
+				if _, isDangling := dangling[id]; isDangling {
+					continue
+				}
+			}
 			if !present[key] {
 				missing = append(missing, key)
 			}
@@ -220,6 +277,24 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 
 		sort.Slice(orphans, func(i, j int) bool { return orphans[i].Key < orphans[j].Key })
 		res.Findings = append(res.Findings, orphans...)
+
+		danglingIDs := make([]string, 0, len(dangling))
+		for id := range dangling {
+			danglingIDs = append(danglingIDs, id)
+		}
+		sort.Strings(danglingIDs)
+		for _, id := range danglingIDs {
+			keys := dangling[id]
+			sort.Strings(keys)
+			res.Findings = append(res.Findings, finding{
+				Kind: findingDanglingCapture, TenantID: tenantID, SK: "CAPTURE#" + id,
+				Owner:   "NOTE#" + idx.Captures[id].NoteID,
+				Objects: keys,
+				Detail: fmt.Sprintf("filed into a note that has no row; %d object(s) unreachable through the app",
+					len(keys)),
+				Repairable: true,
+			})
+		}
 
 		stuck := make([]string, 0)
 		for id, c := range idx.Captures {
@@ -250,13 +325,31 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 		if !f.Repairable {
 			continue
 		}
-		if err := e.Blobs.Delete(ctx, f.Key); err != nil {
-			return res, err
+		switch f.Kind {
+		case findingDanglingCapture:
+			// Objects first, then the row, the order erase uses: a run
+			// interrupted between the two leaves a row that the next run
+			// finds dangling again and finishes, rather than objects reachable
+			// only by a prefix walk.
+			for _, key := range f.Objects {
+				if err := e.Blobs.Delete(ctx, key); err != nil {
+					return res, err
+				}
+			}
+			if err := e.Part.Delete(ctx, tenantPK(f.TenantID), f.SK); err != nil {
+				return res, err
+			}
+			obs.Log(ctx).Info("deleted dangling capture",
+				slog.String("sk", f.SK), slog.String("owner", f.Owner), slog.Int("objects", len(f.Objects)))
+		default:
+			if err := e.Blobs.Delete(ctx, f.Key); err != nil {
+				return res, err
+			}
+			obs.Log(ctx).Info("deleted orphaned object",
+				slog.String("key", f.Key), slog.String("owner", f.Owner))
 		}
 		f.Repaired = true
 		res.Repaired++
-		obs.Log(ctx).Info("deleted orphaned object",
-			slog.String("key", f.Key), slog.String("owner", f.Owner))
 	}
 	return res, nil
 }
