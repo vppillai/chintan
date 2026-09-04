@@ -16,6 +16,7 @@ const ROUTES = [
   '/?q=roof',
   '/settings',
   '/settings?passkey=invalid_session',
+  '/about',
   '/notes/roof-repair',
 ] as const;
 const THEMES = ['ink', 'nocturne'] as const;

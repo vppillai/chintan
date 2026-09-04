@@ -2425,3 +2425,67 @@
   fill: var(--color-accent);
   opacity: 1;
 }
+
+/* --------------------------------------------------------------------------
+   About — a page to read, in the notes' serif
+   -------------------------------------------------------------------------- */
+
+.about__title {
+  margin-block-start: var(--space-2);
+}
+
+.about__lede {
+  margin-block: var(--space-2) var(--space-6);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-lg);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.about__section {
+  display: grid;
+  gap: var(--space-3);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-ink);
+}
+
+.about__section + .about__section {
+  margin-block-start: var(--space-6);
+  padding-block-start: var(--space-6);
+  border-block-start: 1px solid var(--color-line);
+}
+
+/* The same quiet small caps the settings groups use, so You and About read
+   as one family of screens. */
+.about__heading {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.about__version {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  user-select: text;
+}
+
+.about__links {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+}
+
+/* A link styled as an option row keeps the row's colour rather than the
+   browser's link blue. */
+.settings-group a.option {
+  text-decoration: none;
+}

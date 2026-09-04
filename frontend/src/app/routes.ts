@@ -14,6 +14,8 @@ export const ROUTES = {
   /** Archived notes are the library with a filter chip, not a destination. */
   archive: '/?view=archived',
   settings: '/settings',
+  /** What Chintan is and where its data lives. Reached from You. */
+  about: '/about',
   capture: '/capture',
   /** Record straight into a note the user is already reading. */
   captureInto: (noteId: string) => `/capture?note=${encodeURIComponent(noteId)}`,

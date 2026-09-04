@@ -15,13 +15,14 @@ import { StatusRegion } from './StatusRegion.tsx';
 import { TabBar } from './TabBar.tsx';
 
 /** Which of the app's surfaces a URL is. Drives layout and announcements. */
-export type Screen = 'library' | 'note' | 'you' | 'capture' | 'other';
+export type Screen = 'library' | 'note' | 'you' | 'about' | 'capture' | 'other';
 
 export function screenForPath(pathname: string): Screen {
   const path = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
   if (path === ROUTES.home) return 'library';
   if (path === ROUTES.capture) return 'capture';
   if (path === ROUTES.settings) return 'you';
+  if (path === ROUTES.about) return 'about';
   if (path.startsWith('/notes/')) return 'note';
   return 'other';
 }
@@ -30,6 +31,7 @@ const SCREEN_TITLES: Record<Screen, string> = {
   library: 'Notes',
   note: 'Note',
   you: 'You',
+  about: 'About',
   capture: 'Recording',
   other: 'Screen',
 };

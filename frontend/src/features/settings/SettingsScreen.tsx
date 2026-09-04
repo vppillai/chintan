@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Link } from 'react-router';
 
 import { useSaveSettings, useSettings } from '@/api/queries.ts';
 import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
+import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
@@ -79,6 +81,7 @@ export function SettingsScreen() {
   const cleanupId = useId();
   const retentionId = useId();
   const languageId = useId();
+  const aboutId = useId();
 
   return (
     <div className="screen">
@@ -246,6 +249,17 @@ export function SettingsScreen() {
       <PasskeyCard />
 
       <SignOutSetting />
+
+      {/* ---- About ------------------------------------------------------- */}
+      <section className="settings-group" aria-labelledby={aboutId}>
+        <h2 id={aboutId} className="settings-group__title">
+          About
+        </h2>
+        <Link to={ROUTES.about} className="option">
+          <span className="option__label">About Chintan</span>
+          <span className="option__hint">What it does, where your data lives</span>
+        </Link>
+      </section>
 
       {isLoading && <p className="screen__count">Loading your settings…</p>}
 
