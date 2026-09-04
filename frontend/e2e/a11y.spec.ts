@@ -103,6 +103,28 @@ test('selection checkboxes and the playback slider are at least 24 px', async ({
   expect(slider?.height ?? 0).toBeGreaterThanOrEqual(24);
 });
 
+/**
+ * The parked skip link used to leak its shadow: translated 70 px up, its box
+ * ended above the viewport but its 28 px shadow did not, and every desktop
+ * screenshot carried a grey sliver in the top-left corner (QA D19).
+ */
+test('the skip link casts no shadow until it is shown', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  const skip = page.getByRole('link', { name: /skip to content/i });
+
+  const parked = await skip.evaluate((element) => {
+    const { boxShadow } = getComputedStyle(element);
+    return { boxShadow, bottom: element.getBoundingClientRect().bottom };
+  });
+  expect(parked.boxShadow).toBe('none');
+  expect(parked.bottom).toBeLessThanOrEqual(0);
+
+  await page.keyboard.press('Tab');
+  await expect(skip).toBeFocused();
+  expect(await skip.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe('none');
+});
+
 test('the library is fully traversable by keyboard', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
