@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
+
+import { useModalFocus } from './useModalFocus.ts';
 
 /**
  * The app's only modal, and it is a real one: `role="dialog"`,
@@ -9,17 +11,9 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
  * element gives the trap and Escape for free but its top-layer backdrop
  * escapes the theme tokens, and `showModal` is unimplemented in jsdom — which
  * would make the gate on the app's destructive actions the one component that
- * cannot be unit-tested. Sixty lines is a fair price for testability here.
+ * cannot be unit-tested. The trap itself lives in `useModalFocus`, shared with
+ * the note screen's "Move to…" sheet.
  */
-
-const FOCUSABLE = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',');
 
 export interface ConfirmDialogProps {
   open: boolean;
@@ -71,7 +65,6 @@ function DialogPanel({
   onCancel,
 }: Omit<ConfirmDialogProps, 'open'>) {
   const panelRef = useRef<HTMLDivElement>(null);
-  const restoreRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const bodyId = useId();
   const confirmTextId = useId();
@@ -80,60 +73,7 @@ function DialogPanel({
   const unlocked =
     !requireText || typed.trim().toLowerCase() === requireText.trim().toLowerCase();
 
-  const focusables = useCallback((): HTMLElement[] => {
-    const panel = panelRef.current;
-    if (!panel) return [];
-    return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
-  }, []);
-
-  // Remember what had focus, move into the dialog, and put it back on close.
-  // Without the restore, dismissing a dialog drops a keyboard user at the top
-  // of the document.
-  useEffect(() => {
-    restoreRef.current = document.activeElement as HTMLElement | null;
-    // The first focusable, which is Cancel on a plain dialog and the typing
-    // field on a gated one. Never the confirm control: the safe option should
-    // be under the thumb and under the Enter key of someone who opened this by
-    // accident, and on a gated dialog the confirm is disabled anyway.
-    const [first] = focusables();
-    first?.focus();
-
-    return () => {
-      restoreRef.current?.focus?.();
-    };
-  }, [focusables]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onCancel();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-
-      // The trap. Without it, Tab walks out of the dialog into a background
-      // that is visually inert but still reachable.
-      const elements = focusables();
-      if (elements.length === 0) return;
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      const active = document.activeElement;
-
-      if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown, true);
-    };
-  }, [onCancel, focusables]);
+  useModalFocus(panelRef, onCancel);
 
   return (
     <div className="dialog-layer">

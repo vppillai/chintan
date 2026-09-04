@@ -73,7 +73,7 @@ describe('a signed-out visitor gets a sign-in, not a shell of 401s', () => {
   it('gates a deep link too, not just home', async () => {
     mountSignedOut(['/notes']);
     expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Notes' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: /^Notes/ })).toBeNull();
   });
 
   it('keeps exactly one main landmark', async () => {

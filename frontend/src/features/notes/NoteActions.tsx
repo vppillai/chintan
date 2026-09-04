@@ -8,6 +8,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
+import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
@@ -44,7 +45,16 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * controls the app is append-only and the note screen's own "may have been
  * archived or purged" describes states it cannot reach.
  */
-export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: NoteEditor }) {
+export function NoteActions({
+  note,
+  editor,
+  hidden = false,
+}: {
+  note: NoteDetailWire;
+  editor: NoteEditor;
+  /** Stepping aside for another bar at the foot of the screen; state is kept. */
+  hidden?: boolean;
+}) {
   const navigate = useNavigate();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
@@ -60,7 +70,7 @@ export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: No
   const { draft } = editor.model;
 
   return (
-    <div className="note-bar-anchor">
+    <div className="note-bar-anchor" hidden={hidden}>
       {open === 'tags' && (
         <div id={tagsId} className="note-panel">
           <TagEditor
@@ -193,7 +203,8 @@ export function NoteActions({ note, editor }: { note: NoteDetailWire; editor: No
               className="note-bar__action note-bar__action--primary"
               onClick={() => void navigate(ROUTES.captureInto(note.id))}
             >
-              <span aria-hidden="true">＋ </span>Record into this
+              <Icon name="plus" size={16} className="note-bar__icon" />
+              Record into this
             </button>
           </>
         )}

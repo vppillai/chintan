@@ -5,6 +5,7 @@ import type { NoteWire } from '@/api/schema.ts';
 import {
   describeMoment,
   describeRecordings,
+  describeToday,
   formatDurationShort,
   formatRowTime,
   groupByDay,
@@ -131,6 +132,17 @@ describe('describeMoment', () => {
 
   it('is empty for an unparseable timestamp rather than the raw string', () => {
     expect(describeMoment('not a date', NOW)).toBe('');
+  });
+});
+
+describe('describeToday', () => {
+  it('is the weekday, day and month, never the year', () => {
+    const text = describeToday(NOW);
+    const at = new Date(NOW);
+    expect(text).toContain(new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(at));
+    expect(text).toContain(new Intl.DateTimeFormat(undefined, { month: 'long' }).format(at));
+    expect(text).toContain(String(at.getDate()));
+    expect(text).not.toContain(String(at.getFullYear()));
   });
 });
 

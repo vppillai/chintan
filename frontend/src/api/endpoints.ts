@@ -20,6 +20,7 @@ import type {
   CaptureCreateWire,
   CaptureCreatedWire,
   CaptureListQuery,
+  CaptureMoveWire,
   CaptureTargetWire,
   CaptureWire,
   NoteCreateWire,
@@ -33,6 +34,7 @@ import type {
   PresignedDownloadWire,
   PresignedUploadWire,
   ReadinessWire,
+  RecordingUrlsWire,
   SearchHitWire,
   SettingsWire,
   TagWire,
@@ -146,6 +148,16 @@ export class ChintanApi {
     });
   }
 
+  /**
+   * Presigned GETs for every recording of a note that still has its audio,
+   * each with the filename to save it under. One call for the whole note; the
+   * client fetches the files and zips them itself (`zipRecordings.ts`), so a
+   * twelve-recording download is one request here rather than twelve.
+   */
+  recordingUrls(noteId: string): Promise<RecordingUrlsWire> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/recordings/urls`);
+  }
+
   listTags(): Promise<{ items: TagWire[] }> {
     return this.client.request('/v1/tags');
   }
@@ -208,6 +220,39 @@ export class ChintanApi {
   retryCapture(captureId: string, idempotencyKey?: string): Promise<CaptureWire> {
     return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}/retry`, {
       method: 'POST',
+      idempotencyKey,
+    });
+  }
+
+  /**
+   * Deletes one recording and the paragraph it dictated. Irreversible — the
+   * typed confirmation is the client's — and 409 while the capture is still
+   * moving through the pipeline. `NO_RETRY` for the same reason as
+   * `deleteNoteForever`: a retry after a lost 204 is answered 404, which would
+   * report a deletion that succeeded as a failure.
+   */
+  deleteCapture(captureId: string): Promise<void> {
+    return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}`, {
+      method: 'DELETE',
+      retry: NO_RETRY,
+    });
+  }
+
+  /**
+   * Moves a recording and its paragraph into another active note, spliced in
+   * chronological position among that note's own recordings. 200 with the
+   * re-pointed capture; 204 — `undefined` here — when it was already there.
+   * The contract's 503 means "nothing changed, repeat", so the default retry
+   * policy stands, made safe by the idempotency key the client always sends.
+   */
+  moveCapture(
+    captureId: string,
+    body: CaptureMoveWire,
+    idempotencyKey?: string,
+  ): Promise<CaptureWire | undefined> {
+    return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}/move`, {
+      method: 'POST',
+      body,
       idempotencyKey,
     });
   }

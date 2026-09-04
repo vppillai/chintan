@@ -30,6 +30,29 @@ export interface DownloadButtonProps {
   className?: string;
 }
 
+/**
+ * Hands a file to the browser's save flow: a same-origin `blob:` URL on a
+ * detached anchor with `download` set, clicked and revoked. The one save path
+ * in the app — the button below, and the recording archive on the note
+ * screen, both go through here, so the anchor-and-revoke discipline lives in
+ * one place.
+ */
+export function saveBlob(file: Blob, filename: string): void {
+  const url = URL.createObjectURL(file);
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    // Not attached to the DOM: Chrome and Firefox both fire a synthetic
+    // click on a detached anchor, and attaching it would mean also
+    // remembering to remove it on every path, including the ones that
+    // throw.
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function DownloadButton({ blob, filename, label, className }: DownloadButtonProps) {
   const [state, setState] = useState<DownloadState>('idle');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,20 +76,7 @@ export function DownloadButton({ blob, filename, label, className }: DownloadBut
     setState('downloading');
     void (async () => {
       try {
-        const file = await blob();
-        const url = URL.createObjectURL(file);
-        try {
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = filename();
-          // Not attached to the DOM: Chrome and Firefox both fire a synthetic
-          // click on a detached anchor, and attaching it would mean also
-          // remembering to remove it on every path, including the ones that
-          // throw.
-          link.click();
-        } finally {
-          URL.revokeObjectURL(url);
-        }
+        saveBlob(await blob(), filename());
         settle('done');
       } catch {
         settle('failed');

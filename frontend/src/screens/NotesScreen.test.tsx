@@ -1,11 +1,13 @@
 import { onlineManager } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { NoteWire } from '@/api/schema.ts';
+import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
+import { setCanHover } from '@/test/setup.ts';
 
 import { NotesScreen } from './NotesScreen.tsx';
 
@@ -70,6 +72,41 @@ function goOffline(): void {
 afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
   onlineManager.setOnline(true);
+});
+
+/**
+ * The desktop way into selection: a pointer that can hover gets a checkbox at
+ * the row's left edge, and clicking it starts the mode with that row selected.
+ */
+async function startSelecting(
+  user: ReturnType<typeof userEvent.setup>,
+  title: string,
+): Promise<void> {
+  const row = await screen.findByRole('button', { name: new RegExp(title, 'i') });
+  await user.hover(row);
+  await user.click(screen.getByRole('checkbox', { name: new RegExp(`^Select ${title}`, 'i') }));
+  await screen.findByRole('toolbar', { name: 'Bulk actions' });
+}
+
+describe('the heading is the day, with Notes and the count above it', () => {
+  it('is one h1 whose text starts with Notes, then the count, then today in words', async () => {
+    mount(library());
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date());
+    expect(heading).toHaveAccessibleName(/^Notes/);
+    expect(heading).toHaveTextContent(weekday);
+    expect(within(heading).getByText(String(TEST_NOTES.length))).toHaveClass('numeric');
+    // And only the one h1 on the screen.
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  it('holds the count back until something has answered', () => {
+    mount(library());
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(within(heading).queryByText(/^\d+\+?$/)).toBeNull();
+  });
 });
 
 describe('the library never claims an empty library it cannot see', () => {
@@ -382,8 +419,16 @@ describe('the chips filter the list', () => {
 });
 
 describe('doing something to several notes at once', () => {
+  it('has no Select button in the header; a row is where selection starts', async () => {
+    mount(library());
+    await screen.findByRole('button', { name: /roof repair/i });
+    expect(screen.queryByRole('button', { name: 'Select' })).toBeNull();
+    expect(screen.queryByRole('toolbar')).toBeNull();
+  });
+
   it('archives every selected note and leaves selection mode', async () => {
     const user = userEvent.setup();
+    setCanHover(true);
     const archived: string[] = [];
     const base = library();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -397,29 +442,103 @@ describe('doing something to several notes at once', () => {
     });
     mount(fetchImpl);
 
-    await user.click(await screen.findByRole('button', { name: 'Select' }));
-    const checkboxes = await screen.findAllByRole('checkbox');
+    await startSelecting(user, 'Roof repair');
+    // Every row is a checkbox now, and the one that started it is checked.
+    const checkboxes = screen.getAllByRole('checkbox');
     expect(checkboxes).toHaveLength(TEST_NOTES.length);
-    await user.click(checkboxes[0] as HTMLElement);
+    expect(checkboxes[0]).toBeChecked();
 
+    const bar = screen.getByRole('toolbar', { name: 'Bulk actions' });
     expect(
-      await screen.findByText((_content, el) => el?.textContent === '1 selected'),
+      within(bar).getByText((_content, el) => el?.textContent === '1 selected'),
     ).toBeInTheDocument();
+    // Count · Select all · Archive · Delete forever · Cancel, in that order.
+    expect(within(bar).getAllByRole('button').map((el) => el.textContent)).toEqual([
+      'Select all',
+      'Archive',
+      'Delete forever',
+      'Cancel',
+    ]);
 
-    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    await user.click(within(bar).getByRole('button', { name: 'Archive' }));
     await user.click(await screen.findByRole('button', { name: 'Archive them' }));
 
     await waitFor(() => {
       expect(archived).toEqual([TEST_NOTES[0]?.id]);
     });
-    // Back to the plain list: the Select control reads "Select" again, not
-    // "Cancel", and the checkboxes are gone.
-    expect(await screen.findByRole('button', { name: 'Select' })).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox')).toBeNull();
+    // Back to the plain list: no bar, no row checkboxes.
+    await waitFor(() => {
+      expect(screen.queryByRole('toolbar')).toBeNull();
+    });
+    expect(screen.queryAllByRole('checkbox', { checked: true })).toEqual([]);
+  });
+
+  it('starts selecting on a long press, with a haptic tick', async () => {
+    const vibrate = vi.fn();
+    Object.defineProperty(navigator, 'vibrate', { value: vibrate, configurable: true });
+    mount(library());
+    const row = await screen.findByRole('button', { name: /reading list/i });
+
+    fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 12, clientY: 12 });
+    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
+    fireEvent.pointerUp(row, { pointerType: 'touch' });
+    fireEvent.click(row);
+
+    const bar = await screen.findByRole('toolbar', { name: 'Bulk actions' });
+    expect(
+      within(bar).getByText((_content, el) => el?.textContent === '1 selected'),
+    ).toBeInTheDocument();
+    expect(vibrate).toHaveBeenCalledWith(10);
+    // Without hover there is no checkbox before the press, and the press did
+    // not also open the note.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('Shift-click on a checkbox selects the range since the last one', async () => {
+    const user = userEvent.setup();
+    setCanHover(true);
+    const now = Date.now();
+    const notes: NoteWire[] = ['One', 'Two', 'Three', 'Four'].map((title, index) => ({
+      ...TEST_NOTES[0]!,
+      id: title.toLowerCase(),
+      title,
+      updated_at: new Date(now - index * 60_000).toISOString(),
+    }));
+    mount(library({ active: notes, tags: [] }));
+
+    await startSelecting(user, 'One');
+    const boxes = screen.getAllByRole('checkbox');
+    await user.keyboard('{Shift>}');
+    await user.click(boxes[2]!);
+    await user.keyboard('{/Shift}');
+
+    expect(boxes.slice(0, 3).map((box) => (box as HTMLInputElement).checked)).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(boxes[3]).not.toBeChecked();
+    expect(
+      screen.getByText((_content, el) => el?.textContent === '3 selected'),
+    ).toBeInTheDocument();
+  });
+
+  it('Escape leaves selection mode', async () => {
+    const user = userEvent.setup();
+    setCanHover(true);
+    mount(library());
+    await startSelecting(user, 'Roof repair');
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByRole('toolbar')).toBeNull();
+    });
   });
 
   it('deletes every selected note forever: archives, then purges, behind a typed confirmation', async () => {
     const user = userEvent.setup();
+    setCanHover(true);
     const archived: string[] = [];
     let purged: string[] = [];
     const base = library();
@@ -439,7 +558,7 @@ describe('doing something to several notes at once', () => {
     });
     mount(fetchImpl);
 
-    await user.click(await screen.findByRole('button', { name: 'Select' }));
+    await startSelecting(user, 'Roof repair');
     await user.click(screen.getByRole('button', { name: 'Select all' }));
     await user.click(screen.getByRole('button', { name: 'Delete forever' }));
 
@@ -454,7 +573,9 @@ describe('doing something to several notes at once', () => {
     });
     // Every note was archived first, because the server only purges archived notes.
     expect([...archived].sort()).toEqual(TEST_NOTES.map((note) => note.id).sort());
-    expect(await screen.findByRole('button', { name: 'Select' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('toolbar')).toBeNull();
+    });
   });
 
   it('drops the chip of a tag whose last note was deleted forever', async () => {
@@ -464,6 +585,7 @@ describe('doing something to several notes at once', () => {
      * bulkmobile" until a reload — `['tags']` was never invalidated.
      */
     const user = userEvent.setup();
+    setCanHover(true);
     let active: NoteWire[] = TEST_NOTES.map((note) => ({ ...note, tags: ['bulkmobile'] }));
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input));
@@ -487,7 +609,7 @@ describe('doing something to several notes at once', () => {
     mount(fetchImpl);
 
     expect(await screen.findByRole('button', { name: 'bulkmobile' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Select' }));
+    await startSelecting(user, 'Roof repair');
     await user.click(screen.getByRole('button', { name: 'Select all' }));
     await user.click(screen.getByRole('button', { name: 'Delete forever' }));
     await user.type(screen.getByLabelText('Type "delete" to confirm'), 'delete');
@@ -503,9 +625,10 @@ describe('doing something to several notes at once', () => {
 
   it('selects and deselects everything with one control', async () => {
     const user = userEvent.setup();
+    setCanHover(true);
     mount(library());
 
-    await user.click(await screen.findByRole('button', { name: 'Select' }));
+    await startSelecting(user, 'Roof repair');
     await user.click(screen.getByRole('button', { name: 'Select all' }));
     expect(
       await screen.findByText(
@@ -521,6 +644,7 @@ describe('doing something to several notes at once', () => {
 
   it('restores every selected archived note', async () => {
     const user = userEvent.setup();
+    setCanHover(true);
     const restored: string[] = [];
     const base = library();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -534,9 +658,9 @@ describe('doing something to several notes at once', () => {
     });
     mount(fetchImpl, '/?view=archived');
 
-    await user.click(await screen.findByRole('button', { name: 'Select' }));
-    for (const checkbox of await screen.findAllByRole('checkbox')) {
-      await user.click(checkbox);
+    await startSelecting(user, 'Roof repair');
+    for (const checkbox of screen.getAllByRole('checkbox')) {
+      if (!(checkbox as HTMLInputElement).checked) await user.click(checkbox);
     }
     // The active list's action is not offered here.
     expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
@@ -554,6 +678,7 @@ describe('doing something to several notes at once', () => {
     // once. "Select all" plus this is that, using the real batch endpoint —
     // one POST /v1/notes/purge naming every id, not N individual calls.
     const user = userEvent.setup();
+    setCanHover(true);
     let purgeBody: unknown = null;
     const base = library();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -568,7 +693,7 @@ describe('doing something to several notes at once', () => {
     });
     mount(fetchImpl, '/?view=archived');
 
-    await user.click(await screen.findByRole('button', { name: 'Select' }));
+    await startSelecting(user, 'Roof repair');
     await user.click(await screen.findByRole('button', { name: 'Select all' }));
     await user.click(screen.getByRole('button', { name: 'Delete forever' }));
 
@@ -585,13 +710,137 @@ describe('doing something to several notes at once', () => {
 
   it('leaves the plain list untouched when not selecting', async () => {
     // The default path — a real <button> that navigates — must still be what
-    // renders until Select is pressed.
+    // renders until a row is selected; and with no hover there is no checkbox
+    // at all.
     mount(library());
     await screen.findByText(TEST_NOTES[0]?.title ?? '');
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.getAllByRole('button').some((el) => el.className.includes('note-row'))).toBe(
       true,
     );
+  });
+});
+
+/**
+ * Infinite scroll (backlog U3): the next page is asked for as the reader
+ * nears the end of this one, and the day groups run on across pages. The
+ * button survives for the keyboard and the screen reader, hidden until it is
+ * focused; where there is no observer at all it is simply shown.
+ */
+describe('the next page arrives as the list is scrolled', () => {
+  const PAGE_ONE = TEST_NOTES.map((note) => ({ ...note, updated_at: new Date().toISOString() }));
+  const PAGE_TWO: NoteWire[] = [
+    {
+      ...TEST_NOTES[0]!,
+      id: 'older-page',
+      title: 'Older page note',
+      updated_at: new Date(Date.now() - 40 * 86_400_000).toISOString(),
+    },
+  ];
+
+  function pagedLibrary() {
+    const cursors: (string | null)[] = [];
+    const base = library({ active: PAGE_ONE });
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/notes') && (url.searchParams.get('state') ?? 'active') === 'active' && !url.searchParams.has('include')) {
+        const cursor = url.searchParams.get('cursor');
+        cursors.push(cursor);
+        return cursor === 'page-2' ? json({ items: PAGE_TWO }) : json({ items: PAGE_ONE, cursor: 'page-2' });
+      }
+      return base(input, init);
+    });
+    return { fetchImpl, cursors };
+  }
+
+  /** A controllable IntersectionObserver: the test decides when the sentinel is near. */
+  function stubObserver() {
+    const instances: {
+      callback: IntersectionObserverCallback;
+      options?: IntersectionObserverInit | undefined;
+      observed: Element[];
+    }[] = [];
+    class FakeObserver {
+      observed: Element[] = [];
+      constructor(
+        public callback: IntersectionObserverCallback,
+        public options?: IntersectionObserverInit,
+      ) {
+        instances.push(this);
+      }
+      observe(element: Element) {
+        this.observed.push(element);
+      }
+      disconnect() {}
+      unobserve() {}
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    return {
+      instances,
+      near: () => {
+        const live = instances.at(-1);
+        if (!live) throw new Error('nothing is observing');
+        act(() => {
+          live.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            live as unknown as IntersectionObserver,
+          );
+        });
+      },
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetches the next page when the sentinel comes within a viewport, and the groups continue', async () => {
+    const observer = stubObserver();
+    const api = pagedLibrary();
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    // Nothing asked for yet: the sentinel is observed, not yet near.
+    await waitFor(() => {
+      expect(observer.instances.at(-1)?.observed.length).toBe(1);
+    });
+    expect(api.cursors).toEqual([null]);
+    // One viewport of margin below the scroll container.
+    expect(observer.instances.at(-1)?.options?.rootMargin).toBe('0px 0px 100% 0px');
+    // The button is still there for the keyboard, out of sight.
+    const button = screen.getByRole('button', { name: 'Load more' });
+    expect(button).toHaveClass('visually-hidden');
+
+    observer.near();
+
+    expect(await screen.findByRole('button', { name: /older page note/i })).toBeInTheDocument();
+    expect(api.cursors).toEqual([null, 'page-2']);
+    // The new rows file under their own day group beneath today's.
+    const headings = screen.getAllByRole('heading', { level: 2 }).map((el) => el.textContent);
+    expect(headings[0]).toBe('Today');
+    expect(headings.length).toBe(2);
+    // The last page: nothing left to load, so nothing left to press.
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    });
+  });
+
+  it('shows the button outright where there is no observer', async () => {
+    vi.stubGlobal('IntersectionObserver', undefined);
+    const user = userEvent.setup();
+    const api = pagedLibrary();
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    const button = await screen.findByRole('button', { name: 'Load more' });
+    expect(button).not.toHaveClass('visually-hidden');
+    await user.click(button);
+
+    expect(await screen.findByRole('button', { name: /older page note/i })).toBeInTheDocument();
+    expect(api.cursors).toEqual([null, 'page-2']);
   });
 });
 

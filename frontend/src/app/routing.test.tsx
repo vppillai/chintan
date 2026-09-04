@@ -65,7 +65,7 @@ describe('notes first', () => {
   it('lands on the library, with the tab bar beneath it', async () => {
     mount();
     expect(shell()).toHaveAttribute('data-screen', 'library');
-    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Notes/ })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'You' })).not.toHaveAttribute('aria-current');
@@ -78,7 +78,7 @@ describe('notes first', () => {
     mount();
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Notes' })).toBeNull();
-    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Notes/ })).toBeInTheDocument();
   });
 
   it('seats the record button in the tab bar, not floating over content', () => {
@@ -127,7 +127,7 @@ describe('old URLs still land somewhere', () => {
     await waitFor(() => {
       expect(path(router)).toBe('/');
     });
-    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Notes/ })).toBeInTheDocument();
   });
 
   it('sends /archive to the archived view, with the library beneath it for Back', async () => {
@@ -187,7 +187,7 @@ describe('Back always means back', () => {
     await goBack(router);
 
     expect(path(router)).toBe('/');
-    expect(screen.getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^Notes/ })).toBeInTheDocument();
   });
 
   it('leaves the capture screen back to the library', async () => {

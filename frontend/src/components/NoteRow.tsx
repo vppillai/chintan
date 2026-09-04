@@ -4,6 +4,13 @@ import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
+import { useLongPress } from '@/hooks/useLongPress.ts';
+import { HOVER_QUERY, useMediaQuery } from '@/hooks/useMediaQuery.ts';
+
+export interface SelectOptions {
+  /** Shift was held: select the range from the last toggled row to this one. */
+  range: boolean;
+}
 
 export interface NoteRowProps {
   note: NoteWire;
@@ -15,7 +22,7 @@ export interface NoteRowProps {
    */
   selectable?: boolean;
   selected?: boolean;
-  onToggleSelect?: (noteId: string) => void;
+  onToggleSelect?: (noteId: string, options: SelectOptions) => void;
   /**
    * A search hit: the excerpt around the match stands in for the snippet, and
    * the matched term is marked in it. Absent on the plain library.
@@ -33,6 +40,13 @@ export interface NoteRowProps {
  * of the note, then a meta line: the purge countdown for an archived note, the
  * tags, and — when the payload carries them — how many recordings are behind
  * it and how long they run.
+ *
+ * Two ways into selection, one per kind of pointer (backlog U2). A finger
+ * presses and holds the row; a mouse gets a checkbox that slides in at the
+ * row's left edge on hover (and on focus, for the keyboard), and Shift-click
+ * on it selects the range since the last one. The "Select" button that sat in
+ * the header is gone: it was a desktop idiom on a phone screen, and on the
+ * desktop it was a second step before the first click.
  */
 export function NoteRow({
   note,
@@ -43,6 +57,14 @@ export function NoteRow({
   highlight,
 }: NoteRowProps) {
   const navigate = useNavigate();
+  const canHover = useMediaQuery(HOVER_QUERY);
+  const longPress = useLongPress(
+    onToggleSelect && !selectable
+      ? () => {
+          onToggleSelect(note.id, { range: false });
+        }
+      : null,
+  );
   const tags = note.tags ?? [];
   const time = formatRowTime(note.updated_at);
   const recordings = describeRecordings(note);
@@ -89,7 +111,20 @@ export function NoteRow({
 
   if (selectable) {
     return (
-      <label className="note-row note-row--selectable">
+      <label
+        className="note-row note-row--selectable"
+        data-selected={selected || undefined}
+        onClick={(event) => {
+          /*
+           * The finger lifting after the long press that started this mode
+           * lands its click here — the row was a button when the press began
+           * and is this label by the time the click arrives — and a label's
+           * click toggles its checkbox, which would deselect the row that was
+           * just selected. The hook survives the swap, so it knows.
+           */
+          if (longPress.consumeClick()) event.preventDefault();
+        }}
+      >
         {/*
           A 24 px box inside a 44 px one: the control itself meets the WCAG
           2.5.8 minimum (it was 20 px), and the wrapper is the thumb's target.
@@ -100,8 +135,12 @@ export function NoteRow({
             type="checkbox"
             className="note-row__checkbox"
             checked={selected}
+            onClick={(event) => {
+              // `onChange` carries no modifier keys; the click does.
+              onToggleSelect?.(note.id, { range: event.shiftKey });
+            }}
             onChange={() => {
-              onToggleSelect?.(note.id);
+              /* Handled on click, above, where Shift is known. */
             }}
           />
         </span>
@@ -111,15 +150,42 @@ export function NoteRow({
   }
 
   return (
-    <button
-      type="button"
-      className="note-row"
-      onClick={() => {
-        void navigate(ROUTES.note(note.id));
-      }}
-    >
-      {body}
-    </button>
+    <div className="note-row-wrap">
+      <button
+        type="button"
+        className="note-row"
+        onClick={() => {
+          // The click that follows a long press is the finger lifting, not a tap.
+          if (longPress.consumeClick()) return;
+          void navigate(ROUTES.note(note.id));
+        }}
+        {...longPress.handlers}
+      >
+        {body}
+      </button>
+
+      {/*
+        After the row in the DOM so Tab reaches it from the row it selects, and
+        the row's focus is what reveals it (`:focus-within` on the wrap). Drawn
+        only for a pointer that can hover; a finger has the long press.
+      */}
+      {canHover && onToggleSelect && (
+        <span className="note-row__hover-check">
+          <input
+            type="checkbox"
+            className="note-row__checkbox"
+            checked={false}
+            aria-label={`Select ${note.title}`}
+            onClick={(event) => {
+              onToggleSelect(note.id, { range: event.shiftKey });
+            }}
+            onChange={() => {
+              /* Handled on click, above, where Shift is known. */
+            }}
+          />
+        </span>
+      )}
+    </div>
   );
 }
 

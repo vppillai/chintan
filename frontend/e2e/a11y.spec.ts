@@ -74,7 +74,9 @@ for (const route of ROUTES) {
  */
 test('selection checkboxes and the playback slider are at least 24 px', async ({ page, api }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Select' }).click();
+  await page.getByRole('button', { name: /roof repair/i }).hover();
+  await page.getByRole('checkbox', { name: /^Select roof repair/i }).click();
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
   const box = page.getByRole('checkbox').first();
   const checkbox = await box.boundingBox();
   expect(checkbox?.width ?? 0).toBeGreaterThanOrEqual(24);

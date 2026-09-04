@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+
 import { expect, test } from './fixtures.ts';
 
 /**
@@ -100,16 +102,34 @@ test('delete forever is gated by typing the title, and cascades', async ({ page,
 });
 
 /**
- * Bulk select, the same control in both views: Archive from the library,
- * Restore from the archive, Delete forever in either behind a typed word.
+ * Bulk select, the same bar in both views: Archive from the library, Restore
+ * from the archive, Delete forever in either behind a typed word.
+ *
+ * There is no Select button. With a mouse, resting on a row reveals a
+ * checkbox at its left edge and clicking that starts the selection; on a
+ * phone a long press does (the last test here). The bar sits above the tab
+ * bar rather than at the end of the list (backlog U2, Q6).
  */
+async function startSelecting(page: Page, title: RegExp): Promise<void> {
+  await page.getByRole('button', { name: title }).hover();
+  await page.getByRole('checkbox', { name: new RegExp(`^Select ${title.source}`, 'i') }).click();
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
+}
+
 test('several notes can be archived at once from the library', async ({ page, api }) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Select' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Select' }).click();
+  await startSelecting(page, /roof repair/i);
+  await expect(page.getByText('1 selected')).toBeVisible();
   await page.getByRole('button', { name: 'Select all' }).click();
   await expect(page.getByText('2 selected')).toBeVisible();
+
+  // The bar is directly above the tab bar, not at the end of the list.
+  const bar = await page.locator('.selection-bar').boundingBox();
+  const tabs = await page.locator('.tab-bar').boundingBox();
+  expect(bar!.y + bar!.height).toBeLessThanOrEqual(tabs!.y + 1);
 
   await page.getByRole('toolbar', { name: 'Bulk actions' }).getByRole('button', { name: 'Archive' }).click();
   await page.getByRole('button', { name: 'Archive them' }).click();
@@ -128,7 +148,7 @@ test('the archive can be emptied: select all, delete forever, type the word', as
   await page.goto('/?view=archived');
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Select' }).click();
+  await startSelecting(page, /old fence/i);
   await page.getByRole('button', { name: 'Select all' }).click();
   await page.getByRole('button', { name: 'Delete forever' }).click();
 
@@ -156,4 +176,34 @@ test('escape closes the delete dialog without deleting anything', async ({ page,
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(api.purged).toEqual([]);
   expect(api.notes['old-fence']).toBeDefined();
+});
+
+test('on a phone, a long press on a row starts the selection', async ({ page }) => {
+  await page.setViewportSize({ width: 412, height: 915 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /reading list/i })).toBeVisible();
+  // By class and text rather than role: the row is a button until the press
+  // fires and a labelled checkbox afterwards, and the finger is still on it.
+  const row = page.locator('.note-row', { hasText: 'Reading list' });
+
+  // A finger, held: pointer events with a touch pointer type, no click until
+  // it lifts. `page.touchscreen` can only tap, so the gesture is dispatched.
+  await row.dispatchEvent('pointerdown', {
+    pointerType: 'touch',
+    clientX: 40,
+    clientY: 40,
+    isPrimary: true,
+    bubbles: true,
+  });
+  await page.waitForTimeout(650);
+  await row.dispatchEvent('pointerup', { pointerType: 'touch', bubbles: true });
+  await row.dispatchEvent('click', { bubbles: true });
+
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
+  await expect(page.getByText('1 selected')).toBeVisible();
+  // The press selected the row; it did not open the note.
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toHaveCount(0);
 });

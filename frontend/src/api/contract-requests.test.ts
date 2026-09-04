@@ -148,6 +148,7 @@ describe('the requests the frontend actually sends', () => {
     await call('archiveNote', () => api.archiveNote(NOTE_ID));
     await call('restoreNote', () => api.restoreNote(ARCHIVED_NOTE_ID));
     await call('deleteNoteForever', () => api.deleteNoteForever(ARCHIVED_NOTE_ID));
+    await call('recordingUrls', () => api.recordingUrls(NOTE_ID));
     await call('listTags', () => api.listTags());
 
     /* ---- search ------------------------------------------------------- */
@@ -185,6 +186,8 @@ describe('the requests the frontend actually sends', () => {
       api.setCaptureTarget(CAPTURE_ID, { new_note_title: 'A brand new note' }),
     );
     await call('retryCapture', () => api.retryCapture(CAPTURE_ID));
+    await call('moveCapture', () => api.moveCapture(CAPTURE_ID, { note_id: NOTE_ID }));
+    await call('deleteCapture', () => api.deleteCapture(CAPTURE_ID));
     // Every artifact kind, because `kind` is a query enum the backend parses.
     for (const kind of ['audio', 'raw', 'clean', 'segments', 'peaks'] as const) {
       await call(`downloadUrl_${kind}`, () => api.downloadUrl(CAPTURE_ID, kind));

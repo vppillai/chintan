@@ -236,6 +236,12 @@
   padding-block-end: calc(var(--layout-bottom-bar-height) + var(--safe-bottom));
 }
 
+/* While selecting, the selection bar is what sits above the tab bar, and it
+   carries its own bottom padding; the screen's would only float it. */
+.library[data-selecting] {
+  padding-block-end: 0;
+}
+
 .screen__header {
   display: flex;
   flex-wrap: wrap;
@@ -248,6 +254,53 @@
 .screen__header--detail {
   align-items: center;
   justify-content: flex-start;
+}
+
+/*
+ * The library's heading: "NOTES · 12" as a small-caps line, the day beneath
+ * it in the notes' serif. The wordmark lives in the banner; the screen says
+ * where — or rather when — you are.
+ */
+.library-header {
+  padding-block-end: var(--space-3);
+}
+
+.library-heading {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+}
+
+.library-heading__eyebrow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+/* The count is a numeral, so it takes the serif figures and none of the
+   caps treatment; right-aligned by the eyebrow's `space-between`. */
+.library-heading__count {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: var(--letter-spacing-normal);
+  text-transform: none;
+  color: var(--color-muted);
+}
+
+.library-heading__date {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-tight);
+  color: var(--color-ink);
 }
 
 .screen__count,
@@ -291,18 +344,6 @@
 .screen__action[disabled] {
   color: var(--color-faint);
   cursor: default;
-}
-
-.bulk-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  margin-block-start: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  background-color: var(--color-raised);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
 }
 
 .icon-button {
@@ -358,6 +399,57 @@
   transform: scale(0.995);
 }
 
+/*
+ * The row and, for a pointer that can hover, its checkbox. The checkbox sits
+ * at the row's left edge and is drawn only while the pointer rests on the row
+ * or focus is inside it; the row's text slides right to make room. On a
+ * device that cannot hover the checkbox is not rendered at all (`NoteRow`),
+ * and the long press is the way in.
+ */
+.note-row-wrap {
+  position: relative;
+}
+
+.note-row__hover-check {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-start: var(--space-2);
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  visibility: hidden;
+  opacity: 0;
+  transform: translateX(calc(-1 * var(--space-2)));
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard),
+    visibility 0s linear var(--motion-duration-fast);
+}
+
+@media (hover: hover) {
+  .note-row-wrap:hover .note-row__hover-check,
+  .note-row-wrap:focus-within .note-row__hover-check {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+    transition-delay: 0s;
+  }
+
+  .note-row-wrap:hover > .note-row,
+  .note-row-wrap:focus-within > .note-row {
+    padding-inline-start: calc(var(--space-4) + var(--layout-touch-target-min));
+  }
+
+  .note-row-wrap > .note-row {
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-standard),
+      border-color var(--motion-duration-fast) var(--motion-ease-standard),
+      padding var(--motion-duration-fast) var(--motion-ease-standard),
+      transform var(--motion-duration-fast) var(--motion-ease-standard);
+  }
+}
+
 /* A `<label>` wrapping a checkbox, standing in for the row's plain `<button>`
    while bulk-select is active — see NoteRow's own doc comment. */
 .note-row--selectable {
@@ -384,6 +476,11 @@
   block-size: 1.5rem;
   margin: 0;
   accent-color: var(--color-ink);
+}
+
+.note-row--selectable[data-selected] {
+  border-color: var(--color-line-strong);
+  background-color: var(--color-surface);
 }
 
 .note-row__body {
@@ -1732,6 +1829,24 @@
   color: var(--color-ink);
 }
 
+/* The observer's target: nothing to see, one line after the last row. */
+.load-more-sentinel {
+  block-size: 0;
+}
+
+/* Where the observer does the loading, the button is for the keyboard and
+   the screen reader alone: hidden until it is focused, then a real button. */
+.load-more.visually-hidden:focus-visible {
+  position: static;
+  inline-size: 100%;
+  block-size: auto;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-2) var(--space-4);
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+}
+
 /* --------------------------------------------------------------------------
    Settings
    -------------------------------------------------------------------------- */
@@ -2308,14 +2423,16 @@
 
 /*
  * When · how it was filed · duration, as one button that opens the row.
- * Three columns so the duration stays flush right whatever the middle says;
- * the middle column may shrink and wrap, the other two never do.
+ * A wrapping line: the duration is pushed to the right while everything fits
+ * and drops to a second line when it does not — on a 320 px phone the row's
+ * play and More controls leave it 160 px, and a three-column grid overflowed
+ * the note screen sideways by twenty pixels.
  */
 .recording__summary {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-3);
+  column-gap: var(--space-3);
   flex: 1 1 auto;
   min-inline-size: 0;
   min-block-size: var(--layout-touch-target-min);
@@ -2347,8 +2464,9 @@
   font-weight: var(--font-weight-medium);
 }
 
-/* Serif tabular numerals, like every duration in the app. */
+/* Serif tabular numerals, like every duration in the app; flush right. */
 .recording__duration {
+  margin-inline-start: auto;
   font-size: var(--font-size-sm);
   color: var(--color-faint);
   white-space: nowrap;
@@ -2376,6 +2494,269 @@
   padding-block: 0;
 }
 
+/* A row while recordings are being selected: the checkbox and its label
+   stand where the play and disclosure controls were, the same height, so the
+   list does not reflow when the mode changes. */
+.recording__select {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  cursor: pointer;
+}
+
+.recording__check {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+}
+
+.recording__checkbox {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  margin: 0;
+  accent-color: var(--color-ink);
+}
+
+.recording__summary--static {
+  flex: 1 1 auto;
+}
+
+.recording[data-selected] {
+  border-color: var(--color-line-strong);
+  background-color: var(--color-surface);
+}
+
+/* What the last action did, beneath the rows: "Recording moved to “Roof
+   repair” · Open Roof repair", or why it did not. */
+.recordings__notice {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.recordings__notice[data-tone='error'] {
+  color: var(--color-ink);
+}
+
+.recordings__notice-link {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-1);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* --------------------------------------------------------------------------
+   Overflow menu — the "More" control on a row
+   -------------------------------------------------------------------------- */
+
+.overflow {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.overflow__trigger {
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+  color: var(--color-muted);
+}
+
+.overflow__trigger:hover,
+.overflow__trigger[aria-expanded='true'] {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+}
+
+/* Under the trigger, right edges aligned, on the sheet layer so it sits over
+   the rows beneath it but under any dialog. Clipped by the scroll container
+   like everything else in the note. */
+.overflow-menu {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-start: calc(100% + var(--space-1));
+  z-index: var(--z-sheet);
+  display: grid;
+  min-inline-size: 12rem;
+  padding: var(--space-1);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.overflow-menu__item {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  text-align: start;
+  white-space: nowrap;
+}
+
+.overflow-menu__item:hover,
+.overflow-menu__item:focus-visible {
+  background-color: var(--color-surface);
+}
+
+.overflow-menu__item[data-destructive] {
+  color: var(--color-accent-strong);
+}
+
+.overflow-menu__item[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   Selection bar — N selected · Select all · actions · Cancel
+   -------------------------------------------------------------------------- */
+
+/*
+ * Sticky to the foot of the scrolling region, exactly as `.note-bar-anchor`
+ * is: the tab bar owns the viewport's bottom row, so this rests on top of it
+ * rather than over it, and the scroll container clips it. The bar used to be a
+ * card at the end of the list — six thousand pixels down on a phone (QA Q6).
+ */
+.selection-bar {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--z-content);
+  display: grid;
+  gap: var(--space-2);
+  margin-block-start: var(--space-6);
+  padding-block: var(--space-3) var(--space-4);
+  background-color: var(--color-ground);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.selection-bar__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.selection-bar__count {
+  flex: 1 0 auto;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.selection-bar__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.selection-bar__action[disabled] {
+  color: var(--color-faint);
+  border-color: var(--color-line);
+  cursor: default;
+}
+
+.selection-bar__action--destructive {
+  border-color: var(--color-accent);
+  color: var(--color-accent-strong);
+}
+
+.selection-bar__action--destructive[disabled] {
+  border-color: var(--color-line);
+  color: var(--color-faint);
+}
+
+.selection-bar__status {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Move sheet — which note should these recordings go into?
+   -------------------------------------------------------------------------- */
+
+.move-sheet {
+  inline-size: min(28rem, 100%);
+}
+
+.move-sheet__search {
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-ground);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  color: var(--color-ink);
+}
+
+.move-sheet__list {
+  display: grid;
+  gap: var(--space-1);
+  max-block-size: 40dvh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.move-sheet__option {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  border-radius: var(--radius-md);
+  color: var(--color-ink);
+}
+
+.move-sheet__option:hover,
+.move-sheet__option:focus-visible {
+  background-color: var(--color-surface);
+}
+
+.move-sheet__option[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.move-sheet__option-title {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.move-sheet__option-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
+
+.move-sheet__more {
+  justify-self: start;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-decoration: underline;
+}
+
 /* --------------------------------------------------------------------------
    Action bar — Tags · Share · Archive · Record into this
    -------------------------------------------------------------------------- */
@@ -2396,6 +2777,12 @@
   padding-block: var(--space-3) var(--space-4);
   background-color: var(--color-ground);
   border-block-start: 1px solid var(--color-line);
+}
+
+/* `display: grid` above outranks the UA's `[hidden]`, so stepping aside for
+   the recordings' selection bar has to be said here as well. */
+.note-bar-anchor[hidden] {
+  display: none;
 }
 
 .note-panel {
@@ -2449,6 +2836,12 @@
 
 .note-bar__action--destructive {
   border-color: var(--color-accent);
+}
+
+/* The drawn plus before "Record into this": the same stroke as every other
+   glyph, where a text "＋" was a different weight in every font. */
+.note-bar__icon {
+  margin-inline-end: var(--space-1);
 }
 
 /* --------------------------------------------------------------------------
