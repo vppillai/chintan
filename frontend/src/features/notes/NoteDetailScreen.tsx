@@ -1,10 +1,13 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { useNote } from '@/api/queries.ts';
+import { queryKeys, useNote } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
+import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
@@ -39,6 +42,14 @@ export function NoteDetailScreen() {
   const note = served ?? cached.data ?? undefined;
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
+
+  // Pull down at the top to re-read this note — the one thing on this screen
+  // that another device, or the pipeline appending a recording, can change.
+  const queryClient = useQueryClient();
+  const refresh = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: queryKeys.note(id ?? '') }),
+    [queryClient, id],
+  );
 
   // Paused means offline, not slow: TanStack never runs the query at all, so
   // waiting for it would be waiting forever.
@@ -81,6 +92,8 @@ export function NoteDetailScreen() {
 
   return (
     <div className="screen note-screen">
+      <PullToRefresh onRefresh={refresh} />
+
       <header className="screen__header screen__header--detail">
         <BackLink />
       </header>

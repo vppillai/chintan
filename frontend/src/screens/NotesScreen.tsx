@@ -1,7 +1,9 @@
-import { useId, useMemo, useState, type ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useCallback, useId, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
 import {
+  queryKeys,
   useBulkArchiveNotes,
   useBulkDeleteNotes,
   useBulkPurgeNotes,
@@ -17,6 +19,7 @@ import { ARCHIVED_VIEW } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { NoteRow } from '@/components/NoteRow.tsx';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
+import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { groupByDay } from '@/features/notes/groups.ts';
@@ -50,6 +53,23 @@ export function NotesScreen() {
   const inputId = useId();
   const listId = useId();
   const online = useOnline();
+  const queryClient = useQueryClient();
+
+  /*
+   * Pull down at the top to ask again. Everything the library shows is
+   * invalidated — the lists, the tag chips, the filing rows — because the
+   * gesture means "is this current?", not "reload one query". The promise
+   * settles when the refetches do, which is when the indicator lets go.
+   */
+  const refresh = useCallback(
+    () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['notes'] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.tags() }),
+        queryClient.invalidateQueries({ queryKey: ['captures'] }),
+      ]),
+    [queryClient],
+  );
 
   /*
    * Filters are *replaced* in the URL, not pushed. Typing must not turn Back
@@ -196,6 +216,8 @@ export function NotesScreen() {
 
   return (
     <div className="screen library">
+      <PullToRefresh onRefresh={refresh} />
+
       <header className="screen__header">
         <h1>Notes</h1>
         {visible.length > 0 && (

@@ -188,6 +188,44 @@
 }
 
 /*
+ * Pull-to-refresh indicator: a zero-height row at the top of a screen that
+ * grows with the pull. `--pull-offset` is written on the element by the hook
+ * during the drag, so there is no transition then — the finger is the
+ * animation; the snap back to zero, and the settle to the threshold while
+ * refreshing, do transition (and collapse to nothing under reduced motion,
+ * like every other motion token).
+ */
+.pull-refresh {
+  display: grid;
+  place-items: center;
+  block-size: var(--pull-offset, 0px);
+  overflow: hidden;
+  font-family: var(--font-serif);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.pull-refresh[data-phase='idle'],
+.pull-refresh[data-phase='refreshing'] {
+  transition: block-size var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.pull-refresh__label {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.pull-refresh[data-phase='armed'] .pull-refresh__label,
+.pull-refresh[data-phase='refreshing'] .pull-refresh__label {
+  opacity: 1;
+}
+
+.pull-refresh[data-phase='pulling'] .pull-refresh__label {
+  opacity: 0.6;
+}
+
+/*
  * The library's list ends a full bar's height above the bottom of its scroll
  * container, safe area included. The tab bar is a grid row in normal flow and
  * cannot overlay a row — but the last row used to stop 32px from the edge,
