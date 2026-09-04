@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/routing"
 )
@@ -71,7 +72,7 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 			obs.Count(ctx, "RouterContentDiscarded", map[string]string{"Reason": "empty_content"})
 			decision.Content = transcript
 		}
-	case !contentDerivedFrom(decision.Content, transcript):
+	case !llm.VerifySubsequence(decision.Content, transcript):
 		// Counts only: note text does not belong in logs.
 		obs.Log(ctx).Warn("discarded router content that was not taken from the dictation",
 			slog.Int("returned_words", len(comparableWords(decision.Content))),
@@ -80,25 +81,6 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		decision.Content = transcript
 	}
 	return decision, nil
-}
-
-// contentDerivedFrom reports whether every word of content appears, in order, in
-// transcript — that is, whether content is the transcript with words deleted.
-func contentDerivedFrom(content, transcript string) bool {
-	contentWords := comparableWords(content)
-	if len(contentWords) == 0 {
-		return false
-	}
-
-	i := 0
-	for _, word := range comparableWords(transcript) {
-		if word == contentWords[i] {
-			if i++; i == len(contentWords) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // comparableWords reduces text to lowercase alphanumeric words, so that punctuation
@@ -129,9 +111,9 @@ func sanitizeTitle(title string) string {
 // reports whether the model supplied a content field at all, which distinguishes "there
 // was nothing to write" from a reply that ignored the format.
 func parseRouteDecision(raw string) (RouteDecision, bool, error) {
-	jsonText, err := extractJSONObject(raw)
+	jsonText, err := llm.ExtractJSONObject(raw)
 	if err != nil {
-		return RouteDecision{}, false, err
+		return RouteDecision{}, false, fmt.Errorf("provider: router %w", err)
 	}
 
 	var parsed struct {
@@ -174,16 +156,6 @@ func parseRouteDecision(raw string) (RouteDecision, bool, error) {
 	decision.Content = strings.TrimSpace(decision.Content)
 	decision.Title = sanitizeTitle(decision.Title)
 	return decision, parsed.Content != nil, nil
-}
-
-// extractJSONObject returns the outermost {...} span, ignoring fences and prose.
-func extractJSONObject(raw string) (string, error) {
-	start := strings.Index(raw, "{")
-	end := strings.LastIndex(raw, "}")
-	if start < 0 || end <= start {
-		return "", fmt.Errorf("provider: router response contained no JSON object")
-	}
-	return raw[start : end+1], nil
 }
 
 func containsNoteID(candidates []routing.Candidate, noteID string) bool {
