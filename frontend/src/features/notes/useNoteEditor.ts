@@ -16,6 +16,8 @@ import {
 import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
 
 import {
+  APPEND_WAIT_DEFAULT_MS,
+  APPEND_WAIT_LIMIT,
   applyEdit,
   AUTOSAVE_DELAY_MS,
   editorReducer,
@@ -132,6 +134,12 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    * a row is shown as the conflict it then must be, rather than looped on.
    */
   const rebased = useRef(false);
+  /**
+   * How many times the save on the wire has been put off for a recording
+   * being filed into the note (`isAppendInProgress`). Reset by a save that
+   * lands, so the limit is per save, not per note.
+   */
+  const appendWaits = useRef(0);
   /**
    * A stable handle on the current `save`, so the unmount flush below can stay
    * a mount-only effect and the in-flight re-save can call the guarded entry
@@ -256,6 +264,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         draft: attempted,
       });
       rebased.current = false;
+      appendWaits.current = 0;
     } catch (error) {
       /*
        * Offline is not a failure to report — it is a write to make somewhere
@@ -293,7 +302,35 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         }
       }
 
+      /*
+       * A 409 for an append in progress is a wait, not a conflict. The worker
+       * is between writing the dictated paragraph into the body and
+       * refreshing the note's row, and the server refuses body writes until
+       * both have landed — the window in which a save used to slip through
+       * both checks and carry the paragraph away. The same PATCH is sent again
+       * after the server's `Retry-After`; the rebase below is deliberately
+       * not run, because it would carry the draft onto the pre-append version
+       * and re-save straight into that window. Once the paragraph is in the
+       * body, the ordinary conflict prompt is the right outcome, and the limit
+       * makes sure it is reached.
+       */
+      if (
+        error instanceof ApiError &&
+        error.isAppendInProgress &&
+        appendWaits.current < APPEND_WAIT_LIMIT
+      ) {
+        appendWaits.current += 1;
+        commit({ type: 'saveDeferred' });
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          void saveRef.current();
+        }, error.retryAfterMs ?? APPEND_WAIT_DEFAULT_MS);
+        return;
+      }
+
       if (error instanceof ApiError && error.isConflict) {
+        appendWaits.current = 0;
         const theirs = await api.getNote(note.id).catch(() => null);
         /*
          * Not every 409 is a conflict. A clean request bumps the note's

@@ -25,6 +25,13 @@ export interface ProblemWire {
   correlation_id?: string;
   /** Present on 409 so the client can reconcile an optimistic-concurrency loss. */
   current_version?: number;
+  /**
+   * Why a 409 was answered, when the version alone does not say. The one
+   * value today is `append_in_progress`: a recording is being filed into the
+   * note this moment, the same write will be accepted in a second or two, and
+   * the response's `Retry-After` says how long to wait.
+   */
+  reason?: string;
 }
 
 /* ---------------------------------------------------------------------------

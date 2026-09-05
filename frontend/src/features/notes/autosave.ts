@@ -77,6 +77,13 @@ export type EditorEvent =
   /** Written to the device's queue instead of to the server. */
   | { type: 'saveQueued'; draft: NoteDraft }
   | { type: 'saveError'; message: string }
+  /**
+   * The server refused the write for a moment, not for a reason: a recording
+   * is being filed into the note and the same PATCH will be accepted once it
+   * has landed. The draft goes back to dirty and the save is re-scheduled;
+   * nothing is shown as failed, and nothing is offered as a choice.
+   */
+  | { type: 'saveDeferred' }
   | { type: 'conflict'; theirs: NoteDraft; version: number; message: string }
   /** Discard my edit and take the server's copy. */
   | { type: 'takeTheirs' }
@@ -213,6 +220,10 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
     case 'saveError':
       return { ...model, state: 'error', error: event.message };
 
+    case 'saveDeferred':
+      if (model.state !== 'saving') return model;
+      return { ...model, state: 'dirty', error: null };
+
     case 'conflict':
       // The edit is NOT discarded and NOT forced through. Both copies are held
       // until the user chooses.
@@ -339,3 +350,20 @@ export const SAVE_LABELS: Record<SaveState, string> = {
 
 /** Debounce for the autosave. Long enough to not save mid-word. */
 export const AUTOSAVE_DELAY_MS = 1_200;
+
+/**
+ * How long to wait before saving again when the server says a recording is
+ * being filed into the note (`append_in_progress`) and names no `Retry-After`
+ * of its own. The worker's append is one body write and one row refresh —
+ * well under a second — so two is generous.
+ */
+export const APPEND_WAIT_DEFAULT_MS = 2_000;
+
+/**
+ * How many times one save is put off for an append before it is treated as
+ * the conflict it would otherwise have been. An append that is still "in
+ * progress" after ten waits is a stamp the worker left behind, and the user
+ * is better served by the ordinary prompt than by an indicator that says
+ * "Unsaved changes" forever.
+ */
+export const APPEND_WAIT_LIMIT = 10;

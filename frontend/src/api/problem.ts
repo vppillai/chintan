@@ -41,6 +41,8 @@ export interface ApiErrorInit {
   instance?: string | undefined;
   correlationId?: string | undefined;
   currentVersion?: number | undefined;
+  reason?: string | undefined;
+  retryAfterMs?: number | undefined;
   cause?: unknown;
 }
 
@@ -61,6 +63,10 @@ export class ApiError extends Error {
   readonly correlationId: string | undefined;
   /** Present on 409 so an optimistic-concurrency loser can reconcile. */
   readonly currentVersion: number | undefined;
+  /** The problem's `reason`, where a status alone does not say what to do. */
+  readonly reason: string | undefined;
+  /** The response's `Retry-After`, as a delay, when the server named one. */
+  readonly retryAfterMs: number | undefined;
 
   constructor(init: ApiErrorInit) {
     super(init.detail ?? init.title, init.cause ? { cause: init.cause } : undefined);
@@ -73,6 +79,8 @@ export class ApiError extends Error {
     this.instance = init.instance;
     this.correlationId = init.correlationId;
     this.currentVersion = init.currentVersion;
+    this.reason = init.reason;
+    this.retryAfterMs = init.retryAfterMs;
   }
 
   /**
@@ -122,6 +130,16 @@ export class ApiError extends Error {
 
   get isNotFound(): boolean {
     return this.status === 404;
+  }
+
+  /**
+   * A 409 that is not a conflict: a recording is being filed into the note
+   * at this moment, and the server refuses every body write until it has
+   * landed. The words have not diverged — the same PATCH is accepted once the
+   * append is through — so this is a wait, never a decision for the user.
+   */
+  get isAppendInProgress(): boolean {
+    return this.status === 409 && this.reason === 'append_in_progress';
   }
 
   /**
@@ -202,7 +220,19 @@ export async function problemFromResponse(response: Response): Promise<ApiError>
     instance: problem?.instance,
     correlationId: problem?.correlation_id ?? correlationId,
     currentVersion: problem?.current_version,
+    reason: problem?.reason,
+    retryAfterMs: retryAfterMs(response) ?? undefined,
   });
+}
+
+/** `Retry-After` in seconds or as an HTTP date, if the server sent one. */
+export function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get('retry-after');
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const date = Date.parse(header);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
 }
 
 export function networkError(cause: unknown): ApiError {

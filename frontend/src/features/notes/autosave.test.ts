@@ -96,6 +96,21 @@ describe('saving', () => {
     // The edit is still in the draft, so a retry sends it.
     expect(failed.draft.body).toBe('new');
   });
+
+  it('puts a save that was put off for a recording back to dirty, with nothing failed', () => {
+    // The server refused the write only until the append it is filing has
+    // landed; the draft is still owed, and is neither an error nor a choice.
+    const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'new' } });
+    const saving = editorReducer(dirty, { type: 'saveStart' });
+    const deferred = editorReducer(saving, { type: 'saveDeferred' });
+
+    expect(deferred.state).toBe('dirty');
+    expect(deferred.error).toBeNull();
+    expect(deferred.draft.body).toBe('new');
+    expect(deferred.version).toBe(3);
+    // Only a save on the wire can be put off.
+    expect(editorReducer(dirty, { type: 'saveDeferred' })).toBe(dirty);
+  });
 });
 
 describe('the version moving without the text', () => {
