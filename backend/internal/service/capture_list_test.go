@@ -14,7 +14,9 @@ import (
 )
 
 // captureFixture writes capture rows straight to the store, which is how a test
-// reaches a pipeline state the API alone cannot produce.
+// reaches a pipeline state the API alone cannot produce. Every note a capture
+// names gets a row too: a filed capture whose note is gone is dropped from the
+// list on purpose, and a test about something else must not trip over that.
 func captureFixture(t *testing.T, captures ...model.CaptureIndex) (*memory.Store, *CaptureService) {
 	t.Helper()
 	store := memory.NewStore()
@@ -22,6 +24,14 @@ func captureFixture(t *testing.T, captures ...model.CaptureIndex) (*memory.Store
 	for _, c := range captures {
 		if _, err := store.PutCapture(ctx, c); err != nil {
 			t.Fatalf("PutCapture(%s): %v", c.ID, err)
+		}
+		if c.NoteID == "" {
+			continue
+		}
+		if _, err := store.GetNote(ctx, c.UserID, c.NoteID); errors.Is(err, repository.ErrNotFound) {
+			if _, err := store.PutNote(ctx, c.UserID, model.NoteIndex{ID: c.NoteID, Title: "Note " + c.NoteID}); err != nil {
+				t.Fatalf("PutNote(%s): %v", c.NoteID, err)
+			}
 		}
 	}
 	return store, NewCaptureService(store, memory.NewObjects())
@@ -279,8 +289,9 @@ func TestTheCaptureWalkFallbackAlsoFindsAnUnroutedCapture(t *testing.T) {
 		model.CaptureIndex{ID: "c_orphan", UserID: "user1", NoteID: "", Status: model.StatusNeedsTarget, CreatedAt: "2026-08-08T11:00:00.000000000Z"},
 	)
 	ctx := context.Background()
-	if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Roof"}); err != nil {
-		t.Fatalf("PutNote: %v", err)
+	// The fixture gave n1 its row, which is what the walk lists through.
+	if ok, _ := store.NoteExists(ctx, "user1", "n1"); !ok {
+		t.Fatal("fixture: n1 has no row")
 	}
 
 	page, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
@@ -418,4 +429,74 @@ type captureListErrStore struct {
 
 func (s captureListErrStore) ListCaptures(context.Context, string, repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 	return repository.Page[model.CaptureIndex]{}, s.err
+}
+
+// TestListCapturesDropsAReceiptForANoteThatIsGone is what the owner saw on
+// 2026-09-05: every note deleted, the count at zero, and three "Filed · Open
+// the note" cards for captures whose notes no longer had a row. A filed
+// capture is a receipt for its note; without the note it is noise. The
+// statuses that have no note by definition are kept, whatever note_id says.
+func TestListCapturesDropsAReceiptForANoteThatIsGone(t *testing.T) {
+	store, svc := captureFixture(t,
+		model.CaptureIndex{ID: "c_00000000000000010_kept", UserID: "user1", NoteID: "n_live", Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_00000000000000020_gone", UserID: "user1", NoteID: "n_gone", Status: model.StatusAppended, CreatedAt: "2026-08-08T11:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_00000000000000030_empty", UserID: "user1", NoteID: "n_gone", Status: model.StatusNoContent, CreatedAt: "2026-08-08T12:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_00000000000000040_failed", UserID: "user1", NoteID: "n_gone", Status: model.StatusFailed, CreatedAt: "2026-08-08T13:00:00.000000000Z"},
+		model.CaptureIndex{ID: "c_00000000000000050_asking", UserID: "user1", NoteID: "", Status: model.StatusNeedsTarget, CreatedAt: "2026-08-08T14:00:00.000000000Z"},
+	)
+	ctx := context.Background()
+	if err := store.DeleteNote(ctx, "user1", "n_gone"); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+
+	page, err := svc.ListCaptures(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCaptures: %v", err)
+	}
+	want := []string{"c_00000000000000050_asking", "c_00000000000000040_failed", "c_00000000000000030_empty", "c_00000000000000010_kept"}
+	if got := captureIDs(page); !slices.Equal(got, want) {
+		t.Fatalf("captures = %v, want %v (the filed capture of the deleted note dropped, nothing else)", got, want)
+	}
+
+	// The drop happens before the page is counted full, so a page asked for
+	// one capture is not answered with nothing and a cursor.
+	one, err := svc.ListCaptures(ctx, "user1", CaptureFilterAll, repository.ListOptions{Limit: 1})
+	if err != nil {
+		t.Fatalf("ListCaptures(limit 1): %v", err)
+	}
+	if got := captureIDs(one); len(got) != 1 {
+		t.Fatalf("captures = %v, want one", got)
+	}
+
+	// The walk cannot reach a capture of a note with no row in the first
+	// place: it lists captures through their notes.
+	walked, err := svc.listCapturesByWalk(ctx, "user1", CaptureFilterAll, repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("listCapturesByWalk: %v", err)
+	}
+	if got := captureIDs(walked); slices.Contains(got, "c_00000000000000020_gone") {
+		t.Fatalf("walked captures = %v, must not include the filed capture of the deleted note", got)
+	}
+}
+
+// noteExistsErrStore fails the note lookup the list makes for a receipt.
+type noteExistsErrStore struct {
+	repository.Store
+	err error
+}
+
+func (s noteExistsErrStore) NoteExists(context.Context, string, string) (bool, error) {
+	return false, s.err
+}
+
+func TestListCapturesSurfacesANoteLookupFailure(t *testing.T) {
+	store, _ := captureFixture(t,
+		model.CaptureIndex{ID: "c_1", UserID: "user1", NoteID: "n1", Status: model.StatusAppended, CreatedAt: "2026-08-08T10:00:00.000000000Z"},
+	)
+	boom := errors.New("dynamodb: throttled")
+	svc := NewCaptureService(noteExistsErrStore{Store: store, err: boom}, memory.NewObjects())
+
+	if _, err := svc.ListCaptures(context.Background(), "user1", CaptureFilterAll, repository.ListOptions{}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the lookup's failure rather than a receipt silently kept or dropped", err)
+	}
 }

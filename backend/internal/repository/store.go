@@ -155,6 +155,12 @@ type Store interface {
 	// then deletes the note; DynamoDB TTL is only the backstop.
 	ExpiredNotes(ctx context.Context, asOf int64) ([]TenantNote, error)
 	GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error)
+	// NoteExists reports whether the tenant has a row for this note, on either
+	// shelf, without reading the row. It is what a list of captures asks for
+	// every note its receipts name: GetNote would carry the note's cleaned
+	// body (up to 200 KB) into a poll that only wants to know the row is
+	// there.
+	NoteExists(ctx context.Context, tenantID, noteID string) (bool, error)
 	// PutNote writes n conditionally on n.Version matching the stored version,
 	// and returns the note with its new version. A losing write returns
 	// ErrVersionConflict rather than silently discarding the other writer.
@@ -174,6 +180,14 @@ type Store interface {
 	// ListCapturesByNote queries GSI1 directly instead of scanning the tenant's
 	// whole capture partition and filtering client-side.
 	ListCapturesByNote(ctx context.Context, tenantID, noteID string, opts ListOptions) (Page[model.CaptureIndex], error)
+	// ListUnindexedCaptures returns every capture of the tenant whose row is
+	// not in GSI1 and so cannot be found by ListCapturesByNote: a row written
+	// before the index keys were promoted (August 2026) carries only the
+	// `data` blob, and a sparse index holds nothing for an item that lacks its
+	// key attributes. It reads the base table, whole, and is for the cascade
+	// that must find every capture of a note or leave audio behind; nothing on
+	// a request path should call it.
+	ListUnindexedCaptures(ctx context.Context, tenantID string) ([]model.CaptureIndex, error)
 	UpdateCaptureStatus(ctx context.Context, tenantID, captureID string, status model.CaptureStatus, errMsg string) error
 	DeleteCapture(ctx context.Context, tenantID, captureID string) error
 

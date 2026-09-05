@@ -597,6 +597,29 @@ func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID st
 		return fmt.Errorf("%w: list captures: %w", ErrPurgeIncomplete, err)
 	}
 
+	// And the captures the index cannot see. A row written before the index
+	// keys were promoted (August 2026) is not in GSI1 at all, so the query
+	// above is complete only for rows the current code wrote. In production
+	// this is how "delete forever" removed every note and left thirteen filed
+	// captures pointing at them, each still answering GET /v1/captures as a
+	// receipt. The base-table read is the honest fix rather than promoting
+	// the keys on read: it finds the rows now, for this purge, instead of
+	// repairing the index for a later one that may never come — and a purge
+	// is rare enough to afford one partition read per note.
+	seen := make(map[string]bool, len(captures))
+	for _, c := range captures {
+		seen[c.ID] = true
+	}
+	unindexed, err := s.store.ListUnindexedCaptures(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("%w: list unindexed captures: %w", ErrPurgeIncomplete, err)
+	}
+	for _, c := range unindexed {
+		if c.NoteID == noteID && !seen[c.ID] {
+			captures = append(captures, c)
+		}
+	}
+
 	for _, c := range captures {
 		// Every object the capture may own, including a peaks key the row no
 		// longer records; see captureObjectKeys.

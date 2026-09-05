@@ -95,6 +95,14 @@ const maxCaptureFilterRounds = 10
 // never return more kept captures than the page has room for. Discarding the
 // overflow would put it behind a cursor that already points past it, which is
 // the same defect one layer along.
+//
+// A filed capture whose note no longer has a row is dropped on the way out.
+// Its row can outlive the note — a purge that could not see it (see
+// ListUnindexedCaptures), a note deleted before purges cascaded at all — and
+// then the capture is a receipt for a note the user cannot open: the library
+// showed three "Filed · Open the note" cards under a count of zero notes. The
+// other stopped statuses are kept without a lookup; needs_target, failed and
+// no_content have no note by definition.
 func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter CaptureFilter, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 	lister, ok := s.store.(TenantCaptureLister)
 	if !ok {
@@ -110,6 +118,7 @@ func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter
 	}
 	kept := make([]model.CaptureIndex, 0, limit)
 	cursor := opts.Cursor
+	notes := s.noteExistence(userID)
 	for round := 0; round < maxCaptureFilterRounds && len(kept) < limit; round++ {
 		page, err := lister.ListCaptures(ctx, userID, repository.ListOptions{
 			Limit:  int32(limit - len(kept)),
@@ -119,7 +128,14 @@ func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter
 			return repository.Page[model.CaptureIndex]{}, err
 		}
 		for _, c := range page.Items {
-			if filter.keep(c) {
+			if !filter.keep(c) {
+				continue
+			}
+			filed, err := notes.filedIntoLiveNote(ctx, c)
+			if err != nil {
+				return repository.Page[model.CaptureIndex]{}, err
+			}
+			if filed {
 				kept = append(kept, c)
 			}
 		}
@@ -129,6 +145,38 @@ func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter
 		}
 	}
 	return repository.Page[model.CaptureIndex]{Items: kept, Cursor: cursor}, nil
+}
+
+// noteExistence remembers, for one request, which of the tenant's notes have a
+// row. A page of twenty receipts names a handful of notes; each is asked about
+// once.
+type noteExistence struct {
+	store  repository.Store
+	userID string
+	known  map[string]bool
+}
+
+func (s *CaptureService) noteExistence(userID string) *noteExistence {
+	return &noteExistence{store: s.store, userID: userID, known: map[string]bool{}}
+}
+
+// filedIntoLiveNote is false only for an appended capture whose note has no
+// row. Everything else passes: a capture still moving, or stopped on the user,
+// is shown whatever its note_id says.
+func (n *noteExistence) filedIntoLiveNote(ctx context.Context, c model.CaptureIndex) (bool, error) {
+	if c.Status != model.StatusAppended || c.NoteID == "" {
+		return true, nil
+	}
+	exists, ok := n.known[c.NoteID]
+	if !ok {
+		var err error
+		exists, err = n.store.NoteExists(ctx, n.userID, c.NoteID)
+		if err != nil {
+			return false, err
+		}
+		n.known[c.NoteID] = exists
+	}
+	return exists, nil
 }
 
 // ListUnroutedCaptures returns captures that have no destination note yet.

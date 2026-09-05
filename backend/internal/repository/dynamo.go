@@ -673,6 +673,28 @@ func (s *DynamoStore) GetNote(ctx context.Context, tenantID, noteID string) (mod
 	return noteFromItem(result.Item)
 }
 
+// NoteExists is a GetItem projected to the sort key alone: DynamoDB charges
+// the read by the item's full size either way, but nothing but the key crosses
+// the wire, which is the cost that matters when a poll asks this for every
+// receipt on the library screen.
+func (s *DynamoStore) NoteExists(ctx context.Context, tenantID, noteID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		ProjectionExpression: aws.String("sk"),
+	})
+	if err != nil {
+		return false, fmt.Errorf("dynamo note exists: %w", err)
+	}
+	return len(result.Item) > 0, nil
+}
+
 // PutNote writes conditionally on the version the caller read. An unconditional
 // PutItem loses a voice append that lands while the editor is open.
 func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.NoteIndex) (model.NoteIndex, error) {
@@ -1023,6 +1045,64 @@ func (s *DynamoStore) ListCaptures(ctx context.Context, tenantID string, opts Li
 		return Page[model.CaptureIndex]{}, err
 	}
 	return Page[model.CaptureIndex]{Items: captures, Cursor: cursor}, nil
+}
+
+// ListUnindexedCaptures is the base-table complement of ListCapturesByNote.
+//
+// GSI1 is sparse: an item without a gsi1pk attribute is simply not in it, and
+// a capture row written before the index keys were promoted — August 2026,
+// when a row was pk, sk, type and the `data` blob — is exactly such an item.
+// Every query on the index is blind to it, including the one a note's purge
+// uses to find the captures it must unlink, which is how "delete forever"
+// left thirteen filed captures behind in production. Promoting the keys on
+// read would repair the index for the next purge but not for this one, and
+// would put a write inside a read; so the purge asks this once per note.
+//
+// The filter is on the attribute the index is keyed by, so what comes back is
+// precisely the set the index cannot answer for. DynamoDB applies a
+// FilterExpression after the read — the query pays for the whole CAPTURE#
+// range of the partition in read units — but only the unindexed rows are
+// transferred, and a tenant with none pays one empty page. Every page is
+// followed: an unpaginated Query stops at 1 MB.
+func (s *DynamoStore) ListUnindexedCaptures(ctx context.Context, tenantID string) ([]model.CaptureIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var start map[string]types.AttributeValue
+	captures := make([]model.CaptureIndex, 0)
+	for {
+		out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.tableName),
+			KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+			FilterExpression:       aws.String("attribute_not_exists(gsi1pk)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":        strAttr(userPK(tenantID)),
+				":sk_prefix": strAttr("CAPTURE#"),
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dynamo query unindexed captures: %w", err)
+		}
+		for _, raw := range out.Items {
+			c, err := captureFromItem(raw)
+			if err != nil {
+				return nil, err
+			}
+			if c.ID == "" {
+				// A blob without an id is still a row with a sort key.
+				c.ID = trimPrefix(readString(raw, "sk"), "CAPTURE#")
+			}
+			c.UserID = tenantID
+			captures = append(captures, c)
+		}
+		start = out.LastEvaluatedKey
+		if len(start) == 0 {
+			break
+		}
+	}
+	sortCapturesNewestFirst(captures)
+	return captures, nil
 }
 
 // sortCapturesNewestFirst orders a page by creation time.

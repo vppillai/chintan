@@ -42,8 +42,13 @@ type Store struct {
 	settings map[string]model.Settings
 	notes    map[string]map[string]model.NoteIndex
 	captures map[string]map[string]model.CaptureIndex
-	idem     map[string]map[string]idemEntry
-	asks     map[string]map[string]model.Ask
+	// unindexed marks the captures PutLegacyCapture stored: rows that, on
+	// DynamoDB, carry no GSI1 keys and so are invisible to ListCapturesByNote.
+	// Keyed like captures. A PutCapture of the same id clears the mark, as a
+	// rewrite by the pipeline promotes the keys on the real row.
+	unindexed map[string]map[string]bool
+	idem      map[string]map[string]idemEntry
+	asks      map[string]map[string]model.Ask
 }
 
 var _ repository.Store = (*Store)(nil)
@@ -51,11 +56,12 @@ var _ repository.Store = (*Store)(nil)
 // NewStore returns an empty in-memory store.
 func NewStore() *Store {
 	return &Store{
-		settings: make(map[string]model.Settings),
-		notes:    make(map[string]map[string]model.NoteIndex),
-		captures: make(map[string]map[string]model.CaptureIndex),
-		idem:     make(map[string]map[string]idemEntry),
-		asks:     make(map[string]map[string]model.Ask),
+		settings:  make(map[string]model.Settings),
+		notes:     make(map[string]map[string]model.NoteIndex),
+		captures:  make(map[string]map[string]model.CaptureIndex),
+		unindexed: make(map[string]map[string]bool),
+		idem:      make(map[string]map[string]idemEntry),
+		asks:      make(map[string]map[string]model.Ask),
 	}
 }
 
@@ -245,6 +251,16 @@ func (s *Store) GetNote(ctx context.Context, tenantID, noteID string) (model.Not
 	return copyNote(n), nil
 }
 
+func (s *Store) NoteExists(ctx context.Context, tenantID, noteID string) (bool, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return false, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.notes[tenantID][noteID]
+	return ok, nil
+}
+
 func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return model.NoteIndex{}, err
@@ -295,7 +311,46 @@ func (s *Store) PutCapture(ctx context.Context, c model.CaptureIndex) (model.Cap
 	next := c
 	next.Version = c.Version + 1
 	s.captures[c.UserID][c.ID] = next
+	// A rewrite promotes the index keys on the real row.
+	delete(s.unindexed[c.UserID], c.ID)
 	return next, nil
+}
+
+// PutLegacyCapture stores a capture the way a row written before August 2026
+// is stored on DynamoDB: readable by its key and by the base-table walk
+// (GetCapture, ListCaptures, ListUnindexedCaptures) but absent from the note
+// index, so ListCapturesByNote never returns it. It is how a test lays down
+// the shape that "delete forever" left behind in production; nothing in the
+// application writes such a row.
+func (s *Store) PutLegacyCapture(c model.CaptureIndex) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.captures[c.UserID] == nil {
+		s.captures[c.UserID] = make(map[string]model.CaptureIndex)
+	}
+	if s.unindexed[c.UserID] == nil {
+		s.unindexed[c.UserID] = make(map[string]bool)
+	}
+	s.captures[c.UserID][c.ID] = c
+	s.unindexed[c.UserID][c.ID] = true
+}
+
+// ListUnindexedCaptures returns the captures PutLegacyCapture stored, newest
+// first, as the DynamoDB store returns the rows without GSI1 keys.
+func (s *Store) ListUnindexedCaptures(ctx context.Context, tenantID string) ([]model.CaptureIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]model.CaptureIndex, 0)
+	for id := range s.unindexed[tenantID] {
+		if c, ok := s.captures[tenantID][id]; ok {
+			out = append(out, c)
+		}
+	}
+	sortCapturesNewestFirst(out)
+	return out, nil
 }
 
 func (s *Store) GetCapture(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
@@ -369,11 +424,11 @@ func (s *Store) ListCapturesByNote(ctx context.Context, tenantID, noteID string,
 	defer s.mu.RUnlock()
 
 	// Sort key mirrors GSI1: CAPTURE#<createdAt> descending, so the page order
-	// matches what DynamoDB returns.
+	// matches what DynamoDB returns. A legacy row is not in the index at all.
 	type entry struct{ sortKey, id string }
 	entries := make([]entry, 0)
 	for id, c := range s.captures[tenantID] {
-		if c.NoteID == noteID {
+		if c.NoteID == noteID && !s.unindexed[tenantID][id] {
 			entries = append(entries, entry{sortKey: c.CreatedAt + "\x00" + id, id: id})
 		}
 	}
