@@ -77,6 +77,17 @@ Owner's manual-trial notes from 2026-09-04, triaged. One line per item; status i
 
 Performance (cold, Fast 3G + 4× CPU): library interactive ~2.95 s, `/capture` ~3.05 s; one 136 KB gzip JS chunk; four API calls on the library, one only for the "Archived · n" count.
 
+## Added 2026-09-04 (evening)
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| N1 | Long note body pushes Recordings out of reach | **fixing** | Note screen gets a sticky segmented control: Text · Cleaned · Recordings (N). |
+| N2 | Home tab still uses the notes-list glyph | **fixing** | House outline in the same stroke style. |
+| N3 | Recording into a note returns to the library | **fixing** | Send returns to that note's Recordings tab with the filing row inside it. |
+| N4 | Whole-note cleaned view | **fixing** | `cleaned` on the note (structured or polished), regenerable, optional auto-refresh after each recording; Cleaned tab. |
+| U13b | Spend-cap sentence on You is operator noise | **next** | Keep the cap (runaway guard, 100× today's spend); drop the sentence from Usage; one line on About. |
+| D6b | Show AWS cost next to provider cost | **next** | Daily worker task reads the stack Budget's month-to-date actual spend (`budgets:DescribeBudget`, free) → `GET /v1/usage` → "AWS this month" line, instance-level, with an as-of date. |
+
 ## Order of work
 
 1. B1–B6, B10 and U6 (frontend and backend branches in progress).
