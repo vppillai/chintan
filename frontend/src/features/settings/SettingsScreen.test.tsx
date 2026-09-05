@@ -212,6 +212,22 @@ describe('the default transcription language', () => {
     expect(screen.getByText(/mixes two is detected as one of them/i)).toBeInTheDocument();
   });
 
+  it('sits above the retention field and says a note can choose its own under Details', async () => {
+    mountSettings();
+    await screen.findByRole('combobox', { name: /default transcription language/i });
+
+    const titles = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(titles.indexOf('Transcription language')).toBeGreaterThan(-1);
+    expect(titles.indexOf('Transcription language')).toBeLessThan(titles.indexOf('Keep recordings for'));
+    expect(
+      screen.getByText('Applies to every recording; a note can choose its own under Details.'),
+    ).toBeInTheDocument();
+    // Named in the speaker's own script as well as in English.
+    expect(screen.getByRole('option', { name: 'മലയാളം · Malayalam' })).toBeInTheDocument();
+  });
+
   it('reads a record from before the field existed as English, and saves nothing for it', async () => {
     const { default_language: _absent, ...legacy } = STORED;
     const { puts } = mountSettings({ settings: legacy });

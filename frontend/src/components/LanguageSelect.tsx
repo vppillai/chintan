@@ -1,4 +1,4 @@
-import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
+import { AUTO_LANGUAGE, LANGUAGES, languageLabel, languageName } from '@/features/settings/languages.ts';
 
 export interface LanguageSelectProps {
   id: string;
@@ -18,9 +18,11 @@ export interface LanguageSelectProps {
  *
  * A native select, not a custom list: it is a long-ish list chosen rarely, the
  * platform picker is the most usable thing on a phone for that, and it needs
- * no ARIA of its own. Auto-detect sits first because it is the one entry that
- * is not a language; a code the server holds that the curated list does not
- * name is appended so the control always shows the value it is in.
+ * no ARIA of its own. Auto-detect sits first — after the inherit entry where
+ * there is one — because it is the one entry that is not a language. Each
+ * language is named in its own script and in English, "മലയാളം · Malayalam",
+ * so it is found by sight in either. A code the server holds that the curated
+ * list does not name is appended so the control always shows the value it is in.
  */
 export function LanguageSelect({ id, value, onChange, inherit, disabled }: LanguageSelectProps) {
   const listed =
@@ -40,7 +42,7 @@ export function LanguageSelect({ id, value, onChange, inherit, disabled }: Langu
       <option value={AUTO_LANGUAGE}>{languageName(AUTO_LANGUAGE)}</option>
       {LANGUAGES.map((language) => (
         <option key={language.code} value={language.code}>
-          {language.name}
+          {languageLabel(language.code)}
         </option>
       ))}
       {!listed && <option value={value}>{languageName(value)}</option>}

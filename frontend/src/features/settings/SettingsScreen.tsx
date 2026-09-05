@@ -239,6 +239,41 @@ export function SettingsScreen() {
         </ul>
       </section>
 
+      {/* ---- Transcription language -------------------------------------- */}
+      {/*
+        Above the retention field, not below it: the owner's trial found no
+        multilingual support in the app, and this — the one control that is
+        the whole of it — sat under a number field about audio retention.
+        The second line says where a note can differ, by the name of the
+        panel it happens in.
+      */}
+      <section className="settings-group" aria-labelledby={languageId}>
+        <h2 id={languageId} className="settings-group__title">
+          Transcription language
+        </h2>
+        <div className="settings-field">
+          <label className="visually-hidden" htmlFor={`${languageId}-select`}>
+            Default transcription language
+          </label>
+          <LanguageSelect
+            id={`${languageId}-select`}
+            value={draft.default_language ?? 'en'}
+            disabled={!stored}
+            onChange={(default_language) => {
+              change({ default_language });
+            }}
+          />
+        </div>
+        <p className="settings-group__note">
+          {(draft.default_language ?? 'en') === AUTO_LANGUAGE
+            ? 'Each recording is transcribed in whatever language it detects. Naming a language is faster and more accurate; a recording that mixes two is detected as one of them.'
+            : `Recordings are transcribed as ${languageName(draft.default_language ?? 'en')} unless the note they are made into says otherwise. A recording filed automatically always uses this, because it is transcribed before anyone knows which note it belongs to.`}
+        </p>
+        <p className="settings-group__note">
+          Applies to every recording; a note can choose its own under Details.
+        </p>
+      </section>
+
       {/* ---- Retention --------------------------------------------------- */}
       <section className="settings-group" aria-labelledby={retentionId}>
         <h2 id={retentionId} className="settings-group__title">
@@ -270,31 +305,6 @@ export function SettingsScreen() {
           {draft.retention_days === 0
             ? 'Recordings are kept indefinitely. Only the source audio is affected — note text is never deleted by this.'
             : `Source audio is deleted after ${draft.retention_days} days. Note text and transcripts are kept.`}
-        </p>
-      </section>
-
-      {/* ---- Transcription language -------------------------------------- */}
-      <section className="settings-group" aria-labelledby={languageId}>
-        <h2 id={languageId} className="settings-group__title">
-          Transcription language
-        </h2>
-        <div className="settings-field">
-          <label className="visually-hidden" htmlFor={`${languageId}-select`}>
-            Default transcription language
-          </label>
-          <LanguageSelect
-            id={`${languageId}-select`}
-            value={draft.default_language ?? 'en'}
-            disabled={!stored}
-            onChange={(default_language) => {
-              change({ default_language });
-            }}
-          />
-        </div>
-        <p className="settings-group__note">
-          {(draft.default_language ?? 'en') === AUTO_LANGUAGE
-            ? 'Each recording is transcribed in whatever language it detects. Naming a language is faster and more accurate; a recording that mixes two is detected as one of them.'
-            : `Recordings are transcribed as ${languageName(draft.default_language ?? 'en')} unless the note they are made into says otherwise. A recording filed automatically always uses this, because it is transcribed before anyone knows which note it belongs to.`}
         </p>
       </section>
 
