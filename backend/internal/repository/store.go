@@ -49,6 +49,11 @@ type ListOptions struct {
 	// client that renders none of it; search and the offline corpus are the two
 	// readers that want it.
 	IncludeSearchText bool
+	// IncludeCleanedBody asks a NOTE list to carry NoteIndex.CleanedBody, the
+	// whole-note cleaned view. Opt-in for the same reason as IncludeSearchText,
+	// and more so: it is up to 200 KB per note, and the export is the one
+	// reader that wants it for every note at once.
+	IncludeCleanedBody bool
 }
 
 func (o ListOptions) limit() int32 {

@@ -176,6 +176,10 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 			// fails here rather than only in production.
 			n.SearchText = ""
 		}
+		if !opts.IncludeCleanedBody {
+			// Same rule for the whole-note cleaned view.
+			n.CleanedBody = ""
+		}
 		return n
 	})
 }

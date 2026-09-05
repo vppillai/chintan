@@ -171,7 +171,8 @@ type dynamoItem struct {
 // transfer cost this projection exists to avoid, and `sk` is kept so an item
 // written before the attributes were promoted can be read whole by its key.
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
-	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version"
+	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
+	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -184,6 +185,15 @@ const languageAttr = "language"
 // the offline corpus read it. A list asks for it explicitly
 // (ListOptions.IncludeSearchText).
 const searchTextAttr = "search_text"
+
+// cleanedBodyAttr is the promoted attribute holding NoteIndex.CleanedBody, the
+// whole-note cleaned view. Same treatment as search_text and for a stronger
+// reason: it is up to 200 KB per note, the blob must not duplicate it, and a
+// list projects it only when asked (ListOptions.IncludeCleanedBody). The
+// small fields that describe it — auto_clean, clean_mode, cleaned_mode,
+// cleaned_at, cleaned_stale, cleaned_error — are promoted AND projected, so a
+// listed note says truthfully whether it has a view and whether it is stale.
+const cleanedBodyAttr = "cleaned_body"
 
 func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
 
@@ -315,6 +325,12 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		"purge_after":     strAttr(n.PurgeAfter),
 		"verbatim":        boolAttr(n.Verbatim),
 		"version":         numAttr(n.Version),
+		"auto_clean":      boolAttr(n.AutoClean),
+		"clean_mode":      strAttr(string(n.CleanMode)),
+		"cleaned_mode":    strAttr(string(n.CleanedMode)),
+		"cleaned_at":      strAttr(n.CleanedAt),
+		"cleaned_stale":   boolAttr(n.CleanedStale),
+		"cleaned_error":   strAttr(n.CleanedError),
 		"data":            strAttr(string(blob)),
 	}
 	if n.Language != "" {
@@ -324,6 +340,10 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		// Promoted only. The blob deliberately omits it (model.NoteIndex tags it
 		// json:"-"), so the field is stored once, not twice.
 		item[searchTextAttr] = strAttr(n.SearchText)
+	}
+	if n.CleanedBody != "" {
+		// Promoted only, as search_text is.
+		item[cleanedBodyAttr] = strAttr(n.CleanedBody)
 	}
 	if n.PurgeAfterEpoch > 0 {
 		item["purge_after_epoch"] = numAttr(n.PurgeAfterEpoch)
@@ -380,6 +400,27 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	if _, ok := m[languageAttr]; ok {
 		n.Language = readString(m, languageAttr)
 	}
+	if _, ok := m[cleanedBodyAttr]; ok {
+		n.CleanedBody = readString(m, cleanedBodyAttr)
+	}
+	if _, ok := m["auto_clean"]; ok {
+		n.AutoClean = readBool(m, "auto_clean")
+	}
+	if _, ok := m["clean_mode"]; ok {
+		n.CleanMode = model.NoteCleanMode(readString(m, "clean_mode"))
+	}
+	if _, ok := m["cleaned_mode"]; ok {
+		n.CleanedMode = model.NoteCleanMode(readString(m, "cleaned_mode"))
+	}
+	if _, ok := m["cleaned_at"]; ok {
+		n.CleanedAt = readString(m, "cleaned_at")
+	}
+	if _, ok := m["cleaned_stale"]; ok {
+		n.CleanedStale = readBool(m, "cleaned_stale")
+	}
+	if _, ok := m["cleaned_error"]; ok {
+		n.CleanedError = readString(m, "cleaned_error")
+	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}
 	}
@@ -406,7 +447,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		return Page[model.NoteIndex]{}, err
 	}
 
-	all, err := s.drainNotes(ctx, tenantID, opts.IncludeSearchText)
+	all, err := s.drainNotes(ctx, tenantID, opts)
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
@@ -447,13 +488,16 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 
 // drainNotes reads up to maxNotesListed of the tenant's note items, following
 // LastEvaluatedKey: an unpaginated Query silently truncates at ~1 MB.
-func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, includeSearchText bool) ([]model.NoteIndex, error) {
+func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts ListOptions) ([]model.NoteIndex, error) {
 	pk := userPK(tenantID)
 	var start map[string]types.AttributeValue
 	notes := make([]model.NoteIndex, 0, 64)
 	projection := noteListProjection
-	if includeSearchText {
+	if opts.IncludeSearchText {
 		projection += ", " + searchTextAttr
+	}
+	if opts.IncludeCleanedBody {
+		projection += ", " + cleanedBodyAttr
 	}
 
 	for len(notes) < maxNotesListed {
