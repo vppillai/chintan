@@ -3,7 +3,8 @@
 Status: implemented for recording and self-service reading (2026-09-04);
 the instance's AWS cost beside it (2026-09-04, D6b); per-provider split,
 API request counting, storage summary, the tenant's share of the AWS cost and
-the `chintanctl usage` admin listing (2026-09-05).
+the `chintanctl usage` admin listing (2026-09-05); storage over time, from a
+daily snapshot (2026-09-05, O4).
 
 ## Why this exists, and what it is not
 
@@ -338,4 +339,87 @@ Nothing cross-tenant is exposed on the API. The operator's listing is
   day answers the question that was asked; the per-tenant share is a
   proportion of it, not a second reading.
 - No stored storage totals. The summary is computed from the index rows on
-  read, capped, and says when it is approximate.
+  read, capped, and says when it is approximate. What *is* stored is one
+  reading a day of that summary, added onto the month — see the next section
+  — which is a different thing: a counter of what was held, not a copy of
+  what is held.
+
+## Storage over time (O4, 2026-09-05)
+
+`storage` on `GET /v1/usage` is the footprint when the request is served. The
+owner deleted every note on the 5th and it read zero, although the bucket had
+held the audio all month and S3 had billed the account for every day of it.
+Storage is priced in byte-months; a point-in-time figure cannot say what a
+month of it cost. So the same footprint is now also **measured once a day and
+added onto the month**:
+
+```
+storage_byte_days      N   Σ over the month's snapshots of audio_bytes that day
+storage_note_days      N   Σ over the month's snapshots of active notes that day
+storage_snapshot_day   S   yyyy-mm-dd of the last snapshot the month row took
+```
+
+on the tenant's `USAGE#<yyyy-mm>` row, and on `USAGE#<yyyy-mm-dd>` the day's
+own reading (`storage_byte_days`, `storage_note_days`, a SET, not a sum).
+
+### The task
+
+A fourth worker task, `{"task":"storage-snapshot"}` (`internal/storagesnap`),
+from `StorageSnapshotRule` — `rate(1 day)`, the same target, retry story and
+IAM as `AwsCostRule`. It:
+
+1. **names the tenants** — the one hard question in a single-table design
+   with no Scan grant. It queries GSI1 for `gsi1pk = USAGE#<month>` for the
+   current month and the twelve before it (`usage.Dynamo.TenantsWithUsage`,
+   the admin listing's query) and takes the union. Every authenticated API
+   request writes that month row, and so does this task, so a tenant who has
+   been snapshotted once is named by this month's row tomorrow and stays in
+   the set for as long as month rows are kept, which is for good. **The gap:**
+   a tenant with notes in the bucket and no usage row in thirteen months —
+   nobody today, since request counting shipped on 2026-09-05 and the
+   snapshot names everyone it has ever measured — is not counted until they
+   touch the app. Closing it would need a tenant registry row or a Scan; the
+   registry is the right shape if it is ever needed, written at first sign-in.
+2. **measures** each tenant with `service.StorageService.Summarize`, the walk
+   `GET /v1/usage` makes — capped at 2,000 rows each, `Approximate` when it
+   bites, logged but not stored.
+3. **adds** the reading (`usage.Dynamo.AddStorageDay`). A tenant with nothing
+   stored is skipped rather than written as zeros: zeros would keep a departed
+   tenant in the month rows for ever, and there is nothing to bill.
+
+### Idempotent per day
+
+The month write is `ADD storage_byte_days :bytes, storage_note_days :notes
+SET storage_snapshot_day = :day …` under
+`attribute_not_exists(storage_snapshot_day) OR storage_snapshot_day < :day`.
+A second run on the same day — Lambda's retry after a fault, a rule that fired
+twice, an operator invoking it by hand — fails the condition and adds nothing;
+the failure is the answer (`added = false`), not an error. The day row is then
+written regardless, a plain SET of today's footprint over today's footprint,
+so a run that stored the month and died before the day row is finished by the
+retry. The writer builds its own expressions with fresh maps per call; the
+shared `update` helper adds into its caller's maps, which is a defect being
+fixed separately, and this writer does not depend on it.
+
+The order is month first, day second, so a fault between the two leaves the
+billable figure right and the chart short by a day, rather than the reverse.
+
+### On the wire
+
+`storage.byte_days` and `storage.note_days` (required; 0 until the month's
+first snapshot) and `days[].storage_byte_days` (required; 0 on a day the task
+did not run). **No price is attached server-side.** The You screen prices
+byte-days as GB-months — divide by the days in the month — at
+`S3_STANDARD_USD_PER_GB_MONTH = 0.023` (`frontend/src/features/settings/usage.ts`),
+names the rate on screen and calls it an estimate: the bill is in the
+account's region and storage class, after the free tier, and includes request
+and transfer costs the figure knows nothing about. A month of personal
+recordings is a few hundred microdollars, so the screen says "under $0.001"
+rather than rounding a real cost to nothing.
+
+### Cost
+
+Thirteen index queries, one `Summarize` per tenant (two bounded partition
+reads) and two `UpdateItem`s per tenant, once a day. For tens of tenants that
+is noise. If it ever is not, the walk is what to bound — snapshot fewer
+tenants a day, not fewer days a tenant.
