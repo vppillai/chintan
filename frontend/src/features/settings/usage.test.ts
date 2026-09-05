@@ -110,7 +110,9 @@ describe('the AWS line', () => {
     const aws = { month_micros: 3_120_000, as_of: '2026-09-04T09:00:00Z', budget_micros: null };
     expect(combinedMicros({ ...usage, aws })).toBe(3_121_371);
     expect(combinedMicros({ ...usage, aws: null })).toBeNull();
-    // A backend from before the field existed.
-    expect(combinedMicros(usage)).toBeNull();
+    // A backend from before the field existed: the generated fixture now
+    // carries a reading, so the older shape is built by dropping the field.
+    const { aws: _recorded, ...older } = usage;
+    expect(combinedMicros(older)).toBeNull();
   });
 });
