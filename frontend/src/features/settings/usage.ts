@@ -211,16 +211,25 @@ export const OPS: readonly { key: string; label: string }[] = [
   { key: 'ask', label: 'Ask' },
 ];
 
-/** The providers' names as they write them; the wire carries them lowercased. */
+/**
+ * The vendor behind the language model. The worker meters its OpenAI-compatible
+ * endpoint under the wire key `openai` whatever is at the other end, and the
+ * stack points that endpoint at MiniMax (`LLM_BASE_URL` in the template). An
+ * instance pointed elsewhere is mislabelled here until this says otherwise —
+ * which is why the label leads with the role, which is always right.
+ */
+const LLM_VENDOR = 'MiniMax';
+
+/** What the wire's metering keys are called on screen. */
 export const PROVIDER_LABELS: Readonly<Record<string, string>> = {
   groq: 'Groq',
-  minimax: 'MiniMax',
+  openai: `Language model (${LLM_VENDOR})`,
 };
 
 /**
  * One line per provider that charged this month, the biggest bill first, so
  * the split under "Providers" answers "which one" at a glance. A provider
- * the frontend has no name for is shown by its wire name, capitalised.
+ * the frontend has no name for is shown by its wire key, capitalised.
  */
 export function providerRows(
   providers: Record<string, UsageTotalsWire> | undefined,

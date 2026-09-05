@@ -5,6 +5,7 @@ import {
   hasUnsavedWork,
   initialEditor,
   reconcileQueued,
+  sameText,
   type EditorModel,
   type NoteDraft,
 } from './autosave.ts';
@@ -94,6 +95,43 @@ describe('saving', () => {
     expect(hasUnsavedWork(failed)).toBe(true);
     // The edit is still in the draft, so a retry sends it.
     expect(failed.draft.body).toBe('new');
+  });
+});
+
+describe('the version moving without the text', () => {
+  // A clean request bumps the note's version when it is accepted, and the
+  // worker's cleaned view bumps it again; neither touches the words.
+  it('carries a dirty draft onto the newer version, and puts a save that was on the wire back to dirty', () => {
+    const dirty = editorReducer(start(3), { type: 'edit', patch: { body: 'mine' } });
+    const rebased = editorReducer(dirty, { type: 'rebase', version: 4 });
+    expect(rebased).toMatchObject({ version: 4, state: 'dirty', draft: { body: 'mine' } });
+
+    const saving = editorReducer(dirty, { type: 'saveStart' });
+    expect(editorReducer(saving, { type: 'rebase', version: 4 })).toMatchObject({
+      version: 4,
+      state: 'dirty',
+    });
+  });
+
+  it('is ignored backwards, and never dismisses a conflict', () => {
+    const model = editorReducer(start(3), { type: 'edit', patch: { body: 'mine' } });
+    expect(editorReducer(model, { type: 'rebase', version: 3 })).toBe(model);
+    const conflicted = editorReducer(model, {
+      type: 'conflict',
+      theirs: BASE,
+      version: 4,
+      message: 'changed',
+    });
+    expect(editorReducer(conflicted, { type: 'rebase', version: 5 })).toBe(conflicted);
+  });
+
+  it('reads the same text through the cleaned-view settings, and not through a changed word', () => {
+    expect(sameText(BASE, { ...BASE, auto_clean: true, cleaned_mode: 'polished' })).toBe(true);
+    // Absent and the empty string both mean "inherits the default".
+    expect(sameText({ ...BASE, language: '' }, BASE)).toBe(true);
+    expect(sameText(BASE, { ...BASE, body: 'Ridge tiles!' })).toBe(false);
+    expect(sameText(BASE, { ...BASE, tags: ['house'] })).toBe(false);
+    expect(sameText(BASE, { ...BASE, language: 'ml' })).toBe(false);
   });
 });
 

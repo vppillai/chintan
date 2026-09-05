@@ -7,8 +7,10 @@ import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtu
 import { noteCreated } from '@/api/__fixtures__/responses.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 import type { AskWire, NoteCreateWire } from '@/api/schema.ts';
+import { formatRowTime } from '@/features/notes/groups.ts';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
+import { setNarrowViewport } from '@/test/setup.ts';
 
 import { COST_NOTE_KEY } from './costNote.ts';
 import { applyRow, newTurn, saveThread } from './thread.ts';
@@ -45,11 +47,13 @@ function json(body: unknown, status = 200): Response {
  * A library plus the Ask endpoints: the POST answers 202 with the pending
  * row, and the poll answers `pending` for the first `pendingPolls` reads of
  * each question and then `final`. What was posted, and how many polls there
- * were in all, are recorded.
+ * were in all, are recorded. `settle()` is the worker finishing late: every
+ * poll from then on answers `final`.
  */
 function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: number; final?: AskWire } = {}) {
   const posts: { question: string; history?: unknown }[] = [];
   const creates: NoteCreateWire[] = [];
+  let pendingLimit = pendingPolls;
   let polls = 0;
   let pollsThisQuestion = 0;
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -65,7 +69,7 @@ function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: numb
       polls += 1;
       pollsThisQuestion += 1;
       const id = url.pathname.slice(url.pathname.lastIndexOf('/') + 1);
-      return json({ ...(pollsThisQuestion <= pendingPolls ? askPending : final), id });
+      return json({ ...(pollsThisQuestion <= pendingLimit ? askPending : final), id });
     }
     if (url.pathname.endsWith('/v1/notes') && method === 'POST') {
       creates.push(JSON.parse(String(init?.body)) as NoteCreateWire);
@@ -75,7 +79,15 @@ function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: numb
     if (url.pathname.endsWith('/v1/notes')) return json({ items: TEST_NOTES });
     return json({ items: [] });
   });
-  return { fetchImpl, posts, creates, polls: () => polls };
+  return {
+    fetchImpl,
+    posts,
+    creates,
+    polls: () => polls,
+    settle: () => {
+      pendingLimit = 0;
+    },
+  };
 }
 
 function location(): string {
@@ -147,6 +159,19 @@ describe('the field has two modes', () => {
     expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: /search notes/i })).toBeInTheDocument();
     expect(location()).toBe('/');
+  });
+
+  it('shortens the search placeholder on a phone, where the switch leaves it no room for the long one', async () => {
+    setNarrowViewport(true);
+    mount(server().fetchImpl);
+    const field = await screen.findByRole('searchbox', { name: /search notes/i });
+    expect(field).toHaveAttribute('placeholder', 'Search notes');
+    // Asking has a short placeholder already, and keeps it.
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Ask' }));
+    expect(screen.getByRole('searchbox', { name: /ask your notes/i })).toHaveAttribute(
+      'placeholder',
+      'Ask your notes…',
+    );
   });
 
   it('is deep-linkable: `?mode=ask` opens in Ask, and switching drops a filter that was typed', async () => {
@@ -229,6 +254,39 @@ describe('a question is sent on Enter and its answer polled for', () => {
     ]);
     await user.click(within(sources).getByRole('button', { name: 'Kitchen rebuild' }));
     expect(location()).toBe('/notes/fixture-note-id-2');
+  });
+
+  it('tells same-titled sources apart by the note’s date from the device, or a number when it has none', async () => {
+    const user = fakeTime();
+    const twins: AskWire = {
+      ...askAnswered,
+      sources: [
+        // In the library the test serves, so its date is on the device.
+        { note_id: 'roof-repair', title: 'Roof repair' },
+        // Not on the device: numbered.
+        { note_id: 'elsewhere', title: 'Roof repair' },
+        { note_id: 'reading-list', title: 'Reading list' },
+      ],
+    };
+    mount(server({ final: twins }).fetchImpl);
+    const field = await switchToAsk(user);
+    await user.type(field, 'what did I decide about the roof?{Enter}');
+    await screen.findByText('Reading your notes…');
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    const sources = await screen.findByRole('list', { name: 'Sources' });
+    const roof = TEST_NOTES.find((note) => note.id === 'roof-repair');
+    await waitFor(() => {
+      expect(within(sources).getAllByRole('button').map((chip) => chip.textContent)).toEqual([
+        `Roof repair · ${formatRowTime(roof?.updated_at ?? '')}`,
+        'Roof repair (1)',
+        'Reading list',
+      ]);
+    });
+    await user.click(within(sources).getByRole('button', { name: 'Roof repair (1)' }));
+    expect(location()).toBe('/notes/elsewhere');
   });
 
   it('labels an answer the notes could not give, and lists no sources for it', async () => {
@@ -314,6 +372,28 @@ describe('a question is sent on Enter and its answer polled for', () => {
     });
     expect(api.polls()).toBe(settled);
   });
+
+  it('picks the row back up on Try again after the minute, rather than asking — and paying — twice', async () => {
+    const user = fakeTime();
+    const api = server({ pendingPolls: Number.POSITIVE_INFINITY });
+    mount(api.fetchImpl);
+
+    const field = await switchToAsk(user);
+    await user.type(field, 'what did I decide about the roof?{Enter}');
+    await screen.findByText('Reading your notes…');
+    act(() => {
+      vi.advanceTimersByTime(ASK_POLL_TIMEOUT_MS + 1_000);
+    });
+    expect(await screen.findByText('This is taking too long.')).toBeInTheDocument();
+    const gaveUpAfter = api.polls();
+
+    // The worker got there in the meantime; the row is a day old at most.
+    api.settle();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(/The tiler can start on the fourteenth/)).toBeInTheDocument();
+    expect(api.posts).toHaveLength(1);
+    expect(api.polls()).toBeGreaterThan(gaveUpAfter);
+  });
 });
 
 describe('the thread', () => {
@@ -354,12 +434,14 @@ describe('the thread', () => {
     await waitFor(() => {
       expect(api.creates).toHaveLength(1);
     });
+    // Plain text — the answer's bold unwrapped — and tagged so retrieval can leave it out.
     expect(api.creates[0]).toEqual({
       title: 'what did I decide about the roof?',
       body: [
-        `**Q: what did I decide about the roof?**\n\n${askAnswered.answer ?? ''}`,
-        '**Sources**\n- Roof repair\n- Kitchen rebuild',
+        `Q: what did I decide about the roof?\n\nA: ${(askAnswered.answer ?? '').replaceAll('**', '')}`,
+        'Sources:\nRoof repair\nKitchen rebuild',
       ].join('\n\n'),
+      tags: ['ask'],
     });
     // And the reader is taken to it; the thread is finished with.
     await waitFor(() => {

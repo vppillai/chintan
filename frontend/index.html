@@ -14,6 +14,16 @@
     -->
     <meta name="description" content="%VITE_APP_DESCRIPTION%" />
     <meta name="color-scheme" content="light dark" />
+    <!--
+      The browser's own chrome — the address bar, the installed app's title
+      bar — before the stylesheet has loaded: each theme's ground, the same
+      literal manifest.config.ts carries for the splash and tokens.css defines
+      as --color-ground, kept in step by hand because a meta tag cannot read a
+      custom property. Once the app runs, ThemeProvider rewrites both from the
+      live token, so an explicit theme choice wins over the media query.
+    -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbf9f4" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0c0b" />
     <!-- iOS standalone: without these the app opens in Safari chrome from the
          home screen, and the status bar sits over the header. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />

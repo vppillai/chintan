@@ -1,12 +1,14 @@
-import { useId, useState } from 'react';
+import { useCallback, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useCreateNote } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { formatRowTime } from '@/features/notes/groups.ts';
 import { renderMarkdown } from '@/features/notes/markdown.ts';
+import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { COST_NOTE, costNoteDismissed, dismissCostNote } from './costNote.ts';
-import { TIMEOUT_MESSAGE, noteFromThread, type AskTurn } from './thread.ts';
+import { TIMEOUT_MESSAGE, noteFromThread, sourceLabels, type AskTurn } from './thread.ts';
 import type { AskThread } from './useAskThread.ts';
 
 /**
@@ -35,6 +37,22 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
 
   const { turns, busy } = thread;
   const note = noteFromThread(turns);
+
+  /*
+   * The date beside a source whose title another source shares. The wire
+   * carries only id and title, so the date is the library's own copy on the
+   * device — the corpus every list the user has seen is written to — which
+   * is what the row for the same note shows.
+   */
+  const cached = useCachedNotes('active');
+  const notes = cached.data;
+  const when = useCallback(
+    (noteId: string): string | null => {
+      const found = notes?.find((candidate) => candidate.id === noteId);
+      return found ? formatRowTime(found.updated_at) || null : null;
+    },
+    [notes],
+  );
 
   const submitFollowUp = (): void => {
     if (busy) return;
@@ -93,6 +111,7 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
                 <p className="ask__question">{turn.question}</p>
                 <Answer
                   turn={turn}
+                  when={when}
                   onRetry={() => {
                     thread.retry(turn.key);
                   }}
@@ -163,10 +182,13 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
 
 function Answer({
   turn,
+  when,
   onRetry,
   onOpen,
 }: {
   turn: AskTurn;
+  /** The date a source chip adds when its title is not enough (see `sourceLabels`). */
+  when: (noteId: string) => string | null;
   onRetry: () => void;
   onOpen: (noteId: string) => void;
 }) {
@@ -184,14 +206,15 @@ function Answer({
           </button>
         </div>
       );
-    default:
+    default: {
+      const labels = sourceLabels(turn.sources, when);
       return (
         <div className="ask__answer">
           {!turn.grounded && <p className="ask__ungrounded">Not in your notes</p>}
           <div className="ask__body">{renderMarkdown(turn.answer ?? '')}</div>
           {turn.sources.length > 0 && (
             <ul className="ask__sources" aria-label="Sources">
-              {turn.sources.map((source) => (
+              {turn.sources.map((source, index) => (
                 <li key={source.note_id}>
                   <button
                     type="button"
@@ -200,7 +223,7 @@ function Answer({
                       onOpen(source.note_id);
                     }}
                   >
-                    {source.title}
+                    {labels[index] ?? source.title}
                   </button>
                 </li>
               ))}
@@ -208,5 +231,6 @@ function Answer({
           )}
         </div>
       );
+    }
   }
 }

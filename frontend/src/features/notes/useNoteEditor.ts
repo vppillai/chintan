@@ -22,6 +22,7 @@ import {
   hasUnsavedWork,
   initialEditor,
   reconcileQueued,
+  sameText,
   type EditorEvent,
   type EditorModel,
   type NoteDraft,
@@ -126,6 +127,12 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
   /** Set when a save was asked for while one was running. */
   const dirtyAgain = useRef(false);
   /**
+   * A 409 whose server copy had the same text was answered by carrying the
+   * draft onto the new version and saving again — once. A second such 409 in
+   * a row is shown as the conflict it then must be, rather than looped on.
+   */
+  const rebased = useRef(false);
+  /**
    * A stable handle on the current `save`, so the unmount flush below can stay
    * a mount-only effect and the in-flight re-save can call the guarded entry
    * point without `save` closing over itself. Keying the unmount effect on
@@ -152,13 +159,24 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
      * adopted only when there is nothing of the user's to lose: no edit
      * pending, none on the wire, and nothing typed since the last save. A
      * dirty draft keeps its text, and the version check on its next PATCH
-     * turns the divergence into the conflict prompt, as it always has.
+     * turns the divergence into the conflict prompt, as it always has —
+     * unless the server's copy still reads as what this editor last saved.
+     * Then the version moved without the text (a clean request, the worker's
+     * cleaned view) and the draft is carried onto it, rather than left to
+     * lose a version check to a change nobody made to the words.
      */
     const current = latest.current;
-    const settled = current.state === 'clean' || current.state === 'saved';
-    if (!settled || inFlight.current || timer.current) return;
     if (note.version <= current.version) return;
-    commit({ type: 'reset', draft: draftFrom(note), version: note.version });
+    const settled = current.state === 'clean' || current.state === 'saved';
+    if (settled && !inFlight.current && !timer.current) {
+      commit({ type: 'reset', draft: draftFrom(note), version: note.version });
+      return;
+    }
+    // A save on the wire is left to its own answer: the 409 path below asks
+    // the same question of the copy it fetches.
+    if (!inFlight.current && sameText(draftFrom(note), current.saved)) {
+      commit({ type: 'rebase', version: note.version });
+    }
   }, [note, commit]);
 
   const performSave = useCallback(async () => {
@@ -237,6 +255,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         version: stored.version,
         draft: attempted,
       });
+      rebased.current = false;
     } catch (error) {
       /*
        * Offline is not a failure to report — it is a write to make somewhere
@@ -276,6 +295,25 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
 
       if (error instanceof ApiError && error.isConflict) {
         const theirs = await api.getNote(note.id).catch(() => null);
+        /*
+         * Not every 409 is a conflict. A clean request bumps the note's
+         * version the moment it is accepted, and the worker's cleaned view
+         * bumps it again, so a PATCH that crossed either loses the version
+         * check though nobody touched the words. When the server's copy still
+         * reads as what this editor last saved, the draft is carried onto the
+         * new version and sent again; `save()`'s re-run does the sending.
+         */
+        if (
+          theirs &&
+          theirs.version > current.version &&
+          !rebased.current &&
+          sameText(draftFrom(theirs), current.saved)
+        ) {
+          rebased.current = true;
+          commit({ type: 'rebase', version: theirs.version });
+          dirtyAgain.current = true;
+          return;
+        }
         commit({
           type: 'conflict',
           theirs: theirs ? draftFrom(theirs) : attempted,

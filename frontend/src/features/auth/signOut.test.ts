@@ -4,10 +4,17 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { Session } from '@/api/session.ts';
 import { createMemoryTokenStore, type TokenSet } from '@/api/tokens.ts';
+import { COST_NOTE_KEY } from '@/features/ask/costNote.ts';
+import { THREAD_KEY } from '@/features/ask/thread.ts';
 import { saveCaptureRecord } from '@/features/capture/buffer.ts';
+import { DISMISSED_KEY } from '@/features/capture/dismissed.ts';
+import { TARGETED_KEY } from '@/features/capture/targeted.ts';
+import { noteTabStorageKey } from '@/features/notes/NoteTabs.tsx';
 import { openChintanDB, resetDatabaseHandle } from '@/offline/db.ts';
 import { enqueue } from '@/offline/queue.ts';
+import { THEME_STORAGE_KEY } from '@/theme/theme.ts';
 
+import { PASSKEY_NUDGE_KEY } from './passkeys.ts';
 import { hasUnsentWork, performSignOut, readUnsentWork } from './signOut.ts';
 
 const TOKENS: TokenSet = {
@@ -38,6 +45,8 @@ beforeEach(() => {
   // `deleteDatabase` blocks on the handle `openChintanDB` is still holding.
   globalThis.indexedDB = new IDBFactory();
   resetDatabaseHandle();
+  sessionStorage.clear();
+  localStorage.clear();
 });
 
 describe('what signing out has to leave behind', () => {
@@ -82,6 +91,38 @@ describe('what signing out has to leave behind', () => {
     expect(await db.count('captures')).toBe(0);
     expect(await db.count('mutations')).toBe(0);
     expect(await db.count('captureChunks')).toBe(0);
+  });
+
+  it('empties the app’s session storage — the Ask thread, the remembered note tabs — which the same tab carries to the next sign-in', async () => {
+    const h = harness();
+    sessionStorage.setItem(THREAD_KEY, JSON.stringify([{ key: 'k', question: 'what did I decide about the roof?' }]));
+    sessionStorage.setItem(noteTabStorageKey('roof'), 'cleaned');
+    sessionStorage.setItem('chintan.something.new', 'x');
+    sessionStorage.setItem('unrelated', 'left alone');
+
+    await performSignOut(h);
+
+    expect(sessionStorage.getItem(THREAD_KEY)).toBeNull();
+    expect(sessionStorage.getItem(noteTabStorageKey('roof'))).toBeNull();
+    expect(sessionStorage.getItem('chintan.something.new')).toBeNull();
+    expect(sessionStorage.getItem('unrelated')).toBe('left alone');
+  });
+
+  it('drops what in local storage names one person’s activity, and keeps the device’s own preferences', async () => {
+    const h = harness();
+    localStorage.setItem(COST_NOTE_KEY, '1');
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(['cap-1']));
+    localStorage.setItem(TARGETED_KEY, JSON.stringify(['cap-2']));
+    localStorage.setItem(THEME_STORAGE_KEY, 'nocturne');
+    localStorage.setItem(PASSKEY_NUDGE_KEY, 'not-now');
+
+    await performSignOut(h);
+
+    expect(localStorage.getItem(COST_NOTE_KEY)).toBeNull();
+    expect(localStorage.getItem(DISMISSED_KEY)).toBeNull();
+    expect(localStorage.getItem(TARGETED_KEY)).toBeNull();
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('nocturne');
+    expect(localStorage.getItem(PASSKEY_NUDGE_KEY)).toBe('not-now');
   });
 });
 

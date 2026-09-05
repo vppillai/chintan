@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { newIdempotencyKey } from '@/api/client.ts';
 import { ApiError } from '@/api/problem.ts';
@@ -8,12 +8,15 @@ import {
   LOST_MESSAGE,
   NOT_SENT_MESSAGE,
   applyRow,
+  canResume,
   failTurn,
   historyFor,
   isBusy,
   loadThread,
   newTurn,
+  resumeTurn,
   saveThread,
+  updateStoredTurn,
   type AskTurn,
 } from './thread.ts';
 
@@ -22,7 +25,10 @@ export interface AskThread {
   /** Waiting on the server for the latest question. */
   busy: boolean;
   ask: (question: string) => void;
-  /** Sends a failed or timed-out question again, in place. */
+  /**
+   * Picks a timed-out or lost question back up — polling its row again where
+   * there is one to poll — or sends it again, in place.
+   */
   retry: (key: string) => void;
   clear: () => void;
 }
@@ -56,6 +62,29 @@ export function useAskThread(): AskThread {
   const replace = useCallback((key: string, update: (turn: AskTurn) => AskTurn): void => {
     setTurns((prev) => prev.map((turn) => (turn.key === key ? update(turn) : turn)));
   }, []);
+
+  /*
+   * The POST's outcome can land after this screen has gone — a source chip
+   * tapped while it was in flight — when setting state goes nowhere and the
+   * effect that saves the thread never runs. The saved thread is what the
+   * panel comes back from, so the outcome is written there directly when
+   * there is no component left to hold it; left as `asking`, `loadThread`
+   * would show the question as never sent, though it was answered and billed.
+   */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const settle = useCallback(
+    (key: string, update: (turn: AskTurn) => AskTurn): void => {
+      if (mounted.current) replace(key, update);
+      else updateStoredTurn(key, update);
+    },
+    [replace],
+  );
 
   /*
    * Settled? Decided from the poll as it is now. The id is checked as well as
@@ -95,33 +124,45 @@ export function useAskThread(): AskThread {
       const trimmed = question.trim();
       if (trimmed.length === 0) return;
       const turn = newTurn(newIdempotencyKey(), trimmed);
-      const history = historyFor(turns);
+      const history = historyFor(turns, trimmed);
       setTurns((prev) => [...prev, turn]);
-      send.mutate(
-        { body: { question: trimmed, ...(history.length > 0 ? { history } : {}) }, key: turn.key },
-        {
-          // Sent at the moment the row exists, not when the field was
-          // submitted, so a slow POST does not eat into the poll's minute.
-          onSuccess: (created) => {
-            replace(turn.key, (current) => ({ ...applyRow(current, created), since: Date.now() }));
+      // Chained on the promise rather than given as per-call callbacks, which
+      // TanStack drops once the component has unmounted (see `settle`).
+      void send
+        .mutateAsync({
+          body: { question: trimmed, ...(history.length > 0 ? { history } : {}) },
+          key: turn.key,
+        })
+        .then(
+          (created) => {
+            // `since` is the moment the row exists, not when the field was
+            // submitted, so a slow POST does not eat into the poll's minute.
+            settle(turn.key, (current) => ({ ...applyRow(current, created), since: Date.now() }));
           },
-          onError: (error) => {
-            replace(turn.key, (current) => failTurn(current, messageFor(error, NOT_SENT_MESSAGE)));
+          (error: unknown) => {
+            settle(turn.key, (current) => failTurn(current, messageFor(error, NOT_SENT_MESSAGE)));
           },
-        },
-      );
+        );
     },
-    [turns, send, replace],
+    [turns, send, settle],
   );
 
   const retry = useCallback(
     (key: string): void => {
       const turn = turns.find((candidate) => candidate.key === key);
-      if (!turn || isBusy(turn)) return;
+      // One turn in flight at a time holds for a retry as for a question.
+      if (!turn || isBusy(turn) || isBusy(last)) return;
+      // The worker may have answered since the client gave up: the row is
+      // polled again rather than a second answer paid for. Only the last turn
+      // is ever polled, so an older one is asked again as a new turn.
+      if (turn === last && canResume(turn)) {
+        replace(key, (current) => resumeTurn(current));
+        return;
+      }
       setTurns((prev) => prev.filter((candidate) => candidate.key !== key));
       ask(turn.question);
     },
-    [turns, ask],
+    [turns, last, ask, replace],
   );
 
   const clear = useCallback((): void => {

@@ -12,6 +12,12 @@ import { useEffect, type ReactNode } from 'react';
  * row gives: the tab bar owns the viewport's bottom row, and a fixed bar here
  * would sit on it.
  *
+ * Two lines by design: the count and Select all on the first, the actions and
+ * Cancel on the second. One line of five pills wrapped wherever it ran out of
+ * room — on a 412 px phone after "Archive", leaving "Delete forever · Cancel"
+ * orphaned beneath — and a wrap that lands differently per screen reads as an
+ * accident. Two lines that always break in the same place read as a layout.
+ *
  * Escape cancels, from anywhere on the screen: selection is a mode, and a
  * mode needs a way out that does not require finding the button.
  */
@@ -49,17 +55,21 @@ export function SelectionBar({
 
   return (
     <div className="selection-bar">
-      <div className="selection-bar__row" role="toolbar" aria-label={label}>
-        <p className="selection-bar__count" role="status">
-          <span className="numeric">{count}</span> selected
-        </p>
-        <button type="button" className="selection-bar__action" onClick={onSelectAll}>
-          {allSelected ? 'Deselect all' : 'Select all'}
-        </button>
-        {children}
-        <button type="button" className="selection-bar__action" onClick={onCancel}>
-          Cancel
-        </button>
+      <div className="selection-bar__toolbar" role="toolbar" aria-label={label}>
+        <div className="selection-bar__line">
+          <p className="selection-bar__count" role="status">
+            <span className="numeric">{count}</span> selected
+          </p>
+          <button type="button" className="selection-bar__action" onClick={onSelectAll}>
+            {allSelected ? 'Deselect all' : 'Select all'}
+          </button>
+        </div>
+        <div className="selection-bar__line">
+          {children}
+          <button type="button" className="selection-bar__action" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
       </div>
       {status && (
         <p className="selection-bar__status" role="status" aria-live="polite">

@@ -146,6 +146,45 @@ describe('SwipeRow', () => {
     expect(row).not.toHaveAttribute('data-open');
   });
 
+  it('is not wedged by a pen that drifts onto the next row and lifts there', () => {
+    render(
+      <>
+        <Row name="first" />
+        <Row name="second" />
+      </>,
+    );
+    const first = swipe('first');
+    const pen = { pointerId: 7, pointerType: 'pen', button: 0 };
+
+    // Down on the first row, a nudge under the slop, out over the second row,
+    // and up there: no pointerup ever reaches the first row.
+    fireEvent.pointerDown(first, { ...pen, clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(first, { ...pen, clientX: 298, clientY: 15 });
+    fireEvent.pointerLeave(first, { ...pen, clientX: 298, clientY: 60 });
+    fireEvent.pointerUp(swipe('second'), { ...pen, clientX: 298, clientY: 60 });
+
+    // The next finger on the first row is a swipe as usual.
+    drag(first, -100);
+    expect(first).toHaveAttribute('data-open');
+  });
+
+  it('keeps following a committed drag after the pointer leaves the row, and lets go when capture is lost', () => {
+    render(<Row />);
+    const row = swipe('row');
+
+    drag(row, -60, { lift: false });
+    // Captured, so the pointer wandering off the row's box is not a leave that counts.
+    fireEvent.pointerLeave(row, { ...touch, clientX: 220, clientY: 200 });
+    fireEvent.pointerMove(row, { ...touch, clientX: 280 - 100, clientY: 200 });
+    expect(row.style.getPropertyValue('--swipe-x')).toBe('-100px');
+
+    // The browser takes the pointer away without an up or a cancel.
+    fireEvent.lostPointerCapture(row, { ...touch });
+    expect(row).not.toHaveAttribute('data-dragging');
+    expect(row).not.toHaveAttribute('data-open');
+    expect(row.style.getPropertyValue('--swipe-x')).toBe('0px');
+  });
+
   it('keeps one row open at a time', () => {
     render(
       <>
