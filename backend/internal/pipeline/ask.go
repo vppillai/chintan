@@ -46,8 +46,12 @@ const (
 	// 5xx clears more often than not on the second try.
 	askAttempts = 2
 	// askOutputTokensEstimate is what an answer is reserved against before
-	// the model reports; a few paragraphs, reconciled to what was used.
-	askOutputTokensEstimate = 600
+	// the model reports: the completion cap itself, as routing and cleanup
+	// reserve near theirs. Reserving a few paragraphs (600) against a cap of
+	// 3,000 let the last call of a capped day overshoot the daily cap by the
+	// difference before reconciliation corrected the counter. Reconciled to
+	// what was used, so a short answer costs the budget only what it cost.
+	askOutputTokensEstimate = ask.MaxOutputTokens
 )
 
 // Ask answers the question stored under askID from the tenant's notes and

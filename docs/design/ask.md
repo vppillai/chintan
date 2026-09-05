@@ -112,8 +112,9 @@ open and find the answer in.
 ## Cost
 
 One completion per question: up to ~40,000 runes of notes plus the question,
-reserved at four characters per token, plus 600 output tokens, reconciled to
-what the provider reports. At MiniMax-M3 list price a full prompt is about
+reserved at four characters per token, plus the 3,000-token completion cap as
+output (so a capped day cannot be overshot by an answer), reconciled to what
+the provider reports. At MiniMax-M3 list price a full prompt is about
 $0.003–0.004 input and a paragraph of answer well under a tenth of a cent.
 Timeout 25 s per attempt, one retry on a timeout or a 5xx (each attempt its
 own reservation, so a stall costs the budget nothing). The op appears in
