@@ -95,6 +95,9 @@ type NoteCreator interface {
 // API binary depends on the shape of the hand-off and not on the pipeline.
 type Invoker interface {
 	InvokeCapture(ctx context.Context, tenantID, captureID, reason string) error
+	// InvokeCleanNote asks the worker to regenerate the whole-note cleaned
+	// view of noteID in mode. See note_clean.go.
+	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error
 }
 
 // CaptureRequest is what a client asks for when it begins a capture.

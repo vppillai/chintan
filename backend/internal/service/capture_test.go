@@ -48,6 +48,11 @@ func (w *stubInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reas
 	return nil
 }
 
+func (w *stubInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+	w.calls = append(w.calls, "clean-note/"+tenantID+"/"+noteID+"/"+string(mode))
+	return nil
+}
+
 func TestCaptureService_BeginCapture(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()

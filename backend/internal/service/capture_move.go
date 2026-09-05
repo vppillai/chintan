@@ -117,17 +117,29 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 	// 3. Both indexes follow their bodies, then the row follows the paragraph.
 	// The row is last so a capture never claims a note its paragraph is not
 	// in yet; a retry after a failure here re-runs exactly these steps.
+	var touched []model.NoteIndex
 	if sourceKey != "" {
-		if err := refreshNoteIndex(ctx, s.store, s.objects, userID, sourceID); err != nil {
+		refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, sourceID)
+		if err != nil {
 			return nil, false, fmt.Errorf("failed to refresh the source note index: %w", err)
 		}
+		touched = append(touched, refreshed)
 	}
-	if err := refreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID); err != nil {
+	refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID)
+	if err != nil {
 		return nil, false, fmt.Errorf("failed to refresh the target note index: %w", err)
 	}
+	touched = append(touched, refreshed)
 	updated, err := s.repointCapture(ctx, userID, captureID, targetNoteID)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to re-point the capture: %w", err)
+	}
+
+	// Both bodies changed, so both cleaned views are regenerated where asked
+	// for (D2: "structured mode re-runs on both notes") — asynchronously, and
+	// only now that the row agrees with the paragraph.
+	for _, n := range touched {
+		autoCleanAfterBodyWrite(ctx, s.worker, userID, n)
 	}
 
 	obs.Log(ctx).Info("capture moved",
