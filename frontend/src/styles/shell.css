@@ -289,11 +289,11 @@
   inline-size: 100%;
 }
 
+/* The day. Second in the markup, so the heading reads "Notes" first, and
+   placed above the title here: what the eye meets first is where it is, in
+   the small caps of a section label, not the biggest text on the screen. */
 .library-heading__eyebrow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
+  order: -1;
   font-family: var(--font-sans);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
@@ -302,23 +302,28 @@
   color: var(--color-faint);
 }
 
-/* The count is a numeral, so it takes the serif figures and none of the
-   caps treatment; right-aligned by the eyebrow's `space-between`. */
-.library-heading__count {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-regular);
-  letter-spacing: var(--letter-spacing-normal);
-  text-transform: none;
-  color: var(--color-muted);
-}
-
-.library-heading__date {
+/* "Notes", in the notes' own serif, with the count beside it. */
+.library-heading__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   font-family: var(--font-serif);
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--letter-spacing-tight);
   line-height: var(--line-height-tight);
   color: var(--color-ink);
+}
+
+/* The count is a numeral beside the word, quieter than it: regular weight,
+   a step down, the muted ink. The separator is the same, and hidden from
+   assistive technology — "Notes, 12" needs no dot read out. */
+.library-heading__separator,
+.library-heading__count {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--color-muted);
 }
 
 .screen__count,

@@ -606,15 +606,28 @@ describe('what the one poll keeps and what it drops', () => {
     }
   });
 
-  it('keeps a filed capture until the user acts on it, however long ago it filed', () => {
-    // The row used to fade ten minutes after the append. A recording made on
-    // the walk home had no receipt by the time the user sat down to read it,
-    // and the owner asked for rows that stay until opened or dismissed.
+  it('keeps a filed capture for a day, then lets the note be its record', () => {
+    // The row used to fade ten minutes after the append: a recording made on
+    // the walk home had no receipt by the time the user sat down to read it.
+    // Then it never faded, and a device that had dismissed nothing showed
+    // receipts from weeks ago above an empty library. A day covers the walk
+    // home; after that the recording is on its note's Recordings tab.
+    const hoursAgo = (h: number) => new Date(NOW - h * 60 * 60 * 1000).toISOString();
     expect(
       isFilingRelevant(capture({ status: 'appended', appended_at: recent }), NOW),
     ).toBe(true);
-    expect(isFilingRelevant(capture({ status: 'appended', appended_at: old }), NOW)).toBe(true);
-    expect(isFilingRelevant(capture({ status: 'appended' }), NOW)).toBe(true);
+    expect(isFilingRelevant(capture({ status: 'appended', appended_at: hoursAgo(23) }), NOW)).toBe(
+      true,
+    );
+    expect(isFilingRelevant(capture({ status: 'appended', appended_at: hoursAgo(25) }), NOW)).toBe(
+      false,
+    );
+    expect(isFilingRelevant(capture({ status: 'appended', appended_at: old }), NOW)).toBe(false);
+    // Without an append time the capture's own time stands in.
+    expect(isFilingRelevant(capture({ status: 'appended', created_at: hoursAgo(1) }), NOW)).toBe(
+      true,
+    );
+    expect(isFilingRelevant(capture({ status: 'appended', created_at: old }), NOW)).toBe(false);
   });
 
   it('still lets a recording that produced nothing expire on its own', () => {
@@ -645,7 +658,9 @@ describe('what the one poll keeps and what it drops', () => {
     });
   });
 
-  it('shows a capture appended long ago, since nobody has acted on it', async () => {
+  it('shows nothing for a capture appended weeks ago, whatever this device has dismissed', async () => {
+    // Three of these, above a library of zero notes, is what the owner saw
+    // after deleting everything: receipts for recordings filed in August.
     mount([
       capture({
         id: 'srv-old',
@@ -653,10 +668,16 @@ describe('what the one poll keeps and what it drops', () => {
         note_id: 'roof-repair',
         appended_at: '2026-01-01T00:00:00.000Z',
       }),
+      capture({
+        id: 'srv-today',
+        status: 'appended',
+        note_id: 'roof-repair',
+        appended_at: new Date().toISOString(),
+      }),
     ]);
 
     expect(await screen.findByText('Filed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /open the note/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /open the note/i })).toHaveLength(1);
   });
 });
 

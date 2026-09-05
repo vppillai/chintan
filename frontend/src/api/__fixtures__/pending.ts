@@ -131,6 +131,8 @@ export const usageRich: UsageWire = {
     approximate: false,
     audio_bytes: 9123456,
     audio_seconds: 1391.2,
+    byte_days: 18123456,
+    note_days: 23,
     notes: 12,
     recordings: 41,
   },

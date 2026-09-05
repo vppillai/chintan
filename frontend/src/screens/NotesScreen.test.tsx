@@ -88,7 +88,7 @@ async function startSelecting(
   await screen.findByRole('toolbar', { name: 'Bulk actions' });
 }
 
-describe('the heading is the day, with Notes and the count above it', () => {
+describe('the heading is Notes, with the count beside it and the day above', () => {
   it('is one h1 whose text starts with Notes, then the count, then today in words', async () => {
     mount(library());
     await screen.findByRole('button', { name: /roof repair/i });

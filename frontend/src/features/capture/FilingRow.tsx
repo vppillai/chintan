@@ -183,13 +183,14 @@ export function useLocalUpload(
 /**
  * How many "Filed" receipts are shown at once.
  *
- * A receipt stays until the user acts on it, and on a device that has never
- * dismissed any — a second phone, cleared storage, the QA account after a day
- * of recordings — that is every appended capture among the newest twenty: the
- * QA pass saw nineteen full-height cards above the first note. Three is enough
- * to say "your last recordings landed, here they are"; the rest are counted.
- * Rows that still need something — moving, failed, asking for a target — are
- * never hidden behind the cap.
+ * A receipt stays for a day or until the user acts on it (`isFilingRelevant`),
+ * and on a device that has dismissed none — a second phone, cleared storage,
+ * the QA account after a day of recordings — that is every capture appended
+ * in the last day among the newest twenty: the QA pass saw nineteen
+ * full-height cards above the first note. Three is enough to say "your last
+ * recordings landed, here they are"; the rest are counted. Rows that still
+ * need something — moving, failed, asking for a target — are never hidden
+ * behind the cap.
  */
 export const FILED_ROWS_MAX = 3;
 

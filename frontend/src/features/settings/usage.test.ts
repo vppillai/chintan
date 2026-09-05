@@ -4,15 +4,19 @@ import { usageRich } from '@/api/__fixtures__/pending.ts';
 import { usage, usageEmpty } from '@/api/__fixtures__/responses.ts';
 
 import {
+  S3_STANDARD_USD_PER_GB_MONTH,
   asOfLabel,
   combinedMicros,
   currentMonth,
   dayBars,
   dayLabel,
+  estimateStorageMicros,
   formatAudioMinutes,
   formatCalls,
   formatCount,
   formatDollars,
+  formatEstimatedDollars,
+  formatGigabyteDays,
   formatMegabytes,
   formatRequests,
   monthLabel,
@@ -60,12 +64,42 @@ describe('the other figures', () => {
     expect(formatMegabytes(0)).toBe('0.0 MB');
   });
 
+  it('says gigabyte-days to two decimals, the unit storage is billed in', () => {
+    expect(formatGigabyteDays(18_123_456)).toBe('0.02 GB·days');
+    expect(formatGigabyteDays(12_400_000_000)).toBe('12.40 GB·days');
+    expect(formatGigabyteDays(0)).toBe('0.00 GB·days');
+  });
+
   it('keeps the calendar in UTC, as the API does', () => {
     // 23:30 on the 31st in UTC-5 is already September in UTC.
     expect(currentMonth(new Date('2026-09-01T04:30:00Z'))).toBe('2026-09');
     expect(monthLabel('2026-09')).toMatch(/September 2026/);
     expect(dayLabel('2026-09-04')).toMatch(/4/);
     expect(dayLabel('2026-09-04')).toMatch(/Sep/);
+  });
+});
+
+describe('the storage estimate', () => {
+  it('prices byte-days as GB-months at the named S3 rate, and says it is an estimate', () => {
+    // 31 GB-days in a 31-day month is one GB-month: the whole rate, in microdollars.
+    expect(estimateStorageMicros(31_000_000_000, '2026-01')).toBe(
+      Math.round(S3_STANDARD_USD_PER_GB_MONTH * 1_000_000),
+    );
+    // Half as many days in the month, twice the GB-months.
+    expect(estimateStorageMicros(28_000_000_000, '2026-02')).toBe(
+      Math.round(S3_STANDARD_USD_PER_GB_MONTH * 1_000_000),
+    );
+    expect(estimateStorageMicros(0, '2026-01')).toBe(0);
+    expect(estimateStorageMicros(1_000_000, 'nonsense')).toBe(0);
+  });
+
+  it('never rounds a real cost to nothing', () => {
+    // The fixture month: 18 MB·days is a fraction of a tenth of a cent.
+    expect(formatEstimatedDollars(estimateStorageMicros(usage.storage?.byte_days ?? 0, usage.month))).toBe(
+      'under $0.001',
+    );
+    expect(formatEstimatedDollars(0)).toBe('≈ $0.000');
+    expect(formatEstimatedDollars(2_300)).toBe('≈ $0.002');
   });
 });
 
