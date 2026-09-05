@@ -2310,11 +2310,26 @@
    Note screen — back link, meta line, recordings, action bar
    ========================================================================== */
 
-/* The bar carries its own bottom padding, so the screen gives up the usual
-   one: a sticky element rests in its in-flow position at the end of the
-   scroll, and 2rem of screen padding beneath it would float it. */
+/*
+ * The bar carries its own bottom padding, so the screen gives up the usual
+ * one: a sticky element rests in its in-flow position at the end of the
+ * scroll, and 2rem of screen padding beneath it would float it.
+ *
+ * A column at least as tall as the scroll region, with the bars pushed to
+ * its foot. A sticky bar only sticks while there is something to scroll;
+ * on a short note — two paragraphs, or two recording rows on their own tab
+ * — it rested wherever the content ended, a third of the way up the screen,
+ * and the selection bar with it. The panel takes the slack instead.
+ */
 .note-screen {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100%;
   padding-block-end: 0;
+}
+
+.note-screen > .note-bar-anchor {
+  margin-block-start: auto;
 }
 
 .back-link {
@@ -2345,32 +2360,93 @@
 }
 
 /* --------------------------------------------------------------------------
+   Note views — Text · Recordings (N), a strip that sticks under the banner
+   -------------------------------------------------------------------------- */
+
+/*
+ * Sticky to the top of the scrolling region, which is the line under the
+ * banner: `.app__main` is the one thing that scrolls, so `inset-block-start: 0`
+ * is that line. Pulled out to the gutters and painted in the ground colour so
+ * the panel scrolling beneath does not show at the strip's sides. Same layer
+ * as the action bar at the foot — under the sheets and the dialogs.
+ */
+.note-tabs {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-content);
+  margin-inline: calc(-1 * var(--layout-gutter));
+  padding: var(--space-2) var(--layout-gutter);
+  background-color: var(--color-ground);
+}
+
+/* The segmented control: a recessed track with the selected segment raised,
+   the same device as the transcript's Timestamped · Cleaned toggle, at the
+   width of the column so each segment is a generous target. */
+.note-tabs__list {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-full);
+}
+
+.note-tabs__tab {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.note-tabs__tab:hover {
+  color: var(--color-ink);
+}
+
+.note-tabs__tab[aria-selected='true'] {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+
+/* The count is a numeral: serif figures, quieter than the label. */
+.note-tabs__count {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-faint);
+}
+
+.note-tabs__tab[aria-selected='true'] .note-tabs__count {
+  color: var(--color-muted);
+}
+
+/* Grows to fill the column, so the recordings' selection bar — rendered
+   inside the panel — reaches the foot as the action bar does. */
+.note-tabpanel {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  padding-block-start: var(--space-3);
+}
+
+.note-tabpanel > .selection-bar {
+  margin-block-start: auto;
+}
+
+/* --------------------------------------------------------------------------
    Recordings — the sources, as dated rows beneath the body
    -------------------------------------------------------------------------- */
 
+/* A panel of its own now, so no rule or margin separates it from a body
+   that is no longer above it. */
 .recordings {
   display: grid;
   gap: var(--space-3);
-  margin-block-start: var(--space-8);
-  padding-block-start: var(--space-4);
-  border-block-start: 1px solid var(--color-line);
-}
-
-.recordings__header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.recordings__heading {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-caps);
-  text-transform: uppercase;
-  color: var(--color-faint);
 }
 
 .recordings__empty {

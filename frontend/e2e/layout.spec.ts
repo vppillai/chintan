@@ -52,6 +52,7 @@ const THEMES = ['ink', 'nocturne'] as const;
 const ROUTES = [
   { path: '/', label: 'library' },
   { path: '/notes/roof-repair', label: 'note detail' },
+  { path: '/notes/roof-repair?tab=recordings', label: 'note recordings' },
   { path: '/?view=archived', label: 'archive' },
   { path: '/?q=roof', label: 'search with results' },
   { path: '/?q=nothingmatchesthis', label: 'search empty' },
@@ -677,7 +678,7 @@ test('the selection bars sit above the tab bar on a phone', async ({ page, api }
   expect(bars.bar).toBeGreaterThan(bars.tabs - 200);
 
   // The note screen, with recordings selected.
-  await page.goto('/notes/roof-repair');
+  await page.goto('/notes/roof-repair?tab=recordings');
   await page.getByRole('button', { name: /more for recording from/i }).first().click();
   await page.getByRole('menuitem', { name: 'Select' }).click();
   await page.getByRole('button', { name: 'Select all' }).click();

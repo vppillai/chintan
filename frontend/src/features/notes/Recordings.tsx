@@ -102,6 +102,11 @@ export function Recordings({
 
   useEffect(() => {
     onSelectingChange?.(selecting);
+    // Leaving the panel mid-selection — another tab, another note — ends
+    // the selection, and the screen's action bar has to be told to come back.
+    return () => {
+      onSelectingChange?.(false);
+    };
   }, [selecting, onSelectingChange]);
 
   const onAutoplayed = useCallback(() => {
@@ -236,11 +241,10 @@ export function Recordings({
   return (
     <>
       <section className="recordings" aria-labelledby={headingId} data-selecting={selecting || undefined}>
-        <div className="recordings__header">
-          <h2 id={headingId} className="recordings__heading">
-            Recordings
-          </h2>
-        </div>
+        {/* The tab above already says it; the heading names the region for a reader. */}
+        <h2 id={headingId} className="visually-hidden">
+          Recordings
+        </h2>
 
         {ordered.length === 0 ? (
           <p className="recordings__empty">
