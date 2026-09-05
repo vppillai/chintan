@@ -10,11 +10,26 @@ import (
 )
 
 // Usage is the OpenAPI Usage schema: one tenant's provider usage for one
-// month. It is the storage type serialised directly, which is the exception to
-// wire.go's rule and a deliberate one: the row holds nothing but counters the
+// month, and beside it the instance's AWS cost for the same month.
+//
+// The provider half is the storage row's own counters, which is the exception
+// to wire.go's rule and a deliberate one: the row holds nothing but numbers the
 // caller is entitled to see, and there is no S3 key or internal id on it to
-// leak. If that ever stops being true, this gets its own wire type.
-type Usage = usage.Month
+// leak. The AWS half is why this is a wire type rather than an alias of
+// usage.Month: it comes from a different row, on the instance partition, and
+// the two are only joined here.
+type Usage struct {
+	Month string `json:"month"`
+	usage.Totals
+	Ops  map[string]usage.Totals `json:"ops"`
+	Days []usage.Day             `json:"days"`
+	// AWS is the instance's AWS spend for the month as last read from the
+	// stack's budget by the worker's daily task, or null when nothing has been
+	// recorded for the month: the stack has no budget, or the task has not run
+	// since the month began. It is instance-level — the account's bill, not
+	// this caller's share of it — so every tenant sees the same figure.
+	AWS *usage.AWSCost `json:"aws"`
+}
 
 // getUsage answers the caller's own usage for one month. It is what a "You"
 // screen shows and what a future admin listing aggregates; it deliberately
@@ -48,5 +63,16 @@ func (rt *router) getUsage(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, got)
+	awsCost, err := rt.Usage.AWSCost(r.Context(), month)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, Usage{
+		Month:  got.Month,
+		Totals: got.Totals,
+		Ops:    got.Ops,
+		Days:   got.Days,
+		AWS:    awsCost,
+	})
 }

@@ -462,6 +462,13 @@ paths:
         line per day with any usage. Microdollars throughout — the unit the
         spend cap uses. A month with no usage answers zeros, not 404.
 
+        Beside it, `aws`: what the instance itself cost in AWS that month, as
+        last read from the stack's AWS Budget by the worker's daily task
+        (`budgets:DescribeBudget`; nothing calls Cost Explorer). It is
+        instance-level — the account's bill, not this caller's share of it —
+        and null when nothing has been recorded for the month: the stack has
+        no budget, or the task has not run since the month began.
+
         This is the caller's own usage only. There is no cross-tenant view on
         this API; see docs/design/usage-accounting.md for how an admin listing
         would be added.
@@ -937,9 +944,13 @@ components:
             (1000000 = $1). 0 means calls are counted but never refused.
 
             Read-only. It is the operator's number, set in the deployment
-            configuration, and is reported here so the app can show the
-            budget that is actually enforced. A value sent on PUT is accepted
-            for compatibility and ignored; the response carries the instance
+            configuration, and is reported here so the app can say what is
+            actually enforced. It is a runaway guard — set at roughly a
+            hundred times a day's normal spend to stop a loop or a leaked
+            key, not a budget anybody plans against — so it does not belong
+            on the usage screen next to the month's spend; the app mentions
+            it on About, if anywhere. A value sent on PUT is accepted for
+            compatibility and ignored; the response carries the instance
             value, which is how a client learns its own did not take. Until
             2026-09 this was a per-tenant cap stored in the settings record,
             and the breaker enforced the lower of the two.
@@ -1392,13 +1403,41 @@ components:
           type: integer
           description: Completion tokens billed. Absent when zero.
 
+    UsageAws:
+      type: object
+      description: |
+        The instance's AWS spend for one calendar month (UTC), as last read
+        from the stack's AWS Budget. Instance-level: every tenant sees the
+        same figure. A future admin view may apportion it; this API does not.
+      required: [month_micros, as_of, budget_micros]
+      properties:
+        month_micros:
+          type: integer
+          description: The budget's month-to-date actual spend, in microdollars.
+        as_of:
+          type: string
+          format: date-time
+          description: When the budget was read. The reading is daily, so the figure may be up to a day old.
+        budget_micros:
+          type: integer
+          nullable: true
+          description: The budget's monthly limit, in microdollars; null when the budget reports none.
+
     Usage:
       allOf:
         - $ref: '#/components/schemas/UsageTotals'
         - type: object
-          required: [month, ops, days]
+          required: [month, ops, days, aws]
           properties:
             month: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+            aws:
+              nullable: true
+              allOf:
+                - $ref: '#/components/schemas/UsageAws'
+              description: |
+                The instance's AWS spend for the month, or null when nothing
+                has been recorded for it — the stack has no budget, or the
+                daily task has not run since the month began.
             ops:
               type: object
               description: |

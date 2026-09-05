@@ -614,6 +614,39 @@ func TestUsageAnswersTheCallersOwnMonth(t *testing.T) {
 	if len(got.Days) != 2 || got.Days[0].Date != "2026-03-02" {
 		t.Errorf("days = %+v", got.Days)
 	}
+	// Nothing has read the budget for this month: the key is present and null,
+	// which is how the frontend tells "no figure" from "zero".
+	if got.AWS != nil || !strings.Contains(w.Body.String(), `"aws":null`) {
+		t.Errorf("aws = %+v, want null; body = %s", got.AWS, w.Body.String())
+	}
+
+	// Once the daily task has stored a reading, it rides along — the same
+	// instance-level figure for every tenant, not a share of it.
+	limit := int64(10_000_000)
+	asOf := time.Date(2026, 3, 9, 6, 0, 0, 0, time.UTC)
+	if err := h.usage.PutAWSCost(context.Background(), usage.AWSCost{Month: "2026-03", MonthMicros: 4_200_000, AsOf: asOf, BudgetMicros: &limit}); err != nil {
+		t.Fatalf("seed aws cost: %v", err)
+	}
+	for _, tenant := range []string{"user1", "user2"} {
+		w = h.do(t, http.MethodGet, "/v1/usage?month=2026-03", tenant, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d body = %s", tenant, w.Code, w.Body.String())
+		}
+		var withAWS handler.Usage
+		decodeInto(t, w, &withAWS)
+		if withAWS.AWS == nil || withAWS.AWS.MonthMicros != 4_200_000 || !withAWS.AWS.AsOf.Equal(asOf) ||
+			withAWS.AWS.BudgetMicros == nil || *withAWS.AWS.BudgetMicros != limit {
+			t.Errorf("%s: aws = %+v", tenant, withAWS.AWS)
+		}
+		if !strings.Contains(w.Body.String(), `"as_of":"2026-03-09T06:00:00Z"`) {
+			t.Errorf("%s: as_of is not RFC 3339: %s", tenant, w.Body.String())
+		}
+	}
+	// The reading is per month: February has none.
+	w = h.do(t, http.MethodGet, "/v1/usage?month=2026-02", "user1", nil)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"aws":null`) {
+		t.Errorf("other month: status = %d body = %s", w.Code, w.Body.String())
+	}
 
 	// A month with nothing in it is zeros, and the default month is this one.
 	w = h.do(t, http.MethodGet, "/v1/usage?month=2020-01", "user1", nil)

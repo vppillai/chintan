@@ -9,6 +9,10 @@
 // logged without being attributed. Nothing here refuses a call, and nothing
 // here is read on the capture path. See docs/design/usage-accounting.md for the
 // data model and the admin listing that is deliberately not built yet.
+//
+// It also keeps the one number that is not a provider's: the instance's AWS
+// spend for the month (AWSCost), written once a day by the worker's aws-cost
+// task from the stack's budget and shown beside the provider figure.
 package usage
 
 import (
@@ -75,9 +79,39 @@ type Month struct {
 	Days []Day             `json:"days"`
 }
 
-// Reader answers GET /v1/usage.
+// Reader answers GET /v1/usage: the tenant's own month, and the instance's
+// AWS cost for the same month.
 type Reader interface {
 	Month(ctx context.Context, tenantID, month string) (Month, error)
+	// AWSCost returns the AWSCOST#<month> row, or nil when nothing has been
+	// recorded for that month — the stack has no budget, or the daily task
+	// has not run since the month began.
+	AWSCost(ctx context.Context, month string) (*AWSCost, error)
+}
+
+// AWSCost is the instance's AWS spend for one calendar month (UTC), as last
+// read from the stack's AWS Budget by the worker's daily aws-cost task
+// (internal/awscost). It is instance-level: AWS bills the account, not the
+// user, so there is no per-tenant split. The JSON shape is the `aws` object on
+// GET /v1/usage.
+type AWSCost struct {
+	// Month is the yyyy-mm the reading is for. It is the row's key, not a
+	// field of the wire object, which is always nested under a month already.
+	Month string `json:"-"`
+	// MonthMicros is the budget's month-to-date actual spend, in microdollars.
+	MonthMicros int64 `json:"month_micros"`
+	// AsOf is when the budget was read. Budgets refreshes its figure up to
+	// three times a day and the task runs once, so this is the honest date to
+	// show next to the number.
+	AsOf time.Time `json:"as_of"`
+	// BudgetMicros is the budget's limit, in microdollars, or nil when the
+	// budget reported none.
+	BudgetMicros *int64 `json:"budget_micros"`
+}
+
+// AWSCostStore is what the aws-cost task writes.
+type AWSCostStore interface {
+	PutAWSCost(ctx context.Context, c AWSCost) error
 }
 
 // ErrBadMonth rejects a month that is not yyyy-mm.
@@ -149,6 +183,8 @@ var unitAttrs = map[meter.Unit]string{
 type API interface {
 	UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
+	PutItem(ctx context.Context, in *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
+	GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 }
 
 // Dynamo records and reads usage rows in the single table.
@@ -159,8 +195,9 @@ type Dynamo struct {
 }
 
 var (
-	_ Recorder = (*Dynamo)(nil)
-	_ Reader   = (*Dynamo)(nil)
+	_ Recorder     = (*Dynamo)(nil)
+	_ Reader       = (*Dynamo)(nil)
+	_ AWSCostStore = (*Dynamo)(nil)
 )
 
 // NewDynamo builds the DynamoDB-backed recorder and reader.
@@ -306,6 +343,81 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 		}
 	}
 	sort.Slice(out.Days, func(i, j int) bool { return out.Days[i].Date < out.Days[j].Date })
+	return out, nil
+}
+
+// ---------------------------------------------------------------- AWS cost
+
+// The AWS cost row is not a tenant's. It lives in the INSTANCE partition next
+// to the SPEND#<day> counters (internal/pipeline DynamoCounter), for the same
+// reason they do: the number belongs to the account, chintanctl's per-tenant
+// walk must neither export nor erase it, and there is exactly one per month.
+// No TTL — twelve rows a year is billing history, not clutter.
+const (
+	instancePK    = "INSTANCE"
+	awsCostPrefix = "AWSCOST#"
+
+	typeAWSCost      = "aws_cost"
+	attrMonth        = "month"
+	attrMonthMicros  = "month_micros"
+	attrBudgetMicros = "budget_micros"
+	attrAsOf         = "as_of"
+)
+
+// PutAWSCost writes the month's reading, replacing the previous one: the task
+// runs daily and the latest figure is the only one anybody wants, so a retry
+// of the same invocation is harmless.
+func (d *Dynamo) PutAWSCost(ctx context.Context, c AWSCost) error {
+	if !ValidMonth(c.Month) {
+		return ErrBadMonth
+	}
+	item := map[string]types.AttributeValue{
+		"pk":            strAttr(instancePK),
+		"sk":            strAttr(awsCostPrefix + c.Month),
+		attrType:        strAttr(typeAWSCost),
+		attrMonth:       strAttr(c.Month),
+		attrMonthMicros: numAttr(c.MonthMicros),
+		attrAsOf:        strAttr(c.AsOf.UTC().Format(time.RFC3339)),
+	}
+	if c.BudgetMicros != nil {
+		item[attrBudgetMicros] = numAttr(*c.BudgetMicros)
+	}
+	_, err := d.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(d.table),
+		Item:      item,
+	})
+	if err != nil {
+		return fmt.Errorf("usage: put aws cost %s: %w", c.Month, err)
+	}
+	return nil
+}
+
+// AWSCost reads the month's row; nil, nil when there is none.
+func (d *Dynamo) AWSCost(ctx context.Context, month string) (*AWSCost, error) {
+	if !ValidMonth(month) {
+		return nil, ErrBadMonth
+	}
+	res, err := d.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(instancePK),
+			"sk": strAttr(awsCostPrefix + month),
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("usage: get aws cost %s: %w", month, err)
+	}
+	if len(res.Item) == 0 {
+		return nil, nil
+	}
+	out := &AWSCost{Month: month, MonthMicros: readInt(res.Item, attrMonthMicros)}
+	if asOf, err := time.Parse(time.RFC3339, readString(res.Item, attrAsOf)); err == nil {
+		out.AsOf = asOf
+	}
+	if _, has := res.Item[attrBudgetMicros]; has {
+		b := readInt(res.Item, attrBudgetMicros)
+		out.BudgetMicros = &b
+	}
 	return out, nil
 }
 

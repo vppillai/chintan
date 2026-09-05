@@ -13,11 +13,35 @@ import (
 	"github.com/vppillai/chintan/backend/internal/meter"
 )
 
-// fakeAPI records UpdateItems and answers Query from a canned item list.
+// fakeAPI records UpdateItems and PutItems, answers Query from a canned item
+// list and GetItem from the last PutItem with the same key.
 type fakeAPI struct {
 	updates []*dynamodb.UpdateItemInput
+	puts    []*dynamodb.PutItemInput
 	items   []map[string]types.AttributeValue
 	err     error
+}
+
+func (f *fakeAPI) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.puts = append(f.puts, in)
+	return &dynamodb.PutItemOutput{}, nil
+}
+
+func (f *fakeAPI) GetItem(_ context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	for i := len(f.puts) - 1; i >= 0; i-- {
+		item := f.puts[i].Item
+		if item["pk"].(*types.AttributeValueMemberS).Value == in.Key["pk"].(*types.AttributeValueMemberS).Value &&
+			item["sk"].(*types.AttributeValueMemberS).Value == in.Key["sk"].(*types.AttributeValueMemberS).Value {
+			return &dynamodb.GetItemOutput{Item: item}, nil
+		}
+	}
+	return &dynamodb.GetItemOutput{}, nil
 }
 
 func (f *fakeAPI) UpdateItem(_ context.Context, in *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
@@ -197,5 +221,63 @@ func TestMonthRejectsAMalformedMonth(t *testing.T) {
 		if _, err := d.Month(context.Background(), "tenant-a", bad); !errors.Is(err, ErrBadMonth) {
 			t.Errorf("%q: err = %v, want ErrBadMonth", bad, err)
 		}
+	}
+}
+
+// The AWS cost row is the instance's, not a tenant's: it sits in the INSTANCE
+// partition beside SPEND#, keyed by month, and reads back exactly what was
+// written — including the absence of a budget limit.
+func TestAWSCostRowLivesOnTheInstancePartition(t *testing.T) {
+	api := &fakeAPI{}
+	d := NewDynamo(api, "t")
+	ctx := context.Background()
+
+	got, err := d.AWSCost(ctx, "2026-09")
+	if err != nil || got != nil {
+		t.Fatalf("unrecorded month = %+v, %v; want nil, nil", got, err)
+	}
+
+	limit := int64(10_000_000)
+	asOf := time.Date(2026, 9, 4, 6, 15, 0, 0, time.UTC)
+	if err := d.PutAWSCost(ctx, AWSCost{Month: "2026-09", MonthMicros: 2_345_678, AsOf: asOf, BudgetMicros: &limit}); err != nil {
+		t.Fatalf("PutAWSCost: %v", err)
+	}
+	if len(api.puts) != 1 {
+		t.Fatalf("puts = %d, want 1", len(api.puts))
+	}
+	item := api.puts[0].Item
+	if pk := item["pk"].(*types.AttributeValueMemberS).Value; pk != "INSTANCE" {
+		t.Errorf("pk = %q, want INSTANCE (never a tenant's partition)", pk)
+	}
+	if sk := item["sk"].(*types.AttributeValueMemberS).Value; sk != "AWSCOST#2026-09" {
+		t.Errorf("sk = %q", sk)
+	}
+	if _, hasTTL := item["ttl"]; hasTTL {
+		t.Error("the month reading must not expire: it is billing history")
+	}
+
+	got, err = d.AWSCost(ctx, "2026-09")
+	if err != nil || got == nil {
+		t.Fatalf("AWSCost = %+v, %v", got, err)
+	}
+	if got.Month != "2026-09" || got.MonthMicros != 2_345_678 || !got.AsOf.Equal(asOf) || got.BudgetMicros == nil || *got.BudgetMicros != limit {
+		t.Errorf("read back %+v", got)
+	}
+
+	// A later reading replaces the earlier one, and a budget without a limit
+	// reads back as no limit rather than zero.
+	if err := d.PutAWSCost(ctx, AWSCost{Month: "2026-09", MonthMicros: 3_000_000, AsOf: asOf.Add(24 * time.Hour)}); err != nil {
+		t.Fatalf("PutAWSCost: %v", err)
+	}
+	got, err = d.AWSCost(ctx, "2026-09")
+	if err != nil || got == nil || got.MonthMicros != 3_000_000 || got.BudgetMicros != nil {
+		t.Errorf("after second put: %+v, %v", got, err)
+	}
+
+	if err := d.PutAWSCost(ctx, AWSCost{Month: "September"}); !errors.Is(err, ErrBadMonth) {
+		t.Errorf("malformed month: err = %v, want ErrBadMonth", err)
+	}
+	if _, err := d.AWSCost(ctx, "2026-9"); !errors.Is(err, ErrBadMonth) {
+		t.Errorf("malformed month on read: err = %v, want ErrBadMonth", err)
 	}
 }

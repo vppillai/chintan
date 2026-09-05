@@ -427,24 +427,25 @@ export interface UsageTotalsWire {
 }
 
 /**
- * What AWS has charged to run the instance so far this month — one figure
- * for the whole instance, not per caller. A daily worker task reads it from
- * the stack's Budget (`budgets:DescribeBudget`), so `as_of` is when that
- * last happened, and `budget_micros` is the Budget's limit when one is set.
+ * The instance's AWS spend for the month, as last read from the stack's AWS
+ * Budget by the worker's daily task. Instance-level — the account's bill, not
+ * the caller's share of it — so every user sees the same figure.
  */
 export interface UsageAwsWire {
+  /** Month-to-date actual spend, microdollars. */
   month_micros: number;
+  /** When the budget was read, RFC 3339. */
   as_of: string;
+  /** The budget's limit, microdollars; null when the budget has none. */
   budget_micros: number | null;
 }
 
 /**
  * `GET /v1/usage?month=yyyy-mm`: the caller's own provider usage for one
  * month — totals, the same split by pipeline stage, and one line per day. A
- * month with no usage is all zeros, not an error.
- *
- * `aws` is `null` until the worker has recorded a figure for that month, and
- * absent from a backend older than D6b; the screen treats both the same way.
+ * month with no usage is all zeros, not an error. `aws` is null when nothing
+ * has been recorded for the month (no budget in the stack, or the daily task
+ * has not run yet).
  */
 export interface UsageWire extends UsageTotalsWire {
   month: string;

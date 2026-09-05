@@ -33,10 +33,12 @@ type DynamoAPI interface {
 // DynamoStore implements Store using DynamoDB with a single-table design.
 //
 // Keys: pk = USER#<tenantId>, sk = SETTINGS | NOTE#<id> | CAPTURE#<id> |
-// IDEM#<key>. One partition is not a tenant's: pk = INSTANCE, sk = SPEND#<day>
-// is the instance-wide daily provider spend counter (internal/pipeline
-// DynamoCounter), written by the worker's breaker and read by the API's
-// spend gate.
+// IDEM#<key>. One partition is not a tenant's: pk = INSTANCE holds
+// sk = SPEND#<day>, the instance-wide daily provider spend counter
+// (internal/pipeline DynamoCounter), written by the worker's breaker and read
+// by the API's spend gate, and sk = AWSCOST#<yyyy-mm>, the month's AWS spend
+// as last read from the stack's budget (internal/usage), written by the
+// worker's daily aws-cost task and read by GET /v1/usage.
 //
 // GSI1 (gsi1pk = TENANT#<tenantId>#NOTE#<noteId>, gsi1sk = CAPTURE#<createdAt>)
 // turns note -> captures into a direct query. It is the only index: the notes

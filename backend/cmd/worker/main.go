@@ -1,4 +1,5 @@
-// Command worker runs the capture pipeline and the weekly expiry sweep.
+// Command worker runs the capture pipeline, the weekly expiry sweep and the
+// daily AWS cost reading.
 //
 // It is a second Lambda because the first one cannot do this work. API Gateway's
 // HTTP API caps an integration at 30 seconds and the cap is not adjustable, so a
@@ -10,8 +11,9 @@
 // Everything reaches it asynchronously, through the `live` alias: S3 when a
 // recording lands in the content bucket, the API when the user retries a
 // capture or picks its destination, the API or this function itself with
-// {"task":"clean-note"} for a note's whole-note cleaned view, and an
-// EventBridge rule once a week with {"task":"sweep-expired"}. There is no queue in between. A returned error
+// {"task":"clean-note"} for a note's whole-note cleaned view, and two
+// EventBridge rules: once a week with {"task":"sweep-expired"} and once a day
+// with {"task":"aws-cost"}. There is no queue in between. A returned error
 // makes Lambda retry the same payload twice, and an invocation that fails all
 // three attempts is written to the dead-letter queue, which is what the alarm
 // watches.
@@ -38,11 +40,13 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/budgets"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	lambdasvc "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
+	"github.com/vppillai/chintan/backend/internal/awscost"
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/obs"
@@ -57,6 +61,7 @@ import (
 var (
 	worker  *pipeline.Worker
 	sweeper *purge.Sweeper
+	costs   *awscost.Collector
 )
 
 // setup builds everything the handlers need. It is called from main rather
@@ -125,11 +130,12 @@ func setup() {
 	// the tenant's USAGE#<month> and USAGE#<day> rows, in the same place the
 	// breaker writes the usage log line. It enforces nothing; GET /v1/usage
 	// reads it.
+	usageStore := usage.NewDynamo(dynamoClient, tableName)
 	spend := breaker.New(
 		pipeline.NewDynamoCounter(dynamoClient, tableName),
 		meter.DefaultPrices,
 		envInt64("DAILY_SPEND_CAP_MICROS", 0),
-		breaker.WithUsage(usage.NewDynamo(dynamoClient, tableName)),
+		breaker.WithUsage(usageStore),
 	)
 
 	notes := service.NewNotesService(store, objects)
@@ -171,6 +177,21 @@ func setup() {
 	sweeper, err = purge.New(store, notes)
 	if err != nil {
 		log.Fatalf("failed to build the expiry sweeper: %v", err)
+	}
+
+	// The daily AWS cost reading. MONTHLY_BUDGET_NAME is the stack's budget,
+	// or empty when the stack has none (no alarm address), in which case the
+	// task is a logged no-op and the API shows no AWS figure. The account id
+	// is how DescribeBudget addresses a budget; the template passes it so the
+	// binary need not learn it from STS or the function ARN.
+	budgetName := strings.TrimSpace(os.Getenv("MONTHLY_BUDGET_NAME"))
+	var accountID string
+	if budgetName != "" {
+		accountID = mustEnv("AWS_ACCOUNT_ID")
+	}
+	costs, err = awscost.New(budgets.NewFromConfig(cfg), usageStore, accountID, budgetName)
+	if err != nil {
+		log.Fatalf("failed to build the aws-cost task: %v", err)
 	}
 }
 
@@ -279,8 +300,8 @@ func sniff(raw json.RawMessage) (invocation, error) {
 // Handler is the entry point for every asynchronous invocation.
 //
 // The return value is the whole protocol: nil for done, an error for "retry
-// this payload". Both halves — a capture and the sweep — are idempotent, so a
-// retry re-does only what did not finish.
+// this payload". Every handler — a capture, the sweep, the cost reading — is
+// idempotent, so a retry re-does only what did not finish.
 func Handler(ctx context.Context, raw json.RawMessage) error {
 	inv, err := sniff(raw)
 	if err != nil {
@@ -290,6 +311,11 @@ func Handler(ctx context.Context, raw json.RawMessage) error {
 	switch {
 	case inv.task == purge.Task:
 		_, err := sweeper.Sweep(ctx)
+		return err
+
+	case inv.task == awscost.Task:
+		// The daily budget reading behind the AWS line on GET /v1/usage.
+		_, err := costs.Run(ctx)
 		return err
 
 	case inv.task == pipeline.TaskCleanNote:

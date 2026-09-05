@@ -355,11 +355,18 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 			t.Fatalf("seed usage: %v", err)
 		}
 	}
+	budgetMicros := int64(10_000_000)
+	if err := h.usage.PutAWSCost(context.Background(), usage.AWSCost{
+		Month: "2026-01", MonthMicros: 2_345_678, BudgetMicros: &budgetMicros,
+		AsOf: time.Date(2026, 1, 5, 6, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed aws cost: %v", err)
+	}
 	add("usage", "UsageWire",
-		"GET /v1/usage?month=2026-01 → 200. The caller's own provider spend for the month in microdollars: totals, the split by pipeline stage, one line per day.",
+		"GET /v1/usage?month=2026-01 → 200. The caller's own provider spend for the month in microdollars: totals, the split by pipeline stage, one line per day — and `aws`, the instance's AWS spend for the month as last read from the stack's budget.",
 		h.do(t, http.MethodGet, "/v1/usage?month=2026-01", contractUser, nil))
 	add("usageEmpty", "UsageWire",
-		"GET /v1/usage?month=2025-12 → 200 for a month with no usage: zeros and empty collections, never 404.",
+		"GET /v1/usage?month=2025-12 → 200 for a month with no usage: zeros and empty collections, never 404; `aws` is null when no reading has been recorded for the month.",
 		h.do(t, http.MethodGet, "/v1/usage?month=2025-12", contractUser, nil))
 
 	// ---- export
