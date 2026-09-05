@@ -196,12 +196,12 @@ type bumpNoteOnClaim struct {
 func (s *bumpNoteOnClaim) ClaimCaptureAppend(ctx context.Context, tenantID, captureID, token string) (bool, model.CaptureIndex, error) {
 	if !s.bumped {
 		s.bumped = true
-		note, err := s.Store.GetNote(ctx, tenantID, "note1")
+		note, err := s.GetNote(ctx, tenantID, "note1")
 		if err != nil {
 			return false, model.CaptureIndex{}, err
 		}
 		note.Title = "Retitled while the recording was transcribing"
-		if _, err := s.Store.PutNote(ctx, tenantID, note); err != nil {
+		if _, err := s.PutNote(ctx, tenantID, note); err != nil {
 			return false, model.CaptureIndex{}, err
 		}
 	}

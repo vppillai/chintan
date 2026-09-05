@@ -513,7 +513,7 @@ func (s *appendBetweenReads) GetNote(ctx context.Context, tenantID, noteID strin
 		if err != nil {
 			return model.NoteIndex{}, err
 		}
-		if _, err := s.Store.PutNote(ctx, tenantID, row); err != nil {
+		if _, err := s.PutNote(ctx, tenantID, row); err != nil {
 			return model.NoteIndex{}, err
 		}
 	}
