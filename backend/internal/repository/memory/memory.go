@@ -320,6 +320,45 @@ func (s *Store) ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID
 	return nil
 }
 
+func (s *Store) StampCleanRequest(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, at string, expectedVersion int64) (model.NoteIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if at == "" {
+		return model.NoteIndex{}, errors.New("repository: empty clean request stamp")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok {
+		return model.NoteIndex{}, repository.ErrNotFound
+	}
+	if existing.Version != expectedVersion {
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	next := copyNote(existing)
+	next.CleanedRequestedAt = at
+	next.CleanedRequestedMode = mode
+	s.notes[tenantID][noteID] = next
+	return copyNote(next), nil
+}
+
+func (s *Store) ClearCleanStamp(ctx context.Context, tenantID, noteID, at string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok || existing.CleanedRequestedAt != at {
+		return nil
+	}
+	next := copyNote(existing)
+	next.CleanedRequestedAt, next.CleanedRequestedMode = "", ""
+	s.notes[tenantID][noteID] = next
+	return nil
+}
+
 func (s *Store) DeleteNote(ctx context.Context, tenantID, noteID string) error {
 	if err := s.checkCtx(ctx); err != nil {
 		return err

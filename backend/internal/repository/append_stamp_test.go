@@ -135,3 +135,94 @@ func TestClearNoteAppendRemovesOnlyItsOwnStamp(t *testing.T) {
 		}
 	})
 }
+
+// The clean-request stamp is the same kind of write as the append stamp — two
+// named attributes under the row's version — with one difference: the version
+// does not move, because nothing about the note's content changed. A stamp
+// that bumped the version sent every open editor round a conflict with
+// nothing to reconcile, and a whole-row write carried whatever cleaned_body
+// the caller had in hand, which a list-projected note has not.
+func TestStampCleanRequestTouchesOnlyTheStampAndLeavesTheVersionAlone(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store := newStore()
+		ctx := context.Background()
+		seeded, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{
+			ID: "n1", Title: "Kept", CleanedBody: "the stored view", SearchText: "kept search", UpdatedAt: model.Now(),
+		})
+		if err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		const at = "2026-09-05T12:00:00.000000000Z"
+
+		stamped, err := store.StampCleanRequest(ctx, "tenant-a", "n1", model.NoteCleanStructured, at, seeded.Version)
+		if err != nil {
+			t.Fatalf("StampCleanRequest: %v", err)
+		}
+		if stamped.Version != seeded.Version {
+			t.Fatalf("version after the stamp = %d, want %d unchanged", stamped.Version, seeded.Version)
+		}
+		if stamped.CleanedRequestedAt != at || stamped.CleanedRequestedMode != model.NoteCleanStructured {
+			t.Fatalf("stamp = (%q, %q)", stamped.CleanedRequestedAt, stamped.CleanedRequestedMode)
+		}
+		got, err := store.GetNote(ctx, "tenant-a", "n1")
+		if err != nil {
+			t.Fatalf("GetNote: %v", err)
+		}
+		if got.CleanedBody != "the stored view" || got.SearchText != "kept search" || got.Title != "Kept" {
+			t.Fatalf("the stamp disturbed other attributes: %+v", got)
+		}
+		if got.CleanedRequestedAt != at {
+			t.Fatalf("read back stamp %q, want %s", got.CleanedRequestedAt, at)
+		}
+
+		if _, err := store.StampCleanRequest(ctx, "tenant-a", "n1", model.NoteCleanPolished, at, seeded.Version+7); !errors.Is(err, repository.ErrVersionConflict) {
+			t.Fatalf("stamp on a stale version: err = %v, want ErrVersionConflict", err)
+		}
+		if _, err := store.StampCleanRequest(ctx, "tenant-a", "missing", model.NoteCleanPolished, at, 0); !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("stamp on a missing note: err = %v, want ErrNotFound", err)
+		}
+
+		// The clear takes back only the stamp it names.
+		if err := store.ClearCleanStamp(ctx, "tenant-a", "n1", "2026-09-05T12:00:01.000000000Z"); err != nil {
+			t.Fatalf("ClearCleanStamp(other): %v", err)
+		}
+		if got, _ := store.GetNote(ctx, "tenant-a", "n1"); got.CleanedRequestedAt != at {
+			t.Fatal("a clear for another stamp removed this one")
+		}
+		if err := store.ClearCleanStamp(ctx, "tenant-a", "n1", at); err != nil {
+			t.Fatalf("ClearCleanStamp: %v", err)
+		}
+		got, err = store.GetNote(ctx, "tenant-a", "n1")
+		if err != nil {
+			t.Fatalf("GetNote: %v", err)
+		}
+		if got.CleanedRequestedAt != "" || got.CleanedRequestedMode != "" {
+			t.Fatalf("stamp after the clear = (%q, %q), want empty", got.CleanedRequestedAt, got.CleanedRequestedMode)
+		}
+		if got.Version != seeded.Version {
+			t.Fatalf("version after the clear = %d, want %d", got.Version, seeded.Version)
+		}
+
+		// A whole-row write that carried the stamp forward, then a clear: the
+		// read must not resurrect the stamp from the row's record blob.
+		if _, err := store.StampCleanRequest(ctx, "tenant-a", "n1", model.NoteCleanStructured, at, seeded.Version); err != nil {
+			t.Fatalf("re-stamp: %v", err)
+		}
+		row, _ := store.GetNote(ctx, "tenant-a", "n1")
+		row.Title = "Retitled with the stamp on the row"
+		carried, err := store.PutNote(ctx, "tenant-a", row)
+		if err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		if err := store.ClearCleanStamp(ctx, "tenant-a", "n1", at); err != nil {
+			t.Fatalf("ClearCleanStamp: %v", err)
+		}
+		after, _ := store.GetNote(ctx, "tenant-a", "n1")
+		if after.CleanedRequestedAt != "" {
+			t.Fatalf("stamp %q came back from the record blob after the clear", after.CleanedRequestedAt)
+		}
+		if after.Version != carried.Version {
+			t.Fatalf("version = %d, want %d", after.Version, carried.Version)
+		}
+	})
+}

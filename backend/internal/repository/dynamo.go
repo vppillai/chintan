@@ -838,6 +838,74 @@ func (s *DynamoStore) ClearNoteAppend(ctx context.Context, tenantID, noteID, cap
 	return nil
 }
 
+// StampCleanRequest is one conditional UpdateItem on the two stamp attributes.
+// Like StampNoteAppend it leaves the blob behind; noteFromItem overlays the
+// promoted attributes when the read projected them, and every read of this
+// row does.
+func (s *DynamoStore) StampCleanRequest(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, at string, expectedVersion int64) (model.NoteIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if at == "" {
+		return model.NoteIndex{}, errors.New("repository: empty clean request stamp")
+	}
+	out, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:    aws.String("SET cleaned_requested_at = :at, cleaned_requested_mode = :mode"),
+		ConditionExpression: aws.String("attribute_exists(pk) AND (" + versionCondition(expectedVersion) + ")"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected": numAttr(expectedVersion),
+			":at":       strAttr(at),
+			":mode":     strAttr(string(mode)),
+		},
+		ReturnValues: types.ReturnValueAllNew,
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			if _, getErr := s.GetNote(ctx, tenantID, noteID); errors.Is(getErr, ErrNotFound) {
+				return model.NoteIndex{}, ErrNotFound
+			} else if getErr != nil {
+				return model.NoteIndex{}, getErr
+			}
+			return model.NoteIndex{}, ErrVersionConflict
+		}
+		return model.NoteIndex{}, fmt.Errorf("dynamo stamp clean request: %w", err)
+	}
+	return noteFromItem(out.Attributes)
+}
+
+// ClearCleanStamp writes the two attributes empty rather than REMOVEing them:
+// noteFromItem falls back to the blob for an attribute a read did not carry,
+// and the blob may still hold the stamp from a whole-row write that carried
+// it forward. A failed condition is not an error: the stamp is already gone
+// or belongs to a later request.
+func (s *DynamoStore) ClearCleanStamp(ctx context.Context, tenantID, noteID, at string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:    aws.String("SET cleaned_requested_at = :empty, cleaned_requested_mode = :empty"),
+		ConditionExpression: aws.String("attribute_exists(pk) AND cleaned_requested_at = :at"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":at":    strAttr(at),
+			":empty": strAttr(""),
+		},
+	})
+	if err != nil && !isConditionalCheckFailed(err) {
+		return fmt.Errorf("dynamo clear clean stamp: %w", err)
+	}
+	return nil
+}
+
 // versionCondition guards a write on the version the caller read. Expected 0
 // also admits an item written before versioning existed, which carries no
 // version attribute; one write later it does.

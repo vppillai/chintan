@@ -307,3 +307,58 @@ func TestAutoCleanStampsTheRequestItHandsOver(t *testing.T) {
 		t.Errorf("worker calls = %v", worker.calls)
 	}
 }
+
+// Recording a clean request is not a content write. It must not move the
+// version — an autosave already on the wire would lose its version check for
+// nothing — and it must not rewrite the row from the caller's copy: the notes
+// list omits cleaned_body, and a request recorded from a listed note used to
+// write the view away.
+func TestRecordCleanRequestMovesNeitherTheVersionNorTheCleanedView(t *testing.T) {
+	h := newEditHarness(t)
+	n := h.withCleanedView("u", h.note("u", "Roof", "the gutter leaks"), false, model.NoteCleanPolished)
+	before := h.get("u", n.ID)
+	if before.CleanedBody == "" {
+		t.Fatal("the fixture has no cleaned view; the test cannot show it survives")
+	}
+
+	// The caller's copy is a listed note: everything but the view.
+	listed := before
+	listed.CleanedBody = ""
+	stamped, inFlight, err := RecordCleanRequest(h.ctx, h.store, "u", listed, model.NoteCleanStructured, time.Date(2026, 9, 5, 15, 0, 0, 0, time.UTC), true)
+	if err != nil || inFlight {
+		t.Fatalf("RecordCleanRequest: inFlight=%v err=%v", inFlight, err)
+	}
+	if stamped.Version != before.Version {
+		t.Errorf("version moved from %d to %d for a request; the version is for content writes", before.Version, stamped.Version)
+	}
+	after := h.get("u", n.ID)
+	if after.CleanedBody != before.CleanedBody {
+		t.Errorf("cleaned view after the request = %q, want the stored view %q untouched", after.CleanedBody, before.CleanedBody)
+	}
+	if after.CleanedRequestedMode != model.NoteCleanStructured || after.CleanedRequestedAt == "" {
+		t.Errorf("stamp = %q at %q", after.CleanedRequestedMode, after.CleanedRequestedAt)
+	}
+
+	// A stale caller re-reads and stamps again rather than failing.
+	stale := before
+	stale.Version = before.Version - 1
+	if _, _, err := RecordCleanRequest(h.ctx, h.store, "u", stale, model.NoteCleanPolished, time.Date(2026, 9, 5, 15, 1, 0, 0, time.UTC), false); err != nil {
+		t.Fatalf("RecordCleanRequest(stale copy): %v", err)
+	}
+	if got := h.get("u", n.ID).CleanedRequestedMode; got != model.NoteCleanPolished {
+		t.Errorf("stamp mode after the re-read = %q, want polished", got)
+	}
+
+	// Clearing takes back only the stamp the failed hand-off wrote.
+	current := h.get("u", n.ID)
+	older := current
+	older.CleanedRequestedAt = "2026-09-05T14:00:00.000000000Z"
+	ClearCleanRequest(h.ctx, h.store, "u", older)
+	if got := h.get("u", n.ID).CleanedRequestedAt; got != current.CleanedRequestedAt {
+		t.Errorf("a clear for an older stamp removed the current one")
+	}
+	ClearCleanRequest(h.ctx, h.store, "u", current)
+	if got := h.get("u", n.ID); got.CleanedRequestedAt != "" || got.Version != current.Version {
+		t.Errorf("after the clear: stamp=%q version=%d, want empty and %d", got.CleanedRequestedAt, got.Version, current.Version)
+	}
+}

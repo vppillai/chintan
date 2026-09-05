@@ -181,6 +181,21 @@ type Store interface {
 	// append that hands its claim back without writing; an append that writes
 	// clears the stamp with the index refresh's PutNote.
 	ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error
+	// StampCleanRequest records on the note row, conditionally on
+	// expectedVersion, that a clean-note run in mode was handed to the worker
+	// at `at` (NoteIndex.CleanedRequestedAt and CleanedRequestedMode), touching
+	// no other attribute and NOT moving the version, and returns the row as
+	// stored. A lost race returns ErrVersionConflict; a missing note returns
+	// ErrNotFound. The version is left alone because nothing about the note's
+	// content changed: until 2026-09 this was a whole-row PutNote, which bumped
+	// the version — sending every open editor round a conflict for a save that
+	// had nothing to reconcile — and rewrote cleaned_body from whatever copy
+	// the caller held, which a list-projected note holds empty.
+	StampCleanRequest(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, at string, expectedVersion int64) (model.NoteIndex, error)
+	// ClearCleanStamp takes the stamp back, but only while the row still
+	// carries exactly `at`; a stamp a later request has since written stands.
+	// It is for a hand-off that failed after stamping.
+	ClearCleanStamp(ctx context.Context, tenantID, noteID, at string) error
 	DeleteNote(ctx context.Context, tenantID, noteID string) error
 
 	PutCapture(ctx context.Context, c model.CaptureIndex) (model.CaptureIndex, error)
