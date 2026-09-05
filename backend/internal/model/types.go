@@ -250,6 +250,19 @@ type NoteIndex struct {
 	// and never on the wire.
 	CleanedRequestedAt   string        `json:"cleaned_requested_at,omitempty"`
 	CleanedRequestedMode NoteCleanMode `json:"cleaned_requested_mode,omitempty"`
+	// AppendingCapture and AppendingAt say a capture's paragraph is on its way
+	// into the body: the worker stamps them, together with a version bump,
+	// after it takes the append claim and before it writes the body
+	// (repository.Store.StampNoteAppend), and clears them when the index
+	// refresh that follows the write lands or the claim is handed back. While
+	// the stamp is younger than repository.AppendClaimLease, PATCH refuses a
+	// body write with 409 `append_in_progress` (service.UpdateNote): the
+	// version alone cannot witness a body write the worker has made but not yet
+	// indexed, and an editor save landing in that window carried the marker
+	// forward and dropped the paragraph. Promoted and projected like the stamp
+	// above, and never on the wire.
+	AppendingCapture string `json:"appending_capture,omitempty"`
+	AppendingAt      string `json:"appending_at,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.

@@ -1155,6 +1155,24 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	}
 	*capture = current
 
+	// Tell the note row before touching the body. The claim and the marker keep
+	// the append exactly-once between workers; neither is visible to an editor
+	// save, which checks the row's version and the body's ETag. The body write
+	// below moves the ETag but not the version — the index refresh bumps that
+	// afterwards — so a save that read the version before this point and the
+	// ETag after the write passed both checks, rewrote the body from the text
+	// it had, and the paragraph just dictated was gone with nothing left to
+	// retry it (review 2026-09-05, S1). The stamp bumps the version now and
+	// names the capture, so service.UpdateNote refuses a body write for as long
+	// as the append can still be in flight, and refreshNoteIndex clears it.
+	//
+	// The row's version has usually moved since run() read it — the stages
+	// before this one take seconds — so a lost race re-reads and stamps again.
+	if err := p.stampNoteAppend(ctx, tenantID, note.ID, capture.ID); err != nil {
+		p.releaseAppendClaim(ctx, capture)
+		return *capture, fmt.Errorf("pipeline: stamp note for append: %w", err)
+	}
+
 	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, resumingOwnAttempt); err != nil {
 		// Hand the claim back so a transient object-store failure does not park
 		// the capture until the claim lease expires.
@@ -1165,12 +1183,73 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
 }
 
+// appendStampWait bounds how long one append waits for another capture's
+// stamp on the same note to clear before stamping over it. The row holds one
+// stamp, so two appends to one note in flight together would leave the first
+// unprotected once the second's refresh cleared it; waiting for the first to
+// finish keeps one append in flight per note. Ten seconds is two orders of
+// magnitude above the stamp-to-refresh span (one S3 GET and PUT, one GetItem,
+// one S3 GET, one PutItem), so only a holder that died mid-append is ever
+// stamped over, and it is not waited on for its whole twenty-minute lease.
+const appendStampWait = 10 * time.Second
+
+// stampNoteAppend writes the append stamp under the row's current version,
+// re-reading on a lost race the way every other writer of this row does, and
+// waiting first for another capture's fresh stamp on the same note to clear.
+func (p *Pipeline) stampNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error {
+	giveUpWaiting := time.Now().Add(appendStampWait)
+	conflicts := 0
+	for {
+		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
+		if err != nil {
+			return err
+		}
+		if p.anotherAppendInFlight(note, captureID) && time.Now().Before(giveUpWaiting) {
+			// Another capture's paragraph is going into this body right now.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(appendStampPoll):
+			}
+			continue
+		}
+		_, err = p.cfg.Store.StampNoteAppend(ctx, tenantID, noteID, captureID, note.Version, p.now())
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, repository.ErrVersionConflict) {
+			return err
+		}
+		if conflicts++; conflicts >= maxIndexRefreshAttempts {
+			return err
+		}
+	}
+}
+
+// anotherAppendInFlight reports whether the row carries a different capture's
+// stamp young enough to be an append still writing. A stamp older than the
+// wait bound was left by a holder that died; waiting on it would only delay
+// this append by the whole bound for nothing.
+func (p *Pipeline) anotherAppendInFlight(note model.NoteIndex, captureID string) bool {
+	if note.AppendingCapture == "" || note.AppendingCapture == captureID {
+		return false
+	}
+	at, err := model.ParseTime(note.AppendingAt)
+	if err != nil {
+		return false
+	}
+	return p.now().Sub(at) < appendStampWait
+}
+
+// appendStampPoll is how often a waiting append re-reads the row.
+const appendStampPoll = 200 * time.Millisecond
+
 // finishAppend is the bookkeeping after the text is durably in the note body:
 // the index refresh and the completion of the claim. Both are safe to repeat,
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
-	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID)
+	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID, capture.ID)
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
@@ -1208,7 +1287,16 @@ func appendToken(captureID, cleanKey string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
+// releaseAppendClaim hands an unwritten append back: the claim on the capture
+// and the stamp on the note, so neither an editor save nor the next attempt
+// waits out the lease for an append that is not coming. Both are best effort
+// — the lease and the stamp's age are what bound a release that fails.
 func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.CaptureIndex) {
+	if err := p.cfg.Store.ClearNoteAppend(ctx, capture.UserID, capture.NoteID, capture.ID); err != nil {
+		obs.Log(ctx).Warn("could not clear the note's append stamp after handing the claim back; editor saves wait for it to age out",
+			slog.String("note_id", capture.NoteID),
+			slog.String("error", err.Error()))
+	}
 	released := *capture
 	released.AppendToken = ""
 	released.AppendClaimedAt = 0
@@ -1290,7 +1378,7 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 // until the next body write. Returning the error fails the invocation instead.
 // The retry finds the capture's marker in the body and finishes the append
 // from here, so nothing is written twice.
-func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
+func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, captureID string) (model.NoteIndex, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
@@ -1307,6 +1395,14 @@ func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID string
 		note.UpdatedAt = model.FormatTime(p.now())
 		// The paragraph just appended is not in the cleaned view.
 		service.MarkCleanedStale(&note)
+		// The body now carries the paragraph, so the row's version is once more
+		// a witness of it and editor saves may resume. Only this capture's own
+		// stamp is cleared: two captures appending to one note stamp in turn,
+		// and the second's body write may still be in flight when the first
+		// refreshes.
+		if note.AppendingCapture == captureID {
+			note.AppendingCapture, note.AppendingAt = "", ""
+		}
 
 		if stored, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {
 			return stored, nil

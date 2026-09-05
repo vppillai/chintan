@@ -165,6 +165,22 @@ type Store interface {
 	// and returns the note with its new version. A losing write returns
 	// ErrVersionConflict rather than silently discarding the other writer.
 	PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error)
+	// StampNoteAppend records on the note row, conditionally on expectedVersion,
+	// that captureID's paragraph is about to be written into the body: it bumps
+	// the version and sets NoteIndex.AppendingCapture and AppendingAt to
+	// captureID and at, touching no other attribute, and returns the row as
+	// stored. A lost race returns ErrVersionConflict; a missing note returns
+	// ErrNotFound. It is a named-attribute update rather than a whole-row
+	// PutNote so it cannot carry a stale cleaned_body or search_text over a
+	// concurrent writer's, and so the version moves for the reason PATCH is
+	// told about (see service.UpdateNote).
+	StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, expectedVersion int64, at time.Time) (model.NoteIndex, error)
+	// ClearNoteAppend removes the stamp StampNoteAppend left, but only while it
+	// still names captureID; a stamp another capture has since written stands.
+	// The version does not move: nothing about the body changed. It is for the
+	// append that hands its claim back without writing; an append that writes
+	// clears the stamp with the index refresh's PutNote.
+	ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error
 	DeleteNote(ctx context.Context, tenantID, noteID string) error
 
 	PutCapture(ctx context.Context, c model.CaptureIndex) (model.CaptureIndex, error)

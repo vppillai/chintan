@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
@@ -480,5 +481,143 @@ func TestCreateNoteIDsSortInCreationOrder(t *testing.T) {
 			t.Fatalf("note id %q does not sort after the one created before it, %q", note.ID, previous)
 		}
 		previous = note.ID
+	}
+}
+
+// appendBetweenReads lands a whole voice append — body write and index bump —
+// on the first read of the note row. UpdateNote reads the body's ETag and the
+// row; whichever it reads second is the later witness. Reading the row first
+// let an append that landed between the two pass both checks: the version was
+// read before the bump and the ETag after the body write, so the conditional
+// PUT succeeded over the paragraph. Reading the ETag first, the row's version
+// is the one that has moved and the save is refused with the body intact.
+type appendBetweenReads struct {
+	repository.Store
+	objects repository.Objects
+	key     string
+	text    string
+	done    bool
+}
+
+func (s *appendBetweenReads) GetNote(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
+	if !s.done {
+		s.done = true
+		body, etag, err := s.objects.GetWithETag(ctx, s.key)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return model.NoteIndex{}, err
+		}
+		if err := s.objects.PutIfMatch(ctx, s.key, []byte(string(body)+"\n\n"+s.text), "text/markdown", etag); err != nil {
+			return model.NoteIndex{}, err
+		}
+		row, err := s.Store.GetNote(ctx, tenantID, noteID)
+		if err != nil {
+			return model.NoteIndex{}, err
+		}
+		if _, err := s.Store.PutNote(ctx, tenantID, row); err != nil {
+			return model.NoteIndex{}, err
+		}
+	}
+	return s.Store.GetNote(ctx, tenantID, noteID)
+}
+
+func TestUpdateNoteReadsTheBodyBeforeTheRowSoTheVersionIsTheLaterWitness(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	notes := service.NewNotesService(store, objects)
+
+	note, err := notes.CreateNote(ctx, "user1", "Roof", nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	const editorBase = "The roof needs looking at."
+	opened, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Body: stringPtr(editorBase)})
+	if err != nil {
+		t.Fatalf("UpdateNote(seed body): %v", err)
+	}
+
+	const spoken = "Ellis quoted nine hundred pounds."
+	racing := &appendBetweenReads{Store: store, objects: objects, key: note.S3MarkdownKey, text: spoken}
+	racingNotes := service.NewNotesService(racing, objects)
+
+	version := opened.Version
+	_, err = racingNotes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{
+		Body:            stringPtr(editorBase + " Ringing Ellis today."),
+		ExpectedVersion: &version,
+	})
+	if !racing.done {
+		t.Fatal("the test never interleaved an append, so it proves nothing")
+	}
+	if !errors.Is(err, repository.ErrVersionConflict) {
+		t.Errorf("UpdateNote err = %v, want repository.ErrVersionConflict", err)
+	}
+	body, getErr := objects.Get(ctx, note.S3MarkdownKey)
+	if getErr != nil {
+		t.Fatalf("Get(note body): %v", getErr)
+	}
+	if !strings.Contains(string(body), spoken) {
+		t.Errorf("the note body is %q; the spoken paragraph was overwritten", body)
+	}
+	if strings.Contains(string(body), "Ringing Ellis") {
+		t.Errorf("the refused save reached the body: %q", body)
+	}
+}
+
+// A body save that meets the worker's append stamp is refused whatever its
+// version says, and is refused BEFORE the version check: the stamp bumped the
+// version, so answered as a version conflict the client would re-read, find
+// the same text at the new version, and re-send straight into the window.
+// Metadata-only saves are not body writes and go through; a stamp past the
+// claim lease was abandoned and is ignored.
+func TestUpdateNoteRefusesABodyWriteWhileAnAppendIsStamped(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	objects := memory.NewObjects()
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	notes := service.NewNotesService(store, objects).WithClock(func() time.Time { return now })
+
+	note, err := notes.CreateNote(ctx, "user1", "Roof", nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	stamped, err := store.StampNoteAppend(ctx, "user1", note.ID, "cap1", note.Version, now.Add(-time.Second))
+	if err != nil {
+		t.Fatalf("StampNoteAppend: %v", err)
+	}
+
+	// The version the stamp produced, so only the stamp can refuse this.
+	version := stamped.Version
+	got, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Body: stringPtr("typed"), ExpectedVersion: &version})
+	if !errors.Is(err, service.ErrAppendInProgress) {
+		t.Fatalf("body save at the stamped version: err = %v, want ErrAppendInProgress", err)
+	}
+	if got.Version != stamped.Version {
+		t.Fatalf("the refusal carries version %d, want the current %d", got.Version, stamped.Version)
+	}
+	// A stale version too: the stamp is the answer, not the conflict.
+	stale := note.Version
+	if _, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Body: stringPtr("typed"), ExpectedVersion: &stale}); !errors.Is(err, service.ErrAppendInProgress) {
+		t.Fatalf("body save at a stale version: err = %v, want ErrAppendInProgress before ErrVersionConflict", err)
+	}
+
+	// Metadata is not the body.
+	retitled, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Title: stringPtr("Roof and gutters"), ExpectedVersion: &version})
+	if err != nil {
+		t.Fatalf("title save during an append: %v", err)
+	}
+	if retitled.AppendingCapture != "cap1" {
+		t.Fatalf("a metadata save cleared the stamp; the append in flight is unprotected")
+	}
+
+	// Past the lease the stamp is abandoned, the save goes through, and the
+	// write does not carry the dead stamp forward.
+	now = now.Add(repository.AppendClaimLease + time.Minute)
+	version = retitled.Version
+	after, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Body: stringPtr("typed after the lease"), ExpectedVersion: &version})
+	if err != nil {
+		t.Fatalf("body save after the lease: %v", err)
+	}
+	if after.AppendingCapture != "" {
+		t.Fatalf("an abandoned stamp %q was carried forward by the save", after.AppendingCapture)
 	}
 }

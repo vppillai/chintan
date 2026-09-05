@@ -634,6 +634,18 @@ export const problemConflict: ProblemWire = {
   "type": "about:blank"
 };
 
+/** PATCH /v1/notes/{noteId} → 409 with reason append_in_progress while a recording is being added to the body. Repeat the same save after Retry-After; do not rebase on current_version. */
+export const problemAppendInProgress: ProblemWire = {
+  "correlation_id": "00000000-0000-4000-8000-000000000000",
+  "current_version": 2,
+  "detail": "a recording is being added to this note; send the same save again in a moment",
+  "instance": "/v1/fixture",
+  "reason": "append_in_progress",
+  "status": 409,
+  "title": "Conflict",
+  "type": "about:blank"
+};
+
 /** POST /v1/captures → 429 for the daily spend cap, which the client must not treat as a retryable 429. */
 export const problemSpendCapped: ProblemWire = {
   "correlation_id": "00000000-0000-4000-8000-000000000000",

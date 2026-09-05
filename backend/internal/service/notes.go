@@ -298,9 +298,76 @@ func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string)
 	return NoteDetail{NoteIndex: note, Body: StripCaptureMarkers(string(bodyBytes))}, nil
 }
 
-// UpdateNote updates a note with partial changes
+// ErrAppendInProgress refuses a body write while the worker is putting a
+// capture's paragraph into the same body. The handler answers it as a 409 in
+// the version-conflict shape with `reason: append_in_progress` and a
+// Retry-After, and the client repeats the same save unchanged once the append
+// has landed — it must not re-read and rebase, because the version has moved
+// for a body that has not yet.
+var ErrAppendInProgress = errors.New("a recording is being added to this note")
+
+// AppendInProgress reports whether n carries a stamp young enough that the
+// append it announces may still be writing the body. A stamp older than the
+// claim lease was left by a worker that died between stamping and writing;
+// the lease is what lets that capture be retried, and the same bound lets the
+// editor save again.
+func AppendInProgress(n model.NoteIndex, now time.Time) bool {
+	if n.AppendingCapture == "" || n.AppendingAt == "" {
+		return false
+	}
+	at, err := model.ParseTime(n.AppendingAt)
+	if err != nil {
+		return false
+	}
+	return now.Sub(at) < repository.AppendClaimLease
+}
+
+// UpdateNote updates a note with partial changes.
+//
+// A body write has two concurrent writers to survive: another editor save,
+// which the row's version catches, and the worker's append, which writes the
+// body first and refreshes the row afterwards. The append is the hard one. Its
+// body write moves the ETag and not the version, so a save whose row read
+// preceded the append's version bump and whose body read followed the body
+// write passed both checks and rewrote the body from text that predates the
+// paragraph — carrying the marker forward, so nothing ever re-appended it.
+// Three things close that (review 2026-09-05, S1), in this order below:
+//
+//   - The append stamps the row before it writes (Pipeline.append). A save
+//     that finds the stamp is refused with ErrAppendInProgress, whatever its
+//     version says, and the client repeats it once the stamp is gone.
+//   - The body's ETag is read BEFORE the row, so the version is the later
+//     witness. The stamp bumps the version, so a save whose row read saw the
+//     old version read its ETag earlier still, before any body write the stamp
+//     announced; the conditional PUT then loses to that write instead of
+//     erasing it.
+//   - The body write is conditional on the ETag it read, so any body write
+//     between the two is a conflict, not a loss.
 func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, updates NoteUpdates) (model.NoteIndex, error) {
-	// Get existing note
+	// The body first, when there is one to write. The object key is derived
+	// from the ids rather than read from the row, which is what lets the ETag
+	// be read before the row is; a row naming a different key — nothing
+	// writes one, but a row is data — falls back to reading after.
+	//
+	// The stored body is kept as well as its ETag: the client never saw the
+	// worker's append markers (GetNoteDetail strips them), so they are put
+	// back onto whatever it sends, or a save inside a capture's retry window
+	// would erase the one fact that stops the retry appending twice.
+	bodyETag := ""
+	var storedBody []byte
+	bodyReadFrom := ""
+	if updates.Body != nil {
+		key, err := keys.NoteMarkdown(userID, noteID)
+		if err != nil {
+			return model.NoteIndex{}, repository.ErrNotFound
+		}
+		storedBody, bodyETag, err = s.objects.GetWithETag(ctx, key)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return model.NoteIndex{}, fmt.Errorf("failed to read note body: %w", err)
+		}
+		bodyReadFrom = key
+	}
+
 	note, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
 		return model.NoteIndex{}, err
@@ -311,22 +378,23 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		return model.NoteIndex{}, ErrNoteArchived
 	}
 
-	// Read the body's ETag before the version check, so the conditional write
-	// below covers the whole of this call. The pipeline's append writes the
-	// object first and refreshes the index afterwards, so an append that lands
-	// after the version check is invisible to it — only the ETag catches it.
-	//
-	// The stored body is kept as well as its ETag: the client never saw the
-	// worker's append markers (GetNoteDetail strips them), so they are put
-	// back onto whatever it sends, or a save inside a capture's retry window
-	// would erase the one fact that stops the retry appending twice.
-	bodyETag := ""
-	var storedBody []byte
 	if updates.Body != nil {
-		storedBody, bodyETag, err = s.objects.GetWithETag(ctx, note.S3MarkdownKey)
-		if err != nil && !errors.Is(err, repository.ErrNotFound) {
-			return model.NoteIndex{}, fmt.Errorf("failed to read note body: %w", err)
+		if bodyReadFrom != note.S3MarkdownKey {
+			storedBody, bodyETag, err = s.objects.GetWithETag(ctx, note.S3MarkdownKey)
+			if err != nil && !errors.Is(err, repository.ErrNotFound) {
+				return model.NoteIndex{}, fmt.Errorf("failed to read note body: %w", err)
+			}
 		}
+		// Before the version check, deliberately: the stamp bumped the version,
+		// so every save that meets it is also a version conflict, and answered
+		// as one it would be re-read and re-sent straight into the window it
+		// has to wait out.
+		if AppendInProgress(note, s.now()) {
+			return note, ErrAppendInProgress
+		}
+		// A stamp past the lease was abandoned; this write is the row's next
+		// and need not carry it.
+		note.AppendingCapture, note.AppendingAt = "", ""
 	}
 
 	// The version the client read is checked before anything is written, which

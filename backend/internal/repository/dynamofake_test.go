@@ -184,22 +184,35 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 	if updated == nil {
 		updated = map[string]types.AttributeValue{"pk": in.Key["pk"], "sk": in.Key["sk"]}
 	}
-	// Only "SET a = :x, b = :y" is used by the store.
+	// The store uses exactly two shapes: "SET a = :x, b = :y" and
+	// "REMOVE a, b". Anything else is a store change this fake has to learn.
 	expr := strings.TrimSpace(aws.ToString(in.UpdateExpression))
-	expr = strings.TrimPrefix(expr, "SET ")
-	for _, assign := range strings.Split(expr, ",") {
-		name, valRef, ok := strings.Cut(assign, "=")
-		if !ok {
-			return nil, fmt.Errorf("fakeDynamo: unsupported update %q", assign)
+	switch {
+	case strings.HasPrefix(expr, "SET "):
+		for _, assign := range strings.Split(strings.TrimPrefix(expr, "SET "), ",") {
+			name, valRef, ok := strings.Cut(assign, "=")
+			if !ok {
+				return nil, fmt.Errorf("fakeDynamo: unsupported update %q", assign)
+			}
+			v, ok := in.ExpressionAttributeValues[strings.TrimSpace(valRef)]
+			if !ok {
+				return nil, fmt.Errorf("fakeDynamo: unknown value %q", valRef)
+			}
+			updated[strings.TrimSpace(name)] = v
 		}
-		v, ok := in.ExpressionAttributeValues[strings.TrimSpace(valRef)]
-		if !ok {
-			return nil, fmt.Errorf("fakeDynamo: unknown value %q", valRef)
+	case strings.HasPrefix(expr, "REMOVE "):
+		for _, name := range strings.Split(strings.TrimPrefix(expr, "REMOVE "), ",") {
+			delete(updated, strings.TrimSpace(name))
 		}
-		updated[strings.TrimSpace(name)] = v
+	default:
+		return nil, fmt.Errorf("fakeDynamo: unsupported update expression %q", expr)
 	}
 	f.put(updated)
-	return &dynamodb.UpdateItemOutput{}, nil
+	out := &dynamodb.UpdateItemOutput{}
+	if in.ReturnValues == types.ReturnValueAllNew {
+		out.Attributes = cloneItem(updated)
+	}
+	return out, nil
 }
 
 func (f *fakeDynamo) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {

@@ -185,7 +185,7 @@ type dynamoItem struct {
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
 	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
 	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error, " +
-	"cleaned_requested_at, cleaned_requested_mode"
+	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -366,6 +366,8 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 
 		"cleaned_requested_at":   strAttr(n.CleanedRequestedAt),
 		"cleaned_requested_mode": strAttr(string(n.CleanedRequestedMode)),
+		"appending_capture":      strAttr(n.AppendingCapture),
+		"appending_at":           strAttr(n.AppendingAt),
 	}
 	if n.Language != "" {
 		item[languageAttr] = strAttr(n.Language)
@@ -460,6 +462,15 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	}
 	if _, ok := m["cleaned_requested_mode"]; ok {
 		n.CleanedRequestedMode = model.NoteCleanMode(readString(m, "cleaned_requested_mode"))
+	}
+	// The append stamp is written by UpdateItem, so the blob can be behind the
+	// promoted attribute in both directions: carrying a stamp the row no longer
+	// has (ClearNoteAppend REMOVEs the attribute) or lacking one it does. The
+	// attribute is the truth when the read projected it, and its absence from a
+	// full read means the stamp is cleared, whatever the blob says.
+	if _, projected := m["version"]; projected {
+		n.AppendingCapture = readString(m, "appending_capture")
+		n.AppendingAt = readString(m, "appending_at")
 	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}
@@ -758,6 +769,73 @@ func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.N
 		return model.NoteIndex{}, fmt.Errorf("dynamo put note: %w", err)
 	}
 	return next, nil
+}
+
+// StampNoteAppend is one conditional UpdateItem on the row's version. The blob
+// is left as it was — its version and stamp fields go stale until the next
+// PutNote rewrites it — which noteFromItem allows for by taking version and the
+// stamp from the promoted attributes.
+func (s *DynamoStore) StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, expectedVersion int64, at time.Time) (model.NoteIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if captureID == "" {
+		return model.NoteIndex{}, errors.New("repository: empty capture id for the append stamp")
+	}
+	out, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:    aws.String("SET version = :next, appending_capture = :capture, appending_at = :at"),
+		ConditionExpression: aws.String("attribute_exists(pk) AND (" + versionCondition(expectedVersion) + ")"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected": numAttr(expectedVersion),
+			":next":     numAttr(expectedVersion + 1),
+			":capture":  strAttr(captureID),
+			":at":       strAttr(model.FormatTime(at)),
+		},
+		ReturnValues: types.ReturnValueAllNew,
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			// The condition says nothing about which clause failed, and the
+			// caller's response differs: a missing note ends the append, a
+			// moved version re-reads and stamps again.
+			if _, getErr := s.GetNote(ctx, tenantID, noteID); errors.Is(getErr, ErrNotFound) {
+				return model.NoteIndex{}, ErrNotFound
+			} else if getErr != nil {
+				return model.NoteIndex{}, getErr
+			}
+			return model.NoteIndex{}, ErrVersionConflict
+		}
+		return model.NoteIndex{}, fmt.Errorf("dynamo stamp note append: %w", err)
+	}
+	return noteFromItem(out.Attributes)
+}
+
+// ClearNoteAppend REMOVEs the two stamp attributes while they name captureID.
+// A failed condition is not an error: either the row is gone, the stamp was
+// already cleared, or a later append has stamped it for itself.
+func (s *DynamoStore) ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:          aws.String("REMOVE appending_capture, appending_at"),
+		ConditionExpression:       aws.String("attribute_exists(pk) AND appending_capture = :capture"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":capture": strAttr(captureID)},
+	})
+	if err != nil && !isConditionalCheckFailed(err) {
+		return fmt.Errorf("dynamo clear note append: %w", err)
+	}
+	return nil
 }
 
 // versionCondition guards a write on the version the caller read. Expected 0

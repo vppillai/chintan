@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -277,6 +278,46 @@ func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex)
 	next.Version = n.Version + 1
 	s.notes[tenantID][n.ID] = next
 	return copyNote(next), nil
+}
+
+func (s *Store) StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, expectedVersion int64, at time.Time) (model.NoteIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if captureID == "" {
+		return model.NoteIndex{}, errors.New("repository: empty capture id for the append stamp")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok {
+		return model.NoteIndex{}, repository.ErrNotFound
+	}
+	if existing.Version != expectedVersion {
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	next := copyNote(existing)
+	next.Version = expectedVersion + 1
+	next.AppendingCapture = captureID
+	next.AppendingAt = model.FormatTime(at)
+	s.notes[tenantID][noteID] = next
+	return copyNote(next), nil
+}
+
+func (s *Store) ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok || existing.AppendingCapture != captureID {
+		return nil
+	}
+	next := copyNote(existing)
+	next.AppendingCapture, next.AppendingAt = "", ""
+	s.notes[tenantID][noteID] = next
+	return nil
 }
 
 func (s *Store) DeleteNote(ctx context.Context, tenantID, noteID string) error {
