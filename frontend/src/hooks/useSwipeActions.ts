@@ -72,6 +72,8 @@ export interface SwipeHandlers {
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerLeave: (event: ReactPointerEvent<HTMLElement>) => void;
+  onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
 export interface SwipeActionsState {
@@ -104,8 +106,6 @@ export function useSwipeActions({
   /** A drag just ended: the click the browser fires next is the finger lifting. */
   const swallowClick = useRef(false);
 
-  // No ref is read here, deliberately: `close` is also called while rendering
-  // (below), where a ref may not be.
   const close = useCallback(() => {
     if (openRow?.key === containerRef) openRow = null;
     setOpen(false);
@@ -128,21 +128,25 @@ export function useSwipeActions({
 
   // Disabled while open — bulk-select started, the pointer changed — means
   // closed: a tray left uncovered under a checkbox row is two controls in one
-  // place. Derived while rendering from the previous value, React's own
-  // pattern for state that follows a prop, rather than from an effect that
-  // would paint the open row once more first. And a row that unmounts open
-  // must let go of the registry.
+  // place. The row's own state is derived while rendering from the previous
+  // value, React's own pattern for state that follows a prop, rather than in
+  // an effect that would paint the open row once more first. The registry is
+  // module state and is not touched during render: the effect below lets go
+  // of it once the disabled row has committed, and when a row unmounts open.
   const [wasEnabled, setWasEnabled] = useState(enabled);
   if (enabled !== wasEnabled) {
     setWasEnabled(enabled);
-    if (!enabled) close();
+    if (!enabled) {
+      setOpen(false);
+      setOffset(0);
+    }
   }
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    if (!enabled && openRow?.key === containerRef) openRow = null;
+    return () => {
       if (openRow?.key === containerRef) openRow = null;
-    },
-    [containerRef],
-  );
+    };
+  }, [enabled, containerRef]);
 
   // A tap anywhere but this row, or any scroll, closes it. Capture phase, so a
   // control that stops propagation still counts as "elsewhere".
@@ -253,6 +257,25 @@ export function useSwipeActions({
     [end],
   );
 
+  // A pointer that leaves the row before the drag has committed will never
+  // deliver its `pointerup` here: a finger has implicit capture, but a pen
+  // that drifts under the slop onto the next row lifts there, and the gesture
+  // would stay armed — and this row deaf to every later touch — until remount.
+  // Once the drag has committed the row holds capture, so the up or cancel is
+  // its own, and a leave is ignored; `lostpointercapture` covers the browser
+  // taking capture away without either, which counts as a cancel.
+  const onPointerLeave = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointerId !== event.pointerId || g.axis === 'x') return;
+    gesture.current = null;
+  }, []);
+  const onLostPointerCapture = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      end(event, true);
+    },
+    [end],
+  );
+
   const onContentClickCapture = useCallback(
     (event: ReactMouseEvent<HTMLElement>) => {
       if (swallowClick.current) {
@@ -275,7 +298,14 @@ export function useSwipeActions({
     offset,
     open,
     dragging,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel,
+      onPointerLeave,
+      onLostPointerCapture,
+    },
     onContentClickCapture,
     close,
   };
