@@ -63,6 +63,33 @@ describe('useLongPress', () => {
     expect(onLongPress).not.toHaveBeenCalled();
   });
 
+  it('suppresses the context menu Android raises for the same hold', async () => {
+    // On Android the long press that selects a row is also the gesture that
+    // opens the context menu and starts selecting text; the `contextmenu`
+    // event is where both begin, so the hook cancels it while a press is
+    // armed and once one has fired.
+    const onLongPress = vi.fn();
+    render(<Row onLongPress={onLongPress} onTap={() => {}} />);
+    const row = screen.getByRole('button');
+
+    fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 0, clientY: 0 });
+    const armed = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row.dispatchEvent(armed);
+    expect(armed.defaultPrevented).toBe(true);
+
+    await wait(80);
+    const fired = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row.dispatchEvent(fired);
+    expect(fired.defaultPrevented).toBe(true);
+    fireEvent.pointerUp(row, { pointerType: 'touch' });
+    fireEvent.click(row);
+
+    // With no press armed the browser's menu is the browser's business.
+    const idle = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row.dispatchEvent(idle);
+    expect(idle.defaultPrevented).toBe(false);
+  });
+
   it('holds for half a second by default', () => {
     expect(LONG_PRESS_MS).toBe(500);
   });

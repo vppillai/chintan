@@ -257,6 +257,67 @@ describe('a row’s More menu', () => {
   });
 });
 
+describe('a row swiped aside', () => {
+  const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
+
+  function swipeOpen(summary: HTMLElement): HTMLElement {
+    const row = summary.closest('.swipe') as HTMLElement;
+    fireEvent.pointerDown(row, { ...touch, clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(row, { ...touch, clientX: 280, clientY: 10 });
+    fireEvent.pointerMove(row, { ...touch, clientX: 160, clientY: 10 });
+    fireEvent.pointerUp(row, { ...touch, clientX: 160, clientY: 10 });
+    fireEvent.click(summary); // the lifted finger's click, swallowed
+    return row;
+  }
+
+  it('offers Move and Delete, hidden from assistive technology until it is open', async () => {
+    bucketStub();
+    mount(apiStub().fetchImpl);
+    await screen.findByRole('button', { name: /more for recording from/i });
+
+    // Closed, the tray has no accessible name to query by — hidden things do
+    // not — so it is found by class and its label read off the attribute.
+    const tray = document.querySelector('.swipe__tray') as HTMLElement;
+    expect(tray).toHaveAttribute('role', 'group');
+    expect(tray).toHaveAttribute('aria-label', expect.stringMatching(/actions for recording from/i));
+    expect(tray).toHaveAttribute('aria-hidden', 'true');
+    expect(
+      within(tray)
+        .getAllByRole('button', { hidden: true })
+        .map((button) => button.textContent),
+    ).toEqual(['Move', 'Delete']);
+  });
+
+  it('Delete opens the same typed confirmation the menu does; Move the same sheet', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    mount(apiStub().fetchImpl);
+    const summary = await screen.findByRole('button', { name: /filed/i, expanded: true });
+
+    swipeOpen(summary);
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByRole('dialog', { name: 'Delete this recording?' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Type "delete" to confirm')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    swipeOpen(summary);
+    await user.click(screen.getByRole('button', { name: 'Move' }));
+    expect(await screen.findByRole('dialog', { name: /move this recording to/i })).toBeInTheDocument();
+  });
+
+  it('is not offered while recordings are being selected', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    mount(apiStub().fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    await screen.findByRole('toolbar', { name: 'Recording actions' });
+
+    expect(document.querySelector('.swipe__tray')).toBeNull();
+  });
+});
+
 describe('deleting a recording', () => {
   it('asks for the word, deletes the capture, drops the row and refetches the note', async () => {
     const user = userEvent.setup();

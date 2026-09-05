@@ -19,6 +19,50 @@ body {
 }
 
 /* --------------------------------------------------------------------------
+   Selection. Controls are not text (backlog N9).
+
+   A long press on a row, a chip or a tab is a gesture in this app — it
+   selects the row, it is the way into bulk actions — and on a phone the
+   browser's answer to the same hold is to select the words under the finger
+   and offer Copy. That is what made the app "feel like a website". Every
+   control gives up text selection, the iOS callout, and the grey tap flash
+   (each control draws its own :active state instead); the note's text, the
+   transcripts, the cleaned view and every field stay selectable, because
+   those are the things a person copies out.
+   -------------------------------------------------------------------------- */
+
+button,
+[role='button'],
+[role='tab'],
+[role='menuitem'],
+label.note-row--selectable,
+.note-row,
+.chip,
+.recording__summary,
+.recording__select,
+.tab-bar,
+.note-tabs,
+.selection-bar,
+.filing-row__head,
+.swipe__tray {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.prose,
+.transcript__text,
+.transcript__cleaned,
+.cleaned__body,
+.note-meta,
+textarea,
+input {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* --------------------------------------------------------------------------
    Focus. Every interactive element has a visible :focus-visible ring.
    Applied to the element wholesale rather than per-component so nothing can
    be added later without one.

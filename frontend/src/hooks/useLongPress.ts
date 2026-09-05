@@ -14,7 +14,14 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
  * finger lifts; the row would open the note it had just selected. `consumeClick`
  * reports and clears that, so the row's click handler can return early once.
  * The context menu that Android raises for the same hold is suppressed while
- * a press is armed.
+ * a press is armed — that event is also where the platform's text selection
+ * begins, so cancelling it is what keeps a held row from turning into a
+ * highlighted paragraph.
+ *
+ * The movement cancel is also the hand-off to `useSwipeActions`: a finger
+ * that travels sideways past the slop has stopped being a press before the
+ * swipe commits, so the two gestures share a row without either knowing the
+ * other exists (the swipe, for its part, ignores a drift after a hold).
  *
  * A haptic tick where the platform offers one: the row changes state under a
  * finger that is covering it, and the vibration is what says "got it" without
