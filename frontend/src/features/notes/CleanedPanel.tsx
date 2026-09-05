@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
@@ -14,6 +14,7 @@ import {
   CLEANED_MODE_LABELS,
   cleanSettled,
 } from './cleaned.ts';
+import { markTree, useReportTotal, useScrollToActiveMatch, type FindTarget } from './FindBar.tsx';
 import { describeAgo } from './groups.ts';
 import { renderMarkdown } from './markdown.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -35,13 +36,37 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * with the way to fix it beside the words. The mode switch regenerates in
  * the chosen mode and records the choice on the note; the toggle asks the
  * worker to regenerate after each recording, so the view keeps up on its own.
+ *
+ * The find bar searches this view too: the rendered elements are walked and
+ * every match marked where it stands, so a hit inside a heading or a bold
+ * run is lit in place. With no view there is nothing to find, and the bar is
+ * told so.
  */
-export function CleanedPanel({ note, editor }: { note: NoteDetailWire; editor: NoteEditor }) {
+export function CleanedPanel({
+  note,
+  editor,
+  find = null,
+}: {
+  note: NoteDetailWire;
+  editor: NoteEditor;
+  find?: FindTarget | null;
+}) {
   const headingId = useId();
   const autoId = useId();
   const cleaned = note.cleaned ?? null;
   const { regenerate, pending, notice } = useRegenerateCleaned(note);
   const { draft } = editor.model;
+
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const cleanedBody = cleaned?.body ?? '';
+  const query = find?.query ?? '';
+  const active = find?.active ?? 0;
+  const rendered = useMemo(
+    () => markTree(renderMarkdown(cleanedBody), query, active),
+    [cleanedBody, query, active],
+  );
+  useReportTotal(find, rendered.total);
+  useScrollToActiveMatch(bodyRef, find ? active : null, rendered.total);
 
   // The mode the switch shows: the user's choice this session, else the mode
   // of the view on screen, else the rewrite that is the point of the feature.
@@ -141,8 +166,8 @@ export function CleanedPanel({ note, editor }: { note: NoteDetailWire; editor: N
 
           <Progress pending={pending} notice={notice} />
 
-          <div className="cleaned__body prose" data-stale={cleaned.stale || undefined}>
-            {renderMarkdown(cleaned.body)}
+          <div ref={bodyRef} className="cleaned__body prose" data-stale={cleaned.stale || undefined}>
+            {rendered.nodes}
           </div>
         </>
       ) : (

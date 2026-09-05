@@ -1,21 +1,40 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { queryKeys, useNote } from '@/api/queries.ts';
+import { queryKeys, useNote, useSettings } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
+import { languageName } from '@/features/settings/languages.ts';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
 import { CleanedPanel } from './CleanedPanel.tsx';
-import { NoteActions } from './NoteActions.tsx';
+import {
+  FindBar,
+  markMatches,
+  useReportTotal,
+  useScrollToActiveMatch,
+  type FindTarget,
+} from './FindBar.tsx';
+import { NoteActions, noteLanguageFieldId, type NotePanelKind } from './NoteActions.tsx';
 import {
   NoteTabList,
   noteTabId,
@@ -26,6 +45,7 @@ import {
 } from './NoteTabs.tsx';
 import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
+import { FIND_CLOSED, findMatches, findReducer, type FindState, type FindAction } from './find.ts';
 import { describeMoment, describeRecordings } from './groups.ts';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
 import { countWords, describeWords } from './words.ts';
@@ -58,6 +78,52 @@ export function NoteDetailScreen() {
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
   const [selectingRecordings, setSelectingRecordings] = useState(false);
+
+  /*
+   * Which of the action bar's disclosures is open. Held here rather than in
+   * the bar because the meta line opens one of them: "· Malayalam" up by the
+   * title is a fact about the note, and tapping a fact should go to where it
+   * is set.
+   */
+  const [panel, setPanel] = useState<NotePanelKind | null>(null);
+  const openDetails = useCallback(() => {
+    if (!note) return;
+    // Rendered synchronously so the select exists to take the focus: a
+    // keyboard or screen-reader user lands on the control the fact came from.
+    flushSync(() => {
+      setPanel('details');
+    });
+    document.getElementById(noteLanguageFieldId(note.id))?.focus();
+  }, [note]);
+
+  // Find in this note: the state lives with the screen so the header's toggle
+  // and the bar under the strip — different branches of the tree — share it.
+  const [find, dispatchFind] = useReducer(findReducer, FIND_CLOSED);
+  const findBarId = useId();
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const noteOpen = Boolean(note);
+
+  /*
+   * Ctrl/⌘+F opens the bar instead of the browser's find, which cannot see
+   * into a textarea's text as marks and knows nothing of the tabs. Only while
+   * a note is on screen; on a phone there is no such key to press.
+   */
+  useEffect(() => {
+    if (!noteOpen) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      if (event.key !== 'f' && event.key !== 'F') return;
+      event.preventDefault();
+      dispatchFind({ type: 'open' });
+      // Already open: back to the bar, with the query selected to be replaced.
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [noteOpen]);
 
   /*
    * A recording this device is still sending into this note. Send returns
@@ -149,6 +215,18 @@ export function NoteDetailScreen() {
 
       <header className="screen__header screen__header--detail">
         <BackLink />
+        <button
+          type="button"
+          className="note-find-toggle"
+          aria-label="Find in note"
+          aria-expanded={find.open}
+          aria-controls={findBarId}
+          onClick={() => {
+            dispatchFind({ type: 'toggle' });
+          }}
+        >
+          <Icon name="search" size={20} />
+        </button>
       </header>
 
       {offlineCopy && (
@@ -176,14 +254,22 @@ export function NoteDetailScreen() {
         onBlur={() => void editor.saveNow()}
       />
 
-      <NoteMeta note={note} tags={editor.model.draft.tags} body={editor.model.draft.body} />
+      <NoteMeta
+        note={note}
+        tags={editor.model.draft.tags}
+        body={editor.model.draft.body}
+        language={editor.model.draft.language ?? ''}
+        onOpenDetails={openDetails}
+      />
 
       <SaveIndicator editor={editor} />
 
       {/*
         Keyed by the note: the tab strip's memory and the panels' own state
         belong to one note, and "Open <title>" after a move walks from one
-        note to another without remounting this screen.
+        note to another without remounting this screen. The find bar's state
+        is not keyed: a query carried into the next note is a query the user
+        may well want there too, and the panel clamps the active match.
       */}
       <NoteViews
         key={note.id}
@@ -191,16 +277,26 @@ export function NoteDetailScreen() {
         editor={editor}
         localUpload={localUpload}
         onSelectingRecordings={setSelectingRecordings}
+        find={find}
+        dispatchFind={dispatchFind}
+        findBarId={findBarId}
+        findInputRef={findInputRef}
       />
 
       {/*
         While recordings are being selected their own bar takes the foot of
         the screen, so the note's action bar steps aside rather than stacking
-        under it. Hidden, not unmounted: an open Tags or Share panel is still
-        there when the selection ends. The bar is outside the panels, so it is
-        there on every tab.
+        under it. Hidden, not unmounted: an open Details or Share panel is
+        still there when the selection ends. The bar is outside the panels, so
+        it is there on every tab.
       */}
-      <NoteActions note={note} editor={editor} hidden={selectingRecordings} />
+      <NoteActions
+        note={note}
+        editor={editor}
+        hidden={selectingRecordings}
+        open={panel}
+        onOpenChange={setPanel}
+      />
     </div>
   );
 }
@@ -216,13 +312,21 @@ function NoteViews({
   editor,
   localUpload,
   onSelectingRecordings,
+  find,
+  dispatchFind,
+  findBarId,
+  findInputRef,
 }: {
   note: NoteDetailWire;
   editor: NoteEditor;
   localUpload: CaptureModel | null;
   onSelectingRecordings: (selecting: boolean) => void;
+  find: FindState;
+  dispatchFind: (action: FindAction) => void;
+  findBarId: string;
+  findInputRef: RefObject<HTMLInputElement | null>;
 }) {
-  const [tab, setTab] = useNoteTab(note.id);
+  const [tab, selectTab] = useNoteTab(note.id);
   // The upload on its way counts: it is a row on the tab already.
   const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
   const tabs: NoteTabDescriptor[] = [
@@ -231,14 +335,70 @@ function NoteViews({
     { id: 'recordings', label: 'Recordings', count },
   ];
 
+  // Another tab is another text: the count is the new panel's to report, and
+  // the active match starts again from its first.
+  const setTab = (next: NoteTab): void => {
+    selectTab(next);
+    dispatchFind({ type: 'rewind' });
+  };
+
+  /*
+   * What the open panel is asked to find. Nothing, unless the bar is open with
+   * a query: the Text panel shows its textarea until there is something to
+   * mark. `onTotal` is the dispatch, so it is the same function every render
+   * and the panels' report effect runs only when their count changes.
+   */
+  const onTotal = useCallback(
+    (total: number) => {
+      dispatchFind({ type: 'total', total });
+    },
+    [dispatchFind],
+  );
+  const searchable = tab !== 'recordings';
+  const target: FindTarget | null =
+    find.open && find.query !== '' && searchable
+      ? { query: find.query, active: find.active, onTotal }
+      : null;
+
   return (
     <>
-      <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
+      <div className="note-strip">
+        <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
+        {find.open && (
+          <FindBar
+            id={findBarId}
+            query={find.query}
+            active={find.active}
+            total={find.total}
+            inputRef={findInputRef}
+            disabled={!searchable}
+            hint={searchable ? undefined : 'Search works in Text and Cleaned.'}
+            onQueryChange={(query) => {
+              dispatchFind({ type: 'query', query });
+            }}
+            onNext={() => {
+              dispatchFind({ type: 'next' });
+            }}
+            onPrevious={() => {
+              dispatchFind({ type: 'previous' });
+            }}
+            onClose={() => {
+              dispatchFind({ type: 'close' });
+            }}
+          />
+        )}
+      </div>
       <NotePanel noteId={note.id} tab={tab}>
         {tab === 'text' ? (
-          <TextPanel editor={editor} />
+          <TextPanel
+            editor={editor}
+            find={target}
+            onDismissFind={() => {
+              dispatchFind({ type: 'close' });
+            }}
+          />
         ) : tab === 'cleaned' ? (
-          <CleanedPanel note={note} editor={editor} />
+          <CleanedPanel note={note} editor={editor} find={target} />
         ) : (
           <Recordings
             note={note}
@@ -272,13 +432,88 @@ function NotePanel({
   );
 }
 
-/** The editable body: as tall as its text, and the page is what scrolls. */
-function TextPanel({ editor }: { editor: NoteEditor }) {
+/**
+ * The editable body: as tall as its text, and the page is what scrolls.
+ *
+ * While the find bar has a query the textarea gives way to a read-only mirror
+ * of the same text in the same box, because a `<mark>` cannot be drawn inside
+ * a textarea. Closing the bar — or tapping the mirror — brings the textarea
+ * back with the caret on the match that was current, so finding a word and
+ * editing it is one gesture, not a find followed by a hunt.
+ */
+function TextPanel({
+  editor,
+  find,
+  onDismissFind,
+}: {
+  editor: NoteEditor;
+  find: FindTarget | null;
+  /** A tap on the mirror: close the bar and go back to editing. */
+  onDismissFind: () => void;
+}) {
+  const body = editor.model.draft.body;
   // Measured here, in the panel, so re-opening the Text tab measures again:
   // a hook in the screen would keep a ref to a textarea that had left the
   // document and never see the one that replaced it.
   const bodyRef = useRef<HTMLTextAreaElement>(null);
-  useAutoGrow(bodyRef, editor.model.draft.body);
+  const mirrorRef = useRef<HTMLElement>(null);
+  useAutoGrow(bodyRef, body);
+
+  const query = find?.query ?? '';
+  const matches = useMemo(() => findMatches(body, query), [body, query]);
+  const mirrored = find !== null;
+  useReportTotal(find, matches.length);
+  useScrollToActiveMatch(mirrorRef, find?.active ?? null, matches.length);
+
+  /*
+   * Where the caret goes when the textarea returns: the match that was
+   * current when the mirror was last shown. Remembered in a ref because by
+   * the time the textarea is back, `find` is null and the match is gone.
+   */
+  const lastActive = useRef<{ start: number; end: number } | null>(null);
+  const current = find ? matches[find.active] : undefined;
+  useEffect(() => {
+    if (current) lastActive.current = current;
+  }, [current]);
+  // Declared after the remembering effect, so the caret is placed from the
+  // match remembered by this render, not the one before it.
+  const wasMirrored = useRef(false);
+  useEffect(() => {
+    if (wasMirrored.current && !mirrored) {
+      const textarea = bodyRef.current;
+      const range = lastActive.current;
+      if (textarea) {
+        // The mirror and the textarea are the same box, so the match is where
+        // the mark was and the page need not move; `preventScroll` keeps the
+        // browser from re-centring on the whole field.
+        textarea.focus({ preventScroll: true });
+        if (range) {
+          try {
+            textarea.setSelectionRange(range.start, range.end);
+          } catch {
+            /* A browser that will not place the caret still has the focus. */
+          }
+        }
+      }
+    }
+    wasMirrored.current = mirrored;
+  }, [mirrored]);
+
+  if (find) {
+    return (
+      <section
+        ref={mirrorRef}
+        className="note-body-mirror prose"
+        aria-label="Note body, read-only while finding"
+        // A pointer's way back to editing. The keyboard's is Escape in the
+        // bar, which does the same thing; the mirror itself is text, not a
+        // control, so a screen reader can read it and its marks.
+        onClick={onDismissFind}
+      >
+        {markMatches(body, matches, find.active)}
+      </section>
+    );
+  }
 
   return (
     <>
@@ -289,7 +524,7 @@ function TextPanel({ editor }: { editor: NoteEditor }) {
         id="note-body"
         ref={bodyRef}
         className="note-body-input prose"
-        value={editor.model.draft.body}
+        value={body}
         rows={6}
         onChange={(event) => {
           editor.edit({ body: event.target.value });
@@ -327,21 +562,34 @@ function useTimedOut(active: boolean, ms: number): boolean {
 }
 
 /**
- * "Updated today 14:02 · house · 3 recordings · 4:12 · 412 words".
+ * "Updated today 14:02 · house · 3 recordings · 4:12 · 412 words · Malayalam".
  *
  * The tags and the word count are the draft's, not the server's, so adding a
  * tag in the bar or typing a sentence shows up here at once rather than after
  * the save lands.
+ *
+ * The language is the last fact, and only when it is worth a word: the
+ * note's own choice when it differs from the default, or the default itself
+ * when that is not English. An English note under an English default says
+ * nothing — the common case should not carry a label. It is a button because
+ * the control that sets it is in the Details panel at the foot, and the
+ * owner's trial found it there by accident or not at all.
  */
 function NoteMeta({
   note,
   tags,
   body,
+  language,
+  onOpenDetails,
 }: {
   note: NoteDetailWire;
   tags: readonly string[];
   body: string;
+  /** The draft's `language`: a code, `auto`, or the empty string to inherit. */
+  language: string;
+  onOpenDetails: () => void;
 }) {
+  const { data: settings } = useSettings();
   const updated = describeMoment(note.updated_at);
   const parts = [
     // "Updated today 14:02", but "Updated 6 Aug 09:14" — a month keeps its case.
@@ -351,9 +599,39 @@ function NoteMeta({
     describeWords(countWords(body)),
   ].filter((part): part is string => Boolean(part));
 
+  const effective = effectiveLanguage(language, settings?.default_language);
+
   // A real " · " between the facts, not a CSS pseudo-element: a screen reader
   // reads text, and "housereading list3 recordings" is not a sentence.
-  return <p className="note-meta">{parts.join(' · ')}</p>;
+  return (
+    <p className="note-meta">
+      {parts.join(' · ')}
+      {effective && (
+        <>
+          {parts.length > 0 && ' · '}
+          <button type="button" className="note-meta__language" onClick={onOpenDetails}>
+            <span className="visually-hidden">Transcription language: </span>
+            {languageName(effective)}
+          </button>
+        </>
+      )}
+    </p>
+  );
+}
+
+/**
+ * The language a recording made into this note is transcribed in, when that
+ * is worth saying: `null` for an English note under an English default. Pure
+ * and exported so the rule is pinned by a test rather than by reading JSX.
+ */
+export function effectiveLanguage(
+  noteLanguage: string,
+  defaultLanguage: string | undefined,
+): string | null {
+  const fallback = defaultLanguage ?? 'en';
+  const effective = noteLanguage || fallback;
+  if (effective === fallback && fallback === 'en') return null;
+  return effective;
 }
 
 /**

@@ -31,7 +31,11 @@ export type IconName =
   | 'move'
   | 'plus'
   | 'archive'
-  | 'restore';
+  | 'restore'
+  | 'search'
+  | 'close'
+  | 'chevron-up'
+  | 'chevron-down';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -69,6 +73,14 @@ export const PATHS: Record<IconName, string> = {
   // An arrow running back around the clock: restore, the reverse of archive.
   // The head sits at the arc's start so the two glyphs read as a pair.
   restore: 'M4 12a8 8 0 1 0 8-8 8.7 8.7 0 0 0-6 2.4L4 8.5M4 3.5v5h5',
+  // A lens and its handle: find inside the note. The circle's centre sits up
+  // and left of the grid's so the handle can reach the corner at the stroke's
+  // own angle.
+  search: 'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20',
+  close: 'M6 6l12 12M18 6 6 18',
+  // The back chevron, turned: previous and next match.
+  'chevron-up': 'M5 15l7-7 7 7',
+  'chevron-down': 'M5 9l7 7 7-7',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

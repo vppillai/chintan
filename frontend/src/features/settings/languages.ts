@@ -7,36 +7,54 @@
  * or `auto`, and a note may also hold the empty string to inherit the default
  * again (`docs/api/openapi.yaml`, `Note.language` and `Settings.default_language`).
  *
- * The list is curated rather than every ISO code: a select with a hundred and
- * eighty entries is a search box in disguise, and the owner's household speaks
- * a handful. Any code the server holds that is not listed is still shown, by
- * its `Intl` name, so a value set elsewhere is never rendered as blank.
+ * The list is curated rather than every ISO code: a select with a hundred
+ * entries is a search box in disguise. It holds the languages of the owner's
+ * household first — the Indian languages Whisper transcribes — then the
+ * widely spoken ones, each with its name in its own script beside the English
+ * one, so a speaker scanning the list finds their language by sight. Any code
+ * the server holds that is not listed is still shown, by its `Intl` name, so a
+ * value set elsewhere is never rendered as blank.
  */
 
 export const AUTO_LANGUAGE = 'auto';
 
 export interface Language {
   code: string;
+  /** The English name, as the meta line and the settings sentence say it. */
   name: string;
+  /** The name in its own language and script — the same as `name` for English. */
+  native: string;
 }
 
 export const LANGUAGES: readonly Language[] = [
-  { code: 'en', name: 'English' },
-  { code: 'ml', name: 'Malayalam' },
-  { code: 'hi', name: 'Hindi' },
-  { code: 'ta', name: 'Tamil' },
-  { code: 'te', name: 'Telugu' },
-  { code: 'kn', name: 'Kannada' },
-  { code: 'es', name: 'Spanish' },
-  { code: 'fr', name: 'French' },
-  { code: 'de', name: 'German' },
-  { code: 'pt', name: 'Portuguese' },
-  { code: 'it', name: 'Italian' },
-  { code: 'ru', name: 'Russian' },
-  { code: 'ja', name: 'Japanese' },
-  { code: 'zh', name: 'Chinese' },
-  { code: 'ko', name: 'Korean' },
-  { code: 'ar', name: 'Arabic' },
+  { code: 'en', name: 'English', native: 'English' },
+  { code: 'ml', name: 'Malayalam', native: 'മലയാളം' },
+  { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
+  { code: 'ta', name: 'Tamil', native: 'தமிழ்' },
+  { code: 'te', name: 'Telugu', native: 'తెలుగు' },
+  { code: 'kn', name: 'Kannada', native: 'ಕನ್ನಡ' },
+  { code: 'mr', name: 'Marathi', native: 'मराठी' },
+  { code: 'bn', name: 'Bengali', native: 'বাংলা' },
+  { code: 'gu', name: 'Gujarati', native: 'ગુજરાતી' },
+  { code: 'pa', name: 'Punjabi', native: 'ਪੰਜਾਬੀ' },
+  { code: 'ur', name: 'Urdu', native: 'اردو' },
+  { code: 'ar', name: 'Arabic', native: 'العربية' },
+  { code: 'es', name: 'Spanish', native: 'Español' },
+  { code: 'fr', name: 'French', native: 'Français' },
+  { code: 'de', name: 'German', native: 'Deutsch' },
+  { code: 'pt', name: 'Portuguese', native: 'Português' },
+  { code: 'it', name: 'Italian', native: 'Italiano' },
+  { code: 'nl', name: 'Dutch', native: 'Nederlands' },
+  { code: 'ru', name: 'Russian', native: 'Русский' },
+  { code: 'ja', name: 'Japanese', native: '日本語' },
+  { code: 'ko', name: 'Korean', native: '한국어' },
+  { code: 'zh', name: 'Mandarin Chinese', native: '中文' },
+  { code: 'id', name: 'Indonesian', native: 'Bahasa Indonesia' },
+  { code: 'tr', name: 'Turkish', native: 'Türkçe' },
+  { code: 'vi', name: 'Vietnamese', native: 'Tiếng Việt' },
+  { code: 'th', name: 'Thai', native: 'ไทย' },
+  { code: 'sv', name: 'Swedish', native: 'Svenska' },
+  { code: 'pl', name: 'Polish', native: 'Polski' },
 ];
 
 /** `true` for a value the API accepts in either language field. */
@@ -60,4 +78,15 @@ export function languageName(code: string): string {
     /* An unrecognised tag; fall through to the code. */
   }
   return code;
+}
+
+/**
+ * The entry as the select shows it: "മലയാളം · Malayalam" — the language's
+ * own name first, the English one after, and just the one where they are the
+ * same or where only the runtime's name is known.
+ */
+export function languageLabel(code: string): string {
+  const known = LANGUAGES.find((language) => language.code === code);
+  if (known && known.native !== known.name) return `${known.native} · ${known.name}`;
+  return languageName(code);
 }

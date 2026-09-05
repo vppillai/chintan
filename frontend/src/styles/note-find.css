@@ -1,0 +1,195 @@
+/*
+ * Find in this note: the toggle in the note's header, the bar under the tab
+ * strip, the highlighted matches, and the body's read-only mirror.
+ *
+ * Kept out of shell.css so the find bar can travel with its component. The
+ * only thing here that reaches into another component's layout is the strip
+ * wrapper, which exists so the bar sticks with the segments it sits under.
+ */
+
+/* The lens at the far end of the header row — the row is a flex line with
+   the back link at its start, so `auto` margin sends this to the other end. */
+.note-find-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--layout-touch-target-min);
+  min-block-size: var(--layout-touch-target-min);
+  margin-inline-start: auto;
+  /* Not pulled out to the gutter line the way the back link is: a negative
+     margin on the right is scrollable overflow, and the header would scroll
+     sideways by that much on every phone (e2e layout check). */
+  border-radius: var(--radius-full);
+  color: var(--color-muted);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.note-find-toggle:hover,
+.note-find-toggle[aria-expanded='true'] {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+}
+
+/*
+ * The strip and the find bar as one sticky block. `.note-tabs` sticks on its
+ * own; once the bar is beneath it the two must move together, or the bar
+ * would scroll away under the strip the moment a match is brought into view.
+ * The wrapper takes over the sticking, the gutter bleed and the ground colour,
+ * and the strip inside it becomes an ordinary block.
+ */
+.note-strip {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-content);
+  margin-inline: calc(-1 * var(--layout-gutter));
+  padding-inline: var(--layout-gutter);
+  background-color: var(--color-ground);
+}
+
+.note-strip > .note-tabs {
+  position: static;
+  margin-inline: 0;
+  padding-inline: 0;
+}
+
+.find-bar {
+  padding-block-end: var(--space-2);
+}
+
+.find-bar__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.find-bar__input {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-md);
+  color: var(--color-ink);
+}
+
+.find-bar__input[disabled] {
+  color: var(--color-faint);
+  border-color: var(--color-line);
+}
+
+/* "3 of 12": a numeral, so it is in the serif with tabular figures and does
+   not jitter as the number changes under Enter. */
+.find-bar__count {
+  padding-inline: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.find-bar__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--layout-touch-target-min);
+  min-block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+  color: var(--color-muted);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.find-bar__button:hover:not([disabled]) {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+}
+
+.find-bar__button[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.find-bar__hint {
+  padding-block-start: var(--space-1);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+/*
+ * A match: the selection tint, which both themes define against their own
+ * ink. The active match is inverted — ink on ground — so it is the one thing
+ * on the page that reads as "here", in either theme, without borrowing the
+ * accent that is reserved for recording.
+ */
+.find-match {
+  background-color: var(--color-selection);
+  color: inherit;
+  border-radius: var(--radius-sm);
+  box-decoration-break: clone;
+}
+
+.find-match[data-active] {
+  background-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+/*
+ * The body, mirrored: the same box as `.note-body-input` — padding, border,
+ * radius, ground and type — so swapping one for the other moves nothing on
+ * the page, and the newlines of the text are kept as the textarea keeps them.
+ * A `<mark>` cannot be drawn inside a textarea; this is what is drawn instead
+ * while the bar has a query.
+ */
+.note-body-mirror {
+  display: block;
+  inline-size: 100%;
+  min-block-size: calc(6 * var(--line-height-relaxed) * var(--font-size-md) + 2 * var(--space-3) + 2px);
+  padding: var(--space-3);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+
+/*
+ * The language select fits its column. A select is as wide as its longest
+ * option, and "Bahasa Indonesia · Indonesian" is wider than a 320 px phone's
+ * column; a grid or flex item does not shrink below its content unless its
+ * minimum size says it may, so the group scrolled sideways by eleven pixels
+ * (e2e layout check). Zero minimums on the select and on the two containers
+ * it lives in let `.settings-select`'s `max-inline-size: 100%` take effect.
+ * Here rather than in shell.css, which another branch is reworking; fold
+ * these three lines into `.settings-field` and `.language-field` when it lands.
+ */
+.language-select,
+.language-field,
+.settings-field--select {
+  min-inline-size: 0;
+}
+
+/* An inline fact in the meta line that opens the Details panel. The line is
+   thirteen pixels tall; the target is not — the padding reaches the 44 px
+   minimum and the negative margin gives the line its height back. */
+.note-meta__language {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--layout-touch-target-min);
+  margin-block: calc((var(--font-size-sm) * var(--line-height-normal) - var(--layout-touch-target-min)) / 2);
+  color: var(--color-muted);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 0.15em;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.note-meta__language:hover {
+  color: var(--color-ink);
+}
