@@ -27,6 +27,7 @@ import {
   noteFromThread,
   resumeTurn,
   saveThread,
+  sourceLabels,
   sourcesOf,
   type AskTurn,
 } from './thread.ts';
@@ -209,6 +210,48 @@ describe('Try again on a question the client gave up on', () => {
     const { sentAt: _dropped, ...older } = applyRow(newTurn('k', 'q', now), askPending);
     expect(canResume({ ...older, status: 'timeout' }, now + 90_000)).toBe(true);
     expect(canResume({ ...older, status: 'timeout' }, now + RESUME_WINDOW_MS)).toBe(false);
+  });
+});
+
+describe('what a source chip says', () => {
+  const dated = (dates: Record<string, string>) => (noteId: string) => dates[noteId] ?? null;
+
+  it('is the title alone while titles are distinct', () => {
+    expect(sourceLabels(askAnswered.sources, dated({}))).toEqual(['Roof repair', 'Kitchen rebuild']);
+  });
+
+  it('adds the note’s date where two sources share a title, and numbers the ones it has no date for', () => {
+    const sources = [
+      { note_id: 'a', title: 'Gutter leak' },
+      { note_id: 'b', title: 'Gutter leak' },
+      { note_id: 'c', title: 'Roof repair' },
+      { note_id: 'd', title: 'Gutter leak' },
+    ];
+    expect(sourceLabels(sources, dated({ a: '4 Sept', b: '28 Aug' }))).toEqual([
+      'Gutter leak · 4 Sept',
+      'Gutter leak · 28 Aug',
+      'Roof repair',
+      'Gutter leak (1)',
+    ]);
+    expect(sourceLabels(sources, dated({}))).toEqual([
+      'Gutter leak (1)',
+      'Gutter leak (2)',
+      'Roof repair',
+      'Gutter leak (3)',
+    ]);
+  });
+
+  it('numbers the repeats when even the dates collide', () => {
+    const sources = [
+      { note_id: 'a', title: 'Gutter leak' },
+      { note_id: 'b', title: 'Gutter leak' },
+      { note_id: 'c', title: 'Gutter leak' },
+    ];
+    expect(sourceLabels(sources, dated({ a: '4 Sept', b: '4 Sept', c: '4 Sept' }))).toEqual([
+      'Gutter leak · 4 Sept',
+      'Gutter leak · 4 Sept (2)',
+      'Gutter leak · 4 Sept (3)',
+    ]);
   });
 });
 

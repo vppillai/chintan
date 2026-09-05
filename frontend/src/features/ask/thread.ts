@@ -189,6 +189,39 @@ function bodyBytes(body: AskRequestWire): number {
   return ENCODER.encode(JSON.stringify(body)).length;
 }
 
+/**
+ * What each source chip says. A chip carries the note's title, and a library
+ * with recurring subjects has several notes called "Gutter leak" — the QA
+ * pass saw five identical chips for five different notes. Where titles
+ * collide within one answer the chip adds the note's date, read from the
+ * notes on this device when the note is among them (`when` answers `null`
+ * otherwise), and a running number where it is not, or where the dates
+ * collide too. Titles that stand alone are left alone.
+ */
+export function sourceLabels(
+  sources: readonly AskSourceWire[],
+  when: (noteId: string) => string | null,
+): string[] {
+  const titles = new Map<string, number>();
+  for (const source of sources) titles.set(source.title, (titles.get(source.title) ?? 0) + 1);
+
+  const labels = sources.map((source) => {
+    if ((titles.get(source.title) ?? 0) < 2) return source.title;
+    const date = when(source.note_id);
+    return date ? `${source.title} · ${date}` : source.title;
+  });
+  const seen = new Map<string, number>();
+  return labels.map((label, index) => {
+    const source = sources[index];
+    if (!source || (titles.get(source.title) ?? 0) < 2) return label;
+    const nth = (seen.get(label) ?? 0) + 1;
+    seen.set(label, nth);
+    // The first of a set keeps the bare label; only the repeats are numbered,
+    // unless the label is the bare title — then every one is a repeat.
+    return nth > 1 || label === source.title ? `${label} (${String(nth)})` : label;
+  });
+}
+
 /** Every cited note, once, in the order it was first cited. */
 export function sourcesOf(turns: readonly AskTurn[]): AskSourceWire[] {
   const seen = new Set<string>();

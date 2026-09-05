@@ -7,6 +7,7 @@ import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtu
 import { noteCreated } from '@/api/__fixtures__/responses.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 import type { AskWire, NoteCreateWire } from '@/api/schema.ts';
+import { formatRowTime } from '@/features/notes/groups.ts';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import { setNarrowViewport } from '@/test/setup.ts';
@@ -253,6 +254,39 @@ describe('a question is sent on Enter and its answer polled for', () => {
     ]);
     await user.click(within(sources).getByRole('button', { name: 'Kitchen rebuild' }));
     expect(location()).toBe('/notes/fixture-note-id-2');
+  });
+
+  it('tells same-titled sources apart by the note’s date from the device, or a number when it has none', async () => {
+    const user = fakeTime();
+    const twins: AskWire = {
+      ...askAnswered,
+      sources: [
+        // In the library the test serves, so its date is on the device.
+        { note_id: 'roof-repair', title: 'Roof repair' },
+        // Not on the device: numbered.
+        { note_id: 'elsewhere', title: 'Roof repair' },
+        { note_id: 'reading-list', title: 'Reading list' },
+      ],
+    };
+    mount(server({ final: twins }).fetchImpl);
+    const field = await switchToAsk(user);
+    await user.type(field, 'what did I decide about the roof?{Enter}');
+    await screen.findByText('Reading your notes…');
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    const sources = await screen.findByRole('list', { name: 'Sources' });
+    const roof = TEST_NOTES.find((note) => note.id === 'roof-repair');
+    await waitFor(() => {
+      expect(within(sources).getAllByRole('button').map((chip) => chip.textContent)).toEqual([
+        `Roof repair · ${formatRowTime(roof?.updated_at ?? '')}`,
+        'Roof repair (1)',
+        'Reading list',
+      ]);
+    });
+    await user.click(within(sources).getByRole('button', { name: 'Roof repair (1)' }));
+    expect(location()).toBe('/notes/elsewhere');
   });
 
   it('labels an answer the notes could not give, and lists no sources for it', async () => {
