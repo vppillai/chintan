@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,8 +49,39 @@ func (f *fakeAPI) UpdateItem(_ context.Context, in *dynamodb.UpdateItemInput, _ 
 	if f.err != nil {
 		return nil, f.err
 	}
+	// DynamoDB rejects a placeholder that the expression never uses, and the
+	// production outage behind this check was exactly that: a value carried
+	// over from a previous write. The fake enforces the same rule so a test
+	// cannot pass an UpdateItem the service would refuse.
+	if err := validatePlaceholders(in); err != nil {
+		return nil, err
+	}
 	f.updates = append(f.updates, in)
 	return &dynamodb.UpdateItemOutput{}, nil
+}
+
+// validatePlaceholders mirrors the ValidationException DynamoDB raises for an
+// ExpressionAttributeNames or ExpressionAttributeValues entry that appears in
+// no expression of the request.
+func validatePlaceholders(in *dynamodb.UpdateItemInput) error {
+	expr := ""
+	if in.UpdateExpression != nil {
+		expr += *in.UpdateExpression
+	}
+	if in.ConditionExpression != nil {
+		expr += " " + *in.ConditionExpression
+	}
+	for name := range in.ExpressionAttributeNames {
+		if !strings.Contains(expr, name) {
+			return fmt.Errorf("ValidationException: value provided in ExpressionAttributeNames unused in expressions: keys: {%s}", name)
+		}
+	}
+	for value := range in.ExpressionAttributeValues {
+		if !strings.Contains(expr, value) {
+			return fmt.Errorf("ValidationException: value provided in ExpressionAttributeValues unused in expressions: keys: {%s}", value)
+		}
+	}
+	return nil
 }
 
 func (f *fakeAPI) Query(_ context.Context, _ *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
