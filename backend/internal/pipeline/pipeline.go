@@ -827,7 +827,64 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		})
 	}
 
-	return p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates)
+	decision, err := p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates)
+	if err != nil {
+		return decision, err
+	}
+	return preferExistingTitle(ctx, decision, active), nil
+}
+
+// preferExistingTitle applies the rule the prompt already states — an existing
+// note with the same title is the destination — after the model has answered.
+// A "new" decision whose title names an active candidate, by title or alias
+// and compared case- and whitespace-insensitively, appends to that note. The
+// model started a second "staging smoke" beside the one that existed (live QA
+// 2026-09-05 §5b), and a rule this mechanical is the code's to enforce, not the
+// model's to remember. The candidates are the notes the router saw, so the
+// rule reaches exactly as far as routing does; the id, never the title, is
+// what gets logged.
+func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, active []model.NoteIndex) provider.RouteDecision {
+	if decision.Action != provider.RouteNew {
+		return decision
+	}
+	want := normalizeTitle(decision.Title)
+	if want == "" {
+		return decision
+	}
+	for _, n := range active {
+		if !titleNames(n, want) {
+			continue
+		}
+		obs.Log(ctx).Info("router chose a new note whose title names an existing note; appending to it instead",
+			slog.String("note_id", n.ID))
+		obs.Count(ctx, "RouterTitleMatchedExistingNote", map[string]string{})
+		decision.Action = provider.RouteAppend
+		decision.NoteID = n.ID
+		decision.Title = ""
+		decision.Confidence = 1
+		return decision
+	}
+	return decision
+}
+
+// titleNames reports whether want, already normalised, is n's title or one of
+// its aliases.
+func titleNames(n model.NoteIndex, want string) bool {
+	if normalizeTitle(n.Title) == want {
+		return true
+	}
+	for _, alias := range n.Aliases {
+		if normalizeTitle(alias) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeTitle is the comparison form of a title: lowercased, one space
+// between words, none around them.
+func normalizeTitle(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // routeWithRetries asks the router, with one retry on a stall or a 5xx. It

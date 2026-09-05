@@ -468,3 +468,45 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 		t.Errorf("router was consulted %d times, want 0", n)
 	}
 }
+
+// The prompt says an existing note with the same title is the destination;
+// the model did not always honour it and started a second note with the same
+// title (live QA 2026-09-05 §5b). The rule now holds in code: a "new" decision
+// whose title names an active candidate — title or alias, whatever the case
+// and spacing — appends to that note.
+func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
+	for name, title := range map[string]string{
+		"the title, in another case and spacing": "  ROOF   Repair ",
+		"an alias":                               "Roof",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRoutingFixture(t, "more about the roof",
+				provider.RouteDecision{Action: provider.RouteNew, Title: title, Confidence: 1, Content: "more about the roof"}, false)
+			ctx := context.Background()
+			capture, err := f.run(ctx, "c_1")
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if capture.NoteID != "n1" || capture.Status != model.StatusAppended {
+				t.Fatalf("capture = %s in %q, want appended into the existing n1", capture.Status, capture.NoteID)
+			}
+			if titles := f.h.creator.createdTitles(); len(titles) != 0 {
+				t.Fatalf("created titles = %v; a second note with the same title was started", titles)
+			}
+			body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
+			if !strings.Contains(string(body), "more about the roof") {
+				t.Errorf("n1 body = %q, want the dictation appended", body)
+			}
+		})
+	}
+
+	// A title nobody has still makes a new note.
+	f := newRoutingFixture(t, "something else entirely",
+		provider.RouteDecision{Action: provider.RouteNew, Title: "Roof repairs", Confidence: 1, Content: "something else entirely"}, false)
+	if _, err := f.run(context.Background(), "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Roof repairs" {
+		t.Errorf("created titles = %v, want the new title as given (\"Roof repairs\" is not \"Roof repair\")", titles)
+	}
+}
