@@ -12,19 +12,29 @@
  * for the bundle, so the manifest uses the same value and states every path
  * outright. There is nothing left to resolve.
  *
- * Kept out of `src/` deliberately: it carries the theme colours as literals —
- * a manifest cannot reference a CSS custom property — and `src/` is where the
- * token lint forbids exactly that.
+ * The name, short name and description come from the instance's YAML through
+ * `VITE_APP_*` (see `src/config/identity.ts`); `vite.config.ts` resolves them
+ * once and passes them in, so the manifest, the document title and the shell
+ * cannot disagree. The colours do not come from the YAML, on purpose: they are
+ * the design system's, below.
  *
- * **The values below are hardcoded, and `config/instances/*.yaml` has a `pwa:`
- * block that looks as though it sets them.** It does not: nothing in
- * `scripts/` forwards it as a `VITE_*` variable, so it has never reached a
- * build. The two disagree today — the config says `theme_color: "#1B4332"` and
- * `description: Voice brain-dump notes`, neither of which is what ships. This
- * is the parity audit's L14, still true. Wiring it up means exporting the block
- * from the build script and reading it here; until someone does, this file is
- * the only source and the YAML is decoration.
+ * Kept out of `src/` deliberately: it carries a colour as a literal — a
+ * manifest cannot reference a CSS custom property — and `src/` is where the
+ * token lint forbids exactly that.
  */
+
+import type { AppIdentity } from './src/config/identity.ts';
+
+/**
+ * `--color-ground` from `src/styles/tokens.css`, Ink & Paper. The manifest's
+ * `background_color` paints the splash behind the icon and `theme_color` the
+ * window chrome before the stylesheet has loaded, so both must be the same
+ * ground the first frame then paints — and a manifest is static JSON, so it
+ * cannot follow the user's theme or read the token. One constant, here, kept in
+ * step with the token by hand; not per instance, because an instance is not a
+ * brand.
+ */
+const GROUND = '#fbf9f4';
 
 export interface ManifestIcon {
   src: string;
@@ -39,13 +49,13 @@ export function basedPath(base: string, path: string): string {
   return `${prefix}${path.replace(/^\//, '')}`;
 }
 
-export function chintanManifest(base: string) {
+export function chintanManifest(base: string, identity: AppIdentity) {
   const at = (path: string): string => basedPath(base, path);
 
   return {
-    name: 'Chintan',
-    short_name: 'Chintan',
-    description: 'Speak a thought. It files itself.',
+    name: identity.name,
+    short_name: identity.shortName,
+    description: identity.description,
     /*
      * Absolute, not ".". A relative `start_url` resolves against the manifest's
      * own URL, so launching the installed icon depended on where the manifest
@@ -55,8 +65,8 @@ export function chintanManifest(base: string) {
     start_url: at(''),
     scope: at(''),
     display: 'standalone' as const,
-    background_color: '#FBF9F4',
-    theme_color: '#FBF9F4',
+    background_color: GROUND,
+    theme_color: GROUND,
     // Unlocked on purpose: a car mount is landscape, and the stated use case is
     // hands-free. v1 pinned portrait-primary.
     orientation: 'any' as const,

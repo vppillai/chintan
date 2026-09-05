@@ -18,6 +18,8 @@ const SETTINGS: AppConfig = {
   cognitoDomain: 'https://chintan-dev-prod-338186951935.auth.us-west-2.amazoncognito.com',
   instance: 'dev',
   version: 'test-sha',
+  appName: 'Chintan',
+  appDescription: 'Speak a thought. It files itself.',
 };
 
 function json(body: unknown, status = 200): Response {

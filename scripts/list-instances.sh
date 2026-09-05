@@ -9,7 +9,8 @@
 # cannot go stale because it was never true; a single reader is what keeps the
 # schema below honest.
 #
-# Schema — every field except `name` has a default:
+# Schema — every field except `name`, `display_name` and `description` has a
+# default:
 #
 #   name          instance name; the <instance> in chintan-<instance>-<env>.
 #                 Required. Lowercase letters, digits and hyphens, <= 32 chars.
@@ -17,7 +18,21 @@
 #   region        AWS region. Default: $AWS_REGION, else us-west-2.
 #   site_path     GitHub Pages sub-path for this instance's bundle.
 #                 Default: <name> for prod, <name>-<environment> otherwise.
-#   display_name  Human label. Default: the instance name.
+#   display_name  What the app calls itself: the document title, the manifest's
+#                 `name`, the shell's wordmark, the About heading. Required.
+#   short_name    The home-screen label under the installed icon. At most 12
+#                 characters, which is what launchers show before truncating.
+#                 Default: display_name — which must then fit.
+#   description   One sentence: <meta name="description">, the manifest's
+#                 `description`, the lede on About. Required.
+#
+# The identity fields reach the bundle as VITE_APP_NAME, VITE_APP_SHORT_NAME
+# and VITE_APP_DESCRIPTION, exported by scripts/ci-build-site.sh. Colours are
+# deliberately not here: the design tokens own them (frontend/manifest.config.ts
+# says why the manifest's are a constant).
+#
+# An unknown field fails the run. The whole point of a single reader is that a
+# field which nothing reads cannot sit in a config looking as though it works.
 #
 # Optional CloudFormation parameters, each with a template default so omitting
 # them is always safe:
@@ -98,6 +113,24 @@ config_dir = pathlib.Path(os.environ["CHINTAN_CONFIG_DIR"])
 default_region = os.environ["CHINTAN_DEFAULT_REGION"]
 valid_envs = {"prod", "staging", "dev"}
 
+# Every key a config may carry. Kept next to the loop that reads them so adding
+# a field means adding it in both places, in the same file.
+KNOWN_FIELDS = {
+    "name",
+    "environment",
+    "region",
+    "site_path",
+    "display_name",
+    "short_name",
+    "description",
+    "alarm_email",
+    "monthly_budget_usd",
+    "log_retention_days",
+    "daily_spend_cap_micros",
+    "refresh_token_validity_days",
+    "enable_alarms",
+}
+
 out = []
 seen = set()
 for path in sorted(config_dir.glob("*.yaml")):
@@ -123,6 +156,40 @@ for path in sorted(config_dir.glob("*.yaml")):
     seen.add(stack)
 
     site_path = str(doc.get("site_path") or (name if env == "prod" else f"{name}-{env}"))
+
+    # The app's user-visible identity. Required rather than defaulted from the
+    # instance name: "dev" is not a name to put in a browser tab, and a default
+    # here would let a config ship a title nobody chose. The short name is
+    # capped where launchers cap it, so a config cannot promise a label the
+    # home screen then truncates.
+    def text(key, *, required):
+        value = doc.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            if required:
+                sys.exit(
+                    f"{path}: '{key}' is required — it is what the app calls itself "
+                    f"(see the schema in scripts/list-instances.sh)"
+                )
+            return None
+        if not isinstance(value, str):
+            sys.exit(f"{path}: '{key}' must be a string")
+        return value.strip()
+
+    display_name = text("display_name", required=True)
+    description = text("description", required=True)
+    short_name = text("short_name", required=False) or display_name
+    if len(short_name) > 12:
+        sys.exit(
+            f"{path}: 'short_name' ({short_name!r}) must be 12 characters or less — "
+            f"set one when 'display_name' is longer than that"
+        )
+
+    unknown = sorted(set(doc) - KNOWN_FIELDS)
+    if unknown:
+        sys.exit(
+            f"{path}: unknown field(s) {', '.join(unknown)} — nothing reads them; "
+            f"see the schema in scripts/list-instances.sh"
+        )
 
     # Optional CloudFormation parameters. Every one of these has a default in
     # infrastructure/template.yaml, so a config that omits them deploys cleanly;
@@ -165,7 +232,9 @@ for path in sorted(config_dir.glob("*.yaml")):
             "stack": stack,
             "region": str(doc.get("region") or default_region),
             "site_path": site_path,
-            "display_name": str(doc.get("display_name") or name),
+            "display_name": display_name,
+            "short_name": short_name,
+            "description": description,
             "parameters": parameters,
         }
     )

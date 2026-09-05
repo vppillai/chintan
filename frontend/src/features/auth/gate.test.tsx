@@ -21,6 +21,8 @@ vi.mock('@/config/env.ts', () => ({
     clientId: 'client-abc',
     cognitoDomain: 'https://cognito.test',
     instance: 'dev',
+    appName: 'Chintan',
+    appDescription: 'Speak a thought. It files itself.',
   },
   isConfigured: () => true,
 }));

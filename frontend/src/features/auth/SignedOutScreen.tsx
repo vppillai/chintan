@@ -1,3 +1,5 @@
+import { config } from '@/config/env.ts';
+
 import type { AuthGateState } from './useAuth.ts';
 
 /**
@@ -24,8 +26,8 @@ export function SignedOutScreen({ phase, error, signIn, configured }: AuthGateSt
 
   return (
     <div className="signed-out">
-      <h1 className="signed-out__title">Chintan</h1>
-      <p className="signed-out__hint">Speak a thought. It files itself.</p>
+      <h1 className="signed-out__title">{config.appName}</h1>
+      <p className="signed-out__hint">{config.appDescription}</p>
 
       {error && (
         <p className="signed-out__error" role="alert">

@@ -32,8 +32,8 @@ export function AboutScreen() {
         </Link>
       </header>
 
-      <h1 className="about__title">About Chintan</h1>
-      <p className="about__lede">Speak a thought. It files itself.</p>
+      <h1 className="about__title">About {config.appName}</h1>
+      <p className="about__lede">{config.appDescription}</p>
 
       <section className="about__section" aria-labelledby="about-does">
         <h2 id="about-does" className="about__heading">

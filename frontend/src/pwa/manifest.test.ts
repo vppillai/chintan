@@ -17,6 +17,13 @@ import { basedPath, chintanManifest } from '../../manifest.config.ts';
 
 const BASE = '/chintan/dev/';
 
+/** What vite.config.ts hands over: an instance's YAML identity, resolved. */
+const IDENTITY = {
+  name: 'Chintan (staging)',
+  shortName: 'Chintan stg',
+  description: 'Speak a thought. It files itself.',
+};
+
 function urls(manifest: ReturnType<typeof chintanManifest>): string[] {
   return [
     manifest.start_url,
@@ -29,20 +36,20 @@ function urls(manifest: ReturnType<typeof chintanManifest>): string[] {
 
 describe('the manifest at a sub-path deploy', () => {
   it('states every URL from the base, leaving nothing to resolve', () => {
-    for (const url of urls(chintanManifest(BASE))) {
+    for (const url of urls(chintanManifest(BASE, IDENTITY))) {
       expect(url, `${url} is not base-absolute`).toMatch(/^\/chintan\/dev\//);
     }
   });
 
   it('never emits a bare relative path, which is what broke', () => {
-    for (const url of urls(chintanManifest(BASE))) {
+    for (const url of urls(chintanManifest(BASE, IDENTITY))) {
       expect(url.startsWith('/')).toBe(true);
       expect(url).not.toBe('.');
     }
   });
 
   it('scopes the installed app to its own instance', () => {
-    const manifest = chintanManifest(BASE);
+    const manifest = chintanManifest(BASE, IDENTITY);
     // `scope` decides which navigations stay inside the installed app. A "."
     // that resolved a directory too high would swallow a sibling instance.
     expect(manifest.scope).toBe('/chintan/dev/');
@@ -50,7 +57,7 @@ describe('the manifest at a sub-path deploy', () => {
   });
 
   it('still works at the root, where the bug was invisible', () => {
-    const manifest = chintanManifest('/');
+    const manifest = chintanManifest('/', IDENTITY);
     expect(manifest.start_url).toBe('/');
     expect(manifest.icons[0]?.src).toBe('/icon-192.png');
   });
@@ -61,10 +68,25 @@ describe('the manifest at a sub-path deploy', () => {
     expect(basedPath('/chintan/dev/', '/icon-192.png')).toBe('/chintan/dev/icon-192.png');
   });
 
+  it('is named by the instance, not by a constant', () => {
+    /*
+     * The YAML's `pwa:` block used to sit beside a manifest that ignored it,
+     * so a staging build installed under the prod name. The name, the
+     * home-screen label and the sentence are now the resolved identity's.
+     */
+    const manifest = chintanManifest(BASE, IDENTITY);
+    expect(manifest.name).toBe('Chintan (staging)');
+    expect(manifest.short_name).toBe('Chintan stg');
+    expect(manifest.description).toBe('Speak a thought. It files itself.');
+    // The colours are the design system's: the same ground for splash and
+    // chrome, and not something an instance configures.
+    expect(manifest.background_color).toBe(manifest.theme_color);
+  });
+
   it('names icons the build actually ships', () => {
     // The four in `public/`. A manifest may declare only what exists: an icon
     // that 404s is how an installed app ends up with a blank home-screen tile.
-    expect(chintanManifest(BASE).icons.map((icon) => icon.src)).toEqual([
+    expect(chintanManifest(BASE, IDENTITY).icons.map((icon) => icon.src)).toEqual([
       '/chintan/dev/icon-192.png',
       '/chintan/dev/icon-512.png',
       '/chintan/dev/icon-maskable-192.png',

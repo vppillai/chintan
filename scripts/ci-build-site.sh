@@ -56,9 +56,15 @@ while IFS= read -r entry; do
     site_path="$(printf '%s' "$entry" | jq -r .site_path)"
     environment="$(printf '%s' "$entry" | jq -r .environment)"
     instance="$(printf '%s' "$entry" | jq -r .instance)"
-    # display_name is deliberately not exported. Nothing in the bundle reads it —
-    # the app name is in the PWA manifest in vite.config.ts — and a VITE_ variable
-    # nobody consumes advertises a contract that does not exist.
+    # The instance's identity, validated by list-instances.sh (display_name and
+    # description present, short_name within twelve characters). The bundle
+    # derives its document title, PWA manifest and meta description from these
+    # at build time; the YAML is the one place they are written down, and the
+    # frontend's own defaults ("Chintan") exist only for builds outside this
+    # script, such as CI's compile check and the Playwright run.
+    display_name="$(printf '%s' "$entry" | jq -r .display_name)"
+    short_name="$(printf '%s' "$entry" | jq -r .short_name)"
+    description="$(printf '%s' "$entry" | jq -r .description)"
 
     if ! stack_exists "$stack"; then
         warn "skipping $site_path: stack $stack does not exist yet"
@@ -136,6 +142,9 @@ while IFS= read -r entry; do
             VITE_COGNITO_DOMAIN="$cognito_domain" \
             VITE_INSTANCE="$instance" \
             VITE_VERSION="$version" \
+            VITE_APP_NAME="$display_name" \
+            VITE_APP_SHORT_NAME="$short_name" \
+            VITE_APP_DESCRIPTION="$description" \
             bun run build
     )
 
