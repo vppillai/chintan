@@ -6,7 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { usageRich as USAGE } from '@/api/__fixtures__/pending.ts';
 import { usage as USAGE_TODAY } from '@/api/__fixtures__/responses.ts';
 import type { SettingsWire, UsageWire } from '@/api/schema.ts';
-import { TestProviders, testApiContext } from '@/test/providers.tsx';
+import { config } from '@/config/env.ts';
+import { TEST_TOKENS, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { SettingsScreen } from './SettingsScreen.tsx';
 
@@ -29,7 +30,7 @@ function json(body: unknown): Response {
 
 /** You, over a stub API that stores what PUT sends and answers GET with it. */
 export function mountSettings(
-  overrides: { settings?: SettingsWire; usage?: UsageWire } = {},
+  overrides: { settings?: SettingsWire; usage?: UsageWire; idToken?: string } = {},
 ) {
   let stored: SettingsWire = overrides.settings ?? STORED;
   const puts: SettingsWire[] = [];
@@ -47,14 +48,22 @@ export function mountSettings(
     return json({ items: [] });
   });
 
+  const tokens = overrides.idToken ? { ...TEST_TOKENS, idToken: overrides.idToken } : TEST_TOKENS;
   render(
-    <TestProviders api={testApiContext(fetchImpl)}>
+    <TestProviders api={testApiContext(fetchImpl, tokens)}>
       <MemoryRouter initialEntries={['/settings']}>
         <SettingsScreen />
       </MemoryRouter>
     </TestProviders>,
   );
   return { puts, fetchImpl };
+}
+
+/** An id token as Cognito mints one, unverified: the header reads its claims. */
+function idTokenWith(claims: Record<string, unknown>): string {
+  const encode = (value: unknown): string =>
+    btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${encode({ alg: 'RS256' })}.${encode(claims)}.sig`;
 }
 
 describe('every control saves itself when it is changed', () => {
@@ -68,7 +77,7 @@ describe('every control saves itself when it is changed', () => {
     const { puts } = mountSettings();
 
     const select = (await screen.findByRole('combobox', {
-      name: /default transcription language/i,
+      name: /transcription language/i,
     })) as HTMLSelectElement;
     await waitFor(() => {
       expect(select.value).toBe('en');
@@ -91,7 +100,7 @@ describe('every control saves itself when it is changed', () => {
 
   it('saves a cleanup mode on tap', async () => {
     const { puts } = mountSettings();
-    await screen.findByRole('combobox', { name: /default transcription language/i });
+    await screen.findByRole('combobox', { name: /transcription language/i });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
     });
@@ -112,7 +121,7 @@ describe('every control saves itself when it is changed', () => {
      * server still said `ink` — no PUT had ever gone out.
      */
     const { puts } = mountSettings();
-    await screen.findByRole('combobox', { name: /default transcription language/i });
+    await screen.findByRole('combobox', { name: /transcription language/i });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
     });
@@ -130,7 +139,7 @@ describe('every control saves itself when it is changed', () => {
   it('saves the retention once the typing pauses, as one PUT', async () => {
     const user = userEvent.setup({ delay: null });
     const { puts } = mountSettings();
-    const input = await screen.findByRole('spinbutton', { name: /days to keep source audio/i });
+    const input = await screen.findByRole('spinbutton', { name: /keep recordings for/i });
     await waitFor(() => {
       expect(input).toBeEnabled();
     });
@@ -204,7 +213,7 @@ describe('the default transcription language', () => {
     mountSettings({ settings: { ...STORED, default_language: 'auto' } });
 
     const select = (await screen.findByRole('combobox', {
-      name: /default transcription language/i,
+      name: /transcription language/i,
     })) as HTMLSelectElement;
     await waitFor(() => {
       expect(select.value).toBe('auto');
@@ -214,15 +223,14 @@ describe('the default transcription language', () => {
 
   it('sits above the retention field and says a note can choose its own under Details', async () => {
     mountSettings();
-    await screen.findByRole('combobox', { name: /default transcription language/i });
+    const language = await screen.findByRole('combobox', { name: /transcription language/i });
+    const retention = screen.getByRole('spinbutton', { name: /keep recordings for/i });
 
-    const titles = screen
-      .getAllByRole('heading', { level: 2 })
-      .map((heading) => heading.textContent);
-    expect(titles.indexOf('Transcription language')).toBeGreaterThan(-1);
-    expect(titles.indexOf('Transcription language')).toBeLessThan(titles.indexOf('Keep recordings for'));
+    // The same card, the language row first.
+    expect(language.closest('.you-card')).toBe(retention.closest('.you-card'));
+    expect(language.compareDocumentPosition(retention) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(
-      screen.getByText('Applies to every recording; a note can choose its own under Details.'),
+      screen.getByText(/Applies to every recording; a note can choose its own under Details\./),
     ).toBeInTheDocument();
     // Named in the speaker's own script as well as in English.
     expect(screen.getByRole('option', { name: 'മലയാളം · Malayalam' })).toBeInTheDocument();
@@ -233,7 +241,7 @@ describe('the default transcription language', () => {
     const { puts } = mountSettings({ settings: legacy });
 
     const select = (await screen.findByRole('combobox', {
-      name: /default transcription language/i,
+      name: /transcription language/i,
     })) as HTMLSelectElement;
     await waitFor(() => {
       expect(select.value).toBe('en');
@@ -253,8 +261,9 @@ describe('usage this month', () => {
 
     // 2721 microdollars, three decimals under a dollar.
     expect(await screen.findByText('$0.003', { selector: '.usage__figure' })).toBeInTheDocument();
-    expect(screen.getByText('Providers this month')).toBeInTheDocument();
-    expect(screen.getByText(/in January 2026/)).toBeInTheDocument();
+    // The month as the card's eyebrow; the figure is the one large number.
+    expect(screen.getByText('January 2026')).toHaveClass('usage__month');
+    expect(screen.getByText('Providers')).toBeInTheDocument();
     expect(screen.getByText('5 calls', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
     expect(screen.getByText('0.5 min', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
 
@@ -273,13 +282,55 @@ describe('usage this month', () => {
    */
   it('splits the providers’ figure by provider, the biggest bill first', async () => {
     mountSettings({ usage: USAGE });
-    await screen.findByText('Providers this month');
+    await screen.findByText('Providers');
 
     const labels = Array.from(document.querySelectorAll('.usage__providers dt'), (t) => t.textContent);
     expect(labels).toEqual(['MiniMax', 'Groq']);
     const minimax = screen.getByText('MiniMax').closest('.usage__provider');
     expect(minimax).toHaveTextContent('$0.002');
     expect(minimax).toHaveTextContent('4 calls');
+    // The rows add up to the figure, so there is nothing unattributed to show.
+    expect(screen.queryByText(/before the split began/i)).toBeNull();
+  });
+
+  it('shows what the provider rows do not account for, when the split began part-way through the month', async () => {
+    // The per-provider counters were added after the month's total had been
+    // accumulating; for that month the rows sum to less than the figure, and
+    // the difference is a line of its own rather than a puzzle. Derived from
+    // the data, so it disappears once every row carries a provider.
+    mountSettings({
+      usage: { ...USAGE, providers: { minimax: { calls: 2, cost_micros: 1200 } } },
+    });
+    await screen.findByText('Providers');
+
+    const rest = screen.getByText(/before the split began/i).closest('.usage__provider');
+    // 2,721 − 1,200 microdollars.
+    expect(rest).toHaveTextContent('$0.002');
+    expect(rest).toHaveClass('usage__provider--unattributed');
+  });
+
+  it('labels the day strip in print as well as for a screen reader: the scale, the ends, a caption', async () => {
+    mountSettings({ usage: USAGE });
+    const chart = (await screen.findByRole('img', { name: /spend by day/i })).closest('.usage__chart');
+
+    expect(chart?.querySelector('.usage__chart-scale')).toHaveTextContent(/Tallest bar \$0\.002 on (4 Jan|Jan 4)/);
+    const caption = chart?.querySelector('.usage__chart-caption');
+    expect(caption).toHaveTextContent(/^(1 Jan|Jan 1)/);
+    expect(caption).toHaveTextContent(/(31 Jan|Jan 31)$/);
+    expect(caption).toHaveTextContent(/spend by day, today in colour · dots mark API requests/i);
+  });
+
+  it('reserves no blank band for the status line while it has nothing to say (QA 11)', async () => {
+    mountSettings();
+    await screen.findByRole('combobox', { name: /transcription language/i });
+    await waitFor(() => {
+      expect(screen.queryByText(/loading your settings/i)).toBeNull();
+    });
+    // Empty, so `:empty` collapses it; the live region itself stays for the
+    // next Saved to be announced.
+    const status = screen.getByRole('status', { name: '' });
+    expect(status).toHaveClass('settings-status');
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('lists the month’s API requests and what is stored, as one row of facts', async () => {
@@ -307,13 +358,13 @@ describe('usage this month', () => {
   it('shows the user’s estimated share of AWS and totals with that, saying so', async () => {
     mountSettings({ usage: USAGE });
 
-    const aws = (await screen.findByText('AWS this month')).closest('.usage__headline');
+    const aws = (await screen.findByText('AWS')).closest('.usage__cell');
     // The instance figure stays; the share sits beneath it.
     expect(aws).toHaveTextContent('$2.35');
     expect(aws).toHaveTextContent(/Your estimated share: \$0\.123 \(by provider spend\)/);
 
     // 2,721 + 123,456 microdollars, not 2,721 + 2,345,678.
-    const total = screen.getByText(/^Total/).closest('.usage__headline');
+    const total = screen.getByText('Total').closest('.usage__cell');
     expect(total).toHaveTextContent('$0.126');
     expect(total).toHaveTextContent(/providers \+ your AWS share/);
   });
@@ -344,7 +395,7 @@ describe('usage this month', () => {
     expect(screen.queryByRole('group', { name: 'This month' })).toBeNull();
     expect(screen.queryByText(/estimated share/)).toBeNull();
     // The Total falls back to providers plus the instance figure, and says so.
-    const total = screen.getByText(/^Total/).closest('.usage__headline');
+    const total = screen.getByText('Total').closest('.usage__cell');
     expect(total).toHaveTextContent('$2.35');
     expect(total).toHaveTextContent(/providers \+ instance AWS/);
     const figure = screen.getByRole('img', { name: /spend by day/i });
@@ -383,14 +434,14 @@ describe('usage this month', () => {
         },
       });
 
-      const aws = await screen.findByText('AWS this month');
-      const row = aws.closest('.usage__headline');
+      const aws = await screen.findByText('AWS');
+      const row = aws.closest('.usage__cell');
       expect(row).toHaveTextContent('$3.12');
       expect(row).toHaveTextContent(/as of 3 hours ago/);
       expect(row).not.toHaveTextContent(/budget/);
 
       // 3,120,000 + 2,721 microdollars: no share on this reading, so the instance figure.
-      const total = screen.getByText(/^Total/).closest('.usage__headline');
+      const total = screen.getByText('Total').closest('.usage__cell');
       expect(total).toHaveTextContent('$3.12');
       expect(total).toHaveTextContent(/instance AWS/);
       expect(screen.queryByText(/not recorded yet/i)).toBeNull();
@@ -407,7 +458,7 @@ describe('usage this month', () => {
       },
     });
 
-    const row = (await screen.findByText('AWS this month')).closest('.usage__headline');
+    const row = (await screen.findByText('AWS')).closest('.usage__cell');
     expect(row).toHaveTextContent(/of \$10\.00 budget/);
     expect(row).toHaveTextContent(/as of a moment ago/);
   });
@@ -415,9 +466,9 @@ describe('usage this month', () => {
   it('says the AWS cost is not recorded yet, and leaves the Total out, when the API sends null', async () => {
     mountSettings({ usage: { ...USAGE, aws: null } });
 
-    const row = (await screen.findByText('AWS this month')).closest('.usage__headline');
-    expect(row).toHaveTextContent(/AWS cost not recorded yet/);
-    expect(screen.queryByText(/^Total/)).toBeNull();
+    const row = (await screen.findByText('AWS')).closest('.usage__cell');
+    expect(row).toHaveTextContent(/not recorded yet/i);
+    expect(screen.queryByText('Total')).toBeNull();
     // The providers' figure is still the one on top.
     expect(screen.getByText('$0.003', { selector: '.usage__figure' })).toBeInTheDocument();
   });
@@ -428,5 +479,89 @@ describe('usage this month', () => {
     expect(screen.queryByText(/stops taking recordings/i)).toBeNull();
     expect(screen.queryByText(/\bcap\b/i)).toBeNull();
     expect(screen.queryByText('$5.00')).toBeNull();
+  });
+});
+
+/**
+ * The screen is called You, and it used to open on a theme picker with the
+ * person nowhere on it. The account is the header now, and Sign out is a text
+ * action on it rather than an accent-bordered card among the settings.
+ */
+describe('the account header', () => {
+  it('names the signed-in account from the id token, with its initial in the roundel', async () => {
+    const authTime = Math.floor(Date.now() / 1000) - 3 * 86_400;
+    mountSettings({ idToken: idTokenWith({ email: 'vpillai@example.com', auth_time: authTime }) });
+
+    const account = await screen.findByRole('region', { name: 'Account' });
+    expect(account).toHaveTextContent('vpillai@example.com');
+    expect(account).toHaveTextContent(/signed in 3 days ago/i);
+    expect(account.querySelector('.account__roundel')).toHaveTextContent('V');
+  });
+
+  it('still says it is signed in when the token carries no claims it can read', async () => {
+    // The e2e stub's token, and any session whose token is not a JWT.
+    mountSettings();
+    const account = await screen.findByRole('region', { name: 'Account' });
+    expect(account).toHaveTextContent(/^Signed in/);
+    expect(account).not.toHaveTextContent('@');
+  });
+
+  it('offers Sign out as a quiet text action that still asks first', async () => {
+    mountSettings();
+    const signOut = await screen.findByRole('button', { name: 'Sign out' });
+    expect(signOut).toHaveClass('text-link');
+    expect(document.querySelector('.option--destructive')).toBeNull();
+
+    await userEvent.click(signOut);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent(/nothing is waiting to sync/i);
+    expect(dialog).toHaveTextContent(/ends the session with the identity provider/i);
+  });
+});
+
+/**
+ * The screen is five cards, each a landmark named by its title, so a screen
+ * reader's landmark list is the screen's table of contents; the version is a
+ * row in the last one rather than a footnote under the whole screen.
+ */
+describe('the cards', () => {
+  it('are five labelled sections in the order a person needs them', async () => {
+    mountSettings();
+    await screen.findByRole('combobox', { name: /transcription language/i });
+
+    const titles = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent);
+    expect(titles).toEqual([
+      'Recording & transcription',
+      'Appearance',
+      'Usage this month',
+      'Passkeys',
+      'About & support',
+    ]);
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  it('puts the build in the About & support card, as selectable text, with the links beside it', async () => {
+    mountSettings();
+    const card = (await screen.findByRole('heading', { name: 'About & support' })).closest('.you-card');
+    expect(card).not.toBeNull();
+    expect(card).toHaveTextContent('Version');
+    expect(card?.querySelector('.version-footnote code')).toHaveTextContent(config.version);
+    expect(screen.getByRole('link', { name: /about chintan/i })).toHaveAttribute('href', '/about');
+    expect(screen.getByRole('link', { name: /source on github/i })).toHaveAttribute(
+      'href',
+      'https://github.com/vppillai/chintan',
+    );
+    // Nothing under the last card: the footnote it used to be is gone.
+    expect(document.querySelector('.screen > .version-footnote')).toBeNull();
+  });
+
+  it('shows the theme as one three-way control with a swatch each', async () => {
+    mountSettings();
+    const theme = await screen.findByRole('group', { name: 'Theme' });
+    const options = Array.from(theme.querySelectorAll('button'), (button) => button.textContent);
+    expect(options).toEqual(['Ink & Paper', 'Nocturne', 'System']);
+    expect(theme.querySelectorAll('.theme-swatch')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: 'Ink & Paper' })).toHaveAttribute('aria-pressed', 'true');
   });
 });

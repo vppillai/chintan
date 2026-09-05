@@ -1,0 +1,940 @@
+/*
+ * You and About.
+ *
+ * The two screens that are about the person and the product rather than about
+ * a note. Both are built from the same few shapes — a hairline card resting on
+ * the page (`--color-raised` on `--color-ground-deep`, `--shadow-xs`), rows of
+ * label-left control-right, small-caps eyebrows, the notes' serif for titles
+ * and numerals — so they read as one family with Home and the note screen.
+ *
+ * Tokens only — no literal colour or font size lives here.
+ */
+
+/* ==========================================================================
+   You — header, status line, account
+   ========================================================================== */
+
+.you {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.you__header {
+  flex-wrap: nowrap;
+  align-items: center;
+  padding-block-end: 0;
+}
+
+/*
+ * One quiet line for what the last change did — Loading…, Saving…, a brief
+ * Saved, or the failure and a way to try again. It sits beside the title,
+ * right-aligned, and keeps its height while empty so the cards below never
+ * jump when it speaks. The bordered card this used to be framed a Save/Discard
+ * pair and an "Unsaved changes" state; every control saves itself now, so
+ * there is nothing to frame.
+ */
+.settings-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  margin-inline-start: auto;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-align: end;
+}
+
+/* Empty means nothing to say: no reserved band under the heading (QA 11). The
+   region stays in the DOM so its next sentence is still announced. */
+.settings-status:empty {
+  min-block-size: 0;
+}
+
+.settings-status__text--saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-ink);
+}
+
+.settings-status__tick {
+  flex-shrink: 0;
+}
+
+.settings-status__action {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+/* The passkey card's one primary action shares the pill. */
+.settings-status__action--primary {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+/*
+ * The account: a serif initial in a disc of the accent's wash, the email, and
+ * how long ago the session began with Sign out beside it as a text action.
+ * Not a card — it is who the cards belong to, so it sits on the page above
+ * them, the way a note's title sits above its body.
+ */
+.account {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: var(--space-1) var(--space-2);
+}
+
+.account__roundel {
+  display: grid;
+  place-items: center;
+  inline-size: 3.5rem;
+  block-size: 3.5rem;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent-soft);
+  box-shadow: var(--shadow-xs), var(--shadow-highlight);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+  user-select: none;
+}
+
+.account__text {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.account__name {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-snug);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+  /* The address is what someone reads out when asking for help. */
+  user-select: text;
+}
+
+.account__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.account__dot {
+  color: var(--color-faint);
+}
+
+/* A 44 px target on a one-line row: the button is tall, the line is not. */
+.account__sign-out {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--layout-touch-target-min);
+  margin-block: calc(-1 * var(--space-2));
+  padding-inline: var(--space-1);
+  font-size: var(--font-size-sm);
+}
+
+.account__sign-out[disabled] {
+  color: var(--color-faint);
+  text-decoration: none;
+}
+
+.account__message {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* ==========================================================================
+   Cards and rows
+   ========================================================================== */
+
+.you-card {
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  /* Rows and the foot paint to the card's edge; the corners clip them. */
+  overflow: hidden;
+}
+
+.you-card__head {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+}
+
+/* A step down from the screen's h1; the h2 default is the note screen's. */
+.you-card__title {
+  font-size: var(--font-size-lg);
+}
+
+.you-card__lead {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+.you-card__body {
+  display: grid;
+  border-block-start: 1px solid var(--color-line);
+}
+
+/* Hairlines between the rows, drawn on the row below so the first has none. */
+.you-card__body > * + * {
+  border-block-start: 1px solid var(--color-line);
+}
+
+/*
+ * The card's footnote: the sentences that qualify the controls, on the
+ * recessed surface so they read as the card's base rather than another row.
+ */
+.you-card__foot {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-block-start: 1px solid var(--color-line);
+  background-color: var(--color-surface);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+.you-card__note {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.you-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+}
+
+.you-row__label {
+  display: grid;
+  gap: var(--space-1);
+  flex: 1 1 10rem;
+  min-inline-size: 0;
+  font-size: var(--font-size-md);
+  color: var(--color-ink);
+}
+
+.you-row__hint {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  color: var(--color-faint);
+}
+
+/* The control keeps to the right; when it is wider than the room beside the
+   label (the language select on a 320 px phone) it wraps under it, still
+   right-aligned. */
+.you-row__control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 auto;
+  max-inline-size: 100%;
+  margin-inline-start: auto;
+  min-inline-size: 0;
+}
+
+.you-row .settings-select {
+  max-inline-size: 14rem;
+}
+
+/* A row that is itself the control — a link to a screen or a site, or a
+   button — keeps the row's colour rather than the browser's link blue. */
+.you-row--action {
+  flex-wrap: nowrap;
+  inline-size: 100%;
+  text-align: start;
+  text-decoration: none;
+  color: var(--color-ink);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.you-row--action:hover {
+  background-color: var(--color-surface);
+}
+
+.you-row--action:active {
+  background-color: var(--color-ground-deep);
+}
+
+.you-row--action[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.you-row__glyph {
+  flex-shrink: 0;
+  color: var(--color-faint);
+}
+
+.you-row--action:hover .you-row__glyph {
+  color: var(--color-ink);
+}
+
+/* A number and its unit: the retention field. */
+.you-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.you-input {
+  inline-size: 5.5rem;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-ground);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
+  font-size: var(--font-size-md);
+  color: var(--color-ink);
+  text-align: end;
+}
+
+.you-field__suffix {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Segmented control — two or three options in one shape
+   -------------------------------------------------------------------------- */
+
+/*
+ * Wraps rather than scrolls: three named segments with swatches are about
+ * 360 px, wider than the card on a 320–393 px phone, and a segment that
+ * cannot fit beside the others drops to a second line inside the same shape
+ * instead of pushing the card sideways (the layout sweep's fence).
+ */
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-inline-size: 100%;
+  padding: 2px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-inset);
+}
+
+.segmented__option {
+  display: inline-flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  /* Each segment is its own 44 px target; the trough around them is 48. */
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The chosen option is a raised chip; the others are letters on the trough. */
+.segmented__option[aria-pressed='true'] {
+  background-color: var(--color-raised-2);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-ink);
+}
+
+.segmented__option[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.segmented__option:focus-visible {
+  outline-offset: -2px;
+}
+
+/* A disc of each theme's own paper, so the choice is seen before it is made.
+   The two swatch tokens are theme-independent on purpose (tokens.css). */
+.theme-swatch {
+  flex-shrink: 0;
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+}
+
+.theme-swatch[data-swatch='ink'] {
+  background-color: var(--color-swatch-ink);
+  border-color: var(--color-swatch-ink-line);
+}
+
+.theme-swatch[data-swatch='nocturne'] {
+  background-color: var(--color-swatch-nocturne);
+  border-color: var(--color-swatch-nocturne-line);
+}
+
+.theme-swatch[data-swatch='system'] {
+  background: linear-gradient(to right, var(--color-swatch-ink) 50%, var(--color-swatch-nocturne) 50%);
+}
+
+/* --------------------------------------------------------------------------
+   Usage this month — one figure, three cells, a table, a strip, the facts
+   -------------------------------------------------------------------------- */
+
+.usage {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+
+.usage__state {
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.usage__head {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* The month's figure in the serif numerals the note titles use — the one
+   large number on the screen. */
+.usage__figure {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-ink);
+}
+
+.usage__summary {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* Providers · AWS · Total, side by side where there is room and stacked on
+   the narrowest phones. */
+.usage__cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.usage__cell {
+  display: grid;
+  gap: var(--space-1);
+  align-content: start;
+  min-inline-size: 0;
+}
+
+.usage__cell-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.usage__cell-figure {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-tight);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-ink);
+}
+
+.usage__cell-detail {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+/* The provider split, one line each under the Providers figure. */
+.usage__providers {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.usage__provider {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.usage__provider-label {
+  color: var(--color-muted);
+}
+
+.usage__provider-figures {
+  margin: 0;
+  color: var(--color-ink);
+}
+
+.usage__provider--unattributed .usage__provider-figures {
+  color: var(--color-muted);
+}
+
+/* The stages as a quiet two-column table. */
+.usage__ops {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.usage__op {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.usage__op-label {
+  color: var(--color-muted);
+}
+
+.usage__op-figures {
+  margin: 0;
+  color: var(--color-ink);
+}
+
+.usage__chart {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+/* Bars stretch to the card's width; the height stays what the viewBox says. */
+.usage__spark {
+  display: block;
+  inline-size: 100%;
+  block-size: 2.5rem;
+  overflow: visible;
+}
+
+.usage__chart-caption,
+.usage__chart-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
+
+.usage__chart-scale {
+  justify-content: flex-end;
+}
+
+.usage__chart-caption > :nth-child(2) {
+  text-align: center;
+}
+
+/* The end dates stay on one line; the caption between them is what wraps. */
+.usage__chart-caption > :first-child,
+.usage__chart-caption > :last-child {
+  white-space: nowrap;
+}
+
+.usage__baseline {
+  stroke: var(--color-line);
+  stroke-width: 1;
+}
+
+/* Ink at 60%, so the strip reads as a de-emphasised trend beneath the figure;
+   today alone takes the accent, the live/record colour, because today is the
+   one day still being written. */
+.usage__bar {
+  fill: var(--color-ink);
+  opacity: 0.6;
+}
+
+.usage__bar[data-today] {
+  fill: var(--color-accent);
+  opacity: 1;
+}
+
+/* The day's API requests, a dot above the cost bar at its own scale, in the
+   control-border grey so it reads as a second, quieter series. */
+.usage__api-dot {
+  fill: var(--color-line-strong);
+}
+
+/* The facts — requests, what is stored — one row each; a fact the backend
+   learns to send later is one more row here. */
+.usage__facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.usage__fact {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.usage__fact-label {
+  color: var(--color-muted);
+}
+
+.usage__fact-figures {
+  margin: 0;
+  color: var(--color-ink);
+  text-align: end;
+}
+
+/* --------------------------------------------------------------------------
+   Passkeys — the outcome line inside the card
+   -------------------------------------------------------------------------- */
+
+.passkey-result {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-raised-2);
+  box-shadow: var(--shadow-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.passkey-result--warn {
+  border-color: var(--color-accent);
+}
+
+.passkey-result__dismiss {
+  font-size: inherit;
+}
+
+.passkey-result__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* --------------------------------------------------------------------------
+   The running build — the Version row on You
+   -------------------------------------------------------------------------- */
+
+/*
+ * Two weights of quiet. The release tag is `--color-muted`; the build detail
+ * after it (`+14 (abcdef)`) is `--color-faint`, the palette's quietest text,
+ * so the eye lands on the release and the commit is there for whoever needs
+ * it. Both are documented in tokens.css as meeting AA in both themes —
+ * "faded" must still be legible to whoever is reading it out over a phone
+ * call to report a bug.
+ */
+.version-footnote {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-align: end;
+  /* Selectable on purpose: it exists to be copied into a bug report. */
+  user-select: text;
+}
+
+.version-footnote__build {
+  margin-inline-start: var(--space-1);
+  color: var(--color-faint);
+}
+
+/* ==========================================================================
+   About — a page to read, in the notes' serif
+   ========================================================================== */
+
+.about {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.about__hero {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.about__title {
+  font-size: var(--font-size-3xl);
+}
+
+.about__lede {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-lg);
+  font-style: italic;
+  color: var(--color-muted);
+}
+
+.about__intro,
+.about__body {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-ink);
+  max-inline-size: 62ch;
+}
+
+.about__section {
+  display: grid;
+  gap: var(--space-4);
+  padding-block-start: var(--space-6);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.about__section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The section's disc: the same wash as the account roundel on You, so the
+   two screens share one mark. */
+.about__disc {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent-soft);
+  color: var(--color-ink);
+}
+
+.about__body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* The five steps a recording takes: a vertical list on a phone, a strip
+   across the page where there is room (below). */
+.about__steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-sans);
+}
+
+.about__step {
+  display: grid;
+  grid-template-areas:
+    'glyph title'
+    'glyph detail';
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+}
+
+.about__step-glyph {
+  grid-area: glyph;
+  display: grid;
+  place-items: center;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--color-raised);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-ink);
+}
+
+.about__step-title {
+  grid-area: title;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  min-inline-size: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-snug);
+  color: var(--color-ink);
+}
+
+.about__step-number {
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
+
+.about__step-detail {
+  grid-area: detail;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+/* Where each kind of data lives: three hairline rows in a small card. */
+.about__stores {
+  display: grid;
+  margin: 0;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-raised);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.about__store {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  min-block-size: 2.5rem;
+  padding: var(--space-2) var(--space-4);
+}
+
+.about__store + .about__store {
+  border-block-start: 1px solid var(--color-line);
+}
+
+.about__store-what {
+  color: var(--color-muted);
+}
+
+.about__store-where {
+  margin: 0;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+.about__links {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+}
+
+.about__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  text-decoration: underline;
+}
+
+.about__build {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.about__version {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  user-select: text;
+}
+
+/*
+ * Wide screens: the page grows past the note column, each section puts its
+ * heading in a column to the left of its body so the three headings read
+ * down the page as a table of contents, and the five steps become a strip
+ * with a hairline running through the discs.
+ */
+@media (min-width: 56rem) {
+  .about {
+    max-inline-size: 60rem;
+  }
+
+  .about__section {
+    grid-template-columns: 14rem minmax(0, 1fr);
+    align-items: start;
+    column-gap: var(--space-8);
+  }
+
+  /* The body widens for the strip — five titled steps need about 115 px
+     each — while the prose in it keeps a reading measure. */
+  .about__body {
+    max-inline-size: 40rem;
+  }
+
+  .about__body > p {
+    max-inline-size: 62ch;
+  }
+
+  .about__section-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .about__steps {
+    position: relative;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--space-4);
+  }
+
+  .about__steps::before {
+    content: '';
+    position: absolute;
+    inset-inline: 1.125rem;
+    inset-block-start: 1.125rem;
+    block-size: 1px;
+    background-color: var(--color-line-strong);
+  }
+
+  .about__step {
+    grid-template-areas:
+      'glyph'
+      'title'
+      'detail';
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    row-gap: var(--space-2);
+  }
+
+  .about__step-glyph {
+    position: relative;
+    z-index: var(--z-content);
+  }
+}

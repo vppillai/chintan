@@ -6,7 +6,7 @@ import { routes } from '@/app/router.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { SignedOutScreen } from './SignedOutScreen.tsx';
-import { confirmBody } from './SignOutSetting.tsx';
+import { confirmBody } from './AccountHeader.tsx';
 
 /*
  * A configured build. Under Vitest no `VITE_*` variables are set, so

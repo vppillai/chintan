@@ -1,7 +1,8 @@
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 
 import { config } from '@/config/env.ts';
+import { RowButton, SettingsCard } from '@/features/settings/SettingsCard.tsx';
 
 import {
   PASSKEY_STATUS_PARAM,
@@ -38,7 +39,6 @@ export function PasskeyCard({
   /** Injected by tests; production leaves the document. */
   navigate?: (url: string) => void;
 }) {
-  const headingId = useId();
   const [params, setParams] = useSearchParams();
   const result = params.get(PASSKEY_STATUS_PARAM) as PasskeyResult | null;
   const supported = passkeysSupported();
@@ -52,17 +52,17 @@ export function PasskeyCard({
   };
 
   return (
-    <section className="settings-group" aria-labelledby={headingId}>
-      <h2 id={headingId} className="settings-group__title">
-        Passkeys
-      </h2>
-
-      <p className="settings-group__note">
-        A passkey is set up on Cognito&rsquo;s sign-in page, not here: it belongs to that
-        page&rsquo;s domain, so the app cannot register one itself. Once you have added one, the
-        sign-in page offers <em>Sign in with a passkey</em> in place of your password.
-      </p>
-
+    <SettingsCard
+      title="Passkeys"
+      lead={
+        <>
+          A passkey is set up on Cognito&rsquo;s sign-in page, not here: it belongs to that
+          page&rsquo;s domain, so the app cannot register one itself. Once you have added one, the
+          sign-in page offers <em>Sign in with a passkey</em> in place of your password.
+        </>
+      }
+      foot={<p>To remove a passkey, delete it from this device&rsquo;s own passkey manager.</p>}
+    >
       {result === 'success' && (
         <p className="passkey-result" role="status">
           Passkey added. The sign-in page will offer it next time — Face ID, a fingerprint or
@@ -111,14 +111,15 @@ export function PasskeyCard({
       )}
 
       {!supported ? (
-        <p className="settings-group__note" role="note">
-          This browser cannot create passkeys. Open {config.appName} in Safari, Chrome or Edge
-          on this device to set one up.
+        <p className="you-card__note" role="note">
+          This browser cannot create passkeys. Open {config.appName} in Safari, Chrome or Edge on
+          this device to set one up.
         </p>
       ) : (
-        <button
-          type="button"
-          className="option"
+        <RowButton
+          label="Add a passkey on this device"
+          hint="Opens the sign-in page"
+          icon="external"
           disabled={!configured}
           onClick={() => {
             // The dismissal is per device and this device is about to have a
@@ -127,15 +128,8 @@ export function PasskeyCard({
             dismissNudge('added');
             navigate(passkeyAddUrl());
           }}
-        >
-          <span className="option__label">Add a passkey on this device</span>
-          <span className="option__hint">Opens the sign-in page</span>
-        </button>
+        />
       )}
-
-      <p className="settings-group__note">
-        To remove a passkey, delete it from this device&rsquo;s own passkey manager.
-      </p>
-    </section>
+    </SettingsCard>
   );
 }

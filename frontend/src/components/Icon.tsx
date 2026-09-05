@@ -35,7 +35,15 @@ export type IconName =
   | 'search'
   | 'close'
   | 'chevron-up'
-  | 'chevron-down';
+  | 'chevron-down'
+  | 'chevron-right'
+  | 'external'
+  | 'transcribe'
+  | 'route'
+  | 'sparkle'
+  | 'append'
+  | 'shield'
+  | 'code';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -81,6 +89,26 @@ export const PATHS: Record<IconName, string> = {
   // The back chevron, turned: previous and next match.
   'chevron-up': 'M5 15l7-7 7 7',
   'chevron-down': 'M5 9l7 7 7-7',
+  // The back chevron, mirrored: a row on You that leads to another screen.
+  'chevron-right': 'M9 5l7 7-7 7',
+  // An arrow out of the box's corner: a link that leaves the app.
+  external: 'M14 5h5v5M19 5l-8 8M17 14v5H5V7h5',
+  // Three lines of text, the last one short: what a recording becomes. The
+  // About page's Transcribe step.
+  transcribe: 'M5 7h14M5 12h14M5 17h8',
+  // One line that branches to another and points at it: the router choosing
+  // a note. Also the disc beside "How filing works".
+  route: 'M6 4v15M6 9a5 5 0 0 0 5 5h7M15 11l3 3-3 3',
+  // A four-point star with a small second one: cleanup, the step that
+  // tidies. Drawn as one closed path so the joins stay round.
+  sparkle: 'M12 4l1.8 5.2L19 11l-5.2 1.8L12 18l-1.8-5.2L5 11l5.2-1.8zM19 4v3M17.5 5.5h3',
+  // A page with a turned corner and a plus on it: the text appended to its
+  // note.
+  append: 'M7 3h7l4 4v14H7zM14 3v4h4M12 11v6M9 14h6',
+  // A shield: where the data lives, and who can see it.
+  shield: 'M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z',
+  // Two angle brackets with a slash: the source.
+  code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

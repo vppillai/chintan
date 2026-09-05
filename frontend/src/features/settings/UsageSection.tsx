@@ -1,8 +1,7 @@
-import { useId } from 'react';
-
 import { useUsage } from '@/api/queries.ts';
 import type { UsageWire } from '@/api/schema.ts';
 
+import { SettingsCard } from './SettingsCard.tsx';
 import {
   asOfLabel,
   combinedMicros,
@@ -34,20 +33,28 @@ import {
  * the split by pipeline stage, and a bar per day — from `GET /v1/usage`, the
  * per-tenant accounting the worker writes on every priced provider call.
  *
+ * The card reads top to bottom the way a bill does: the month as an eyebrow,
+ * the providers' figure large in the serif numerals, the calls and minutes it
+ * bought; then three cells — Providers (split by provider), AWS, Total — as
+ * one compact grid rather than three stacked headlines, which is what made
+ * the section a page long; then the per-stage rows as a quiet table, the
+ * day-by-day strip, and the facts about what is stored.
+ *
  * Beneath the providers' figure sits what AWS charges to run the instance
  * (D6b): the whole instance's month to date, read from the stack's Budget by
  * a daily worker task, so it carries an as-of and, when the Budget has a
  * limit, how much of it this is. Since N11 the backend also apportions that
  * bill by each user's share of the instance's provider spend, and when it
  * does, the Total is providers plus *that* share — a number about this
- * person — rather than providers plus everyone's AWS. The label says which.
+ * person — rather than providers plus everyone's AWS. The cell says which.
  *
  * N11 adds the rest of the picture: the split by provider under Providers,
- * the two hand-asked calls (Clean note, Ask) among the stages, and a row of
- * facts — API requests this month, what is stored — so "what does this cost"
- * and "what am I keeping" are answered on one screen. Every one of those is
+ * the two hand-asked calls (Clean note, Ask) among the stages, and the facts
+ * — API requests this month, what is stored — so "what does this cost" and
+ * "what am I keeping" are answered on one screen. Every one of those is
  * optional on the wire here, because this screen may ship before the backend
- * that sends them; each simply does not appear until it does.
+ * that sends them; each simply does not appear until it does, and a fact the
+ * backend learns to send later is one more row in the same list.
  *
  * The instance's daily spend cap is not named here at all (U13b): it is an
  * operator's runaway guard, set far above any real day, and a sentence about
@@ -55,35 +62,44 @@ import {
  * that a cap exists and what happens if it is ever reached.
  */
 export function UsageSection() {
-  const headingId = useId();
-  const { data, isLoading, isError } = useUsage();
+  const { data, isLoading, isError, refetch } = useUsage();
 
   return (
-    <section className="settings-group" aria-labelledby={headingId}>
-      <h2 id={headingId} className="settings-group__title">
-        Usage this month
-      </h2>
-
+    <SettingsCard
+      title="Usage this month"
+      className="you-card--usage"
+      foot={
+        <p>
+          Providers are what transcription and the language model charged for this
+          account&rsquo;s recordings and questions. AWS is what it costs to run the instance for
+          everyone using it, updated once a day; your share of it is estimated from your part of
+          the provider spend.
+        </p>
+      }
+    >
       {isLoading && (
-        <p className="settings-group__note" role="status">
+        <p className="usage__state" role="status">
           Adding up this month…
         </p>
       )}
 
       {isError && (
-        <p className="settings-group__note" role="alert">
-          Couldn&rsquo;t load this month&rsquo;s usage.
+        <p className="usage__state" role="alert">
+          Couldn&rsquo;t load this month&rsquo;s usage.{' '}
+          <button
+            type="button"
+            className="text-link"
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            Try again
+          </button>
         </p>
       )}
 
       {data && <Usage usage={data} />}
-
-      <p className="settings-group__note">
-        Providers are what transcription and the language model charged for this account&rsquo;s
-        recordings and questions. AWS is what it costs to run the instance for everyone using it,
-        updated once a day; your share of it is estimated from your part of the provider spend.
-      </p>
-    </section>
+    </SettingsCard>
   );
 }
 
@@ -97,18 +113,38 @@ function Usage({ usage }: { usage: UsageWire }) {
   const storage = usage.storage;
   const requests = usage.api?.requests;
   const hasFacts = requests !== undefined || storage !== undefined;
+  /*
+   * The split by provider was added to the accounting after the month's total
+   * had been running for a while, so for that month the provider rows sum to
+   * less than the figure above them. The difference is shown as its own line
+   * rather than left for the reader to notice: it is derived from the data,
+   * so it disappears on its own once every row of the month carries a name.
+   */
+  const attributed = providers.reduce((sum, row) => sum + row.totals.cost_micros, 0);
+  const unattributed = providers.length > 0 ? Math.max(0, usage.cost_micros - attributed) : 0;
 
   return (
     <div className="usage">
-      <dl className="usage__headlines">
-        <div className="usage__headline">
-          <dt className="usage__headline-label">Providers this month</dt>
-          <dd className="usage__headline-figures">
-            <span className="numeric usage__figure">{formatDollars(usage.cost_micros)}</span>{' '}
-            <span className="usage__month">in {monthLabel(usage.month)}</span>
-          </dd>
+      <div className="usage__head">
+        <p className="usage__month eyebrow">{monthLabel(usage.month)}</p>
+        <p className="usage__figure numeric">{formatDollars(usage.cost_micros)}</p>
+        {usage.calls === 0 ? (
+          <p className="usage__summary">No recordings have been processed this month yet.</p>
+        ) : (
+          <p className="usage__summary">
+            <span className="numeric">{formatCalls(usage.calls)}</span>
+            {' · '}
+            <span className="numeric">{formatAudioMinutes(usage.audio_seconds)}</span> of audio
+          </p>
+        )}
+      </div>
+
+      <dl className="usage__cells">
+        <div className="usage__cell">
+          <dt className="usage__cell-label">Providers</dt>
+          <dd className="usage__cell-figure numeric">{formatDollars(usage.cost_micros)}</dd>
           {providers.length > 0 && (
-            <dd className="usage__headline-figures">
+            <dd className="usage__cell-detail">
               <dl className="usage__providers">
                 {providers.map(({ key, label, totals }) => (
                   <div key={key} className="usage__provider">
@@ -120,55 +156,81 @@ function Usage({ usage }: { usage: UsageWire }) {
                     </dd>
                   </div>
                 ))}
+                {unattributed > 0 && (
+                  <div className="usage__provider usage__provider--unattributed">
+                    <dt className="usage__provider-label">Before the split began</dt>
+                    <dd className="usage__provider-figures">
+                      <span className="numeric">{formatDollars(unattributed)}</span>
+                    </dd>
+                  </div>
+                )}
               </dl>
             </dd>
           )}
         </div>
 
-        <div className="usage__headline">
-          <dt className="usage__headline-label">AWS this month</dt>
-          <dd className="usage__headline-figures">
-            {aws ? (
-              <>
-                <span className="numeric usage__figure">{formatDollars(aws.month_micros)}</span>{' '}
-                <span className="usage__month">
-                  {asOfLabel(aws.as_of)}
-                  {aws.budget_micros !== null && (
-                    <>
-                      {' · '}of{' '}
-                      <span className="numeric">{formatDollars(aws.budget_micros)}</span> budget
-                    </>
-                  )}
-                </span>
-              </>
-            ) : (
-              <span className="usage__unrecorded">AWS cost not recorded yet</span>
-            )}
-          </dd>
-          {share !== null && (
-            <dd className="usage__headline-figures">
-              <span className="usage__month">
-                Your estimated share: <span className="numeric">{formatDollars(share)}</span> (by
-                provider spend)
-              </span>
-            </dd>
+        <div className="usage__cell">
+          <dt className="usage__cell-label">AWS</dt>
+          {aws ? (
+            <>
+              <dd className="usage__cell-figure numeric">{formatDollars(aws.month_micros)}</dd>
+              <dd className="usage__cell-detail">
+                {asOfLabel(aws.as_of)}
+                {aws.budget_micros !== null && (
+                  <>
+                    {' · '}of <span className="numeric">{formatDollars(aws.budget_micros)}</span>{' '}
+                    budget
+                  </>
+                )}
+                {share !== null && (
+                  <>
+                    <br />
+                    Your estimated share: <span className="numeric">{formatDollars(share)}</span>{' '}
+                    (by provider spend)
+                  </>
+                )}
+              </dd>
+            </>
+          ) : (
+            <dd className="usage__cell-detail">Not recorded yet</dd>
           )}
         </div>
 
         {total !== null && (
-          <div className="usage__headline usage__headline--total">
-            <dt className="usage__headline-label">
-              Total{' '}
-              <span className="usage__headline-hint">
-                {basis === 'share' ? '· providers + your AWS share' : '· providers + instance AWS'}
-              </span>
-            </dt>
-            <dd className="usage__headline-figures">
-              <span className="numeric usage__figure">{formatDollars(total)}</span>
+          <div className="usage__cell usage__cell--total">
+            <dt className="usage__cell-label">Total</dt>
+            <dd className="usage__cell-figure numeric">{formatDollars(total)}</dd>
+            <dd className="usage__cell-detail">
+              {basis === 'share' ? 'providers + your AWS share' : 'providers + instance AWS'}
             </dd>
           </div>
         )}
       </dl>
+
+      {usage.calls > 0 && (
+        <>
+          <dl className="usage__ops">
+            {rows.map(({ key, label, totals }) => (
+              <div key={key} className="usage__op">
+                <dt className="usage__op-label">{label}</dt>
+                <dd className="usage__op-figures">
+                  <span className="numeric">{formatDollars(totals.cost_micros)}</span>
+                  {' · '}
+                  <span className="numeric">{formatCalls(totals.calls)}</span>
+                  {totals.audio_seconds !== undefined && (
+                    <>
+                      {' · '}
+                      <span className="numeric">{formatAudioMinutes(totals.audio_seconds)}</span>
+                    </>
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+
+          <Sparkline usage={usage} />
+        </>
+      )}
 
       {hasFacts && (
         <dl className="usage__facts" role="group" aria-label="This month">
@@ -225,39 +287,6 @@ function Usage({ usage }: { usage: UsageWire }) {
           )}
         </dl>
       )}
-
-      {usage.calls === 0 ? (
-        <p className="settings-group__note">No recordings have been processed this month yet.</p>
-      ) : (
-        <>
-          <p className="usage__summary">
-            <span className="numeric">{formatCalls(usage.calls)}</span>
-            {' · '}
-            <span className="numeric">{formatAudioMinutes(usage.audio_seconds)}</span> of audio
-          </p>
-
-          <dl className="usage__ops">
-            {rows.map(({ key, label, totals }) => (
-              <div key={key} className="usage__op">
-                <dt className="usage__op-label">{label}</dt>
-                <dd className="usage__op-figures">
-                  <span className="numeric">{formatDollars(totals.cost_micros)}</span>
-                  {' · '}
-                  <span className="numeric">{formatCalls(totals.calls)}</span>
-                  {totals.audio_seconds !== undefined && (
-                    <>
-                      {' · '}
-                      <span className="numeric">{formatAudioMinutes(totals.audio_seconds)}</span>
-                    </>
-                  )}
-                </dd>
-              </div>
-            ))}
-          </dl>
-
-          <Sparkline usage={usage} />
-        </>
-      )}
     </div>
   );
 }
@@ -280,7 +309,10 @@ const DOT = 1.2;
  * that names both figures, and the whole figure is described in words for
  * anyone who cannot see it — the numbers themselves are already in the text
  * above, so the description says what the picture adds: which day was the
- * biggest, and how many requests the month took.
+ * biggest, and how many requests the month took. For the sighted reader the
+ * strip carries the same in print (QA 12): the tallest bar's value and day
+ * above it, the first and last day of the month beneath it, and a caption
+ * saying what the bars, the accent and the dots are.
  */
 function Sparkline({ usage }: { usage: UsageWire }) {
   const bars = dayBars(usage);
@@ -293,59 +325,74 @@ function Sparkline({ usage }: { usage: UsageWire }) {
   const requests = bars.reduce((sum, bar) => sum + bar.apiRequests, 0);
 
   return (
-    <svg
-      className="usage__spark"
-      viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`}
-      role="img"
-      aria-label={`Spend by day in ${monthLabel(usage.month)}: ${String(active)} ${
-        active === 1 ? 'day' : 'days'
-      } with recordings, the most on ${dayLabel(peak.date)} at ${formatDollars(peak.costMicros)}.${
-        maxRequests > 0 ? ` ${formatRequests(requests)} to the API, shown as dots.` : ''
-      }`}
-      preserveAspectRatio="none"
-    >
-      <line className="usage__baseline" x1={0} x2={width} y1={HEIGHT - 0.5} y2={HEIGHT - 0.5} />
-      {bars.map((bar, index) => {
-        if (bar.costMicros === 0) return null;
-        // Never shorter than two units, so a day that cost a tenth of a cent
-        // is still a mark rather than a rumour.
-        const height = Math.max(2, Math.round((bar.costMicros / max) * (HEIGHT - 2)));
-        return (
-          <rect
-            key={bar.date}
-            className="usage__bar"
-            data-today={bar.today || undefined}
-            x={index * (BAR + GAP)}
-            y={HEIGHT - height}
-            width={BAR}
-            height={height}
-            rx={1}
-          >
-            <title>{`${dayLabel(bar.date)} · ${formatDollars(bar.costMicros)} · ${formatCalls(
-              bar.calls,
-            )}${bar.apiRequests > 0 ? ` · ${formatRequests(bar.apiRequests)}` : ''}`}</title>
-          </rect>
-        );
-      })}
-      {maxRequests > 0 &&
-        bars.map((bar, index) => {
-          if (bar.apiRequests === 0) return null;
-          // The busiest day sits at the top of the strip, the quietest just
-          // above the baseline; the dot never touches the floor so it cannot
-          // be read as a very small bar.
-          const y = HEIGHT - 2 - DOT - (bar.apiRequests / maxRequests) * (HEIGHT - 4 - 2 * DOT);
+    <figure className="usage__chart">
+      <p className="usage__chart-scale">
+        <span>
+          Tallest bar <span className="numeric">{formatDollars(peak.costMicros)}</span> on{' '}
+          {dayLabel(peak.date)}
+        </span>
+      </p>
+      <svg
+        className="usage__spark"
+        viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`}
+        role="img"
+        aria-label={`Spend by day in ${monthLabel(usage.month)}: ${String(active)} ${
+          active === 1 ? 'day' : 'days'
+        } with recordings, the most on ${dayLabel(peak.date)} at ${formatDollars(peak.costMicros)}.${
+          maxRequests > 0 ? ` ${formatRequests(requests)} to the API, shown as dots.` : ''
+        }`}
+        preserveAspectRatio="none"
+      >
+        <line className="usage__baseline" x1={0} x2={width} y1={HEIGHT - 0.5} y2={HEIGHT - 0.5} />
+        {bars.map((bar, index) => {
+          if (bar.costMicros === 0) return null;
+          // Never shorter than two units, so a day that cost a tenth of a cent
+          // is still a mark rather than a rumour.
+          const height = Math.max(2, Math.round((bar.costMicros / max) * (HEIGHT - 2)));
           return (
-            <circle
+            <rect
               key={bar.date}
-              className="usage__api-dot"
-              cx={index * (BAR + GAP) + BAR / 2}
-              cy={y}
-              r={DOT}
+              className="usage__bar"
+              data-today={bar.today || undefined}
+              x={index * (BAR + GAP)}
+              y={HEIGHT - height}
+              width={BAR}
+              height={height}
+              rx={1}
             >
-              <title>{`${dayLabel(bar.date)} · ${formatRequests(bar.apiRequests)}`}</title>
-            </circle>
+              <title>{`${dayLabel(bar.date)} · ${formatDollars(bar.costMicros)} · ${formatCalls(
+                bar.calls,
+              )}${bar.apiRequests > 0 ? ` · ${formatRequests(bar.apiRequests)}` : ''}`}</title>
+            </rect>
           );
         })}
-    </svg>
+        {maxRequests > 0 &&
+          bars.map((bar, index) => {
+            if (bar.apiRequests === 0) return null;
+            // The busiest day sits at the top of the strip, the quietest just
+            // above the baseline; the dot never touches the floor so it cannot
+            // be read as a very small bar.
+            const y = HEIGHT - 2 - DOT - (bar.apiRequests / maxRequests) * (HEIGHT - 4 - 2 * DOT);
+            return (
+              <circle
+                key={bar.date}
+                className="usage__api-dot"
+                cx={index * (BAR + GAP) + BAR / 2}
+                cy={y}
+                r={DOT}
+              >
+                <title>{`${dayLabel(bar.date)} · ${formatRequests(bar.apiRequests)}`}</title>
+              </circle>
+            );
+          })}
+      </svg>
+      <figcaption className="usage__chart-caption">
+        <span>{dayLabel(bars[0]!.date)}</span>
+        <span>
+          Spend by day, today in colour{maxRequests > 0 ? ' · dots mark API requests' : ''}
+        </span>
+        <span>{dayLabel(bars[bars.length - 1]!.date)}</span>
+      </figcaption>
+    </figure>
   );
 }
