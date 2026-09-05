@@ -179,6 +179,11 @@ jobs:
       # through a deploy matrix.
       - name: list-instances
         run: scripts/list-instances.sh --format text
+      # The identity fields land in index.html unescaped, so the script refuses
+      # the characters that would break out of a title or an attribute. A check
+      # nobody has watched fail is not a check.
+      - name: Prove the check can fail
+        run: scripts/list-instances.sh --self-test
 
   frontend:
     name: Frontend
