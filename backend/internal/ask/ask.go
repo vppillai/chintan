@@ -35,6 +35,12 @@ import (
 const (
 	// MaxQuestionRunes bounds the question after trimming.
 	MaxQuestionRunes = 1000
+	// MaxQueryTerms bounds the terms retrieval scores by. score and
+	// matchPositions are O(terms × text) over up to MaxNotesConsidered notes
+	// of up to 32 KB each; a 1,000-rune question of two-letter tokens is
+	// ~330 terms, and tens of gigabytes of scanning inside one invocation.
+	// Thirty-two terms is more than any question a person asks carries.
+	MaxQueryTerms = 32
 	// MaxHistoryTurns bounds the earlier turns a request may carry. Six is a
 	// conversation, not a transcript: enough for a follow-up to resolve, not
 	// enough to crowd the notes out of the prompt.
@@ -108,7 +114,8 @@ func init() {
 // digits and combining marks in any script — the marks matter because a
 // Devanagari vowel sign is a mark, not a letter, and splitting on it would
 // cut every word of a Hindi question in half. Duplicates are kept out so a
-// repeated word does not double its weight.
+// repeated word does not double its weight, and the first MaxQueryTerms terms
+// are kept, in the order spoken.
 func Tokenize(question string) []string {
 	fields := strings.FieldsFunc(strings.ToLower(question), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.Is(unicode.Mn, r) && !unicode.Is(unicode.Mc, r)
@@ -127,6 +134,9 @@ func Tokenize(question string) []string {
 		}
 		seen[f] = struct{}{}
 		out = append(out, f)
+		if len(out) == MaxQueryTerms {
+			break
+		}
 	}
 	return out
 }

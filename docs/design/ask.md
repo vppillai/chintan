@@ -50,7 +50,9 @@ lowercased, marker-stripped copy of its body (`search_text`, up to 32 KB).
    bound before it answers — an internal bounded drain, not a public list.
 2. Tokenise the question: lowercase, split on anything that is not a letter,
    digit or combining mark (so Devanagari and Han tokenise), drop English
-   stopwords, keep tokens of at least two runes, dedupe.
+   stopwords, keep tokens of at least two runes, dedupe, and keep the first
+   32 (`ask.MaxQueryTerms`: scoring and excerpting are O(terms × text) over
+   up to 2,000 notes of 32 KB).
 3. Score each note: term occurrences in the title ×4, in aliases and tags ×3,
    in `search_text` ×1 with natural-log damping (`ln(1+hits)`) so a note that
    says a word fifty times does not beat a title that says it once. A note

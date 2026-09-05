@@ -1,6 +1,7 @@
 package ask
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -351,5 +352,21 @@ func TestSourcesKeepsOnlyPackedNotesInRankingOrder(t *testing.T) {
 				t.Error("Sources returned nil; the wire needs [] not null")
 			}
 		})
+	}
+}
+
+// A question of hundreds of distinct tokens must not become hundreds of scans
+// over every note; the first MaxQueryTerms terms are what retrieval sees.
+func TestTokenizeKeepsAtMostMaxQueryTerms(t *testing.T) {
+	var words []string
+	for i := 0; i < MaxQueryTerms+10; i++ {
+		words = append(words, fmt.Sprintf("w%d", i))
+	}
+	got := Tokenize(strings.Join(words, " "))
+	if len(got) != MaxQueryTerms {
+		t.Fatalf("terms = %d, want %d", len(got), MaxQueryTerms)
+	}
+	if got[0] != "w0" || got[MaxQueryTerms-1] != fmt.Sprintf("w%d", MaxQueryTerms-1) {
+		t.Errorf("terms are not the first %d in spoken order: %v", MaxQueryTerms, got)
 	}
 }
