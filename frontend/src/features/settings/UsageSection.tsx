@@ -239,6 +239,10 @@ function Usage({ usage }: { usage: UsageWire }) {
               <dt className="usage__fact-label">API requests</dt>
               <dd className="usage__fact-figures">
                 <span className="numeric">{formatRequests(requests)}</span>
+                {/* Every authenticated request is counted, and most of them are
+                    the app polling for a capture or an answer — said here, or
+                    the figure reads as how much the person did. */}
+                {' · '}every call the app made, polling included
               </dd>
             </div>
           )}
