@@ -355,6 +355,16 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 			t.Fatalf("seed usage: %v", err)
 		}
 	}
+	// Two days of the worker's storage snapshot, so the fixture carries the
+	// month's byte-days and a day row that has one.
+	for _, snap := range []usage.StorageSnapshot{
+		{TenantID: contractUser, Day: "2026-01-03", AudioBytes: 9_000_000, Notes: 11},
+		{TenantID: contractUser, Day: "2026-01-04", AudioBytes: 9_123_456, Notes: 12},
+	} {
+		if _, err := h.usage.AddStorageDay(context.Background(), snap); err != nil {
+			t.Fatalf("seed storage snapshot: %v", err)
+		}
+	}
 	budgetMicros := int64(10_000_000)
 	if err := h.usage.PutAWSCost(context.Background(), usage.AWSCost{
 		Month: "2026-01", MonthMicros: 2_345_678, BudgetMicros: &budgetMicros,

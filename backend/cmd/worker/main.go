@@ -1,5 +1,5 @@
-// Command worker runs the capture pipeline, the weekly expiry sweep and the
-// daily AWS cost reading.
+// Command worker runs the capture pipeline, the weekly expiry sweep, the
+// daily AWS cost reading and the daily storage snapshot.
 //
 // It is a second Lambda because the first one cannot do this work. API Gateway's
 // HTTP API caps an integration at 30 seconds and the cap is not adjustable, so a
@@ -12,9 +12,10 @@
 // recording lands in the content bucket, the API when the user retries a
 // capture or picks its destination, the API or this function itself with
 // {"task":"clean-note"} for a note's whole-note cleaned view, the API with
-// {"task":"ask"} for a question over the tenant's notes, and two
+// {"task":"ask"} for a question over the tenant's notes, and three
 // EventBridge rules: once a week with {"task":"sweep-expired"} and once a day
-// with {"task":"aws-cost"}. There is no queue in between. A returned error
+// each with {"task":"aws-cost"} and {"task":"storage-snapshot"}. There is no
+// queue in between. A returned error
 // makes Lambda retry the same payload twice, and an invocation that fails all
 // three attempts is written to the dead-letter queue, which is what the alarm
 // watches.
@@ -56,13 +57,15 @@ import (
 	"github.com/vppillai/chintan/backend/internal/purge"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
+	"github.com/vppillai/chintan/backend/internal/storagesnap"
 	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 var (
-	worker  *pipeline.Worker
-	sweeper *purge.Sweeper
-	costs   *awscost.Collector
+	worker    *pipeline.Worker
+	sweeper   *purge.Sweeper
+	costs     *awscost.Collector
+	snapshots *storagesnap.Snapshotter
 )
 
 // setup builds everything the handlers need. It is called from main rather
@@ -208,6 +211,14 @@ func setup() {
 	if err != nil {
 		log.Fatalf("failed to build the aws-cost task: %v", err)
 	}
+
+	// The daily storage snapshot: the same footprint GET /v1/usage computes
+	// on demand, added onto each tenant's usage rows once a day so storage
+	// has a figure over the month and not only a figure right now.
+	snapshots, err = storagesnap.New(usageStore, service.NewStorageService(store))
+	if err != nil {
+		log.Fatalf("failed to build the storage-snapshot task: %v", err)
+	}
 }
 
 // checkPriced refuses a provider and model the price table has no row for,
@@ -352,6 +363,11 @@ func Handler(ctx context.Context, raw json.RawMessage) error {
 	case inv.task == awscost.Task:
 		// The daily budget reading behind the AWS line on GET /v1/usage.
 		_, err := costs.Run(ctx)
+		return err
+
+	case inv.task == storagesnap.Task:
+		// The daily storage reading behind storage.byte_days on GET /v1/usage.
+		_, err := snapshots.Run(ctx)
 		return err
 
 	case inv.task == pipeline.TaskCleanNote:

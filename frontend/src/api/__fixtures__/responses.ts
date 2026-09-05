@@ -512,7 +512,8 @@ export const usage: UsageWire = {
       "cost_micros": 951,
       "date": "2026-01-03",
       "input_tokens": 900,
-      "output_tokens": 300
+      "output_tokens": 300,
+      "storage_byte_days": 9000000
     },
     {
       "api_requests": 0,
@@ -520,7 +521,8 @@ export const usage: UsageWire = {
       "cost_micros": 420,
       "date": "2026-01-04",
       "input_tokens": 1200,
-      "output_tokens": 100
+      "output_tokens": 100,
+      "storage_byte_days": 9123456
     }
   ],
   "input_tokens": 2100,
@@ -562,6 +564,8 @@ export const usage: UsageWire = {
     "approximate": false,
     "audio_bytes": 0,
     "audio_seconds": 0,
+    "byte_days": 18123456,
+    "note_days": 23,
     "notes": 0,
     "recordings": 0
   }
@@ -583,6 +587,8 @@ export const usageEmpty: UsageWire = {
     "approximate": false,
     "audio_bytes": 0,
     "audio_seconds": 0,
+    "byte_days": 0,
+    "note_days": 0,
     "notes": 0,
     "recordings": 0
   }

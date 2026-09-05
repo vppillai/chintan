@@ -79,23 +79,61 @@ type Totals struct {
 	OutputTokens int64   `json:"output_tokens,omitempty"`
 }
 
-// Day is one day's totals inside a month, and the API requests it served.
+// Day is one day's totals inside a month, the API requests it served, and the
+// storage the daily snapshot found that day.
 type Day struct {
 	Date string `json:"date"`
 	Totals
 	APIRequests int64 `json:"api_requests"`
+	// StorageByteDays is the tenant's audio footprint in bytes as the daily
+	// storage snapshot found it that day — one day of storage at that size,
+	// hence the unit — or 0 on a day the snapshot did not run.
+	StorageByteDays int64 `json:"storage_byte_days"`
 }
 
 // Month is a tenant's usage for one calendar month: the month row's totals,
 // the same broken down by op and by provider, the authenticated API requests
-// the tenant made, and one entry per day that had any usage or any request.
+// the tenant made, the storage-days the daily snapshot accumulated, and one
+// entry per day that had any usage, any request or a snapshot.
 type Month struct {
 	Month string `json:"month"`
 	Totals
 	Ops         map[string]Totals `json:"ops"`
 	Providers   map[string]Totals `json:"providers"`
 	APIRequests int64             `json:"api_requests"`
-	Days        []Day             `json:"days"`
+	// StorageByteDays and StorageNoteDays are the sums of the daily snapshots
+	// taken in the month: bytes of audio held × days held, and notes held ×
+	// days held. A point-in-time footprint reads zero the moment everything is
+	// deleted; these say what was stored over the month, which is what storage
+	// is billed by.
+	StorageByteDays int64 `json:"storage_byte_days"`
+	StorageNoteDays int64 `json:"storage_note_days"`
+	Days            []Day `json:"days"`
+}
+
+// StorageSnapshot is one day's reading of a tenant's footprint, as the
+// worker's storage-snapshot task takes it (internal/storagesnap).
+type StorageSnapshot struct {
+	TenantID string
+	// Day is the UTC calendar day the reading is for, yyyy-mm-dd.
+	Day        string
+	AudioBytes int64
+	Notes      int64
+}
+
+// StorageDayStore is what the storage-snapshot task writes. AddStorageDay
+// adds the reading onto the tenant's month row and records it on the day row.
+// It is idempotent per day: added is false, and the month is left as it was,
+// when the month row already carries a snapshot for that day or a later one.
+type StorageDayStore interface {
+	AddStorageDay(ctx context.Context, s StorageSnapshot) (added bool, err error)
+}
+
+// TenantLister names the tenants that have a USAGE#<month> row for any of the
+// months given — the set the storage-snapshot task walks, since nothing can
+// query the table for "every tenant" without a Scan.
+type TenantLister interface {
+	TenantsWithUsage(ctx context.Context, months []string) ([]string, error)
 }
 
 // Reader answers GET /v1/usage: the tenant's own month, the instance's AWS
@@ -192,7 +230,13 @@ const (
 	attrCost        = "cost_micros"
 	attrCalls       = "calls"
 	attrAPIRequests = "api_requests"
-	opPrefix        = "op_"
+	// The storage-days counters (StorageDayStore). storage_snapshot_day is
+	// the last day whose snapshot the month row has taken, and the condition
+	// that makes a second run on the same day add nothing.
+	attrStorageByteDays    = "storage_byte_days"
+	attrStorageNoteDays    = "storage_note_days"
+	attrStorageSnapshotDay = "storage_snapshot_day"
+	opPrefix               = "op_"
 	// providerPrefix is the per-provider split, same five counters as the
 	// per-op one: provider_<name>_<counter>.
 	providerPrefix = "provider_"
@@ -225,10 +269,12 @@ type Dynamo struct {
 }
 
 var (
-	_ Recorder       = (*Dynamo)(nil)
-	_ RequestCounter = (*Dynamo)(nil)
-	_ Reader         = (*Dynamo)(nil)
-	_ AWSCostStore   = (*Dynamo)(nil)
+	_ Recorder        = (*Dynamo)(nil)
+	_ RequestCounter  = (*Dynamo)(nil)
+	_ Reader          = (*Dynamo)(nil)
+	_ AWSCostStore    = (*Dynamo)(nil)
+	_ StorageDayStore = (*Dynamo)(nil)
+	_ TenantLister    = (*Dynamo)(nil)
 )
 
 // NewDynamo builds the DynamoDB-backed recorder and reader.
@@ -433,8 +479,14 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 				out.Ops = splitOf(item, opPrefix)
 				out.Providers = splitOf(item, providerPrefix)
 				out.APIRequests = readInt(item, attrAPIRequests)
+				out.StorageByteDays = readInt(item, attrStorageByteDays)
+				out.StorageNoteDays = readInt(item, attrStorageNoteDays)
 			case strings.HasPrefix(period, month+"-"):
-				out.Days = append(out.Days, Day{Date: period, Totals: totalsOf(item, ""), APIRequests: readInt(item, attrAPIRequests)})
+				out.Days = append(out.Days, Day{
+					Date: period, Totals: totalsOf(item, ""),
+					APIRequests:     readInt(item, attrAPIRequests),
+					StorageByteDays: readInt(item, attrStorageByteDays),
+				})
 			}
 		}
 		start = res.LastEvaluatedKey
@@ -445,6 +497,132 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 	sort.Slice(out.Days, func(i, j int) bool { return out.Days[i].Date < out.Days[j].Date })
 	return out, nil
 }
+
+// ------------------------------------------------------------ storage-days
+
+// AddStorageDay is two writes with their own maps, not a call to update: that
+// helper adds to the caller's maps, and a second write from the same maps
+// carries the first write's names into an expression that no longer uses them.
+//
+// The month row takes an ADD of both counters under a condition on
+// storage_snapshot_day — absent, or earlier than this day — and sets it to
+// this day in the same write. A second run on the same day fails the
+// condition and adds nothing, which is what makes a Lambda retry of the task
+// safe; the failure is the answer (added = false), not an error. The day row
+// then takes a plain SET of the day's reading whether or not the month moved:
+// a run that stored the month and died before the day row is finished by the
+// retry, and writing today's footprint over today's footprint changes nothing
+// anyone bills by.
+func (d *Dynamo) AddStorageDay(ctx context.Context, s StorageSnapshot) (bool, error) {
+	if s.TenantID == "" {
+		return false, errors.New("usage: storage snapshot without a tenant")
+	}
+	if len(s.Day) != len("2006-01-02") {
+		return false, fmt.Errorf("usage: day %q is not yyyy-mm-dd", s.Day)
+	}
+	if s.AudioBytes < 0 || s.Notes < 0 {
+		return false, fmt.Errorf("usage: storage snapshot for %s is negative", s.Day)
+	}
+	month := MonthOf(s.Day)
+
+	_, err := d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(s.TenantID)),
+			"sk": strAttr(skPrefix + month),
+		},
+		UpdateExpression: aws.String("ADD #bd :bytes, #nd :notes " +
+			"SET #type = :type, tenant_id = :tenant, period = :period, granularity = :gran, " +
+			"gsi1pk = :g1pk, gsi1sk = :g1sk, #snap = :day"),
+		ConditionExpression: aws.String("attribute_not_exists(#snap) OR #snap < :day"),
+		ExpressionAttributeNames: map[string]string{
+			"#bd": attrStorageByteDays, "#nd": attrStorageNoteDays, "#snap": attrStorageSnapshotDay, "#type": attrType,
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":bytes": numAttr(s.AudioBytes), ":notes": numAttr(s.Notes), ":day": strAttr(s.Day),
+			":type": strAttr(typeUsage), ":tenant": strAttr(s.TenantID), ":period": strAttr(month), ":gran": strAttr(granMonth),
+			":g1pk": strAttr(adminGSI1PKPrefix + month), ":g1sk": strAttr(adminGSI1SKPrefix + s.TenantID),
+		},
+	})
+	added := true
+	if err != nil {
+		var failed *types.ConditionalCheckFailedException
+		if !errors.As(err, &failed) {
+			return false, fmt.Errorf("usage: add storage day %s to month %s: %w", s.Day, month, err)
+		}
+		added = false
+	}
+
+	_, err = d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(s.TenantID)),
+			"sk": strAttr(skPrefix + s.Day),
+		},
+		UpdateExpression: aws.String("SET #bd = :bytes, #nd = :notes, #snap = :day, " +
+			"#type = :type, tenant_id = :tenant, period = :period, granularity = :gran, #ttl = :ttl"),
+		ExpressionAttributeNames: map[string]string{
+			"#bd": attrStorageByteDays, "#nd": attrStorageNoteDays, "#snap": attrStorageSnapshotDay,
+			"#type": attrType, "#ttl": attrTTL,
+		},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":bytes": numAttr(s.AudioBytes), ":notes": numAttr(s.Notes), ":day": strAttr(s.Day),
+			":type": strAttr(typeUsage), ":tenant": strAttr(s.TenantID), ":period": strAttr(s.Day), ":gran": strAttr(granDay),
+			":ttl": numAttr(d.now().Add(dayRetention).Unix()),
+		},
+	})
+	if err != nil {
+		return added, fmt.Errorf("usage: set storage day %s: %w", s.Day, err)
+	}
+	return added, nil
+}
+
+// TenantsWithUsage queries GSI1 once per month — gsi1pk USAGE#<month>, the
+// key the admin listing uses — and returns the union of the tenants found,
+// sorted. The index projects capture attributes only, so a hit is its keys;
+// the tenant is the gsi1sk. Every page is followed.
+func (d *Dynamo) TenantsWithUsage(ctx context.Context, months []string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, month := range months {
+		if !ValidMonth(month) {
+			return nil, ErrBadMonth
+		}
+		var start map[string]types.AttributeValue
+		for {
+			res, err := d.client.Query(ctx, &dynamodb.QueryInput{
+				TableName:              aws.String(d.table),
+				IndexName:              aws.String(adminGSI1Name),
+				KeyConditionExpression: aws.String("gsi1pk = :pk"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":pk": strAttr(adminGSI1PKPrefix + month),
+				},
+				ExclusiveStartKey: start,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("usage: query tenants for %s: %w", month, err)
+			}
+			for _, item := range res.Items {
+				if id, ok := strings.CutPrefix(readString(item, "gsi1sk"), adminGSI1SKPrefix); ok && id != "" {
+					seen[id] = true
+				}
+			}
+			start = res.LastEvaluatedKey
+			if len(start) == 0 {
+				break
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// adminGSI1Name is the index the month rows' gsi1pk/gsi1sk are keys of. It is
+// the one index the template creates; internal/repository spells it too.
+const adminGSI1Name = "gsi1"
 
 // ---------------------------------------------------------------- AWS cost
 

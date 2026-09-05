@@ -20,18 +20,91 @@ type Usage struct {
 	records []usage.Record
 	// requests counts authenticated API requests per tenant per day.
 	requests map[string]map[string]int64
-	awsCost  map[string]usage.AWSCost
+	// snapshots is the storage reading per tenant per day, one at most, as
+	// the month row's storage_snapshot_day condition allows.
+	snapshots map[string]map[string]usage.StorageSnapshot
+	awsCost   map[string]usage.AWSCost
 }
 
 var (
-	_ usage.Recorder       = (*Usage)(nil)
-	_ usage.RequestCounter = (*Usage)(nil)
-	_ usage.Reader         = (*Usage)(nil)
-	_ usage.AWSCostStore   = (*Usage)(nil)
+	_ usage.Recorder        = (*Usage)(nil)
+	_ usage.RequestCounter  = (*Usage)(nil)
+	_ usage.Reader          = (*Usage)(nil)
+	_ usage.AWSCostStore    = (*Usage)(nil)
+	_ usage.StorageDayStore = (*Usage)(nil)
+	_ usage.TenantLister    = (*Usage)(nil)
 )
 
 // NewUsage returns an empty in-memory usage store.
 func NewUsage() *Usage { return &Usage{} }
+
+// AddStorageDay keeps one reading per tenant per day, as the DynamoDB month
+// row's condition does; a second reading for the same day is not added.
+func (u *Usage) AddStorageDay(ctx context.Context, s usage.StorageSnapshot) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if s.TenantID == "" || len(s.Day) != len("2006-01-02") {
+		return false, fmt.Errorf("usage: storage snapshot for %q on %q", s.TenantID, s.Day)
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.snapshots == nil {
+		u.snapshots = map[string]map[string]usage.StorageSnapshot{}
+	}
+	if u.snapshots[s.TenantID] == nil {
+		u.snapshots[s.TenantID] = map[string]usage.StorageSnapshot{}
+	}
+	if _, taken := u.snapshots[s.TenantID][s.Day]; taken {
+		return false, nil
+	}
+	u.snapshots[s.TenantID][s.Day] = s
+	return true, nil
+}
+
+// TenantsWithUsage is every tenant with a record, a request or a snapshot in
+// any of the months, sorted — what the month rows' GSI1 keys answer on DynamoDB.
+func (u *Usage) TenantsWithUsage(ctx context.Context, months []string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	inMonths := func(day string) bool {
+		for _, m := range months {
+			if strings.HasPrefix(day, m+"-") {
+				return true
+			}
+		}
+		return false
+	}
+	seen := map[string]bool{}
+	for _, r := range u.records {
+		if inMonths(r.Day) {
+			seen[r.TenantID] = true
+		}
+	}
+	for tenant, days := range u.requests {
+		for day := range days {
+			if inMonths(day) {
+				seen[tenant] = true
+			}
+		}
+	}
+	for tenant, days := range u.snapshots {
+		for day := range days {
+			if inMonths(day) {
+				seen[tenant] = true
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for tenant := range seen {
+		out = append(out, tenant)
+	}
+	sort.Strings(out)
+	return out, nil
+}
 
 func (u *Usage) Record(ctx context.Context, r usage.Record) error {
 	if err := ctx.Err(); err != nil {
@@ -114,6 +187,13 @@ func (u *Usage) Month(ctx context.Context, tenantID, month string) (usage.Month,
 		if strings.HasPrefix(day, month+"-") {
 			dayOf(day).APIRequests += n
 			out.APIRequests += n
+		}
+	}
+	for day, s := range u.snapshots[tenantID] {
+		if strings.HasPrefix(day, month+"-") {
+			dayOf(day).StorageByteDays = s.AudioBytes
+			out.StorageByteDays += s.AudioBytes
+			out.StorageNoteDays += s.Notes
 		}
 	}
 	for _, d := range days {

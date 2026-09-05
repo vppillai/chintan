@@ -39,6 +39,12 @@ func TestSniffDistinguishesTheThreeInvocations(t *testing.T) {
 			want: invocation{task: "aws-cost"},
 		},
 		{
+			// The third rule's constant input.
+			name: "the daily storage snapshot",
+			raw:  `{"task":"storage-snapshot"}`,
+			want: invocation{task: "storage-snapshot"},
+		},
+		{
 			// The clean-note task, from the API or from the worker itself. It
 			// goes to the pipeline worker too, which dispatches on the task.
 			name: "a clean-note task",

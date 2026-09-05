@@ -1274,8 +1274,9 @@ Resources:
   # Worker Lambda — the slow half of the pipeline. Transcribe, route, clean,
   # append. Invoked asynchronously by S3 and by the API, so its ceiling is
   # Lambda's 900s rather than the gateway's 30. Also the weekly expiry sweep
-  # (ExpirySweepRule) and the daily AWS cost reading (AwsCostRule), both
-  # dispatched on the payload's task field.
+  # (ExpirySweepRule), the daily AWS cost reading (AwsCostRule) and the daily
+  # storage snapshot (StorageSnapshotRule), all dispatched on the payload's
+  # task field.
   WorkerLambdaFunction:
     Type: AWS::Lambda::Function
     DependsOn: WorkerLogGroup
@@ -1511,6 +1512,36 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt AwsCostRule.Arn
+
+  # Once a day the worker measures what each tenant is storing — the same
+  # walk of the capture and note rows GET /v1/usage makes for `storage` — and
+  # adds the reading onto the tenant's USAGE#<yyyy-mm> row as byte-days and
+  # note-days (internal/storagesnap). The on-demand figure is the footprint
+  # now; this is the footprint over the month, which is what S3 bills by, and
+  # it survives a tenant deleting everything on the 30th. Daily because that
+  # is the resolution S3's own byte-hour billing rounds to for a figure shown
+  # in GB-days, and the write is conditioned on the day so a retry or a
+  # second firing adds nothing. Same target, same retry story, same IAM as the
+  # rule above: the table Query and UpdateItem the role already has.
+  StorageSnapshotRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'chintan-${InstanceName}-${Environment}-storage-snapshot'
+      Description: Daily reading of each tenant's stored audio and notes onto their usage rows; invokes the worker with {"task":"storage-snapshot"}.
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Id: worker
+          Arn: !Ref WorkerLambdaLiveAlias
+          Input: '{"task":"storage-snapshot"}'
+
+  StorageSnapshotRuleInvokesWorkerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkerLambdaLiveAlias
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StorageSnapshotRule.Arn
 
   # CloudWatch Log Group
   ApiLogGroup:
@@ -1828,7 +1859,7 @@ Resources:
     Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-capture-dlq'
-      AlarmDescription: A worker invocation exhausted its retries and its failure record is in the dead-letter queue — a capture (retry it from the app) or a scheduled or queued worker task (sweep-expired, aws-cost, clean-note, ask; the record names it).
+      AlarmDescription: A worker invocation exhausted its retries and its failure record is in the dead-letter queue — a capture (retry it from the app) or a scheduled or queued worker task (sweep-expired, aws-cost, storage-snapshot, clean-note, ask; the record names it).
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Dimensions:

@@ -47,7 +47,8 @@ type UsageAPI struct {
 	Requests int64 `json:"requests"`
 }
 
-// UsageStorage is the OpenAPI UsageStorage schema.
+// UsageStorage is the OpenAPI UsageStorage schema: the footprint now, from
+// the index rows, and the footprint over the month, from the daily snapshot.
 type UsageStorage struct {
 	Recordings   int     `json:"recordings"`
 	AudioSeconds float64 `json:"audio_seconds"`
@@ -56,6 +57,13 @@ type UsageStorage struct {
 	// Approximate is true when the walk behind the numbers stopped at its
 	// row cap, so they are a floor rather than the total.
 	Approximate bool `json:"approximate"`
+	// ByteDays and NoteDays are the month's storage-days so far: each day the
+	// worker's snapshot ran, the audio bytes and notes it found, summed. The
+	// figures above read zero the moment everything is deleted; these do not,
+	// and are what a storage bill is proportional to. Nothing here converts
+	// them to money — the client does, with a price it names as an estimate.
+	ByteDays int64 `json:"byte_days"`
+	NoteDays int64 `json:"note_days"`
 }
 
 // UsageAWS is the OpenAPI UsageAws schema: the instance figure, plus the
@@ -154,6 +162,8 @@ func (rt *router) getUsage(w http.ResponseWriter, r *http.Request) {
 			AudioBytes:   storage.AudioBytes,
 			Notes:        storage.Notes,
 			Approximate:  storage.Approximate,
+			ByteDays:     got.StorageByteDays,
+			NoteDays:     got.StorageNoteDays,
 		},
 		AWS: aws,
 	})
