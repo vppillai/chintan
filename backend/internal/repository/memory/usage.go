@@ -17,11 +17,13 @@ import (
 type Usage struct {
 	mu      sync.Mutex
 	records []usage.Record
+	awsCost map[string]usage.AWSCost
 }
 
 var (
-	_ usage.Recorder = (*Usage)(nil)
-	_ usage.Reader   = (*Usage)(nil)
+	_ usage.Recorder     = (*Usage)(nil)
+	_ usage.Reader       = (*Usage)(nil)
+	_ usage.AWSCostStore = (*Usage)(nil)
 )
 
 // NewUsage returns an empty in-memory usage store.
@@ -74,6 +76,40 @@ func (u *Usage) Month(ctx context.Context, tenantID, month string) (usage.Month,
 	}
 	sort.Slice(out.Days, func(i, j int) bool { return out.Days[i].Date < out.Days[j].Date })
 	return out, nil
+}
+
+// PutAWSCost keeps the latest reading per month, as the DynamoDB row does.
+func (u *Usage) PutAWSCost(ctx context.Context, c usage.AWSCost) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !usage.ValidMonth(c.Month) {
+		return usage.ErrBadMonth
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.awsCost == nil {
+		u.awsCost = map[string]usage.AWSCost{}
+	}
+	u.awsCost[c.Month] = c
+	return nil
+}
+
+// AWSCost returns the month's reading, or nil when none was recorded.
+func (u *Usage) AWSCost(ctx context.Context, month string) (*usage.AWSCost, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !usage.ValidMonth(month) {
+		return nil, usage.ErrBadMonth
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	c, ok := u.awsCost[month]
+	if !ok {
+		return nil, nil
+	}
+	return &c, nil
 }
 
 func apply(t *usage.Totals, r usage.Record) {
