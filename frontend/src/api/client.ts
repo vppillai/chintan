@@ -14,6 +14,7 @@ import {
   cancelledError,
   networkError,
   problemFromResponse,
+  retryAfterMs,
   timeoutError,
 } from './problem.ts';
 import type { Session } from './session.ts';
@@ -106,16 +107,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-/** `Retry-After` in seconds or as an HTTP date, if the server sent one. */
-function retryAfterMs(response: Response): number | null {
-  const header = response.headers.get('retry-after');
-  if (!header) return null;
-  const seconds = Number(header);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-  const date = Date.parse(header);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
 }
 
 export class ApiClient {

@@ -50,9 +50,20 @@ function json(body: unknown, status = 200): Response {
  * were in all, are recorded. `settle()` is the worker finishing late: every
  * poll from then on answers `final`.
  */
-function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: number; final?: AskWire } = {}) {
+function server({
+  pendingPolls = 1,
+  final = askAnswered,
+  holdCreate = false,
+}: { pendingPolls?: number; final?: AskWire; holdCreate?: boolean } = {}) {
   const posts: { question: string; history?: unknown }[] = [];
   const creates: NoteCreateWire[] = [];
+  // `POST /v1/notes` answers only once `releaseCreate()` is called, when asked to wait.
+  let releaseCreate: () => void = () => undefined;
+  const createGate = holdCreate
+    ? new Promise<void>((resolve) => {
+        releaseCreate = resolve;
+      })
+    : Promise.resolve();
   let pendingLimit = pendingPolls;
   let polls = 0;
   let pollsThisQuestion = 0;
@@ -73,6 +84,7 @@ function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: numb
     }
     if (url.pathname.endsWith('/v1/notes') && method === 'POST') {
       creates.push(JSON.parse(String(init?.body)) as NoteCreateWire);
+      await createGate;
       return json({ ...noteCreated, id: 'saved-thread' }, 201);
     }
     if (url.pathname.endsWith('/v1/tags')) return json({ items: [{ name: 'house', count: 1 }] });
@@ -83,6 +95,7 @@ function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: numb
     fetchImpl,
     posts,
     creates,
+    releaseCreate,
     polls: () => polls,
     settle: () => {
       pendingLimit = 0;
@@ -434,11 +447,12 @@ describe('the thread', () => {
     await waitFor(() => {
       expect(api.creates).toHaveLength(1);
     });
-    // Plain text — the answer's bold unwrapped — and tagged so retrieval can leave it out.
+    // Plain text — the answer's bold unwrapped, its bullets as lines — and
+    // tagged so retrieval can leave it out.
     expect(api.creates[0]).toEqual({
       title: 'what did I decide about the roof?',
       body: [
-        `Q: what did I decide about the roof?\n\nA: ${(askAnswered.answer ?? '').replaceAll('**', '')}`,
+        'Q: what did I decide about the roof?\n\nA: You decided to get two quotes before the rain and to have the ridge tiles on the south slope reset.\n\nThe tiler can start on the fourteenth.\nThe gutter leak goes to the roofer.',
         'Sources:\nRoof repair\nKitchen rebuild',
       ].join('\n\n'),
       tags: ['ask'],
@@ -448,6 +462,37 @@ describe('the thread', () => {
       expect(location()).toBe('/notes/saved-thread');
     });
     expect(sessionStorage.getItem('chintan.ask.thread')).toBeNull();
+  });
+
+  it('still ends the thread when the note is created after the panel has gone, and makes no second note', async () => {
+    /*
+     * Review S16: a source chip tapped while `POST /v1/notes` was in flight.
+     * The per-call `onSuccess` was dropped with the unmount, so the note was
+     * created but the thread was not cleared, and the returning panel
+     * offered Save again under a fresh key — a second note.
+     */
+    const user = fakeTime();
+    const api = server({ holdCreate: true });
+    const view = mount(api.fetchImpl);
+    await askAndAnswer(user);
+
+    await user.click(screen.getByRole('button', { name: 'Save as note' }));
+    await waitFor(() => {
+      expect(api.creates).toHaveLength(1);
+    });
+    // Away to a note before the 201.
+    view.unmount();
+    api.releaseCreate();
+
+    await waitFor(() => {
+      expect(sessionStorage.getItem('chintan.ask.thread')).toBeNull();
+    });
+    // Back to the library: nothing to save again.
+    mount(api.fetchImpl);
+    await switchToAsk(user);
+    expect(screen.getByText(/ask a question and the answer is drawn from your notes/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save as note' })).toBeNull();
+    expect(api.creates).toHaveLength(1);
   });
 
   it('is cleared on Clear', async () => {

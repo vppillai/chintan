@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  additionTo,
   editorReducer,
   hasUnsavedWork,
   initialEditor,
   reconcileQueued,
   sameText,
+  withAddition,
   type EditorModel,
   type NoteDraft,
 } from './autosave.ts';
@@ -95,6 +97,21 @@ describe('saving', () => {
     expect(hasUnsavedWork(failed)).toBe(true);
     // The edit is still in the draft, so a retry sends it.
     expect(failed.draft.body).toBe('new');
+  });
+
+  it('puts a save that was put off for a recording back to dirty, with nothing failed', () => {
+    // The server refused the write only until the append it is filing has
+    // landed; the draft is still owed, and is neither an error nor a choice.
+    const dirty = editorReducer(start(), { type: 'edit', patch: { body: 'new' } });
+    const saving = editorReducer(dirty, { type: 'saveStart' });
+    const deferred = editorReducer(saving, { type: 'saveDeferred' });
+
+    expect(deferred.state).toBe('dirty');
+    expect(deferred.error).toBeNull();
+    expect(deferred.draft.body).toBe('new');
+    expect(deferred.version).toBe(3);
+    // Only a save on the wire can be put off.
+    expect(editorReducer(dirty, { type: 'saveDeferred' })).toBe(dirty);
   });
 });
 
@@ -196,6 +213,71 @@ describe('conflict', () => {
     const clean = start();
     expect(editorReducer(clean, { type: 'takeTheirs' })).toBe(clean);
     expect(editorReducer(clean, { type: 'keepMine' })).toBe(clean);
+    expect(editorReducer(clean, { type: 'keepBoth' })).toBe(clean);
+  });
+
+  it('records what the newer version added and whether a recording did it, for the prompt to say', () => {
+    const model = editorReducer(conflicted(), {
+      type: 'conflict',
+      theirs: { ...BASE, body: 'Ridge tiles.\n\nEllis quoted nine hundred.' },
+      version: 4,
+      message: 'This note changed somewhere else.',
+      addition: 'Ellis quoted nine hundred.',
+      recording: true,
+    });
+    expect(model.theirs).toMatchObject({ addition: 'Ellis quoted nine hundred.', recording: true });
+    // A conflict raised without either is one nothing more can be said about.
+    expect(conflicted().theirs).toMatchObject({ addition: null, recording: false });
+  });
+
+  it('keepBoth keeps my words and adds theirs after them, on their version', () => {
+    // The third way out: a recording landed while the user typed, and neither
+    // the edit nor the dictated paragraph has to be thrown away.
+    const model = editorReducer(
+      editorReducer(conflicted(), {
+        type: 'conflict',
+        theirs: { ...BASE, body: 'Ridge tiles.\n\nEllis quoted nine hundred.' },
+        version: 4,
+        message: 'This note changed somewhere else.',
+        addition: 'Ellis quoted nine hundred.',
+        recording: true,
+      }),
+      { type: 'keepBoth' },
+    );
+    expect(model.state).toBe('dirty');
+    expect(model.draft.body).toBe('mine\n\nEllis quoted nine hundred.');
+    expect(model.version).toBe(4);
+    expect(model.theirs).toBeNull();
+    // Nothing to add: the choice is not offered, and the event does nothing.
+    const bare = conflicted();
+    expect(editorReducer(bare, { type: 'keepBoth' })).toBe(bare);
+  });
+});
+
+describe('what the newer version added', () => {
+  it('is the paragraph appended after the last-saved body, without its separator', () => {
+    expect(additionTo('Ridge tiles.', 'Ridge tiles.\n\nEllis quoted nine hundred.')).toBe(
+      'Ellis quoted nine hundred.',
+    );
+    // An empty note the recording was filed into.
+    expect(additionTo('', 'Ellis quoted nine hundred.')).toBe('Ellis quoted nine hundred.');
+    // Two recordings landed.
+    expect(additionTo('A.', 'A.\n\nB.\n\nC.')).toBe('B.\n\nC.');
+  });
+
+  it('is nothing when the words changed some other way', () => {
+    expect(additionTo('Ridge tiles.', 'Ridge tiles')).toBeNull();
+    expect(additionTo('Ridge tiles.', 'Ridge tiles. Two quotes.')).toBeNull();
+    expect(additionTo('Ridge tiles.', 'Slates.\n\nEllis quoted.')).toBeNull();
+    expect(additionTo('Ridge tiles.', 'Ridge tiles.')).toBeNull();
+    expect(additionTo('Ridge tiles.', 'Ridge tiles.\n\n')).toBeNull();
+  });
+
+  it('is placed after the draft as its own paragraph, whatever the draft ends with', () => {
+    expect(withAddition('mine', 'theirs')).toBe('mine\n\ntheirs');
+    expect(withAddition('mine\n', 'theirs')).toBe('mine\n\ntheirs');
+    expect(withAddition('mine\n\n', 'theirs')).toBe('mine\n\ntheirs');
+    expect(withAddition('', 'theirs')).toBe('theirs');
   });
 });
 

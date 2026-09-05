@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
-import { parseBlocks, renderMarkdown } from './markdown.ts';
+import { parseBlocks, renderMarkdown, toPlainText } from './markdown.ts';
 
 /**
  * The cleaned view's renderer: the small dialect the worker writes, as
@@ -87,5 +87,37 @@ describe('renderMarkdown', () => {
     expect(html('- a\n- b\n\n1. c\n\n> q\n\n---')).toBe(
       '<ul><li>a</li><li>b</li></ul><ol><li>c</li></ol><blockquote><p>q</p></blockquote><hr/>',
     );
+  });
+});
+
+describe('toPlainText', () => {
+  /*
+   * Save as note writes an answer into a body the Text tab and the library
+   * snippet show verbatim, so every mark the answers' dialect can carry has
+   * to come out as words. Each row is one construct the renderer knows.
+   */
+  it.each([
+    ['strong', 'Two **quotes** first.', 'Two quotes first.'],
+    ['emphasis with asterisks', 'Call *Ellis* today.', 'Call Ellis today.'],
+    ['emphasis with underscores', 'Call _Ellis_ today.', 'Call Ellis today.'],
+    ['code', 'Run `chintanctl reconcile`.', 'Run chintanctl reconcile.'],
+    ['a heading', '## Roof\n\nTwo quotes.', 'Roof\n\nTwo quotes.'],
+    ['a heading with a mark', '# The **roof**', 'The roof'],
+    ['bullets', '- Call the tiler\n- Then the **gutter**', 'Call the tiler\nThen the gutter'],
+    ['bullets with other markers', '* One\n+ Two', 'One\nTwo'],
+    ['a numbered list, renumbered', '3. First\n4. Second', '1. First\n2. Second'],
+    ['a quote', '> Two quotes first.', 'Two quotes first.'],
+    ['a rule', 'Above.\n\n---\n\nBelow.', 'Above.\n\nBelow.'],
+    ['a paragraph over two lines', 'One line\nand the next.', 'One line and the next.'],
+    ['a lone asterisk left alone', 'Rated 4* by the tenant.', 'Rated 4* by the tenant.'],
+    ['nothing', '', ''],
+    [
+      'an answer as the worker writes one',
+      'You decided to get **two quotes**.\n\n- The tiler can start.\n- The gutter goes to the roofer.',
+      'You decided to get two quotes.\n\nThe tiler can start.\nThe gutter goes to the roofer.',
+    ],
+  ])('unwraps %s', (_name, source, expected) => {
+    expect(toPlainText(source)).toBe(expected);
+    expect(toPlainText(source)).not.toMatch(/\*\*|`|^#/m);
   });
 });

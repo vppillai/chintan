@@ -16,6 +16,9 @@ import {
 import { OFFLINE_QUEUE_KEY } from '@/offline/useOfflineQueue.ts';
 
 import {
+  additionTo,
+  APPEND_WAIT_DEFAULT_MS,
+  APPEND_WAIT_LIMIT,
   applyEdit,
   AUTOSAVE_DELAY_MS,
   editorReducer,
@@ -44,12 +47,23 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
   };
 }
 
+/** The recordings a note's copy says have been filed into it. */
+function filedCaptures(note: NoteDetailWire): Set<string> {
+  return new Set(
+    (note.captures ?? [])
+      .filter((capture) => capture.status === 'appended')
+      .map((capture) => capture.id),
+  );
+}
+
 export interface NoteEditor {
   model: EditorModel;
   edit: (patch: Partial<NoteDraft>) => void;
   saveNow: () => Promise<void>;
   takeTheirs: () => void;
   keepMine: () => void;
+  /** Keep my edits and add the newer version's paragraph after them (see `keepBoth`). */
+  keepBoth: () => void;
 }
 
 /**
@@ -133,6 +147,19 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
    */
   const rebased = useRef(false);
   /**
+   * How many times the save on the wire has been put off for a recording
+   * being filed into the note (`isAppendInProgress`). Reset by a save that
+   * lands, so the limit is per save, not per note.
+   */
+  const appendWaits = useRef(0);
+  /**
+   * The recordings the draft was built over: those filed into the note as of
+   * the copy last loaded into the editor. A conflict whose server copy names
+   * one more is a recording landing while the user typed, which the prompt
+   * says in so many words — "Keep my edits" would remove its text.
+   */
+  const knownCaptures = useRef(new Set<string>());
+  /**
    * A stable handle on the current `save`, so the unmount flush below can stay
    * a mount-only effect and the in-flight re-save can call the guarded entry
    * point without `save` closing over itself. Keying the unmount effect on
@@ -146,6 +173,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (!note) return;
     if (loadedId.current !== note.id) {
       loadedId.current = note.id;
+      knownCaptures.current = filedCaptures(note);
       commit({ type: 'reset', draft: draftFrom(note), version: note.version });
       return;
     }
@@ -169,6 +197,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (note.version <= current.version) return;
     const settled = current.state === 'clean' || current.state === 'saved';
     if (settled && !inFlight.current && !timer.current) {
+      knownCaptures.current = filedCaptures(note);
       commit({ type: 'reset', draft: draftFrom(note), version: note.version });
       return;
     }
@@ -256,6 +285,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         draft: attempted,
       });
       rebased.current = false;
+      appendWaits.current = 0;
     } catch (error) {
       /*
        * Offline is not a failure to report — it is a write to make somewhere
@@ -293,7 +323,35 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         }
       }
 
+      /*
+       * A 409 for an append in progress is a wait, not a conflict. The worker
+       * is between writing the dictated paragraph into the body and
+       * refreshing the note's row, and the server refuses body writes until
+       * both have landed — the window in which a save used to slip through
+       * both checks and carry the paragraph away. The same PATCH is sent again
+       * after the server's `Retry-After`; the rebase below is deliberately
+       * not run, because it would carry the draft onto the pre-append version
+       * and re-save straight into that window. Once the paragraph is in the
+       * body, the ordinary conflict prompt is the right outcome, and the limit
+       * makes sure it is reached.
+       */
+      if (
+        error instanceof ApiError &&
+        error.isAppendInProgress &&
+        appendWaits.current < APPEND_WAIT_LIMIT
+      ) {
+        appendWaits.current += 1;
+        commit({ type: 'saveDeferred' });
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          void saveRef.current();
+        }, error.retryAfterMs ?? APPEND_WAIT_DEFAULT_MS);
+        return;
+      }
+
       if (error instanceof ApiError && error.isConflict) {
+        appendWaits.current = 0;
         const theirs = await api.getNote(note.id).catch(() => null);
         /*
          * Not every 409 is a conflict. A clean request bumps the note's
@@ -314,11 +372,25 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
           dirtyAgain.current = true;
           return;
         }
+        /*
+         * What the prompt can offer depends on what changed. A recording
+         * filed since the draft was loaded is named as such, because "Keep
+         * my edits" would carry its paragraph away; and when the server's
+         * copy is the last-saved text with a paragraph added after it — the
+         * shape of every append — the paragraph is offered as an addition to
+         * the draft, so neither side has to be thrown away.
+         */
+        const recording =
+          theirs?.captures?.some(
+            (capture) => capture.status === 'appended' && !knownCaptures.current.has(capture.id),
+          ) ?? false;
         commit({
           type: 'conflict',
           theirs: theirs ? draftFrom(theirs) : attempted,
           version: theirs?.version ?? error.currentVersion ?? current.version + 1,
           message: 'This note changed somewhere else while you were editing.',
+          addition: theirs ? additionTo(current.saved.body, theirs.body) : null,
+          recording,
         });
         return;
       }
@@ -460,11 +532,18 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     model: reconcileQueued(model, note ? queued.data : undefined),
     edit,
     saveNow,
+    // Through `commit`, not a bare dispatch: the banner's buttons call
+    // `saveNow()` in the same tick, and a save that reads the mirror before
+    // the effect has copied the resolution across still sees `conflict` and
+    // sends nothing — the same-tick hazard `edit()` guards against.
     takeTheirs: useCallback(() => {
-      dispatch({ type: 'takeTheirs' });
-    }, []),
+      commit({ type: 'takeTheirs' });
+    }, [commit]),
     keepMine: useCallback(() => {
-      dispatch({ type: 'keepMine' });
-    }, []),
+      commit({ type: 'keepMine' });
+    }, [commit]),
+    keepBoth: useCallback(() => {
+      commit({ type: 'keepBoth' });
+    }, [commit]),
   };
 }

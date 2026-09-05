@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
+import { ApiError } from '@/api/problem.ts';
 import {
   queryKeys,
   refreshAppendedNote,
@@ -280,6 +281,9 @@ export function FilingRow() {
           }}
           onRetry={() => retry.mutate(capture.id)}
           retrying={retry.isPending && retry.variables === capture.id}
+          retryError={
+            retry.isError && retry.variables === capture.id ? retryMessage(retry.error) : null
+          }
           onDismiss={() => {
             dismiss(capture.id);
           }}
@@ -378,15 +382,27 @@ export function LocalUploadItem({ model }: { model: CaptureModel }) {
   );
 }
 
+/**
+ * What a Retry that the server refused says under the row. The problem's
+ * `detail` is one of the backend's fixed sentences — "that recording has
+ * already been filed", "an identical request is still in flight" — and is
+ * written for a person; anything else is the client's own sentence.
+ */
+function retryMessage(error: unknown): string {
+  return error instanceof ApiError ? error.userMessage : 'The retry did not go through. Try again.';
+}
+
 interface FilingItemProps {
   capture: CaptureWire;
   onOpen: () => void;
   onRetry: () => void;
   retrying: boolean;
+  /** Why the last Retry on this row failed, or `null`. Silent failure is not an option here. */
+  retryError: string | null;
   onDismiss: () => void;
 }
 
-function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingItemProps) {
+function FilingItem({ capture, onOpen, onRetry, retrying, retryError, onDismiss }: FilingItemProps) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const stuck = isStuck(capture);
   // A stuck capture gets the same way out a failed one does: retrying is safe
@@ -462,6 +478,12 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
             <span>Dismiss</span>
           </button>
         </div>
+      )}
+
+      {retryError && (
+        <p className="filing-row__error" role="alert">
+          {retryError}
+        </p>
       )}
 
       {/*
