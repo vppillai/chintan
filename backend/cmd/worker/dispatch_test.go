@@ -33,6 +33,13 @@ func TestSniffDistinguishesTheThreeInvocations(t *testing.T) {
 			want: invocation{task: "sweep-expired"},
 		},
 		{
+			// The clean-note task, from the API or from the worker itself. It
+			// goes to the pipeline worker too, which dispatches on the task.
+			name: "a clean-note task",
+			raw:  `{"task":"clean-note","tenant_id":"u","note_id":"n","mode":"structured"}`,
+			want: invocation{task: "clean-note"},
+		},
+		{
 			// The API's payload names a capture directly and has no records at
 			// all; it goes to the pipeline worker with the S3 notifications.
 			name: "the API's invocation",

@@ -9,8 +9,9 @@
 //
 // Everything reaches it asynchronously, through the `live` alias: S3 when a
 // recording lands in the content bucket, the API when the user retries a
-// capture or picks its destination, and an EventBridge rule once a week with
-// {"task":"sweep-expired"}. There is no queue in between. A returned error
+// capture or picks its destination, the API or this function itself with
+// {"task":"clean-note"} for a note's whole-note cleaned view, and an
+// EventBridge rule once a week with {"task":"sweep-expired"}. There is no queue in between. A returned error
 // makes Lambda retry the same payload twice, and an invocation that fails all
 // three attempts is written to the dead-letter queue, which is what the alarm
 // watches.
@@ -38,6 +39,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	lambdasvc "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
@@ -132,18 +134,29 @@ func setup() {
 
 	notes := service.NewNotesService(store, objects)
 
+	// After an append to a note with auto_clean the worker hands the note back
+	// to itself, through the same live alias the API uses, so the cleaned view
+	// runs as its own invocation with its own retries. The variable is
+	// optional: without it the view is regenerated inline, which is still off
+	// the request path.
+	var cleanInvoker pipeline.NoteCleanInvoker
+	if arn := strings.TrimSpace(os.Getenv("WORKER_FUNCTION_ARN")); arn != "" {
+		cleanInvoker = pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), arn)
+	}
+
 	p, err := pipeline.New(pipeline.Config{
-		Store:       store,
-		Objects:     objects,
-		STT:         stt,
-		LLM:         llm,
-		Router:      llm,
-		Notes:       notes,
-		Breaker:     spend,
-		STTProvider: "groq",
-		STTModel:    stt.Model(),
-		LLMProvider: "openai",
-		LLMModel:    llm.Model(),
+		Store:        store,
+		Objects:      objects,
+		STT:          stt,
+		LLM:          llm,
+		Router:       llm,
+		Notes:        notes,
+		Breaker:      spend,
+		CleanInvoker: cleanInvoker,
+		STTProvider:  "groq",
+		STTModel:     stt.Model(),
+		LLMProvider:  "openai",
+		LLMModel:     llm.Model(),
 	})
 	if err != nil {
 		log.Fatalf("failed to build capture pipeline: %v", err)
@@ -278,6 +291,13 @@ func Handler(ctx context.Context, raw json.RawMessage) error {
 	case inv.task == purge.Task:
 		_, err := sweeper.Sweep(ctx)
 		return err
+
+	case inv.task == pipeline.TaskCleanNote:
+		// The whole-note cleaned view. Sent by the API for POST
+		// /v1/notes/{id}/clean and for a recording moved or deleted from a
+		// note with auto_clean, and by this function to itself after an
+		// append to one.
+		return worker.Handle(ctx, raw)
 
 	case inv.task != "":
 		// Retrying cannot make this recognisable, so it is logged and dropped
