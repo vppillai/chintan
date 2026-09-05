@@ -3,13 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  askAnswered,
-  askFailed,
-  askNotInNotes,
-  askPending,
-  noteCreated,
-} from '@/api/__fixtures__/responses.ts';
+import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/pending.ts';
+import { noteCreated } from '@/api/__fixtures__/responses.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 import type { AskWire, NoteCreateWire } from '@/api/schema.ts';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';

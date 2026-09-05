@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/responses.ts';
+import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/pending.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 
 import {

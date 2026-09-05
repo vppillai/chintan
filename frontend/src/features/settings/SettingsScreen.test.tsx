@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { usage as USAGE } from '@/api/__fixtures__/responses.ts';
+import { usageRich as USAGE } from '@/api/__fixtures__/pending.ts';
+import { usage as USAGE_TODAY } from '@/api/__fixtures__/responses.ts';
 import type { SettingsWire, UsageWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
@@ -303,13 +304,12 @@ describe('usage this month', () => {
     expect(figure.querySelectorAll('.usage__api-dot')).toHaveLength(2);
   });
 
-  it('renders the older shape — no providers, api, storage or share — with nothing invented', async () => {
-    const { providers: _p, api: _a, storage: _s, aws, days, ...older } = USAGE;
-    const { share_micros: _share, share_basis: _basis, ...olderAws } = aws!;
-    const olderDays = days.map(({ api_requests: _counted, ...day }) => day);
-    mountSettings({ usage: { ...older, aws: olderAws, days: olderDays } });
+  it('renders what the backend sends today — no providers, api, storage or share — with nothing invented', async () => {
+    // The generated fixture is the shape of the API as deployed, and it must
+    // keep rendering while the frontend ships ahead of the backend.
+    mountSettings({ usage: USAGE_TODAY });
 
-    await screen.findByText('Providers this month');
+    expect(await screen.findByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
     expect(document.querySelector('.usage__providers')).toBeNull();
     expect(screen.queryByRole('group', { name: 'This month' })).toBeNull();
     expect(screen.queryByText(/estimated share/)).toBeNull();

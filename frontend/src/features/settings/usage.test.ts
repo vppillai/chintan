@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { usageRich } from '@/api/__fixtures__/pending.ts';
 import { usage, usageEmpty } from '@/api/__fixtures__/responses.ts';
 
 import {
@@ -71,7 +72,7 @@ describe('the other figures', () => {
 describe('a bar per day of the month', () => {
   it('fills the calendar, zero where the API sent no row, and marks today', () => {
     // The fixture month is January 2026 with rows on the 3rd and 4th only.
-    const bars = dayBars(usage, new Date('2026-01-04T12:00:00Z'));
+    const bars = dayBars(usageRich, new Date('2026-01-04T12:00:00Z'));
 
     expect(bars).toHaveLength(31);
     expect(bars[0]).toEqual({
@@ -98,8 +99,8 @@ describe('a bar per day of the month', () => {
   });
 
   it('reads a day from a backend that does not count requests as zero of them', () => {
-    const { api_requests: _counted, ...day } = usage.days[0]!;
-    const bars = dayBars({ ...usage, days: [day] });
+    // The generated fixture is the backend as deployed, which has no api_requests yet.
+    const bars = dayBars(usage);
     expect(bars[2]).toMatchObject({ date: '2026-01-03', costMicros: 951, apiRequests: 0 });
   });
 
@@ -112,7 +113,8 @@ describe('a bar per day of the month', () => {
 
 describe('the split by stage', () => {
   it('lists the stages in the order a recording meets them, then the hand-asked calls, only those that ran', () => {
-    expect(opRows(usage.ops).map((row) => row.label)).toEqual([
+    expect(opRows(usage.ops).map((row) => row.label)).toEqual(['Transcribe', 'Route', 'Clean up']);
+    expect(opRows(usageRich.ops).map((row) => row.label)).toEqual([
       'Transcribe',
       'Route',
       'Clean up',
@@ -134,7 +136,7 @@ describe('the split by stage', () => {
 
 describe('the split by provider', () => {
   it('names the providers as they write their names, the biggest bill first', () => {
-    const rows = providerRows(usage.providers);
+    const rows = providerRows(usageRich.providers);
     expect(rows.map((row) => row.label)).toEqual(['MiniMax', 'Groq']);
     expect(rows[0]?.totals.cost_micros).toBe(2410);
   });
@@ -168,7 +170,7 @@ describe('the AWS line', () => {
   it('adds the instance AWS figure to the providers when that is all there is', () => {
     const aws = { month_micros: 3_120_000, as_of: '2026-09-04T09:00:00Z', budget_micros: null };
     expect(totalBasis(aws)).toBe('instance');
-    expect(combinedMicros({ ...usage, aws })).toBe(3_122_721);
+    expect(combinedMicros({ ...usage, aws })).toBe(3_121_371);
     expect(combinedMicros({ ...usage, aws: null })).toBeNull();
     expect(totalBasis(null)).toBeNull();
     // A backend from before the field existed: the generated fixture now
@@ -179,11 +181,11 @@ describe('the AWS line', () => {
 
   it('adds the user’s own share instead, when the backend has apportioned one', () => {
     // The fixture: 2,721 of providers plus a 123,456 share, not the 2,345,678 instance bill.
-    expect(totalBasis(usage.aws)).toBe('share');
-    expect(combinedMicros(usage)).toBe(126_177);
+    expect(totalBasis(usageRich.aws)).toBe('share');
+    expect(combinedMicros(usageRich)).toBe(126_177);
     // A share of nothing is still a share — a user who spent nothing owes nothing.
-    const aws = { ...usage.aws!, share_micros: 0 };
-    expect(combinedMicros({ ...usage, aws })).toBe(2_721);
+    const aws = { ...usageRich.aws!, share_micros: 0 };
+    expect(combinedMicros({ ...usageRich, aws })).toBe(2_721);
     // Null is the backend saying it could not apportion, which is the instance figure again.
     expect(totalBasis({ ...aws, share_micros: null, share_basis: null })).toBe('instance');
   });
