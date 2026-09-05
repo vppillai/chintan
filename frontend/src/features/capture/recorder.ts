@@ -155,30 +155,33 @@ export class RecorderController {
     }
   }
 
-  async start(localId: string): Promise<void> {
-    this.stopping = false;
-
-    /*
-     * The previous recording is retired here, before anything is awaited, not
-     * when the new session is created after `getUserMedia` resolves.
-     *
-     * The capture screen draws the waveform from its first frame, reading
-     * `recentAmplitudes()`. Until this ran, that read the *last* recording's
-     * peaks for as long as the microphone request took — so a new recording
-     * opened on the tail of the previous one's bars, which then vanished. The
-     * old session's envelope has already been sent or discarded by the time a
-     * new recording is legal to start, so nothing is lost by dropping it.
-     *
-     * One AudioContext per recording, and the previous one is closed before
-     * the next is opened. WebKit caps the number of live contexts (four, in
-     * practice); leaking one per recording meant the constructor started
-     * throwing after a handful of captures, `createAudioContext` swallowed it,
-     * and the waveform and the start/stop tones silently disappeared on iOS.
-     * Closed here rather than in `teardown()` so the stop tone, which is
-     * scheduled on it just before `stop()`, is not cut off.
-     */
+  /**
+   * Drops the finished recording's session: its peaks and its AudioContext.
+   *
+   * The capture screen draws the waveform from its first frame, reading
+   * `recentAmplitudes()`, so the previous recording's peaks must be gone
+   * before the screen can ask — not when the new session is created after
+   * `getUserMedia` resolves. The store calls this before it dispatches
+   * `request`, and `start()` calls it again for callers that come straight
+   * here. The old session's envelope has already been sent or discarded by
+   * the time a new recording is legal to start, so nothing is lost.
+   *
+   * One AudioContext per recording, and the previous one is closed before
+   * the next is opened. WebKit caps the number of live contexts (four, in
+   * practice); leaking one per recording meant the constructor started
+   * throwing after a handful of captures, `createAudioContext` swallowed it,
+   * and the waveform and the start/stop tones silently disappeared on iOS.
+   * Closed here rather than in `teardown()` so the stop tone, which is
+   * scheduled on it just before `stop()`, is not cut off.
+   */
+  retire(): void {
     RecorderController.closeContext(this.session?.audioContext);
     this.session = null;
+  }
+
+  async start(localId: string): Promise<void> {
+    this.stopping = false;
+    this.retire();
 
     if (!this.deps.isSupported()) {
       this.emit({ type: 'unsupported' });

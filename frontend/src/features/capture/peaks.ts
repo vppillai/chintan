@@ -8,11 +8,35 @@
  * response.
  *
  * Two consumers, one array: the live canvas during recording, and
- * `peaks.json` for the scrubbable player on the note screen.
+ * `peaks.json` for the scrubbable player on the note screen. Both are scaled
+ * the same way — see `scale()` — so the bars a person watches while speaking
+ * are the bars they scrub through afterwards. The live view used to hand out
+ * raw RMS (speech sits around 0.05–0.3) while the envelope was normalised to
+ * the loudest moment, so the same recording was a ribbon of stubs while it
+ * was being made and a full-height waveform the moment it stopped.
  */
 
 /** Resolution of the stored envelope. ~2 KB of JSON, enough for any width. */
 export const PEAK_BUCKETS = 800;
+
+/**
+ * The quietest "loudest moment" the envelope will normalise to.
+ *
+ * Without a floor, a recording that has heard nothing but the room normalises
+ * its noise up to full scale: the live canvas erupts before a word is said and
+ * a silent recording plays back as a wall of bars. A muted or idle microphone
+ * yields a few LSB of quantisation noise, around 0.01 RMS, which this keeps
+ * under a quarter of the height, while someone speaking softly at 0.05 still
+ * fills the panel once the running peak passes the floor.
+ */
+export const PEAK_FLOOR = 0.04;
+
+/**
+ * How much of the canvas height a full-scale bar takes. Shared by the live
+ * canvas, the review player and the note's scrubber, so the three draw the
+ * same envelope to the same height.
+ */
+export const BAR_HEIGHT_SCALE = 0.92;
 
 export class PeakCollector {
   /** One 0..1 amplitude per analyser frame, before downsampling. */
@@ -43,9 +67,19 @@ export class PeakCollector {
     return this.samples.length;
   }
 
-  /** The most recent `count` amplitudes, for the live canvas. */
+  /** The divisor both views normalise by: the loudest moment so far, floored. */
+  private scale(): number {
+    return Math.max(this.peak, PEAK_FLOOR);
+  }
+
+  /**
+   * The most recent `count` amplitudes for the live canvas, in 0..1 relative
+   * to the loudest moment so far — the same scale `envelope()` uses, so the
+   * last bars drawn live are the first bars drawn on review.
+   */
   recent(count: number): number[] {
-    return this.samples.slice(-count);
+    const scale = this.scale();
+    return this.samples.slice(-count).map((sample) => Math.min(1, sample / scale));
   }
 
   /**
@@ -53,7 +87,7 @@ export class PeakCollector {
    * quietly recorded note still renders as a waveform rather than a flat line.
    */
   envelope(buckets: number = PEAK_BUCKETS): number[] {
-    return downsample(this.samples, buckets, this.peak);
+    return downsample(this.samples, buckets, this.scale());
   }
 
   reset(): void {

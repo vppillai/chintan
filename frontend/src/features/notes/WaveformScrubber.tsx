@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+import { BAR_HEIGHT_SCALE } from '@/features/capture/peaks.ts';
+
 import { formatTime } from './artifacts.ts';
 
 /**
@@ -61,7 +63,7 @@ export function WaveformScrubber({
       // Peaks are a fixed-resolution envelope, so they are resampled to
       // whatever width the element happens to have.
       const source = peaks.length > 0 ? peaks[Math.floor((slot / slots) * peaks.length)] ?? 0 : 0;
-      const barHeight = Math.max(2, source * height * 0.92);
+      const barHeight = Math.max(2, source * height * BAR_HEIGHT_SCALE);
       const x = slot * (barWidth + gap);
       context.fillStyle = x <= playedUntil ? played : unplayed;
       context.fillRect(x, midpoint - barHeight / 2, barWidth, barHeight);

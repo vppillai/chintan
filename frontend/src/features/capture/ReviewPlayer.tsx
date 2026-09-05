@@ -12,6 +12,8 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 import { formatTime } from '@/features/notes/artifacts.ts';
 import { usePlayer } from '@/features/notes/usePlayer.ts';
 
+import { BAR_HEIGHT_SCALE } from './peaks.ts';
+
 /**
  * Listening back before Send.
  *
@@ -226,7 +228,7 @@ function ClipScrubber({
       const source =
         envelope.length > 0 ? (envelope[Math.floor((slot / slots) * envelope.length)] ?? 0) : 0;
       // A floor so silence still draws a hairline rather than a gap.
-      const barHeight = Math.max(2, source * height * 0.92);
+      const barHeight = Math.max(2, source * height * BAR_HEIGHT_SCALE);
       const x = slot * (BAR_WIDTH + BAR_GAP);
       context.fillStyle = x <= playedUntil ? played : unplayed;
       context.fillRect(x, midpoint - barHeight / 2, BAR_WIDTH, barHeight);

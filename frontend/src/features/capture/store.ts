@@ -21,6 +21,14 @@ import {
 import { RecorderController, defaultRecorderDeps, type RecorderDeps } from './recorder.ts';
 import { uploadCapture, type UploadDeps } from './uploader.ts';
 
+/** The states in which the microphone is open and the live canvas has something to say. */
+const LIVE_STATES: ReadonlySet<CaptureModel['state']> = new Set([
+  'requesting',
+  'recording',
+  'paused',
+  'stopping',
+]);
+
 function newLocalId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -124,14 +132,28 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
   return {
     model: INITIAL_CAPTURE,
 
-    amplitudes: (count) => controller?.recentAmplitudes(count) ?? [],
+    /*
+     * Only while the machine has a live recording. Between recordings the
+     * controller still holds the last session (its envelope is read by Send
+     * and by a retry), and the capture screen's canvas draws its first frame
+     * before the screen has armed the next recording — so answering from the
+     * controller alone painted the previous recording's tail for that frame.
+     * The honest live level of a recording that is not happening is nothing.
+     */
+    amplitudes: (count) =>
+      LIVE_STATES.has(get().model.state) ? (controller?.recentAmplitudes(count) ?? []) : [],
 
     dispatch,
 
     async start(noteId = null) {
       const localId = newLocalId();
-      dispatch({ type: 'request', localId, noteId });
       const active = ensureController();
+      // The previous recording's peaks go before `requesting` can be rendered,
+      // so the first frame of the new canvas reads an empty session rather
+      // than the tail of the last one. `start()` would drop them too, but only
+      // once it runs — after the dispatch below has already queued a render.
+      active.retire();
+      dispatch({ type: 'request', localId, noteId });
       await active.start(localId);
       if (get().model.state === 'recording') {
         startFeedback(active.current()?.audioContext ?? null);

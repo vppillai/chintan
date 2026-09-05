@@ -192,7 +192,16 @@ export function CaptureScreen() {
         />
       ) : (
         <div className="capture__waveform">
+          {/*
+            Keyed by the recording, so each one gets a fresh canvas. A canvas
+            keeps its last bitmap until something repaints it, and the
+            waveform's draw effect only re-runs when `active` flips — which is
+            when the stream is live, a microphone request later. Without the
+            key, whatever the element showed on this screen's first frame
+            stayed on it for that whole wait.
+          */}
           <Waveform
+            key={model.localId}
             read={read}
             active={model.state === 'recording'}
             reducedMotion={reducedMotion}

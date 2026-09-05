@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import type { ApiContextValue } from '@/api/ApiProvider.tsx';
@@ -57,10 +57,47 @@ class FakeRecorder extends EventTarget {
   }
 }
 
+/**
+ * Enough of an AudioContext for the recorder to attach its analyser and feed
+ * the peak collector a loud frame every tick. The start/stop tones ask it for
+ * an oscillator, find none, and are swallowed as they would be under autoplay
+ * policy.
+ */
+class FakeAnalyser {
+  fftSize = 1024;
+  smoothingTimeConstant = 0;
+  getByteTimeDomainData(frame: Uint8Array): void {
+    frame.fill(255);
+  }
+}
+
+function fakeAudioContext(): AudioContext {
+  return {
+    state: 'running',
+    createMediaStreamSource: () => ({ connect() {} }),
+    createAnalyser: () => new FakeAnalyser(),
+    close: () => Promise.resolve(),
+  } as unknown as AudioContext;
+}
+
+/**
+ * jsdom's `getContext` returns null, which stops the waveform's draw effect
+ * before it reads a single amplitude. This lets the effect run to the read.
+ */
+function stubCanvas(): void {
+  const context = {
+    fillStyle: '',
+    setTransform() {},
+    clearRect() {},
+    fillRect() {},
+  } as unknown as CanvasRenderingContext2D;
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => context);
+}
+
 let recorder = new FakeRecorder();
 let micRequests = 0;
 
-function fakeDeps(): RecorderDeps {
+function fakeDeps(overrides: Partial<RecorderDeps> = {}): RecorderDeps {
   return {
     requestMicrophone: async () => {
       micRequests += 1;
@@ -76,6 +113,7 @@ function fakeDeps(): RecorderDeps {
     acquireWakeLock: async () => null,
     persistChunk: async () => {},
     now: () => Date.now(),
+    ...overrides,
   };
 }
 
@@ -218,6 +256,92 @@ describe('opening /capture arms a recording', () => {
     view.unmount();
 
     expect(useCaptureStore.getState().model.state).toBe('idle');
+  });
+});
+
+describe('the live waveform starts empty', () => {
+  it('reads nothing of the previous recording on any frame before the next one is live', async () => {
+    /*
+     * The recorder already dropped the old session at the top of `start()`,
+     * and the flash survived that. What remained: the canvas's first draw runs
+     * in the child's effect, before this screen's own effect has called
+     * `start()` at all, so it read the previous recording's collector — and
+     * the draw effect does not re-run until the stream is live, so whatever it
+     * painted stayed on the element for the whole microphone request.
+     */
+    stubCanvas();
+    useCaptureStore
+      .getState()
+      .__configure({ recorder: fakeDeps({ createAudioContext: fakeAudioContext }) });
+
+    // Recording one, with something on its envelope.
+    const first = mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    await waitFor(() => {
+      expect(useCaptureStore.getState().amplitudes(8).length).toBeGreaterThan(0);
+    });
+    recorder.emitChunk(10);
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Stop' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('review');
+    });
+    // Send hands off and the screen leaves; the controller still holds the
+    // session, as it must for a retry to find the envelope.
+    act(() => {
+      useCaptureStore.setState({
+        model: { ...useCaptureStore.getState().model, state: 'uploaded', uploadProgress: 1 },
+      });
+    });
+    first.unmount();
+
+    // Everything the new screen's canvas reads, and the machine's state when it did.
+    const reads: { state: string; values: number[] }[] = [];
+    const amplitudes = useCaptureStore.getState().amplitudes;
+    useCaptureStore.setState({
+      amplitudes: (count) => {
+        const values = amplitudes(count);
+        reads.push({ state: useCaptureStore.getState().model.state, values });
+        return values;
+      },
+    });
+    try {
+      mount();
+      await waitFor(() => {
+        expect(useCaptureStore.getState().model.state).toBe('recording');
+      });
+    } finally {
+      useCaptureStore.setState({ amplitudes });
+    }
+
+    const beforeLive = reads.filter((read) => read.state !== 'recording');
+    // The first frame is drawn before this screen has armed anything.
+    expect(beforeLive.length).toBeGreaterThan(0);
+    for (const read of beforeLive) expect(read.values).toEqual([]);
+  });
+
+  it('gives each recording its own canvas', async () => {
+    // A canvas keeps its bitmap until it is repainted, and the draw effect
+    // only re-runs when the stream goes live. The element itself is replaced
+    // the moment the next recording is requested. Arming is held back so the
+    // screen can be seen with the canvas it had before that.
+    const start = useCaptureStore.getState().start;
+    useCaptureStore.setState({ start: async () => {} });
+    try {
+      mount();
+      const before = document.querySelector('canvas.waveform');
+      expect(before).not.toBeNull();
+      await act(() => start(null));
+      await waitFor(() => {
+        expect(useCaptureStore.getState().model.state).toBe('recording');
+      });
+      const after = document.querySelector('canvas.waveform');
+      expect(after).not.toBeNull();
+      expect(after).not.toBe(before);
+    } finally {
+      useCaptureStore.setState({ start });
+    }
   });
 });
 

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
 
+import { BAR_HEIGHT_SCALE } from './peaks.ts';
+
 /**
  * The live waveform.
  *
@@ -65,8 +67,10 @@ export function Waveform({ read, active, reducedMotion = false, label }: Wavefor
       for (let index = 0; index < amplitudes.length; index += 1) {
         const amplitude = amplitudes[index] ?? 0;
         // A floor so a live-but-quiet microphone still shows a line rather
-        // than reading as "not recording".
-        const barHeight = Math.max(2, amplitude * height * 0.9);
+        // than reading as "not recording". The scale is the one the review
+        // player and the note's scrubber use, so the bars do not change size
+        // when the recording stops.
+        const barHeight = Math.max(2, amplitude * height * BAR_HEIGHT_SCALE);
         const x = width - (amplitudes.length - index) * (BAR_WIDTH + BAR_GAP);
         context.fillRect(x, midpoint - barHeight / 2, BAR_WIDTH, barHeight);
       }

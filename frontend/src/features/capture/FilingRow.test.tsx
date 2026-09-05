@@ -20,6 +20,7 @@ import { FILED_ROWS_MAX, FilingRow } from './FilingRow.tsx';
 import { DISMISSED_KEY, DISMISSED_LIMIT, dismissCapture, loadDismissed } from './dismissed.ts';
 import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
+import { TARGETED_KEY, TARGETED_LIMIT, loadTargeted, rememberTargeted } from './targeted.ts';
 
 beforeEach(() => {
   // Dismissals are kept on the device; each test starts with none.
@@ -931,5 +932,107 @@ describe('a capture that has just been filed refreshes its note', () => {
     expect(newlyAppendedNoteIds(before, after)).toEqual(['n1', 'n3']);
     // A cold start has no cache to be stale.
     expect(newlyAppendedNoteIds(undefined, after)).toEqual([]);
+  });
+});
+
+describe('a recording made into a note is the note\'s to show, not the library\'s', () => {
+  /*
+   * "Record into this" sends the user back to the note's Recordings tab, where
+   * the upload and then the finished row already show (N3). Listing it here
+   * as well made Home a wall of "Filed" receipts after a day of recording into
+   * one note. Home keeps only what the router had to place — contract §3.
+   */
+  it('shows the untargeted server row and not the targeted one', async () => {
+    mount([
+      capture({ id: 'srv-targeted', status: 'appended', note_id: 'roof-repair', targeted: true }),
+      capture({ id: 'srv-routed', status: 'appended', note_id: 'roof-repair', targeted: false }),
+    ]);
+
+    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(document.querySelectorAll('.filing-row')).toHaveLength(1);
+    expect(screen.queryByText(/more filed/)).toBeNull();
+  });
+
+  it('hides a row this device sent with a note even when the server does not say so', async () => {
+    // Older backends send no `targeted`; the uploader's own memory stands in.
+    rememberTargeted('srv-old-backend');
+    mount([
+      capture({ id: 'srv-old-backend', status: 'appended', note_id: 'roof-repair' }),
+      capture({ id: 'srv-routed', status: 'transcribing' }),
+    ]);
+
+    expect(await screen.findByText('Filing your recording')).toBeInTheDocument();
+    expect(document.querySelectorAll('.filing-row')).toHaveLength(1);
+  });
+
+  it('renders nothing at all when every capture is a note\'s', async () => {
+    mount([capture({ id: 'srv-targeted', status: 'appended', note_id: 'roof-repair', targeted: true })]);
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
+  it('does not show the upload this device is making into a note', async () => {
+    // Send went back to that note's Recordings tab, which is showing it.
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploading',
+          localId: 'cap-local',
+          noteId: 'roof-repair',
+          bytes: 20_000,
+          elapsedMs: 41_000,
+          uploadProgress: 0.4,
+        },
+      });
+    });
+    mount([]);
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
+  it('still releases the machine for a targeted upload once its server row exists', async () => {
+    // The note screen usually does this hand-over; if the user came Home
+    // first, Home must not leave the machine stuck at `uploaded`.
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploaded',
+          localId: 'cap-local',
+          noteId: 'roof-repair',
+          serverCaptureId: 'srv-t',
+          uploadProgress: 1,
+        },
+      });
+    });
+    mount([capture({ id: 'srv-t', status: 'transcribing', note_id: 'roof-repair', targeted: true })]);
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+    expect(document.querySelectorAll('.filing-row')).toHaveLength(0);
+  });
+
+  it('remembers ids across a reload, newest last, and keeps only the most recent', () => {
+    rememberTargeted('a');
+    rememberTargeted('b');
+    rememberTargeted('a');
+    expect(Array.from(loadTargeted())).toEqual(['b', 'a']);
+    expect(JSON.parse(localStorage.getItem(TARGETED_KEY) ?? '[]')).toEqual(['b', 'a']);
+
+    for (let index = 0; index < TARGETED_LIMIT + 5; index += 1) rememberTargeted(`id-${index}`);
+    const kept = loadTargeted();
+    expect(kept.size).toBe(TARGETED_LIMIT);
+    expect(kept.has('id-0')).toBe(false);
+    expect(kept.has(`id-${TARGETED_LIMIT + 4}`)).toBe(true);
+  });
+
+  it('treats unreadable storage as nothing remembered', () => {
+    localStorage.setItem(TARGETED_KEY, '{not json');
+    expect(loadTargeted().size).toBe(0);
+    localStorage.setItem(TARGETED_KEY, JSON.stringify([1, 'ok', null]));
+    expect(Array.from(loadTargeted())).toEqual(['ok']);
   });
 });
