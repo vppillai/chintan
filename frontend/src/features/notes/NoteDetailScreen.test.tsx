@@ -197,7 +197,7 @@ describe('what was just saved is what the app shows next', () => {
       'v1 body more words here.',
     );
 
-    await user.click(screen.getByRole('button', { name: 'Tags' }));
+    await user.click(screen.getByRole('button', { name: 'Details' }));
     await user.type(screen.getByRole('textbox', { name: 'Add a tag' }), 'vtag{Enter}');
 
     await waitFor(() => {
@@ -526,6 +526,139 @@ describe('the note is panels under one strip', () => {
     await user.click(screen.getByRole('tab', { name: 'Text' }));
     expect(screen.queryByRole('toolbar', { name: 'Recording actions' })).toBeNull();
     expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Find in this note. The body is a textarea, which cannot show a mark, so
+ * while the bar has a query the panel shows a read-only mirror of the same
+ * text with every match marked; closing the bar brings the textarea back with
+ * the caret on the match that was current.
+ */
+describe('find in this note', () => {
+  const LONG: StoredNote = {
+    ...ROOF,
+    body: 'Ridge tiles have slipped.\n\nEllis quoted for the tiles. The café roof has tiles too.',
+    captures: [FILED],
+  };
+
+  async function loaded() {
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue(LONG.body);
+    });
+  }
+
+  it('mirrors the body with the matches marked, and hands back the textarea with the caret on the match', async () => {
+    const user = userEvent.setup();
+    const api = server([LONG]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+    expect(screen.queryByRole('search', { name: 'Find in note' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Find in note' }));
+    const input = screen.getByRole('searchbox', { name: 'Find in note' });
+    expect(input).toHaveFocus();
+    // Nothing typed yet: the textarea stays.
+    expect(screen.getByRole('textbox', { name: 'Note body' })).toBeInTheDocument();
+
+    await user.type(input, 'tiles');
+    expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
+    // Looked up each time: clearing the query hands the textarea back for a
+    // moment, and the next letter mounts a fresh mirror.
+    const mirror = () => screen.getByRole('region', { name: /note body, read-only while finding/i });
+    // The same text, newlines and all.
+    expect(mirror().textContent).toBe(LONG.body);
+    const marks = () => Array.from(mirror().querySelectorAll('mark'));
+    expect(marks().map((mark) => mark.textContent)).toEqual(['tiles', 'tiles', 'tiles']);
+    expect(marks().map((mark) => mark.hasAttribute('data-active'))).toEqual([true, false, false]);
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+
+    await user.keyboard('{Enter}');
+    expect(marks().map((mark) => mark.hasAttribute('data-active'))).toEqual([false, true, false]);
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+
+    // Diacritics do not matter: "cafe" finds "café".
+    await user.clear(input);
+    await user.type(input, 'cafe');
+    expect(marks().map((mark) => mark.textContent)).toEqual(['café']);
+
+    await user.clear(input);
+    await user.type(input, 'tiles');
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Escape}');
+
+    const body = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Note body' });
+    expect(body).toHaveFocus();
+    expect(screen.queryByRole('search', { name: 'Find in note' })).toBeNull();
+    // The caret is on the second "tiles".
+    const second = LONG.body.indexOf('tiles', LONG.body.indexOf('tiles') + 1);
+    expect(body.selectionStart).toBe(second);
+    expect(body.selectionEnd).toBe(second + 'tiles'.length);
+  });
+
+  it('opens on Ctrl/⌘+F instead of the browser’s find, and closes from the mirror on a tap', async () => {
+    const user = userEvent.setup();
+    const api = server([LONG]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    const intercepted = vi.fn<(event: KeyboardEvent) => void>((event) => {
+      // What the browser would look at: was the default (its own find) refused?
+      // Registered after the screen's listener, so it sees the answer.
+      if (event.key === 'f') expect(event.defaultPrevented).toBe(true);
+    });
+    window.addEventListener('keydown', intercepted);
+    await user.keyboard('{Control>}f{/Control}');
+    window.removeEventListener('keydown', intercepted);
+    expect(intercepted).toHaveBeenCalled();
+    const input = screen.getByRole('searchbox', { name: 'Find in note' });
+    expect(input).toHaveFocus();
+
+    await user.type(input, 'Ellis');
+    const mirror = screen.getByRole('region', { name: /note body, read-only while finding/i });
+    expect(mirror.querySelectorAll('mark')).toHaveLength(1);
+
+    await user.click(mirror);
+    const body = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Note body' });
+    expect(body).toHaveFocus();
+    expect(body.selectionStart).toBe(LONG.body.indexOf('Ellis'));
+    expect(screen.queryByRole('searchbox')).toBeNull();
+  });
+
+  it('is greyed on Recordings with a hint, and searches the cleaned view in place', async () => {
+    const user = userEvent.setup();
+    const api = server([
+      {
+        ...LONG,
+        cleaned: {
+          body: '# Roof\n\n- **Tiles** slipped\n- Ellis quoted for the tiles',
+          mode: 'structured',
+          generated_at: '2026-08-06T09:20:00.000Z',
+          stale: false,
+        },
+      },
+    ]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await user.click(screen.getByRole('button', { name: 'Find in note' }));
+    await user.type(screen.getByRole('searchbox'), 'tiles');
+    expect(screen.getByText('1 of 3')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /^Recordings/ }));
+    expect(screen.getByRole('searchbox')).toBeDisabled();
+    expect(screen.getByText('Search works in Text and Cleaned.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Cleaned' }));
+    expect(screen.getByRole('searchbox')).toBeEnabled();
+    const view = await screen.findByRole('region', { name: 'Cleaned view' });
+    await waitFor(() => {
+      expect(view.querySelectorAll('mark')).toHaveLength(2);
+    });
+    expect(view.querySelector('mark')?.parentElement?.tagName).toBe('STRONG');
+    expect(screen.getByText('1 of 2')).toBeInTheDocument();
+    // The query is kept across tabs; the count is the new panel's.
+    expect(screen.getByRole('searchbox')).toHaveValue('tiles');
   });
 });
 

@@ -1,12 +1,13 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { NoteDetailWire, SettingsWire } from '@/api/schema.ts';
+import { languageLabel } from '@/features/settings/languages.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { NoteDetailScreen } from './NoteDetailScreen.tsx';
+import { NoteDetailScreen, effectiveLanguage } from './NoteDetailScreen.tsx';
 
 const NOTE: NoteDetailWire = {
   id: 'roof-repair',
@@ -74,12 +75,14 @@ function mount(note: NoteDetailWire = NOTE) {
 
 async function openLanguage(): Promise<HTMLSelectElement> {
   await screen.findByDisplayValue('Roof repair');
-  await userEvent.click(screen.getByRole('button', { name: 'Tags' }));
-  return (await screen.findByRole('combobox', { name: 'Language' })) as HTMLSelectElement;
+  await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+  return (await screen.findByRole('combobox', {
+    name: 'Transcription language',
+  })) as HTMLSelectElement;
 }
 
 describe('a note’s transcription language', () => {
-  it('lives in the Tags disclosure and is sent with the note’s own PATCH and version', async () => {
+  it('lives in the Details disclosure and is sent with the note’s own PATCH and version', async () => {
     const { patches } = mount();
     const select = await openLanguage();
 
@@ -100,12 +103,19 @@ describe('a note’s transcription language', () => {
     expect(patches[0]?.['title']).toBe('Roof repair');
   });
 
-  it('offers auto-detect and the curated languages, in words', async () => {
+  it('offers auto-detect and the curated languages, each in its own script and in English', async () => {
     mount();
     await openLanguage();
-    for (const name of ['Auto-detect', 'Malayalam', 'Hindi', 'Tamil', 'Spanish', 'Japanese']) {
-      expect(screen.getByRole('option', { name })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Auto-detect' })).toBeInTheDocument();
+    for (const code of ['ml', 'hi', 'ta', 'es', 'ja']) {
+      expect(screen.getByRole('option', { name: languageLabel(code) })).toBeInTheDocument();
     }
+    expect(screen.getByRole('option', { name: 'മലയാളം · Malayalam' })).toBeInTheDocument();
+    // Inherit first, then Auto-detect, then the languages.
+    const options = within(screen.getByRole('combobox', { name: 'Transcription language' }))
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(options.slice(0, 3)).toEqual(['Default (Malayalam)', 'Auto-detect', 'English']);
   });
 
   it('shows the language the note already has, and can hand it back to the default', async () => {
@@ -128,4 +138,76 @@ describe('a note’s transcription language', () => {
     expect(screen.getByText(/recordings made into this note/i)).toBeInTheDocument();
     expect(screen.getByText(/filed automatically is transcribed in your default/i)).toBeInTheDocument();
   });
+});
+
+/**
+ * The owner's trial: "I don't see multilingual support anywhere." The control
+ * existed, third in a panel called Tags. It is now the first thing in Details,
+ * and the language is said in the meta line under the title, where a tap on
+ * it opens the panel.
+ */
+describe('the language is where the user looks', () => {
+  it('is the first field of Details, before the tags and the other names', async () => {
+    mount();
+    await screen.findByDisplayValue('Roof repair');
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+
+    const panel = screen.getByRole('combobox', { name: 'Transcription language' }).closest(
+      '.note-panel',
+    );
+    expect(panel).not.toBeNull();
+    const labels = Array.from(panel!.querySelectorAll('.tag-editor__label')).map(
+      (label) => label.textContent,
+    );
+    expect(labels).toEqual(['Transcription language', 'Tags', 'Also called']);
+    expect(screen.queryByRole('button', { name: 'Tags' })).toBeNull();
+  });
+
+  it('names the effective language in the meta line when it is not plain English', async () => {
+    // The default is Malayalam here; the note inherits it.
+    mount();
+    await screen.findByDisplayValue('Roof repair');
+    const fact = await screen.findByRole('button', { name: /transcription language:\s*malayalam/i });
+    expect(fact.closest('.note-meta')).toHaveTextContent(/house · .*Malayalam$/);
+  });
+
+  it('names the note’s own language when it differs from the default', async () => {
+    mount({ ...NOTE, language: 'ta' });
+    await screen.findByDisplayValue('Roof repair');
+    expect(
+      await screen.findByRole('button', { name: /transcription language:\s*tamil/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('opens Details and lands on the select when the fact is tapped', async () => {
+    mount({ ...NOTE, language: 'auto' });
+    await screen.findByDisplayValue('Roof repair');
+    expect(screen.queryByRole('combobox', { name: 'Transcription language' })).toBeNull();
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: /transcription language:\s*auto-detect/i }),
+    );
+
+    const select = screen.getByRole('combobox', { name: 'Transcription language' });
+    expect(select).toHaveFocus();
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
+describe('when the language is worth a word', () => {
+  const cases: [note: string, fallback: string | undefined, expected: string | null][] = [
+    ['', 'en', null],
+    ['', undefined, null],
+    ['en', 'en', null],
+    ['', 'ml', 'ml'],
+    ['ml', 'ml', 'ml'],
+    ['en', 'ml', 'en'],
+    ['ta', 'en', 'ta'],
+    ['auto', 'en', 'auto'],
+  ];
+  for (const [note, fallback, expected] of cases) {
+    it(`note ${JSON.stringify(note)} under default ${JSON.stringify(fallback)} → ${JSON.stringify(expected)}`, () => {
+      expect(effectiveLanguage(note, fallback)).toBe(expected);
+    });
+  }
 });

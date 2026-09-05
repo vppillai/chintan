@@ -18,19 +18,26 @@ import { describePurge, purgeCountdown } from './purge.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
- * The note's action bar: Tags · Share · Archive · Record into this.
+ * The note's action bar: Details · Share · Archive · Record into this.
  *
  * Sticky at the foot of the note, so none of it is buried under a long body
  * and six transcripts — "Record into this" in particular is the one-tap path
  * to add to a note you are already reading, and a control the user has to
  * scroll two screens to find is not one tap.
  *
- * Tags and Share are disclosures: the tag and alias editors and the copy and
- * download controls open above the bar when asked for and are otherwise out
- * of the way. The two used to sit inline between the body and Archive, which
- * put a copy control adjacent to a destructive one — how a stray thumb
- * destroys a note it meant to keep. Archive is the far side of the bar from
- * Record for the same reason.
+ * Details and Share are disclosures: the language, tag and alias editors and
+ * the copy and download controls open above the bar when asked for and are
+ * otherwise out of the way. The editors used to sit inline between the body
+ * and Archive, which put a copy control adjacent to a destructive one — how a
+ * stray thumb destroys a note it meant to keep. Archive is the far side of the
+ * bar from Record for the same reason. Which disclosure is open belongs to the
+ * screen (`open` / `onOpenChange`): the meta line under the title opens
+ * Details when its language fact is tapped.
+ *
+ * Details was called Tags, and held the transcription language as its third
+ * control. The owner tried the app and reported no sign of multilingual
+ * support: a language control filed under "Tags" is a control nobody looks
+ * for. The language is now the panel's first field and named in full.
  *
  * Getting rid of a note, and getting it back, keep their two confirmation
  * disciplines, because these are two different promises:
@@ -46,24 +53,34 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * controls the app is append-only and the note screen's own "may have been
  * archived or purged" describes states it cannot reach.
  */
+export type NotePanelKind = 'details' | 'share';
+
+/** The id of a note's language select, so the meta line can send focus to it. */
+export function noteLanguageFieldId(noteId: string): string {
+  return `note-language-${noteId}`;
+}
+
 export function NoteActions({
   note,
   editor,
   hidden = false,
+  open,
+  onOpenChange,
 }: {
   note: NoteDetailWire;
   editor: NoteEditor;
   /** Stepping aside for another bar at the foot of the screen; state is kept. */
   hidden?: boolean;
+  open: NotePanelKind | null;
+  onOpenChange: (open: NotePanelKind | null) => void;
 }) {
   const navigate = useNavigate();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const purge = useDeleteNoteForever();
 
-  const tagsId = useId();
+  const detailsId = useId();
   const shareId = useId();
-  const [open, setOpen] = useState<'tags' | 'share' | null>(null);
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
 
   const busy = archive.isPending || restore.isPending || purge.isPending;
@@ -73,8 +90,16 @@ export function NoteActions({
 
   return (
     <div className="note-bar-anchor" hidden={hidden}>
-      {open === 'tags' && (
-        <div id={tagsId} className="note-panel">
+      {open === 'details' && (
+        <div id={detailsId} className="note-panel">
+          <NoteLanguage
+            id={noteLanguageFieldId(note.id)}
+            value={draft.language ?? ''}
+            onChange={(language) => {
+              editor.edit({ language });
+              void editor.saveNow();
+            }}
+          />
           <TagEditor
             label="Tags"
             values={draft.tags}
@@ -93,13 +118,6 @@ export function NoteActions({
               editor.edit({ aliases });
             }}
             onCommit={() => void editor.saveNow()}
-          />
-          <NoteLanguage
-            value={draft.language ?? ''}
-            onChange={(language) => {
-              editor.edit({ language });
-              void editor.saveNow();
-            }}
           />
         </div>
       )}
@@ -165,13 +183,13 @@ export function NoteActions({
         <button
           type="button"
           className="note-bar__action"
-          aria-expanded={open === 'tags'}
-          aria-controls={tagsId}
+          aria-expanded={open === 'details'}
+          aria-controls={detailsId}
           onClick={() => {
-            setOpen((current) => (current === 'tags' ? null : 'tags'));
+            onOpenChange(open === 'details' ? null : 'details');
           }}
         >
-          Tags
+          Details
         </button>
         <button
           type="button"
@@ -179,7 +197,7 @@ export function NoteActions({
           aria-expanded={open === 'share'}
           aria-controls={shareId}
           onClick={() => {
-            setOpen((current) => (current === 'share' ? null : 'share'));
+            onOpenChange(open === 'share' ? null : 'share');
           }}
         >
           Share
@@ -278,8 +296,8 @@ export function NoteActions({
 }
 
 /**
- * The note's transcription language, in the Tags disclosure with the other
- * facts about the note that are not its text.
+ * The note's transcription language, first in the Details disclosure with the
+ * other facts about the note that are not its text.
  *
  * The inherit entry names what it inherits — "Default (Malayalam)" — read from
  * the You screen's setting, so the choice is between real languages rather
@@ -288,15 +306,22 @@ export function NoteActions({
  * here afterwards was transcribed before anyone knew where it was going, so
  * only the default could apply to it.
  */
-function NoteLanguage({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const id = useId();
+function NoteLanguage({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
   const { data: settings } = useSettings();
   const inherited = settings?.default_language ?? 'en';
 
   return (
     <section className="language-field">
       <label className="tag-editor__label" htmlFor={id}>
-        Language
+        Transcription language
       </label>
       <LanguageSelect
         id={id}
