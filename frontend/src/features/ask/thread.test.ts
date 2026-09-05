@@ -8,6 +8,7 @@ import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtu
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 
 import {
+  ASK_NOTE_TAG,
   HISTORY_ANSWER_LIMIT,
   HISTORY_BYTES_BUDGET,
   HISTORY_LIMIT,
@@ -212,23 +213,26 @@ describe('Try again on a question the client gave up on', () => {
 });
 
 describe('the thread as a note', () => {
-  it('is titled by the first question and holds each exchange, then the sources once each', () => {
+  it('is titled by the first question and holds each exchange as plain text, then the sources once each, tagged ask', () => {
     const turns = [
       answered('what did I decide about the roof?', 'Two quotes first.'),
-      answered('and when?', 'The **fourteenth**.', [
+      answered('and when?', 'The **fourteenth**.\n\n- Call the tiler\n- Then the **gutter**', [
         { note_id: 'fixture-note-id', title: 'Roof repair' },
         { note_id: 'other', title: 'Calendar' },
       ]),
     ];
     const note = noteFromThread(turns);
     expect(note?.title).toBe('what did I decide about the roof?');
+    // No Markdown: the Text tab and the library snippet show the body verbatim.
     expect(note?.body).toBe(
       [
-        '**Q: what did I decide about the roof?**\n\nTwo quotes first.',
-        '**Q: and when?**\n\nThe **fourteenth**.',
-        '**Sources**\n- Roof repair\n- Kitchen rebuild\n- Calendar',
+        'Q: what did I decide about the roof?\n\nA: Two quotes first.',
+        'Q: and when?\n\nA: The fourteenth.\n\n- Call the tiler\n- Then the gutter',
+        'Sources:\nRoof repair\nKitchen rebuild\nCalendar',
       ].join('\n\n'),
     );
+    expect(note?.body).not.toMatch(/\*/);
+    expect(note?.tags).toEqual([ASK_NOTE_TAG]);
     expect(sourcesOf(turns).map((source) => source.note_id)).toEqual([
       'fixture-note-id',
       'fixture-note-id-2',
@@ -241,9 +245,7 @@ describe('the thread as a note', () => {
       answered('what colour is my car?', 'Your notes do not say.', []),
       failTurn(newTurn('k', 'and the van?'), NOT_SENT_MESSAGE),
     ];
-    expect(noteFromThread(turns)?.body).toBe(
-      '**Q: what colour is my car?**\n\nYour notes do not say.',
-    );
+    expect(noteFromThread(turns)?.body).toBe('Q: what colour is my car?\n\nA: Your notes do not say.');
   });
 
   it('cuts the title to what POST /v1/notes accepts, and is nothing when nothing was answered', () => {

@@ -159,6 +159,7 @@ describe('the field has two modes', () => {
     expect(location()).toBe('/');
   });
 
+
   it('is deep-linkable: `?mode=ask` opens in Ask, and switching drops a filter that was typed', async () => {
     const user = userEvent.setup();
     mount(server().fetchImpl, '/?q=roof');
@@ -386,12 +387,14 @@ describe('the thread', () => {
     await waitFor(() => {
       expect(api.creates).toHaveLength(1);
     });
+    // Plain text — the answer's bold unwrapped — and tagged so retrieval can leave it out.
     expect(api.creates[0]).toEqual({
       title: 'what did I decide about the roof?',
       body: [
-        `**Q: what did I decide about the roof?**\n\n${askAnswered.answer ?? ''}`,
-        '**Sources**\n- Roof repair\n- Kitchen rebuild',
+        `Q: what did I decide about the roof?\n\nA: ${(askAnswered.answer ?? '').replaceAll('**', '')}`,
+        'Sources:\nRoof repair\nKitchen rebuild',
       ].join('\n\n'),
+      tags: ['ask'],
     });
     // And the reader is taken to it; the thread is finished with.
     await waitFor(() => {

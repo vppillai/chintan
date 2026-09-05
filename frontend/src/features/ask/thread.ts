@@ -203,25 +203,46 @@ export function sourcesOf(turns: readonly AskTurn[]): AskSourceWire[] {
   return sources;
 }
 
+/** The tag a saved thread carries, so retrieval can tell an answer from a note. */
+export const ASK_NOTE_TAG = 'ask';
+
 /**
  * The thread as a note: the first question is the title, the body is each
- * exchange in the same light Markdown the answers arrive in, and the notes
- * the answers drew on are listed at the end so the reader can go and check.
- * Turns without an answer are left out — a failed question is not worth
- * keeping. `null` when nothing was answered, so there is nothing to save.
+ * exchange as `Q:` and `A:` paragraphs, and the notes the answers drew on are
+ * listed at the end so the reader can go and check. Plain text throughout —
+ * a note's body is what the Text tab and the library snippet show verbatim,
+ * where Markdown's asterisks and dashes are just asterisks and dashes — so
+ * the bold the answers arrive with is unwrapped too. Turns without an answer
+ * are left out: a failed question is not worth keeping. `null` when nothing
+ * was answered, so there is nothing to save.
+ *
+ * Tagged `ask`, because an answer saved as a note is note text the next
+ * question would otherwise retrieve as if it were a source, and one answer
+ * feeding the next is a loop. The tag is what retrieval can exclude on.
  */
 export function noteFromThread(turns: readonly AskTurn[]): NoteCreateWire | null {
   const answered = turns.filter((turn) => turn.status === 'answered' && turn.answer !== null);
   const first = turns[0];
   if (!first || answered.length === 0) return null;
 
-  const exchanges = answered.map((turn) => `**Q: ${turn.question}**\n\n${turn.answer ?? ''}`);
+  const exchanges = answered.map(
+    (turn) => `Q: ${turn.question}\n\nA: ${plainText(turn.answer ?? '')}`,
+  );
   const sources = sourcesOf(answered);
   const parts = [...exchanges];
   if (sources.length > 0) {
-    parts.push(`**Sources**\n${sources.map((source) => `- ${source.title}`).join('\n')}`);
+    parts.push(`Sources:\n${sources.map((source) => source.title).join('\n')}`);
   }
-  return { title: first.question.slice(0, TITLE_LIMIT), body: parts.join('\n\n') };
+  return {
+    title: first.question.slice(0, TITLE_LIMIT),
+    body: parts.join('\n\n'),
+    tags: [ASK_NOTE_TAG],
+  };
+}
+
+/** An answer's light Markdown as text: `**bold**` unwrapped, lists left as lines. */
+function plainText(answer: string): string {
+  return answer.replace(/\*\*(.+?)\*\*/g, '$1');
 }
 
 /* ---------------------------------------------------------------------------
