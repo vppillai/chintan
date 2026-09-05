@@ -392,13 +392,19 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       const id = `cap-${state.captures.length + 1}`;
       // `note_id` is the target the client chose, as the real endpoint stores it.
       const body = (request.postDataJSON() ?? {}) as { note_id?: string | null };
-      state.captures.push({
+      const created: CaptureRecord = {
         id,
         status: 'uploaded',
         created_at: new Date().toISOString(),
         version: 1,
         note_id: body.note_id ?? null,
-      });
+      };
+      state.captures.push(created);
+      // A capture aimed at a note is one of that note's recordings from the
+      // moment it exists, as the real server lists it. The same object, so a
+      // spec that moves `api.captures[0].status` along moves the note's row.
+      const target = body.note_id ? state.notes[body.note_id] : undefined;
+      if (target) target.captures = [...(target.captures ?? []), created];
       await json(
         route,
         {

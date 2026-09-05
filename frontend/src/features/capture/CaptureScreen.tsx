@@ -94,13 +94,18 @@ export function CaptureScreen() {
   );
 
   /*
-   * Back to the library, *replacing* this entry rather than pushing over it.
-   * Opening /capture starts a recording, so leaving a `/capture` entry behind
-   * would turn the next Back press into a new recording nobody asked for.
+   * Leaves, *replacing* this entry rather than pushing over it. Opening
+   * /capture starts a recording, so leaving a `/capture` entry behind would
+   * turn the next Back press into a new recording nobody asked for. Where to
+   * is `captureReturnPath`'s call: the note the recording was aimed at, or
+   * the library.
    */
-  const leave = useCallback(() => {
-    void navigate(ROUTES.home, { replace: true });
-  }, [navigate]);
+  const leave = useCallback(
+    (to: string) => {
+      void navigate(to, { replace: true });
+    },
+    [navigate],
+  );
 
   /*
    * Only reachable by coming back to this screen mid-upload (the indicator on
@@ -109,24 +114,30 @@ export function CaptureScreen() {
    */
   useEffect(() => {
     if (model.state !== 'uploaded') return;
-    const timer = setTimeout(leave, 600);
+    const to = captureReturnPath(model.noteId, true);
+    const timer = setTimeout(() => {
+      leave(to);
+    }, 600);
     return () => {
       clearTimeout(timer);
     };
-  }, [model.state, leave]);
+  }, [model.state, model.noteId, leave]);
 
   const read = useCallback((count: number) => amplitudes(count), [amplitudes]);
 
   /*
    * Send does not wait. The upload lives in the store, outside this tree, and
-   * the library's filing row shows it from "Uploading… 40%" through to
-   * "Filed" — so the only thing keeping the user on a screen that said
-   * "Sending" was the screen. The promise is deliberately not awaited: its
-   * outcome is reported through the machine, which the row reads.
+   * the filing row shows it from "Uploading… 40%" through to "Filed" — so the
+   * only thing keeping the user on a screen that said "Sending" was the
+   * screen. The promise is deliberately not awaited: its outcome is reported
+   * through the machine, which the row reads. The target is read before the
+   * hand-off: `send` is what the machine's `noteId` is for, and where the user
+   * goes next is decided by the same fact.
    */
   const handOff = useCallback(() => {
+    const to = captureReturnPath(useCaptureStore.getState().model.noteId, true);
     void send(api);
-    leave();
+    leave(to);
   }, [send, api, leave]);
 
   // The envelope is read once per review, not per render: the recorder has
@@ -236,14 +247,36 @@ export function CaptureScreen() {
         onResume={resume}
         onStop={() => void stop()}
         onDiscard={() => {
-          void discard().then(leave);
+          // Read before the discard resets it: a take abandoned from inside a
+          // note goes back to that note.
+          const to = captureReturnPath(model.noteId, false);
+          void discard().then(() => {
+            leave(to);
+          });
         }}
         onRerecord={() => void rerecord()}
         onSend={handOff}
-        onLeave={leave}
+        onLeave={() => {
+          leave(captureReturnPath(model.noteId, false));
+        }}
       />
     </div>
   );
+}
+
+/**
+ * Where the capture screen goes when it is done.
+ *
+ * A recording aimed at a note — "Record into this", `?note=`, or the chooser —
+ * goes back to that note, and a *sent* one to its Recordings tab, where the
+ * upload shows as the first row and turns into the recording once it lands.
+ * Sending used to drop the user on the library whatever the target, a screen
+ * away from the note they had just added to. A recording with no target is
+ * the library's to file, so the library is where it goes.
+ */
+export function captureReturnPath(noteId: string | null, sent: boolean): string {
+  if (!noteId) return ROUTES.home;
+  return sent ? ROUTES.noteRecordings(noteId) : ROUTES.note(noteId);
 }
 
 function statusLabel(model: CaptureModel): string {

@@ -9,6 +9,8 @@ import { onlineManager } from '@tanstack/react-query';
 import { CAPTURE_POLL_FAST_MS, queryKeys } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 import { routes } from '@/app/router.tsx';
+import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
+import { useCaptureStore } from '@/features/capture/store.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { LOADING_PATIENCE_MS } from './NoteDetailScreen.tsx';
@@ -504,5 +506,93 @@ describe('the note is panels under one strip', () => {
     await user.click(screen.getByRole('tab', { name: 'Text' }));
     expect(screen.queryByRole('toolbar', { name: 'Recording actions' })).toBeNull();
     expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Send returns to the note's Recordings tab. The upload this device is making
+ * is the first row there, counted on the tab, until the server's row takes
+ * over — the hand-over the library's filing row used to be the only one to do.
+ */
+describe('a recording sent into this note shows up on its recordings', () => {
+  afterEach(() => {
+    useCaptureStore.setState({ model: INITIAL_CAPTURE });
+  });
+
+  it('counts the upload on the tab, shows it first, and hands over to the server row', async () => {
+    const api = server([{ ...ROOF, captures: [FILED] }]);
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploading',
+          localId: 'cap-local',
+          noteId: 'roof-repair',
+          elapsedMs: 6_000,
+          uploadProgress: 0.4,
+        },
+      });
+    });
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+
+    expect(await screen.findByRole('tab', { name: 'Recordings (2)' })).toBeInTheDocument();
+    const region = await screen.findByRole('region', { name: 'Recordings' });
+    const rows = () =>
+      within(region)
+        .getAllByRole('listitem')
+        .filter((item) => item.matches('.recording, .recordings__filing'));
+    expect(rows()[0]).toHaveTextContent('Uploading… 40%');
+
+    // The PUT lands and the server mints the row; the note is asked again.
+    const getsBefore = api.gets;
+    act(() => {
+      api.notes.set('roof-repair', {
+        ...(api.notes.get('roof-repair') as StoredNote),
+        captures: [
+          { ...FILED, id: 'cap-new', status: 'transcribing', created_at: new Date().toISOString() },
+          FILED,
+        ],
+      });
+      useCaptureStore.setState({
+        model: {
+          ...useCaptureStore.getState().model,
+          state: 'uploaded',
+          uploadProgress: 1,
+          serverCaptureId: 'cap-new',
+        },
+      });
+    });
+
+    // The server's row replaces the local one and the machine is released.
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+    expect(api.gets).toBeGreaterThan(getsBefore);
+    await waitFor(() => {
+      expect(screen.queryByText(/uploading…/i)).toBeNull();
+    });
+    expect(screen.getByRole('tab', { name: 'Recordings (2)' })).toBeInTheDocument();
+    expect(rows()[0]).toHaveTextContent('Filing…');
+    expect(within(rows()[0]!).getByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
+  });
+
+  it('a recording aimed at another note stays off this one', async () => {
+    const api = server([{ ...ROOF, captures: [FILED] }]);
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploading',
+          localId: 'cap-local',
+          noteId: 'reading-list',
+          uploadProgress: 0.2,
+        },
+      });
+    });
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+
+    expect(await screen.findByRole('tab', { name: 'Recordings (1)' })).toBeInTheDocument();
+    await screen.findByRole('button', { name: /more for recording from/i });
+    expect(screen.queryByText(/uploading…/i)).toBeNull();
   });
 });

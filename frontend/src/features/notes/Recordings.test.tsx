@@ -7,11 +7,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys, useNote } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
+import { INITIAL_CAPTURE, type CaptureModel } from '@/features/capture/machine.ts';
 import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
 import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { Recordings } from './Recordings.tsx';
+import { Recordings, justLanded } from './Recordings.tsx';
 
 /**
  * The audio lives in a bucket on another origin, behind a presigned URL. Two
@@ -145,18 +146,32 @@ function bucketStub() {
 }
 
 /** The note screen's own wiring: the recordings read the note from the query. */
-function Host({ noteId, onSelectingChange }: { noteId: string; onSelectingChange: () => void }) {
+function Host({
+  noteId,
+  localUpload,
+  onSelectingChange,
+}: {
+  noteId: string;
+  localUpload?: CaptureModel | null;
+  onSelectingChange: () => void;
+}) {
   const { data } = useNote(noteId);
   if (!data) return <p>Loading…</p>;
-  return <Recordings note={data} onSelectingChange={onSelectingChange} />;
+  return (
+    <Recordings note={data} localUpload={localUpload ?? null} onSelectingChange={onSelectingChange} />
+  );
 }
 
-function mount(fetchImpl: typeof fetch, queryClient: QueryClient = testQueryClient()) {
+function mount(
+  fetchImpl: typeof fetch,
+  queryClient: QueryClient = testQueryClient(),
+  localUpload: CaptureModel | null = null,
+) {
   const onSelectingChange = vi.fn();
   render(
     <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
       <MemoryRouter>
-        <Host noteId={NOTE.id} onSelectingChange={onSelectingChange} />
+        <Host noteId={NOTE.id} localUpload={localUpload} onSelectingChange={onSelectingChange} />
       </MemoryRouter>
     </TestProviders>,
   );
@@ -482,5 +497,92 @@ describe('selecting several recordings', () => {
       expect(screen.queryByRole('toolbar')).toBeNull();
     });
     expect(await screen.findByText('2 recordings deleted')).toBeInTheDocument();
+  });
+});
+
+/** The rows of the recordings list — not the segments of a stage strip inside one. */
+async function recordingRows(): Promise<HTMLElement[]> {
+  const region = await screen.findByRole('region', { name: 'Recordings' });
+  return within(region)
+    .getAllByRole('listitem')
+    .filter((item) => item.matches('.recording, .recordings__filing'));
+}
+
+/**
+ * A recording on its way into this note. Send returns to the note's
+ * Recordings tab, so the upload and then the pipeline show here, as the
+ * library's filing row shows them, and the row turns into a recording when
+ * it lands.
+ */
+describe('a recording still being made into this note', () => {
+  it('is the first row, with the upload bar from the store', async () => {
+    bucketStub();
+    const uploading: CaptureModel = {
+      ...INITIAL_CAPTURE,
+      state: 'uploading',
+      localId: 'cap-local',
+      noteId: 'roof-repair',
+      elapsedMs: 9_000,
+      uploadProgress: 0.4,
+    };
+    mount(apiStub().fetchImpl, testQueryClient(), uploading);
+
+    const rows = await recordingRows();
+    expect(rows[0]).toHaveTextContent('Uploading… 40%');
+    expect(rows[0]).toHaveTextContent('0:09');
+    // The filed recording is still there, after it.
+    expect(rows[1]).toHaveTextContent('Filed');
+  });
+
+  it('shows the filing stages under a row the pipeline is still working on, and asks for no audio', async () => {
+    bucketStub();
+    const api = apiStub({ ...NOTE, captures: [{ ...CAPTURE, id: 'cap-2', status: 'transcribing' }, CAPTURE] });
+    mount(api.fetchImpl);
+
+    const rows = await recordingRows();
+    // Newest first; the moving one is on top, and says so twice: in words
+    // and as the strip.
+    expect(rows[0]).toHaveTextContent('Filing…');
+    expect(within(rows[0]!).getByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
+    expect(within(rows[0]!).getByText(/transcribing in progress/i)).toBeInTheDocument();
+    // The finished one is the row that opened on arrival.
+    expect(within(rows[1]!).getByRole('button', { name: /filed/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+
+    // Opening the moving row explains itself rather than asking for artifacts
+    // that do not exist yet.
+    await userEvent.click(within(rows[0]!).getByRole('button', { name: /filing/i }));
+    expect(await screen.findByText(/being filed/i)).toBeInTheDocument();
+    expect(api.calls.some((call) => call.path.includes('/captures/cap-2/download'))).toBe(false);
+  });
+
+  it('opens itself when it lands', async () => {
+    bucketStub();
+    const moving: CaptureWire = { ...CAPTURE, id: 'cap-2', status: 'transcribing' };
+    const api = apiStub({ ...NOTE, captures: [moving] });
+    const queryClient = testQueryClient();
+    mount(api.fetchImpl, queryClient);
+    await screen.findByRole('list', { name: 'Filing progress' });
+    expect(screen.queryByRole('region', { name: 'Recording' })).toBeNull();
+
+    // The poll brings the landed row.
+    act(() => {
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(NOTE.id), (current) =>
+        current ? { ...current, captures: [{ ...moving, status: 'appended' }] } : current,
+      );
+    });
+
+    expect(await screen.findByRole('region', { name: 'Recording' })).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
+    expect(screen.getByRole('button', { name: /filed/i })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('knows a landing from a row that arrived already filed', () => {
+    const moving: CaptureWire = { ...CAPTURE, status: 'cleaning' };
+    expect(justLanded([moving], [{ ...moving, status: 'appended' }])?.id).toBe(CAPTURE.id);
+    expect(justLanded([], [CAPTURE])).toBeUndefined();
+    expect(justLanded([CAPTURE], [CAPTURE])).toBeUndefined();
   });
 });

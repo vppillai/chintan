@@ -2570,6 +2570,20 @@
   padding-block: 0;
 }
 
+/* The upload this device is still making, first in the list: the library's
+   filing row as it is, in a list item that adds no second card around it. */
+.recordings__filing {
+  display: grid;
+}
+
+/* The stage strip under a row that is still being filed, inset to the row's
+   text and clear of the head's controls. */
+.recording__progress {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
 /* A row while recordings are being selected: the checkbox and its label
    stand where the play and disclosure controls were, the same height, so the
    list does not reflow when the mode changes. */

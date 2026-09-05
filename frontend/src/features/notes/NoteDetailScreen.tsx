@@ -8,6 +8,8 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
+import type { CaptureModel } from '@/features/capture/machine.ts';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
@@ -54,6 +56,14 @@ export function NoteDetailScreen() {
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
   const [selectingRecordings, setSelectingRecordings] = useState(false);
+
+  /*
+   * A recording this device is still sending into this note. Send returns
+   * here rather than to the library, so the upload's row — the same one the
+   * library shows — is the first recording until the server's row takes
+   * over; this hook does that hand-over while the screen is the one mounted.
+   */
+  const localUpload = useLocalUpload(note?.captures ?? [], id ?? '');
 
   // Pull down at the top to re-read this note — the one thing on this screen
   // that another device, or the pipeline appending a recording, can change.
@@ -177,6 +187,7 @@ export function NoteDetailScreen() {
         key={note.id}
         note={note}
         editor={editor}
+        localUpload={localUpload}
         onSelectingRecordings={setSelectingRecordings}
       />
 
@@ -201,16 +212,20 @@ export function NoteDetailScreen() {
 function NoteViews({
   note,
   editor,
+  localUpload,
   onSelectingRecordings,
 }: {
   note: NoteDetailWire;
   editor: NoteEditor;
+  localUpload: CaptureModel | null;
   onSelectingRecordings: (selecting: boolean) => void;
 }) {
   const [tab, setTab] = useNoteTab(note.id);
+  // The upload on its way counts: it is a row on the tab already.
+  const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
   const tabs: NoteTabDescriptor[] = [
     { id: 'text', label: 'Text' },
-    { id: 'recordings', label: 'Recordings', count: note.captures?.length ?? 0 },
+    { id: 'recordings', label: 'Recordings', count },
   ];
 
   return (
@@ -220,7 +235,11 @@ function NoteViews({
         {tab === 'text' ? (
           <TextPanel editor={editor} />
         ) : (
-          <Recordings note={note} onSelectingChange={onSelectingRecordings} />
+          <Recordings
+            note={note}
+            localUpload={localUpload}
+            onSelectingChange={onSelectingRecordings}
+          />
         )}
       </NotePanel>
     </>
