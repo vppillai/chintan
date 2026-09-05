@@ -406,6 +406,17 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
 	}
 
+	if capture.RoutedKey == "" && capture.CleanKey == "" {
+		// Recorded into a note, so routing — and with it the removal of the
+		// words addressed to the app — was skipped.
+		if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
+			return *capture, err
+		}
+		if service.CaptureIsTerminal(capture.Status) {
+			return *capture, nil
+		}
+	}
+
 	if capture.CleanKey == "" {
 		if err := p.clean(ctx, tenantID, capture); err != nil {
 			return *capture, err
@@ -416,6 +427,66 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	return p.append(ctx, tenantID, capture, note)
+}
+
+// stripInstructions removes a spoken app instruction from a capture that was
+// recorded into a note and so never reached routing.
+//
+// Routing deletes the words addressed to the app — "add this to my roof
+// note", "create a note with the title …" — before the dictation is cleaned
+// and appended, but a capture that already has its destination skips routing,
+// and the same words were appended verbatim (QA 2026-09-05 §5a). This is the
+// same span-extraction call, with the target note as the only candidate and
+// the destination it answers ignored: one small routing-priced call for a
+// targeted capture whose transcript contains an instruction cue, and no call
+// for one that does not (routing.MentionsInstruction). The result is stored as
+// the routed text, so a retry after a later fault finds it and does not call
+// again.
+//
+// The call is a convenience, as routing is: its own failure keeps the words as
+// spoken; a spend cap stops the capture as it would at the routing stage; and
+// only a store or object-store fault fails the invocation.
+func (p *Pipeline) stripInstructions(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) error {
+	rawBytes, err := p.cfg.Objects.Get(ctx, capture.RawKey)
+	if err != nil {
+		return fmt.Errorf("pipeline: get raw text: %w", err)
+	}
+	transcript := string(rawBytes)
+	if p.cfg.Router == nil || !routing.MentionsInstruction(transcript) {
+		obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": "no_cue"})
+		return nil
+	}
+
+	candidates := []routing.Candidate{{NoteID: note.ID, Title: note.Title, Aliases: note.Aliases}}
+	decision, err := p.routeWithRetries(ctx, tenantID, capture.ID, transcript, candidates)
+	if err != nil {
+		if errors.Is(err, breaker.ErrSpendCapExceeded) {
+			return p.handleProviderError(ctx, capture, "route", err)
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		obs.Log(ctx).Warn("instruction check failed; keeping the dictation as spoken",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+		obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": "failed"})
+		return nil
+	}
+
+	routedKey, err := keys.CaptureRouted(tenantID, capture.ID)
+	if err != nil {
+		return fmt.Errorf("pipeline: routed key: %w", err)
+	}
+	if err := p.cfg.Objects.Put(ctx, routedKey, []byte(decision.Content), "text/plain"); err != nil {
+		return fmt.Errorf("pipeline: store routed text: %w", err)
+	}
+	capture.RoutedKey = routedKey
+	outcome := "nothing_removed"
+	if decision.Content != transcript {
+		outcome = "removed"
+	}
+	obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": outcome})
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -756,6 +827,13 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		})
 	}
 
+	return p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates)
+}
+
+// routeWithRetries asks the router, with one retry on a stall or a 5xx. It
+// is the model half of decideTarget, shared with stripInstructions, which
+// wants the instruction spans and not the destination.
+func (p *Pipeline) routeWithRetries(ctx context.Context, tenantID, captureID, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
 	// Each attempt is its own breaker.Do, so each reserves before it calls and
 	// settles for itself. An attempt that fails — a timeout included — reports
 	// no usage, and the breaker releases exactly what that attempt reserved,

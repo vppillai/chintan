@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Span is a run of words in the whitespace-tokenised transcript that the
@@ -95,4 +96,36 @@ func RemoveSpans(transcript string, spans []Span) (string, error) {
 		return "", fmt.Errorf("%w: %d words, limit %d", ErrSpansTooLong, removed, MaxInstructionWords)
 	}
 	return strings.Join(kept, " "), nil
+}
+
+// instructionCues are the openings of the two app instructions the router
+// honours (systemPrompt), as people say them. A transcript containing none of
+// them has no span to remove, so MentionsInstruction lets the pipeline skip the
+// router call for a capture that was recorded straight into a note; one
+// containing any may have. Recall over precision: a cue that fires on ordinary
+// dictation ("call it a day") costs one small routing call, while an
+// instruction no cue catches stays in the note.
+var instructionCues = []string{
+	"add this to", "add that to", "add it to", "append this to", "append that to", "append it to",
+	"put this in", "put that in", "put it in", "put this under", "put that under",
+	"file this", "file that", "file it", "save this to", "save this in", "save this under",
+	"create a note", "create a new note", "make a note", "make a new note", "start a note", "start a new note", "new note",
+	"title this", "title it", "titled", "with the title", "under the title",
+	"call this note", "call this", "call it", "name this note", "name this", "name it",
+}
+
+// MentionsInstruction reports whether transcript contains any instruction cue
+// as whole words, case-insensitively and ignoring punctuation, so "Create a
+// note with the title Staging Smoke." is caught and "the gutter leaks" is not.
+func MentionsInstruction(transcript string) bool {
+	words := strings.FieldsFunc(strings.ToLower(transcript), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
+	})
+	padded := " " + strings.Join(words, " ") + " "
+	for _, cue := range instructionCues {
+		if strings.Contains(padded, " "+cue+" ") {
+			return true
+		}
+	}
+	return false
 }

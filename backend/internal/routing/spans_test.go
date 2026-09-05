@@ -96,3 +96,23 @@ func TestRemoveSpansRefusesToRemoveDictation(t *testing.T) {
 		t.Errorf("a span at the limit should be accepted: %v", err)
 	}
 }
+
+// The cue check decides whether a capture recorded into a note is worth a
+// routing call at all. It must catch the instructions the router honours as
+// people say them, and must not fire on plain dictation.
+func TestMentionsInstruction(t *testing.T) {
+	for transcript, want := range map[string]bool{
+		"Create a note with the title Staging Smoke. The gutter on the north side is leaking again.": true,
+		"Add this to my roof repair note: the flashing needs checking.":                              true,
+		"FILE THIS under taxes.":                                                                 true,
+		"Title this dentist, the appointment moved to Tuesday.":                                  true,
+		"Put it in the garden note please":                                                       true,
+		"the gutter on the north side is leaking again and the roofer should check the flashing": false,
+		"we noted the additional cost and the filing deadline":                                   false,
+		"": false,
+	} {
+		if got := MentionsInstruction(transcript); got != want {
+			t.Errorf("MentionsInstruction(%q) = %v, want %v", transcript, got, want)
+		}
+	}
+}

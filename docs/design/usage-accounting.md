@@ -119,7 +119,8 @@ stage, rather than read off the context: the context's tenant is a logging
 convenience (`obs.WithTenant`) and a cost record should not depend on it.
 
 Cost per capture: two `UpdateItem`s per provider call, i.e. four to six per
-capture, each under 1 KB. At today's rate (~50 captures/day) that is well
+capture — eight for a recording made into a note whose transcript carries a
+spoken instruction, which adds one routing-priced span call — each under 1 KB. At today's rate (~50 captures/day) that is well
 inside the table's on-demand noise.
 
 ### API requests (2026-09-05)
