@@ -324,8 +324,16 @@
    Segmented control — two or three options in one shape
    -------------------------------------------------------------------------- */
 
+/*
+ * Wraps rather than scrolls: three named segments with swatches are about
+ * 360 px, wider than the card on a 320–393 px phone, and a segment that
+ * cannot fit beside the others drops to a second line inside the same shape
+ * instead of pushing the card sideways (the layout sweep's fence).
+ */
 .segmented {
   display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   max-inline-size: 100%;
   padding: 2px;
   background-color: var(--color-surface);
@@ -336,6 +344,7 @@
 
 .segmented__option {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
