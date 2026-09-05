@@ -16,8 +16,9 @@
   min-inline-size: var(--layout-touch-target-min);
   min-block-size: var(--layout-touch-target-min);
   margin-inline-start: auto;
-  /* Pulled right so the lens sits on the gutter line, as the chevron does on the left. */
-  margin-inline-end: calc(-1 * var(--space-2));
+  /* Not pulled out to the gutter line the way the back link is: a negative
+     margin on the right is scrollable overflow, and the header would scroll
+     sideways by that much on every phone (e2e layout check). */
   border-radius: var(--radius-full);
   color: var(--color-muted);
   transition:
