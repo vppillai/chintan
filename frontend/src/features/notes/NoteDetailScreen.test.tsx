@@ -750,6 +750,85 @@ describe('a recording sent into this note shows up on its recordings', () => {
   });
 });
 
+describe('a recording filed while the user was typing', () => {
+  it('is named in the conflict prompt, and its paragraph can be kept alongside the edit', async () => {
+    /*
+     * Review S10: "Keep my edits" after a voice append carried the
+     * recording's text away without saying so. The prompt now says a
+     * recording is at stake, and offers to keep both.
+     */
+    sessionStorage.removeItem(noteTabStorageKey('roof-repair'));
+    const user = userEvent.setup();
+    const api = server([ROOF]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    const body = await screen.findByRole('textbox', { name: 'Note body' });
+    await waitFor(() => {
+      expect(body).toHaveValue('v1 body');
+    });
+
+    // The worker filed a recording: its paragraph after the body, its row on the note.
+    api.notes.set('roof-repair', {
+      ...ROOF,
+      body: 'v1 body\n\nFrom the recording.',
+      snippet: 'v1 body From the recording.',
+      version: 2,
+      captures: [{ ...FILED, id: 'cap-new', created_at: new Date().toISOString() }],
+    });
+    await user.type(body, ' mine');
+    await user.tab();
+
+    expect(await screen.findByText(/changed elsewhere/i)).toBeInTheDocument();
+    expect(screen.getByText(/a recording was filed into this note/i)).toBeInTheDocument();
+    expect(screen.getByText(/keeping only your edits removes its text/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Keep my edits and add the recording' }));
+    await waitFor(() => {
+      expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
+    });
+    expect(body).toHaveValue('v1 body mine\n\nFrom the recording.');
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(api.notes.get('roof-repair')?.body).toBe('v1 body mine\n\nFrom the recording.');
+    expect(api.patches.at(-1)).toEqual(expect.objectContaining({ version: 2, status: 200 }));
+  });
+
+  it('asks twice before keeping only the edits when the recording’s paragraph cannot be added back', async () => {
+    // Another device also rewrote the words, so what the recording added is
+    // not separable; the first tap explains, the second acts.
+    sessionStorage.removeItem(noteTabStorageKey('roof-repair'));
+    const user = userEvent.setup();
+    const api = server([ROOF]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    const body = await screen.findByRole('textbox', { name: 'Note body' });
+    await waitFor(() => {
+      expect(body).toHaveValue('v1 body');
+    });
+
+    api.notes.set('roof-repair', {
+      ...ROOF,
+      body: 'Rewritten, then a recording.',
+      snippet: 'Rewritten, then a recording.',
+      version: 2,
+      captures: [{ ...FILED, id: 'cap-new', created_at: new Date().toISOString() }],
+    });
+    await user.type(body, ' mine');
+    await user.tab();
+
+    expect(await screen.findByText(/a recording was filed into this note/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /and add the recording/ })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Keep my edits' }));
+    expect(screen.getByText(/tap keep my edits again/i)).toBeInTheDocument();
+    expect(api.notes.get('roof-repair')?.body).toBe('Rewritten, then a recording.');
+
+    await user.click(screen.getByRole('button', { name: 'Keep my edits' }));
+    await waitFor(() => {
+      expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
+    });
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(api.notes.get('roof-repair')?.body).toBe('v1 body mine');
+  });
+});
+
 describe('a conflict takes the foot of the screen', () => {
   it('closes the Details panel while the banner is up, so its buttons are not covered, and brings it back after', async () => {
     /*

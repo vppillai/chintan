@@ -674,24 +674,54 @@ function BackLink() {
  */
 function SaveIndicator({ editor }: { editor: ReturnType<typeof useNoteEditor> }) {
   const { model } = editor;
+  /*
+   * "Keep my edits" over a recording whose paragraph cannot be added back
+   * asks twice: the first tap says what it would cost, the second does it.
+   * Keyed by the server version the conflict is against, so a new conflict
+   * starts unconfirmed without an effect resetting anything.
+   */
+  const [discardConfirmedFor, setDiscardConfirmedFor] = useState<number | null>(null);
   if (model.state === 'clean') return null;
 
   if (model.state === 'conflict') {
+    const theirs = model.theirs;
+    const recording = theirs?.recording ?? false;
+    const addition = theirs?.addition ?? null;
+    const mustConfirm = recording && addition === null;
+    const confirmed = discardConfirmedFor === theirs?.version;
     return (
       <div className="save-conflict" role="alert">
         <p className="save-conflict__title">{SAVE_LABELS.conflict}</p>
         <p className="save-conflict__body">
-          A voice capture or another device saved this note while you were editing. Nothing
-          has been overwritten — choose which version to keep.
+          {recording
+            ? 'A recording was filed into this note while you were editing. Nothing has been overwritten — keeping only your edits removes its text from the note.'
+            : 'A voice capture or another device saved this note while you were editing. Nothing has been overwritten — choose which version to keep.'}
+          {mustConfirm && confirmed && ' Tap Keep my edits again to keep your text without the recording’s.'}
         </p>
         <div className="save-conflict__actions">
           <button type="button" className="save-conflict__action" onClick={editor.takeTheirs}>
             Use the newer version
           </button>
+          {addition !== null && (
+            <button
+              type="button"
+              className="save-conflict__action"
+              onClick={() => {
+                editor.keepBoth();
+                void editor.saveNow();
+              }}
+            >
+              {recording ? 'Keep my edits and add the recording' : 'Keep my edits and add the new text'}
+            </button>
+          )}
           <button
             type="button"
             className="save-conflict__action"
             onClick={() => {
+              if (mustConfirm && !confirmed) {
+                setDiscardConfirmedFor(theirs?.version ?? null);
+                return;
+              }
               editor.keepMine();
               void editor.saveNow();
             }}

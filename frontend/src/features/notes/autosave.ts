@@ -67,7 +67,19 @@ export interface EditorModel {
   state: SaveState;
   error: string | null;
   /** The server's copy, held while a conflict is unresolved. */
-  theirs: { draft: NoteDraft; version: number } | null;
+  theirs: {
+    draft: NoteDraft;
+    version: number;
+    /**
+     * What the server's copy added at the end of the body this editor last
+     * saved — a recording's paragraph, as the worker files it — or `null`
+     * when the words changed some other way. When it is known, "keep my
+     * edits and add it" is a third way out of the conflict (`keepBoth`).
+     */
+    addition: string | null;
+    /** Whether a recording was filed into the note since this draft was loaded. */
+    recording: boolean;
+  } | null;
 }
 
 export type EditorEvent =
@@ -84,11 +96,23 @@ export type EditorEvent =
    * nothing is shown as failed, and nothing is offered as a choice.
    */
   | { type: 'saveDeferred' }
-  | { type: 'conflict'; theirs: NoteDraft; version: number; message: string }
+  | {
+      type: 'conflict';
+      theirs: NoteDraft;
+      version: number;
+      message: string;
+      addition?: string | null;
+      recording?: boolean;
+    }
   /** Discard my edit and take the server's copy. */
   | { type: 'takeTheirs' }
   /** Re-apply my edit on top of the server's version and save again. */
   | { type: 'keepMine' }
+  /**
+   * Keep my edit and add what the server's copy added — the recording's
+   * paragraph — after it, then save again. Only when the addition is known.
+   */
+  | { type: 'keepBoth' }
   /**
    * The server's version moved without the text: a clean request, or the
    * worker writing the cleaned view, bumps the note's `version` and changes
@@ -133,6 +157,29 @@ export function sameText(a: NoteDraft, b: NoteDraft): boolean {
     sameList(a.tags, b.tags) &&
     (a.language ?? '') === (b.language ?? '')
   );
+}
+
+/**
+ * The text `theirs` added at the end of `saved`, or `null` when it changed
+ * `saved` in some other way. This is the shape of a recording being filed:
+ * the worker appends the dictated paragraph after everything that was there,
+ * on a line of its own, and touches nothing above it. Leading line breaks
+ * are the append's own separator and are not part of the addition; a tail
+ * that runs straight on from the last word is an edit, not an append.
+ */
+export function additionTo(saved: string, theirs: string): string | null {
+  if (theirs.length <= saved.length || !theirs.startsWith(saved)) return null;
+  const tail = theirs.slice(saved.length);
+  if (saved.length > 0 && !tail.startsWith('\n')) return null;
+  const addition = tail.replace(/^\n+/, '');
+  return addition.length > 0 ? addition : null;
+}
+
+/** `body` with `addition` after it as its own paragraph, as the worker would have placed it. */
+export function withAddition(body: string, addition: string): string {
+  if (body.length === 0) return addition;
+  const separator = body.endsWith('\n\n') ? '' : body.endsWith('\n') ? '\n' : '\n\n';
+  return `${body}${separator}${addition}`;
 }
 
 export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
@@ -231,7 +278,12 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
         ...model,
         state: 'conflict',
         error: event.message,
-        theirs: { draft: event.theirs, version: event.version },
+        theirs: {
+          draft: event.theirs,
+          version: event.version,
+          addition: event.addition ?? null,
+          recording: event.recording ?? false,
+        },
       };
 
     case 'takeTheirs': {
@@ -253,6 +305,20 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       // just chose — it is not something the app decided on its own.
       return {
         ...model,
+        version: model.theirs.version,
+        state: 'dirty',
+        error: null,
+        theirs: null,
+      };
+    }
+
+    case 'keepBoth': {
+      if (!model.theirs || model.theirs.addition === null) return model;
+      // My words, then theirs after them, on their version: the next PATCH is
+      // accepted and neither the edit nor the recording's paragraph is lost.
+      return {
+        ...model,
+        draft: { ...model.draft, body: withAddition(model.draft.body, model.theirs.addition) },
         version: model.theirs.version,
         state: 'dirty',
         error: null,
