@@ -146,32 +146,9 @@ export interface NoteCleanedWire {
   error?: string;
 }
 
-/** How the whole note is rewritten for its cleaned view. */
-export type CleanedMode = 'polished' | 'structured';
-
-/**
- * The cleaned view of a whole note: the body rewritten by the worker in one
- * of two modes — `polished` keeps the note's shape and tidies its prose,
- * `structured` rewrites it into headings and lists — as Markdown. `stale`
- * is set when the note has changed since `generated_at`. `error` is what the
- * last attempt said when it failed, if the backend reports one.
- */
-export interface CleanedWire {
-  body: string;
-  mode: CleanedMode;
-  generated_at: string;
-  stale: boolean;
-  error?: string | null;
-}
-
 /** `POST /v1/notes/{id}/clean` answers 202 with this; the worker does the rest. */
-export interface CleanQueuedWire {
-  status: 'queued';
-}
-
-export interface CleanRequestWire {
-  mode?: CleanedMode;
-}
+export type CleanQueuedWire = NoteCleanQueuedWire;
+export type CleanRequestWire = NoteCleanRequestWire;
 
 export interface NoteDetailWire extends NoteWire {
   body: string;
