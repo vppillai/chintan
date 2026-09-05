@@ -447,11 +447,12 @@ describe('the thread', () => {
     await waitFor(() => {
       expect(api.creates).toHaveLength(1);
     });
-    // Plain text — the answer's bold unwrapped — and tagged so retrieval can leave it out.
+    // Plain text — the answer's bold unwrapped, its bullets as lines — and
+    // tagged so retrieval can leave it out.
     expect(api.creates[0]).toEqual({
       title: 'what did I decide about the roof?',
       body: [
-        `Q: what did I decide about the roof?\n\nA: ${(askAnswered.answer ?? '').replaceAll('**', '')}`,
+        'Q: what did I decide about the roof?\n\nA: You decided to get two quotes before the rain and to have the ridge tiles on the south slope reset.\n\nThe tiler can start on the fourteenth.\nThe gutter leak goes to the roofer.',
         'Sources:\nRoof repair\nKitchen rebuild',
       ].join('\n\n'),
       tags: ['ask'],

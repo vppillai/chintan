@@ -11,6 +11,7 @@
  */
 
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
+import { toPlainText } from '@/features/notes/markdown.ts';
 import type {
   AskRequestWire,
   AskSourceWire,
@@ -274,7 +275,8 @@ export const ASK_NOTE_TAG = 'ask';
  * listed at the end so the reader can go and check. Plain text throughout —
  * a note's body is what the Text tab and the library snippet show verbatim,
  * where Markdown's asterisks and dashes are just asterisks and dashes — so
- * the bold the answers arrive with is unwrapped too. Turns without an answer
+ * the answers' Markdown is read by the same parser that renders it and
+ * written back as words (`toPlainText`). Turns without an answer
  * are left out: a failed question is not worth keeping. `null` when nothing
  * was answered, so there is nothing to save.
  *
@@ -288,7 +290,7 @@ export function noteFromThread(turns: readonly AskTurn[]): NoteCreateWire | null
   if (!first || answered.length === 0) return null;
 
   const exchanges = answered.map(
-    (turn) => `Q: ${turn.question}\n\nA: ${plainText(turn.answer ?? '')}`,
+    (turn) => `Q: ${turn.question}\n\nA: ${toPlainText(turn.answer ?? '')}`,
   );
   const sources = sourcesOf(answered);
   const parts = [...exchanges];
@@ -300,11 +302,6 @@ export function noteFromThread(turns: readonly AskTurn[]): NoteCreateWire | null
     body: parts.join('\n\n'),
     tags: [ASK_NOTE_TAG],
   };
-}
-
-/** An answer's light Markdown as text: `**bold**` unwrapped, lists left as lines. */
-function plainText(answer: string): string {
-  return answer.replace(/\*\*(.+?)\*\*/g, '$1');
 }
 
 /* ---------------------------------------------------------------------------

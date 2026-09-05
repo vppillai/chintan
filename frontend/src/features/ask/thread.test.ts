@@ -272,11 +272,11 @@ describe('the thread as a note', () => {
     expect(note?.body).toBe(
       [
         'Q: what did I decide about the roof?\n\nA: Two quotes first.',
-        'Q: and when?\n\nA: The fourteenth.\n\n- Call the tiler\n- Then the gutter',
+        'Q: and when?\n\nA: The fourteenth.\n\nCall the tiler\nThen the gutter',
         'Sources:\nRoof repair\nKitchen rebuild\nCalendar',
       ].join('\n\n'),
     );
-    expect(note?.body).not.toMatch(/\*/);
+    expect(note?.body).not.toMatch(/[*#`]|^- /m);
     expect(note?.tags).toEqual([ASK_NOTE_TAG]);
     expect(sourcesOf(turns).map((source) => source.note_id)).toEqual([
       'fixture-note-id',

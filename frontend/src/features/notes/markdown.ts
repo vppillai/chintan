@@ -133,6 +133,48 @@ export function renderInline(text: string): ReactNode {
   });
 }
 
+/** `text` with its inline marks unwrapped: `**strong**`, `*em*` / `_em_`, `` `code` `` become their words. */
+export function plainInline(text: string): string {
+  return text
+    .split(INLINE)
+    .map((part) => {
+      if (part.startsWith('**') && part.endsWith('**') && part.length > 4) return part.slice(2, -2);
+      if (part.startsWith('`') && part.endsWith('`') && part.length > 2) return part.slice(1, -1);
+      if ((part.startsWith('*') || part.startsWith('_')) && part.length > 2) return part.slice(1, -1);
+      return part;
+    })
+    .join('');
+}
+
+/**
+ * The document as plain text, for a body that is shown verbatim: headings
+ * and paragraphs as lines with their marks unwrapped, one blank line between
+ * blocks; bullets as one line each without the marker; a numbered list with
+ * its numbers, because "the third step" is meaning and a dash is not; a
+ * quote as its words; a rule as nothing.
+ */
+export function toPlainText(source: string): string {
+  return parseBlocks(source)
+    .map((block) => {
+      switch (block.kind) {
+        case 'heading':
+        case 'paragraph':
+        case 'quote':
+          return plainInline(block.text);
+        case 'list':
+          return block.items
+            .map((item, index) =>
+              block.ordered ? `${String(index + 1)}. ${plainInline(item)}` : plainInline(item),
+            )
+            .join('\n');
+        default:
+          return '';
+      }
+    })
+    .filter((text) => text.length > 0)
+    .join('\n\n');
+}
+
 /**
  * The rendered document. Headings are stepped down one level: the note's
  * title is the screen's h1, so the view's `#` is an h2 beneath it and its
