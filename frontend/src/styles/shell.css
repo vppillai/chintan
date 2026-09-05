@@ -3328,16 +3328,41 @@
   gap: var(--space-3);
 }
 
-.usage__total {
+.usage__headlines {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.usage__headline {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* Total is set off by a rule, the way a bill's last line is. */
+.usage__headline--total {
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.usage__headline-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.usage__headline-figures {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--space-2);
+  margin: 0;
 }
 
-/* The month's one figure, in the serif numerals the note titles use. */
+/* The figures, in the serif numerals the note titles use; three of them now
+   share the section, so each is a step down from the one figure that used
+   to stand alone. */
 .usage__figure {
-  font-size: var(--font-size-3xl);
+  font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-regular);
   line-height: var(--line-height-tight);
   letter-spacing: var(--letter-spacing-tight);
@@ -3345,7 +3370,8 @@
 }
 
 .usage__month,
-.usage__summary {
+.usage__summary,
+.usage__unrecorded {
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }

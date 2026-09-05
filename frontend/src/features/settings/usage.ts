@@ -6,7 +6,7 @@
  * and people think in dollars, so the conversion happens exactly here.
  */
 
-import type { UsageTotalsWire, UsageWire } from '@/api/schema.ts';
+import type { UsageAwsWire, UsageTotalsWire, UsageWire } from '@/api/schema.ts';
 
 const MICROS_PER_DOLLAR = 1_000_000;
 
@@ -55,6 +55,37 @@ export function dayLabel(date: string): string {
   return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(
     at,
   );
+}
+
+/**
+ * `as of 3 hours ago`, for the AWS figure's timestamp.
+ *
+ * The worker reads the Budget once a day, so the figure on screen can be most
+ * of a day old and the reader should know roughly how old — but not to the
+ * minute, which is why the steps are coarse. An unparseable timestamp is
+ * shown as sent rather than dropped.
+ */
+export function asOfLabel(iso: string, now: Date = new Date()): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return `as of ${iso}`;
+  const seconds = Math.max(0, Math.round((now.getTime() - at.getTime()) / 1000));
+  if (seconds < 90) return 'as of a moment ago';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `as of ${String(minutes)} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours === 1 ? 'as of an hour ago' : `as of ${String(hours)} hours ago`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'as of yesterday' : `as of ${String(days)} days ago`;
+}
+
+/**
+ * Providers plus AWS, when AWS has been recorded; `null` otherwise, so the
+ * screen leaves the Total line out rather than repeat the providers' figure
+ * under a heading that promises more.
+ */
+export function combinedMicros(usage: UsageWire, aws: UsageAwsWire | null | undefined = usage.aws): number | null {
+  if (!aws) return null;
+  return usage.cost_micros + aws.month_micros;
 }
 
 export interface DayBar {
