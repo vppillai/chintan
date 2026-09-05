@@ -59,6 +59,11 @@
 .field-mode__input {
   position: absolute;
   inset: 0;
+  z-index: 1;
+  /* Sized explicitly as well as pinned: WebKit keeps a native radio at its
+     intrinsic 12 px unless told otherwise, and 12 px is not a target. */
+  inline-size: 100%;
+  block-size: 100%;
   margin: 0;
   opacity: 0;
   cursor: pointer;
