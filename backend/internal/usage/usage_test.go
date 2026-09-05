@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
@@ -19,8 +20,12 @@ import (
 type fakeAPI struct {
 	updates []*dynamodb.UpdateItemInput
 	puts    []*dynamodb.PutItemInput
+	queries []*dynamodb.QueryInput
 	items   []map[string]types.AttributeValue
 	err     error
+	// conditionFails makes every conditional UpdateItem fail its condition,
+	// the way the month row answers a second storage snapshot in one day.
+	conditionFails bool
 }
 
 func (f *fakeAPI) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
@@ -57,6 +62,9 @@ func (f *fakeAPI) UpdateItem(_ context.Context, in *dynamodb.UpdateItemInput, _ 
 		return nil, err
 	}
 	f.updates = append(f.updates, in)
+	if f.conditionFails && in.ConditionExpression != nil {
+		return nil, &types.ConditionalCheckFailedException{Message: aws.String("The conditional request failed")}
+	}
 	return &dynamodb.UpdateItemOutput{}, nil
 }
 
@@ -84,10 +92,11 @@ func validatePlaceholders(in *dynamodb.UpdateItemInput) error {
 	return nil
 }
 
-func (f *fakeAPI) Query(_ context.Context, _ *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+func (f *fakeAPI) Query(_ context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
+	f.queries = append(f.queries, in)
 	return &dynamodb.QueryOutput{Items: f.items}, nil
 }
 
@@ -440,5 +449,131 @@ func TestInstanceSpendSumsTheDayCounters(t *testing.T) {
 	}
 	if got, _ := NewDynamo(&fakeAPI{}, "t").InstanceSpend(context.Background(), "2026-01"); got != 0 {
 		t.Errorf("no counters: %d, want 0", got)
+	}
+}
+
+// The storage snapshot is two writes with fresh maps each: an ADD onto the
+// month row under a condition on storage_snapshot_day, and a SET on the day
+// row. The condition is what makes a second run on the same day add nothing.
+func TestAddStorageDayAddsToTheMonthOnceADay(t *testing.T) {
+	api := &fakeAPI{}
+	d := NewDynamo(api, "t")
+	d.now = func() time.Time { return time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC) }
+
+	added, err := d.AddStorageDay(context.Background(), StorageSnapshot{TenantID: "tenant-a", Day: "2026-09-05", AudioBytes: 9_123_456, Notes: 12})
+	if err != nil {
+		t.Fatalf("AddStorageDay: %v", err)
+	}
+	if !added || len(api.updates) != 2 {
+		t.Fatalf("added = %v, updates = %d; want the month and the day written", added, len(api.updates))
+	}
+	month, day := api.updates[0], api.updates[1]
+	if keyOf(month, "sk") != "USAGE#2026-09" || keyOf(day, "sk") != "USAGE#2026-09-05" {
+		t.Errorf("keys = %q, %q", keyOf(month, "sk"), keyOf(day, "sk"))
+	}
+	if month.ConditionExpression == nil || !strings.Contains(*month.ConditionExpression, "attribute_not_exists(#snap) OR #snap < :day") {
+		t.Errorf("month condition = %v, want one on the last snapshot day", month.ConditionExpression)
+	}
+	if !strings.HasPrefix(*month.UpdateExpression, "ADD #bd :bytes, #nd :notes") || !strings.Contains(*month.UpdateExpression, "#snap = :day") {
+		t.Errorf("month expression = %q", *month.UpdateExpression)
+	}
+	if month.ExpressionAttributeNames["#bd"] != "storage_byte_days" || month.ExpressionAttributeNames["#nd"] != "storage_note_days" ||
+		month.ExpressionAttributeNames["#snap"] != "storage_snapshot_day" {
+		t.Errorf("month names = %v", month.ExpressionAttributeNames)
+	}
+	if got := month.ExpressionAttributeValues[":bytes"].(*types.AttributeValueMemberN).Value; got != "9123456" {
+		t.Errorf("bytes = %q", got)
+	}
+	// The month row is what the admin listing and the snapshot task find
+	// tenants through, so a month created by a snapshot alone is listed too.
+	if got := month.ExpressionAttributeValues[":g1pk"].(*types.AttributeValueMemberS).Value; got != "USAGE#2026-09" {
+		t.Errorf("month gsi1pk = %q", got)
+	}
+	if day.ConditionExpression != nil {
+		t.Errorf("the day row is a plain SET; condition = %q", *day.ConditionExpression)
+	}
+	if !strings.HasPrefix(*day.UpdateExpression, "SET #bd = :bytes, #nd = :notes") || !strings.Contains(*day.UpdateExpression, "#ttl = :ttl") {
+		t.Errorf("day expression = %q", *day.UpdateExpression)
+	}
+	// Fresh maps: nothing from the month write leaks into the day write.
+	for name := range day.ExpressionAttributeNames {
+		if name == "#snap" {
+			continue
+		}
+		if !strings.Contains(*day.UpdateExpression, name) {
+			t.Errorf("day names carry %s, which its expression does not use", name)
+		}
+	}
+
+	// The same day again: the month's condition fails, nothing is added, and
+	// the day row is still written so a retry can finish an interrupted run.
+	api.updates = nil
+	api.conditionFails = true
+	added, err = d.AddStorageDay(context.Background(), StorageSnapshot{TenantID: "tenant-a", Day: "2026-09-05", AudioBytes: 9_123_456, Notes: 12})
+	if err != nil {
+		t.Fatalf("AddStorageDay again: %v", err)
+	}
+	if added {
+		t.Error("added = true on the second run of the day")
+	}
+	if len(api.updates) != 2 || keyOf(api.updates[1], "sk") != "USAGE#2026-09-05" {
+		t.Errorf("updates after the failed condition = %d, want the day row still written", len(api.updates))
+	}
+}
+
+func TestAddStorageDayRefusesAMalformedSnapshot(t *testing.T) {
+	d := NewDynamo(&fakeAPI{}, "t")
+	for _, s := range []StorageSnapshot{
+		{Day: "2026-09-05"},
+		{TenantID: "t", Day: "2026-09"},
+		{TenantID: "t", Day: "2026-09-05", AudioBytes: -1},
+	} {
+		if _, err := d.AddStorageDay(context.Background(), s); err == nil {
+			t.Errorf("AddStorageDay(%+v) accepted", s)
+		}
+	}
+}
+
+func TestMonthReadsTheStorageDays(t *testing.T) {
+	api := &fakeAPI{items: []map[string]types.AttributeValue{
+		{"sk": strAttr("USAGE#2026-09"), "period": strAttr("2026-09"), "storage_byte_days": numAttr(27_370_368), "storage_note_days": numAttr(36)},
+		{"sk": strAttr("USAGE#2026-09-05"), "period": strAttr("2026-09-05"), "storage_byte_days": numAttr(9_123_456)},
+	}}
+	got, err := NewDynamo(api, "t").Month(context.Background(), "tenant-a", "2026-09")
+	if err != nil {
+		t.Fatalf("Month: %v", err)
+	}
+	if got.StorageByteDays != 27_370_368 || got.StorageNoteDays != 36 {
+		t.Errorf("month storage days = %d bytes, %d notes", got.StorageByteDays, got.StorageNoteDays)
+	}
+	if len(got.Days) != 1 || got.Days[0].StorageByteDays != 9_123_456 {
+		t.Errorf("days = %+v", got.Days)
+	}
+}
+
+// The snapshot task finds its tenants the way the admin listing does: one
+// index query per month, tenants read off gsi1sk, the union returned once.
+func TestTenantsWithUsageQueriesTheIndexPerMonth(t *testing.T) {
+	api := &fakeAPI{items: []map[string]types.AttributeValue{
+		{"gsi1pk": strAttr("USAGE#2026-09"), "gsi1sk": strAttr("TENANT#tenant-b")},
+		{"gsi1pk": strAttr("USAGE#2026-09"), "gsi1sk": strAttr("TENANT#tenant-a")},
+	}}
+	got, err := NewDynamo(api, "t").TenantsWithUsage(context.Background(), []string{"2026-09", "2026-08"})
+	if err != nil {
+		t.Fatalf("TenantsWithUsage: %v", err)
+	}
+	if len(got) != 2 || got[0] != "tenant-a" || got[1] != "tenant-b" {
+		t.Errorf("tenants = %v, want the two, once each, sorted", got)
+	}
+	if len(api.queries) != 2 {
+		t.Fatalf("queries = %d, want one per month", len(api.queries))
+	}
+	for _, q := range api.queries {
+		if q.IndexName == nil || *q.IndexName != "gsi1" || *q.KeyConditionExpression != "gsi1pk = :pk" {
+			t.Errorf("query = %+v, want a GSI1 query on gsi1pk", q)
+		}
+	}
+	if _, err := NewDynamo(api, "t").TenantsWithUsage(context.Background(), []string{"09-2026"}); err == nil {
+		t.Error("a malformed month was accepted")
 	}
 }

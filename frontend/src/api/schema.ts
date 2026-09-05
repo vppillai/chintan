@@ -520,6 +520,14 @@ export interface UsageStorageWire {
   audio_bytes: number;
   notes: number;
   approximate: boolean;
+  /**
+   * The month's storage so far, from the worker's daily snapshot: the audio
+   * bytes held each day, summed, and likewise the notes. Unlike the fields
+   * above these do not read zero the moment everything is deleted. Optional
+   * here because the screen may meet a backend from before the snapshot.
+   */
+  byte_days?: number;
+  note_days?: number;
 }
 
 /**
@@ -537,7 +545,9 @@ export interface UsageStorageWire {
 export interface UsageWire extends UsageTotalsWire {
   month: string;
   ops: Record<string, UsageTotalsWire>;
-  days: Array<UsageTotalsWire & { date: string; api_requests?: number }>;
+  days: Array<
+    UsageTotalsWire & { date: string; api_requests?: number; storage_byte_days?: number }
+  >;
   aws?: UsageAwsWire | null;
   /** The same totals split by provider name (`groq`, `minimax`…); absent providers omitted. */
   providers?: Record<string, UsageTotalsWire>;

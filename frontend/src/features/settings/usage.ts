@@ -42,6 +42,46 @@ export function formatMegabytes(bytes: number): string {
   return `${(Math.max(0, bytes) / 1_000_000).toFixed(1)} MB`;
 }
 
+/**
+ * What one GB stored for one month costs at S3 Standard in us-east-1, in
+ * dollars, as published in 2026. It is here, named, because the backend
+ * deliberately attaches no price to storage: it reports byte-days, and this
+ * screen turns them into an ESTIMATE. The real charge is on the account's
+ * bill, in whatever region and class the bucket is, after the free tier, and
+ * with request and transfer costs this figure knows nothing about.
+ */
+export const S3_STANDARD_USD_PER_GB_MONTH = 0.023;
+
+const BYTES_PER_GB = 1_000_000_000;
+
+/** `0.02 GB·days`, `12.40 GB·days` — the unit storage is billed in, scaled to gigabytes. */
+export function formatGigabyteDays(byteDays: number): string {
+  return `${(Math.max(0, byteDays) / BYTES_PER_GB).toFixed(2)} GB·days`;
+}
+
+/**
+ * The month's storage so far, priced: byte-days become GB-months by dividing
+ * by the days in the month, then cost at `S3_STANDARD_USD_PER_GB_MONTH`.
+ * Microdollars, like every other figure here, so `formatDollars` renders it.
+ * An estimate — see the constant.
+ */
+export function estimateStorageMicros(byteDays: number, month: string): number {
+  const days = daysIn(month);
+  if (days === 0 || byteDays <= 0) return 0;
+  const gbMonths = byteDays / BYTES_PER_GB / days;
+  return Math.round(gbMonths * S3_STANDARD_USD_PER_GB_MONTH * MICROS_PER_DOLLAR);
+}
+
+/**
+ * `≈ $0.002`, or `under $0.001` for a figure that is real but rounds away —
+ * a month of personal recordings costs a few tenths of a cent to store, and
+ * "$0.000" would read as nothing rather than as almost nothing.
+ */
+export function formatEstimatedDollars(micros: number): string {
+  if (micros > 0 && micros < 500) return 'under $0.001';
+  return `≈ ${formatDollars(micros)}`;
+}
+
 /** `41 recordings`, `1 recording`; likewise notes. */
 export function formatCount(count: number, singular: string, plural = `${singular}s`): string {
   return `${String(count)} ${count === 1 ? singular : plural}`;

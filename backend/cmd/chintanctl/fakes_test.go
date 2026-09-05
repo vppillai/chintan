@@ -346,6 +346,9 @@ func noteItem(tenantID string, n model.NoteIndex) Item {
 	return it
 }
 
+// captureItem builds the item repository writes for a capture, GSI1 keys
+// included: a row without them is the legacy shape reconcile reports, and a
+// fixture that left them off would make every seeded capture a finding.
 func captureItem(c model.CaptureIndex) Item {
 	blob, err := json.Marshal(c)
 	if err != nil {
@@ -360,6 +363,8 @@ func captureItem(c model.CaptureIndex) Item {
 		"status":     StringAttr(string(c.Status)),
 		"created_at": StringAttr(c.CreatedAt),
 		"version":    NumberAttr(c.Version),
+		"gsi1pk":     StringAttr("TENANT#" + c.UserID + "#NOTE#" + c.NoteID),
+		"gsi1sk":     StringAttr("CAPTURE#" + c.CreatedAt),
 		"data":       StringAttr(string(blob)),
 	}
 }
@@ -405,6 +410,7 @@ func seedTenant(t *testing.T, part *fakePartition, blobs *fakeBlobs, tenantID st
 		PeaksKey:    "tenants/" + tenantID + "/captures/c1/peaks.json",
 		CreatedAt:   "2026-08-07T09:59:00.000000000Z",
 		DurationMS:  42000,
+		AudioBytes:  int64(len("OPUSOPUSOPUS")),
 		Version:     2,
 	}
 	put(t, part, captureItem(capture))

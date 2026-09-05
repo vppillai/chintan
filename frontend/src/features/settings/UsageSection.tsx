@@ -7,11 +7,15 @@ import {
   asOfLabel,
   combinedMicros,
   dayBars,
+  S3_STANDARD_USD_PER_GB_MONTH,
   dayLabel,
+  estimateStorageMicros,
   formatAudioMinutes,
   formatCalls,
   formatCount,
   formatDollars,
+  formatEstimatedDollars,
+  formatGigabyteDays,
   formatMegabytes,
   formatRequests,
   monthLabel,
@@ -196,6 +200,27 @@ function Usage({ usage }: { usage: UsageWire }) {
                   {storage.approximate && ' · approx.'}
                 </dd>
               </div>
+              {storage.byte_days !== undefined && (
+                /*
+                 * The two rows above are the footprint now; this one is the
+                 * footprint over the month, which is what storage is billed
+                 * by and which survives deleting everything on the 30th. The
+                 * price is this screen's estimate, not the backend's figure.
+                 */
+                <div className="usage__fact">
+                  <dt className="usage__fact-label">Stored this month</dt>
+                  <dd className="usage__fact-figures">
+                    <span className="numeric">{formatGigabyteDays(storage.byte_days)}</span>{' '}
+                    <span className="usage__month">
+                      (
+                      <span className="numeric">
+                        {formatEstimatedDollars(estimateStorageMicros(storage.byte_days, usage.month))}
+                      </span>{' '}
+                      at S3 standard {`$${String(S3_STANDARD_USD_PER_GB_MONTH)}`}/GB-month)
+                    </span>
+                  </dd>
+                </div>
+              )}
             </>
           )}
         </dl>

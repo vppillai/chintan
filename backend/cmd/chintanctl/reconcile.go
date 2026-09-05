@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 
@@ -38,8 +40,42 @@ const (
 	// note left its captures behind; the app lists captures through their
 	// note, so these are unreachable and cost storage for nothing. It is the
 	// one finding whose repair deletes an index row — see runReconcile.
+	//
+	// In production this is also what "delete forever" left behind on
+	// 2026-09-05: the purge listed each note's captures through GSI1, and a
+	// row written in August 2026 — the `data` blob and nothing promoted — is
+	// not in that index at all. The API has since learned to read such rows
+	// from the base table; this finding is how the rows it missed are found.
 	findingDanglingCapture = "dangling_capture"
+	// findingUnlistedNote is a NOTE row without the promoted attributes the
+	// notes list projects and filters on (note_id, deleted_at, updated_at,
+	// purge_after_epoch…): a row written before promotion (August 2026),
+	// which the list has to fetch whole by a second read and can only order
+	// by whatever the blob says. Its repair writes the promoted set back onto
+	// the row from the blob — the same attributes internal/repository writes —
+	// and touches neither the blob nor the version.
+	findingUnlistedNote = "unlisted_note"
+	// findingUnindexedCapture is a CAPTURE row without GSI1 keys, invisible
+	// to every note-scoped read: the note's Recordings tab, a move, and the
+	// purge cascade before it learned to read the base table. Same vintage
+	// and same repair as an unlisted note; a capture whose note is gone is a
+	// dangling capture instead, and is deleted rather than re-indexed.
+	findingUnindexedCapture = "unindexed_capture"
+	// findingCaptureSizeUnknown is a capture row that names an audio object
+	// but records no size for it. The worker has stamped audio_bytes from the
+	// S3 notification since 2026-09-05; every capture before that reads zero,
+	// and the You screen summed them to "27 recordings · 0.0 MB". The bucket
+	// listing reconcile already walks carries every object's size, so the
+	// repair writes that size into the row's record blob — audio_bytes lives
+	// in the blob alone — under the row's version. No HeadObject is needed:
+	// the listing is the same answer for less.
+	findingCaptureSizeUnknown = "capture_size_unknown"
 )
+
+// repairableKinds is what --apply may act on, and what --only accepts.
+var repairableKinds = []string{
+	findingOrphanObject, findingDanglingCapture, findingUnlistedNote, findingUnindexedCapture, findingCaptureSizeUnknown,
+}
 
 type finding struct {
 	Kind     string `json:"kind"`
@@ -51,6 +87,8 @@ type finding struct {
 	// Objects are the keys --apply deletes along with the row, for findings
 	// whose subject is a row rather than an object.
 	Objects []string `json:"objects,omitempty"`
+	// Bytes is the object size --apply writes, for capture_size_unknown.
+	Bytes int64 `json:"bytes,omitempty"`
 	// Repairable is whether --apply would act on this finding.
 	Repairable bool `json:"repairable"`
 	Repaired   bool `json:"repaired,omitempty"`
@@ -107,16 +145,23 @@ func (r *reconcileResult) human(w *lineWriter) {
 
 func cmdReconcile(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) error {
 	var g globalFlags
+	var only stringList
 	fs := newFlagSet("reconcile", stderr)
 	g.register(fs, true, true)
+	fs.Var(&only, "only", "with --apply, repair only findings of this kind ("+strings.Join(repairableKinds, ", ")+"); repeatable. Everything is still reported")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	for _, kind := range only {
+		if !slices.Contains(repairableKinds, kind) {
+			return fmt.Errorf("--only %q is not a repairable finding; one of %s", kind, strings.Join(repairableKinds, ", "))
+		}
 	}
 	e, err := dial(ctx, g, stdout, stderr, stdin)
 	if err != nil {
 		return err
 	}
-	res, err := runReconcile(ctx, e, g.tenants, g.apply)
+	res, err := runReconcile(ctx, e, g.tenants, g.apply, only)
 	if err != nil {
 		return err
 	}
@@ -126,9 +171,10 @@ func cmdReconcile(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	return dryRunBanner(stdout, g.apply, res.repairPlan())
 }
 
-// repairPlan says what --apply would do, in the words the banner prints.
+// repairPlan says what --apply would do, in the words the banner prints. A
+// finding --only leaves out is not repairable in this run and is not counted.
 func (r *reconcileResult) repairPlan() string {
-	orphans, dangling, danglingObjects := 0, 0, 0
+	orphans, dangling, danglingObjects, unlisted, unindexed, sizes := 0, 0, 0, 0, 0, 0
 	for _, f := range r.Findings {
 		if !f.Repairable {
 			continue
@@ -137,6 +183,12 @@ func (r *reconcileResult) repairPlan() string {
 		case findingDanglingCapture:
 			dangling++
 			danglingObjects += len(f.Objects)
+		case findingUnlistedNote:
+			unlisted++
+		case findingUnindexedCapture:
+			unindexed++
+		case findingCaptureSizeUnknown:
+			sizes++
 		default:
 			orphans++
 		}
@@ -144,6 +196,12 @@ func (r *reconcileResult) repairPlan() string {
 	plan := fmt.Sprintf("delete %d orphaned object(s)", orphans)
 	if dangling > 0 {
 		plan += fmt.Sprintf(" and %d dangling capture row(s) with %d object(s)", dangling, danglingObjects)
+	}
+	if unlisted > 0 || unindexed > 0 {
+		plan += fmt.Sprintf("; re-promote the attributes of %d note row(s) and %d capture row(s)", unlisted, unindexed)
+	}
+	if sizes > 0 {
+		plan += fmt.Sprintf("; record the audio size of %d capture row(s)", sizes)
 	}
 	return plan
 }
@@ -163,17 +221,38 @@ func (r *reconcileResult) repairPlan() string {
 // was filed into is gone, and the app reaches captures only through their
 // note, so nothing can ever show it. Keeping it preserves bytes nobody can
 // read.
-func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply bool) (*reconcileResult, error) {
+//
+// only, when not empty, restricts what --apply repairs to those finding kinds;
+// a finding of another kind is reported with Repairable false for this run, so
+// the banner, the JSON and the repair agree about what is going to happen. An
+// operator cleaning up one incident should not have to accept every repair
+// the tool knows.
+func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply bool, only []string) (*reconcileResult, error) {
 	tenants, err := resolveTenants(ctx, e.Blobs, explicitTenants)
 	if err != nil {
 		return nil, err
 	}
 	res := &reconcileResult{Target: e.Target, Apply: apply, Tenants: tenants}
+	repairs := func(kind string) bool { return len(only) == 0 || slices.Contains(only, kind) }
 
 	for _, tenantID := range tenants {
 		tctx := obs.WithTenant(ctx, tenantID)
 
-		idx, err := buildIndex(tctx, e.Part, tenantID, nil)
+		// The raw rows that predate attribute promotion, kept by sort key so
+		// the repair can rewrite exactly what it read. Judged on the row, not
+		// the decoded model: the model cannot say whether note_id was promoted
+		// or recovered from the blob.
+		legacy := map[string]Item{}
+		idx, err := buildIndex(tctx, e.Part, tenantID, func(it Item) error {
+			sk := it.SK()
+			switch {
+			case strings.HasPrefix(sk, "NOTE#") && !hasAttr(it, "note_id"):
+				legacy[sk] = it
+			case strings.HasPrefix(sk, "CAPTURE#") && !hasAttr(it, "gsi1pk"):
+				legacy[sk] = it
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -198,10 +277,13 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 		// unavoidable accumulation in this command, and it is bounded by the
 		// object count, not by the corpus size.
 		present := make(map[string]bool)
+		// Sizes, for the captures whose rows record none. Bounded like present.
+		sizes := make(map[string]int64)
 		var orphans []finding
 		err = e.Blobs.List(tctx, tenantPrefix(tenantID), func(info ObjectInfo) error {
 			res.Objects++
 			present[info.Key] = true
+			sizes[info.Key] = info.Size
 			ref := parseObjectKey(info.Key)
 			if ref.Group == "captures" {
 				if _, isDangling := dangling[ref.EntityID]; isDangling {
@@ -218,7 +300,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 					orphans = append(orphans, finding{
 						Kind: findingOrphanObject, TenantID: tenantID, Key: info.Key,
 						Owner:  "NOTE#" + ref.EntityID,
-						Detail: "no index row for the owning note", Repairable: true,
+						Detail: "no index row for the owning note", Repairable: repairs(findingOrphanObject),
 					})
 					return nil
 				}
@@ -232,7 +314,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 					orphans = append(orphans, finding{
 						Kind: findingOrphanObject, TenantID: tenantID, Key: info.Key,
 						Owner:  "CAPTURE#" + ref.EntityID,
-						Detail: "no index row for the owning capture", Repairable: true,
+						Detail: "no index row for the owning capture", Repairable: repairs(findingOrphanObject),
 					})
 					return nil
 				}
@@ -292,7 +374,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 				Objects: keys,
 				Detail: fmt.Sprintf("filed into a note that has no row; %d object(s) unreachable through the app",
 					len(keys)),
-				Repairable: true,
+				Repairable: repairs(findingDanglingCapture),
 			})
 		}
 
@@ -308,6 +390,64 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 				Kind: findingStuckCapture, TenantID: tenantID, SK: "CAPTURE#" + id,
 				Detail: fmt.Sprintf("capture is still %q", idx.Captures[id].Status),
 			})
+		}
+
+		legacySKs := make([]string, 0, len(legacy))
+		for sk := range legacy {
+			legacySKs = append(legacySKs, sk)
+		}
+		sort.Strings(legacySKs)
+		for _, sk := range legacySKs {
+			if id, ok := strings.CutPrefix(sk, "NOTE#"); ok {
+				n := idx.Notes[id]
+				res.Findings = append(res.Findings, finding{
+					Kind: findingUnlistedNote, TenantID: tenantID, SK: sk,
+					Detail:     "row carries only the record blob; " + describeNoteShelf(n),
+					Repairable: repairs(findingUnlistedNote),
+				})
+				continue
+			}
+			id := strings.TrimPrefix(sk, "CAPTURE#")
+			if _, isDangling := dangling[id]; isDangling {
+				// Deleted by the finding above; nothing to re-index.
+				continue
+			}
+			res.Findings = append(res.Findings, finding{
+				Kind: findingUnindexedCapture, TenantID: tenantID, SK: sk,
+				Owner:      "NOTE#" + idx.Captures[id].NoteID,
+				Detail:     "row carries no GSI1 keys, so no note-scoped read can find it",
+				Repairable: repairs(findingUnindexedCapture),
+			})
+		}
+
+		// Captures that name an audio object but record no size for it. The
+		// size comes from the listing above; a capture whose audio is not in
+		// the bucket is already a missing_object and has nothing to record.
+		unsized := make([]string, 0)
+		for id, c := range idx.Captures {
+			if _, isDangling := dangling[id]; isDangling {
+				continue
+			}
+			if c.AudioKey != "" && c.AudioBytes == 0 {
+				unsized = append(unsized, id)
+			}
+		}
+		sort.Strings(unsized)
+		for _, id := range unsized {
+			c := idx.Captures[id]
+			size, known := sizes[c.AudioKey]
+			f := finding{Kind: findingCaptureSizeUnknown, TenantID: tenantID, SK: "CAPTURE#" + id, Owner: c.AudioKey}
+			switch {
+			case !known:
+				f.Detail = "row records no audio size and the audio object is not in the bucket"
+			case size == 0:
+				f.Detail = "row records no audio size and the audio object is empty"
+			default:
+				f.Detail = fmt.Sprintf("row records no audio size; the object is %d bytes", size)
+				f.Bytes = size
+				f.Repairable = repairs(findingCaptureSizeUnknown)
+			}
+			res.Findings = append(res.Findings, f)
 		}
 
 		obs.Log(tctx).Info("reconciled tenant",
@@ -326,6 +466,61 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			continue
 		}
 		switch f.Kind {
+		case findingUnlistedNote, findingUnindexedCapture:
+			// A conditional SET of the promoted attributes, the write
+			// backfill-search-text uses: the blob and the version are left as
+			// they are, so a row the API rewrote between the read and here is
+			// skipped and reported rather than overwritten.
+			it, ok, err := e.Part.Get(ctx, tenantPK(f.TenantID), f.SK)
+			if err != nil {
+				return res, err
+			}
+			if !ok {
+				f.Detail += "; gone before --apply reached it"
+				continue
+			}
+			set, err := promotedAttributes(f.TenantID, it)
+			if err != nil {
+				return res, err
+			}
+			err = e.Part.Update(ctx, it.PK(), it.SK(), set, it.Num("version"))
+			if errors.Is(err, ErrItemChanged) {
+				f.Detail += "; changed between the read and the write, not touched"
+				continue
+			}
+			if err != nil {
+				return res, err
+			}
+			obs.Log(ctx).Info("re-promoted a legacy row",
+				slog.String("sk", f.SK), slog.Int("attributes", len(set)))
+		case findingCaptureSizeUnknown:
+			// audio_bytes lives in the record blob and nowhere else, so the
+			// blob is rewritten with the one field added — decoded as raw
+			// JSON so a field this build does not know survives — under the
+			// same version condition as the other row repairs.
+			it, ok, err := e.Part.Get(ctx, tenantPK(f.TenantID), f.SK)
+			if err != nil {
+				return res, err
+			}
+			if !ok {
+				f.Detail += "; gone before --apply reached it"
+				continue
+			}
+			data, err := blobWithAudioBytes(it, f.Bytes)
+			if err != nil {
+				f.Detail += "; " + err.Error()
+				continue
+			}
+			err = e.Part.Update(ctx, it.PK(), it.SK(), Item{"data": data}, it.Num("version"))
+			if errors.Is(err, ErrItemChanged) {
+				f.Detail += "; changed between the read and the write, not touched"
+				continue
+			}
+			if err != nil {
+				return res, err
+			}
+			obs.Log(ctx).Info("recorded a capture's audio size",
+				slog.String("sk", f.SK), slog.Int64("bytes", f.Bytes))
 		case findingDanglingCapture:
 			// Objects first, then the row, the order erase uses: a run
 			// interrupted between the two leaves a row that the next run

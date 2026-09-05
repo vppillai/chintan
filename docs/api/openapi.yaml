@@ -466,10 +466,12 @@ paths:
         every authenticated request: the month's provider totals, the same
         split by operation (`transcribe`, `route`, `cleanup`, `clean_note`,
         `ask`) and by provider (`providers`), the authenticated API requests
-        made (`api`), one line per day with any usage or any request, and
-        what the recordings and notes occupy (`storage`, computed from the
-        index rows at read time). Microdollars throughout — the unit the
-        spend cap uses. A month with no usage answers zeros, not 404.
+        made (`api`), one line per day with any usage, request or storage
+        snapshot, and what the recordings and notes occupy (`storage`: the
+        footprint now, computed from the index rows at read time, and the
+        month's byte-days and note-days from the worker's daily snapshot).
+        Microdollars throughout — the unit the spend cap uses. A month with
+        no usage answers zeros, not 404.
 
         Beside it, `aws`: what the instance itself cost in AWS that month, as
         last read from the stack's AWS Budget by the worker's daily task
@@ -1545,9 +1547,19 @@ components:
       type: object
       description: |
         What the caller's recordings and notes add up to, computed from the
-        capture and note index rows when the request is served.
-      required: [recordings, audio_seconds, audio_bytes, notes, approximate]
+        capture and note index rows when the request is served — and, in
+        `byte_days` and `note_days`, what they added up to over the month:
+        the worker measures the same footprint once a day and adds it onto
+        the month, so the figure survives a delete-all and is what storage
+        is billed by. No price is attached server-side.
+      required: [recordings, audio_seconds, audio_bytes, notes, approximate, byte_days, note_days]
       properties:
+        byte_days:
+          type: integer
+          description: Sum over the month's daily snapshots of the audio bytes held that day. 0 until the first snapshot of the month; divide by the days in the month for an average footprint, or price it as GB-months.
+        note_days:
+          type: integer
+          description: Sum over the month's daily snapshots of the active notes held that day.
         recordings: { type: integer }
         audio_seconds:
           type: number
@@ -1603,12 +1615,15 @@ components:
                 allOf:
                   - $ref: '#/components/schemas/UsageTotals'
                   - type: object
-                    required: [date, api_requests]
+                    required: [date, api_requests, storage_byte_days]
                     properties:
                       date: { type: string, format: date }
                       api_requests:
                         type: integer
                         description: Authenticated API requests served that day; 0 when none.
+                      storage_byte_days:
+                        type: integer
+                        description: The audio bytes held on that day, as the daily storage snapshot found them; 0 on a day it did not run.
             api: { $ref: '#/components/schemas/UsageApi' }
             storage: { $ref: '#/components/schemas/UsageStorage' }
 

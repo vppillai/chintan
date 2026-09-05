@@ -589,6 +589,15 @@ export function useAsk(askId: string | null, since: number) {
  */
 const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
 
+/**
+ * How long a `Filed` receipt is offered before it stops being a filing row.
+ * A day covers the recording made on the walk home and read at the desk; after
+ * that the recording is in its note, where the Recordings tab shows it, and a
+ * receipt on the library screen is noise — the owner met three of them, weeks
+ * old, above an empty library.
+ */
+export const FILED_RECEIPT_MS = 24 * 60 * 60 * 1000;
+
 /** Newest-first, and twenty is more than one person records before the first has filed. */
 const CAPTURE_LIST_LIMIT = 20;
 
@@ -632,21 +641,25 @@ function within(iso: string | null | undefined, windowMs: number, now: number): 
  *
  * Anything still moving, obviously. Of the stopped ones: `failed`,
  * `spend_capped` and `needs_target` always, because each has an action the
- * user must take and a capture waiting on the user must not vanish silently;
- * `appended` always too — the row is the one place that says "your recording
- * is in this note, here it is", and it stays until the user opens the note or
- * dismisses it (`FilingRow` remembers which, per device). It used to fade
- * after ten minutes, which meant a recording made on the walk home had no
- * receipt by the time the user sat down to read it. `no_content` alone
- * expires on its own: there is nothing to open and nothing to do.
+ * user must take and a capture waiting on the user must not vanish silently.
+ * `appended` for a day (`FILED_RECEIPT_MS`): the row is the one place that
+ * says "your recording is in this note, here it is", and within the day it
+ * stays until the user opens the note or dismisses it (`FilingRow` remembers
+ * which, per device). It used to fade after ten minutes, which meant a
+ * recording made on the walk home had no receipt by the time the user sat
+ * down to read it; then it never faded, which meant a device that had
+ * dismissed nothing showed receipts from weeks ago. `no_content` alone
+ * expires quickly: there is nothing to open and nothing to do.
  */
 export function isFilingRelevant(capture: CaptureWire, now: number = Date.now()): boolean {
   switch (capture.status) {
     case 'failed':
     case 'spend_capped':
     case 'needs_target':
-    case 'appended':
       return true;
+    case 'appended':
+      // The append's own time when the API sends it; the capture's otherwise.
+      return within(capture.appended_at ?? capture.created_at, FILED_RECEIPT_MS, now);
     case 'no_content':
       return within(capture.created_at, RECENTLY_SETTLED_MS, now);
     default:

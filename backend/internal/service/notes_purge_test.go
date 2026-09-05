@@ -260,3 +260,51 @@ func TestPurgeNotesRefusesAnotherTenantsNote(t *testing.T) {
 		t.Fatalf("another tenant's note was deleted: %v", err)
 	}
 }
+
+// TestPurgeUnlinksACaptureTheNoteIndexCannotSee is the production defect of
+// 2026-09-05: "delete forever" listed each note's captures through GSI1, a
+// capture row written in August 2026 carries no index keys, so thirteen filed
+// captures survived the purge of every note and kept answering the library's
+// receipts. The purge has to find such a row from the base table.
+func TestPurgeUnlinksACaptureTheNoteIndexCannotSee(t *testing.T) {
+	f := newPurgeFixture(t)
+	ctx := context.Background()
+	archived := f.archivedNote(t, "a")
+
+	audio := "tenants/user1/captures/c_legacy/audio.webm"
+	f.store.PutLegacyCapture(model.CaptureIndex{
+		ID: "c_legacy", UserID: "user1", NoteID: archived.ID,
+		Status: model.StatusAppended, CreatedAt: "2026-08-07T09:00:00Z", AudioKey: audio,
+	})
+	if err := f.objects.Put(ctx, audio, []byte("x"), "audio/webm"); err != nil {
+		t.Fatalf("Put audio: %v", err)
+	}
+	if page, _ := f.store.ListCapturesByNote(ctx, "user1", archived.ID, repository.ListOptions{}); len(page.Items) != 1 {
+		t.Fatalf("the index lists %d captures, want only the modern one; the legacy row must be invisible to it", len(page.Items))
+	}
+
+	results, err := f.notes.PurgeNotes(ctx, "user1", []string{archived.ID})
+	if err != nil {
+		t.Fatalf("PurgeNotes: %v", err)
+	}
+	if results[0].Status != PurgeStatusPurged {
+		t.Fatalf("result = %+v, want purged", results[0])
+	}
+	if _, err := f.objects.Get(ctx, audio); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("the legacy capture's audio survived the purge (err = %v)", err)
+	}
+	if _, err := f.store.GetCapture(ctx, "user1", "c_legacy"); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("the legacy capture row survived the purge (err = %v)", err)
+	}
+	// And a legacy capture filed into a different note is left alone.
+	other := f.archivedNote(t, "b")
+	f.store.PutLegacyCapture(model.CaptureIndex{
+		ID: "c_other", UserID: "user1", NoteID: other.ID, Status: model.StatusAppended, CreatedAt: "2026-08-07T09:00:00Z",
+	})
+	if _, err := f.notes.PurgeNotes(ctx, "user1", []string{f.archivedNote(t, "c").ID}); err != nil {
+		t.Fatalf("PurgeNotes: %v", err)
+	}
+	if _, err := f.store.GetCapture(ctx, "user1", "c_other"); err != nil {
+		t.Errorf("purging one note removed another note's legacy capture: %v", err)
+	}
+}

@@ -9,7 +9,7 @@
 //	chintanctl export    --instance <name> --out <dir|tar.gz>
 //	chintanctl backup    --instance <name> --out <dir>
 //	chintanctl restore   --instance <name> --in <dir> [--apply]
-//	chintanctl reconcile --instance <name> [--apply]
+//	chintanctl reconcile --instance <name> [--apply] [--only <kind>]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //	chintanctl backfill-search-text --instance <name> [--tenant <id>] [--apply]
 //	chintanctl usage     --instance <name> [--month yyyy-mm] [--tenant <id>]
@@ -45,7 +45,12 @@ Commands:
              objects, with a content hash per object.
   restore    Inverse of backup. Verifies every hash before it writes anything.
   reconcile  Report orphans in both directions: objects with no index row, and
-             index rows whose objects are gone.
+             index rows whose objects are gone; captures filed into a note
+             that has no row; and rows written before their attributes were
+             promoted, which the app lists poorly or not at all; and
+             captures that record no size for their audio. --apply deletes
+             the first three, re-promotes the fourth and fills in the fifth;
+             --only <kind> narrows what it touches.
   erase      Irreversibly delete one tenant everywhere, and report what went.
   backfill-search-text
              Fill in the search_text attribute of every note row from its

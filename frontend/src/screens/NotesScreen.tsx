@@ -294,25 +294,34 @@ export function NotesScreen() {
       <PullToRefresh onRefresh={refresh} />
 
       {/*
-        The wordmark is in the banner above; the screen's own heading is the
-        day, in the notes' serif, with "Notes" and how many as a small-caps
-        line above it (backlog U5). All of it is the one h1 — a screen reader
-        hears "Notes, 12, Thursday 4 September" — and the text still starts
-        with "Notes", which is what the a11y sweep and the route tests look
-        for. The count is what has been loaded, with "+" while there is more.
+        The wordmark is in the banner above; the screen's own heading is
+        "Notes", in the notes' serif, with how many beside it, and the day as
+        a small-caps line above it. It was the other way round (backlog U5) —
+        the day large, "Notes · 12" as the eyebrow — until the owner asked why
+        the biggest text on Home was today's date. All of it is the one h1 —
+        a screen reader hears "Notes, 12, Friday 5 September", because the day
+        comes second in the markup and is only placed above by the stylesheet
+        — and the text still starts with "Notes", which is what the a11y sweep
+        and the route tests look for. The count is what has been loaded, with
+        "+" while there is more.
       */}
       <header className="screen__header library-header">
         <h1 className="library-heading">
-          <span className="library-heading__eyebrow">
-            <span>Notes</span>{' '}
+          <span className="library-heading__title">
+            <span>Notes</span>
             {count !== undefined && (
-              <span className="library-heading__count numeric">
-                {count}
-                {list.hasNextPage ? '+' : ''}
-              </span>
+              <>
+                <span aria-hidden="true" className="library-heading__separator">
+                  ·
+                </span>
+                <span className="library-heading__count numeric">
+                  {count}
+                  {list.hasNextPage ? '+' : ''}
+                </span>
+              </>
             )}
           </span>{' '}
-          <span className="library-heading__date">{describeToday()}</span>
+          <span className="library-heading__eyebrow">{describeToday()}</span>
         </h1>
       </header>
 

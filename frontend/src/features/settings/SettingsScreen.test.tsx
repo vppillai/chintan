@@ -289,6 +289,11 @@ describe('usage this month', () => {
     expect(facts).toHaveTextContent(/API requests\s*312 requests/);
     expect(facts).toHaveTextContent(/Recordings stored\s*41 recordings · 23.2 min · 9.1 MB/);
     expect(facts).toHaveTextContent(/Notes\s*12 notes/);
+    // The month's storage-days, priced here as an estimate at a named rate;
+    // 18 MB·days is real but rounds below a tenth of a cent.
+    expect(facts).toHaveTextContent(
+      /Stored this month\s*0\.02 GB·days \(under \$0\.001 at S3 standard \$0\.023\/GB-month\)/,
+    );
     expect(facts).not.toHaveTextContent(/approx/);
   });
 
