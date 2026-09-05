@@ -22,7 +22,7 @@ import (
 // which is how the first attempt at every capture starts.
 type Invocation struct {
 	TenantID  string `json:"tenant_id"`
-	CaptureID string `json:"capture_id"`
+	CaptureID string `json:"capture_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 	// Task names a job that is not a capture — the weekly expiry sweep's
 	// EventBridge rule sends {"task":"sweep-expired"}, and the API and the

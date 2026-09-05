@@ -59,7 +59,7 @@ func getNote(t *testing.T, h *harness, noteID string) model.NoteIndex {
 	return n
 }
 
-const dictated = service.CaptureMarker("c_1") + "\nthe gutter leaks again\n\n" + service.CaptureMarker("c_2") + "\ncall the roofer on the fourteenth"
+var dictated = service.CaptureMarker("c_1") + "\nthe gutter leaks again\n\n" + service.CaptureMarker("c_2") + "\ncall the roofer on the fourteenth"
 
 // The task end to end: the worker reads the body with the markers stripped,
 // makes one reserved LLM call, and stores the view with its mode and time,

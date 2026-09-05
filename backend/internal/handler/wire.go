@@ -58,6 +58,65 @@ type Note struct {
 	// the client's offline corpus can search the same text the server does
 	// without fetching every body; every other Note response omits it.
 	SearchText string `json:"search_text,omitempty"`
+	// AutoClean says the worker regenerates the whole-note cleaned view after
+	// every change it makes or is told about (append, move, delete). Always
+	// present so a toggle renders the state it is in.
+	AutoClean bool `json:"auto_clean"`
+	// CleanedMode is the mode an automatic or unspecified clean runs in:
+	// polished or structured. Absent means structured, the default.
+	CleanedMode string `json:"cleaned_mode,omitempty"`
+}
+
+// NoteCleaned is the OpenAPI NoteCleaned schema: the whole-note cleaned view.
+//
+// Read-only. The view is derived from the body by the worker's clean-note
+// task, so there is no request that writes it; an edit belongs in the body
+// and the view is regenerated (POST /v1/notes/{id}/clean, or auto_clean).
+type NoteCleaned struct {
+	// Body is the cleaned view in Markdown; empty when the last run failed
+	// before any view existed.
+	Body string `json:"body"`
+	// Mode is the mode Body was generated in, or the mode of the failed
+	// attempt when there is no body.
+	Mode string `json:"mode"`
+	// GeneratedAt is when Body was generated, or when the attempt failed when
+	// there is no body.
+	GeneratedAt string `json:"generated_at"`
+	// Stale is true when the body changed — an append, an edit, a recording
+	// moved in or out or deleted — after GeneratedAt.
+	Stale bool `json:"stale"`
+	// Error is the fixed reason the most recent run produced no view. Present
+	// only after a failure; the next successful run clears it. Beside a Body,
+	// it means the previous view was kept.
+	Error *string `json:"error,omitempty"`
+}
+
+// cleanedOf renders the view, or nil for a note that has never been cleaned
+// and never failed to be.
+func cleanedOf(n model.NoteIndex) *NoteCleaned {
+	if n.CleanedBody == "" && n.CleanedError == "" {
+		return nil
+	}
+	out := &NoteCleaned{
+		Body:        n.CleanedBody,
+		Mode:        string(service.EffectiveCleanMode(model.NoteIndex{CleanMode: n.CleanedMode})),
+		GeneratedAt: n.CleanedAt,
+		Stale:       n.CleanedStale,
+	}
+	if n.CleanedError != "" {
+		v := n.CleanedError
+		out.Error = &v
+	}
+	return out
+}
+
+// NoteCleanQueued is the OpenAPI NoteCleanQueued schema, the 202 body of
+// POST /v1/notes/{id}/clean.
+type NoteCleanQueued struct {
+	Status string `json:"status"`
+	// Mode is the mode that was queued: the request's, else the note's, else
+	// structured.
+	Mode string `json:"mode"`
 }
 
 func noteOf(n model.NoteIndex) Note {
@@ -73,6 +132,10 @@ func noteOf(n model.NoteIndex) Note {
 		Archived:  !service.NoteIsActive(n),
 		Verbatim:  n.Verbatim,
 		Language:  n.Language,
+		AutoClean: n.AutoClean,
+	}
+	if model.ValidNoteCleanMode(n.CleanMode) {
+		out.CleanedMode = string(n.CleanMode)
 	}
 	if out.Aliases == nil {
 		out.Aliases = []string{}
@@ -126,6 +189,9 @@ type NoteDetail struct {
 	Note
 	Body     string    `json:"body"`
 	Captures []Capture `json:"captures"`
+	// Cleaned is the whole-note cleaned view, null until the note has been
+	// cleaned (or a clean has failed) at least once.
+	Cleaned *NoteCleaned `json:"cleaned"`
 }
 
 // Capture is the OpenAPI Capture schema.

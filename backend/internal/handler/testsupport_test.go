@@ -45,7 +45,7 @@ func withBrokenStore() harnessOption {
 // withBrokenObjects makes deletes fail, so a purge cascade cannot complete.
 func withBrokenObjects() harnessOption {
 	return func(d *handler.Deps, h *harness) {
-		notes := service.NewNotesService(h.store, brokenObjects{h.objects})
+		notes := service.NewNotesService(h.store, brokenObjects{h.objects}).WithInvoker(h.worker)
 		d.Notes = notes
 	}
 }
@@ -72,7 +72,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		spend:   &fakeSpend{},
 		usage:   memory.NewUsage(),
 	}
-	h.notes = service.NewNotesService(h.store, h.objects)
+	h.notes = service.NewNotesService(h.store, h.objects).WithInvoker(h.worker)
 	h.captures = service.NewCaptureService(h.store, h.objects).
 		WithInvoker(h.worker).
 		WithNoteCreator(h.notes)

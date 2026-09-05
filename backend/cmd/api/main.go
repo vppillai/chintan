@@ -77,7 +77,12 @@ func init() {
 	store := repository.NewDynamoStore(dynamoClient, tableName)
 	objects := repository.NewS3Objects(s3Client, contentBucket)
 
-	notesService := service.NewNotesService(store, objects)
+	// One hand-off to the worker Lambda, on its live alias, shared by the
+	// capture retry/target and the whole-note clean. Without it a retry has
+	// nowhere to go and POST /v1/notes/{id}/clean answers 503.
+	invoker := pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), mustEnv("WORKER_FUNCTION_ARN"))
+
+	notesService := service.NewNotesService(store, objects).WithInvoker(invoker)
 	settingsService := service.NewSettingsService(store)
 
 	// Three wirings, each of which is the difference between a feature working
@@ -93,7 +98,7 @@ func init() {
 	//    new note.
 	captureService := service.NewCaptureService(store, objects).
 		WithUploads(upload.NewS3(s3Client, contentBucket)).
-		WithInvoker(pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), mustEnv("WORKER_FUNCTION_ARN"))).
+		WithInvoker(invoker).
 		WithNoteCreator(notesService)
 
 	// The API does not call a provider, so it cannot spend. It reads the same

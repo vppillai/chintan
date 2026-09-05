@@ -612,6 +612,31 @@ func statusScenarios() map[string]scenario {
 		"GET /v1/notes/{noteId}/recordings/urls -> 401": get("/v1/notes/n1/recordings/urls", ""),
 		"GET /v1/notes/{noteId}/recordings/urls -> 404": get("/v1/notes/missing/recordings/urls", "user1"),
 
+		"POST /v1/notes/{noteId}/clean -> 202": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Cleanable", map[string]any{"body": "the gutter leaks"})
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil).Code
+		},
+		"POST /v1/notes/{noteId}/clean -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Cleanable", nil)
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", map[string]any{"mode": "faithful"}).Code
+		},
+		"POST /v1/notes/{noteId}/clean -> 401": send(http.MethodPost, "/v1/notes/x/clean", "", nil),
+		"POST /v1/notes/{noteId}/clean -> 404": send(http.MethodPost, "/v1/notes/missing/clean", "user1", nil),
+		"POST /v1/notes/{noteId}/clean -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Archived", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil).Code
+		},
+		"POST /v1/notes/{noteId}/clean -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Capped", nil)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil).Code
+		},
+
 		// ---- tags and search
 		"GET /v1/tags -> 200":   get("/v1/tags", "user1"),
 		"GET /v1/tags -> 401":   get("/v1/tags", ""),
