@@ -18,6 +18,7 @@ import {
   RESUME_WINDOW_MS,
   THREAD_KEY,
   applyRow,
+  canResend,
   canResume,
   failTurn,
   historyFor,
@@ -25,6 +26,7 @@ import {
   loadThread,
   newTurn,
   noteFromThread,
+  resendTurn,
   resumeTurn,
   saveThread,
   sourceLabels,
@@ -320,6 +322,34 @@ describe('the thread in session storage', () => {
     expect(neverSent).toMatchObject({ status: 'failed', error: NOT_SENT_MESSAGE });
     expect(stale?.status).toBe('timeout');
     expect(fresh?.status).toBe('pending');
+  });
+
+  it('keeps a young question whose POST was in flight as asking, so it is sent again under its key', () => {
+    // The panel was remounted mid-send. With the request held, the hook
+    // replays it and the server answers with the original 202; without it,
+    // or once too old to be worth it, the question is shown as never sent.
+    const now = 1_000_000;
+    const request = { question: 'in flight' };
+    saveThread([
+      { ...newTurn('a', 'in flight', now - 5_000), request },
+      { ...newTurn('b', 'too old', now - RESUME_WINDOW_MS), request },
+      newTurn('c', 'saved without its request', now - 5_000),
+    ]);
+    const [young, old, bare] = loadThread(now);
+    expect(young).toMatchObject({ status: 'asking', request });
+    expect(old).toMatchObject({ status: 'failed', error: NOT_SENT_MESSAGE });
+    expect(bare).toMatchObject({ status: 'failed', error: NOT_SENT_MESSAGE });
+  });
+
+  it('can resend only a question that never reached this side and still has its body', () => {
+    const request = { question: 'q' };
+    const lost = failTurn({ ...newTurn('k', 'q'), request }, NOT_SENT_MESSAGE);
+    expect(canResend(lost)).toBe(true);
+    expect(canResend(failTurn(newTurn('k', 'q'), NOT_SENT_MESSAGE))).toBe(false);
+    // The server's own failure is bound to the key; only a new question can do better.
+    expect(canResend({ ...applyRow({ ...newTurn('k', 'q'), request }, askFailed) })).toBe(false);
+    expect(canResend(failTurn({ ...newTurn('k', 'q'), request }, LOST_MESSAGE))).toBe(false);
+    expect(resendTurn(lost, 7)).toMatchObject({ status: 'asking', askId: null, error: null, since: 7 });
   });
 
   it('is empty for anything unreadable', () => {

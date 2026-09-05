@@ -8,17 +8,30 @@ import {
   LOST_MESSAGE,
   NOT_SENT_MESSAGE,
   applyRow,
+  canResend,
   canResume,
   failTurn,
   historyFor,
   isBusy,
   loadThread,
   newTurn,
+  resendTurn,
   resumeTurn,
   saveThread,
   updateStoredTurn,
   type AskTurn,
 } from './thread.ts';
+
+/**
+ * A replay that reaches the server while the original POST is still being
+ * handled there is answered 409 "an identical request is still in flight";
+ * the record is written the moment the original finishes, so the same
+ * request a second later is the replayed 202. A few tries cover a slow
+ * original; after that the question is shown as not sent, and Try again
+ * sends the same request once more.
+ */
+const REPLAY_RETRY_MS = 1_000;
+const REPLAY_RETRY_LIMIT = 5;
 
 export interface AskThread {
   turns: readonly AskTurn[];
@@ -27,9 +40,11 @@ export interface AskThread {
   ask: (question: string) => void;
   /**
    * Picks a timed-out or lost question back up — polling its row again where
-   * there is one to poll — or sends it again, in place.
+   * there is one to poll, sending the same request under the same key where
+   * the POST never came back — or asks it again as a new turn.
    */
   retry: (key: string) => void;
+  /** Ends the thread, on screen and in storage — from a panel that is gone too. */
   clear: () => void;
 }
 
@@ -86,6 +101,63 @@ export function useAskThread(): AskThread {
     [replace],
   );
 
+  /** The keys this instance has itself sent; see the replay effect below. */
+  const sent = useRef(new Set<string>());
+  /**
+   * A stable handle on `post`, for the replay attempt it schedules for
+   * itself: a callback cannot name itself without the hooks linter reading
+   * the reference as a mutation. Filled in by the effect after `post` is
+   * defined; the placeholder is never reachable before then.
+   */
+  const postRef = useRef<(turn: AskTurn, attempt: number) => void>(() => {});
+
+  /**
+   * One send path for a question, a resend and a replay. The turn's own key
+   * is the idempotency key and its `request` the body, so however many times
+   * a turn is sent the server sees one question. Chained on the promise
+   * rather than given as per-call callbacks, which TanStack drops once the
+   * component has unmounted (see `settle`).
+   */
+  const post = useCallback(
+    (turn: AskTurn, attempt = 0): void => {
+      if (!turn.request) return;
+      sent.current.add(turn.key);
+      void send.mutateAsync({ body: turn.request, key: turn.key }).then(
+        (created) => {
+          // `since` is the moment the row exists, not when the field was
+          // submitted, so a slow POST does not eat into the poll's minute.
+          settle(turn.key, (current) => ({ ...applyRow(current, created), since: Date.now() }));
+        },
+        (error: unknown) => {
+          if (error instanceof ApiError && error.isConflict && attempt < REPLAY_RETRY_LIMIT) {
+            setTimeout(() => {
+              postRef.current(turn, attempt + 1);
+            }, REPLAY_RETRY_MS);
+            return;
+          }
+          settle(turn.key, (current) => failTurn(current, messageFor(error, NOT_SENT_MESSAGE)));
+        },
+      );
+    },
+    [send, settle],
+  );
+
+  /*
+   * A turn still `asking` that this instance did not send is one the panel
+   * was remounted under — the POST belongs to a closure that has gone, and
+   * whatever it settles to, this instance would not see it. The same request
+   * goes out again under the same key: the server answers with the original
+   * 202 if the first attempt reached it, or asks the question once if it did
+   * not, and either way the turn is polled here rather than shown as never
+   * sent. `sent` is what stops the effect re-sending a turn `ask` just did.
+   */
+  useEffect(() => {
+    postRef.current = post;
+  }, [post]);
+  useEffect(() => {
+    if (last?.status === 'asking' && !sent.current.has(last.key)) post(last);
+  }, [last, post]);
+
   /*
    * Settled? Decided from the poll as it is now. The id is checked as well as
    * the status, because the query for a previous question can still hold its
@@ -123,28 +195,15 @@ export function useAskThread(): AskThread {
     (question: string): void => {
       const trimmed = question.trim();
       if (trimmed.length === 0) return;
-      const turn = newTurn(newIdempotencyKey(), trimmed);
       const history = historyFor(turns, trimmed);
+      const turn: AskTurn = {
+        ...newTurn(newIdempotencyKey(), trimmed),
+        request: { question: trimmed, ...(history.length > 0 ? { history } : {}) },
+      };
       setTurns((prev) => [...prev, turn]);
-      // Chained on the promise rather than given as per-call callbacks, which
-      // TanStack drops once the component has unmounted (see `settle`).
-      void send
-        .mutateAsync({
-          body: { question: trimmed, ...(history.length > 0 ? { history } : {}) },
-          key: turn.key,
-        })
-        .then(
-          (created) => {
-            // `since` is the moment the row exists, not when the field was
-            // submitted, so a slow POST does not eat into the poll's minute.
-            settle(turn.key, (current) => ({ ...applyRow(current, created), since: Date.now() }));
-          },
-          (error: unknown) => {
-            settle(turn.key, (current) => failTurn(current, messageFor(error, NOT_SENT_MESSAGE)));
-          },
-        );
+      post(turn);
     },
-    [turns, send, settle],
+    [turns, post],
   );
 
   const retry = useCallback(
@@ -159,14 +218,27 @@ export function useAskThread(): AskThread {
         replace(key, (current) => resumeTurn(current));
         return;
       }
+      // A question that never reached this side goes out again as itself —
+      // same key, same body — so a POST that did reach the server is not
+      // paid for twice. It moves to the end, where the poll is.
+      if (canResend(turn)) {
+        const resent = resendTurn(turn);
+        setTurns((prev) => [...prev.filter((candidate) => candidate.key !== key), resent]);
+        post(resent);
+        return;
+      }
       setTurns((prev) => prev.filter((candidate) => candidate.key !== key));
       ask(turn.question);
     },
-    [turns, last, ask, replace],
+    [turns, last, ask, post, replace],
   );
 
+  // A Save as note that lands after the panel has gone still ends the thread
+  // the panel comes back to; with no component to hold the state, storage is
+  // written directly, as `settle` does.
   const clear = useCallback((): void => {
-    setTurns([]);
+    if (mounted.current) setTurns([]);
+    else saveThread([]);
   }, []);
 
   return { turns, busy: isBusy(last), ask, retry, clear };
