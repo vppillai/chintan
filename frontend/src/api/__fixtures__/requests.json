@@ -93,7 +93,22 @@
         "house"
       ],
       "verbatim": true,
-      "language": "ml"
+      "language": "ml",
+      "auto_clean": true,
+      "cleaned_mode": "structured"
+    }
+  },
+  {
+    "name": "cleanNote",
+    "method": "POST",
+    "path": "/v1/notes/contract-note/clean"
+  },
+  {
+    "name": "cleanNoteMode",
+    "method": "POST",
+    "path": "/v1/notes/contract-note/clean",
+    "body": {
+      "mode": "polished"
     }
   },
   {

@@ -73,7 +73,38 @@ interface NoteRecord {
   /** `auto`, an ISO-639-1 code, or absent to inherit `default_language`. */
   language?: string;
   captures?: CaptureRecord[];
+  /** The worker's rewrite of the whole note, or nothing yet. */
+  cleaned?: CleanedRecord | null;
+  auto_clean?: boolean;
+  cleaned_mode?: 'polished' | 'structured';
 }
+
+interface CleanedRecord {
+  body: string;
+  mode: 'polished' | 'structured';
+  generated_at: string;
+  stale: boolean;
+}
+
+/**
+ * What the worker would write for a note: the structured rewrite is the
+ * title and the note's sentences as a list under a heading; the polished one
+ * is the body as it is. Enough Markdown to prove the renderer draws it.
+ */
+function cleanedFor(note: NoteRecord, mode: 'polished' | 'structured'): CleanedRecord {
+  const sentences = note.body
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const body =
+    mode === 'structured'
+      ? `# ${note.title}\n\n## Summary\n\n${sentences.map((sentence) => `- ${sentence}`).join('\n')}\n\n**Next:** get the quotes in.`
+      : note.body;
+  return { body, mode, generated_at: new Date().toISOString(), stale: false };
+}
+
+/** How long the stub's "worker" takes to write the view after a 202. */
+export const CLEAN_WORKER_MS = 400;
 
 interface CaptureRecord {
   id: string;
@@ -607,6 +638,26 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    /*
+     * The cleaned view's regeneration: 202 at once, the view a moment later,
+     * as the real worker does — so the app's poll is what finds it.
+     */
+    const cleanMatch = /^\/v1\/notes\/([^/]+)\/clean$/.exec(path);
+    if (cleanMatch && method === 'POST') {
+      const note = state.notes[cleanMatch[1] ?? ''];
+      if (!note) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      const body = (request.postDataJSON() ?? {}) as { mode?: 'polished' | 'structured' };
+      const mode = body.mode ?? note.cleaned_mode ?? note.cleaned?.mode ?? 'structured';
+      setTimeout(() => {
+        note.cleaned = cleanedFor(note, mode);
+      }, CLEAN_WORKER_MS);
+      await json(route, { status: 'queued' }, 202);
+      return;
+    }
+
     const noteMatch = /^\/v1\/notes\/([^/]+)$/.exec(path);
     if (noteMatch) {
       const note = state.notes[noteMatch[1] ?? ''];
@@ -615,7 +666,8 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         return;
       }
       if (method === 'GET') {
-        await json(route, note);
+        // The detail always carries the two cleaned-view fields.
+        await json(route, { ...note, cleaned: note.cleaned ?? null, auto_clean: note.auto_clean ?? false });
         return;
       }
       if (method === 'DELETE') {
@@ -647,7 +699,15 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         }
         const body = request.postDataJSON() as Record<string, unknown>;
         if (typeof body['title'] === 'string') note.title = body['title'];
-        if (typeof body['body'] === 'string') note.body = body['body'];
+        if (typeof body['body'] === 'string' && body['body'] !== note.body) {
+          note.body = body['body'];
+          // The view was made from the text before this edit.
+          if (note.cleaned) note.cleaned = { ...note.cleaned, stale: true };
+        }
+        if (typeof body['auto_clean'] === 'boolean') note.auto_clean = body['auto_clean'];
+        if (body['cleaned_mode'] === 'polished' || body['cleaned_mode'] === 'structured') {
+          note.cleaned_mode = body['cleaned_mode'];
+        }
         if (Array.isArray(body['tags'])) note.tags = body['tags'] as string[];
         if (typeof body['language'] === 'string') {
           // The empty string means "inherit again", which the wire spells as absence.

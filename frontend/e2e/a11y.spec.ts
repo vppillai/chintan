@@ -18,6 +18,7 @@ const ROUTES = [
   '/about',
   '/notes/roof-repair',
   '/notes/roof-repair?tab=recordings',
+  '/notes/roof-repair?tab=cleaned',
 ] as const;
 const THEMES = ['ink', 'nocturne'] as const;
 

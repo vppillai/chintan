@@ -23,6 +23,8 @@ import type {
   CaptureMoveWire,
   CaptureTargetWire,
   CaptureWire,
+  CleanQueuedWire,
+  CleanRequestWire,
   NoteCreateWire,
   NoteDetailWire,
   NoteListQuery,
@@ -108,6 +110,25 @@ export class ChintanApi {
     return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}`, {
       method: 'PATCH',
       body,
+      idempotencyKey,
+    });
+  }
+
+  /**
+   * Asks the worker to regenerate the note's cleaned view, in `mode` when
+   * given and otherwise in the note's own. Answers 202 at once; the result
+   * arrives on the note detail's `cleaned` a few seconds later, which the
+   * caller polls for (`useRegenerateCleaned`). Retried by the client like
+   * any mutation — the idempotency key makes a replay one request.
+   */
+  cleanNote(
+    noteId: string,
+    body?: CleanRequestWire,
+    idempotencyKey?: string,
+  ): Promise<CleanQueuedWire> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/clean`, {
+      method: 'POST',
+      ...(body ? { body } : {}),
       idempotencyKey,
     });
   }

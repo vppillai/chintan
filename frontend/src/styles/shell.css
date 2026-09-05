@@ -2425,6 +2425,275 @@
   color: var(--color-muted);
 }
 
+/* --------------------------------------------------------------------------
+   Cleaned view — the worker's rewrite of the whole note, read-only
+   -------------------------------------------------------------------------- */
+
+.cleaned {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.cleaned__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* Structured · Polished: the same recessed track as the transcript's toggle. */
+.cleaned__modes {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-full);
+}
+
+.cleaned__mode {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+
+.cleaned__mode[aria-pressed='true'] {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.cleaned__mode[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* The toggle: a real checkbox stretched invisibly over its 44 px label, with
+   a drawn mark where the box would be. */
+.cleaned__auto {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.cleaned__auto-box {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.cleaned__auto-mark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-raised);
+  color: var(--color-ground);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.cleaned__auto-mark svg {
+  opacity: 0;
+}
+
+.cleaned__auto-box:checked + .cleaned__auto-mark {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+}
+
+.cleaned__auto-box:checked + .cleaned__auto-mark svg {
+  opacity: 1;
+}
+
+.cleaned__auto-box:checked ~ span:last-child {
+  color: var(--color-ink);
+}
+
+/* The hidden control's focus ring is drawn on the mark it stands behind. */
+.cleaned__auto-box:focus-visible + .cleaned__auto-mark {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: var(--layout-focus-ring-offset);
+}
+
+/* "Generated 3 minutes ago · Structured", with Regenerate on the same line. */
+.cleaned__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.cleaned__meta {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.cleaned__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.cleaned__action--primary {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.cleaned__action[disabled] {
+  background-color: var(--color-raised);
+  border-color: var(--color-line);
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* The note moved on: said beside the way to catch up, in the accent border
+   the app reserves for "this needs you" (the resume prompt, a failed row). */
+.cleaned__stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.cleaned__progress,
+.cleaned__hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.cleaned__notice {
+  font-size: var(--font-size-sm);
+  color: var(--color-accent-strong);
+}
+
+/* The rendered rewrite reads like the note's own body: the same card, the
+   same serif measure. Headings step down from the title's serif; lists take
+   their markers back from the reset. */
+.cleaned__body {
+  padding: var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  color: var(--color-ink);
+}
+
+.cleaned__body[data-stale] {
+  color: var(--color-muted);
+}
+
+.cleaned__body h2,
+.cleaned__body h3,
+.cleaned__body h4,
+.cleaned__body h5,
+.cleaned__body h6 {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-snug);
+}
+
+.cleaned__body h2 {
+  font-size: var(--font-size-xl);
+}
+
+.cleaned__body h3 {
+  font-size: var(--font-size-lg);
+}
+
+.cleaned__body h4,
+.cleaned__body h5,
+.cleaned__body h6 {
+  font-size: var(--font-size-md);
+}
+
+.cleaned__body ul,
+.cleaned__body ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.cleaned__body ul {
+  list-style: disc;
+}
+
+.cleaned__body ol {
+  list-style: decimal;
+}
+
+.cleaned__body blockquote {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 2px solid var(--color-line-strong);
+  color: var(--color-muted);
+}
+
+.cleaned__body code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.cleaned__body hr {
+  border: 0;
+  border-block-start: 1px solid var(--color-line);
+}
+
+/* Nothing generated yet: what it would be, and the one thing to do. */
+.cleaned__empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-lg);
+}
+
+.cleaned__empty-title {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+}
+
 /* Grows to fill the column, so the recordings' selection bar — rendered
    inside the panel — reaches the foot as the action bar does. */
 .note-tabpanel {

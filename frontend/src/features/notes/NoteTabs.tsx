@@ -2,21 +2,23 @@ import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
 import { useSearchParams } from 'react-router';
 
 /**
- * The note's segments: Text · Recordings (N).
+ * The note's segments: Text · Cleaned · Recordings (N).
  *
  * The note used to be one long page — title, body, then every recording with
  * its player and transcript — and reaching the recordings of a note with a
- * few thousand words meant scrolling past all of them. Now the body and the
- * recordings are panels under one strip, and the strip sticks under the
- * banner while whichever panel is open scrolls.
+ * few thousand words meant scrolling past all of them. Now the body, the
+ * worker's cleaned rewrite of it, and the recordings are panels under one
+ * strip, and the strip sticks under the banner while whichever panel is open
+ * scrolls.
  *
  * The chosen tab is remembered per note for the session and is a real query
  * parameter (`?tab=recordings`), so a link can open a note on its recordings
- * and a reload lands where the user was. Text is the default: the note is
- * the document; the recordings are its sources.
+ * — which is what the capture screen does after "Record into this" — and a
+ * reload lands where the user was. Text is the default: the note is the
+ * document; the other two are a reading of it and its sources.
  */
 
-export const NOTE_TABS = ['text', 'recordings'] as const;
+export const NOTE_TABS = ['text', 'cleaned', 'recordings'] as const;
 export type NoteTab = (typeof NOTE_TABS)[number];
 
 export const NOTE_TAB_PARAM = 'tab';

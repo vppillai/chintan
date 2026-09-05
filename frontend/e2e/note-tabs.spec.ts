@@ -1,7 +1,7 @@
 import { expect, test } from './fixtures.ts';
 
 /**
- * The note as panels under one strip: Text · Recordings (N).
+ * The note as panels under one strip: Text · Cleaned · Recordings (N).
  *
  * The note used to be one page, and the recordings of a long note were a
  * scroll past every paragraph. The strip sticks under the banner, the chosen
@@ -14,7 +14,7 @@ test('opens on the text, and Recordings is one tap away with its count', async (
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
   const tabs = page.getByRole('tablist', { name: 'Note views' }).getByRole('tab');
-  await expect(tabs).toHaveText(['Text', 'Recordings (1)']);
+  await expect(tabs).toHaveText(['Text', 'Cleaned', 'Recordings (1)']);
   await expect(page.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('textbox', { name: 'Note body' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Recordings' })).toHaveCount(0);
@@ -42,9 +42,13 @@ test('the arrow keys move between segments', async ({ page }) => {
   await page.goto('/notes/roof-repair');
   await page.getByRole('tab', { name: 'Text' }).focus();
   await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Cleaned' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Cleaned' })).toBeFocused();
+  await expect(page.getByText('No cleaned view yet')).toBeVisible();
+  await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tab', { name: /^Recordings/ })).toBeFocused();
-  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Home');
   await expect(page.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('textbox', { name: 'Note body' })).toBeVisible();
 });

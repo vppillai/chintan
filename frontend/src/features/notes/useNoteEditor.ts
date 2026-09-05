@@ -36,6 +36,10 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     // Absent on the wire means "inherits the default", which the contract
     // spells as the empty string on the way back up.
     language: note.language ?? '',
+    auto_clean: note.auto_clean ?? false,
+    // The mode is only known from a cleaned view that exists; with none, the
+    // draft leaves it unset and nothing is sent until the user picks one.
+    ...(note.cleaned?.mode ? { cleaned_mode: note.cleaned.mode } : {}),
   };
 }
 
@@ -164,6 +168,15 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (current.state !== 'dirty' && current.state !== 'error') return;
 
     const attempted = current.draft;
+    /*
+     * The cleaned-view fields go out only when they changed. Every other
+     * field is sent whole on every save; these two are the one part of the
+     * contract the backend is still growing into, and a PATCH that names a
+     * field the server does not yet accept is refused outright
+     * (`DisallowUnknownFields`) — which would turn every keystroke's save
+     * into "Couldn't save" until the backend caught up. Sending them only
+     * when the user touched them keeps the ordinary save on the old contract.
+     */
     const body = {
       version: current.version,
       title: attempted.title,
@@ -171,6 +184,14 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       aliases: attempted.aliases,
       tags: attempted.tags,
       ...(attempted.language !== undefined ? { language: attempted.language } : {}),
+      ...(attempted.auto_clean !== undefined &&
+      Boolean(attempted.auto_clean) !== Boolean(current.saved.auto_clean)
+        ? { auto_clean: attempted.auto_clean }
+        : {}),
+      ...(attempted.cleaned_mode !== undefined &&
+      attempted.cleaned_mode !== current.saved.cleaned_mode
+        ? { cleaned_mode: attempted.cleaned_mode }
+        : {}),
     };
     commit({ type: 'saveStart' });
 
@@ -201,6 +222,9 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         tags: attempted.tags,
         // `''` means "inherits the default", which the wire spells as absence.
         ...(attempted.language ? { language: attempted.language } : {}),
+        // The list row the PATCH answers with may not carry it; the toggle
+        // must not flip back to what the cache held before the save.
+        ...(attempted.auto_clean !== undefined ? { auto_clean: attempted.auto_clean } : {}),
         ...(note.captures ? { captures: note.captures } : {}),
       });
       // The version is the server's, not `current.version + 1`. The two agree

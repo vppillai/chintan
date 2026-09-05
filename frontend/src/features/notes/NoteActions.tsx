@@ -13,6 +13,7 @@ import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
 
+import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import { describePurge, purgeCountdown } from './purge.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
@@ -68,6 +69,7 @@ export function NoteActions({
   const busy = archive.isPending || restore.isPending || purge.isPending;
   const failure = archive.error ?? restore.error ?? purge.error;
   const { draft } = editor.model;
+  const cleaned = note.cleaned?.body.trim() ? note.cleaned : null;
 
   return (
     <div className="note-bar-anchor" hidden={hidden}>
@@ -124,6 +126,30 @@ export function NoteActions({
               )
             }
           />
+          {/*
+            The worker's rewrite, when there is one, named for what it is: a
+            control called "Copy" next to another called "Copy" would mean
+            neither. Stale or not — the user can see which it is on its tab.
+          */}
+          {cleaned && (
+            <>
+              <CopyButton
+                label="Copy cleaned view"
+                text={() => cleanedDocument(draft.title, cleaned.body)}
+              />
+              <DownloadButton
+                label="Download cleaned view"
+                filename={() => `${filenameFor(draft.title)} (cleaned).md`}
+                blob={() =>
+                  Promise.resolve(
+                    new Blob([cleanedMarkdown(draft.title, cleaned.body)], {
+                      type: 'text/markdown',
+                    }),
+                  )
+                }
+              />
+            </>
+          )}
         </div>
       )}
 

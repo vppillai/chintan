@@ -406,7 +406,7 @@ describe('the note is panels under one strip', () => {
 
     const tablist = screen.getByRole('tablist', { name: 'Note views' });
     const tabs = within(tablist).getAllByRole('tab');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Text', 'Recordings (1)']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Text', 'Cleaned', 'Recordings (1)']);
     expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('textbox', { name: 'Note body' })).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
@@ -445,6 +445,12 @@ describe('the note is panels under one strip', () => {
 
     text.focus();
     await user.keyboard('{ArrowRight}');
+    const cleaned = screen.getByRole('tab', { name: 'Cleaned' });
+    expect(cleaned).toHaveAttribute('aria-selected', 'true');
+    expect(cleaned).toHaveFocus();
+    expect(await screen.findByRole('region', { name: 'Cleaned view' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
     expect(recordings).toHaveAttribute('aria-selected', 'true');
     expect(recordings).toHaveFocus();
     expect(await screen.findByRole('region', { name: 'Recordings' })).toBeInTheDocument();
@@ -458,6 +464,20 @@ describe('the note is panels under one strip', () => {
     expect(recordings).toHaveAttribute('aria-selected', 'true');
     await user.keyboard('{Home}');
     expect(text).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('names each of the three segments, and each panel is what its tab says', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await user.click(screen.getByRole('tab', { name: 'Cleaned' }));
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Cleaned');
+    expect(screen.getByText('No cleaned view yet')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
+    // The bar is here too.
+    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
   });
 
   it('remembers the tab per note for the session, and a deep link outranks the memory', async () => {

@@ -14,6 +14,7 @@ import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
+import { CleanedPanel } from './CleanedPanel.tsx';
 import { NoteActions } from './NoteActions.tsx';
 import {
   NoteTabList,
@@ -33,12 +34,13 @@ import { countWords, describeWords } from './words.ts';
  * A note.
  *
  * Top to bottom: the way back, the title, one line of metadata, then a strip
- * of segments — Text · Recordings (N) — and the one panel it selects, with
- * the action bar at the foot. The strip sticks under the banner while the
- * panel scrolls, so the recordings are one tap away from anywhere in a long
- * note rather than a screen or five below its last paragraph, which is where
- * they sat when body and recordings were one page. The text is the document;
- * the recordings are its sources.
+ * of segments — Text · Cleaned · Recordings (N) — and the one panel it
+ * selects, with the action bar at the foot. The strip sticks under the banner
+ * while the panel scrolls, so the recordings are one tap away from anywhere
+ * in a long note rather than a screen or five below its last paragraph, which
+ * is where they sat when body and recordings were one page. The text is the
+ * document; the cleaned view is the worker's rewrite of the whole of it; the
+ * recordings are its sources.
  */
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -225,6 +227,7 @@ function NoteViews({
   const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
   const tabs: NoteTabDescriptor[] = [
     { id: 'text', label: 'Text' },
+    { id: 'cleaned', label: 'Cleaned' },
     { id: 'recordings', label: 'Recordings', count },
   ];
 
@@ -234,6 +237,8 @@ function NoteViews({
       <NotePanel noteId={note.id} tab={tab}>
         {tab === 'text' ? (
           <TextPanel editor={editor} />
+        ) : tab === 'cleaned' ? (
+          <CleanedPanel note={note} editor={editor} />
         ) : (
           <Recordings
             note={note}

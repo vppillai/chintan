@@ -105,6 +105,28 @@ export function describeMoment(iso: string, now: number = Date.now()): string {
 }
 
 /**
+ * How long ago, for the cleaned view's "Generated 3 minutes ago": `just now`
+ * under a minute, then minutes, hours, `yesterday`, days for the rest of the
+ * week, and past that the date as the rows write it — a generation a month
+ * old is better placed by its date than counted in weeks.
+ */
+export function describeAgo(iso: string, now: number = Date.now()): string {
+  const at = parse(iso);
+  if (!at) return '';
+  const seconds = Math.max(0, Math.round((now - at.getTime()) / 1000));
+  if (seconds < 45) return 'just now';
+  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: 'always' });
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return relative.format(-Math.max(1, minutes), 'minute');
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return relative.format(-hours, 'hour');
+  const days = daysAgo(at, new Date(now));
+  if (days <= 1) return 'yesterday';
+  if (days < 7) return relative.format(-days, 'day');
+  return `on ${formatRowTime(iso, now)}`;
+}
+
+/**
  * Today, for the library's heading: "Thursday, 4 September" in the device's
  * locale — weekday, day and month, never the year, because the heading is a
  * place to be rather than a timestamp. The date the notes are grouped under
