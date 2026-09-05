@@ -255,6 +255,22 @@ func (s *NotesService) ListNotes(ctx context.Context, userID string, opts reposi
 	return page, nil
 }
 
+// DrainNotes is the whole of a shelf in one read (repository.Store.DrainNotes),
+// for the callers that read every note anyway; it reports the ceiling the way
+// ListNotes does.
+func (s *NotesService) DrainNotes(ctx context.Context, userID string, opts repository.DrainOptions) ([]model.NoteIndex, error) {
+	notes, truncated, err := s.store.DrainNotes(ctx, userID, opts)
+	if err != nil {
+		return nil, err
+	}
+	shelf := "active"
+	if opts.Shelf == repository.NoteShelfArchived {
+		shelf = "archived"
+	}
+	noteListTruncated(ctx, repository.Page[model.NoteIndex]{Truncated: truncated}, shelf)
+	return notes, nil
+}
+
 // noteListTruncated is the one place a list that hit repository.MaxNotesDrained
 // is reported. The store has no logger or metrics of its own, so it marks the
 // page and this layer says so: once per list call at WARN, and a counter an
@@ -502,11 +518,9 @@ func (s *NotesService) DeleteNote(ctx context.Context, userID, noteID string) er
 
 // MatchNotes finds matching notes for a query (only searches active notes)
 func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (MatchResult, error) {
-	// Matching scores against every candidate, so it pages through the whole
-	// active set rather than seeing whatever fitted in one page.
-	notes, err := repository.DrainPages(ctx, maxMatchCandidates, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListNotes(ctx, userID, opts)
-	})
+	// Matching scores against every candidate, so it reads the whole active
+	// set — once — rather than seeing whatever fitted in one page.
+	notes, err := s.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxMatchCandidates})
 	if err != nil {
 		return MatchResult{}, err
 	}

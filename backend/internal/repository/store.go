@@ -67,6 +67,28 @@ func (o ListOptions) limit() int32 {
 	}
 }
 
+// NoteShelf names which of a tenant's notes a drain returns: the active list
+// or the archive (archived and not yet past its purge deadline).
+type NoteShelf string
+
+const (
+	NoteShelfActive   NoteShelf = "active"
+	NoteShelfArchived NoteShelf = "archived"
+)
+
+// DrainOptions bounds a DrainNotes call. The zero value drains the active
+// shelf whole, up to MaxNotesDrained, without the two large opt-in fields.
+type DrainOptions struct {
+	Shelf NoteShelf
+	// MaxItems cuts the ordered result; 0 means no cut below the store's own
+	// ceiling. A caller that wants to know whether it was cut compares the
+	// length against what it asked for.
+	MaxItems int
+	// IncludeSearchText and IncludeCleanedBody are ListOptions' opt-ins.
+	IncludeSearchText  bool
+	IncludeCleanedBody bool
+}
+
 // Page is one page of a list query. Cursor is empty when the query is
 // exhausted.
 //
@@ -149,6 +171,19 @@ type Store interface {
 	// deadline. The expiry sweep removes them once it has; the filter keeps
 	// them out of the UI in the meantime.
 	ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error)
+	// DrainNotes returns every note on a shelf, most recently touched first,
+	// in ONE read of the tenant's partition, cut to opts.MaxItems. truncated
+	// reports that the read hit MaxNotesDrained, as Page.Truncated does.
+	//
+	// It is for the callers that want the whole set — routing candidates,
+	// Ask's corpus, the storage summary, export, tags, note matching. The
+	// notes list is ordered in Go over a drain of the partition (see
+	// MaxNotesDrained), so paging through it with ListNotes and a cursor
+	// re-drains the partition once per page: ⌈N/200⌉ full reads, each
+	// carrying search_text when asked, for a caller that reads every row
+	// once anyway (review 2026-09-05, S5). ListNotes remains the wire's
+	// pagination.
+	DrainNotes(ctx context.Context, tenantID string, opts DrainOptions) (notes []model.NoteIndex, truncated bool, err error)
 	// ExpiredNotes returns every archived note, in every tenant, whose purge
 	// deadline had passed at asOf (Unix seconds). It is the input to the
 	// weekly expiry sweep, which unlinks each note's objects and captures and

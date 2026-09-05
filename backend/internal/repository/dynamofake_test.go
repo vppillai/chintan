@@ -41,9 +41,14 @@ type fakeDynamo struct {
 	// index.
 	projected map[string]map[string]bool
 
-	queries []*dynamodb.QueryInput
-	gets    int
-	scans   int
+	queries   []*dynamodb.QueryInput
+	batchGets []*dynamodb.BatchGetItemInput
+	gets      int
+	scans     int
+	// unprocessedEvery, when non-zero, makes every nth BatchGetItem leave its
+	// last key unprocessed, standing in for the 16 MB response cap so the
+	// tests prove the store asks again.
+	unprocessedEvery int
 }
 
 func newFakeDynamo() *fakeDynamo {
@@ -211,6 +216,39 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 	out := &dynamodb.UpdateItemOutput{}
 	if in.ReturnValues == types.ReturnValueAllNew {
 		out.Attributes = cloneItem(updated)
+	}
+	return out, nil
+}
+
+// BatchGetItem answers each key from the table, projected as asked, in no
+// particular order, and enforces DynamoDB's hundred-key ceiling.
+func (f *fakeDynamo) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.batchGets = append(f.batchGets, in)
+	out := &dynamodb.BatchGetItemOutput{
+		Responses:       map[string][]map[string]types.AttributeValue{},
+		UnprocessedKeys: map[string]types.KeysAndAttributes{},
+	}
+	for table, req := range in.RequestItems {
+		if len(req.Keys) == 0 || len(req.Keys) > 100 {
+			return nil, validationError("BatchGetItem: %d keys for %s; DynamoDB accepts 1 to 100", len(req.Keys), table)
+		}
+		keys := req.Keys
+		if f.unprocessedEvery > 0 && len(f.batchGets)%f.unprocessedEvery == 0 && len(keys) > 1 {
+			out.UnprocessedKeys[table] = types.KeysAndAttributes{Keys: keys[len(keys)-1:], ProjectionExpression: req.ProjectionExpression}
+			keys = keys[:len(keys)-1]
+		}
+		for _, key := range keys {
+			if err := validateItem(key); err != nil {
+				return nil, err
+			}
+			item := f.items[av(key["pk"])][av(key["sk"])]
+			if item == nil {
+				continue
+			}
+			out.Responses[table] = append(out.Responses[table], project(cloneItem(item), req.ProjectionExpression, req.ExpressionAttributeNames, "pk", "sk"))
+		}
 	}
 	return out, nil
 }

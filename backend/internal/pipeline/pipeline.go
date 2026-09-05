@@ -799,9 +799,7 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 	// router should see — the likeliest destinations. Until 2026-09 this
 	// drained a 500-note pool and cut it here, which was only right while the
 	// store's own order was by creation.
-	active, err := repository.DrainPages(ctx, maxRouteCandidates, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return p.cfg.Store.ListNotes(ctx, tenantID, opts)
-	})
+	active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxRouteCandidates})
 	if err != nil {
 		return provider.RouteDecision{}, fmt.Errorf("%w: %w", errRouteCandidates, err)
 	}

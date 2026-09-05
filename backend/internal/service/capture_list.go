@@ -196,15 +196,11 @@ func (s *CaptureService) listCapturesByWalk(ctx context.Context, userID string, 
 		return repository.Page[model.CaptureIndex]{}, err
 	}
 
-	notes, err := repository.DrainPages(ctx, maxCaptureWalkNotes, func(ctx context.Context, o repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListNotes(ctx, userID, o)
-	})
+	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxCaptureWalkNotes})
 	if err != nil {
 		return repository.Page[model.CaptureIndex]{}, err
 	}
-	archived, err := repository.DrainPages(ctx, maxCaptureWalkNotes, func(ctx context.Context, o repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListArchivedNotes(ctx, userID, o)
-	})
+	archived, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{Shelf: repository.NoteShelfArchived, MaxItems: maxCaptureWalkNotes})
 	if err != nil {
 		return repository.Page[model.CaptureIndex]{}, err
 	}

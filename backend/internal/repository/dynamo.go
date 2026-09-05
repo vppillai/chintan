@@ -28,6 +28,7 @@ type DynamoAPI interface {
 	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	Scan(ctx context.Context, in *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error)
 }
 
 // DynamoStore implements Store using DynamoDB with a single-table design.
@@ -489,6 +490,12 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 // the cursor stable when a note is touched or created between two pages: the
 // second page begins after the last note the client saw, whatever moved above
 // it.
+//
+// The drain is always the light projection. search_text and cleaned_body,
+// when asked for, are fetched afterwards for the page alone (hydrateNotes):
+// every page of a paged list costs one drain, and a drain that carried 32 KB
+// of search text per note for the whole partition to serve 200 of them was
+// what made the offline corpus's ⌈N/200⌉ pages cost ⌈N/200⌉ × N × 32 KB.
 func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, keep func(model.NoteIndex) bool, opts ListOptions) (Page[model.NoteIndex], error) {
 	if err := ctx.Err(); err != nil {
 		return Page[model.NoteIndex]{}, err
@@ -498,7 +505,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		return Page[model.NoteIndex]{}, err
 	}
 
-	all, truncated, err := s.drainNotes(ctx, tenantID, opts)
+	all, truncated, err := s.drainNotes(ctx, tenantID, ListOptions{})
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
@@ -528,6 +535,9 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 	if page.Items == nil {
 		page.Items = []model.NoteIndex{}
 	}
+	if err := s.hydrateNotes(ctx, tenantID, page.Items, opts.IncludeSearchText, opts.IncludeCleanedBody); err != nil {
+		return Page[model.NoteIndex]{}, err
+	}
 	if end < len(kept) {
 		page.Cursor, err = encodeNoteCursor(tenantID, shelf, kept[end-1])
 		if err != nil {
@@ -535,6 +545,124 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		}
 	}
 	return page, nil
+}
+
+// DrainNotes is listNotes without the paging: one read of the partition, the
+// shelf's notes in order, cut to what the caller asked for. The large opt-in
+// fields ride the drain itself here, since the caller wants them for every
+// row and a second read per row would be the cost this method exists to avoid.
+func (s *DynamoStore) DrainNotes(ctx context.Context, tenantID string, opts DrainOptions) ([]model.NoteIndex, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	keep := noteShelfFilter(opts.Shelf, time.Now().Unix())
+	all, truncated, err := s.drainNotes(ctx, tenantID, ListOptions{
+		IncludeSearchText:  opts.IncludeSearchText,
+		IncludeCleanedBody: opts.IncludeCleanedBody,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	kept := make([]model.NoteIndex, 0, len(all))
+	for _, n := range all {
+		if keep(n) {
+			kept = append(kept, n)
+		}
+	}
+	sortNotesMostRecentlyTouchedFirst(kept)
+	if opts.MaxItems > 0 && len(kept) > opts.MaxItems {
+		kept = kept[:opts.MaxItems]
+	}
+	return kept, truncated, nil
+}
+
+// noteShelfFilter is the one definition of which notes are on which shelf,
+// shared by the paged lists and the drain.
+func noteShelfFilter(shelf NoteShelf, now int64) func(model.NoteIndex) bool {
+	if shelf == NoteShelfArchived {
+		return func(n model.NoteIndex) bool {
+			return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
+		}
+	}
+	return func(n model.NoteIndex) bool {
+		return strings.TrimSpace(n.DeletedAt) == ""
+	}
+}
+
+// batchGetKeys is DynamoDB's ceiling on keys per BatchGetItem.
+const batchGetKeys = 100
+
+// hydrateNotes fetches search_text and/or cleaned_body for exactly these notes
+// with BatchGetItem and overlays them, so a paged list pays for the large
+// fields of its page alone. Unprocessed keys — DynamoDB's answer to a batch
+// over its 16 MB response cap, which two hundred 32 KB search texts can reach
+// — are asked for again until every key has answered.
+func (s *DynamoStore) hydrateNotes(ctx context.Context, tenantID string, notes []model.NoteIndex, searchText, cleanedBody bool) error {
+	if len(notes) == 0 || (!searchText && !cleanedBody) {
+		return nil
+	}
+	projection := "sk"
+	if searchText {
+		projection += ", " + searchTextAttr
+	}
+	if cleanedBody {
+		projection += ", " + cleanedBodyAttr
+	}
+	byID := make(map[string]int, len(notes))
+	keys := make([]map[string]types.AttributeValue, 0, len(notes))
+	for i, n := range notes {
+		byID[n.ID] = i
+		keys = append(keys, map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(n.ID)),
+		})
+	}
+	items, err := s.batchGet(ctx, keys, projection)
+	if err != nil {
+		return fmt.Errorf("dynamo hydrate notes: %w", err)
+	}
+	for _, item := range items {
+		i, ok := byID[trimPrefix(readString(item, "sk"), "NOTE#")]
+		if !ok {
+			continue
+		}
+		if searchText {
+			notes[i].SearchText = readString(item, searchTextAttr)
+		}
+		if cleanedBody {
+			notes[i].CleanedBody = readString(item, cleanedBodyAttr)
+		}
+	}
+	return nil
+}
+
+// batchGet reads the named keys with projection, in batches of batchGetKeys,
+// re-asking for whatever DynamoDB left unprocessed. Keys that name no item
+// are simply absent from the result.
+func (s *DynamoStore) batchGet(ctx context.Context, keys []map[string]types.AttributeValue, projection string) ([]map[string]types.AttributeValue, error) {
+	var out []map[string]types.AttributeValue
+	for len(keys) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n := min(batchGetKeys, len(keys))
+		request := map[string]types.KeysAndAttributes{
+			s.tableName: {Keys: keys[:n], ProjectionExpression: aws.String(projection)},
+		}
+		keys = keys[n:]
+		for len(request) > 0 {
+			res, err := s.client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: request})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, res.Responses[s.tableName]...)
+			request = res.UnprocessedKeys
+			if pending, ok := request[s.tableName]; ok && len(pending.Keys) == 0 {
+				request = nil
+			}
+		}
+	}
+	return out, nil
 }
 
 // drainNotes reads the tenant's note items, following LastEvaluatedKey (an
@@ -632,16 +760,11 @@ const (
 )
 
 func (s *DynamoStore) ListNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
-	return s.listNotes(ctx, tenantID, noteShelfActive, func(n model.NoteIndex) bool {
-		return strings.TrimSpace(n.DeletedAt) == ""
-	}, opts)
+	return s.listNotes(ctx, tenantID, noteShelfActive, noteShelfFilter(NoteShelfActive, 0), opts)
 }
 
 func (s *DynamoStore) ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
-	now := time.Now().Unix()
-	return s.listNotes(ctx, tenantID, noteShelfArchived, func(n model.NoteIndex) bool {
-		return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
-	}, opts)
+	return s.listNotes(ctx, tenantID, noteShelfArchived, noteShelfFilter(NoteShelfArchived, time.Now().Unix()), opts)
 }
 
 // ExpiredNotes returns every archived note, across every tenant, whose purge

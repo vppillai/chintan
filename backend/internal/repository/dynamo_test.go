@@ -1525,13 +1525,21 @@ func TestListNotesProjectsSearchTextOnlyWhenAsked(t *testing.T) {
 		t.Errorf("a list that did not ask carried search text %q", plain.Items[0].SearchText)
 	}
 
-	api.queries = nil
+	// Asked for, the field is fetched for the PAGE by BatchGetItem, never
+	// projected onto the drain of the whole partition: a paged list re-drains
+	// the partition once per page, and 32 KB per note for every note to
+	// serve two hundred of them was the cost that made the offline corpus's
+	// pages quadratic (S5).
+	api.queries, api.batchGets = nil, nil
 	with, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{IncludeSearchText: true})
 	if err != nil {
 		t.Fatalf("ListNotes(include): %v", err)
 	}
-	if !strings.Contains(projectionOf(t), "search_text") {
-		t.Errorf("the list asked for search text but did not project it: %q", projectionOf(t))
+	if strings.Contains(projectionOf(t), "search_text") {
+		t.Errorf("the list projected search_text onto the partition drain: %q", projectionOf(t))
+	}
+	if len(api.batchGets) != 1 || !strings.Contains(*api.batchGets[0].RequestItems[tableName].ProjectionExpression, "search_text") {
+		t.Errorf("the list did not fetch search_text for the page with one BatchGetItem: %+v", api.batchGets)
 	}
 	if with.Items[0].SearchText != "the gutter is leaking" {
 		t.Errorf("search text = %q, want the stored value", with.Items[0].SearchText)
@@ -1605,13 +1613,18 @@ func TestListNotesProjectsCleanedBodyOnlyWhenAsked(t *testing.T) {
 		t.Errorf("the plain list dropped the cleaned view's metadata: %+v", plain.Items[0])
 	}
 
-	api.queries = nil
+	// As for search_text: fetched for the page by BatchGetItem, not
+	// projected onto the drain.
+	api.queries, api.batchGets = nil, nil
 	with, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{IncludeCleanedBody: true})
 	if err != nil {
 		t.Fatalf("ListNotes(include): %v", err)
 	}
-	if !strings.Contains(projectionOf(t), "cleaned_body") {
-		t.Errorf("the list asked for the cleaned body but did not project it: %q", projectionOf(t))
+	if strings.Contains(projectionOf(t), "cleaned_body") {
+		t.Errorf("the list projected cleaned_body onto the partition drain: %q", projectionOf(t))
+	}
+	if len(api.batchGets) != 1 || !strings.Contains(*api.batchGets[0].RequestItems[tableName].ProjectionExpression, "cleaned_body") {
+		t.Errorf("the list did not fetch cleaned_body for the page with one BatchGetItem: %+v", api.batchGets)
 	}
 	if with.Items[0].CleanedBody != "# Roof\n\nThe gutter is leaking." {
 		t.Errorf("cleaned body = %q, want the stored value", with.Items[0].CleanedBody)

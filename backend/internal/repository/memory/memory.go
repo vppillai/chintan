@@ -215,6 +215,41 @@ func (s *Store) ListArchivedNotes(ctx context.Context, tenantID string, opts rep
 	})
 }
 
+// DrainNotes is the whole shelf in list order. The double has no partition to
+// drain, so this is the paged list without the paging; it drops the two large
+// fields unless asked for them, for the reason listNotes does.
+func (s *Store) DrainNotes(ctx context.Context, tenantID string, opts repository.DrainOptions) ([]model.NoteIndex, bool, error) {
+	keep := func(n model.NoteIndex) bool { return strings.TrimSpace(n.DeletedAt) == "" }
+	if opts.Shelf == repository.NoteShelfArchived {
+		now := time.Now().Unix()
+		keep = func(n model.NoteIndex) bool { return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now }
+	}
+	var out []model.NoteIndex
+	list := repository.ListOptions{
+		Limit:              repository.MaxListLimit,
+		IncludeSearchText:  opts.IncludeSearchText,
+		IncludeCleanedBody: opts.IncludeCleanedBody,
+	}
+	for {
+		page, err := s.listNotes(ctx, tenantID, list, keep)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, page.Items...)
+		if page.Cursor == "" || (opts.MaxItems > 0 && len(out) >= opts.MaxItems) {
+			break
+		}
+		list.Cursor = page.Cursor
+	}
+	if opts.MaxItems > 0 && len(out) > opts.MaxItems {
+		out = out[:opts.MaxItems]
+	}
+	if out == nil {
+		out = []model.NoteIndex{}
+	}
+	return out, false, nil
+}
+
 func (s *Store) ExpiredNotes(ctx context.Context, asOf int64) ([]repository.TenantNote, error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return nil, err

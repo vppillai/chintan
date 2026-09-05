@@ -226,18 +226,12 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 	}
 
 	// The list carries the cleaned view only on request; an export wants it
-	// for every note that has one.
-	active, err := repository.DrainPages(ctx, maxExportNotes, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		opts.IncludeCleanedBody = true
-		return s.notes.ListNotes(ctx, userID, opts)
-	})
+	// for every note that has one, and reads each shelf once.
+	active, err := s.notes.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxExportNotes, IncludeCleanedBody: true})
 	if err != nil {
 		return exportDocument{}, err
 	}
-	archived, err := repository.DrainPages(ctx, maxExportNotes, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		opts.IncludeCleanedBody = true
-		return s.notes.ListArchivedNotes(ctx, userID, opts)
-	})
+	archived, err := s.notes.DrainNotes(ctx, userID, repository.DrainOptions{Shelf: repository.NoteShelfArchived, MaxItems: maxExportNotes, IncludeCleanedBody: true})
 	if err != nil {
 		return exportDocument{}, err
 	}

@@ -28,6 +28,11 @@ func (s truncatedListStore) ListArchivedNotes(ctx context.Context, tenantID stri
 	return page, err
 }
 
+func (s truncatedListStore) DrainNotes(ctx context.Context, tenantID string, opts repository.DrainOptions) ([]model.NoteIndex, bool, error) {
+	notes, _, err := s.Store.DrainNotes(ctx, tenantID, opts)
+	return notes, true, err
+}
+
 // A list that hit the drain ceiling is counted, once per list, so the missing
 // note has a metric an operator can find. The store cannot emit it — it has no
 // metrics of its own — so this layer must.
@@ -43,6 +48,10 @@ func TestATruncatedNotesListIsCounted(t *testing.T) {
 		}},
 		{"archived", func(s *NotesService) error {
 			_, err := s.ListArchivedNotes(ctx, "u1", repository.ListOptions{})
+			return err
+		}},
+		{"drain", func(s *NotesService) error {
+			_, err := s.DrainNotes(ctx, "u1", repository.DrainOptions{})
 			return err
 		}},
 	} {

@@ -136,7 +136,8 @@ func TestRoutingToAMissingNoteStillCreatesOne(t *testing.T) {
 	}
 }
 
-// throttleListNotes fails every listing and passes everything else through.
+// throttleListNotes fails every read of the notes — paged or drained — and
+// passes everything else through.
 type throttleListNotes struct {
 	repository.Store
 	mu    sync.Mutex
@@ -148,6 +149,13 @@ func (s *throttleListNotes) ListNotes(ctx context.Context, tenantID string, opts
 	s.calls++
 	s.mu.Unlock()
 	return repository.Page[model.NoteIndex]{}, errInducedThrottle
+}
+
+func (s *throttleListNotes) DrainNotes(ctx context.Context, tenantID string, opts repository.DrainOptions) ([]model.NoteIndex, bool, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	return nil, false, errInducedThrottle
 }
 
 func (s *throttleListNotes) throttled() int {
