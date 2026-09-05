@@ -22,6 +22,8 @@ vi.mock('@/config/env.ts', () => ({
     cognitoDomain: 'https://cognito.test',
     instance: 'dev',
     version: 'test',
+    appName: 'Chintan',
+    appDescription: 'Speak a thought. It files itself.',
   },
   isConfigured: () => true,
   LOCAL_VERSION: 'local build',
@@ -73,8 +75,14 @@ describe('the passkey card on You', () => {
      */
     const navigate = mountCard();
 
-    expect(screen.getByRole('heading', { name: /sign in with a passkey/i })).toBeInTheDocument();
-    expect(screen.getByText(/made on the cognito sign-in page, not in the app/i)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Passkeys' })).toBeInTheDocument();
+    expect(
+      screen.getByText(/set up on cognito’s sign-in page, not here/i),
+    ).toBeInTheDocument();
+    // The sign-in page's own button is named as what comes *after*, not as
+    // what this card does.
+    expect(screen.getByText(/offers/i)).toHaveTextContent(/sign in with a passkey/i);
+    expect(screen.queryByRole('heading', { name: /sign in with a passkey/i })).toBeNull();
 
     await userEvent.click(screen.getByRole('button', { name: /add a passkey on this device/i }));
 
