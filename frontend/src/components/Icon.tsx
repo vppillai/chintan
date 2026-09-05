@@ -29,7 +29,9 @@ export type IconName =
   | 'more'
   | 'download'
   | 'move'
-  | 'plus';
+  | 'plus'
+  | 'archive'
+  | 'restore';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -61,6 +63,12 @@ export const PATHS: Record<IconName, string> = {
   download: 'M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14',
   // An arrow leaving a bracket for a bar: out of this note, into another.
   move: 'M9 5H5v14h4M10 12h9M15.5 8.5 19 12l-3.5 3.5',
+  // A box under its lid, with the pull on the front: where a note goes when
+  // it is archived. The swipe tray's Archive action wears it.
+  archive: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4',
+  // An arrow running back around the clock: restore, the reverse of archive.
+  // The head sits at the arc's start so the two glyphs read as a pair.
+  restore: 'M4 12a8 8 0 1 0 8-8 8.7 8.7 0 0 0-6 2.4L4 8.5M4 3.5v5h5',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
