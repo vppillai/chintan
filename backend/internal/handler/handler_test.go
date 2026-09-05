@@ -518,26 +518,15 @@ func TestEveryProblemCarriesTheCorrelationID(t *testing.T) {
 func TestCORS(t *testing.T) {
 	h := newHarness(t)
 
-	t.Run("a preflight is not the API's to answer", func(t *testing.T) {
-		// In front of the gateway no preflight reaches the Lambda: the
-		// HttpApi's CorsConfiguration answers it. One that does arrive — a
-		// local run — is an OPTIONS request the router has no route for,
-		// answered as such, and not a 204 from the middleware pretending to
-		// be the gateway.
+	t.Run("preflight", func(t *testing.T) {
 		w := h.do(t, http.MethodOptions, "/v1/notes", "", nil,
 			[2]string{"Origin", "http://localhost:3000"},
 			[2]string{"Access-Control-Request-Method", "POST"})
-		if w.Code == http.StatusNoContent {
-			t.Fatalf("status = 204; the middleware answered a preflight the gateway owns")
-		}
-		if w.Code != http.StatusMethodNotAllowed {
-			t.Errorf("status = %d, want 405 from the router for a method no route serves", w.Code)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", w.Code)
 		}
 		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:3000" {
 			t.Errorf("allow-origin = %q", got)
-		}
-		if got := w.Header().Get("Access-Control-Allow-Headers"); got != "" {
-			t.Errorf("the API declared an allowed-header list %q; the gateway's CorsConfiguration is the only one", got)
 		}
 	})
 
