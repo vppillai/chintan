@@ -25,6 +25,10 @@ info:
     Breaking changes from v1: the `X-User-ID` header is rejected and ignored;
     capture completion is asynchronous; list endpoints return an envelope rather
     than a bare array.
+
+    `info.version` is the version of this contract and moves only when the
+    contract does; it is independent of the application release tag
+    (`vX.Y.Z`, cut by the deploy pipeline on every production deploy).
   license:
     name: MIT
     url: https://github.com/vppillai/chintan/blob/main/LICENSE

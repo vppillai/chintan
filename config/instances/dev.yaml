@@ -16,8 +16,9 @@ pwa:
 # Budgets email.
 daily_spend_cap_micros: 5000000
 
-# Alarms default on: API function errors, the worker dead-letter queue (a lost
-# capture or a failed expiry sweep), a rejected provider key, and the spend cap
-# above.
+# Alarms default on: API function errors, the worker dead-letter queue (a
+# capture or a scheduled or queued worker task — sweep-expired, aws-cost,
+# clean-note, ask — that exhausted its retries), a rejected provider key, and
+# the spend cap above.
 # The address they e-mail comes from the ALARM_EMAIL repository secret, not from
 # this public file. The first user is created with scripts/invite-user.sh.

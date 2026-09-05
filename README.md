@@ -1,9 +1,13 @@
 # Chintan
 
-Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and it transcribes the recording, cleans up the text and files it into the right note. It runs on serverless AWS — Cognito, API Gateway, two Lambdas, DynamoDB and S3 — with a static frontend on GitHub Pages, and every instance is its own isolated stack. Speech-to-text is **Groq**, and cleanup and routing use an OpenAI-compatible endpoint, **MiniMax** by default, with the API keys in SSM Parameter Store.
+**Speak a thought. It files itself.**
+
+Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unstructured thoughts while driving or walking, and it transcribes the recording, cleans up the text and files it into the right note.
+
+It runs on serverless AWS — Cognito, API Gateway, an API Lambda and a multi-task worker Lambda (captures, retries, the weekly expiry sweep, the daily AWS-cost reading, whole-note clean, Ask), DynamoDB and S3 — and every instance is its own isolated stack. GitHub Pages hosts one independently built frontend bundle per instance, compiled against that instance's stack outputs (API URL, user pool, client id, Cognito domain) by `scripts/ci-build-site.sh` from `deploy-frontend.yaml`. Speech-to-text is **Groq**, and cleanup and routing use an OpenAI-compatible endpoint, **MiniMax** by default, with the API keys in SSM Parameter Store.
 
 - [Deploy your own](#deploy-your-own) · [Configure](#configure) · [Operate](#operate) · [Security](#security) · [Develop](#develop)
-- What is planned: [`docs/backlog.md`](docs/backlog.md). The API: [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
+- Current backlog and QA ledger (open and completed items, with decisions): [`docs/backlog.md`](docs/backlog.md). The API: [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
 ---
 
@@ -56,13 +60,24 @@ What each step needs and leaves behind:
 3. The keys are `SecureString`s created outside CloudFormation because `AWS::SSM::Parameter` cannot declare that type. They are per instance, so `dev` staging and `dev` prod share them.
 4. `Deploy Backend` runs the tests, builds the two arm64 Lambda packages, deploys `chintan-dev-staging` through a printed change set and smoke-tests it (`/v1/health` and `/v1/health/ready`, which round-trips DynamoDB and S3), then deploys `chintan-dev-prod` once you approve, tags the commit `vX.Y.(Z+1)` and publishes a release. `Deploy Frontend` runs when that completes, builds one Vite bundle per instance from the deployed stacks' outputs and publishes them to Pages. Every later push to `main` does the same.
    To deploy the backend from your own machine instead — before the pipeline exists, or when it is broken — `scripts/bootstrap.sh --instance dev --region us-west-2 --origin https://<owner>.github.io --apply` targets the same `chintan-dev-prod` stack, so CI takes over from it without colliding. The frontend still needs the workflow (`gh workflow run deploy-frontend.yaml`).
-5. The account is left in `FORCE_CHANGE_PASSWORD`, so the password must be changed at first sign-in. Add `--print-password` to read it off the screen instead of from the file. After signing in with a password, **You → Sign in with a passkey** hands off to Cognito's managed-login page to register one.
+5. The account is left in `FORCE_CHANGE_PASSWORD`, so the password must be changed at first sign-in. Add `--print-password` to read it off the screen instead of from the file. After signing in, **You → Passkeys → Add a passkey on this device** opens Cognito's managed-login `/passkeys/add` page; the app performs no WebAuthn registration itself, because the relying-party id is the Cognito domain, and afterwards the sign-in page offers **Sign in with a passkey**.
 
 ---
 
 ## Configure
 
+### Instance configuration
+
 `config/instances/*.yaml` declares the instances; `scripts/list-instances.sh` is the one reader and produces the deploy matrix for both workflows. Every field except `name` has a default. Two files may share a `name` with different `environment`s — that is how a staging copy is expressed, and the repository ships `dev.yaml` (prod) and `dev-staging.yaml`.
+
+The YAML owns an instance's identity and description — `display_name`, `short_name`, `description` — and nothing about its look: colours belong to the design tokens (`frontend/src/styles/tokens.css`), and the frontend build derives the page `<title>`, the PWA manifest and the meta description from the YAML. A value therefore lives in exactly one place, which is why this README names the fields and repeats none of their values.
+
+`dev` is a name the owner chose for the shipped instance, not a tier: its `environment` defaults to `prod`, so `chintan-dev-prod` is production infrastructure, and `dev-staging.yaml` is its staging twin. `scripts/list-instances.sh` derives the stack as `chintan-<name>-<environment>` and the Pages path as `<name>` for prod and `<name>-<environment>` otherwise, unless `site_path` says so explicitly; `scripts/ci-deploy-stack.sh` hands that path to the template as `SitePath` and `scripts/ci-build-site.sh` builds the bundle under it.
+
+| Instance | Environment | Stack | Pages path |
+|---|---|---|---|
+| `dev` | `prod` | `chintan-dev-prod` | `/chintan/dev/` |
+| `dev` | `staging` | `chintan-dev-staging` | `/chintan/dev-staging/` |
 
 | Field | Default | Meaning |
 |---|---|---|
@@ -70,15 +85,15 @@ What each step needs and leaves behind:
 | `environment` | `prod` | `prod`, `staging` or `dev`. |
 | `region` | `us-west-2` | Must match the artifact bucket's region; CI enforces it. |
 | `site_path` | `<name>`, or `<name>-<environment>` off prod | The GitHub Pages sub-path the bundle is served from. |
-| `display_name` | `<name>` | Human label. |
+| `display_name` | `<name>` | The instance's human name; the page `<title>` and the manifest name are derived from it. |
+| `short_name` | none | Optional, ≤ 12 characters: the manifest's `short_name`, what a phone shows under the installed icon. |
+| `description` | none | One sentence for the manifest description and the meta description; the shipped configs use the tagline. |
 | `daily_spend_cap_micros` | `0` (count, never enforce) | Instance-wide daily provider spend ceiling in **microdollars** (`1000000` = $1). The worker reserves against one `SPEND#<day>` counter before every paid call; a capture that would cross the cap fails with status `spend_capped`. Non-zero also creates the spend-cap alarm. |
-| `enable_alarms` | `true` | Create this stack's four CloudWatch alarms: API function errors, the capture dead-letter queue, a rejected provider key, and the spend cap. `dev-staging.yaml` sets `false` — its failures are caught by the deploy's smoke test, and CloudWatch's free allowance is ten alarms per account. |
+| `enable_alarms` | `true` | Create this stack's four CloudWatch alarms: API function errors, the worker dead-letter queue (a capture or a scheduled or queued worker task — sweep-expired, aws-cost, clean-note, ask — that exhausted its retries), a rejected provider key, and the spend cap. `dev-staging.yaml` sets `false` — its failures are caught by the deploy's smoke test, and CloudWatch's free allowance is ten alarms per account. |
 | `alarm_email` | none | Subscribed to the alarm topic and the budget. Because this repository is public, production reads it from the **`ALARM_EMAIL` repository secret** instead (`gh secret set ALARM_EMAIL`); a value in the file wins if present, which is what a private fork wants. |
 | `monthly_budget_usd` | `10` | AWS Budgets limit. |
 | `log_retention_days` | `14` | CloudWatch retention. |
 | `refresh_token_validity_days` | `30` | Cognito refresh token lifetime. |
-
-Per-user preferences — theme, cleanup mode, the default transcription language and each note's language — are settings in the app (**You**), stored per user, not instance configuration. Each note can also keep a **cleaned view** of its whole body (`structured` or `polished`), regenerated on request or, with `auto_clean`, after every recording appended, moved or deleted; it is read-only and derived from the body, and costs one cleanup call per run under the daily spend cap.
 
 Check what the configs resolve to before pushing:
 
@@ -88,43 +103,55 @@ scripts/list-instances.sh --format text
 # chintan-dev-prod    us-west-2 dev
 ```
 
+### User preferences
+
+Per-user preferences — theme, cleanup mode, audio retention and the default transcription language — are settings in the app (**You**), stored per user, not instance configuration; they are the fields of `GET /v1/settings`, which also reports the instance's `daily_spend_cap_micros` read-only.
+
+### Per-note behaviour
+
+Each note carries its own transcription `language` (absent, it inherits the user's default) and a `verbatim` switch that bypasses cleanup for it. Each note can also keep a **cleaned view** of its whole body (`structured` or `polished`, the note's `cleaned_mode`), regenerated on request or, with `auto_clean`, after every recording appended, moved or deleted; it is read-only and derived from the body, and costs one cleanup call per run under the daily spend cap.
+
 ---
 
 ## Operate
 
 **Release flow.** Open a pull request; `ci.yaml` runs the gates in [Develop](#develop). Merge to `main`: `Deploy Backend` deploys staging, smoke-tests it, waits for your approval on `production`, deploys prod, tags `vX.Y.(Z+1)` and publishes a release; `Deploy Frontend` then builds and publishes the Pages site, and the You screen shows that tag. `scripts/deploy.sh`, the change-set deploy CI uses, prints the change set before executing it and refuses one that would *replace* the user pool, the table, the bucket or the user pool client — `Retain` would keep the old resource, but the stack would point at an empty one and every note would become unreachable. Pass `--allow-replacement <LogicalId>` once a migration is planned.
 
+**Versions.** Three names, each for a different thing. The footnote at the bottom of You is the frontend build's `git describe --tags --always`, injected as `VITE_VERSION` by `scripts/ci-build-site.sh` and read in `frontend/src/config/env.ts` (a local build says `local build`); `VersionFootnote.tsx` shows a release as its tag alone and a later build as the tag plus `+N (sha)`. Backend releases are the `vX.Y.Z` tags: the `Tag and release` job in `deploy-backend.yaml` tags every production deploy `vX.Y.(Z+1)` from the latest `v*` tag and publishes a GitHub release, and because Deploy Frontend runs only after that job has finished, a frontend built after a backend deploy shows exactly that tag. `info.version` in `docs/api/openapi.yaml` is the API contract's version and moves only when the contract does.
+
 **Smoke test.** `GET /v1/health` (liveness) and `GET /v1/health/ready` (round-trips DynamoDB and S3 under the Lambda's own role). CI runs both against staging before prod and against prod after; run them by hand with `curl "$(aws cloudformation describe-stacks --stack-name chintan-dev-prod --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" --output text)/v1/health/ready"`.
 
 **Rollback.** Every deploy publishes an immutable Lambda version and moves the `live` alias; the deploy log and the job summary print the exact `aws lambda update-alias … --function-version <N>` that puts the previous one back. To roll the whole stack back, redeploy the previous commit.
 
-**Alarms.** Four per stack when `enable_alarms` is true (API errors, the capture dead-letter queue, a rejected provider key, the spend cap), e-mailed to `ALARM_EMAIL`. One message in the dead-letter queue is one recording that was not filed after three attempts; the recovery is the app's Retry. A weekly EventBridge rule runs the worker's expiry sweep, which deletes the objects and rows of archived notes past their thirty-day purge deadline; DynamoDB TTL is the backstop.
+**Alarms.** Four per stack when `enable_alarms` is true (API errors, the worker dead-letter queue, a rejected provider key, the spend cap), e-mailed to `ALARM_EMAIL`. The dead-letter queue is shared by every asynchronous worker invocation, so one message is one capture or one scheduled or queued worker task (sweep-expired, aws-cost, clean-note, ask) that exhausted its three attempts; the record names which. For a capture the recovery is the app's Retry; a scheduled task runs again on its next schedule, and a clean or an Ask on the next request. A weekly EventBridge rule runs the worker's expiry sweep, which deletes the objects and rows of archived notes past their thirty-day purge deadline; DynamoDB TTL is the backstop.
 
 **`chintanctl`**, the operator CLI (`cd backend && go build -o chintanctl ./cmd/chintanctl`). Dry run is the default for everything destructive; `--json` puts results on stdout and diagnostics on stderr; no note content ever reaches a log line.
 
 | Subcommand | What it does |
 |---|---|
-| `export --instance <i> --out <dir\|tar.gz>` | Every note as markdown with YAML front matter, beside each capture's `audio.*`, `raw.txt`, `clean.txt`, `segments.json` and `peaks.json`, in a layout Obsidian opens as a vault. Re-running skips unchanged objects. |
-| `backup --instance <i> --out <dir>` | Full fidelity: the DynamoDB items verbatim, every S3 body, a sha256 per object, and `backup.json` written last so its presence means the backup finished. |
-| `restore --instance <i> --in <dir> [--apply]` | Inverse of `backup`; verifies both manifests and re-hashes every body before writing anything. |
-| `reconcile --instance <i> [--apply]` | Every disagreement between the table and the bucket in both directions, plus captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row. |
-| `erase --instance <i> --tenant <t> [--apply]` | Deletes one tenant everywhere; `--apply` requires the tenant id typed exactly. |
-| `backfill-search-text --instance <i> [--apply]` | Fills the searchable body text for notes written before it existed. |
+| `export` | Every note as markdown with YAML front matter, beside each capture's `audio.*`, `raw.txt`, `clean.txt`, `segments.json` and `peaks.json`, in a layout Obsidian opens as a vault. Re-running skips unchanged objects. |
+| `backup` | Full fidelity: the DynamoDB items verbatim, every S3 body, a sha256 per object, and `backup.json` written last so its presence means the backup finished. |
+| `restore` | Inverse of `backup`; verifies both manifests and re-hashes every body before writing anything. |
+| `reconcile` | Every disagreement between the table and the bucket in both directions, plus captures stuck in a non-terminal state. `--apply` deletes only objects whose owning entity has no index row. |
+| `erase` | Deletes one tenant everywhere; `--apply` requires the tenant id typed exactly. |
+| `backfill-search-text` | Fills the searchable body text for notes written before it existed. |
+| `usage` | Every tenant's provider spend, calls, audio, API requests and per-operation cost for one month, from the `USAGE#` rows. Read-only. |
 
 The table name is derived from the instance; the bucket is read from the stack's `ContentBucketName` output, so the principal needs `cloudformation:DescribeStacks` on `chintan-*`. Both can be overridden with `--table` / `--bucket`.
 
-**Other commands.**
+**Workflows.** Each names the command or two involved; `--help` on any of them has the flags.
 
-| Task | Command |
+| Workflow | Commands |
 |---|---|
-| Readiness of this machine and account | `scripts/doctor.sh --instance dev` |
-| What would be deployed | `scripts/list-instances.sh --format text` |
-| Invite or reset a user | `scripts/invite-user.sh --instance dev --email you@example.com --apply` |
-| Delete one stack and what it retains | `scripts/cleanup-aws.sh --instance dev --environment staging --apply` |
-| Clear the wreckage of a failed create | `scripts/clean-instance-orphans.sh --instance dev --environment staging --apply` |
-| Delete everything | `scripts/teardown.sh --apply` — every note and recording; the CloudTrail trail, its bucket and the agent principal are left alone |
+| Bootstrap an account | `scripts/bootstrap-agent.sh` once as an administrator, then `scripts/setup.sh`; `scripts/doctor.sh` says what is left. |
+| Deploy an instance | `gh workflow run deploy-backend.yaml` (the frontend follows), or `scripts/bootstrap.sh` from your own machine; `scripts/list-instances.sh --format text` shows what would deploy. |
+| Invite or reset a user | `scripts/invite-user.sh` |
+| Recover failed processing | The app's Retry for one capture; `chintanctl reconcile` for what the table and the bucket disagree about. |
+| Back up, restore, export | `chintanctl backup` and `chintanctl restore`; `chintanctl export` for a vault Obsidian opens. |
+| Inspect usage | `chintanctl usage` for every tenant; **You → Usage** in the app for your own. |
+| Tear down | `scripts/cleanup-aws.sh` for one stack and what it retains; `scripts/clean-instance-orphans.sh` after a failed create; `scripts/teardown.sh` for everything — every note and recording; the CloudTrail trail, its bucket and the agent principal are left alone. |
 
-**Costs.** At single-user volume the AWS side is a few cents a month — Lambda, DynamoDB, S3, SNS, EventBridge and CloudWatch sit inside the always-free tiers, the alarms and the CloudTrail digests are the lines that do not — and the transcription and cleanup providers are the real bill, from under a dollar a month for light use to the daily spend cap you set. Every resource carries `Project`, `Instance` and `Environment` tags, and the budget is defined in `infrastructure/template.yaml`; activate the tags once in Billing → Cost allocation tags to see the per-instance view.
+**Costs.** At single-user volume the AWS side is a few cents a month — Lambda, DynamoDB, S3, SNS, EventBridge and CloudWatch sit inside the always-free tiers, the alarms and the CloudTrail digests are the lines that do not — and the transcription and cleanup providers are the real bill, from under a dollar a month for light use to the daily spend cap you set. Those are two different numbers: **provider spend** (Groq, MiniMax) is metered per call by the worker and attributable to each user, while **AWS spend** is the account's month-to-date actual read once a day from the stack's Budget, which is the instance's cost only on an account dedicated to it and an upper bound on a shared one. **You → Usage** shows both, plus each user's estimated share of the AWS figure, apportioned by provider cost (`docs/design/usage-accounting.md`). Every resource carries `Project`, `Instance` and `Environment` tags, and the budget is defined in `infrastructure/template.yaml`; activate the tags once in Billing → Cost allocation tags to see the per-instance view.
 
 ---
 
@@ -132,13 +159,24 @@ The table name is derived from the instance; the bucket is read from the stack's
 
 This is a public repository; nothing in it is secret.
 
-- **Authentication** is Cognito. Sign-in goes through the hosted managed-login page, which is branded from the app's own tokens by the template; passkeys are registered there too (**You → Sign in with a passkey**). The JWT is verified at the API Gateway authorizer and again in the service against the pool's JWKS; identity comes from the verified token and from nothing else.
+- **Authentication** is Cognito. Sign-in goes through the hosted managed-login page, which is branded from the app's own tokens by the template; passkeys are registered there too (**You → Passkeys**). The JWT is verified at the API Gateway authorizer and again in the service against the pool's JWKS; identity comes from the verified token and from nothing else.
 - **Isolation** is per tenant: every DynamoDB key is prefixed by the verified user id, every S3 key sits under `tenants/<id>/`, and the repository tests assert that one tenant cannot read another.
 - **Provider keys** live in SSM Parameter Store as `SecureString`, referenced by path, read by the Lambdas at run time, never by CloudFormation and never in a log. Nothing in the repository or the bundle holds a plaintext secret; the frontend carries only public endpoints and the Cognito client id.
 - **Deploys** run from CI as `chintan-github-actions`, scoped to `chintan-*` and trusted only from the `staging` and `production` environments; production requires your approval. The build jobs assume `chintan-github-build`, which can upload artifacts and read stack outputs and nothing else.
 - **Nothing derived from speech reaches a log.** `scripts/check-log-hygiene.sh` enforces it in CI.
 - **The agent principal** from `scripts/bootstrap-agent.sh` runs under a permissions boundary, cannot read the provider keys, and cannot write to or stop the CloudTrail trail.
 - **CORS** is restricted to your Pages origin. Never commit `.env` files or keys; `.gitignore` already excludes them.
+
+### Tenancy
+
+One Cognito user is one tenant, and that equality is load-bearing. `auth.Identity` (`backend/internal/auth/identity.go`) carries a `UserID` and a `TenantID`; the middleware sets both to the verified token's subject, and nothing below that package may key data on the user id. Everything that isolates data hangs off the tenant id:
+
+- The DynamoDB partition `USER#<tenant>` holds the tenant's settings, notes, captures and `USAGE#` rows (`internal/repository/dynamo.go`, `internal/usage/usage.go`); the instance's `SPEND#` counter deliberately sits outside it (`internal/pipeline/spend.go`).
+- Every S3 key is `tenants/<tenant>/…` (`internal/keys/keys.go`); the worker reads the tenant back out of the object key when a recording arrives (`internal/pipeline/worker.go`).
+- `chintanctl` discovers tenants from those prefixes and walks one partition at a time (`cmd/chintanctl/enumerate.go`); `erase --tenant` is the unit of deletion; `chintanctl usage` attributes spend per tenant.
+- Ownership is the key, not a check: a note or capture is read under the caller's partition, so another tenant's id is simply not found (`internal/repository/isolation_test.go` asserts it). A capture's `targeted` flag records that a person, not the router, chose its note; it is not an access flag.
+
+Sharing a note, or several sign-ins over one library, means populating `TenantID` from a claim or a membership lookup rather than the subject — the seam `Identity`'s comment reserves — plus an explicit ownership check wherever the partition key alone did the work, and a decision on whether usage is attributed to the tenant or the user. Until then a user's data is entirely their own.
 
 ---
 
