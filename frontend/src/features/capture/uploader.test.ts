@@ -5,6 +5,7 @@ import { ApiError } from '@/api/problem.ts';
 import type { CaptureCreatedWire, CaptureWire } from '@/api/schema.ts';
 
 import type { CaptureEvent } from './machine.ts';
+import { loadTargeted } from './targeted.ts';
 import {
   AUDIO_ATTEMPT_TIMEOUT_MS,
   PEAKS_ATTEMPT_TIMEOUT_MS,
@@ -441,5 +442,25 @@ describe('a resumed upload never replays a dead credential', () => {
     expect((failure as { message: string }).message).toMatch(/expired/i);
     expect((failure as { message: string }).message).toMatch(/still on this device/i);
     expect(h.confirmed).toEqual([]);
+  });
+});
+
+describe('a recording sent into a note is remembered as the note\'s', () => {
+  it('records the server capture id when the request named a note', async () => {
+    // The library's filing row leaves it out on the strength of this alone
+    // when the backend does not yet say `targeted` — see `targeted.ts`.
+    const h = harness();
+
+    await uploadCapture(h.api, { ...REQUEST, noteId: 'roof-repair' }, emitInto(h.events), h.deps);
+
+    expect(loadTargeted().has('srv-1')).toBe(true);
+  });
+
+  it('records nothing for a recording the router is to place', async () => {
+    const h = harness();
+
+    await uploadCapture(h.api, REQUEST, emitInto(h.events), h.deps);
+
+    expect(loadTargeted().size).toBe(0);
   });
 });

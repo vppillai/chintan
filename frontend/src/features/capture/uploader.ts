@@ -22,6 +22,7 @@ import type { CaptureContentType, CaptureCreatedWire } from '@/api/schema.ts';
 
 import { assembleBlob, confirmUploaded, saveCaptureRecord } from './buffer.ts';
 import { peaksDocument } from './peaks.ts';
+import { rememberTargeted } from './targeted.ts';
 import type { CaptureEvent } from './machine.ts';
 
 /**
@@ -231,6 +232,11 @@ export async function uploadCapture(
   }
 
   emit({ type: 'captureCreated', serverCaptureId: created.capture.id });
+  // A recording sent into a note is that note's to show, not the library's.
+  // Remembered here, as soon as the server has named the capture, so the
+  // library's filing row can leave it out even when the backend predates
+  // `CaptureWire.targeted` — see `targeted.ts`.
+  if (request.noteId) rememberTargeted(created.capture.id);
   emit({ type: 'uploadProgress', progress: 0.3 });
 
   // Recorded before the bytes move, so a crash mid-upload still leaves a row

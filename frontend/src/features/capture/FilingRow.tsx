@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
@@ -26,6 +26,7 @@ import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
+import { isTargeted, loadTargeted } from './targeted.ts';
 import { awaitsConnection } from './useResendOnReconnect.ts';
 
 /**
@@ -121,14 +122,18 @@ const HANDOFF_GRACE_MS = 10_000;
  * the machine. A failed upload stays here with Retry and Discard, because the
  * bytes are still on this device and only this device can act.
  *
- * Two readers. The library's filing row shows every upload; a note's
- * Recordings tab passes its own id and sees only an upload aimed at it, with
- * the note's own captures as the server rows that take over. Whichever is
- * mounted does the hand-over — they are never on screen together.
+ * Two readers. A note's Recordings tab passes its own id and sees only an
+ * upload aimed at it, with the note's own captures as the server rows that
+ * take over. The library's filing row passes `homeOnly` and sees only an
+ * upload aimed at nothing — one aimed at a note is already on that note's
+ * Recordings tab, which is where Send went — while still doing the hand-over
+ * for either, since whichever screen is mounted is the one that can. They are
+ * never on screen together.
  */
 export function useLocalUpload(
   serverItems: readonly CaptureWire[],
   noteId?: string,
+  options: { homeOnly?: boolean } = {},
 ): CaptureModel | null {
   const model = useCaptureStore((state) => state.model);
   const reset = useCaptureStore((state) => state.reset);
@@ -170,6 +175,7 @@ export function useLocalUpload(
   }, [landed, serverHasIt, reset]);
 
   if (noteId !== undefined && target !== noteId) return null;
+  if (options.homeOnly && target !== null) return null;
   if (uploading || failed || (landed && !serverHasIt)) return model;
   return null;
 }
@@ -209,7 +215,7 @@ export function FilingRow() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data } = usePendingCaptures();
-  const local = useLocalUpload(data?.items ?? []);
+  const local = useLocalUpload(data?.items ?? [], undefined, { homeOnly: true });
   const retry = useRetryCapture();
   /*
    * Rows the user has closed, read from the device on mount. The library
@@ -233,7 +239,20 @@ export function FilingRow() {
     setDismissed(dismissCapture(captureId, dismissed));
   };
 
-  const captures = (data?.items ?? []).filter((capture) => !dismissed.has(capture.id));
+  /*
+   * Captures a person aimed at a note are that note's to show (contract §3):
+   * they are on its Recordings tab from the first "Uploading" onward, and a
+   * receipt for each one here too made Home a wall of them after a day of
+   * recording into one note. The server's flag decides; the device's own
+   * memory of what it sent with a note stands in for backends that do not
+   * send it yet. Re-read whenever the poll answers, since the uploader may
+   * have written to it while this row was mounted.
+   */
+  const untargeted = useMemo(() => {
+    const remembered = loadTargeted();
+    return (data?.items ?? []).filter((capture) => !isTargeted(capture, remembered));
+  }, [data]);
+  const captures = untargeted.filter((capture) => !dismissed.has(capture.id));
   if (captures.length === 0 && !local) return null;
 
   // Everything that still needs something is shown; the receipts are capped.

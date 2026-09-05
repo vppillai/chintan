@@ -316,6 +316,8 @@ export interface CaptureWire {
   duration_ms?: number | null;
   has_segments?: boolean;
   has_peaks?: boolean;
+  /** True when a person chose the note (`note_id` at create, or `/target`); false when the router decided. Optional only until every backend sends it. */
+  targeted?: boolean;
   version: number;
 }
 
