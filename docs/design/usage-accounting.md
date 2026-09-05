@@ -119,23 +119,39 @@ stage, rather than read off the context: the context's tenant is a logging
 convenience (`obs.WithTenant`) and a cost record should not depend on it.
 
 Cost per capture: two `UpdateItem`s per provider call, i.e. four to six per
-capture, each under 1 KB. At today's rate (~50 captures/day) that is well
+capture — eight for a recording made into a note whose transcript carries a
+spoken instruction, which adds one routing-priced span call — each under 1 KB. At today's rate (~50 captures/day) that is well
 inside the table's on-demand noise.
 
 ### API requests (2026-09-05)
 
 Every authenticated request the tenant makes adds one to `api_requests` on the
-same month and day rows: two unconditional `ADD`s, from the API's per-route
-wrapper (`handler.router.counted`) after the handler has answered. Health
-routes are public and never pass through it; a 401 is never counted. A count
+**day** row: one unconditional `ADD`, from the API's per-route wrapper
+(`handler.router.counted`) after the handler has answered. The month's
+`api.requests` is the sum of its day rows on read, so the month row is not
+written per request; the day's first request (the `ADD` that made the day's
+count 1) writes it once, an `ADD` of zero carrying the GSI1 keys, so a tenant
+who only read is still in the `chintanctl usage` listing. Health routes are
+public and never pass through the wrapper; a 401 is never counted. A count
 that could not be written is logged (`UsageRecordFailures{Op=api_request}`)
 and the response goes out unchanged — a request must not fail over a row
-that exists only to describe it. The month row created by a request alone
-carries the GSI1 keys too, so a tenant who only read is still in the listing.
+that exists only to describe it.
 
-Cost: two `UpdateItem`s per request, each under 1 KB, on the request path.
-At a few hundred requests a day that is noise; if it ever is not, the answer
-is to count once per invocation in a buffer and flush, not to stop counting.
+What the number is: every authenticated request, the app's own polling
+included — `GET /v1/captures` every 1.5–4 s while a recording is processing,
+`GET /v1/ask/{id}` every 1–2 s while a question is pending — so it measures
+traffic to the API, not actions taken. On 2026-09-04 polls were about 40% of
+it.
+
+Cost: one `UpdateItem` per request, under 1 KB, on the request path. It was
+two until 2026-09-05; measured around the deploy that introduced the counter,
+the pair took the `GET /v1/captures` poll from a 4 ms warm p50 to 14 ms (prod
+API access log, `duration_ms`, 579 warm polls before vs 28 after), which was
+most of the time of the requests it counted. Months up to that date carry a
+month-row count from the two-write period; it is ignored on read. The day
+rows' 400-day retention bounds the sum: a month older than that reads zero
+requests. If one write is ever too many, the answer is to count once per
+invocation in a buffer and flush, not to stop counting.
 
 ### Read path
 
@@ -176,8 +192,8 @@ Since D6b the same response carries `aws` — see the next section — and since
 
 - `providers` is the `provider_<name>_*` split; a provider with no call in
   the month is absent, and the object is empty rather than null.
-- `days[].api_requests` and `api.requests` are the counters above; a day with
-  requests and no calls is still a day.
+- `days[].api_requests` are the day counters above and `api.requests` is their
+  sum; a day with requests and no calls is still a day.
 - `storage` is computed when the request is served, from the tenant's capture
   and note index rows: recordings and their summed duration and uploaded size
   (`CaptureIndex.AudioBytes`, stamped by the worker from the S3 notification

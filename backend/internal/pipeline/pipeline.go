@@ -113,8 +113,11 @@ const (
 	defaultCleanupTimeout = 2 * time.Minute
 	// The whole-note clean reads up to 150 KB and writes up to 200 KB
 	// (model.MaxCleanNoteInputBytes, MaxCleanedBodyBytes), a longer completion
-	// than cleanup by an order of magnitude, so it gets a minute more.
-	defaultCleanNoteTimeout = 3 * time.Minute
+	// than cleanup by an order of magnitude, so it gets a minute more. The
+	// number lives in service because the request path's in-flight guard is
+	// the same duration: a stamped request younger than this may still be
+	// running.
+	defaultCleanNoteTimeout = service.CleanNoteTimeout
 )
 
 // NoteCreator creates the destination note for a capture that has none.
@@ -156,8 +159,9 @@ type Config struct {
 	// RouteAttemptTimeout bounds each of the routeAttempts routing calls. Zero
 	// means defaultRouteAttemptTimeout; tests shorten it.
 	RouteAttemptTimeout time.Duration
-	// AskAttemptTimeout bounds each of the askAttempts model calls of an ask
-	// task. Zero means defaultAskAttemptTimeout; tests shorten it.
+	// AskAttemptTimeout bounds the first model call of an ask task; the one
+	// retry gets askRetryShare of it. Zero means defaultAskAttemptTimeout;
+	// tests shorten it.
 	AskAttemptTimeout time.Duration
 	// TranscribeTimeout, CleanupTimeout and CleanNoteTimeout bound the
 	// transcription, per-capture cleanup and whole-note clean provider calls.
@@ -399,7 +403,18 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, fmt.Errorf("pipeline: get note: %w", err)
 	}
 	if !service.NoteIsActive(note) {
-		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived)
+		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
+	}
+
+	if capture.RoutedKey == "" && capture.CleanKey == "" {
+		// Recorded into a note, so routing — and with it the removal of the
+		// words addressed to the app — was skipped.
+		if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
+			return *capture, err
+		}
+		if service.CaptureIsTerminal(capture.Status) {
+			return *capture, nil
+		}
 	}
 
 	if capture.CleanKey == "" {
@@ -412,6 +427,66 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	return p.append(ctx, tenantID, capture, note)
+}
+
+// stripInstructions removes a spoken app instruction from a capture that was
+// recorded into a note and so never reached routing.
+//
+// Routing deletes the words addressed to the app — "add this to my roof
+// note", "create a note with the title …" — before the dictation is cleaned
+// and appended, but a capture that already has its destination skips routing,
+// and the same words were appended verbatim (QA 2026-09-05 §5a). This is the
+// same span-extraction call, with the target note as the only candidate and
+// the destination it answers ignored: one small routing-priced call for a
+// targeted capture whose transcript contains an instruction cue, and no call
+// for one that does not (routing.MentionsInstruction). The result is stored as
+// the routed text, so a retry after a later fault finds it and does not call
+// again.
+//
+// The call is a convenience, as routing is: its own failure keeps the words as
+// spoken; a spend cap stops the capture as it would at the routing stage; and
+// only a store or object-store fault fails the invocation.
+func (p *Pipeline) stripInstructions(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) error {
+	rawBytes, err := p.cfg.Objects.Get(ctx, capture.RawKey)
+	if err != nil {
+		return fmt.Errorf("pipeline: get raw text: %w", err)
+	}
+	transcript := string(rawBytes)
+	if p.cfg.Router == nil || !routing.MentionsInstruction(transcript) {
+		obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": "no_cue"})
+		return nil
+	}
+
+	candidates := []routing.Candidate{{NoteID: note.ID, Title: note.Title, Aliases: note.Aliases}}
+	decision, err := p.routeWithRetries(ctx, tenantID, capture.ID, transcript, candidates)
+	if err != nil {
+		if errors.Is(err, breaker.ErrSpendCapExceeded) {
+			return p.handleProviderError(ctx, capture, "route", err)
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		obs.Log(ctx).Warn("instruction check failed; keeping the dictation as spoken",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+		obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": "failed"})
+		return nil
+	}
+
+	routedKey, err := keys.CaptureRouted(tenantID, capture.ID)
+	if err != nil {
+		return fmt.Errorf("pipeline: routed key: %w", err)
+	}
+	if err := p.cfg.Objects.Put(ctx, routedKey, []byte(decision.Content), "text/plain"); err != nil {
+		return fmt.Errorf("pipeline: store routed text: %w", err)
+	}
+	capture.RoutedKey = routedKey
+	outcome := "nothing_removed"
+	if decision.Content != transcript {
+		outcome = "removed"
+	}
+	obs.Count(ctx, "TargetedInstructionCheck", map[string]string{"Outcome": outcome})
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -625,7 +700,18 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		if errors.Is(err, breaker.ErrSpendCapExceeded) {
 			return p.handleProviderError(ctx, capture, "route", err)
 		}
+		if errors.Is(err, errRouteCandidates) {
+			// The router was never asked. Filing the dictation into a new note
+			// here would be the fault the GetNote branch below describes — a
+			// DynamoDB throttle starting a second note on the subject the user
+			// has been dictating into all week — one step earlier. The
+			// invocation is worth retrying; a duplicate note is not.
+			return err
+		}
 		// Routing is a convenience; a recording is never lost because of it.
+		// From here the failure is the router's own — a stall past both
+		// attempts, a 5xx, an answer that would not parse — and nothing the
+		// store said is being second-guessed.
 		obs.Log(ctx).Warn("routing failed; keeping the dictation in a new note",
 			slog.String("capture_id", capture.ID),
 			slog.String("error", err.Error()))
@@ -698,6 +784,11 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	return p.persist(ctx, capture)
 }
 
+// errRouteCandidates marks a routing failure that happened before the router
+// was asked: the store would not list the notes it chooses among. It is the
+// one routing error route() does not turn into a new note.
+var errRouteCandidates = errors.New("pipeline: list routing candidates")
+
 func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript string) (provider.RouteDecision, error) {
 	if p.cfg.Router == nil {
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
@@ -712,7 +803,7 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		return p.cfg.Store.ListNotes(ctx, tenantID, opts)
 	})
 	if err != nil {
-		return provider.RouteDecision{}, fmt.Errorf("pipeline: list notes: %w", err)
+		return provider.RouteDecision{}, fmt.Errorf("%w: %w", errRouteCandidates, err)
 	}
 
 	// Kept as a guard on the order the store promised, and because it is the
@@ -736,6 +827,70 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		})
 	}
 
+	decision, err := p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates)
+	if err != nil {
+		return decision, err
+	}
+	return preferExistingTitle(ctx, decision, active), nil
+}
+
+// preferExistingTitle applies the rule the prompt already states — an existing
+// note with the same title is the destination — after the model has answered.
+// A "new" decision whose title names an active candidate, by title or alias
+// and compared case- and whitespace-insensitively, appends to that note. The
+// model started a second "staging smoke" beside the one that existed (live QA
+// 2026-09-05 §5b), and a rule this mechanical is the code's to enforce, not the
+// model's to remember. The candidates are the notes the router saw, so the
+// rule reaches exactly as far as routing does; the id, never the title, is
+// what gets logged.
+func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, active []model.NoteIndex) provider.RouteDecision {
+	if decision.Action != provider.RouteNew {
+		return decision
+	}
+	want := normalizeTitle(decision.Title)
+	if want == "" {
+		return decision
+	}
+	for _, n := range active {
+		if !titleNames(n, want) {
+			continue
+		}
+		obs.Log(ctx).Info("router chose a new note whose title names an existing note; appending to it instead",
+			slog.String("note_id", n.ID))
+		obs.Count(ctx, "RouterTitleMatchedExistingNote", map[string]string{})
+		decision.Action = provider.RouteAppend
+		decision.NoteID = n.ID
+		decision.Title = ""
+		decision.Confidence = 1
+		return decision
+	}
+	return decision
+}
+
+// titleNames reports whether want, already normalised, is n's title or one of
+// its aliases.
+func titleNames(n model.NoteIndex, want string) bool {
+	if normalizeTitle(n.Title) == want {
+		return true
+	}
+	for _, alias := range n.Aliases {
+		if normalizeTitle(alias) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeTitle is the comparison form of a title: lowercased, one space
+// between words, none around them.
+func normalizeTitle(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// routeWithRetries asks the router, with one retry on a stall or a 5xx. It
+// is the model half of decideTarget, shared with stripInstructions, which
+// wants the instruction spans and not the destination.
+func (p *Pipeline) routeWithRetries(ctx context.Context, tenantID, captureID, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
 	// Each attempt is its own breaker.Do, so each reserves before it calls and
 	// settles for itself. An attempt that fails — a timeout included — reports
 	// no usage, and the breaker releases exactly what that attempt reserved,
@@ -1015,7 +1170,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
-	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID, cleanedText)
+	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID)
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
@@ -1126,17 +1281,27 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 // cleaned view's stale flag from the note body that is now in object storage,
 // and returns the note as stored. The body is authoritative, so a version
 // conflict is resolved by re-reading rather than by overwriting whoever won.
-func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallbackBody string) (model.NoteIndex, error) {
+//
+// A body that cannot be read is an error, not a body to guess at. Until
+// 2026-09 a failed read fell back to the paragraph just appended, so one S3
+// 5xx or timeout at this moment rewrote the note's search text and snippet to
+// that paragraph alone; the capture was then marked appended, nothing retried,
+// and server search, the offline corpus and Ask lost the rest of the note
+// until the next body write. Returning the error fails the invocation instead.
+// The retry finds the capture's marker in the body and finishes the append
+// from here, so nothing is written twice.
+func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
 		if err != nil {
 			return model.NoteIndex{}, err
 		}
-		body := fallbackBody
-		if existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey); err == nil {
-			body = string(existing)
+		existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey)
+		if err != nil {
+			return model.NoteIndex{}, fmt.Errorf("read note body: %w", err)
 		}
+		body := string(existing)
 		note.Snippet = service.Snippet(body)
 		note.SearchText = service.SearchText(body)
 		note.UpdatedAt = model.FormatTime(p.now())
@@ -1304,6 +1469,15 @@ func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) err
 // failure on the wire, so it must not drift with a provider's error text.
 var ErrProviderKeyRejected = errors.New("the provider rejected this instance's API key")
 
+// captureProviderFailed is the verdict for every provider fault that is not
+// classified in handleProviderError: a 5xx, a rate limit, a dial or TLS
+// error, a reply that would not decode. One fixed sentence, for the reason
+// ErrProviderKeyRejected is one: it reaches the user, and the cause —
+// `Post "https://api.groq.com/…": dial tcp …`, `unexpected end of JSON input`
+// — tells them nothing they can act on while naming hosts and internals that
+// belong in the log. The log line written beside it carries the cause.
+const captureProviderFailed = "the transcription or cleanup provider failed; try again"
+
 // handleProviderError records the capture's verdict and reports whether the
 // invocation itself should be retried.
 //
@@ -1377,7 +1551,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 		// The user is told what actually happened. Every capture from here on
 		// fails the same way until the key is replaced, and "capture failed"
 		// would have them re-recording it.
-		return p.markFailed(ctx, capture, ErrProviderKeyRejected)
+		return p.markFailed(ctx, capture, ErrProviderKeyRejected.Error())
 
 	case provider.IsRateLimited(cause):
 		// Warn, not error: this is the expected shape of a busy provider.
@@ -1394,7 +1568,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 	}
 
 	obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
-	return p.markFailed(ctx, capture, cause)
+	return p.markFailed(ctx, capture, captureProviderFailed)
 }
 
 // isDeadline reports whether a provider call ended because its context did —
@@ -1416,13 +1590,16 @@ func (p *Pipeline) providerForStage(stage string) string {
 	return p.cfg.LLMProvider
 }
 
-// markFailed records the capture's own verdict. It returns the write's error
-// rather than swallowing it: a conceded write here means another delivery owns
-// the capture, and reporting that as "recorded" would hide a duplicate delivery
-// behind a status this worker never actually wrote.
-func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, cause error) error {
+// markFailed records the capture's own verdict. reason is one of the fixed
+// sentences — never a provider's or Go's error text, which until 2026-09 the
+// default branch above wrote to capture.error and the API served as it was.
+// It returns the write's error rather than swallowing it: a conceded write
+// here means another delivery owns the capture, and reporting that as
+// "recorded" would hide a duplicate delivery behind a status this worker never
+// actually wrote.
+func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, reason string) error {
 	capture.Status = model.StatusFailed
-	capture.Error = cause.Error()
+	capture.Error = reason
 	return p.persist(ctx, capture)
 }
 

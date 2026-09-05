@@ -107,6 +107,8 @@ type NotesService struct {
 	// worker is the hand-off for the clean-note task. Nil means POST
 	// /v1/notes/{id}/clean answers 503 and auto-clean logs and skips.
 	worker Invoker
+	// now stamps clean requests (RequestClean); tests move it.
+	now func() time.Time
 }
 
 // NoteUpdates represents partial updates to a note.
@@ -146,7 +148,15 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 	return &NotesService{
 		store:   store,
 		objects: objects,
+		now:     time.Now,
 	}
+}
+
+// WithClock replaces the clock RequestClean stamps requests with; tests use it
+// to age a request past the worker's window.
+func (s *NotesService) WithClock(now func() time.Time) *NotesService {
+	s.now = now
+	return s
 }
 
 // CreateNote creates a new note.

@@ -1,6 +1,7 @@
 package ask
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -267,13 +268,13 @@ func TestPromptFencesEveryNoteAndEndsWithTheQuestion(t *testing.T) {
 	if !strings.Contains(user, "NOTE id=n1 title=Roof ----- repairs updated=2026-09-01\n"+llm.FenceMarker+"\n") {
 		t.Errorf("the note header or its fence is wrong:\n%s", user)
 	}
-	// Two notes, two fences of two markers each; the marker inside the note
-	// text was defanged, so it does not add a third boundary.
-	if got := strings.Count(user, llm.FenceMarker); got != 4 {
-		t.Errorf("fence markers = %d, want 4:\n%s", got, user)
+	// Two notes and one history turn, each a fence of two markers; the marker
+	// inside the note text was defanged, so it does not add a boundary.
+	if got := strings.Count(user, llm.FenceMarker); got != 6 {
+		t.Errorf("fence markers = %d, want 6:\n%s", got, user)
 	}
-	if !strings.Contains(user, "Q: what about the roof?\nA: The roofer comes on the 14th.") {
-		t.Errorf("history is not rendered:\n%s", user)
+	if !strings.Contains(user, llm.FenceMarker+"\nQ: what about the roof?\nA: The roofer comes on the 14th.\n"+llm.FenceMarker) {
+		t.Errorf("history is not rendered inside its own fence:\n%s", user)
 	}
 	if !strings.HasSuffix(user, "Question: and when was that decided?") {
 		t.Errorf("the question is not last:\n%s", user)
@@ -351,5 +352,57 @@ func TestSourcesKeepsOnlyPackedNotesInRankingOrder(t *testing.T) {
 				t.Error("Sources returned nil; the wire needs [] not null")
 			}
 		})
+	}
+}
+
+// A question of hundreds of distinct tokens must not become hundreds of scans
+// over every note; the first MaxQueryTerms terms are what retrieval sees.
+func TestTokenizeKeepsAtMostMaxQueryTerms(t *testing.T) {
+	var words []string
+	for i := 0; i < MaxQueryTerms+10; i++ {
+		words = append(words, fmt.Sprintf("w%d", i))
+	}
+	got := Tokenize(strings.Join(words, " "))
+	if len(got) != MaxQueryTerms {
+		t.Fatalf("terms = %d, want %d", len(got), MaxQueryTerms)
+	}
+	if got[0] != "w0" || got[MaxQueryTerms-1] != fmt.Sprintf("w%d", MaxQueryTerms-1) {
+		t.Errorf("terms are not the first %d in spoken order: %v", MaxQueryTerms, got)
+	}
+}
+
+// The prompt header collapses and defangs a title; the source chip must show
+// the title as the person wrote it.
+func TestSourcesCarryTheTitleAsStoredWhileThePromptDefangsIt(t *testing.T) {
+	title := "Roof\nrepairs " + llm.FenceMarker
+	p := NewPacker("roof")
+	if !p.Add(model.NoteIndex{ID: "n1", Title: title, UpdatedAt: at(1)}, "the roof leaks") {
+		t.Fatal("the note was not packed")
+	}
+	sources := Sources([]string{"n1"}, p.Notes())
+	if len(sources) != 1 || sources[0].Title != title {
+		t.Fatalf("sources = %+v, want the stored title %q", sources, title)
+	}
+	_, user, err := (Prompt{Today: "2026-09-05", Notes: p.Notes(), Question: "roof?"}).Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(user, "title=Roof repairs ----- updated=") {
+		t.Errorf("the prompt header did not collapse and defang the title:\n%s", user)
+	}
+}
+
+// A note the app saved from an Ask thread is an earlier answer, not a source;
+// retrieval never sees it, whatever the case of the tag.
+func TestRetrievableLeavesOutNotesSavedFromAnAskThread(t *testing.T) {
+	notes := []model.NoteIndex{
+		{ID: "roof", Title: "Roof repairs", Tags: []string{"house"}},
+		{ID: "saved", Title: "What is leaking?", Tags: []string{"Ask"}},
+		{ID: "saved2", Title: "Another answer", Tags: []string{"house", " ask "}},
+		{ID: "plain", Title: "Garden"},
+	}
+	got := Retrievable(notes)
+	if len(got) != 2 || got[0].ID != "roof" || got[1].ID != "plain" {
+		t.Fatalf("Retrievable = %v, want roof and plain in that order", got)
 	}
 }

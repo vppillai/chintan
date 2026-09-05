@@ -88,6 +88,11 @@ Parameters:
   AlarmEmail:
     Type: String
     Default: ''
+    # NoEcho: an e-mail address is personal data, and without it DescribeStacks
+    # returns the value to anything that can read the stack — the build role any
+    # branch of the repository can assume included. The subscription and the
+    # budget still receive the real value; only the parameter readback is masked.
+    NoEcho: true
     Description: >
       Email address subscribed to the alarm topic and the budget notifications.
       Empty installs the topic with no subscription, so a clone deploys clean.

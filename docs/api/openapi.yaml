@@ -306,8 +306,9 @@ paths:
         The body is optional. `mode` is `polished` (coherent prose, light
         touch on wording) or `structured` (Markdown with short headings and
         lists); absent, the note's own `cleaned_mode` is used, else
-        `structured`. A second request while one is queued is accepted — the
-        worker regenerates from the body as it stands, so the later run wins.
+        `structured`. A second request while one is queued is accepted: in the
+        same mode it joins the run in flight rather than starting another; in the
+        other mode it supersedes it, and the superseded run stores nothing.
 
         The cleaned view is read-only. It is derived from the body, so an edit
         belongs in `body` (PATCH) and the view is regenerated from it; there
@@ -1541,7 +1542,13 @@ components:
       properties:
         requests:
           type: integer
-          description: Authenticated API requests this caller made in the month. Health probes and 401s are not counted.
+          description: |
+            Authenticated API requests this caller made in the month — the sum of
+            `days[].api_requests`. Every authenticated request counts, the app's own
+            polling included (`GET /v1/captures` while a recording is processing,
+            `GET /v1/ask/{askId}` while a question is pending), so the number
+            measures traffic to the API, not actions taken. Health probes and 401s
+            are not counted.
 
     UsageStorage:
       type: object
@@ -1620,7 +1627,7 @@ components:
                       date: { type: string, format: date }
                       api_requests:
                         type: integer
-                        description: Authenticated API requests served that day; 0 when none.
+                        description: Authenticated API requests served that day, the app's own polling included; 0 when none.
                       storage_byte_days:
                         type: integer
                         description: The audio bytes held on that day, as the daily storage snapshot found them; 0 on a day it did not run.

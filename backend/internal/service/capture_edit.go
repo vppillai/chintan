@@ -103,7 +103,7 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 	// the note asks for it — asynchronously; the request path never runs the
 	// model.
 	if touched != nil {
-		autoCleanAfterBodyWrite(ctx, s.worker, userID, *touched)
+		autoCleanAfterBodyWrite(ctx, s.store, s.worker, userID, *touched)
 	}
 	return nil
 }

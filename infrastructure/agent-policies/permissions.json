@@ -17,7 +17,9 @@
         "cloudformation:TagResource",
         "cloudformation:UntagResource",
         "cloudformation:GetStackPolicy",
-        "cloudformation:SetStackPolicy"
+        "cloudformation:SetStackPolicy",
+        "cloudformation:DetectStackDrift",
+        "cloudformation:DetectStackResourceDrift"
       ],
       "Resource": "arn:aws:cloudformation:REGION:ACCOUNT_ID:stack/chintan-*/*"
     },
@@ -30,9 +32,11 @@
         "cloudformation:ListStacks",
         "cloudformation:ValidateTemplate",
         "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricData",
         "cloudwatch:GetMetricStatistics",
         "cloudwatch:ListTagsForResource",
         "dynamodb:ListTables",
+        "events:ListRules",
         "lambda:GetAccountSettings",
         "lambda:GetEventSourceMapping",
         "lambda:ListEventSourceMappings",
@@ -40,6 +44,9 @@
         "lambda:ListLayers",
         "logs:DescribeLogGroups",
         "logs:DescribeLogStreams",
+        "logs:DescribeQueries",
+        "logs:GetQueryResults",
+        "logs:StopQuery",
         "s3:GetBucketLocation",
         "s3:ListAllMyBuckets",
         "sqs:ListQueues",
@@ -187,7 +194,8 @@
         "logs:CreateLogStream",
         "logs:PutLogEvents",
         "logs:FilterLogEvents",
-        "logs:GetLogEvents"
+        "logs:GetLogEvents",
+        "logs:StartQuery"
       ],
       "Resource": [
         "arn:aws:logs:REGION:ACCOUNT_ID:log-group:/aws/lambda/chintan-*",

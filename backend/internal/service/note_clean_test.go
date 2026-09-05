@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
@@ -234,5 +235,75 @@ func TestRequestCleanWithoutAWorkerSaysSo(t *testing.T) {
 	}
 	if _, err := notes.RequestClean(context.Background(), "u", n.ID, ""); !errors.Is(err, ErrCaptureWorkerUnavailable) {
 		t.Errorf("RequestClean without a worker = %v, want ErrCaptureWorkerUnavailable", err)
+	}
+}
+
+// Two requests for the same mode inside the worker's window are one run: the
+// second answers as queued and hands nothing to the worker. The other mode is
+// a different answer and goes through; a stamp older than the worker's window
+// belongs to a run that died, and the next request invokes again.
+func TestRequestCleanJoinsARunInFlightAndReinvokesOnlyForAnotherModeOrAStaleStamp(t *testing.T) {
+	h := newEditHarness(t)
+	worker := &stubInvoker{}
+	now := time.Date(2026, 9, 5, 14, 34, 0, 0, time.UTC)
+	h.notes.WithInvoker(worker).WithClock(func() time.Time { return now })
+	n := h.note("u", "Roof", "the gutter leaks")
+
+	for i := 0; i < 2; i++ {
+		mode, err := h.notes.RequestClean(h.ctx, "u", n.ID, model.NoteCleanStructured)
+		if err != nil || mode != model.NoteCleanStructured {
+			t.Fatalf("request %d: mode=%q err=%v; a repeat is answered as queued", i+1, mode, err)
+		}
+	}
+	if got := worker.calls; len(got) != 1 {
+		t.Fatalf("worker calls = %v, want exactly one hand-off for two rapid requests in the same mode", got)
+	}
+	stamped := h.get("u", n.ID)
+	if stamped.CleanedRequestedMode != model.NoteCleanStructured || stamped.CleanedRequestedAt != model.FormatTime(now) {
+		t.Errorf("stamp = %q at %q, want structured at %s", stamped.CleanedRequestedMode, stamped.CleanedRequestedAt, model.FormatTime(now))
+	}
+
+	now = now.Add(30 * time.Second)
+	if _, err := h.notes.RequestClean(h.ctx, "u", n.ID, model.NoteCleanPolished); err != nil {
+		t.Fatalf("RequestClean(polished): %v", err)
+	}
+	if got := worker.calls; len(got) != 2 || got[1] != "clean-note/u/"+n.ID+"/polished" {
+		t.Fatalf("worker calls = %v, want the other mode handed over as a second run", got)
+	}
+	if got := h.get("u", n.ID).CleanedRequestedMode; got != model.NoteCleanPolished {
+		t.Errorf("stamp mode = %q after the polished request, want polished", got)
+	}
+
+	// The same mode again, but past the window: the stamp was left by a run
+	// that never reached a verdict.
+	now = now.Add(CleanNoteTimeout)
+	if _, err := h.notes.RequestClean(h.ctx, "u", n.ID, model.NoteCleanPolished); err != nil {
+		t.Fatalf("RequestClean(stale): %v", err)
+	}
+	if got := worker.calls; len(got) != 3 {
+		t.Fatalf("worker calls = %v, want a third hand-off once the stamp is older than the worker's window", got)
+	}
+}
+
+// The auto-clean path stamps too, so the worker can tell a run the body has
+// since outdated from the one it was invoked for.
+func TestAutoCleanStampsTheRequestItHandsOver(t *testing.T) {
+	h := newEditHarness(t)
+	worker := &stubInvoker{}
+	h.captures.WithInvoker(worker)
+
+	body := CaptureMarker("c_1") + "\nFirst take.\n\n" + CaptureMarker("c_2") + "\nSecond take."
+	n := h.withCleanedView("u", h.note("u", "Roof", body), true, model.NoteCleanPolished)
+	h.appended("u", n.ID, "c_1", "2026-01-01T09:00:00.000000000Z")
+	h.appended("u", n.ID, "c_2", "2026-01-01T10:00:00.000000000Z")
+	if err := h.captures.DeleteCapture(h.ctx, "u", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	after := h.get("u", n.ID)
+	if after.CleanedRequestedMode != model.NoteCleanPolished || after.CleanedRequestedAt == "" {
+		t.Errorf("stamp after an auto-clean hand-off = %q at %q, want polished with a time", after.CleanedRequestedMode, after.CleanedRequestedAt)
+	}
+	if len(worker.calls) != 1 {
+		t.Errorf("worker calls = %v", worker.calls)
 	}
 }

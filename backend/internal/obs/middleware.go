@@ -35,7 +35,8 @@ func (l *routeLabel) get() string {
 // unmatchedRoute labels a request no registered route served: the mux's own
 // 404 and 405, or a path outside the API entirely. It carries no part of the
 // path, so a probe for /wp-admin or a typo with a note id in it cannot put
-// either into the log.
+// either into the log. Like a matched pattern it is prefixed with the method
+// in the access line, since `route` is the only place the method is logged.
 const unmatchedRoute = "unmatched"
 
 // SetRoutePattern records the ServeMux pattern that matched this request, so
@@ -122,9 +123,10 @@ func Correlate(next http.Handler) http.Handler {
 		// content. The pattern is the whole route — "POST /v1/notes/purge",
 		// "GET /v1/captures/{id}/download" — where the old two-segment prefix
 		// logged both of those as "/v1/notes" and "/v1/captures" and could not
-		// tell a purge from a create or a download from a list.
+		// tell a purge from a create or a download from a list. The pattern
+		// carries the method, so there is no separate `method` field: with
+		// both, `stats count() by method, route` read "GET GET /v1/notes".
 		Log(ctx).Info("request",
-			slog.String("method", r.Method),
 			slog.String("route", routePattern(label, served)),
 			slog.Int("status", rec.status),
 			slog.Int("bytes", rec.bytes),
@@ -143,5 +145,5 @@ func routePattern(label *routeLabel, served *http.Request) string {
 	if p := served.Pattern; p != "" {
 		return p
 	}
-	return unmatchedRoute
+	return served.Method + " " + unmatchedRoute
 }

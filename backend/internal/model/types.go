@@ -240,6 +240,16 @@ type NoteIndex struct {
 	// produced no view. A successful run clears it. It never carries provider
 	// text.
 	CleanedError string `json:"cleaned_error,omitempty"`
+	// CleanedRequestedAt and CleanedRequestedMode are the clean-note run most
+	// recently handed to the worker: when, and in which mode. The request path
+	// stamps them before it invokes (service.RecordCleanRequest) and answers a
+	// repeat in the same mode without a second hand-off while the stamp is
+	// younger than service.CleanNoteTimeout; the worker writes nothing once the
+	// stamp is no longer the one it was invoked for, and clears both when its
+	// run reaches a verdict. Promoted and projected like the fields above it,
+	// and never on the wire.
+	CleanedRequestedAt   string        `json:"cleaned_requested_at,omitempty"`
+	CleanedRequestedMode NoteCleanMode `json:"cleaned_requested_mode,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.

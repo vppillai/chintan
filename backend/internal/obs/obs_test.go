@@ -160,8 +160,11 @@ func TestCorrelateLabelsUnmatchedRequestsWithoutThePath(t *testing.T) {
 			t.Fatalf("%s: %d access lines, want 1", path, len(lines))
 		}
 		route, _ := lines[0]["route"].(string)
-		if route != unmatchedRoute {
-			t.Errorf("%s: route = %q, want %q", path, route, unmatchedRoute)
+		if route != "GET "+unmatchedRoute {
+			t.Errorf("%s: route = %q, want %q — the method rides on the route, there is no separate field", path, route, "GET "+unmatchedRoute)
+		}
+		if _, has := lines[0]["method"]; has {
+			t.Errorf("%s: the access line carries a method field beside a route that already names the method", path)
 		}
 		for _, leak := range []string{"note_secret_12345", "secret", "wp-admin"} {
 			if strings.Contains(route, leak) {

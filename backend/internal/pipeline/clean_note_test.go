@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
@@ -418,5 +419,79 @@ func TestInvokerSendsACleanNoteTaskTheWorkerAccepts(t *testing.T) {
 	}
 	if _, isCapture := parseCleanNoteTask(json.RawMessage(`{"tenant_id":"u","capture_id":"c"}`)); isCapture {
 		t.Error("a capture invocation was read as a clean-note task")
+	}
+}
+
+// A run whose mode is no longer the one stamped on the row was superseded by a
+// later request; it neither calls the model nor writes. Before the stamp, two
+// runs in different modes both wrote and the later to finish decided the
+// stored mode — the live evidence was a polished view stored after structured
+// had been asked for last.
+func TestCleanNoteTaskLeavesTheNoteToALaterRequestInAnotherMode(t *testing.T) {
+	llmFake := &fake.LLM{NoteResponse: "# Roof"}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	seedNoteWithBody(t, h, "n1", dictated, func(n *model.NoteIndex) {
+		n.CleanedBody, n.CleanedMode, n.CleanedAt = "# Old", model.NoteCleanStructured, model.Now()
+		n.CleanedRequestedAt, n.CleanedRequestedMode = model.Now(), model.NoteCleanPolished
+	})
+
+	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "n1", model.NoteCleanStructured)); err != nil {
+		t.Fatalf("Handle: %v; a superseded run is a verdict, not a retry", err)
+	}
+	if got := len(llmFake.NoteCalls()); got != 0 {
+		t.Fatalf("the superseded run called the model %d time(s); that bills a view nobody asked for", got)
+	}
+	n := getNote(t, h, "n1")
+	if n.CleanedBody != "# Old" || n.CleanedMode != model.NoteCleanStructured {
+		t.Errorf("the superseded run wrote: body=%q mode=%q", n.CleanedBody, n.CleanedMode)
+	}
+	if n.CleanedRequestedMode != model.NoteCleanPolished {
+		t.Errorf("the superseded run cleared the polished request's stamp: %q", n.CleanedRequestedMode)
+	}
+}
+
+// A request that lands while the model works supersedes the run in flight —
+// whatever its mode — and the older run's view is not written over the one
+// the newer run will store. A run that does write clears its stamp, so the
+// next request invokes again.
+func TestCleanNoteTaskYieldsToARequestThatLandedDuringTheCallAndClearsItsOwnStamp(t *testing.T) {
+	llmFake := &fake.LLM{NoteResponse: "# From the older body"}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	first := model.FormatTime(h.clock.Now())
+	seedNoteWithBody(t, h, "n1", dictated, func(n *model.NoteIndex) {
+		n.CleanedRequestedAt, n.CleanedRequestedMode = first, model.NoteCleanStructured
+	})
+	ctx := context.Background()
+
+	// While the model works, an append asks for a fresh run in the same mode.
+	llmFake.OnCall = func() {
+		later := h.clock.Now().Add(5 * time.Second)
+		if _, _, err := service.RecordCleanRequest(ctx, h.store, "user1", getNote(t, h, "n1"), model.NoteCleanStructured, later, false); err != nil {
+			t.Errorf("stamp the later request: %v", err)
+		}
+	}
+	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTask("user1", "n1", model.NoteCleanStructured)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	n := getNote(t, h, "n1")
+	if n.CleanedBody != "" {
+		t.Errorf("the older run wrote its view %q over a newer request", n.CleanedBody)
+	}
+	if n.CleanedRequestedAt == first || n.CleanedRequestedAt == "" {
+		t.Errorf("stamp after the yield = %q; want the later request's, untouched", n.CleanedRequestedAt)
+	}
+
+	// The later run, invoked for that stamp, writes and clears it.
+	llmFake.OnCall = nil
+	llmFake.NoteResponse = "# From the current body"
+	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTask("user1", "n1", model.NoteCleanStructured)); err != nil {
+		t.Fatalf("Handle (later run): %v", err)
+	}
+	n = getNote(t, h, "n1")
+	if n.CleanedBody != "# From the current body" {
+		t.Errorf("cleaned body = %q, want the later run's view", n.CleanedBody)
+	}
+	if n.CleanedRequestedAt != "" || n.CleanedRequestedMode != "" {
+		t.Errorf("a finished run left its stamp on the row (%q %q); the next request would be answered as queued against nothing", n.CleanedRequestedAt, n.CleanedRequestedMode)
 	}
 }
