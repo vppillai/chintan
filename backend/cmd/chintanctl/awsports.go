@@ -58,6 +58,49 @@ func (d *dynamoPartition) Scan(ctx context.Context, pk, skPrefix string, fn func
 	}
 }
 
+func (d *dynamoPartition) Get(ctx context.Context, pk, sk string) (Item, bool, error) {
+	out, err := d.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(d.table),
+		Key: map[string]dynamotypes.AttributeValue{
+			"pk": &dynamotypes.AttributeValueMemberS{Value: pk},
+			"sk": &dynamotypes.AttributeValueMemberS{Value: sk},
+		},
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("get %s item %s %s: %w", d.table, pk, sk, err)
+	}
+	if len(out.Item) == 0 {
+		return nil, false, nil
+	}
+	return itemFromSDK(out.Item), true, nil
+}
+
+func (d *dynamoPartition) ScanIndex(ctx context.Context, index, pkAttr, pk string, fn func(Item) error) error {
+	var start map[string]dynamotypes.AttributeValue
+	for {
+		out, err := d.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:                 aws.String(d.table),
+			IndexName:                 aws.String(index),
+			KeyConditionExpression:    aws.String("#pk = :pk"),
+			ExpressionAttributeNames:  map[string]string{"#pk": pkAttr},
+			ExpressionAttributeValues: map[string]dynamotypes.AttributeValue{":pk": &dynamotypes.AttributeValueMemberS{Value: pk}},
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return fmt.Errorf("query %s index %s for %s: %w", d.table, index, pk, err)
+		}
+		for _, raw := range out.Items {
+			if err := fn(itemFromSDK(raw)); err != nil {
+				return err
+			}
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return nil
+		}
+		start = out.LastEvaluatedKey
+	}
+}
+
 func (d *dynamoPartition) Put(ctx context.Context, it Item) error {
 	_, err := d.client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(d.table),
