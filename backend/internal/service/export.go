@@ -93,6 +93,20 @@ type exportNote struct {
 	model.NoteIndex
 	Body     string               `json:"body"`
 	Captures []model.CaptureIndex `json:"captures,omitempty"`
+	// Cleaned is the whole-note cleaned view when the note has one. It is
+	// spelled out because the index row keeps the body out of its JSON
+	// (model.NoteIndex.CleanedBody is json:"-"), and an export that carried
+	// the view's mode and time but not the view would look complete.
+	Cleaned *exportCleaned `json:"cleaned,omitempty"`
+}
+
+// exportCleaned mirrors the API's NoteCleaned: the view, the mode and time it
+// was generated in, and whether the body has moved on since.
+type exportCleaned struct {
+	Body        string `json:"body"`
+	Mode        string `json:"mode"`
+	GeneratedAt string `json:"generated_at"`
+	Stale       bool   `json:"stale"`
 }
 
 // exportKeys records where a capture's binary artifacts live, so a restore can
@@ -211,13 +225,17 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 		return exportDocument{}, err
 	}
 
+	// The list carries the cleaned view only on request; an export wants it
+	// for every note that has one.
 	active, err := repository.DrainPages(ctx, maxExportNotes, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+		opts.IncludeCleanedBody = true
 		return s.notes.ListNotes(ctx, userID, opts)
 	})
 	if err != nil {
 		return exportDocument{}, err
 	}
 	archived, err := repository.DrainPages(ctx, maxExportNotes, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+		opts.IncludeCleanedBody = true
 		return s.notes.ListArchivedNotes(ctx, userID, opts)
 	})
 	if err != nil {
@@ -242,6 +260,14 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 		// Strip the worker's append markers as GET /v1/notes/{id} does: the
 		// export is the note as the user knows it, not the object as stored.
 		entry.Body = StripCaptureMarkers(string(body))
+		if note.CleanedBody != "" {
+			entry.Cleaned = &exportCleaned{
+				Body:        note.CleanedBody,
+				Mode:        string(EffectiveCleanMode(model.NoteIndex{CleanMode: note.CleanedMode})),
+				GeneratedAt: note.CleanedAt,
+				Stale:       note.CleanedStale,
+			}
+		}
 
 		captures, err := repository.DrainPages(ctx, maxExportCapturesPerNote, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 			return s.captures.ListCapturesForNote(ctx, userID, note.ID, opts)
