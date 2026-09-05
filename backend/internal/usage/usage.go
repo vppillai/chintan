@@ -18,9 +18,11 @@
 // also counted under its provider (provider_<name>_*), so the month can be
 // read as "what did Groq cost, what did MiniMax cost" without a log query.
 // And every authenticated API request the tenant makes adds one to
-// api_requests on the same month and day rows (RequestCounter), written by the
-// API's per-route wrapper after the handler has answered — so the request
-// count and the provider spend sit on one row and one read.
+// api_requests on the tenant's day row (RequestCounter), written by the API's
+// per-route wrapper after the handler has answered; the month's figure is the
+// sum of its days on read, and the month row is touched once a day so the
+// tenant is in the admin listing — so the request count and the provider spend
+// still come back from the one Query a month read already makes.
 package usage
 
 import (
@@ -532,9 +534,10 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 
 // ------------------------------------------------------------ storage-days
 
-// AddStorageDay is two writes with their own maps, not a call to update: that
-// helper adds to the caller's maps, and a second write from the same maps
-// carries the first write's names into an expression that no longer uses them.
+// AddStorageDay builds its two writes itself rather than through update: the
+// month write needs a ConditionExpression and a SET of the snapshot day
+// alongside its ADD, which that helper — an unconditional ADD plus the row's
+// identity — does not offer.
 //
 // The month row takes an ADD of both counters under a condition on
 // storage_snapshot_day — absent, or earlier than this day — and sets it to
