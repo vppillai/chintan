@@ -1,11 +1,17 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { ApiError } from '@/api/problem.ts';
+import { useArchiveNote, useDeleteNoteForever, useRestoreNote } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useLongPress } from '@/hooks/useLongPress.ts';
 import { HOVER_QUERY, useMediaQuery } from '@/hooks/useMediaQuery.ts';
+
+import { ConfirmDialog } from './ConfirmDialog.tsx';
+import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
 
 export interface SelectOptions {
   /** Shift was held: select the range from the last toggled row to this one. */
@@ -47,6 +53,17 @@ export interface NoteRowProps {
  * on it selects the range since the last one. The "Select" button that sat in
  * the header is gone: it was a desktop idiom on a phone screen, and on the
  * desktop it was a second step before the first click.
+ *
+ * And a third gesture, for a finger only: swipe the row aside for its actions
+ * (backlog N8). In the library that is Archive and Delete; in the archive,
+ * Restore and Delete. The row carries these itself — its own mutations, its
+ * own confirmation — so the screen that lists it need know nothing about
+ * them. The two keep the disciplines the note's action bar sets: archiving is
+ * reversible and happens on the tap; deleting is not, so it names what goes
+ * and asks for the title to be typed. From the library, delete is the two
+ * server operations the archive would otherwise require — archive, then
+ * purge — because the server refuses to purge a note that is still active,
+ * and rightly (see `useBulkDeleteNotes`).
  */
 export function NoteRow({
   note,
@@ -65,6 +82,13 @@ export function NoteRow({
         }
       : null,
   );
+  const archive = useArchiveNote();
+  const restore = useRestoreNote();
+  const purge = useDeleteNoteForever();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const busy = archive.isPending || restore.isPending || purge.isPending;
+  const failure = archive.error ?? restore.error ?? purge.error;
+
   const tags = note.tags ?? [];
   const time = formatRowTime(note.updated_at);
   const recordings = describeRecordings(note);
@@ -149,43 +173,126 @@ export function NoteRow({
     );
   }
 
-  return (
-    <div className="note-row-wrap">
-      <button
-        type="button"
-        className="note-row"
-        onClick={() => {
-          // The click that follows a long press is the finger lifting, not a tap.
-          if (longPress.consumeClick()) return;
-          void navigate(ROUTES.note(note.id));
-        }}
-        {...longPress.handlers}
-      >
-        {body}
-      </button>
+  const actions: SwipeAction[] = note.archived
+    ? [
+        {
+          id: 'restore',
+          label: 'Restore',
+          icon: 'restore',
+          onSelect: () => {
+            restore.mutate(note.id);
+          },
+        },
+        {
+          id: 'delete',
+          label: 'Delete',
+          icon: 'trash',
+          destructive: true,
+          onSelect: () => {
+            setConfirmingDelete(true);
+          },
+        },
+      ]
+    : [
+        {
+          id: 'archive',
+          label: 'Archive',
+          icon: 'archive',
+          onSelect: () => {
+            archive.mutate(note.id);
+          },
+        },
+        {
+          id: 'delete',
+          label: 'Delete',
+          icon: 'trash',
+          destructive: true,
+          onSelect: () => {
+            setConfirmingDelete(true);
+          },
+        },
+      ];
 
-      {/*
-        After the row in the DOM so Tab reaches it from the row it selects, and
-        the row's focus is what reveals it (`:focus-within` on the wrap). Drawn
-        only for a pointer that can hover; a finger has the long press.
-      */}
-      {canHover && onToggleSelect && (
-        <span className="note-row__hover-check">
-          <input
-            type="checkbox"
-            className="note-row__checkbox"
-            checked={false}
-            aria-label={`Select ${note.title}`}
-            onClick={(event) => {
-              onToggleSelect(note.id, { range: event.shiftKey });
+  return (
+    <>
+      <SwipeRow
+        actions={actions}
+        disabled={busy}
+        label={`Actions for ${note.title}`}
+        className="note-swipe"
+      >
+        <div className="note-row-wrap">
+          <button
+            type="button"
+            className="note-row"
+            onClick={() => {
+              // The click that follows a long press is the finger lifting, not a tap.
+              if (longPress.consumeClick()) return;
+              void navigate(ROUTES.note(note.id));
             }}
-            onChange={() => {
-              /* Handled on click, above, where Shift is known. */
-            }}
-          />
-        </span>
+            {...longPress.handlers}
+          >
+            {body}
+          </button>
+
+          {/*
+            After the row in the DOM so Tab reaches it from the row it selects, and
+            the row's focus is what reveals it (`:focus-within` on the wrap). Drawn
+            only for a pointer that can hover; a finger has the long press.
+          */}
+          {canHover && onToggleSelect && (
+            <span className="note-row__hover-check">
+              <input
+                type="checkbox"
+                className="note-row__checkbox"
+                checked={false}
+                aria-label={`Select ${note.title}`}
+                onClick={(event) => {
+                  onToggleSelect(note.id, { range: event.shiftKey });
+                }}
+                onChange={() => {
+                  /* Handled on click, above, where Shift is known. */
+                }}
+              />
+            </span>
+          )}
+        </div>
+      </SwipeRow>
+
+      {failure && (
+        <p className="note-row__error" role="alert">
+          {failure instanceof ApiError ? failure.userMessage : 'That did not go through.'}
+        </p>
       )}
-    </div>
+
+      <ConfirmDialog
+        open={confirmingDelete}
+        title="Delete this note forever?"
+        body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
+        confirmLabel="Delete forever"
+        requireText={note.title}
+        requireLabel={`Type the note's title to confirm: ${note.title}`}
+        destructive
+        onCancel={() => {
+          setConfirmingDelete(false);
+        }}
+        onConfirm={() => {
+          setConfirmingDelete(false);
+          if (note.archived) {
+            purge.mutate(note.id);
+            return;
+          }
+          // Chained on the promise rather than in a per-call `onSuccess`, which
+          // TanStack drops once the row has unmounted — and the archive's own
+          // refetch is about to remove this row from the list it is in. Either
+          // failure lands on its mutation's state and is shown beneath the row.
+          void archive
+            .mutateAsync(note.id)
+            .then(() => purge.mutateAsync(note.id))
+            .catch(() => undefined);
+        }}
+      />
+    </>
   );
 }
 

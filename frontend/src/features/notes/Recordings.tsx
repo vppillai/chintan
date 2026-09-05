@@ -18,6 +18,7 @@ import { DownloadButton, saveBlob } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { OverflowMenu } from '@/components/OverflowMenu.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
+import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { FilingStages, LocalUploadItem, TargetPrompt } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 import { useLongPress, type LongPress } from '@/hooks/useLongPress.ts';
@@ -54,9 +55,11 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  * Each row has a More control — Move to…, Delete recording, Download audio,
  * Select — and a long press (or Select) enters a selection mode in which the
  * same three actions apply to several rows at once from a bar at the foot of
- * the screen. Moving and deleting take the paragraph the recording dictated
- * with them (backlog D2, D3); downloading several is one zip built on the
- * device from the server's manifest of presigned URLs (D4).
+ * the screen. On a phone the row also swipes aside for Delete and Move (N8),
+ * which open the same dialog and sheet the menu does. Moving and deleting take
+ * the paragraph the recording dictated with them (backlog D2, D3); downloading
+ * several is one zip built on the device from the server's manifest of
+ * presigned URLs (D4).
  */
 export function Recordings({
   note,
@@ -634,13 +637,13 @@ function RecordingRow({
       data-status={capture.status}
       data-selected={selected || undefined}
     >
-      <div className="recording__head">
-        {selecting ? (
-          /*
-           * In selection mode the row is a checkbox and its label — the one
-           * control every screen reader and keyboard already knows — and the
-           * player is closed, so a tap anywhere on the row toggles it.
-           */
+      {selecting ? (
+        /*
+         * In selection mode the row is a checkbox and its label — the one
+         * control every screen reader and keyboard already knows — and the
+         * player is closed, so a tap anywhere on the row toggles it.
+         */
+        <div className="recording__head">
           <label
             className="recording__select"
             htmlFor={checkId}
@@ -663,53 +666,66 @@ function RecordingRow({
             </span>
             <span className="recording__summary recording__summary--static">{summary}</span>
           </label>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="recording__play"
-              aria-label={`${playing ? 'Pause' : 'Play'} recording from ${when}`}
-              disabled={noAudio || unreachable}
-              onClick={() => {
-                if (expanded) player.toggle();
-                else onRequestPlay();
-              }}
-            >
-              <Icon name={playing ? 'stop' : 'play'} size={18} />
-            </button>
+        </div>
+      ) : (
+        /*
+         * The head alone slides, not the open player beneath it: the tray is
+         * about the recording as a row, and a transcript sliding off the
+         * screen would be the gesture taking more than it was asked for.
+         */
+        <SwipeRow
+          className="recording__swipe"
+          contentClassName="recording__head"
+          label={`Actions for recording from ${when}`}
+          actions={[
+            { id: 'move', label: 'Move', icon: 'move', onSelect: onMove },
+            { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: onDelete },
+          ]}
+        >
+          <button
+            type="button"
+            className="recording__play"
+            aria-label={`${playing ? 'Pause' : 'Play'} recording from ${when}`}
+            disabled={noAudio || unreachable}
+            onClick={() => {
+              if (expanded) player.toggle();
+              else onRequestPlay();
+            }}
+          >
+            <Icon name={playing ? 'stop' : 'play'} size={18} />
+          </button>
 
-            {/*
-              The row itself is the disclosure. `aria-expanded` on a real button
-              rather than a click handler on the <li>: the transcript beneath is
-              reachable by keyboard, and a screen reader is told there is one.
-              Held down, it selects instead (`useLongPress`).
-            */}
-            <button
-              type="button"
-              className="recording__summary"
-              aria-expanded={expanded}
-              aria-controls={bodyId}
-              onClick={() => {
-                if (longPress.consumeClick()) return;
-                onToggle();
-              }}
-              {...longPress.handlers}
-            >
-              {summary}
-            </button>
+          {/*
+            The row itself is the disclosure. `aria-expanded` on a real button
+            rather than a click handler on the <li>: the transcript beneath is
+            reachable by keyboard, and a screen reader is told there is one.
+            Held down, it selects instead (`useLongPress`).
+          */}
+          <button
+            type="button"
+            className="recording__summary"
+            aria-expanded={expanded}
+            aria-controls={bodyId}
+            onClick={() => {
+              if (longPress.consumeClick()) return;
+              onToggle();
+            }}
+            {...longPress.handlers}
+          >
+            {summary}
+          </button>
 
-            <OverflowMenu
-              label={`More for recording from ${when}`}
-              items={[
-                { label: 'Move to…', onSelect: onMove },
-                { label: 'Delete recording', onSelect: onDelete, destructive: true },
-                { label: 'Download audio', onSelect: onDownload },
-                { label: 'Select', onSelect: onStartSelecting },
-              ]}
-            />
-          </>
-        )}
-      </div>
+          <OverflowMenu
+            label={`More for recording from ${when}`}
+            items={[
+              { label: 'Move to…', onSelect: onMove },
+              { label: 'Delete recording', onSelect: onDelete, destructive: true },
+              { label: 'Download audio', onSelect: onDownload },
+              { label: 'Select', onSelect: onStartSelecting },
+            ]}
+          />
+        </SwipeRow>
+      )}
 
       {/*
         Still being filed: the same four segments the library's filing row

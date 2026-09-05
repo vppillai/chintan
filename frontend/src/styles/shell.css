@@ -583,6 +583,13 @@
   color: var(--color-accent-strong);
 }
 
+/* What a swipe action could not do, said under the row it was asked of. */
+.note-row__error {
+  padding: var(--space-1) var(--space-4) 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent-strong);
+}
+
 /* --------------------------------------------------------------------------
    Library: day groups and filter chips
    -------------------------------------------------------------------------- */
@@ -2918,6 +2925,118 @@
   color: var(--color-ink);
   text-decoration: underline;
   text-underline-offset: 0.18em;
+}
+
+/* --------------------------------------------------------------------------
+   Swipe actions — the tray a row slides aside to reveal (backlog N8)
+   -------------------------------------------------------------------------- */
+
+/*
+ * `--swipe-x` is written on the element by `useSwipeActions` — 0 or negative,
+ * the row's offset in pixels. The content translates by it; the tray is
+ * exactly as wide as the row has moved, clipped, with its buttons pinned to
+ * the trailing edge so the nearest one appears first. Nothing clips the
+ * content, so the row's own focus ring is untouched.
+ *
+ * No transition while the finger is down — the finger is the animation — and
+ * the motion tokens for the settle, so reduced motion makes it a cut.
+ */
+.swipe {
+  --swipe-action-size: 4.5rem;
+
+  position: relative;
+  /* Sideways is ours; up and down stay the browser's scroll. */
+  touch-action: pan-y;
+}
+
+/*
+ * Positioned, so it paints over the tray behind it, but with no `z-index` and
+ * — at rest — no `transform`: either would make the content a stacking
+ * context, and the row's overflow menu, which drops down over the row below,
+ * would be trapped inside it and painted under that row. The transform is
+ * applied only while the row is off its mark (`data-shifted`); the settle
+ * back to `none` still transitions, since `none` is the identity.
+ */
+.swipe__content {
+  position: relative;
+  transition: transform var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.swipe[data-shifted] .swipe__content {
+  transform: translateX(var(--swipe-x, 0px));
+}
+
+.swipe[data-dragging] .swipe__content {
+  transition: none;
+}
+
+.swipe__tray {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  inline-size: max(0px, calc(-1 * var(--swipe-x, 0px)));
+  overflow: hidden;
+  border-radius: inherit;
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-inset);
+}
+
+.swipe__actions {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: flex;
+}
+
+.swipe__action {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-1);
+  inline-size: var(--swipe-action-size);
+  min-block-size: var(--layout-touch-target-min);
+  block-size: 100%;
+  color: var(--color-ink);
+}
+
+.swipe__action:active {
+  background-color: var(--color-line);
+}
+
+/* Delete wears the accent, as the confirm dialog's destructive control does:
+   the one consequential colour, on the one action here that ends in a
+   typed confirmation. */
+.swipe__action[data-destructive] {
+  background-color: var(--color-accent);
+  background-image: var(--gradient-lift);
+  color: var(--color-on-accent);
+}
+
+.swipe__action[data-destructive]:active {
+  background-color: var(--color-accent-strong);
+  background-image: none;
+}
+
+.swipe__action-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+/* The note row's tray takes the row's corners. */
+.note-swipe {
+  border-radius: var(--radius-lg);
+}
+
+/* A recording's head slides on its own, over the card's raised ground, so it
+   needs that ground itself; the tray takes the card's inner corners. */
+.recording__swipe {
+  border-radius: calc(var(--radius-lg) - 1px);
+}
+
+.recording__swipe > .swipe__content {
+  background-color: var(--color-raised);
+  border-radius: inherit;
 }
 
 /* --------------------------------------------------------------------------
