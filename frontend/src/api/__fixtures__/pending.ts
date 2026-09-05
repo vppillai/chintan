@@ -122,9 +122,12 @@ export const usageRich: UsageWire = {
       output_tokens: 550,
     },
   ],
+  // The keys are the generated fixture's — `openai` is the OpenAI-compatible
+  // endpoint the worker meters the language model under, whatever vendor is
+  // behind it — with the two extra calls added to that line.
   providers: {
-    groq: { audio_seconds: 28.5, calls: 1, cost_micros: 311 },
-    minimax: { calls: 4, cost_micros: 2410, input_tokens: 5800, output_tokens: 850 },
+    ...usage.providers,
+    openai: { calls: 4, cost_micros: 2410, input_tokens: 5800, output_tokens: 850 },
   },
   api: { requests: 312 },
   storage: {

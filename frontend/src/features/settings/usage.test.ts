@@ -5,6 +5,7 @@ import { usage, usageEmpty } from '@/api/__fixtures__/responses.ts';
 
 import {
   S3_STANDARD_USD_PER_GB_MONTH,
+  PROVIDER_LABELS,
   asOfLabel,
   combinedMicros,
   currentMonth,
@@ -169,9 +170,26 @@ describe('the split by stage', () => {
 });
 
 describe('the split by provider', () => {
-  it('names the providers as they write their names, the biggest bill first', () => {
+  it('has a name for every key the backend actually sends', () => {
+    // The generated fixture is the contract: a key renamed there and not here
+    // would otherwise reach the screen capitalised, as "Openai" once did.
+    for (const key of Object.keys(usage.providers ?? {})) {
+      expect(PROVIDER_LABELS[key], `label for ${key}`).toBeDefined();
+    }
+    // And the rich variant restates those keys, not others.
+    expect(Object.keys(usageRich.providers ?? {}).sort()).toEqual(
+      Object.keys(usage.providers ?? {}).sort(),
+    );
+  });
+
+  it('names the language model by role and vendor, and the biggest bill comes first', () => {
+    // The generated month: the language model at 1,060 µ$ over Groq at 311.
+    expect(providerRows(usage.providers).map((row) => row.label)).toEqual([
+      'Language model (MiniMax)',
+      'Groq',
+    ]);
     const rows = providerRows(usageRich.providers);
-    expect(rows.map((row) => row.label)).toEqual(['MiniMax', 'Groq']);
+    expect(rows.map((row) => row.label)).toEqual(['Language model (MiniMax)', 'Groq']);
     expect(rows[0]?.totals.cost_micros).toBe(2410);
   });
 

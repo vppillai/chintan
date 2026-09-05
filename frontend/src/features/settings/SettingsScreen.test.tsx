@@ -285,8 +285,8 @@ describe('usage this month', () => {
     await screen.findByText('Providers');
 
     const labels = Array.from(document.querySelectorAll('.usage__providers dt'), (t) => t.textContent);
-    expect(labels).toEqual(['MiniMax', 'Groq']);
-    const minimax = screen.getByText('MiniMax').closest('.usage__provider');
+    expect(labels).toEqual(['Language model (MiniMax)', 'Groq']);
+    const minimax = screen.getByText('Language model (MiniMax)').closest('.usage__provider');
     expect(minimax).toHaveTextContent('$0.002');
     expect(minimax).toHaveTextContent('4 calls');
     // The rows add up to the figure, so there is nothing unattributed to show.
