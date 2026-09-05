@@ -140,6 +140,17 @@ This is a public repository; nothing in it is secret.
 - **The agent principal** from `scripts/bootstrap-agent.sh` runs under a permissions boundary, cannot read the provider keys, and cannot write to or stop the CloudTrail trail.
 - **CORS** is restricted to your Pages origin. Never commit `.env` files or keys; `.gitignore` already excludes them.
 
+### Tenancy
+
+One Cognito user is one tenant, and that equality is load-bearing. `auth.Identity` (`backend/internal/auth/identity.go`) carries a `UserID` and a `TenantID`; the middleware sets both to the verified token's subject, and nothing below that package may key data on the user id. Everything that isolates data hangs off the tenant id:
+
+- The DynamoDB partition `USER#<tenant>` holds the tenant's settings, notes, captures and `USAGE#` rows (`internal/repository/dynamo.go`, `internal/usage/usage.go`); the instance's `SPEND#` counter deliberately sits outside it (`internal/pipeline/spend.go`).
+- Every S3 key is `tenants/<tenant>/…` (`internal/keys/keys.go`); the worker reads the tenant back out of the object key when a recording arrives (`internal/pipeline/worker.go`).
+- `chintanctl` discovers tenants from those prefixes and walks one partition at a time (`cmd/chintanctl/enumerate.go`); `erase --tenant` is the unit of deletion; `chintanctl usage` attributes spend per tenant.
+- Ownership is the key, not a check: a note or capture is read under the caller's partition, so another tenant's id is simply not found (`internal/repository/isolation_test.go` asserts it). A capture's `targeted` flag records that a person, not the router, chose its note; it is not an access flag.
+
+Sharing a note, or several sign-ins over one library, means populating `TenantID` from a claim or a membership lookup rather than the subject — the seam `Identity`'s comment reserves — plus an explicit ownership check wherever the partition key alone did the work, and a decision on whether usage is attributed to the tenant or the user. Until then a user's data is entirely their own.
+
 ---
 
 ## Develop
