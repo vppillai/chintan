@@ -18,7 +18,7 @@ import type { SVGProps } from 'react';
 export const ICON_STROKE_WIDTH = 1.75;
 
 export type IconName =
-  | 'notes'
+  | 'home'
   | 'you'
   | 'mic'
   | 'play'
@@ -32,7 +32,12 @@ export type IconName =
   | 'plus';
 
 export const PATHS: Record<IconName, string> = {
-  notes: 'M6 3h9l4 4v14H6zM15 3v4h4M9 12h7M9 16h7',
+  // A house: roof, two walls, a door. The Home tab is the way back to the
+  // start of the app, and it wore the document glyph from when the tab was
+  // called Notes — a page icon under the word "Home" read as two different
+  // places. The roof's apex sits a unit above the grid's centre line so the
+  // glyph's optical centre matches the person beside it.
+  home: 'M4 11.5 12 4.5l8 7M5.5 10.2V20h13V10.2M10 20v-5h4v5',
   you: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21a8 8 0 0 1 16 0',
   mic: 'M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
   // Playback, not recording — a triangle rather than the microphone glyph,
