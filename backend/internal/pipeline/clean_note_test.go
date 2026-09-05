@@ -16,10 +16,16 @@ import (
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
-// cleanNoteTask is the payload the API and the worker itself send.
+// cleanNoteTask is the payload an invocation queued before requested_at
+// existed carries; cleanNoteTaskFor is the one the API and the worker send
+// today, naming the stamp the run is for.
 func cleanNoteTask(tenantID, noteID string, mode model.NoteCleanMode) json.RawMessage {
+	return cleanNoteTaskFor(tenantID, noteID, mode, "")
+}
+
+func cleanNoteTaskFor(tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) json.RawMessage {
 	raw, err := json.Marshal(Invocation{
-		Task: TaskCleanNote, TenantID: tenantID, NoteID: noteID, Mode: string(mode),
+		Task: TaskCleanNote, TenantID: tenantID, NoteID: noteID, Mode: string(mode), RequestedAt: requestedAt,
 		CorrelationID: "00000000-0000-4000-8000-000000000001",
 	})
 	if err != nil {
@@ -283,18 +289,20 @@ func TestCleanNoteTaskOnAMissingOrArchivedNoteIsDone(t *testing.T) {
 
 // recordingCleanInvoker captures every clean-note hand-off the pipeline makes.
 type recordingCleanInvoker struct {
-	mu    sync.Mutex
-	calls []string
-	err   error
+	mu     sync.Mutex
+	calls  []string
+	stamps []string
+	err    error
 }
 
-func (r *recordingCleanInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+func (r *recordingCleanInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.err != nil {
 		return r.err
 	}
 	r.calls = append(r.calls, tenantID+"/"+noteID+"/"+string(mode))
+	r.stamps = append(r.stamps, requestedAt)
 	return nil
 }
 
@@ -340,6 +348,16 @@ func TestAppendToAnAutoCleanNoteInvokesTheCleanNoteTask(t *testing.T) {
 			}
 			if got := invoker.got(); strings.Join(got, ",") != strings.Join(tc.want, ",") {
 				t.Errorf("clean-note hand-offs = %v, want %v", got, tc.want)
+			}
+			// The hand-off names the stamp it wrote on the row, so the run it
+			// starts can tell whether it is still the one asked for.
+			if len(tc.want) == 1 {
+				invoker.mu.Lock()
+				stamps := append([]string(nil), invoker.stamps...)
+				invoker.mu.Unlock()
+				if len(stamps) != 1 || stamps[0] == "" || stamps[0] != getNote(t, h, "note1").CleanedRequestedAt {
+					t.Errorf("hand-off carried requested_at %v; want the row's stamp %q", stamps, getNote(t, h, "note1").CleanedRequestedAt)
+				}
 			}
 			// Whatever the preference, the append made the existing view stale.
 			if !getNote(t, h, "note1").CleanedStale {
@@ -395,7 +413,7 @@ func TestInvokerSendsACleanNoteTaskTheWorkerAccepts(t *testing.T) {
 	client := &capturingLambda{}
 	inv := NewInvoker(client, "arn:aws:lambda:us-west-2:123456789012:function:chintan-worker-dev-prod:live")
 	ctx := context.Background()
-	if err := inv.InvokeCleanNote(ctx, "user1", "n1", model.NoteCleanPolished); err != nil {
+	if err := inv.InvokeCleanNote(ctx, "user1", "n1", model.NoteCleanPolished, "2026-09-05T12:00:00.000000000Z"); err != nil {
 		t.Fatalf("InvokeCleanNote: %v", err)
 	}
 	if client.in == nil {
@@ -405,7 +423,7 @@ func TestInvokerSendsACleanNoteTaskTheWorkerAccepts(t *testing.T) {
 	if err := json.Unmarshal(client.in.Payload, &sent); err != nil {
 		t.Fatalf("payload is not JSON: %v", err)
 	}
-	for k, want := range map[string]string{"task": TaskCleanNote, "tenant_id": "user1", "note_id": "n1", "mode": "polished"} {
+	for k, want := range map[string]string{"task": TaskCleanNote, "tenant_id": "user1", "note_id": "n1", "mode": "polished", "requested_at": "2026-09-05T12:00:00.000000000Z"} {
 		if sent[k] != want {
 			t.Errorf("payload[%s] = %v, want %q", k, sent[k], want)
 		}
@@ -414,7 +432,7 @@ func TestInvokerSendsACleanNoteTaskTheWorkerAccepts(t *testing.T) {
 		t.Error("a clean-note payload names a capture")
 	}
 	task, ok := parseCleanNoteTask(client.in.Payload)
-	if !ok || task.NoteID != "n1" || task.TenantID != "user1" || task.Mode != "polished" {
+	if !ok || task.NoteID != "n1" || task.TenantID != "user1" || task.Mode != "polished" || task.RequestedAt != "2026-09-05T12:00:00.000000000Z" {
 		t.Errorf("the worker does not read back what the invoker sent: %+v ok=%v", task, ok)
 	}
 	if _, isCapture := parseCleanNoteTask(json.RawMessage(`{"tenant_id":"u","capture_id":"c"}`)); isCapture {
@@ -493,5 +511,95 @@ func TestCleanNoteTaskYieldsToARequestThatLandedDuringTheCallAndClearsItsOwnStam
 	}
 	if n.CleanedRequestedAt != "" || n.CleanedRequestedMode != "" {
 		t.Errorf("a finished run left its stamp on the row (%q %q); the next request would be answered as queued against nothing", n.CleanedRequestedAt, n.CleanedRequestedMode)
+	}
+}
+
+// Asynchronous invocations are unordered. The person asks for structured
+// (stamp t0), then polished (stamp t1); the polished run lands first, writes
+// and clears the stamp. Judged from the row, the structured run then found no
+// stamp, took that for "not superseded", called the model and stored
+// structured over the polished view asked for last. Judged from its own
+// invocation's stamp, it sees the row no longer carries t0 and leaves.
+func TestAnOlderCleanRunDeliveredAfterTheNewerOneWritesNothing(t *testing.T) {
+	llmFake := &fake.LLM{NoteResponse: "# Polished"}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	seedNoteWithBody(t, h, "n1", dictated, nil)
+	ctx := context.Background()
+
+	// The request path, twice: the row's stamp ends as polished at t1, and
+	// each invocation carries the stamp that was written for it.
+	structured, _, err := service.RecordCleanRequest(ctx, h.store, "user1", getNote(t, h, "n1"), model.NoteCleanStructured, h.clock.Now(), true)
+	if err != nil {
+		t.Fatalf("stamp structured: %v", err)
+	}
+	h.clock.Advance(2 * time.Second)
+	polished, _, err := service.RecordCleanRequest(ctx, h.store, "user1", getNote(t, h, "n1"), model.NoteCleanPolished, h.clock.Now(), true)
+	if err != nil {
+		t.Fatalf("stamp polished: %v", err)
+	}
+	if structured.CleanedRequestedAt == polished.CleanedRequestedAt {
+		t.Fatal("the two requests carry the same stamp; the test cannot tell them apart")
+	}
+
+	// Polished lands first.
+	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTaskFor("user1", "n1", model.NoteCleanPolished, polished.CleanedRequestedAt)); err != nil {
+		t.Fatalf("Handle(polished): %v", err)
+	}
+	// Then the older structured run.
+	llmFake.NoteResponse = "# Structured"
+	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTaskFor("user1", "n1", model.NoteCleanStructured, structured.CleanedRequestedAt)); err != nil {
+		t.Fatalf("Handle(structured): %v", err)
+	}
+
+	if got := len(llmFake.NoteCalls()); got != 1 {
+		t.Fatalf("the model was called %d times, want 1: the superseded run must not bill a view nobody asked for", got)
+	}
+	n := getNote(t, h, "n1")
+	if n.CleanedMode != model.NoteCleanPolished || n.CleanedBody != "# Polished" {
+		t.Fatalf("stored view is %s %q; the older run overwrote the mode asked for last", n.CleanedMode, n.CleanedBody)
+	}
+	if n.CleanedRequestedAt != "" {
+		t.Errorf("stamp %q left on the row", n.CleanedRequestedAt)
+	}
+}
+
+// Lambda delivers at least once. A run that wrote and cleared its stamp, then
+// had its invocation delivered again, found an unstamped row and ran the whole
+// task a second time — the same view, billed twice. Its own stamp is gone from
+// the row, so it is superseded by its own completion.
+func TestARedeliveredCleanRunThatAlreadyWroteDoesNotCallTheModelAgain(t *testing.T) {
+	llmFake := &fake.LLM{NoteResponse: "# Roof"}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	seedNoteWithBody(t, h, "n1", dictated, nil)
+	ctx := context.Background()
+
+	stamped, _, err := service.RecordCleanRequest(ctx, h.store, "user1", getNote(t, h, "n1"), model.NoteCleanStructured, h.clock.Now(), true)
+	if err != nil {
+		t.Fatalf("stamp: %v", err)
+	}
+	payload := cleanNoteTaskFor("user1", "n1", model.NoteCleanStructured, stamped.CleanedRequestedAt)
+	for i := 0; i < 2; i++ {
+		if err := NewWorker(h.pipeline).Handle(ctx, payload); err != nil {
+			t.Fatalf("Handle #%d: %v", i+1, err)
+		}
+	}
+	if got := len(llmFake.NoteCalls()); got != 1 {
+		t.Fatalf("the model was called %d times for one request delivered twice, want 1", got)
+	}
+	if n := getNote(t, h, "n1"); n.CleanedBody != "# Roof" {
+		t.Fatalf("cleaned body = %q", n.CleanedBody)
+	}
+
+	// A retry of a run that did NOT reach a verdict — the stamp is still on
+	// the row — is the retry the protocol exists for, and it runs.
+	stamped, _, err = service.RecordCleanRequest(ctx, h.store, "user1", getNote(t, h, "n1"), model.NoteCleanPolished, h.clock.Now().Add(time.Minute), true)
+	if err != nil {
+		t.Fatalf("stamp polished: %v", err)
+	}
+	if err := NewWorker(h.pipeline).Handle(ctx, cleanNoteTaskFor("user1", "n1", model.NoteCleanPolished, stamped.CleanedRequestedAt)); err != nil {
+		t.Fatalf("Handle(polished): %v", err)
+	}
+	if got := len(llmFake.NoteCalls()); got != 2 {
+		t.Fatalf("a run whose stamp is still on the row was skipped (model calls = %d, want 2)", got)
 	}
 }

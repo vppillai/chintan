@@ -174,9 +174,19 @@ func (rt *router) getUsage(w http.ResponseWriter, r *http.Request) {
 // nearest microdollar. ok is false when the instance spent nothing, since a
 // share of zero is not a fraction. Exact integer arithmetic, because the
 // product of two month totals in microdollars can pass int64.
+//
+// The fraction is clamped to one. The two totals age differently: the
+// tenant's month row never expires, while the instance's SPEND#<day> rows
+// carry a 90-day TTL, so two or three months back the denominator has lost
+// days the numerator still counts and the raw quotient exceeds the whole
+// (review 2026-09-05, S15). A share above the month's AWS cost is not a
+// share; the honest answer for a stale denominator is "all of it".
 func shareOf(awsMicros, tenantMicros, instanceMicros int64) (int64, bool) {
 	if instanceMicros <= 0 || tenantMicros < 0 || awsMicros < 0 {
 		return 0, false
+	}
+	if tenantMicros >= instanceMicros {
+		return awsMicros, true
 	}
 	num := new(big.Int).Mul(big.NewInt(awsMicros), big.NewInt(tenantMicros))
 	den := big.NewInt(instanceMicros)

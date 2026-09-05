@@ -62,15 +62,13 @@ func (s *StorageService) Summarize(ctx context.Context, userID string) (StorageS
 		out.AudioBytes += c.AudioBytes
 	}
 
-	notes, err := repository.DrainPages(ctx, maxStorageRows, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListNotes(ctx, userID, opts)
-	})
+	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxStorageRows})
 	if err != nil {
 		return StorageSummary{}, fmt.Errorf("storage: list notes: %w", err)
 	}
 	out.Notes = len(notes)
 
-	// DrainPages cuts the set to the cap, so hitting it exactly is the only
+	// Both drains cut the set to the cap, so hitting it exactly is the only
 	// evidence there may have been more.
 	out.Approximate = len(captures) >= maxStorageRows || len(notes) >= maxStorageRows
 	return out, nil

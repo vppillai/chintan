@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 
-	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
@@ -36,9 +35,7 @@ func NewTagsService(notes *NotesService) *TagsService {
 
 // List returns every tag in use on an active note, most used first.
 func (s *TagsService) List(ctx context.Context, userID string) ([]TagCount, error) {
-	notes, err := repository.DrainPages(ctx, maxTagScanNotes, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.notes.ListNotes(ctx, userID, opts)
-	})
+	notes, err := s.notes.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxTagScanNotes})
 	if err != nil {
 		return nil, err
 	}

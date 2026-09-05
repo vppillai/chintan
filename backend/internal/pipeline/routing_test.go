@@ -99,8 +99,8 @@ func (w directInvoker) InvokeCapture(ctx context.Context, tenantID, captureID, r
 	return err
 }
 
-func (w directInvoker) InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
-	return w.p.CleanNote(ctx, tenantID, noteID, mode)
+func (w directInvoker) InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error {
+	return w.p.CleanNote(ctx, tenantID, noteID, mode, requestedAt)
 }
 
 func (w directInvoker) InvokeAsk(ctx context.Context, tenantID, askID string) error {

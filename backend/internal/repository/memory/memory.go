@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -214,6 +215,41 @@ func (s *Store) ListArchivedNotes(ctx context.Context, tenantID string, opts rep
 	})
 }
 
+// DrainNotes is the whole shelf in list order. The double has no partition to
+// drain, so this is the paged list without the paging; it drops the two large
+// fields unless asked for them, for the reason listNotes does.
+func (s *Store) DrainNotes(ctx context.Context, tenantID string, opts repository.DrainOptions) ([]model.NoteIndex, bool, error) {
+	keep := func(n model.NoteIndex) bool { return strings.TrimSpace(n.DeletedAt) == "" }
+	if opts.Shelf == repository.NoteShelfArchived {
+		now := time.Now().Unix()
+		keep = func(n model.NoteIndex) bool { return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now }
+	}
+	var out []model.NoteIndex
+	list := repository.ListOptions{
+		Limit:              repository.MaxListLimit,
+		IncludeSearchText:  opts.IncludeSearchText,
+		IncludeCleanedBody: opts.IncludeCleanedBody,
+	}
+	for {
+		page, err := s.listNotes(ctx, tenantID, list, keep)
+		if err != nil {
+			return nil, false, err
+		}
+		out = append(out, page.Items...)
+		if page.Cursor == "" || (opts.MaxItems > 0 && len(out) >= opts.MaxItems) {
+			break
+		}
+		list.Cursor = page.Cursor
+	}
+	if opts.MaxItems > 0 && len(out) > opts.MaxItems {
+		out = out[:opts.MaxItems]
+	}
+	if out == nil {
+		out = []model.NoteIndex{}
+	}
+	return out, false, nil
+}
+
 func (s *Store) ExpiredNotes(ctx context.Context, asOf int64) ([]repository.TenantNote, error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return nil, err
@@ -261,6 +297,20 @@ func (s *Store) NoteExists(ctx context.Context, tenantID, noteID string) (bool, 
 	return ok, nil
 }
 
+func (s *Store) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]bool, len(noteIDs))
+	for _, id := range noteIDs {
+		_, ok := s.notes[tenantID][id]
+		out[id] = ok
+	}
+	return out, nil
+}
+
 func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return model.NoteIndex{}, err
@@ -277,6 +327,85 @@ func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex)
 	next.Version = n.Version + 1
 	s.notes[tenantID][n.ID] = next
 	return copyNote(next), nil
+}
+
+func (s *Store) StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, expectedVersion int64, at time.Time) (model.NoteIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if captureID == "" {
+		return model.NoteIndex{}, errors.New("repository: empty capture id for the append stamp")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok {
+		return model.NoteIndex{}, repository.ErrNotFound
+	}
+	if existing.Version != expectedVersion {
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	next := copyNote(existing)
+	next.Version = expectedVersion + 1
+	next.AppendingCapture = captureID
+	next.AppendingAt = model.FormatTime(at)
+	s.notes[tenantID][noteID] = next
+	return copyNote(next), nil
+}
+
+func (s *Store) ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok || existing.AppendingCapture != captureID {
+		return nil
+	}
+	next := copyNote(existing)
+	next.AppendingCapture, next.AppendingAt = "", ""
+	s.notes[tenantID][noteID] = next
+	return nil
+}
+
+func (s *Store) StampCleanRequest(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, at string, expectedVersion int64) (model.NoteIndex, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if at == "" {
+		return model.NoteIndex{}, errors.New("repository: empty clean request stamp")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok {
+		return model.NoteIndex{}, repository.ErrNotFound
+	}
+	if existing.Version != expectedVersion {
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	next := copyNote(existing)
+	next.CleanedRequestedAt = at
+	next.CleanedRequestedMode = mode
+	s.notes[tenantID][noteID] = next
+	return copyNote(next), nil
+}
+
+func (s *Store) ClearCleanStamp(ctx context.Context, tenantID, noteID, at string) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.notes[tenantID][noteID]
+	if !ok || existing.CleanedRequestedAt != at {
+		return nil
+	}
+	next := copyNote(existing)
+	next.CleanedRequestedAt, next.CleanedRequestedMode = "", ""
+	s.notes[tenantID][noteID] = next
+	return nil
 }
 
 func (s *Store) DeleteNote(ctx context.Context, tenantID, noteID string) error {

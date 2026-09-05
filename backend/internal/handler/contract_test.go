@@ -399,6 +399,18 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		h.do(t, http.MethodPatch, "/v1/notes/"+contended.ID, contractUser,
 			map[string]any{"version": contended.Version, "title": "Loser"}))
 
+	// The 409 that is not a conflict to reconcile: a save that meets a
+	// recording's append in flight. The client repeats the same save after
+	// Retry-After rather than re-reading, and `reason` is what tells it to.
+	appending := h.createNote(t, contractUser, "Being dictated into", nil)
+	if _, err := h.store.StampNoteAppend(context.Background(), contractUser, appending.ID, "capture_in_flight", appending.Version, time.Now()); err != nil {
+		t.Fatalf("stamp the append: %v", err)
+	}
+	add("problemAppendInProgress", "ProblemWire",
+		"PATCH /v1/notes/{noteId} → 409 with reason append_in_progress while a recording is being added to the body. Repeat the same save after Retry-After; do not rebase on current_version.",
+		h.do(t, http.MethodPatch, "/v1/notes/"+appending.ID, contractUser,
+			map[string]any{"version": appending.Version, "body": "typed while dictating"}))
+
 	capped := newHarness(t)
 	capped.spend.capped = true
 	add("problemSpendCapped", "ProblemWire",

@@ -127,15 +127,11 @@ func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter
 		if err != nil {
 			return repository.Page[model.CaptureIndex]{}, err
 		}
+		if err := notes.learn(ctx, page.Items); err != nil {
+			return repository.Page[model.CaptureIndex]{}, err
+		}
 		for _, c := range page.Items {
-			if !filter.keep(c) {
-				continue
-			}
-			filed, err := notes.filedIntoLiveNote(ctx, c)
-			if err != nil {
-				return repository.Page[model.CaptureIndex]{}, err
-			}
-			if filed {
+			if filter.keep(c) && notes.filedIntoLiveNote(c) {
 				kept = append(kept, c)
 			}
 		}
@@ -148,8 +144,9 @@ func (s *CaptureService) ListCaptures(ctx context.Context, userID string, filter
 }
 
 // noteExistence remembers, for one request, which of the tenant's notes have a
-// row. A page of twenty receipts names a handful of notes; each is asked about
-// once.
+// row. A page of twenty receipts names a handful of notes; the page asks about
+// all of them in one round trip (learn) and each is asked about once, however
+// many pages the filter walks.
 type noteExistence struct {
 	store  repository.Store
 	userID string
@@ -160,23 +157,44 @@ func (s *CaptureService) noteExistence(userID string) *noteExistence {
 	return &noteExistence{store: s.store, userID: userID, known: map[string]bool{}}
 }
 
+// learn asks the store, once, about every note a page's receipts name that
+// this request has not asked about yet.
+func (n *noteExistence) learn(ctx context.Context, page []model.CaptureIndex) error {
+	var ask []string
+	for _, c := range page {
+		if c.Status != model.StatusAppended || c.NoteID == "" {
+			continue
+		}
+		if _, known := n.known[c.NoteID]; known {
+			continue
+		}
+		n.known[c.NoteID] = false
+		ask = append(ask, c.NoteID)
+	}
+	if len(ask) == 0 {
+		return nil
+	}
+	found, err := n.store.NotesExist(ctx, n.userID, ask)
+	if err != nil {
+		for _, id := range ask {
+			delete(n.known, id)
+		}
+		return err
+	}
+	for id, exists := range found {
+		n.known[id] = exists
+	}
+	return nil
+}
+
 // filedIntoLiveNote is false only for an appended capture whose note has no
 // row. Everything else passes: a capture still moving, or stopped on the user,
-// is shown whatever its note_id says.
-func (n *noteExistence) filedIntoLiveNote(ctx context.Context, c model.CaptureIndex) (bool, error) {
+// is shown whatever its note_id says. The page must have been learned first.
+func (n *noteExistence) filedIntoLiveNote(c model.CaptureIndex) bool {
 	if c.Status != model.StatusAppended || c.NoteID == "" {
-		return true, nil
+		return true
 	}
-	exists, ok := n.known[c.NoteID]
-	if !ok {
-		var err error
-		exists, err = n.store.NoteExists(ctx, n.userID, c.NoteID)
-		if err != nil {
-			return false, err
-		}
-		n.known[c.NoteID] = exists
-	}
-	return exists, nil
+	return n.known[c.NoteID]
 }
 
 // ListUnroutedCaptures returns captures that have no destination note yet.
@@ -196,15 +214,11 @@ func (s *CaptureService) listCapturesByWalk(ctx context.Context, userID string, 
 		return repository.Page[model.CaptureIndex]{}, err
 	}
 
-	notes, err := repository.DrainPages(ctx, maxCaptureWalkNotes, func(ctx context.Context, o repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListNotes(ctx, userID, o)
-	})
+	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxCaptureWalkNotes})
 	if err != nil {
 		return repository.Page[model.CaptureIndex]{}, err
 	}
-	archived, err := repository.DrainPages(ctx, maxCaptureWalkNotes, func(ctx context.Context, o repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		return s.store.ListArchivedNotes(ctx, userID, o)
-	})
+	archived, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{Shelf: repository.NoteShelfArchived, MaxItems: maxCaptureWalkNotes})
 	if err != nil {
 		return repository.Page[model.CaptureIndex]{}, err
 	}

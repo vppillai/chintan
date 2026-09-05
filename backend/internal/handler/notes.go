@@ -221,6 +221,13 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A conflict carries the version the client should reconcile against,
 		// so the editor does not have to re-read to find out what it lost to.
+		// An append in flight is the one conflict the client must NOT
+		// reconcile against: the version moved for a body write that has not
+		// landed yet, and the answer says so.
+		if errors.Is(err, service.ErrAppendInProgress) {
+			httperr.ConflictAppendInProgress(w, r, updated.Version)
+			return
+		}
 		if errors.Is(err, repository.ErrVersionConflict) {
 			failConflictAt(w, r, err, updated.Version)
 			return

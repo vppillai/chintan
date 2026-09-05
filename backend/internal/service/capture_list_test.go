@@ -398,6 +398,7 @@ func TestCaptureStatusGroupsCoverEveryDeclaredStatus(t *testing.T) {
 	}
 	terminal := []model.CaptureStatus{
 		model.StatusAppended, model.StatusNoContent, model.StatusFailed, model.StatusSpendCapped,
+		model.StatusNeedsTarget,
 	}
 	for _, s := range pending {
 		if !CaptureIsPending(s) {
@@ -415,9 +416,16 @@ func TestCaptureStatusGroupsCoverEveryDeclaredStatus(t *testing.T) {
 			t.Errorf("CaptureIsPending(%s) = true for a capture that has stopped", s)
 		}
 	}
-	// needs_target is neither: the pipeline is waiting on the user, not on itself.
-	if CaptureIsPending(model.StatusNeedsTarget) || CaptureIsTerminal(model.StatusNeedsTarget) {
-		t.Error("needs_target is neither pending nor terminal: it waits on the user, and calling it pending puts it in the progress card forever")
+	// needs_target is terminal for the pipeline — it will not move the capture
+	// on by itself — but not pending: calling it pending would put it in the
+	// progress card forever. One definition for terminal (model.IsTerminalStatus)
+	// is what keeps the worker, the API's retry, reconcile and the frontend's
+	// list from drifting apart again.
+	if CaptureIsPending(model.StatusNeedsTarget) {
+		t.Error("needs_target is pending; it waits on the user, and calling it pending puts it in the progress card forever")
+	}
+	if CaptureIsTerminal(model.StatusNeedsTarget) != model.IsTerminalStatus(model.StatusNeedsTarget) {
+		t.Error("the service and the model disagree about needs_target")
 	}
 }
 
@@ -479,7 +487,8 @@ func TestListCapturesDropsAReceiptForANoteThatIsGone(t *testing.T) {
 	}
 }
 
-// noteExistsErrStore fails the note lookup the list makes for a receipt.
+// noteExistsErrStore fails the note lookup the list makes for a page of
+// receipts.
 type noteExistsErrStore struct {
 	repository.Store
 	err error
@@ -487,6 +496,58 @@ type noteExistsErrStore struct {
 
 func (s noteExistsErrStore) NoteExists(context.Context, string, string) (bool, error) {
 	return false, s.err
+}
+
+func (s noteExistsErrStore) NotesExist(context.Context, string, []string) (map[string]bool, error) {
+	return nil, s.err
+}
+
+// countingNotesExist records every existence lookup the list makes.
+type countingNotesExist struct {
+	repository.Store
+	singles int
+	batches [][]string
+}
+
+func (s *countingNotesExist) NoteExists(ctx context.Context, tenantID, noteID string) (bool, error) {
+	s.singles++
+	return s.Store.NoteExists(ctx, tenantID, noteID)
+}
+
+func (s *countingNotesExist) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
+	s.batches = append(s.batches, append([]string(nil), noteIDs...))
+	return s.Store.NotesExist(ctx, tenantID, noteIDs)
+}
+
+// The captures list is polled every second and a half, and every page of it
+// asked the store about each distinct filed note in turn: a page of twenty
+// receipts over five notes was five sequential GetItems. It is one call per
+// page now, for exactly the notes not yet asked about.
+func TestListCapturesAsksAboutAPagesNotesInOneRoundTrip(t *testing.T) {
+	seed := make([]model.CaptureIndex, 0, 20)
+	for i := 0; i < 20; i++ {
+		seed = append(seed, model.CaptureIndex{
+			ID: fmt.Sprintf("c_%02d", i), UserID: "user1", NoteID: fmt.Sprintf("n%d", i%5),
+			Status: model.StatusAppended, CreatedAt: fmt.Sprintf("2026-08-08T10:%02d:00.000000000Z", i),
+		})
+	}
+	store, _ := captureFixture(t, seed...)
+	counting := &countingNotesExist{Store: store}
+	svc := NewCaptureService(counting, memory.NewObjects())
+
+	page, err := svc.ListCaptures(context.Background(), "user1", CaptureFilterAll, repository.ListOptions{Limit: 20})
+	if err != nil {
+		t.Fatalf("ListCaptures: %v", err)
+	}
+	if len(page.Items) != 20 {
+		t.Fatalf("page = %d items, want 20", len(page.Items))
+	}
+	if counting.singles != 0 {
+		t.Fatalf("the list made %d single-note lookups; want none", counting.singles)
+	}
+	if len(counting.batches) != 1 || len(counting.batches[0]) != 5 {
+		t.Fatalf("the list asked about the page's notes in %d call(s) of %v; want one call naming the five distinct notes", len(counting.batches), counting.batches)
+	}
 }
 
 func TestListCapturesSurfacesANoteLookupFailure(t *testing.T) {

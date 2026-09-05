@@ -250,6 +250,19 @@ type NoteIndex struct {
 	// and never on the wire.
 	CleanedRequestedAt   string        `json:"cleaned_requested_at,omitempty"`
 	CleanedRequestedMode NoteCleanMode `json:"cleaned_requested_mode,omitempty"`
+	// AppendingCapture and AppendingAt say a capture's paragraph is on its way
+	// into the body: the worker stamps them, together with a version bump,
+	// after it takes the append claim and before it writes the body
+	// (repository.Store.StampNoteAppend), and clears them when the index
+	// refresh that follows the write lands or the claim is handed back. While
+	// the stamp is younger than repository.AppendClaimLease, PATCH refuses a
+	// body write with 409 `append_in_progress` (service.UpdateNote): the
+	// version alone cannot witness a body write the worker has made but not yet
+	// indexed, and an editor save landing in that window carried the marker
+	// forward and dropped the paragraph. Promoted and projected like the stamp
+	// above, and never on the wire.
+	AppendingCapture string `json:"appending_capture,omitempty"`
+	AppendingAt      string `json:"appending_at,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.
@@ -265,6 +278,22 @@ type NoteIndex struct {
 // promoting a constant from another package into this one changes no stored
 // value and no wire representation.
 type CaptureStatus string
+
+// IsTerminalStatus reports whether the pipeline will not move a capture on
+// from s by itself: it finished (appended, no_content), it stopped on a
+// verdict (failed, spend_capped), or it is waiting on a person (needs_target).
+// This is the one definition; the worker, the API's retry and `chintanctl
+// reconcile` all read it, and the frontend's TERMINAL_CAPTURE_STATUSES lists
+// the same five. Until 2026-09-05 there were three lists that disagreed, and
+// reconcile reported every spend_capped capture as stuck.
+func IsTerminalStatus(s CaptureStatus) bool {
+	switch s {
+	case StatusAppended, StatusNoContent, StatusFailed, StatusSpendCapped, StatusNeedsTarget:
+		return true
+	default:
+		return false
+	}
+}
 
 const (
 	StatusUploaded    CaptureStatus = "uploaded"
@@ -338,6 +367,14 @@ type CaptureIndex struct {
 	CleanKey  string        `json:"clean_key"`
 	Error     string        `json:"error,omitempty"`
 	CreatedAt string        `json:"created_at"`
+	// LastProgressAt is when the pipeline last wrote this row, or when the API
+	// last handed the capture to the worker. It is what says whether a worker
+	// can still be alive on this capture: the worker function's timeout is
+	// 900 s, so a row untouched for longer than that has no live worker, and a
+	// retry may start one without starting a second delivery
+	// (service.CaptureStuckAfter). Empty on rows written before 2026-09-05,
+	// which read as CreatedAt. In the record blob only; nothing lists on it.
+	LastProgressAt string `json:"last_progress_at,omitempty"`
 
 	// TargetSource says who set NoteID. Empty on rows written before 2026-09
 	// and on captures nothing has decided for yet.

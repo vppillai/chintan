@@ -33,9 +33,17 @@ type Invocation struct {
 	// refused rather than misread.
 	Task string `json:"task,omitempty"`
 	// NoteID and Mode address a clean-note task: the note whose cleaned view
-	// is regenerated and the mode to write it in.
-	NoteID string `json:"note_id,omitempty"`
-	Mode   string `json:"mode,omitempty"`
+	// is regenerated and the mode to write it in. RequestedAt is the stamp
+	// the request path left on the row for this run (NoteIndex
+	// CleanedRequestedAt): the run writes only while the row still carries
+	// exactly it. Judged from the row alone, a reordered or Lambda-retried
+	// older run found the row unstamped — the newer run had finished and
+	// cleared it — and wrote its older view over the newer one, billing a
+	// second call (review 2026-09-05, S2). Empty on an invocation queued
+	// before the field existed, which then writes as before.
+	NoteID      string `json:"note_id,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	RequestedAt string `json:"requested_at,omitempty"`
 	// AskID addresses an ask task: the question row to answer.
 	AskID string `json:"ask_id,omitempty"`
 	// CorrelationID is the id the API minted for the request, so the worker's
@@ -137,7 +145,7 @@ func (w *Worker) handleCleanNote(ctx context.Context, task Invocation) error {
 		}
 	}
 	ctx = obs.WithCorrelationID(ctx, id)
-	if err := w.pipeline.CleanNote(ctx, task.TenantID, task.NoteID, model.NoteCleanMode(task.Mode)); err != nil {
+	if err := w.pipeline.CleanNote(ctx, task.TenantID, task.NoteID, model.NoteCleanMode(task.Mode), task.RequestedAt); err != nil {
 		obs.Log(ctx).Error("clean-note will be retried",
 			slog.String("note_id", task.NoteID),
 			slog.String("error", err.Error()))

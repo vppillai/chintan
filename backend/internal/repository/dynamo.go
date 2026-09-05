@@ -28,6 +28,7 @@ type DynamoAPI interface {
 	DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error)
 	Query(ctx context.Context, in *dynamodb.QueryInput, opts ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	Scan(ctx context.Context, in *dynamodb.ScanInput, opts ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
+	BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error)
 }
 
 // DynamoStore implements Store using DynamoDB with a single-table design.
@@ -185,7 +186,7 @@ type dynamoItem struct {
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
 	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
 	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error, " +
-	"cleaned_requested_at, cleaned_requested_mode"
+	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -366,6 +367,8 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 
 		"cleaned_requested_at":   strAttr(n.CleanedRequestedAt),
 		"cleaned_requested_mode": strAttr(string(n.CleanedRequestedMode)),
+		"appending_capture":      strAttr(n.AppendingCapture),
+		"appending_at":           strAttr(n.AppendingAt),
 	}
 	if n.Language != "" {
 		item[languageAttr] = strAttr(n.Language)
@@ -461,6 +464,15 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	if _, ok := m["cleaned_requested_mode"]; ok {
 		n.CleanedRequestedMode = model.NoteCleanMode(readString(m, "cleaned_requested_mode"))
 	}
+	// The append stamp is written by UpdateItem, so the blob can be behind the
+	// promoted attribute in both directions: carrying a stamp the row no longer
+	// has (ClearNoteAppend REMOVEs the attribute) or lacking one it does. The
+	// attribute is the truth when the read projected it, and its absence from a
+	// full read means the stamp is cleared, whatever the blob says.
+	if _, projected := m["version"]; projected {
+		n.AppendingCapture = readString(m, "appending_capture")
+		n.AppendingAt = readString(m, "appending_at")
+	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}
 	}
@@ -478,6 +490,12 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 // the cursor stable when a note is touched or created between two pages: the
 // second page begins after the last note the client saw, whatever moved above
 // it.
+//
+// The drain is always the light projection. search_text and cleaned_body,
+// when asked for, are fetched afterwards for the page alone (hydrateNotes):
+// every page of a paged list costs one drain, and a drain that carried 32 KB
+// of search text per note for the whole partition to serve 200 of them was
+// what made the offline corpus's ⌈N/200⌉ pages cost ⌈N/200⌉ × N × 32 KB.
 func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, keep func(model.NoteIndex) bool, opts ListOptions) (Page[model.NoteIndex], error) {
 	if err := ctx.Err(); err != nil {
 		return Page[model.NoteIndex]{}, err
@@ -487,7 +505,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		return Page[model.NoteIndex]{}, err
 	}
 
-	all, truncated, err := s.drainNotes(ctx, tenantID, opts)
+	all, truncated, err := s.drainNotes(ctx, tenantID, ListOptions{})
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
@@ -517,6 +535,9 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 	if page.Items == nil {
 		page.Items = []model.NoteIndex{}
 	}
+	if err := s.hydrateNotes(ctx, tenantID, page.Items, opts.IncludeSearchText, opts.IncludeCleanedBody); err != nil {
+		return Page[model.NoteIndex]{}, err
+	}
 	if end < len(kept) {
 		page.Cursor, err = encodeNoteCursor(tenantID, shelf, kept[end-1])
 		if err != nil {
@@ -524,6 +545,124 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		}
 	}
 	return page, nil
+}
+
+// DrainNotes is listNotes without the paging: one read of the partition, the
+// shelf's notes in order, cut to what the caller asked for. The large opt-in
+// fields ride the drain itself here, since the caller wants them for every
+// row and a second read per row would be the cost this method exists to avoid.
+func (s *DynamoStore) DrainNotes(ctx context.Context, tenantID string, opts DrainOptions) ([]model.NoteIndex, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	keep := noteShelfFilter(opts.Shelf, time.Now().Unix())
+	all, truncated, err := s.drainNotes(ctx, tenantID, ListOptions{
+		IncludeSearchText:  opts.IncludeSearchText,
+		IncludeCleanedBody: opts.IncludeCleanedBody,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	kept := make([]model.NoteIndex, 0, len(all))
+	for _, n := range all {
+		if keep(n) {
+			kept = append(kept, n)
+		}
+	}
+	sortNotesMostRecentlyTouchedFirst(kept)
+	if opts.MaxItems > 0 && len(kept) > opts.MaxItems {
+		kept = kept[:opts.MaxItems]
+	}
+	return kept, truncated, nil
+}
+
+// noteShelfFilter is the one definition of which notes are on which shelf,
+// shared by the paged lists and the drain.
+func noteShelfFilter(shelf NoteShelf, now int64) func(model.NoteIndex) bool {
+	if shelf == NoteShelfArchived {
+		return func(n model.NoteIndex) bool {
+			return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
+		}
+	}
+	return func(n model.NoteIndex) bool {
+		return strings.TrimSpace(n.DeletedAt) == ""
+	}
+}
+
+// batchGetKeys is DynamoDB's ceiling on keys per BatchGetItem.
+const batchGetKeys = 100
+
+// hydrateNotes fetches search_text and/or cleaned_body for exactly these notes
+// with BatchGetItem and overlays them, so a paged list pays for the large
+// fields of its page alone. Unprocessed keys — DynamoDB's answer to a batch
+// over its 16 MB response cap, which two hundred 32 KB search texts can reach
+// — are asked for again until every key has answered.
+func (s *DynamoStore) hydrateNotes(ctx context.Context, tenantID string, notes []model.NoteIndex, searchText, cleanedBody bool) error {
+	if len(notes) == 0 || (!searchText && !cleanedBody) {
+		return nil
+	}
+	projection := "sk"
+	if searchText {
+		projection += ", " + searchTextAttr
+	}
+	if cleanedBody {
+		projection += ", " + cleanedBodyAttr
+	}
+	byID := make(map[string]int, len(notes))
+	keys := make([]map[string]types.AttributeValue, 0, len(notes))
+	for i, n := range notes {
+		byID[n.ID] = i
+		keys = append(keys, map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(n.ID)),
+		})
+	}
+	items, err := s.batchGet(ctx, keys, projection)
+	if err != nil {
+		return fmt.Errorf("dynamo hydrate notes: %w", err)
+	}
+	for _, item := range items {
+		i, ok := byID[trimPrefix(readString(item, "sk"), "NOTE#")]
+		if !ok {
+			continue
+		}
+		if searchText {
+			notes[i].SearchText = readString(item, searchTextAttr)
+		}
+		if cleanedBody {
+			notes[i].CleanedBody = readString(item, cleanedBodyAttr)
+		}
+	}
+	return nil
+}
+
+// batchGet reads the named keys with projection, in batches of batchGetKeys,
+// re-asking for whatever DynamoDB left unprocessed. Keys that name no item
+// are simply absent from the result.
+func (s *DynamoStore) batchGet(ctx context.Context, keys []map[string]types.AttributeValue, projection string) ([]map[string]types.AttributeValue, error) {
+	var out []map[string]types.AttributeValue
+	for len(keys) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n := min(batchGetKeys, len(keys))
+		request := map[string]types.KeysAndAttributes{
+			s.tableName: {Keys: keys[:n], ProjectionExpression: aws.String(projection)},
+		}
+		keys = keys[n:]
+		for len(request) > 0 {
+			res, err := s.client.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: request})
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, res.Responses[s.tableName]...)
+			request = res.UnprocessedKeys
+			if pending, ok := request[s.tableName]; ok && len(pending.Keys) == 0 {
+				request = nil
+			}
+		}
+	}
+	return out, nil
 }
 
 // drainNotes reads the tenant's note items, following LastEvaluatedKey (an
@@ -621,16 +760,11 @@ const (
 )
 
 func (s *DynamoStore) ListNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
-	return s.listNotes(ctx, tenantID, noteShelfActive, func(n model.NoteIndex) bool {
-		return strings.TrimSpace(n.DeletedAt) == ""
-	}, opts)
+	return s.listNotes(ctx, tenantID, noteShelfActive, noteShelfFilter(NoteShelfActive, 0), opts)
 }
 
 func (s *DynamoStore) ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error) {
-	now := time.Now().Unix()
-	return s.listNotes(ctx, tenantID, noteShelfArchived, func(n model.NoteIndex) bool {
-		return strings.TrimSpace(n.DeletedAt) != "" && n.PurgeAfterEpoch > now
-	}, opts)
+	return s.listNotes(ctx, tenantID, noteShelfArchived, noteShelfFilter(NoteShelfArchived, time.Now().Unix()), opts)
 }
 
 // ExpiredNotes returns every archived note, across every tenant, whose purge
@@ -723,6 +857,37 @@ func (s *DynamoStore) NoteExists(ctx context.Context, tenantID, noteID string) (
 	return len(result.Item) > 0, nil
 }
 
+// NotesExist is NoteExists for a set: one BatchGetItem projected to the sort
+// key, so a page of twenty receipts naming five notes costs one call, not five.
+func (s *DynamoStore) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(noteIDs))
+	keys := make([]map[string]types.AttributeValue, 0, len(noteIDs))
+	for _, id := range noteIDs {
+		if _, dup := out[id]; dup {
+			continue
+		}
+		out[id] = false
+		keys = append(keys, map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(id)),
+		})
+	}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	items, err := s.batchGet(ctx, keys, "sk")
+	if err != nil {
+		return nil, fmt.Errorf("dynamo notes exist: %w", err)
+	}
+	for _, item := range items {
+		out[trimPrefix(readString(item, "sk"), "NOTE#")] = true
+	}
+	return out, nil
+}
+
 // PutNote writes conditionally on the version the caller read. An unconditional
 // PutItem loses a voice append that lands while the editor is open.
 func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.NoteIndex) (model.NoteIndex, error) {
@@ -758,6 +923,141 @@ func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.N
 		return model.NoteIndex{}, fmt.Errorf("dynamo put note: %w", err)
 	}
 	return next, nil
+}
+
+// StampNoteAppend is one conditional UpdateItem on the row's version. The blob
+// is left as it was — its version and stamp fields go stale until the next
+// PutNote rewrites it — which noteFromItem allows for by taking version and the
+// stamp from the promoted attributes.
+func (s *DynamoStore) StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, expectedVersion int64, at time.Time) (model.NoteIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if captureID == "" {
+		return model.NoteIndex{}, errors.New("repository: empty capture id for the append stamp")
+	}
+	out, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:    aws.String("SET version = :next, appending_capture = :capture, appending_at = :at"),
+		ConditionExpression: aws.String("attribute_exists(pk) AND (" + versionCondition(expectedVersion) + ")"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected": numAttr(expectedVersion),
+			":next":     numAttr(expectedVersion + 1),
+			":capture":  strAttr(captureID),
+			":at":       strAttr(model.FormatTime(at)),
+		},
+		ReturnValues: types.ReturnValueAllNew,
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			// The condition says nothing about which clause failed, and the
+			// caller's response differs: a missing note ends the append, a
+			// moved version re-reads and stamps again.
+			if _, getErr := s.GetNote(ctx, tenantID, noteID); errors.Is(getErr, ErrNotFound) {
+				return model.NoteIndex{}, ErrNotFound
+			} else if getErr != nil {
+				return model.NoteIndex{}, getErr
+			}
+			return model.NoteIndex{}, ErrVersionConflict
+		}
+		return model.NoteIndex{}, fmt.Errorf("dynamo stamp note append: %w", err)
+	}
+	return noteFromItem(out.Attributes)
+}
+
+// ClearNoteAppend REMOVEs the two stamp attributes while they name captureID.
+// A failed condition is not an error: either the row is gone, the stamp was
+// already cleared, or a later append has stamped it for itself.
+func (s *DynamoStore) ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:          aws.String("REMOVE appending_capture, appending_at"),
+		ConditionExpression:       aws.String("attribute_exists(pk) AND appending_capture = :capture"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":capture": strAttr(captureID)},
+	})
+	if err != nil && !isConditionalCheckFailed(err) {
+		return fmt.Errorf("dynamo clear note append: %w", err)
+	}
+	return nil
+}
+
+// StampCleanRequest is one conditional UpdateItem on the two stamp attributes.
+// Like StampNoteAppend it leaves the blob behind; noteFromItem overlays the
+// promoted attributes when the read projected them, and every read of this
+// row does.
+func (s *DynamoStore) StampCleanRequest(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, at string, expectedVersion int64) (model.NoteIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return model.NoteIndex{}, err
+	}
+	if at == "" {
+		return model.NoteIndex{}, errors.New("repository: empty clean request stamp")
+	}
+	out, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:    aws.String("SET cleaned_requested_at = :at, cleaned_requested_mode = :mode"),
+		ConditionExpression: aws.String("attribute_exists(pk) AND (" + versionCondition(expectedVersion) + ")"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected": numAttr(expectedVersion),
+			":at":       strAttr(at),
+			":mode":     strAttr(string(mode)),
+		},
+		ReturnValues: types.ReturnValueAllNew,
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			if _, getErr := s.GetNote(ctx, tenantID, noteID); errors.Is(getErr, ErrNotFound) {
+				return model.NoteIndex{}, ErrNotFound
+			} else if getErr != nil {
+				return model.NoteIndex{}, getErr
+			}
+			return model.NoteIndex{}, ErrVersionConflict
+		}
+		return model.NoteIndex{}, fmt.Errorf("dynamo stamp clean request: %w", err)
+	}
+	return noteFromItem(out.Attributes)
+}
+
+// ClearCleanStamp writes the two attributes empty rather than REMOVEing them:
+// noteFromItem falls back to the blob for an attribute a read did not carry,
+// and the blob may still hold the stamp from a whole-row write that carried
+// it forward. A failed condition is not an error: the stamp is already gone
+// or belongs to a later request.
+func (s *DynamoStore) ClearCleanStamp(ctx context.Context, tenantID, noteID, at string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(noteID)),
+		},
+		UpdateExpression:    aws.String("SET cleaned_requested_at = :empty, cleaned_requested_mode = :empty"),
+		ConditionExpression: aws.String("attribute_exists(pk) AND cleaned_requested_at = :at"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":at":    strAttr(at),
+			":empty": strAttr(""),
+		},
+	})
+	if err != nil && !isConditionalCheckFailed(err) {
+		return fmt.Errorf("dynamo clear clean stamp: %w", err)
+	}
+	return nil
 }
 
 // versionCondition guards a write on the version the caller read. Expected 0

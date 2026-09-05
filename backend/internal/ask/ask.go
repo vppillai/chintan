@@ -39,7 +39,10 @@ const (
 	// matchPositions are O(terms × text) over up to MaxNotesConsidered notes
 	// of up to 32 KB each; a 1,000-rune question of two-letter tokens is
 	// ~330 terms, and tens of gigabytes of scanning inside one invocation.
-	// Thirty-two terms is more than any question a person asks carries.
+	// Thirty-two terms is more than any question a person asks carries. When
+	// a question does carry more, the LONGEST are kept, not the first: a long
+	// question tends to put its subject last, after the preamble, and a
+	// longer word is the rarer, more discriminating one.
 	MaxQueryTerms = 32
 	// MaxHistoryTurns bounds the earlier turns a request may carry. Six is a
 	// conversation, not a transcript: enough for a follow-up to resolve, not
@@ -134,9 +137,32 @@ func Tokenize(question string) []string {
 		}
 		seen[f] = struct{}{}
 		out = append(out, f)
-		if len(out) == MaxQueryTerms {
-			break
+	}
+	return keepLongestTerms(out, MaxQueryTerms)
+}
+
+// keepLongestTerms cuts terms to at most max, keeping the longest and, among
+// equals, the earliest spoken; the survivors stay in spoken order.
+func keepLongestTerms(terms []string, max int) []string {
+	if len(terms) <= max {
+		return terms
+	}
+	order := make([]int, len(terms))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		la, lb := len([]rune(terms[order[a]])), len([]rune(terms[order[b]]))
+		if la != lb {
+			return la > lb
 		}
+		return order[a] < order[b]
+	})
+	keep := order[:max]
+	sort.Ints(keep)
+	out := make([]string, 0, max)
+	for _, i := range keep {
+		out = append(out, terms[i])
 	}
 	return out
 }

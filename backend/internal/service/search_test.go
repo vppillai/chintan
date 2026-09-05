@@ -591,7 +591,8 @@ func TestSearchSurfacesAStoreFailure(t *testing.T) {
 	}
 }
 
-// listErrStore fails the note list, which is the only read search makes.
+// listErrStore fails the note list and the note drain, the only reads search
+// and the tag count make.
 type listErrStore struct {
 	repository.Store
 	err error
@@ -599,6 +600,10 @@ type listErrStore struct {
 
 func (s listErrStore) ListNotes(context.Context, string, repository.ListOptions) (repository.Page[model.NoteIndex], error) {
 	return repository.Page[model.NoteIndex]{}, s.err
+}
+
+func (s listErrStore) DrainNotes(context.Context, string, repository.DrainOptions) ([]model.NoteIndex, bool, error) {
+	return nil, false, s.err
 }
 
 // The owner searched for a word several transcripts contained and got nothing:

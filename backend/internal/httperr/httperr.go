@@ -55,7 +55,28 @@ type Problem struct {
 	// CurrentVersion is present on 409 so the client can reconcile without a
 	// second round trip.
 	CurrentVersion *int64 `json:"current_version,omitempty"`
+	// Reason distinguishes a 409 the client must handle differently from the
+	// version conflict it otherwise looks like. ReasonAppendInProgress is the
+	// one value: the same save is to be repeated as it was after Retry-After,
+	// not re-read and rebased. Absent on every other 409.
+	Reason string `json:"reason,omitempty"`
 }
+
+// ReasonAppendInProgress is Problem.Reason on a PATCH /v1/notes/{id} 409 that
+// was refused because the worker is writing a capture's paragraph into the
+// same body. The version has moved — the append bumped it — but the body it
+// witnesses has not landed yet, so a client that re-read and rebased on it
+// would send its save straight into the window this 409 exists to keep it out
+// of. The client re-sends the same save unchanged after Retry-After.
+//
+// The frontend matches this exact string, as it does TypeSpendCapped.
+const ReasonAppendInProgress = "append_in_progress"
+
+// appendRetryAfterSeconds is the Retry-After on ReasonAppendInProgress. An
+// append holds the stamp for one S3 round trip and one index refresh, well
+// under a second; two seconds means a client's first retry almost always
+// lands after it.
+const appendRetryAfterSeconds = "2"
 
 // TypeURI is the base for problem type URIs. It is a documentation anchor, not
 // a live endpoint, which RFC 9457 explicitly permits.
@@ -144,6 +165,19 @@ func MethodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
 func Conflict(w http.ResponseWriter, r *http.Request, detail string, currentVersion *int64) {
 	p := New(http.StatusConflict, detail)
 	p.CurrentVersion = currentVersion
+	Write(w, r, p)
+}
+
+// ConflictAppendInProgress writes the 409 for a body save that met a capture's
+// append in flight: the version-conflict shape, so a client that knows only
+// that shape still reconciles correctly, plus Reason and a Retry-After for the
+// client that knows to wait instead.
+func ConflictAppendInProgress(w http.ResponseWriter, r *http.Request, currentVersion int64) {
+	w.Header().Set("Retry-After", appendRetryAfterSeconds)
+	p := New(http.StatusConflict, "a recording is being added to this note; send the same save again in a moment")
+	v := currentVersion
+	p.CurrentVersion = &v
+	p.Reason = ReasonAppendInProgress
 	Write(w, r, p)
 }
 

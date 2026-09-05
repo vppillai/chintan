@@ -96,11 +96,12 @@ func (p *Pipeline) Ask(ctx context.Context, tenantID, askID string) error {
 		return nil
 	}
 
-	notes, err := repository.DrainPages(ctx, ask.MaxNotesConsidered, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-		// The search text is the body the ranker reads; without it only
-		// titles and names would score.
-		opts.IncludeSearchText = true
-		return p.cfg.Store.ListNotes(ctx, tenantID, opts)
+	// One drain, not a paged walk: the ranker reads every row once, and a
+	// paged list re-drains the partition per page. The search text is the
+	// body the ranker reads; without it only titles and names would score.
+	notes, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{
+		MaxItems:          ask.MaxNotesConsidered,
+		IncludeSearchText: true,
 	})
 	if err != nil {
 		return fmt.Errorf("pipeline: ask: list notes: %w", err)

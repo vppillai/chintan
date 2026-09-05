@@ -827,7 +827,7 @@ Resources:
   # the alias through its notification config, and referencing the bucket here
   # would close the cycle. The name is deterministic, so this is exact, not
   # approximate — but it MUST stay byte-identical to ContentBucket's BucketName
-  # below, and to the copies in LambdaExecutionRole and the functions'
+  # below, and to the copies in both execution roles and the functions'
   # CONTENT_BUCKET, all of which exist for the same reason. When the bucket
   # gained ${Environment} the queue policy this replaced was left behind, the
   # SourceArn matched nothing, and S3's test-publish failed the whole stack
@@ -920,15 +920,6 @@ Resources:
                     Value: 'tenants/'
                   - Name: suffix
                     Value: '/audio.wav'
-          - Event: 's3:ObjectCreated:*'
-            Function: !Ref WorkerLambdaLiveAlias
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: 'tenants/'
-                  - Name: suffix
-                    Value: '/audio.bin'
       # Retention expires source audio only. The prefix cannot isolate
       # captures either, so the rules are keyed on the object tags the presigned
       # PUT carries; an untagged object is never expired, which fails safe.
@@ -1067,11 +1058,27 @@ Resources:
         - Key: Application
           Value: Chintan
 
-  # Lambda Execution Role
-  LambdaExecutionRole:
+  # Execution roles: one per function, since 2026-09-05.
+  #
+  # Both functions ran under one role, so the API — the function every browser
+  # can reach — held the worker's grants: both provider keys through SSM,
+  # dynamodb:Scan across every tenant, sqs:SendMessage, budgets:ViewBudget
+  # (review 2026-09-05, S7). cmd/api/main.go wires no SSM, Scan, SQS or
+  # Budgets client; what it uses is item operations and Query on the table,
+  # objects under the tenant prefixes, and one asynchronous invoke of the
+  # worker's live alias. The worker gets the rest.
+  #
+  # Both names keep the `chintan-lambda-` prefix. The agent boundary and deny
+  # policies (infrastructure/agent-policies) refuse ssm:GetParameter and
+  # kms:Decrypt on /chintan/* to every principal that is not
+  # `role/chintan-lambda-*`, and bootstrap.yaml lets the deploy role create a
+  # role only under `chintan-*` and only with the boundary attached; a name
+  # outside the prefix would deploy and then fail the worker's start-up on
+  # the key read.
+  ApiFunctionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'chintan-lambda-${InstanceName}-${Environment}'
+      RoleName: !Sub 'chintan-lambda-api-${InstanceName}-${Environment}'
       # Bound by the same ceiling as the agent so privilege cannot escalate through Lambda.
       PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
       AssumeRolePolicyDocument:
@@ -1095,12 +1102,15 @@ Resources:
                   - dynamodb:UpdateItem
                   - dynamodb:DeleteItem
                   - dynamodb:Query
-                  # Scan is for exactly one caller: the weekly expiry sweep,
-                  # which has to find every note past its purge deadline in
-                  # every tenant, and the worker knows no tenant list. Every
-                  # other access path is a keyed Query, and a Scan anywhere
-                  # else in the API would be a bug that reads across tenants.
-                  - dynamodb:Scan
+                  # BatchGetItem is its own IAM action. The notes list fetches
+                  # search_text for a page with it, and the captures list asks
+                  # about a page's notes with it (2026-09-05); without the
+                  # grant both fail at runtime with AccessDeniedException while
+                  # /v1/health stays 200.
+                  - dynamodb:BatchGetItem
+                  # No Scan: every API read is a keyed Query, and a Scan
+                  # anywhere in the API would be a bug that reads across
+                  # tenants. The one Scan belongs to the worker's expiry sweep.
                 # The table, and every index ON that table.
                 #
                 # This enumerated the indexes one by one and listed only gsi1.
@@ -1148,9 +1158,92 @@ Resources:
                   - s3:GetObjectTagging
                 # The bucket name is spelled out, not !GetAtt'd. ContentBucket's
                 # notification invokes the worker alias, whose function runs
-                # under this role; a reference here would be the last edge of a
-                # cycle CloudFormation refuses. MUST stay byte-identical to
-                # ContentBucket's BucketName.
+                # under WorkerFunctionRole; the two roles are written the same
+                # way so they cannot drift apart, and a reference here would be
+                # the last edge of a cycle CloudFormation refuses. MUST stay
+                # byte-identical to ContentBucket's BucketName.
+                Resource: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
+        - PolicyName: WorkerHandOff
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The API hands work to the worker — a capture on POST
+              # /v1/captures/{id}/retry and /target, a clean-note task, an ask
+              # — by invoking the worker's live alias asynchronously. The alias
+              # ARN is spelled out rather than !Ref'd: the alias depends on the
+              # function, the function on its role, and the bucket notification
+              # on the alias, and a reference here would close that cycle. MUST
+              # stay in step with WorkerLambdaFunction's FunctionName and the
+              # alias Name below.
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-${InstanceName}-${Environment}:live'
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  WorkerFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'chintan-lambda-worker-${InstanceName}-${Environment}'
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/chintan-agent-boundary'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchGetItem
+                  # Scan is for exactly one caller: the weekly expiry sweep,
+                  # which has to find every note past its purge deadline in
+                  # every tenant, and the worker knows no tenant list. Nothing
+                  # in the API has it.
+                  - dynamodb:Scan
+                # The table and its indexes; see ApiFunctionRole for why the
+                # indexes are a wildcard.
+                Resource:
+                  - !GetAtt DynamoDBTable.Arn
+                  - !Sub '${DynamoDBTable.Arn}/index/*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  # The worker re-tags audio once it has been processed
+                  # (MarkProcessed) so the retention lifecycle may expire it;
+                  # see ApiFunctionRole for the tags themselves.
+                  - s3:PutObjectTagging
+                  - s3:GetObjectTagging
+                # Spelled out for the same cycle as in ApiFunctionRole. MUST
+                # stay byte-identical to ContentBucket's BucketName.
                 Resource: !Sub 'arn:aws:s3:::chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}/*'
               - Effect: Allow
                 Action:
@@ -1178,13 +1271,11 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # The API hands a capture to the worker on POST
-              # /v1/captures/{id}/retry and /target by invoking the worker's
-              # live alias asynchronously. The alias ARN is spelled out rather
-              # than !Ref'd: the alias depends on the function, the function on
-              # this role, and a reference here would close that cycle. MUST
-              # stay in step with WorkerLambdaFunction's FunctionName and the
-              # alias Name below.
+              # The worker invokes its own live alias for the clean-note task
+              # after an append to a note with auto_clean, so the clean runs as
+              # its own invocation with its own retries. Spelled out for the
+              # cycle ApiFunctionRole describes. MUST stay in step with
+              # WorkerLambdaFunction's FunctionName and the alias Name below.
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
@@ -1221,7 +1312,7 @@ Resources:
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Ref LambdaCodeKey
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Role: !GetAtt ApiFunctionRole.Arn
       Architectures:
         - arm64
       MemorySize: 512
@@ -1292,7 +1383,7 @@ Resources:
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: !Ref WorkerCodeKey
-      Role: !GetAtt LambdaExecutionRole.Arn
+      Role: !GetAtt WorkerFunctionRole.Arn
       Architectures:
         - arm64
       MemorySize: 2048
@@ -1316,14 +1407,10 @@ Resources:
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
-          # Both halves are required. The service verifies tokens itself rather
-          # than trusting the gateway authorizer, and it builds the JWKS issuer
-          # URL from the region and the pool id — so with the client id alone it
-          # fails closed at init with "auth: issuer is required" and every
-          # request 500s. Fail-closed is right; shipping only half the config was
-          # not.
-          USER_POOL_ID: !Ref UserPool
-          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          # No USER_POOL_ID / USER_POOL_CLIENT_ID: the worker is invoked by S3,
+          # EventBridge and the API, never with a user's token, and
+          # cmd/worker/main.go reads neither. They were copied from the API's
+          # environment and read by nothing (review 2026-09-05, S34).
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
           # Its own live alias, spelled out for the same reason the API's
           # invoke grant is (a !Ref would close the alias → function cycle).
@@ -1420,14 +1507,14 @@ Resources:
     # The Qualifier is the alias NAME, not a reference, so nothing here orders
     # this against the alias existing; DependsOn does. Lambda also validates,
     # when the destination is written, that the execution role can SendMessage
-    # to it, and nothing otherwise orders this against LambdaExecutionRole —
+    # to it, and nothing otherwise orders this against WorkerFunctionRole —
     # the dependency runs through the alias to the function to the role, so
     # CloudFormation is free to write the destination while the role's inline
     # policy is still propagating — so the role is named too rather than
     # reached transitively through the function.
     DependsOn:
       - WorkerLambdaLiveAlias
-      - LambdaExecutionRole
+      - WorkerFunctionRole
     Properties:
       FunctionName: !Ref WorkerLambdaFunction
       Qualifier: live
@@ -1438,7 +1525,7 @@ Resources:
           # The failure record carries the original payload — the S3 event or
           # the API's {tenant_id, capture_id} — and the error, so the capture
           # can be named from the message. Written by Lambda under
-          # LambdaExecutionRole, which is why that role has sqs:SendMessage on
+          # WorkerFunctionRole, which is why that role has sqs:SendMessage on
           # the queue.
           Destination: !GetAtt CaptureDLQ.Arn
 
@@ -1533,7 +1620,13 @@ Resources:
     Properties:
       Name: !Sub 'chintan-${InstanceName}-${Environment}-storage-snapshot'
       Description: Daily reading of each tenant's stored audio and notes onto their usage rows; invokes the worker with {"task":"storage-snapshot"}.
-      ScheduleExpression: rate(1 day)
+      # A fixed hour rather than rate(1 day): a rate schedule fires at the
+      # minute the rule was created, so a stack created near midnight UTC
+      # would take its reading on either side of the day boundary from one
+      # run to the next and attribute a day's storage to its neighbour (review
+      # 2026-09-05, S26). 03:00 UTC is far from the boundary and from the
+      # aws-cost reading.
+      ScheduleExpression: cron(0 3 * * ? *)
       State: ENABLED
       Targets:
         - Id: worker
@@ -2037,19 +2130,19 @@ Resources:
               Address: !Ref AlarmEmail
 
   # The worker may read that one budget, and only when it exists. A separate
-  # policy rather than a statement in LambdaExecutionRole because the grant is
+  # policy rather than a statement in WorkerFunctionRole because the grant is
   # conditional with the budget and a role's inline statement cannot be; and
   # scoped to the budget's own ARN, not budgets:* — the read is
   # budgets:ViewBudget (the IAM action behind DescribeBudget), which reveals
-  # the account's spend, and the API function shares this role. Budget ARNs
-  # carry no region.
+  # the account's spend. On the worker's role only: the API function never
+  # reads it. Budget ARNs carry no region.
   WorkerReadsBudgetPolicy:
     Type: AWS::IAM::Policy
     Condition: HasAlarmEmail
     Properties:
       PolicyName: !Sub 'chintan-${InstanceName}-${Environment}-read-budget'
       Roles:
-        - !Ref LambdaExecutionRole
+        - !Ref WorkerFunctionRole
       PolicyDocument:
         Version: '2012-10-17'
         Statement:

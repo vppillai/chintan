@@ -380,7 +380,7 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 
 		stuck := make([]string, 0)
 		for id, c := range idx.Captures {
-			if !terminalStatus(c.Status) {
+			if !model.IsTerminalStatus(c.Status) {
 				stuck = append(stuck, id)
 			}
 		}
@@ -547,19 +547,4 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 		res.Repaired++
 	}
 	return res, nil
-}
-
-// terminalStatus reports whether a capture has reached a state the pipeline
-// will not move it out of on its own.
-func terminalStatus(s model.CaptureStatus) bool {
-	switch s {
-	case model.StatusAppended, model.StatusFailed, model.StatusNoContent, model.StatusNeedsTarget:
-		return true
-	case "":
-		// A capture row with no status at all is not "in progress"; it is
-		// malformed. Reporting it is more useful than assuming.
-		return false
-	default:
-		return false
-	}
 }

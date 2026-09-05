@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Assert that no provider adapter puts a response body — or anything else derived
-# from user speech — into a log line or an error string.
+# Assert that no provider adapter, pipeline stage or service puts a response
+# body — or anything else derived from user speech — into a log line or an
+# error string.
 #
 # The three adapters get this right today, each with a comment saying so:
 #
@@ -25,7 +26,10 @@
 # Usage:
 #   scripts/check-log-hygiene.sh [--json] [--self-test] [PATH ...]
 #
-# PATH defaults to backend/internal/provider.
+# PATH defaults to backend/internal/provider, backend/internal/pipeline and
+# backend/internal/service — the adapters, and the two packages whose slog
+# lines carry the most context about a capture and so are the likeliest
+# places for a transcript to be added to a message (review 2026-09-05, S18).
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
@@ -48,7 +52,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-[ "${#PATHS[@]}" -gt 0 ] || PATHS=("backend/internal/provider")
+[ "${#PATHS[@]}" -gt 0 ] || PATHS=("backend/internal/provider" "backend/internal/pipeline" "backend/internal/service")
 
 # Calls whose argument list can end up in CloudWatch or in an HTTP response.
 EMITTERS='(log\.(Printf|Println|Print|Fatalf|Fatal|Panicf|Panic)|slog\.[A-Za-z]+|fmt\.(Errorf|Sprintf|Printf|Println|Print)|panic\()'
@@ -77,7 +81,7 @@ scan() {
                 sed -e 's/"[^"]*"//g' -e 's|//.*||' -e 's/len([^)]*)//g')"
 
             if printf '%s' "$stripped" | grep -qE "$FORBIDDEN"; then
-                violation "${file}:${lineno}: a provider adapter must not log or format user content — $(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
+                violation "${file}:${lineno}: user content must not be logged or formatted — $(printf '%s' "$line" | sed 's/^[[:space:]]*//')"
             fi
         done <"$REPO_ROOT/$file"
     done < <(cd "$REPO_ROOT" && find "$root" -name '*.go' -type f 2>/dev/null | LC_ALL=C sort)

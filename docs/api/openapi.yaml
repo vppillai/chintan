@@ -207,6 +207,16 @@ paths:
         version; a mismatch returns 409 with the current state so the client can
         reconcile. Without a version, a voice append landing while the editor is
         open would be overwritten by the next save.
+
+        One 409 is not a conflict to reconcile. While the worker is writing a
+        recording's paragraph into this note's body, a save that carries `body`
+        is refused with the same problem shape plus `reason:
+        append_in_progress` and a `Retry-After` header. The version has moved
+        (the append bumps it before it writes) but the body it witnesses has not
+        landed yet, so re-reading and rebasing would send the save into exactly
+        the window it was kept out of. Send the SAME save again, unchanged,
+        after `Retry-After`; once the paragraph is in the body the normal 409
+        follows and the normal conflict handling is right.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -223,7 +233,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
+        '409': { $ref: '#/components/responses/NoteConflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
     delete:
       tags: [notes]
@@ -753,6 +763,16 @@ paths:
         Genuinely idempotent. The append is guarded by a token written in the
         same conditional update that marks the capture appended, so a retry that
         finds a matching token skips the append rather than duplicating the text.
+
+        A capture that is `failed` or `spend_capped` is retried at once. A
+        capture still in flight (`uploaded`, `transcribing`, `transcribed`,
+        `routing`, `cleaned`, `cleaning`, `appending`) is refused with 409
+        while a worker may still be working on it: until the worker has not
+        written the row for 15 minutes (its own maximum lifetime), and for
+        `appending` until the append claim's 20-minute lease has run out — a
+        retry inside it cannot take the claim and would only dead-letter. A
+        client that offers Retry for a stalled capture should offer it no
+        earlier than that, and show the 409's `detail` when it is early.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -764,7 +784,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: The capture is already in a terminal state.
+          description: |
+            The capture has finished (`appended`, `no_content`) or is waiting
+            on a person (`needs_target`), or it is still in flight and a worker
+            may still be working on it — see the description for when a
+            stalled capture becomes retryable. `detail` says which.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -902,6 +926,20 @@ components:
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
+    NoteConflict:
+      description: |
+        Version conflict; `current_version` is the version to reconcile
+        against — unless `reason` is `append_in_progress`, in which case a
+        recording's paragraph is on its way into the body, `Retry-After` is
+        set, and the client repeats the same save unchanged after it. Only
+        PATCH /v1/notes/{noteId} with a `body` produces that reason.
+      headers:
+        Retry-After:
+          description: Present only with `reason: append_in_progress`.
+          schema: { type: integer }
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
     PayloadTooLarge:
       description: Body or field exceeded its limit.
       content:
@@ -961,6 +999,13 @@ components:
         current_version:
           type: integer
           description: Present on 409 so the client can reconcile.
+        reason:
+          type: string
+          enum: [append_in_progress]
+          description: |
+            Present on the one 409 the client must not reconcile against:
+            PATCH /v1/notes/{noteId} refused because the worker is writing a
+            recording into the body. Repeat the same save after `Retry-After`.
 
     Readiness:
       type: object
@@ -1277,7 +1322,11 @@ components:
             reports and is what makes a retry safe.
             `failed` — the note is still here. Either it was not archived, or
             part of its cascade failed and the index row was deliberately kept
-            so the delete can be retried.
+            so the delete can be retried, or the batch ran out of time before
+            it reached this note (`detail` begins "not attempted") — the
+            server stops starting notes about twenty seconds in rather than
+            run into the gateway's timeout, and the client sends the rest
+            again.
         detail:
           type: string
           description: Safe to display. Never contains provider or AWS internals.

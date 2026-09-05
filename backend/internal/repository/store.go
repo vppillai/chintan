@@ -67,6 +67,28 @@ func (o ListOptions) limit() int32 {
 	}
 }
 
+// NoteShelf names which of a tenant's notes a drain returns: the active list
+// or the archive (archived and not yet past its purge deadline).
+type NoteShelf string
+
+const (
+	NoteShelfActive   NoteShelf = "active"
+	NoteShelfArchived NoteShelf = "archived"
+)
+
+// DrainOptions bounds a DrainNotes call. The zero value drains the active
+// shelf whole, up to MaxNotesDrained, without the two large opt-in fields.
+type DrainOptions struct {
+	Shelf NoteShelf
+	// MaxItems cuts the ordered result; 0 means no cut below the store's own
+	// ceiling. A caller that wants to know whether it was cut compares the
+	// length against what it asked for.
+	MaxItems int
+	// IncludeSearchText and IncludeCleanedBody are ListOptions' opt-ins.
+	IncludeSearchText  bool
+	IncludeCleanedBody bool
+}
+
 // Page is one page of a list query. Cursor is empty when the query is
 // exhausted.
 //
@@ -149,6 +171,19 @@ type Store interface {
 	// deadline. The expiry sweep removes them once it has; the filter keeps
 	// them out of the UI in the meantime.
 	ListArchivedNotes(ctx context.Context, tenantID string, opts ListOptions) (Page[model.NoteIndex], error)
+	// DrainNotes returns every note on a shelf, most recently touched first,
+	// in ONE read of the tenant's partition, cut to opts.MaxItems. truncated
+	// reports that the read hit MaxNotesDrained, as Page.Truncated does.
+	//
+	// It is for the callers that want the whole set — routing candidates,
+	// Ask's corpus, the storage summary, export, tags, note matching. The
+	// notes list is ordered in Go over a drain of the partition (see
+	// MaxNotesDrained), so paging through it with ListNotes and a cursor
+	// re-drains the partition once per page: ⌈N/200⌉ full reads, each
+	// carrying search_text when asked, for a caller that reads every row
+	// once anyway (review 2026-09-05, S5). ListNotes remains the wire's
+	// pagination.
+	DrainNotes(ctx context.Context, tenantID string, opts DrainOptions) (notes []model.NoteIndex, truncated bool, err error)
 	// ExpiredNotes returns every archived note, in every tenant, whose purge
 	// deadline had passed at asOf (Unix seconds). It is the input to the
 	// weekly expiry sweep, which unlinks each note's objects and captures and
@@ -161,10 +196,47 @@ type Store interface {
 	// body (up to 200 KB) into a poll that only wants to know the row is
 	// there.
 	NoteExists(ctx context.Context, tenantID, noteID string) (bool, error)
+	// NotesExist answers NoteExists for several notes in one round trip: the
+	// result holds true for every id that has a row and false for the rest.
+	// It is what a page of receipts asks — one BatchGetItem for the page's
+	// distinct notes rather than one GetItem each, on a list the client polls
+	// every second and a half (review 2026-09-05, S17).
+	NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error)
 	// PutNote writes n conditionally on n.Version matching the stored version,
 	// and returns the note with its new version. A losing write returns
 	// ErrVersionConflict rather than silently discarding the other writer.
 	PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error)
+	// StampNoteAppend records on the note row, conditionally on expectedVersion,
+	// that captureID's paragraph is about to be written into the body: it bumps
+	// the version and sets NoteIndex.AppendingCapture and AppendingAt to
+	// captureID and at, touching no other attribute, and returns the row as
+	// stored. A lost race returns ErrVersionConflict; a missing note returns
+	// ErrNotFound. It is a named-attribute update rather than a whole-row
+	// PutNote so it cannot carry a stale cleaned_body or search_text over a
+	// concurrent writer's, and so the version moves for the reason PATCH is
+	// told about (see service.UpdateNote).
+	StampNoteAppend(ctx context.Context, tenantID, noteID, captureID string, expectedVersion int64, at time.Time) (model.NoteIndex, error)
+	// ClearNoteAppend removes the stamp StampNoteAppend left, but only while it
+	// still names captureID; a stamp another capture has since written stands.
+	// The version does not move: nothing about the body changed. It is for the
+	// append that hands its claim back without writing; an append that writes
+	// clears the stamp with the index refresh's PutNote.
+	ClearNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error
+	// StampCleanRequest records on the note row, conditionally on
+	// expectedVersion, that a clean-note run in mode was handed to the worker
+	// at `at` (NoteIndex.CleanedRequestedAt and CleanedRequestedMode), touching
+	// no other attribute and NOT moving the version, and returns the row as
+	// stored. A lost race returns ErrVersionConflict; a missing note returns
+	// ErrNotFound. The version is left alone because nothing about the note's
+	// content changed: until 2026-09 this was a whole-row PutNote, which bumped
+	// the version — sending every open editor round a conflict for a save that
+	// had nothing to reconcile — and rewrote cleaned_body from whatever copy
+	// the caller held, which a list-projected note holds empty.
+	StampCleanRequest(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, at string, expectedVersion int64) (model.NoteIndex, error)
+	// ClearCleanStamp takes the stamp back, but only while the row still
+	// carries exactly `at`; a stamp a later request has since written stands.
+	// It is for a hand-off that failed after stamping.
+	ClearCleanStamp(ctx context.Context, tenantID, noteID, at string) error
 	DeleteNote(ctx context.Context, tenantID, noteID string) error
 
 	PutCapture(ctx context.Context, c model.CaptureIndex) (model.CaptureIndex, error)

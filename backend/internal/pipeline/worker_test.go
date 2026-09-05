@@ -215,7 +215,7 @@ func TestACaptureLongerThanTheGatewayCeilingStillCompletes(t *testing.T) {
 type recordingInvoker struct{}
 
 func (recordingInvoker) InvokeCapture(context.Context, string, string, string) error { return nil }
-func (recordingInvoker) InvokeCleanNote(context.Context, string, string, model.NoteCleanMode) error {
+func (recordingInvoker) InvokeCleanNote(context.Context, string, string, model.NoteCleanMode, string) error {
 	return nil
 }
 func (recordingInvoker) InvokeAsk(context.Context, string, string) error { return nil }

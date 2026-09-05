@@ -48,7 +48,7 @@ func (w *stubInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reas
 	return nil
 }
 
-func (w *stubInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+func (w *stubInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode, _ string) error {
 	w.calls = append(w.calls, "clean-note/"+tenantID+"/"+noteID+"/"+string(mode))
 	return nil
 }
@@ -332,6 +332,88 @@ func TestTheUploadCarriesTheTenantsOwnRetention(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("retention tag = %q, want %q — the object expires on whatever day this names, and nothing else reads the setting",
 					got, tc.want)
+			}
+		})
+	}
+}
+
+// A retry is for a capture nobody is working on. One still in flight is
+// refused until the worker's maximum lifetime has passed since it last wrote
+// the row — a retry before that starts a second delivery beside a live one —
+// and one in `appending` is refused until the claim lease has run out, because
+// a retry inside the lease cannot take the claim and only dead-letters. Every
+// hand-off stamps the row, so two taps are one delivery.
+func TestRetryCaptureRefusesAnInFlightCaptureUntilNoWorkerCanBeAlive(t *testing.T) {
+	now := time.Date(2026, 9, 5, 17, 0, 0, 0, time.UTC)
+	at := func(ago time.Duration) string { return model.FormatTime(now.Add(-ago)) }
+
+	for _, tc := range []struct {
+		name    string
+		capture model.CaptureIndex
+		wantErr error
+	}{
+		{"transcribing, worker wrote the row a minute ago", model.CaptureIndex{
+			Status: model.StatusTranscribing, CreatedAt: at(time.Hour), LastProgressAt: at(time.Minute),
+		}, ErrCaptureInFlight},
+		{"transcribing, nothing written for 15 minutes", model.CaptureIndex{
+			Status: model.StatusTranscribing, CreatedAt: at(time.Hour), LastProgressAt: at(CaptureStuckAfter),
+		}, nil},
+		{"cleaning, a row from before the stamp existed, created 20 minutes ago", model.CaptureIndex{
+			Status: model.StatusCleaning, CreatedAt: at(20 * time.Minute),
+		}, nil},
+		{"cleaning, a row from before the stamp existed, created 5 minutes ago", model.CaptureIndex{
+			Status: model.StatusCleaning, CreatedAt: at(5 * time.Minute),
+		}, ErrCaptureInFlight},
+		{"appending, claim 12 minutes old: inside the lease, the retry could not take it", model.CaptureIndex{
+			Status: model.StatusAppending, CreatedAt: at(time.Hour), LastProgressAt: at(16 * time.Minute),
+			AppendToken: "t", AppendClaimedAt: now.Add(-12 * time.Minute).Unix(),
+		}, ErrCaptureInFlight},
+		{"appending, claim 21 minutes old: the lease has run out", model.CaptureIndex{
+			Status: model.StatusAppending, CreatedAt: at(time.Hour), LastProgressAt: at(21 * time.Minute),
+			AppendToken: "t", AppendClaimedAt: now.Add(-21 * time.Minute).Unix(),
+		}, nil},
+		{"failed a minute ago: retried at once", model.CaptureIndex{
+			Status: model.StatusFailed, Error: "the cleanup provider failed; try again", CreatedAt: at(time.Hour), LastProgressAt: at(time.Minute),
+		}, nil},
+		{"spend capped a minute ago: retried at once", model.CaptureIndex{
+			Status: model.StatusSpendCapped, CreatedAt: at(time.Hour), LastProgressAt: at(time.Minute),
+		}, nil},
+		{"needs_target: the person decides, not a retry", model.CaptureIndex{
+			Status: model.StatusNeedsTarget, CreatedAt: at(time.Hour),
+		}, ErrCaptureTerminal},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memory.NewStore()
+			worker := &stubInvoker{}
+			svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker).WithClock(func() time.Time { return now })
+			c := tc.capture
+			c.ID, c.UserID, c.NoteID, c.RawKey = "c_1", "user1", "n1", "tenants/user1/captures/c_1/raw.txt"
+			if _, err := store.PutCapture(context.Background(), c); err != nil {
+				t.Fatalf("PutCapture: %v", err)
+			}
+
+			got, err := svc.RetryCapture(context.Background(), "user1", "c_1")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if len(worker.calls) != 0 {
+					t.Fatalf("a refused retry handed the capture to the worker: %v", worker.calls)
+				}
+				return
+			}
+			if len(worker.calls) != 1 {
+				t.Fatalf("worker calls = %v, want one retry", worker.calls)
+			}
+			if got.LastProgressAt != model.FormatTime(now) {
+				t.Fatalf("the hand-off did not stamp the row: last_progress_at = %q", got.LastProgressAt)
+			}
+			// The same tap again, a moment later, is one delivery.
+			if _, err := svc.RetryCapture(context.Background(), "user1", "c_1"); !errors.Is(err, ErrCaptureInFlight) {
+				t.Fatalf("a second retry right after the first returned %v, want ErrCaptureInFlight", err)
+			}
+			if len(worker.calls) != 1 {
+				t.Fatalf("worker calls after the second tap = %v, want still one", worker.calls)
 			}
 		})
 	}

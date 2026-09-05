@@ -423,19 +423,20 @@ billable figure right and the chart short by a day, rather than the reverse.
 ### Which day a reading lands on
 
 The task stamps the reading with the UTC day at the moment it runs, and
-`StorageSnapshotRule` is `rate(1 day)`: EventBridge fires it at the wall-clock
+`StorageSnapshotRule` is a fixed-hour schedule, `cron(0 3 * * ? *)`, so every
+reading lands at 03:00 UTC whatever time the stack was deployed. Until
+2026-09-05 it was `rate(1 day)`, which EventBridge fires at the wall-clock
 time the rule was created, every 24 hours, give or take a few seconds. A rule
-created within those seconds of midnight UTC can therefore fire on one side of
-midnight one day and the other side the next — one calendar day then gets no
-reading (its day row is never written and the month's `storage_byte_days`
-misses that day's bytes), and the day after gets the run that slipped; the
-run that follows lands on a day already stamped and adds nothing, which is
-the idempotency condition doing its job, not a second loss. The reading is
-never counted twice, only skipped. The production rule was created around
-20:00Z on 2026-09-05, twenty hours from the boundary, so it does not slip;
-the exposure is a stack created or re-created near 00:00Z. The fix, if it is
-ever wanted, is a fixed-hour schedule — `cron(0 3 * * ? *)` — which pins the
-reading to one hour of the day whatever the deploy time (backlog S26).
+created within those seconds of midnight UTC could therefore fire on one side
+of midnight one day and the other side the next — one calendar day then got
+no reading (its day row was never written and the month's
+`storage_byte_days` missed that day's bytes), and the day after got the run
+that slipped; the run that followed landed on a day already stamped and added
+nothing, which is the idempotency condition doing its job, not a second loss.
+A reading was never counted twice, only skipped. The production rule was
+created around 20:00Z, twenty hours from the boundary, so it never slipped;
+the exposure was a stack created or re-created near 00:00Z, and the fixed
+hour removes it (backlog S26).
 
 ### On the wire
 

@@ -23,7 +23,7 @@ import (
 // auto_clean; the pipeline sends it to itself after an append to such a note.
 //
 // The payload is Invocation with Task set: {"task":"clean-note","tenant_id",
-// "note_id","mode","correlation_id"}.
+// "note_id","mode","requested_at","correlation_id"}.
 const TaskCleanNote = "clean-note"
 
 // The verdicts a clean-note run can leave on the row. Fixed sentences, for the
@@ -47,19 +47,28 @@ const maxCleanNoteStoreAttempts = 5
 // It is idempotent in the only sense that matters for an at-least-once
 // transport: every run reads the current body and writes a view of it, so two
 // deliveries produce the same view. Which run writes is decided by the stamp
-// the request path left on the row (service.RecordCleanRequest): a run whose
-// stamp is no longer the one on the row — the person asked for the other mode,
-// or a body write asked for a fresh run — has been superseded and writes
-// nothing, so the stored view is always the most recently requested one and
-// never an older body's view landing after a newer one. The return value is
-// the worker protocol — nil means the run reached a verdict (a view, a stored
-// error the user can read, or a superseded run) and must not be retried; an
-// error means an infrastructure fault interrupted it and Lambda should try
-// again.
+// the request path left on the row (service.RecordCleanRequest) and carried in
+// the invocation as requestedAt: a run whose stamp is no longer the one on the
+// row — the person asked for the other mode, a body write asked for a fresh
+// run, or a newer run already finished and cleared it — has been superseded
+// and writes nothing, so the stored view is always the most recently requested
+// one and never an older body's view landing after a newer one. The return
+// value is the worker protocol — nil means the run reached a verdict (a view,
+// a stored error the user can read, or a superseded run) and must not be
+// retried; an error means an infrastructure fault interrupted it and Lambda
+// should try again.
+//
+// requestedAt is judged against the row rather than read from it. Asynchronous
+// invocations are unordered and retried: when the run for the newer request
+// landed first, wrote and cleared the stamp, the older run read an unstamped
+// row, took that for "nothing has superseded me", called the model and stored
+// the older mode over the view asked for last. An empty requestedAt is an
+// invocation queued before the field existed and is judged from the row as
+// before.
 //
 // One LLM call, through the breaker, priced like cleanup: output reserved at
 // about the size of the input, reconciled to what the provider reports.
-func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error {
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("note_id", noteID))
 
@@ -81,14 +90,19 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		mode = service.EffectiveCleanMode(note)
 	}
 	// stamp is the request this run is acting on. Checked here so a run the
-	// person has already asked to replace with the other mode does not call
-	// the model — that only bills a view nobody wants — and again at the
-	// write, for a request that lands while the model works.
-	stamp := note.CleanedRequestedAt
+	// person has already asked to replace, or one a newer run has already
+	// answered, does not call the model — that only bills a view nobody wants
+	// — and again at the write, for a request that lands while the model
+	// works.
+	stamp := requestedAt
+	if stamp == "" {
+		stamp = note.CleanedRequestedAt
+	}
 	if cleanRunSuperseded(note, mode, stamp) {
-		log.Info("clean-note: a later request asked for another mode; leaving the note to that run",
+		log.Info("clean-note: a later request superseded this run before it began; leaving the note to that run",
 			slog.String("mode", string(mode)),
-			slog.String("requested_mode", string(note.CleanedRequestedMode)))
+			slog.String("requested_mode", string(note.CleanedRequestedMode)),
+			slog.Bool("row_unstamped", note.CleanedRequestedAt == ""))
 		obs.Count(ctx, "NoteCleanOutcome", map[string]string{"Outcome": "superseded"})
 		return nil
 	}
@@ -250,12 +264,13 @@ func (p *Pipeline) recordCleanNoteVerdict(ctx context.Context, tenantID, noteID 
 }
 
 // cleanRunSuperseded reports whether the row's clean request is no longer the
-// one a run was invoked for: another mode, or a newer request in the same mode,
-// whose own run will write. An empty stamp claims nothing — a run invoked
-// before stamps existed, or one whose failed hand-off cleared it — and such a
-// run writes.
+// one a run was invoked for: another mode, a newer request in the same mode
+// whose own run will write, or no request at all because a newer run has
+// already written and cleared it. An empty stamp claims nothing — a run
+// invoked before the invocation carried one, judged from a row that was
+// unstamped when it was read — and such a run writes.
 func cleanRunSuperseded(n model.NoteIndex, mode model.NoteCleanMode, stamp string) bool {
-	if n.CleanedRequestedAt == "" && n.CleanedRequestedMode == "" {
+	if stamp == "" {
 		return false
 	}
 	return n.CleanedRequestedMode != mode || n.CleanedRequestedAt != stamp
@@ -326,7 +341,7 @@ func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, no
 		return
 	}
 	if p.cfg.CleanInvoker != nil {
-		if err := p.cfg.CleanInvoker.InvokeCleanNote(ctx, tenantID, note.ID, mode); err != nil {
+		if err := p.cfg.CleanInvoker.InvokeCleanNote(ctx, tenantID, note.ID, mode, stamped.CleanedRequestedAt); err != nil {
 			service.ClearCleanRequest(ctx, p.cfg.Store, tenantID, stamped)
 			obs.Log(ctx).Error("could not hand the note to the worker for auto-clean; the cleaned view stays stale",
 				slog.String("note_id", note.ID),
@@ -338,7 +353,7 @@ func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, no
 		return
 	}
 	obs.Count(ctx, "NoteCleanRequested", map[string]string{"Mode": string(mode), "Trigger": "append"})
-	if err := p.CleanNote(ctx, tenantID, note.ID, mode); err != nil {
+	if err := p.CleanNote(ctx, tenantID, note.ID, mode, stamped.CleanedRequestedAt); err != nil {
 		obs.Log(ctx).Error("auto-clean after append did not finish; the cleaned view stays stale",
 			slog.String("note_id", note.ID),
 			slog.String("error", err.Error()))
