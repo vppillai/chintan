@@ -67,6 +67,17 @@ func (i *Invoker) InvokeCleanNote(ctx context.Context, tenantID, noteID string, 
 	})
 }
 
+// InvokeAsk queues the ask task for one question row, the same way and with
+// the same retries.
+func (i *Invoker) InvokeAsk(ctx context.Context, tenantID, askID string) error {
+	return i.invoke(ctx, Invocation{
+		Task:          TaskAsk,
+		TenantID:      tenantID,
+		AskID:         askID,
+		CorrelationID: obs.CorrelationID(ctx),
+	})
+}
+
 func (i *Invoker) invoke(ctx context.Context, inv Invocation) error {
 	payload, err := json.Marshal(inv)
 	if err != nil {

@@ -192,6 +192,17 @@ type Store interface {
 	// recordable response, so the caller's retry runs instead of being told the
 	// original is still in flight. A completed record is left alone.
 	AbandonIdempotent(ctx context.Context, tenantID, key string) error
+
+	// PutAsk writes a question row (sk ASK#<id>) whole, replacing what is
+	// there, with the TTL a.ExpiresAt names. There is no version: the API
+	// writes the row once, pending, and only the worker writes it again, so
+	// two deliveries of the same task produce the same answer and the later
+	// one wins — the same rule the clean-note task lives by.
+	PutAsk(ctx context.Context, tenantID string, a model.Ask) error
+	// GetAsk reads one question row, or ErrNotFound. A row past its TTL that
+	// DynamoDB has not collected yet is still returned; the API's 24 h window
+	// is the TTL, not a read-time check.
+	GetAsk(ctx context.Context, tenantID, askID string) (model.Ask, error)
 }
 
 // Objects stores blob content addressed by S3-style keys.

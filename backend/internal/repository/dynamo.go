@@ -33,7 +33,7 @@ type DynamoAPI interface {
 // DynamoStore implements Store using DynamoDB with a single-table design.
 //
 // Keys: pk = USER#<tenantId>, sk = SETTINGS | NOTE#<id> | CAPTURE#<id> |
-// IDEM#<key>. One partition is not a tenant's: pk = INSTANCE holds
+// IDEM#<key> | ASK#<id>. One partition is not a tenant's: pk = INSTANCE holds
 // sk = SPEND#<day>, the instance-wide daily provider spend counter
 // (internal/pipeline DynamoCounter), written by the worker's breaker and read
 // by the API's spend gate, and sk = AWSCOST#<yyyy-mm>, the month's AWS spend
@@ -92,6 +92,10 @@ func captureSK(captureID string) string {
 
 func idemSK(key string) string {
 	return "IDEM#" + key
+}
+
+func askSK(askID string) string {
+	return "ASK#" + askID
 }
 
 // noteCapturesGSI1PK is the GSI1 partition holding one note's captures. The
@@ -1362,6 +1366,43 @@ func (s *DynamoStore) AbandonIdempotent(ctx context.Context, tenantID, key strin
 		return fmt.Errorf("dynamo abandon idempotent: %w", err)
 	}
 	return nil
+}
+
+// ------------------------------------------------------------------ asks
+
+// PutAsk stores the question as one JSON blob. Nothing queries an ask by
+// anything but its key, so no attribute is promoted; the TTL is the row's
+// expiry, which is the only lifecycle it has.
+func (s *DynamoStore) PutAsk(ctx context.Context, tenantID string, a model.Ask) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if a.ID == "" {
+		return errors.New("repository: ask without an id")
+	}
+	blob, err := json.Marshal(a)
+	if err != nil {
+		return fmt.Errorf("dynamo encode ask: %w", err)
+	}
+	return s.putJSONItem(ctx, userPK(tenantID), askSK(a.ID), "ask", string(blob), a.ExpiresAt)
+}
+
+func (s *DynamoStore) GetAsk(ctx context.Context, tenantID, askID string) (model.Ask, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Ask{}, err
+	}
+	item, err := s.getJSONItem(ctx, userPK(tenantID), askSK(askID))
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return model.Ask{}, ErrNotFound
+		}
+		return model.Ask{}, fmt.Errorf("dynamo get ask: %w", err)
+	}
+	var a model.Ask
+	if err := json.Unmarshal([]byte(item.Data), &a); err != nil {
+		return model.Ask{}, fmt.Errorf("dynamo decode ask: %w", err)
+	}
+	return a, nil
 }
 
 // --------------------------------------------------------------- generic

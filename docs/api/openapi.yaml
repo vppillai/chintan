@@ -45,6 +45,7 @@ tags:
   - name: captures
   - name: search
   - name: usage
+  - name: ask
   - name: export
 
 security:
@@ -456,22 +457,28 @@ paths:
       tags: [usage]
       summary: The caller's own provider usage for one month
       description: |
-        What this account's captures cost, from the per-tenant rows the
-        worker writes on every priced provider call (transcription, routing,
-        cleanup): the month's totals, the same split by operation, and one
-        line per day with any usage. Microdollars throughout — the unit the
+        What this account cost and did in one month, from the per-tenant rows
+        the worker writes on every priced provider call and the API writes on
+        every authenticated request: the month's provider totals, the same
+        split by operation (`transcribe`, `route`, `cleanup`, `clean_note`,
+        `ask`) and by provider (`providers`), the authenticated API requests
+        made (`api`), one line per day with any usage or any request, and
+        what the recordings and notes occupy (`storage`, computed from the
+        index rows at read time). Microdollars throughout — the unit the
         spend cap uses. A month with no usage answers zeros, not 404.
 
         Beside it, `aws`: what the instance itself cost in AWS that month, as
         last read from the stack's AWS Budget by the worker's daily task
-        (`budgets:DescribeBudget`; nothing calls Cost Explorer). It is
-        instance-level — the account's bill, not this caller's share of it —
-        and null when nothing has been recorded for the month: the stack has
-        no budget, or the task has not run since the month began.
+        (`budgets:DescribeBudget`; nothing calls Cost Explorer). The figure is
+        instance-level — the account's bill — and null when nothing has been
+        recorded for the month: the stack has no budget, or the task has not
+        run since the month began. `aws.share_micros` is this caller's slice
+        of it, apportioned by their share of the instance's provider spend for
+        the month (`share_basis: provider_cost`); null when the instance spent
+        nothing at the providers.
 
         This is the caller's own usage only. There is no cross-tenant view on
-        this API; see docs/design/usage-accounting.md for how an admin listing
-        would be added.
+        this API; `chintanctl usage` is the operator's listing.
       parameters:
         - name: month
           in: query
@@ -485,6 +492,77 @@ paths:
               schema: { $ref: '#/components/schemas/Usage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /v1/ask:
+    post:
+      tags: [ask]
+      summary: Ask a question over your notes
+      description: |
+        Writes the question, hands it to the worker and answers 202 at once
+        with the row in status `pending`; poll `GET /v1/ask/{askId}` for the
+        answer. Nothing runs on the request path: retrieval over the notes and
+        the one model call happen in the worker, the same way the whole-note
+        clean does, because the API's integration is bounded by the gateway's
+        30-second ceiling and that work is not.
+
+        The worker ranks the caller's active notes lexically against the
+        question (title, aliases and tags, then the searchable body text),
+        reads the bodies of the top few, packs excerpts into one prompt within
+        a fixed budget, and asks the model to answer ONLY from those notes and
+        to cite the ones it used. A question the notes do not answer comes
+        back `grounded: false` with an answer that says so. Note content is
+        fenced as data in the prompt; instructions found inside a note are not
+        followed.
+
+        `history` is at most six earlier turns of THIS conversation, oldest
+        first, so a follow-up ("and when was that?") resolves. It is context
+        for the model only; retrieval is over the notes, never over history.
+
+        The request body is capped at 16 KB. A history carried whole with long
+        answers can exceed that; the client is expected to cut earlier answers.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AskRequest' }
+      responses:
+        '202':
+          description: Accepted. The row is `pending`; poll for the answer.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ask' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+        '503':
+          description: The worker is not configured on this instance, so a question has nowhere to go.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/ask/{askId}:
+    parameters:
+      - $ref: '#/components/parameters/AskId'
+    get:
+      tags: [ask]
+      summary: Read a question and its answer
+      description: |
+        The caller's own rows only; another tenant's id is 404. Rows live 24
+        hours, after which the id is 404 as well. `status` moves from
+        `pending` to `answered` or `failed`; `answer`, `sources` and
+        `grounded` are meaningful once `answered`, `error` once `failed`.
+      responses:
+        '200':
+          description: The question, and its answer once the worker has run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ask' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/captures:
     get:
@@ -780,6 +858,11 @@ components:
       schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
     CaptureId:
       name: captureId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    AskId:
+      name: askId
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
@@ -1236,7 +1319,7 @@ components:
 
     Capture:
       type: object
-      required: [id, status, created_at, version]
+      required: [id, status, created_at, version, targeted]
       properties:
         id: { type: string }
         note_id: { type: string, nullable: true }
@@ -1266,6 +1349,16 @@ components:
         has_segments: { type: boolean }
         has_peaks: { type: boolean }
         version: { type: integer }
+        targeted:
+          type: boolean
+          description: >
+            True when a person chose the destination: the client named
+            `note_id` at `POST /v1/captures` ("Record into this"), or a person
+            picked the note via `POST /v1/captures/{id}/target`. False when the
+            router decided or nothing has decided yet. The Home screen's
+            filing rows show only non-targeted captures; a targeted one is
+            already visible in its note's Recordings tab. Captures recorded
+            before this field existed read false.
 
     CapturePage:
       type: object
@@ -1407,9 +1500,9 @@ components:
       type: object
       description: |
         The instance's AWS spend for one calendar month (UTC), as last read
-        from the stack's AWS Budget. Instance-level: every tenant sees the
-        same figure. A future admin view may apportion it; this API does not.
-      required: [month_micros, as_of, budget_micros]
+        from the stack's AWS Budget, and the caller's share of it.
+        `month_micros` is instance-level: every tenant sees the same figure.
+      required: [month_micros, as_of, budget_micros, share_micros, share_basis]
       properties:
         month_micros:
           type: integer
@@ -1422,12 +1515,54 @@ components:
           type: integer
           nullable: true
           description: The budget's monthly limit, in microdollars; null when the budget reports none.
+        share_micros:
+          type: integer
+          nullable: true
+          description: |
+            `month_micros` × this caller's provider cost for the month ÷ the
+            instance's provider spend for the month (the sum of the breaker's
+            daily counters). Null when the instance spent nothing at the
+            providers, since there is then nothing to apportion by.
+        share_basis:
+          type: string
+          nullable: true
+          enum: [provider_cost]
+          description: How `share_micros` was apportioned; null when it is null.
+
+    UsageApi:
+      type: object
+      required: [requests]
+      properties:
+        requests:
+          type: integer
+          description: Authenticated API requests this caller made in the month. Health probes and 401s are not counted.
+
+    UsageStorage:
+      type: object
+      description: |
+        What the caller's recordings and notes add up to, computed from the
+        capture and note index rows when the request is served.
+      required: [recordings, audio_seconds, audio_bytes, notes, approximate]
+      properties:
+        recordings: { type: integer }
+        audio_seconds:
+          type: number
+          description: The recordings' durations summed, as transcribed.
+        audio_bytes:
+          type: integer
+          description: The recordings' uploaded sizes summed, as S3 reported them. A recording processed before the size was recorded contributes zero.
+        notes:
+          type: integer
+          description: Active notes; the archive is not counted.
+        approximate:
+          type: boolean
+          description: True when the walk behind the numbers stopped at its 2,000-row cap, so they are a floor rather than the total.
 
     Usage:
       allOf:
         - $ref: '#/components/schemas/UsageTotals'
         - type: object
-          required: [month, ops, days, aws]
+          required: [month, ops, providers, days, api, storage, aws]
           properties:
             month: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
             aws:
@@ -1435,26 +1570,109 @@ components:
               allOf:
                 - $ref: '#/components/schemas/UsageAws'
               description: |
-                The instance's AWS spend for the month, or null when nothing
-                has been recorded for it — the stack has no budget, or the
-                daily task has not run since the month began.
+                The instance's AWS spend for the month and this caller's share
+                of it, or null when nothing has been recorded for the month —
+                the stack has no budget, or the daily task has not run since
+                the month began.
             ops:
               type: object
               description: |
-                The month's totals split by operation. Keys are the pipeline
-                stages that call a provider: `transcribe`, `route`, `cleanup`.
-                A stage that made no call in the month is absent.
+                The month's totals split by operation. Keys are the operations
+                that call a provider: `transcribe`, `route`, `cleanup`,
+                `clean_note` (the whole-note cleaned view) and `ask` (a
+                question over the notes). An operation that made no call in
+                the month is absent.
+              additionalProperties: { $ref: '#/components/schemas/UsageTotals' }
+            providers:
+              type: object
+              description: |
+                The same totals split by provider name (`groq`, `openai` — the
+                name the price table is keyed on, so the OpenAI-compatible
+                endpoint pointed at MiniMax is `openai`). A provider that made
+                no call in the month is absent; the object is empty, never
+                null, when none did.
               additionalProperties: { $ref: '#/components/schemas/UsageTotals' }
             days:
               type: array
-              description: One entry per day with any usage, ascending.
+              description: One entry per day with any usage or any API request, ascending.
               items:
                 allOf:
                   - $ref: '#/components/schemas/UsageTotals'
                   - type: object
-                    required: [date]
+                    required: [date, api_requests]
                     properties:
                       date: { type: string, format: date }
+                      api_requests:
+                        type: integer
+                        description: Authenticated API requests served that day; 0 when none.
+            api: { $ref: '#/components/schemas/UsageApi' }
+            storage: { $ref: '#/components/schemas/UsageStorage' }
+
+    AskRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: The question, 1–1000 characters after trimming.
+        history:
+          type: array
+          maxItems: 6
+          description: |
+            At most six earlier turns of THIS conversation, oldest first, so a
+            follow-up resolves. Context for the model only; retrieval is over
+            the notes.
+          items: { $ref: '#/components/schemas/AskTurn' }
+
+    AskTurn:
+      type: object
+      required: [question, answer]
+      properties:
+        question: { type: string, maxLength: 1000 }
+        answer: { type: string, maxLength: 4000 }
+
+    AskSource:
+      type: object
+      required: [note_id, title]
+      properties:
+        note_id: { type: string }
+        title: { type: string }
+
+    Ask:
+      type: object
+      required: [id, status, question, answer, grounded, sources, error, notes_considered, created_at, answered_at]
+      properties:
+        id: { type: string }
+        status:
+          type: string
+          enum: [pending, answered, failed]
+        question: { type: string }
+        answer:
+          type: string
+          nullable: true
+          description: |
+            The answer once `answered`, else null. Plain text; may contain
+            simple Markdown (paragraphs, "- " lists, **bold**). No headings.
+            Capped at 8,000 characters — a longer answer is refused whole and
+            the row is `failed`.
+        grounded:
+          type: boolean
+          description: True when the answer was drawn from notes; false when the honest answer is "that is not in your notes", and while pending.
+        sources:
+          type: array
+          description: Only notes that were actually given to the model AND that it cited, in relevance order. Never null; empty while pending.
+          items: { $ref: '#/components/schemas/AskSource' }
+        error:
+          type: string
+          nullable: true
+          description: A fixed sentence when `failed`, else null. Never provider text.
+        notes_considered:
+          type: integer
+          description: How many notes were in the retrieval window.
+        created_at: { type: string, format: date-time }
+        answered_at: { type: string, format: date-time, nullable: true }
 
     ExportJob:
       type: object

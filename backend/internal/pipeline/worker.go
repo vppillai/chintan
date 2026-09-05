@@ -25,16 +25,19 @@ type Invocation struct {
 	CaptureID string `json:"capture_id,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 	// Task names a job that is not a capture — the weekly expiry sweep's
-	// EventBridge rule sends {"task":"sweep-expired"}, and the API and the
-	// pipeline itself send {"task":"clean-note"} (TaskCleanNote). cmd/worker
-	// dispatches on it: the sweep never reaches this package, the clean-note
-	// task is handled by Worker.Handle, and any other task that reaches the
-	// capture path is refused rather than misread.
+	// EventBridge rule sends {"task":"sweep-expired"}, the API and the
+	// pipeline itself send {"task":"clean-note"} (TaskCleanNote), and the API
+	// sends {"task":"ask"} (TaskAsk). cmd/worker dispatches on it: the sweep
+	// never reaches this package, the clean-note and ask tasks are handled by
+	// Worker.Handle, and any other task that reaches the capture path is
+	// refused rather than misread.
 	Task string `json:"task,omitempty"`
 	// NoteID and Mode address a clean-note task: the note whose cleaned view
 	// is regenerated and the mode to write it in.
 	NoteID string `json:"note_id,omitempty"`
 	Mode   string `json:"mode,omitempty"`
+	// AskID addresses an ask task: the question row to answer.
+	AskID string `json:"ask_id,omitempty"`
 	// CorrelationID is the id the API minted for the request, so the worker's
 	// log lines join the API's into one trace.
 	CorrelationID string `json:"correlation_id,omitempty"`
@@ -58,8 +61,15 @@ func NewWorker(p *Pipeline) *Worker { return &Worker{pipeline: p} }
 // to the dead-letter queue; every stage persists its artefact, so the retry
 // resumes where the fault struck rather than re-transcribing.
 func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
-	if task, ok := parseCleanNoteTask(raw); ok {
-		return w.handleCleanNote(ctx, task)
+	if task, ok := parseTask(raw); ok {
+		switch task.Task {
+		case TaskCleanNote:
+			return w.handleCleanNote(ctx, task)
+		case TaskAsk:
+			return w.handleAsk(ctx, task)
+		}
+		// Any other task falls through to the capture path, which refuses
+		// it by name.
 	}
 
 	refs, correlationID, err := parseInvocation(raw)
@@ -100,7 +110,7 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 			continue
 		}
 
-		if _, err := w.pipeline.Run(recCtx, ref.TenantID, ref.CaptureID); err != nil {
+		if _, err := w.pipeline.RunUpload(recCtx, ref); err != nil {
 			obs.Log(recCtx).Error("capture will be retried",
 				slog.String("capture_id", ref.CaptureID),
 				slog.String("error", err.Error()))
@@ -136,11 +146,45 @@ func (w *Worker) handleCleanNote(ctx context.Context, task Invocation) error {
 	return nil
 }
 
-// parseCleanNoteTask reads a clean-note payload. ok is false for anything else,
+// handleAsk runs one ask task. A payload that names the task but not a
+// question is discarded like any other unparseable invocation.
+func (w *Worker) handleAsk(ctx context.Context, task Invocation) error {
+	if task.TenantID == "" || task.AskID == "" {
+		obs.Log(ctx).Error("discarding an ask invocation that names no question")
+		obs.Count(ctx, "WorkerMessagesDiscarded", map[string]string{"Reason": "unparseable"})
+		return nil
+	}
+	id, ok := obs.SanitizeCorrelationID(task.CorrelationID)
+	if !ok {
+		id, ok = obs.SanitizeCorrelationID("ask-" + task.AskID)
+		if !ok {
+			id = obs.NewCorrelationID()
+		}
+	}
+	ctx = obs.WithCorrelationID(ctx, id)
+	if err := w.pipeline.Ask(ctx, task.TenantID, task.AskID); err != nil {
+		obs.Log(ctx).Error("ask will be retried",
+			slog.String("ask_id", task.AskID),
+			slog.String("error", err.Error()))
+		return err
+	}
+	return nil
+}
+
+// parseTask reads a payload that names a task. ok is false for anything else,
 // including a payload that does not decode: the capture path reports that.
-func parseCleanNoteTask(raw json.RawMessage) (Invocation, bool) {
+func parseTask(raw json.RawMessage) (Invocation, bool) {
 	var inv Invocation
-	if err := json.Unmarshal(raw, &inv); err != nil || inv.Task != TaskCleanNote {
+	if err := json.Unmarshal(raw, &inv); err != nil || inv.Task == "" {
+		return Invocation{}, false
+	}
+	return inv, true
+}
+
+// parseCleanNoteTask reads a clean-note payload; ok is false for any other.
+func parseCleanNoteTask(raw json.RawMessage) (Invocation, bool) {
+	inv, ok := parseTask(raw)
+	if !ok || inv.Task != TaskCleanNote {
 		return Invocation{}, false
 	}
 	return inv, true

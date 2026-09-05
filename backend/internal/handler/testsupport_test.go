@@ -88,6 +88,9 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Readiness:     service.NewReadinessService(h.store, h.objects),
 		Spend:         h.spend,
 		Usage:         h.usage,
+		Requests:      h.usage,
+		Storage:       service.NewStorageService(h.store),
+		Ask:           service.NewAskService(h.store, h.worker),
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
 	}
@@ -199,6 +202,19 @@ func (w *recordingInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID s
 	}
 	w.calls = append(w.calls, "clean-note/"+tenantID+"/"+noteID+"/"+string(mode))
 	return nil
+}
+
+func (w *recordingInvoker) InvokeAsk(_ context.Context, tenantID, askID string) error {
+	w.calls = append(w.calls, "ask/"+tenantID+"/"+askID)
+	return nil
+}
+
+// withoutAsk builds the API the way an instance with no worker is built: the
+// ask service exists but has nowhere to send a question.
+func withoutAsk() harnessOption {
+	return func(d *handler.Deps, h *harness) {
+		d.Ask = service.NewAskService(h.store, nil)
+	}
 }
 
 type fakeSpend struct {

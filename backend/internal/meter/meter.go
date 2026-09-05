@@ -31,6 +31,10 @@ const (
 	// OpCleanNote is the whole-note cleaned view: one call over the entire
 	// body, priced like cleanup (input and output tokens on the LLM model).
 	OpCleanNote Op = "clean_note"
+	// OpAsk is a question answered over the tenant's notes (backlog D5): one
+	// call carrying the packed notes and the question, priced on the LLM
+	// model's input and output tokens like every other completion.
+	OpAsk Op = "ask"
 )
 
 // Quantities is what one call consumed, per unit. A call is priced as the sum

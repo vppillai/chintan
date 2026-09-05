@@ -1,8 +1,9 @@
 # Per-tenant usage accounting
 
 Status: implemented for recording and self-service reading (2026-09-04);
-the instance's AWS cost beside it (2026-09-04, D6b).
-Admin listing: designed, not built.
+the instance's AWS cost beside it (2026-09-04, D6b); per-provider split,
+API request counting, storage summary, the tenant's share of the AWS cost and
+the `chintanctl usage` admin listing (2026-09-05).
 
 ## Why this exists, and what it is not
 
@@ -69,15 +70,29 @@ audio_seconds   N   3 decimals
 input_tokens    N
 output_tokens   N
 
-op_<op>_cost_micros      N   the same five, per pipeline stage:
-op_<op>_calls            N   <op> ∈ transcribe | route | cleanup
-op_<op>_audio_seconds    N   (only the units the stage consumes)
+op_<op>_cost_micros      N   the same five, per operation:
+op_<op>_calls            N   <op> ∈ transcribe | route | cleanup | clean_note | ask
+op_<op>_audio_seconds    N   (only the units the operation consumes)
 op_<op>_input_tokens     N
 op_<op>_output_tokens    N
+
+provider_<name>_cost_micros    N   the same five again, per provider:
+provider_<name>_calls          N   <name> ∈ groq | openai — the name the price
+provider_<name>_audio_seconds  N   table is keyed on, lowercased, letters and
+provider_<name>_input_tokens   N   digits only
+provider_<name>_output_tokens  N
+
+api_requests    N   authenticated API requests (2026-09-05; see below)
 
 gsi1pk          "USAGE#<yyyy-mm>"     month row only — see admin listing
 gsi1sk          "TENANT#<tenant>"     month row only
 ```
+
+The op and provider splits are written by the same single `ADD` as the row
+totals: one `UpdateItem` per row moves cost, calls, the units, and all three
+copies of each. A new operation or provider appears as new attributes on the
+next call and the readers recover both splits by attribute-name prefix, so
+`clean_note` and `ask` needed no change here.
 
 A future admin query reads this cheaply: every number it wants is a
 top-level attribute on one item, readable with a `ProjectionExpression`, and
@@ -106,6 +121,21 @@ Cost per capture: two `UpdateItem`s per provider call, i.e. four to six per
 capture, each under 1 KB. At today's rate (~50 captures/day) that is well
 inside the table's on-demand noise.
 
+### API requests (2026-09-05)
+
+Every authenticated request the tenant makes adds one to `api_requests` on the
+same month and day rows: two unconditional `ADD`s, from the API's per-route
+wrapper (`handler.router.counted`) after the handler has answered. Health
+routes are public and never pass through it; a 401 is never counted. A count
+that could not be written is logged (`UsageRecordFailures{Op=api_request}`)
+and the response goes out unchanged — a request must not fail over a row
+that exists only to describe it. The month row created by a request alone
+carries the GSI1 keys too, so a tenant who only read is still in the listing.
+
+Cost: two `UpdateItem`s per request, each under 1 KB, on the request path.
+At a few hundred requests a day that is noise; if it ever is not, the answer
+is to count once per invocation in a buffer and flush, not to stop counting.
+
 ### Read path
 
 `GET /v1/usage?month=yyyy-mm` (default: the current UTC month) answers the
@@ -130,8 +160,31 @@ user's screen is not an error. Microdollars throughout, the unit the cap and
 `daily_spend_cap_micros` already use, so a "You" screen can show spend against
 budget without converting.
 
-Since D6b the same response carries one more member, `aws` — see the next
-section; the example above omits it.
+Since D6b the same response carries `aws` — see the next section — and since
+2026-09-05 four more members, all required so the client never guesses:
+
+```json
+{
+  "providers": {"groq": {"cost_micros": 20230, "calls": 50, "audio_seconds": 1391.2},
+                "openai": {"cost_micros": 20561, "calls": 68, "input_tokens": 84210, "output_tokens": 15332}},
+  "days":  [{"date": "2026-09-04", "cost_micros": 40791, "calls": 118, "api_requests": 12, "…": "…"}],
+  "api":   {"requests": 312},
+  "storage": {"recordings": 41, "audio_seconds": 1391.2, "audio_bytes": 9123456, "notes": 12, "approximate": false}
+}
+```
+
+- `providers` is the `provider_<name>_*` split; a provider with no call in
+  the month is absent, and the object is empty rather than null.
+- `days[].api_requests` and `api.requests` are the counters above; a day with
+  requests and no calls is still a day.
+- `storage` is computed when the request is served, from the tenant's capture
+  and note index rows: recordings and their summed duration and uploaded size
+  (`CaptureIndex.AudioBytes`, stamped by the worker from the S3 notification
+  that started the pipeline — a recording processed before 2026-09-05 reads
+  zero), and the active notes. Each walk is capped at 2,000 rows; hitting the
+  cap sets `approximate` and the numbers are a floor. Nothing is stored for
+  it: a running total would be one more counter to keep in step with every
+  delete and move.
 
 ## The AWS cost beside it (D6b)
 
@@ -212,15 +265,22 @@ say "as of the 4th" rather than imply the figure is live. If a month-end
 figure ever matters (billing), the fix is a second read of the previous
 period on the 1st, not a shorter interval.
 
-### No per-user split — deliberately
+### The tenant's share (2026-09-05)
 
-AWS cost is instance-level. Every tenant sees the same `aws` object, and it is
-not their share of anything: apportioning the account's bill by provider
-share (a tenant that caused 40% of the provider spend caused roughly 40% of
-the Lambda seconds) or flat (per active tenant) is a policy decision, and it
-belongs in the admin view designed above, not in the self-service endpoint. A
-future admin listing has everything it needs for either: the per-tenant month
-rows for the shares and this row for the total.
+`aws.month_micros` stays instance-level: every tenant sees the same figure.
+Beside it, `aws.share_micros` is that figure × the tenant's own provider cost
+for the month ÷ the instance's provider spend for the month, rounded to the
+nearest microdollar, and `aws.share_basis` is `"provider_cost"` — the one
+apportionment rule there is, named on the wire so a different one can be told
+apart later. The denominator is the sum of the breaker's `INSTANCE /
+SPEND#<day>` counters for the month (`usage.Reader.InstanceSpend`), read with
+one `begins_with` Query; it is the number the cap is enforced against, so the
+shares of every tenant add up to the bill. Both members are null when the
+instance spent nothing at the providers — there is then nothing to apportion
+by — and the counters expire after ninety days, so a month older than that
+reads null as well. The rule is a proxy (a tenant that caused 40% of the
+provider spend caused roughly 40% of the Lambda seconds behind it), which is
+why the basis is named rather than implied.
 
 ### The spend cap stays, and leaves the You screen (U13b)
 
@@ -235,25 +295,31 @@ longer shows it; a single line on About is enough for an operator to confirm
 the guard is on. Nothing about that is an API change, which is why this
 section is a paragraph and not a migration.
 
-## The admin listing, when it is wanted
+## The admin listing
 
-Nothing cross-tenant is exposed today. When it is:
+Nothing cross-tenant is exposed on the API. The operator's listing is
+`chintanctl usage --instance <name> [--month yyyy-mm] [--tenant <id>]…`
+(2026-09-05), read-only:
 
-1. **Which tenants had usage in month M** is a `Query` on the existing GSI1:
-   `gsi1pk = "USAGE#<M>"`. The month rows already carry these keys, so there
-   is no backfill and no template change. GSI1 is an `INCLUDE` projection of
-   capture attributes, so the query returns keys only (tenant id from
-   `gsi1sk`); the listing then does one `GetItem` per tenant for the numbers.
-   For an admin page over tens of tenants that is the right cost. If it ever
-   becomes hundreds, the alternative is an `ADMIN#USAGE#<M>` aggregate row
-   updated by the same breaker `ADD` — a third `UpdateItem` per call — or a
-   second GSI projecting the counters; both are additive.
-2. **Who may call it** needs an admin notion this API does not have: today
-   every route is tenant-scoped by the Cognito `sub`. The smallest honest
-   version is a Cognito group (`admins`) checked in the middleware, and a
-   `GET /v1/admin/usage?month=` route that lists `{tenant_id, totals}`.
-   Nothing about the rows changes for that.
-3. **Billing** would read the month rows and nothing else. The day rows exist
+1. **Which tenants had usage in month M** is a `Query` on GSI1:
+   `gsi1pk = "USAGE#<M>"`. The month rows have carried these keys since the
+   accounting shipped, so there was no backfill and no template change. GSI1
+   is an `INCLUDE` projection of capture attributes, so the query returns
+   keys only (tenant id from `gsi1sk`); the command then does one `GetItem`
+   per tenant for the numbers. For tens of tenants that is the right cost. If
+   it ever becomes hundreds, the alternative is an `ADMIN#USAGE#<M>` aggregate
+   row updated by the same breaker `ADD` — a third `UpdateItem` per call — or
+   a second GSI projecting the counters; both are additive.
+2. It prints tenant, cost, calls, audio minutes, API requests and the per-op
+   cost, as a table or `--json`, and recovers the per-op split by attribute
+   prefix as the API does. `--tenant` reads the named rows and skips the
+   index.
+3. **An API route** for the same listing would need an admin notion this API
+   does not have: every route is tenant-scoped by the Cognito `sub`. The
+   smallest honest version is a Cognito group (`admins`) checked in the
+   middleware, and a `GET /v1/admin/usage?month=` route returning what the
+   command prints. Nothing about the rows changes for that.
+4. **Billing** would read the month rows and nothing else. The day rows exist
    for charts and expire.
 
 ## Deliberately not built
@@ -265,7 +331,11 @@ Nothing cross-tenant is exposed today. When it is:
   stays that way; a per-tenant cap is exactly the machinery step 3 removed.
 - No backfill. The log group's retention is 14 days and the rows are cheap;
   history starts at the deploy that ships this.
-- No admin endpoint, no UI. The API for the caller's own month is what a
-  "You" screen needs; the design above is what an admin page would add.
-- No Cost Explorer, no per-service AWS breakdown, no per-tenant AWS share.
-  One free `DescribeBudget` a day answers the question that was asked.
+- No admin endpoint, no admin UI. The API for the caller's own month is what
+  a "You" screen needs; `chintanctl usage` is the operator's view, and the
+  design above is what an admin page would add.
+- No Cost Explorer, no per-service AWS breakdown. One free `DescribeBudget` a
+  day answers the question that was asked; the per-tenant share is a
+  proportion of it, not a second reading.
+- No stored storage totals. The summary is computed from the index rows on
+  read, capped, and says when it is approximate.

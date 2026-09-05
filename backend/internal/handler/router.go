@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/auth"
 	"github.com/vppillai/chintan/backend/internal/httperr"
@@ -42,6 +44,15 @@ type Deps struct {
 	// Usage answers GET /v1/usage from the per-tenant rows the worker's
 	// breaker writes. Nil answers 503, like the other optional services.
 	Usage usage.Reader
+	// Requests counts every authenticated request against its tenant, on the
+	// same rows Usage reads. Nil counts nothing; a failed count is logged and
+	// never fails the request.
+	Requests usage.RequestCounter
+	// Storage computes the storage half of GET /v1/usage from the tenant's
+	// index rows. Nil reports zeros.
+	Storage *service.StorageService
+	// Ask answers POST /v1/ask and GET /v1/ask/{askId}. Nil answers 503.
+	Ask *service.AskService
 
 	// Store backs idempotent replay. It is the raw store rather than a service
 	// because idempotency is a property of the request, not of any one domain.
@@ -130,9 +141,40 @@ func (rt *router) handle(pattern string, h http.HandlerFunc, opts ...routeOption
 	}
 	var final http.Handler = wrapped
 	if !cfg.public {
-		final = rt.authenticated(final)
+		// Counted inside the authentication, so the identity is on the
+		// context and a 401 from the middleware never reaches the counter.
+		final = rt.authenticated(rt.counted(final))
 	}
 	rt.mux.Handle(pattern, instrument(pattern, final))
+}
+
+// counted adds the request to the caller's api_requests once the handler has
+// answered. It is the accounting behind `api.requests` on GET /v1/usage and
+// nothing else: a count that could not be written is logged and the response
+// goes out unchanged, because a person's request must not fail over a row
+// that only exists to describe it. Health routes are public and never pass
+// through here; a 401 produced past the middleware is skipped the same way
+// the middleware's own would have been.
+func (rt *router) counted(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusWriter{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		if rt.Requests == nil {
+			return
+		}
+		userID, ok := middleware.GetUserID(r.Context())
+		if !ok || rec.status == http.StatusUnauthorized {
+			return
+		}
+		// UTC, the same calendar the breaker bills to, so the day this lands
+		// on is the day the provider calls it caused land on.
+		day := time.Now().UTC().Format("2006-01-02")
+		if err := rt.Requests.CountRequest(r.Context(), userID, day); err != nil {
+			obs.Log(r.Context()).Warn("could not count the request against the tenant's usage",
+				slog.String("error", err.Error()))
+			obs.Count(r.Context(), "UsageRecordFailures", map[string]string{"Op": "api_request"})
+		}
+	})
 }
 
 // bodyLimit returns the cap registered for the route serving r.

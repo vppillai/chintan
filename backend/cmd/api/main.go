@@ -84,6 +84,9 @@ func init() {
 
 	notesService := service.NewNotesService(store, objects).WithInvoker(invoker)
 	settingsService := service.NewSettingsService(store)
+	// Ask writes the question row and hands it to the same worker; the
+	// retrieval and the model call never run here.
+	askService := service.NewAskService(store, invoker)
 
 	// Three wirings, each of which is the difference between a feature working
 	// and a feature that only looks like it works:
@@ -112,6 +115,10 @@ func init() {
 	// login does passkeys natively (SignInPolicy.AllowedFirstAuthFactors on the
 	// user pool), which replaced the custom WebAuthn ceremony, the sealed
 	// refresh-token vault and the SSM vault key that used to be built here.
+	// One usage store for both directions: the reader behind GET /v1/usage,
+	// and the counter that adds every authenticated request to the same
+	// month and day rows the worker's breaker writes provider spend to.
+	usageStore := usage.NewDynamo(dynamoClient, tableName)
 	router := handler.New(handler.Deps{
 		Notes:          notesService,
 		Settings:       settingsService,
@@ -121,7 +128,10 @@ func init() {
 		Export:         service.NewExportService(notesService, captureService, settingsService, objects),
 		Readiness:      service.NewReadinessService(store, objects),
 		Spend:          spendGate,
-		Usage:          usage.NewDynamo(dynamoClient, tableName),
+		Usage:          usageStore,
+		Requests:       usageStore,
+		Storage:        service.NewStorageService(store),
+		Ask:            askService,
 		Store:          store,
 		Verifier:       verifier,
 		AllowedOrigin:  allowedOrigin,

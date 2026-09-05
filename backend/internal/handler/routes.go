@@ -50,6 +50,11 @@ func (rt *router) routes() {
 	// Usage: the caller's own provider spend, by month.
 	rt.handle("GET "+p+"/usage", rt.getUsage)
 
+	// Ask: a question over the caller's notes. 202 and a worker invocation,
+	// like the whole-note clean; the client polls the row for the answer.
+	rt.handle("POST "+p+"/ask", rt.beginAsk, idempotent(), body(MaxAskRequestBytes))
+	rt.handle("GET "+p+"/ask/{askId}", rt.getAsk)
+
 	// Captures. POST /v1/captures is synchronous and fast: it writes the row and
 	// returns presigned PUTs. Nothing slow happens on a request path bounded by
 	// the gateway's fixed 30-second integration ceiling.
