@@ -16,6 +16,8 @@
 import { NO_RETRY } from './client.ts';
 import type { ApiClient, RequestOptions } from './client.ts';
 import type {
+  AskRequestWire,
+  AskWire,
   CaptureArtifactKind,
   CaptureCreateWire,
   CaptureCreatedWire,
@@ -84,6 +86,21 @@ export class ChintanApi {
    */
   getUsage(month?: string): Promise<UsageWire> {
     return this.client.request('/v1/usage', { query: { month } });
+  }
+
+  /* ---- Ask ------------------------------------------------------------ */
+
+  /**
+   * A question over the notes. Answered 202 with the row in `pending`; the
+   * worker does the reading and the client polls `getAsk`. The body is
+   * capped at 16 KB by the API, which six turns of history stay well inside.
+   */
+  ask(body: AskRequestWire, idempotencyKey?: string): Promise<AskWire> {
+    return this.client.request('/v1/ask', { method: 'POST', body, idempotencyKey });
+  }
+
+  getAsk(askId: string): Promise<AskWire> {
+    return this.client.request(`/v1/ask/${encodeURIComponent(askId)}`);
   }
 
   /* ---- Notes ---------------------------------------------------------- */

@@ -15,6 +15,8 @@ export const ROUTES = {
   notePattern: '/notes/:id',
   /** Archived notes are the library with a filter chip, not a destination. */
   archive: '/?view=archived',
+  /** The library's search field in Ask mode: a question over the notes rather than a filter. */
+  ask: '/?mode=ask',
   settings: '/settings',
   /** What Chintan is and where its data lives. Reached from You. */
   about: '/about',
@@ -25,6 +27,14 @@ export const ROUTES = {
 
 /** The `view` query parameter that switches the library to the archive. */
 export const ARCHIVED_VIEW = 'archived';
+
+/**
+ * The `mode` query parameter that turns the search field into Ask. In the URL
+ * like `q` and `view`, so it survives a reload and Back from a cited note
+ * returns to the answer — but the question itself never is: a question is
+ * not a place, and it should not be in anyone's history or a shared link.
+ */
+export const ASK_MODE = 'ask';
 
 /**
  * URLs from before the library was home. Kept so bookmarks, the OS share
