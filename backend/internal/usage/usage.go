@@ -348,12 +348,28 @@ func (d *Dynamo) add(ctx context.Context, r Record, period, granularity string, 
 		values[val] = floatAttr(q)
 		adds = append(adds, total+" "+val, perOp+" "+val, perProvider+" "+val)
 	}
-	return d.update(ctx, r.TenantID, period, granularity, ttl, adds, names, values)
+	_, err := d.update(ctx, r.TenantID, period, granularity, ttl, adds, names, values)
+	return err
 }
 
-// CountRequest adds one to api_requests on the tenant's month and day rows.
-// Two ADDs, like Record, and for the same reason: the row is shared with the
-// breaker's counters, and a read-then-write would lose increments to it.
+// CountRequest adds one to api_requests on the tenant's day row — one ADD,
+// like Record's, and for the same reason: the row is shared with the breaker's
+// counters, and a read-then-write would lose increments to it — and touches
+// the month row on the day's first request only.
+//
+// One UpdateItem per request, not two. This runs on the request path of every
+// authenticated call, the app's polls included, and measured around the deploy
+// that introduced it (2026-09-05, prod API log) the two writes took the
+// GET /v1/captures poll from a 4 ms warm p50 to 14 ms: the counter was most of
+// the time of the requests it counted. The day row is the one that has to move
+// on every request — the per-day figures on the You screen — and the month's
+// total is the sum of its days on read (Month). The month row is still written
+// once a day, by the request whose ADD made the day's count 1, so a tenant who
+// only read has a month row with the GSI1 keys chintanctl usage lists tenants
+// by. The pair is not a transaction, for the reason Record's is not: a failure
+// between them leaves a tenant off the listing until the next day's first
+// request, which a reader can see and a transaction would cost double write
+// units on every request to prevent.
 func (d *Dynamo) CountRequest(ctx context.Context, tenantID, day string) error {
 	if tenantID == "" {
 		return errors.New("usage: count request without a tenant")
@@ -363,15 +379,23 @@ func (d *Dynamo) CountRequest(ctx context.Context, tenantID, day string) error {
 	}
 	names := map[string]string{"#req": attrAPIRequests}
 	values := map[string]types.AttributeValue{":one": numAttr(1)}
-	adds := []string{"#req :one"}
-	if err := d.update(ctx, tenantID, MonthOf(day), granMonth, 0, adds, names, values); err != nil {
+	after, err := d.update(ctx, tenantID, day, granDay, d.now().Add(dayRetention).Unix(), []string{"#req :one"}, names, values)
+	if err != nil {
 		return err
 	}
-	return d.update(ctx, tenantID, day, granDay, d.now().Add(dayRetention).Unix(), adds, names, values)
+	if readInt(after, attrAPIRequests) != 1 {
+		return nil
+	}
+	// The day's first request. ADD of zero creates the month row, with its
+	// identity and GSI1 keys, without moving a counter on it.
+	_, err = d.update(ctx, tenantID, MonthOf(day), granMonth, 0, []string{"#req :zero"}, names, map[string]types.AttributeValue{":zero": numAttr(0)})
+	return err
 }
 
 // update is the one UpdateItem shape both writers use: ADD the counters given,
 // SET the row's identity, its TTL (day rows) or its GSI1 keys (month rows).
+// It returns the attributes the write updated, as DynamoDB reports them, so a
+// caller can read a counter's new value without a second round trip.
 //
 // The caller's maps are copied, never written to. CountRequest passes the same
 // two maps to the month write and then the day write, and when this function
@@ -383,7 +407,7 @@ func (d *Dynamo) CountRequest(ctx context.Context, tenantID, day string) error {
 // shipped, logged a warning per request, and left days[].api_requests at zero
 // while the month total kept climbing. The test fake now refuses an unused
 // placeholder the way the service does, so this cannot pass the tests again.
-func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity string, ttl int64, adds []string, callerNames map[string]string, callerValues map[string]types.AttributeValue) error {
+func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity string, ttl int64, adds []string, callerNames map[string]string, callerValues map[string]types.AttributeValue) (map[string]types.AttributeValue, error) {
 	names := make(map[string]string, len(callerNames)+2)
 	for k, v := range callerNames {
 		names[k] = v
@@ -410,7 +434,7 @@ func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity strin
 		sets = append(sets, "gsi1pk = :g1pk", "gsi1sk = :g1sk")
 	}
 
-	_, err := d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+	out, err := d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(d.table),
 		Key: map[string]types.AttributeValue{
 			"pk": strAttr(userPK(tenantID)),
@@ -419,11 +443,12 @@ func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity strin
 		UpdateExpression:          aws.String("ADD " + strings.Join(adds, ", ") + " SET " + strings.Join(sets, ", ")),
 		ExpressionAttributeNames:  names,
 		ExpressionAttributeValues: values,
+		ReturnValues:              types.ReturnValueUpdatedNew,
 	})
 	if err != nil {
-		return fmt.Errorf("usage: record %s %s: %w", granularity, period, err)
+		return nil, fmt.Errorf("usage: record %s %s: %w", granularity, period, err)
 	}
-	return nil
+	return out.Attributes, nil
 }
 
 // providerName is the provider as it appears in an attribute name: lowercase,
@@ -448,6 +473,12 @@ func providerName(p string) string {
 // sort keys extend the month's, so begins_with(sk, USAGE#yyyy-mm) is exactly
 // the set. A month with no usage answers zeros rather than not found — a new
 // user's "You" screen is not an error.
+//
+// The month's api_requests is the sum of its days, not the month row's own
+// attribute: CountRequest writes the day row only. Months up to 2026-09-05
+// carry a month-row count from when it wrote both; it is ignored, and the day
+// rows' 400-day retention bounds the sum — a month older than that reads zero
+// requests, which is the trade for one write per request instead of two.
 func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, error) {
 	if !ValidMonth(month) {
 		return Month{}, ErrBadMonth
@@ -478,15 +509,16 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 				out.Totals = totalsOf(item, "")
 				out.Ops = splitOf(item, opPrefix)
 				out.Providers = splitOf(item, providerPrefix)
-				out.APIRequests = readInt(item, attrAPIRequests)
 				out.StorageByteDays = readInt(item, attrStorageByteDays)
 				out.StorageNoteDays = readInt(item, attrStorageNoteDays)
 			case strings.HasPrefix(period, month+"-"):
-				out.Days = append(out.Days, Day{
+				day := Day{
 					Date: period, Totals: totalsOf(item, ""),
 					APIRequests:     readInt(item, attrAPIRequests),
 					StorageByteDays: readInt(item, attrStorageByteDays),
-				})
+				}
+				out.APIRequests += day.APIRequests
+				out.Days = append(out.Days, day)
 			}
 		}
 		start = res.LastEvaluatedKey

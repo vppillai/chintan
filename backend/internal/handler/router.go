@@ -149,10 +149,11 @@ func (rt *router) handle(pattern string, h http.HandlerFunc, opts ...routeOption
 }
 
 // counted adds the request to the caller's api_requests once the handler has
-// answered. It is the accounting behind `api.requests` on GET /v1/usage and
-// nothing else: a count that could not be written is logged and the response
-// goes out unchanged, because a person's request must not fail over a row
-// that only exists to describe it. Health routes are public and never pass
+// answered — one DynamoDB write on the request path (usage.CountRequest says
+// why one, and what two cost). It is the accounting behind `api.requests` on
+// GET /v1/usage and nothing else: a count that could not be written is logged
+// and the response goes out unchanged, because a person's request must not
+// fail over a row that only exists to describe it. Health routes are public and never pass
 // through here; a 401 produced past the middleware is skipped the same way
 // the middleware's own would have been.
 func (rt *router) counted(next http.Handler) http.Handler {

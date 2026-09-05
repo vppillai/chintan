@@ -26,6 +26,9 @@ type fakeAPI struct {
 	// conditionFails makes every conditional UpdateItem fail its condition,
 	// the way the month row answers a second storage snapshot in one day.
 	conditionFails bool
+	// requests is api_requests per row key, so UpdateItem can report the
+	// counter's new value the way the service does (ReturnValues UPDATED_NEW).
+	requests map[string]int64
 }
 
 func (f *fakeAPI) PutItem(_ context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
@@ -65,7 +68,18 @@ func (f *fakeAPI) UpdateItem(_ context.Context, in *dynamodb.UpdateItemInput, _ 
 	if f.conditionFails && in.ConditionExpression != nil {
 		return nil, &types.ConditionalCheckFailedException{Message: aws.String("The conditional request failed")}
 	}
-	return &dynamodb.UpdateItemOutput{}, nil
+	out := &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{}}
+	if in.ExpressionAttributeNames["#req"] == attrAPIRequests {
+		if f.requests == nil {
+			f.requests = map[string]int64{}
+		}
+		key := keyOf(in, "pk") + "|" + keyOf(in, "sk")
+		if strings.Contains(*in.UpdateExpression, "#req :one") {
+			f.requests[key]++
+		}
+		out.Attributes[attrAPIRequests] = numAttr(f.requests[key])
+	}
+	return out, nil
 }
 
 // validatePlaceholders mirrors the ValidationException DynamoDB raises for an
@@ -359,10 +373,11 @@ func TestRecordCountsTheCallUnderItsProvider(t *testing.T) {
 	}
 }
 
-// A request is one ADD of api_requests on the month row and one on the day
-// row, each carrying the row's identity so a month with requests and no calls
-// still has its GSI1 keys and its day rows their TTL.
-func TestCountRequestAddsOneToBothRows(t *testing.T) {
+// A request is one ADD of api_requests on the day row, carrying the row's
+// identity and TTL. The day's first request also writes the month row — an ADD
+// of zero with the GSI1 keys — so a tenant with requests and no calls is still
+// listed; every later request of the day is the one write.
+func TestCountRequestWritesTheDayRowAndTheMonthRowOnlyOnTheDaysFirstRequest(t *testing.T) {
 	api := &fakeAPI{}
 	d := NewDynamo(api, "t")
 	d.now = func() time.Time { return time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC) }
@@ -370,19 +385,21 @@ func TestCountRequestAddsOneToBothRows(t *testing.T) {
 		t.Fatalf("CountRequest: %v", err)
 	}
 	if len(api.updates) != 2 {
-		t.Fatalf("updates = %d, want 2", len(api.updates))
+		t.Fatalf("updates after the day's first request = %d, want the day row and then the month row", len(api.updates))
 	}
-	month, day := api.updates[0], api.updates[1]
-	if keyOf(month, "sk") != "USAGE#2026-09" || keyOf(day, "sk") != "USAGE#2026-09-04" {
-		t.Errorf("keys = %s, %s", keyOf(month, "sk"), keyOf(day, "sk"))
+	day, month := api.updates[0], api.updates[1]
+	if keyOf(day, "sk") != "USAGE#2026-09-04" || keyOf(month, "sk") != "USAGE#2026-09" {
+		t.Errorf("keys = %s, %s; the day row is written first so its count decides the month write", keyOf(day, "sk"), keyOf(month, "sk"))
+	}
+	if expr := *day.UpdateExpression; !strings.HasPrefix(expr, "ADD #req :one SET ") || day.ExpressionAttributeNames["#req"] != "api_requests" {
+		t.Errorf("day expression = %q names = %v", expr, day.ExpressionAttributeNames)
+	}
+	if expr := *month.UpdateExpression; !strings.HasPrefix(expr, "ADD #req :zero SET ") {
+		t.Errorf("month expression = %q, want an ADD of zero that creates the row without counting on it", expr)
 	}
 	for _, in := range api.updates {
-		expr := *in.UpdateExpression
-		if !strings.HasPrefix(expr, "ADD #req :one SET ") || in.ExpressionAttributeNames["#req"] != "api_requests" {
-			t.Errorf("expression = %q names = %v", expr, in.ExpressionAttributeNames)
-		}
-		if strings.Contains(expr, "cost") {
-			t.Errorf("a request count moved a cost counter: %q", expr)
+		if strings.Contains(*in.UpdateExpression, "cost") {
+			t.Errorf("a request count moved a cost counter: %q", *in.UpdateExpression)
 		}
 	}
 	if _, has := month.ExpressionAttributeValues[":g1pk"]; !has {
@@ -390,6 +407,27 @@ func TestCountRequestAddsOneToBothRows(t *testing.T) {
 	}
 	if _, has := day.ExpressionAttributeValues[":ttl"]; !has {
 		t.Error("the day row lost its TTL")
+	}
+
+	for i := 0; i < 3; i++ {
+		if err := d.CountRequest(context.Background(), "tenant-a", "2026-09-04"); err != nil {
+			t.Fatalf("CountRequest %d: %v", i+2, err)
+		}
+	}
+	if len(api.updates) != 5 {
+		t.Fatalf("updates after four requests = %d, want 5: the month row is written on the day's first request only", len(api.updates))
+	}
+	for _, in := range api.updates[2:] {
+		if keyOf(in, "sk") != "USAGE#2026-09-04" {
+			t.Errorf("a later request wrote %s; only the day row moves", keyOf(in, "sk"))
+		}
+	}
+	// A new day, or another tenant, starts its own count and its own month write.
+	if err := d.CountRequest(context.Background(), "tenant-a", "2026-09-05"); err != nil {
+		t.Fatalf("CountRequest (next day): %v", err)
+	}
+	if len(api.updates) != 7 || keyOf(api.updates[6], "sk") != "USAGE#2026-09" {
+		t.Errorf("updates after the next day's first request = %d (last %s), want the month row touched again", len(api.updates), keyOf(api.updates[len(api.updates)-1], "sk"))
 	}
 	if err := d.CountRequest(context.Background(), "", "2026-09-04"); err == nil {
 		t.Error("an anonymous request was counted")
@@ -399,13 +437,14 @@ func TestCountRequestAddsOneToBothRows(t *testing.T) {
 	}
 }
 
-// The read recovers the per-provider split and the request count from the
-// same items the per-op split comes from.
+// The read recovers the per-provider split from the month row and the request
+// count as the sum of the day rows; the month row's own api_requests — a count
+// from before 2026-09-05, when both rows were written — is ignored.
 func TestMonthReadsProvidersAndRequests(t *testing.T) {
 	api := &fakeAPI{items: []map[string]types.AttributeValue{
 		{
 			"sk": strAttr("USAGE#2026-09"), attrPeriod: strAttr("2026-09"),
-			attrCost: numAttr(1000), attrCalls: numAttr(3), attrAPIRequests: numAttr(312),
+			attrCost: numAttr(1000), attrCalls: numAttr(3), attrAPIRequests: numAttr(999),
 			"op_ask_cost_micros": numAttr(400), "op_ask_calls": numAttr(1),
 			"provider_groq_cost_micros": numAttr(600), "provider_groq_calls": numAttr(2), "provider_groq_audio_seconds": floatAttr(41.5),
 			"provider_openai_cost_micros": numAttr(400), "provider_openai_calls": numAttr(1), "provider_openai_input_tokens": numAttr(900),
@@ -418,7 +457,7 @@ func TestMonthReadsProvidersAndRequests(t *testing.T) {
 		t.Fatalf("Month: %v", err)
 	}
 	if got.APIRequests != 312 || got.Ops["ask"].CostMicros != 400 {
-		t.Errorf("month = %+v", got)
+		t.Errorf("month = %+v; api_requests is the sum of the days (12 + 300), never the month row's own attribute", got)
 	}
 	if got.Providers["groq"].CostMicros != 600 || got.Providers["groq"].AudioSeconds != 41.5 || got.Providers["openai"].InputTokens != 900 || len(got.Providers) != 2 {
 		t.Errorf("providers = %+v", got.Providers)

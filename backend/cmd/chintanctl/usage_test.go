@@ -47,7 +47,19 @@ func (w *usageWriter) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInp
 			it[attr] = NumberAttr(int64(parseFloat(v.Value)))
 		}
 	}
-	return &dynamodb.UpdateItemOutput{}, w.part.Put(ctx, it)
+	// The service answers ReturnValues UPDATED_NEW with the attributes the
+	// write touched; the whole item is a superset of that, and CountRequest
+	// reads the day's new count off it.
+	attrs := make(map[string]types.AttributeValue, len(it))
+	for name, v := range it {
+		switch {
+		case v.N != nil:
+			attrs[name] = &types.AttributeValueMemberN{Value: *v.N}
+		case v.S != nil:
+			attrs[name] = &types.AttributeValueMemberS{Value: *v.S}
+		}
+	}
+	return &dynamodb.UpdateItemOutput{Attributes: attrs}, w.part.Put(ctx, it)
 }
 
 func (w *usageWriter) Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {

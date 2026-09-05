@@ -95,9 +95,11 @@ func cmdUsage(ctx context.Context, args []string, stdout, stderr io.Writer, stdi
 
 // runUsage lists the month. With no --tenant it finds the tenants through
 // GSI1 — every month row carries gsi1pk USAGE#<month>, gsi1sk TENANT#<id> for
-// exactly this — and then reads each month row by key, since the index
-// projects none of the counters. With --tenant it reads those rows directly.
-// It writes nothing.
+// exactly this — and then reads each tenant's month row and its day rows in
+// one prefix scan, since the index projects none of the counters. The cost
+// counters come off the month row; api_requests is the sum of the day rows,
+// as internal/usage.Month reads it, because the request counter writes the
+// day row only. With --tenant it reads those rows directly. It writes nothing.
 func runUsage(ctx context.Context, e *env, month string, explicitTenants []string) (*usageResult, error) {
 	tenants := append([]string(nil), explicitTenants...)
 	if len(tenants) == 0 {
@@ -122,31 +124,42 @@ func runUsage(ctx context.Context, e *env, month string, explicitTenants []strin
 
 	res := &usageResult{Target: e.Target, Month: month, Tenants: []usageTenant{}}
 	for _, id := range tenants {
-		it, ok, err := e.Part.Get(ctx, tenantPK(id), usageSKPrefix+month)
+		var monthRow Item
+		var requests int64
+		err := e.Part.Scan(ctx, tenantPK(id), usageSKPrefix+month, func(it Item) error {
+			switch sk := it.SK(); {
+			case sk == usageSKPrefix+month:
+				monthRow = it
+			case strings.HasPrefix(sk, usageSKPrefix+month+"-"):
+				requests += it.Num("api_requests")
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
+		if monthRow == nil {
 			// Named explicitly and has no row: nothing to show, not an error.
 			continue
 		}
-		t := usageTenantOf(id, it)
+		t := usageTenantOf(id, monthRow)
+		t.APIRequests = requests
 		res.Tenants = append(res.Tenants, t)
 		res.CostMicros += t.CostMicros
 	}
 	return res, nil
 }
 
-// usageTenantOf reads the counters off a month row. The per-op split is
-// recovered by attribute-name prefix, as the API reads it, so an operation
-// added later appears here without a code change.
+// usageTenantOf reads the cost counters off a month row; api_requests is the
+// caller's to fill from the day rows. The per-op split is recovered by
+// attribute-name prefix, as the API reads it, so an operation added later
+// appears here without a code change.
 func usageTenantOf(tenantID string, it Item) usageTenant {
 	t := usageTenant{
 		TenantID:     tenantID,
 		CostMicros:   it.Num("cost_micros"),
 		Calls:        it.Num("calls"),
 		AudioSeconds: it.Float("audio_seconds"),
-		APIRequests:  it.Num("api_requests"),
 		OpCostMicros: map[string]int64{},
 	}
 	for name := range it {
