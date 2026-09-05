@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/vppillai/chintan/backend/internal/ask"
 	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 )
@@ -83,6 +84,26 @@ func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode,
 		return Cleaned{}, err
 	}
 	return Cleaned{Text: text, Usage: usage}, nil
+}
+
+// Ask answers one question over the packed notes. Like Route the completion
+// is a JSON object and is read back with the shared extractor, so a model
+// that wraps its answer in a fence or a sentence still parses; the caller
+// filters the cited ids to the notes it packed and bounds the answer.
+func (c *OpenAICleanup) Ask(ctx context.Context, q ask.Prompt) (Answer, error) {
+	systemPrompt, userPrompt, err := q.Render()
+	if err != nil {
+		return Answer{}, err
+	}
+	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, ask.MaxOutputTokens)
+	if err != nil {
+		return Answer{}, err
+	}
+	parsed, err := ask.ParseAnswer(out)
+	if err != nil {
+		return Answer{}, err
+	}
+	return Answer{Text: parsed.Text, Sources: parsed.Sources, Grounded: parsed.Grounded, Usage: usage}, nil
 }
 
 // complete runs a single chat completion and returns the assistant message text

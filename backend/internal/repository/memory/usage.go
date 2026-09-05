@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -17,13 +18,16 @@ import (
 type Usage struct {
 	mu      sync.Mutex
 	records []usage.Record
-	awsCost map[string]usage.AWSCost
+	// requests counts authenticated API requests per tenant per day.
+	requests map[string]map[string]int64
+	awsCost  map[string]usage.AWSCost
 }
 
 var (
-	_ usage.Recorder     = (*Usage)(nil)
-	_ usage.Reader       = (*Usage)(nil)
-	_ usage.AWSCostStore = (*Usage)(nil)
+	_ usage.Recorder       = (*Usage)(nil)
+	_ usage.RequestCounter = (*Usage)(nil)
+	_ usage.Reader         = (*Usage)(nil)
+	_ usage.AWSCostStore   = (*Usage)(nil)
 )
 
 // NewUsage returns an empty in-memory usage store.
@@ -37,6 +41,34 @@ func (u *Usage) Record(ctx context.Context, r usage.Record) error {
 	defer u.mu.Unlock()
 	u.records = append(u.records, r)
 	return nil
+}
+
+// CountRequest counts one request on the tenant's day, as the DynamoDB rows
+// would. A malformed day is refused the same way.
+func (u *Usage) CountRequest(ctx context.Context, tenantID, day string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if tenantID == "" || len(day) != len("2006-01-02") {
+		return fmt.Errorf("usage: count request for %q on %q", tenantID, day)
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.requests == nil {
+		u.requests = map[string]map[string]int64{}
+	}
+	if u.requests[tenantID] == nil {
+		u.requests[tenantID] = map[string]int64{}
+	}
+	u.requests[tenantID][day]++
+	return nil
+}
+
+// Requests returns the tenant's request count for one day, for tests.
+func (u *Usage) Requests(tenantID, day string) int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.requests[tenantID][day]
 }
 
 // Records returns everything recorded, in order, for tests to assert on.
@@ -56,8 +88,14 @@ func (u *Usage) Month(ctx context.Context, tenantID, month string) (usage.Month,
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
-	out := usage.Month{Month: month, Ops: map[string]usage.Totals{}, Days: []usage.Day{}}
-	days := map[string]*usage.Totals{}
+	out := usage.Month{Month: month, Ops: map[string]usage.Totals{}, Providers: map[string]usage.Totals{}, Days: []usage.Day{}}
+	days := map[string]*usage.Day{}
+	dayOf := func(date string) *usage.Day {
+		if days[date] == nil {
+			days[date] = &usage.Day{Date: date}
+		}
+		return days[date]
+	}
 	for _, r := range u.records {
 		if r.TenantID != tenantID || !strings.HasPrefix(r.Day, month+"-") {
 			continue
@@ -66,16 +104,43 @@ func (u *Usage) Month(ctx context.Context, tenantID, month string) (usage.Month,
 		op := out.Ops[string(r.Op)]
 		apply(&op, r)
 		out.Ops[string(r.Op)] = op
-		if days[r.Day] == nil {
-			days[r.Day] = &usage.Totals{}
-		}
-		apply(days[r.Day], r)
+		provider := strings.ToLower(strings.TrimSpace(r.Provider))
+		prov := out.Providers[provider]
+		apply(&prov, r)
+		out.Providers[provider] = prov
+		apply(&dayOf(r.Day).Totals, r)
 	}
-	for date, t := range days {
-		out.Days = append(out.Days, usage.Day{Date: date, Totals: *t})
+	for day, n := range u.requests[tenantID] {
+		if strings.HasPrefix(day, month+"-") {
+			dayOf(day).APIRequests += n
+			out.APIRequests += n
+		}
+	}
+	for _, d := range days {
+		out.Days = append(out.Days, *d)
 	}
 	sort.Slice(out.Days, func(i, j int) bool { return out.Days[i].Date < out.Days[j].Date })
 	return out, nil
+}
+
+// InstanceSpend is every tenant's recorded cost in the month together, which
+// is what the breaker's SPEND#<day> counters add up to in production.
+func (u *Usage) InstanceSpend(ctx context.Context, month string) (int64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if !usage.ValidMonth(month) {
+		return 0, usage.ErrBadMonth
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var total int64
+	for _, r := range u.records {
+		if strings.HasPrefix(r.Day, month+"-") {
+			total += r.CostMicros
+		}
+	}
+	return total, nil
 }
 
 // PutAWSCost keeps the latest reading per month, as the DynamoDB row does.

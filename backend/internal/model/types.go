@@ -289,6 +289,33 @@ const (
 	StatusSpendCapped CaptureStatus = "spend_capped"
 )
 
+// TargetSource records who chose a capture's destination note. It exists so
+// the client can tell a recording a person aimed — "Record into this", or a
+// note picked for a needs_target capture — from one the router filed: the
+// first is already visible under its note and the Home screen's filing rows
+// show only the second. A capture written before the field existed reads as
+// "", which the wire promotes to targeted=false; for such a capture whose
+// note_id was set at creation there is no way to recover, after the fact,
+// that a person chose it, and that is accepted.
+type TargetSource string
+
+const (
+	// TargetSourceClient means the request that began the capture named the
+	// note (POST /v1/captures with note_id).
+	TargetSourceClient TargetSource = "client"
+	// TargetSourceUser means a person chose the note for a capture that had
+	// none (POST /v1/captures/{id}/target).
+	TargetSourceUser TargetSource = "user"
+	// TargetSourceRouter means the pipeline decided.
+	TargetSourceRouter TargetSource = "router"
+)
+
+// Targeted reports whether a person, rather than the router, chose the
+// destination.
+func (t TargetSource) Targeted() bool {
+	return t == TargetSourceClient || t == TargetSourceUser
+}
+
 type CaptureIndex struct {
 	ID        string        `json:"id"`
 	NoteID    string        `json:"note_id"`
@@ -301,6 +328,10 @@ type CaptureIndex struct {
 	CleanKey  string        `json:"clean_key"`
 	Error     string        `json:"error,omitempty"`
 	CreatedAt string        `json:"created_at"`
+
+	// TargetSource says who set NoteID. Empty on rows written before 2026-09
+	// and on captures nothing has decided for yet.
+	TargetSource TargetSource `json:"target_source,omitempty"`
 
 	// Routing suggestion, set when the destination could not be decided confidently.
 	SuggestedNoteID string  `json:"suggested_note_id,omitempty"`
@@ -323,4 +354,73 @@ type CaptureIndex struct {
 	DurationMS  int64  `json:"duration_ms,omitempty"`
 	SegmentsKey string `json:"segments_key,omitempty"`
 	PeaksKey    string `json:"peaks_key,omitempty"`
+	// AudioBytes is the uploaded object's size as S3 reported it in the
+	// notification that started the pipeline — the only measurement of the
+	// recording this system ever gets (the request-time size_bytes is the
+	// client's claim). Zero on captures processed before 2026-09 and on ones
+	// the worker has not yet seen; GET /v1/usage sums it as storage.
+	AudioBytes int64 `json:"audio_bytes,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Ask (backlog D5)
+// ---------------------------------------------------------------------------
+
+// AskStatus is where a question sits: written by the API and pending, then
+// answered or failed by the worker.
+type AskStatus string
+
+const (
+	AskPending  AskStatus = "pending"
+	AskAnswered AskStatus = "answered"
+	AskFailed   AskStatus = "failed"
+)
+
+// AskTurn is one earlier exchange of the conversation the question continues.
+// It is context for the model so a follow-up ("and when was that?") resolves;
+// retrieval never reads it.
+type AskTurn struct {
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
+}
+
+// AskSource is one note the answer was drawn from: a note that was actually
+// packed into the prompt AND that the model cited.
+type AskSource struct {
+	NoteID string `json:"note_id"`
+	Title  string `json:"title"`
+}
+
+// AskTTL is how long an ask row lives. A question and its answer are a
+// conversation turn, not a record: the client reads the answer within seconds
+// and keeps its own history, so a day is generous.
+const AskTTL = 24 * time.Hour
+
+// Ask is one question over the tenant's notes and, once the worker has run,
+// its answer. It is stored under the tenant's partition (sk ASK#<id>) with a
+// TTL, so it is exported, backed up and erased with the tenant and expires on
+// its own.
+type Ask struct {
+	ID       string    `json:"id"`
+	UserID   string    `json:"user_id"`
+	Status   AskStatus `json:"status"`
+	Question string    `json:"question"`
+	History  []AskTurn `json:"history,omitempty"`
+	// Answer is plain text, possibly with simple Markdown, once answered.
+	Answer string `json:"answer,omitempty"`
+	// Grounded is true when the answer was drawn from the notes and false
+	// when the honest answer was "that is not in your notes".
+	Grounded bool `json:"grounded,omitempty"`
+	// Sources is written as [] rather than omitted once the row is answered,
+	// so a reader can tell "answered with no sources" from "not yet answered".
+	Sources []AskSource `json:"sources"`
+	// Error is the fixed user-facing sentence when Status is failed. It never
+	// carries a provider's words.
+	Error string `json:"error,omitempty"`
+	// NotesConsidered is how many notes were in the retrieval window.
+	NotesConsidered int    `json:"notes_considered"`
+	CreatedAt       string `json:"created_at"`
+	AnsweredAt      string `json:"answered_at,omitempty"`
+	// ExpiresAt is the row's TTL as a Unix second count.
+	ExpiresAt int64 `json:"expires_at"`
 }

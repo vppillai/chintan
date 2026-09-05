@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/vppillai/chintan/backend/internal/ask"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/routing"
@@ -102,11 +103,73 @@ type LLM struct {
 	NoteResponse string
 	NoteErr      error
 
+	// Answer, when set, is what Ask answers verbatim; otherwise the fake cites
+	// every packed note and answers from their titles. AskErrs are returned,
+	// in order, by the leading Ask calls (a nil entry answers normally), so a
+	// test can fail the first attempt and answer the second. AskHang makes
+	// that many leading calls block until their context is done.
+	Answer  *provider.Answer
+	AskErrs []error
+	AskHang int
+
 	mu    sync.Mutex
 	calls int
 	// noteCalls records every whole-note request: the mode and the body, so a
 	// test can assert what the worker sent.
 	noteCalls []NoteCall
+	// askCalls records every ask prompt as the worker built it.
+	askCalls []ask.Prompt
+}
+
+// Ask records the prompt and answers as configured.
+func (f *LLM) Ask(ctx context.Context, q ask.Prompt) (provider.Answer, error) {
+	f.mu.Lock()
+	f.askCalls = append(f.askCalls, q)
+	call := len(f.askCalls) - 1
+	f.mu.Unlock()
+
+	if f.OnCall != nil {
+		f.OnCall()
+	}
+	if call < f.AskHang {
+		<-ctx.Done()
+		return provider.Answer{}, fmt.Errorf("fake llm: ask request: %w", ctx.Err())
+	}
+	if call < len(f.AskErrs) && f.AskErrs[call] != nil {
+		return provider.Answer{}, f.AskErrs[call]
+	}
+	if f.ShouldFail {
+		return provider.Answer{}, fmt.Errorf("fake LLM failed")
+	}
+	// Priced from the prompt's size, the way a real provider would report it.
+	words := len(strings.Fields(q.Question))
+	for _, n := range q.Notes {
+		words += len(strings.Fields(n.Text))
+	}
+	usage := provider.TokenUsage{InputTokens: words + 40, OutputTokens: 30}
+	if f.Answer != nil {
+		out := *f.Answer
+		out.Usage = usage
+		return out, nil
+	}
+	if len(q.Notes) == 0 {
+		return provider.Answer{Text: "That is not in your notes.", Usage: usage}, nil
+	}
+	out := provider.Answer{Grounded: true, Usage: usage}
+	titles := make([]string, 0, len(q.Notes))
+	for _, n := range q.Notes {
+		out.Sources = append(out.Sources, n.NoteID)
+		titles = append(titles, n.Title)
+	}
+	out.Text = "From your notes: " + strings.Join(titles, ", ") + "."
+	return out, nil
+}
+
+// AskCalls reports every ask prompt, in order.
+func (f *LLM) AskCalls() []ask.Prompt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ask.Prompt(nil), f.askCalls...)
 }
 
 // NoteCall is one CleanNote request as the fake saw it.

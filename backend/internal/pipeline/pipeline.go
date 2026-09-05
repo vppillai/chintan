@@ -132,6 +132,9 @@ type Config struct {
 	// RouteAttemptTimeout bounds each of the routeAttempts routing calls. Zero
 	// means defaultRouteAttemptTimeout; tests shorten it.
 	RouteAttemptTimeout time.Duration
+	// AskAttemptTimeout bounds each of the askAttempts model calls of an ask
+	// task. Zero means defaultAskAttemptTimeout; tests shorten it.
+	AskAttemptTimeout time.Duration
 
 	Now func() time.Time
 }
@@ -166,6 +169,9 @@ func New(cfg Config) (*Pipeline, error) {
 	if cfg.RouteAttemptTimeout <= 0 {
 		cfg.RouteAttemptTimeout = defaultRouteAttemptTimeout
 	}
+	if cfg.AskAttemptTimeout <= 0 {
+		cfg.AskAttemptTimeout = defaultAskAttemptTimeout
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -198,6 +204,19 @@ var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinishe
 // invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
+	return p.runCapture(ctx, tenantID, captureID, 0)
+}
+
+// RunUpload is Run for the S3 notification that starts a capture: the same
+// pipeline, plus the one fact only that notification carries — how many bytes
+// were actually written — stamped on the row so GET /v1/usage can sum what a
+// tenant's recordings occupy. The request-time size_bytes is the client's
+// claim; this is the measurement.
+func (p *Pipeline) RunUpload(ctx context.Context, ref CaptureRef) (model.CaptureIndex, error) {
+	return p.runCapture(ctx, ref.TenantID, ref.CaptureID, ref.SizeBytes)
+}
+
+func (p *Pipeline) runCapture(ctx context.Context, tenantID, captureID string, audioBytes int64) (model.CaptureIndex, error) {
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("capture_id", captureID))
 
@@ -209,6 +228,11 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 	if service.CaptureIsTerminal(capture.Status) {
 		log.Info("capture already finished; nothing to do", slog.String("status", string(capture.Status)))
 		return capture, nil
+	}
+	if audioBytes > 0 && capture.AudioBytes == 0 {
+		// Carried to the row by the first stage's own write; it earns no
+		// write of its own.
+		capture.AudioBytes = audioBytes
 	}
 
 	started := p.now()
@@ -589,6 +613,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		case err == nil && service.NoteIsActive(note):
 			if decision.Confidence >= routeConfidenceThreshold {
 				capture.NoteID = decision.NoteID
+				capture.TargetSource = model.TargetSourceRouter
 				capture.Status = model.StatusTranscribed
 			} else {
 				// Plausible but unsure: ask before writing into an existing note.
@@ -624,6 +649,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
 	}
 	capture.NoteID = note.ID
+	capture.TargetSource = model.TargetSourceRouter
 	capture.Status = model.StatusTranscribed
 	return p.persist(ctx, capture)
 }

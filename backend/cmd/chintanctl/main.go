@@ -12,6 +12,7 @@
 //	chintanctl reconcile --instance <name> [--apply]
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //	chintanctl backfill-search-text --instance <name> [--tenant <id>] [--apply]
+//	chintanctl usage     --instance <name> [--month yyyy-mm] [--tenant <id>]
 //
 // Three conventions are load-bearing and shared with scripts/:
 //
@@ -50,6 +51,9 @@ Commands:
              Fill in the search_text attribute of every note row from its
              body in the bucket, so GET /v1/search matches notes written
              before the attribute existed. Skips rows that are already current.
+  usage      List every tenant's provider spend, calls, audio, API requests
+             and per-operation cost for one month, from the USAGE# rows the
+             worker and the API write. Read-only.
 
 Run "chintanctl <command> --help" for the flags of one command.
 `
@@ -159,6 +163,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdErase(ctx, rest, stdout, stderr, stdin)
 	case "backfill-search-text":
 		return cmdBackfillSearchText(ctx, rest, stdout, stderr, stdin)
+	case "usage":
+		return cmdUsage(ctx, rest, stdout, stderr, stdin)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)

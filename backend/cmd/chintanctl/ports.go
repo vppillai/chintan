@@ -99,6 +99,21 @@ func (it Item) Num(name string) int64 {
 	return n
 }
 
+// Float returns a number attribute as a float64, or 0 when it is absent or
+// not a number. It is for the counters that are genuinely fractional — audio
+// seconds — where Num would read a "28.500" as 0.
+func (it Item) Float(name string) float64 {
+	v, ok := it[name]
+	if !ok || v.N == nil {
+		return 0
+	}
+	f, err := strconv.ParseFloat(*v.N, 64)
+	if err != nil {
+		return 0
+	}
+	return f
+}
+
 // PK returns the item's partition key.
 func (it Item) PK() string { return it.Str("pk") }
 
@@ -128,6 +143,13 @@ type Partition interface {
 	Update(ctx context.Context, pk, sk string, set Item, expectVersion int64) error
 	// Delete removes one item. Deleting an absent item is not an error.
 	Delete(ctx context.Context, pk, sk string) error
+	// Get reads one item by its key; ok is false when there is none.
+	Get(ctx context.Context, pk, sk string) (it Item, ok bool, err error)
+	// ScanIndex streams every item of a global secondary index whose
+	// partition key attribute pkAttr equals pk, in the index's sort order.
+	// It is how the usage listing finds the tenants with a month row without
+	// a table Scan, which the infrastructure deliberately does not grant.
+	ScanIndex(ctx context.Context, index, pkAttr, pk string, fn func(Item) error) error
 }
 
 // ErrItemChanged is returned by Partition.Update when the item is gone or its

@@ -13,6 +13,14 @@
 // It also keeps the one number that is not a provider's: the instance's AWS
 // spend for the month (AWSCost), written once a day by the worker's aws-cost
 // task from the stack's budget and shown beside the provider figure.
+//
+// Since 2026-09 the same rows carry two more things. Every priced call is
+// also counted under its provider (provider_<name>_*), so the month can be
+// read as "what did Groq cost, what did MiniMax cost" without a log query.
+// And every authenticated API request the tenant makes adds one to
+// api_requests on the same month and day rows (RequestCounter), written by the
+// API's per-route wrapper after the handler has answered — so the request
+// count and the provider spend sit on one row and one read.
 package usage
 
 import (
@@ -55,7 +63,14 @@ type Recorder interface {
 	Record(ctx context.Context, r Record) error
 }
 
-// Totals is what accumulates on a row, whole or per op.
+// RequestCounter counts one authenticated API request against its tenant, on
+// the UTC day it was served. Like Recorder it must never make the caller's
+// request fail: the handler logs a failed count and answers as it would have.
+type RequestCounter interface {
+	CountRequest(ctx context.Context, tenantID, day string) error
+}
+
+// Totals is what accumulates on a row, whole, per op or per provider.
 type Totals struct {
 	CostMicros   int64   `json:"cost_micros"`
 	Calls        int64   `json:"calls"`
@@ -64,29 +79,40 @@ type Totals struct {
 	OutputTokens int64   `json:"output_tokens,omitempty"`
 }
 
-// Day is one day's totals inside a month.
+// Day is one day's totals inside a month, and the API requests it served.
 type Day struct {
 	Date string `json:"date"`
 	Totals
+	APIRequests int64 `json:"api_requests"`
 }
 
 // Month is a tenant's usage for one calendar month: the month row's totals,
-// the same broken down by op, and one entry per day that had any usage.
+// the same broken down by op and by provider, the authenticated API requests
+// the tenant made, and one entry per day that had any usage or any request.
 type Month struct {
 	Month string `json:"month"`
 	Totals
-	Ops  map[string]Totals `json:"ops"`
-	Days []Day             `json:"days"`
+	Ops         map[string]Totals `json:"ops"`
+	Providers   map[string]Totals `json:"providers"`
+	APIRequests int64             `json:"api_requests"`
+	Days        []Day             `json:"days"`
 }
 
-// Reader answers GET /v1/usage: the tenant's own month, and the instance's
-// AWS cost for the same month.
+// Reader answers GET /v1/usage: the tenant's own month, the instance's AWS
+// cost for the same month, and the instance's provider spend the AWS cost is
+// apportioned by.
 type Reader interface {
 	Month(ctx context.Context, tenantID, month string) (Month, error)
 	// AWSCost returns the AWSCOST#<month> row, or nil when nothing has been
 	// recorded for that month — the stack has no budget, or the daily task
 	// has not run since the month began.
 	AWSCost(ctx context.Context, month string) (*AWSCost, error)
+	// InstanceSpend is what every tenant together spent at the providers in
+	// the month: the sum of the INSTANCE / SPEND#<day> counters the breaker
+	// enforces the cap against. Zero when there are none — the counters
+	// expire after ninety days, so an old month reads zero, and a share of
+	// the AWS bill is not computed for it.
+	InstanceSpend(ctx context.Context, month string) (int64, error)
 }
 
 // AWSCost is the instance's AWS spend for one calendar month (UTC), as last
@@ -165,7 +191,11 @@ const (
 	attrTTL         = "ttl"
 	attrCost        = "cost_micros"
 	attrCalls       = "calls"
+	attrAPIRequests = "api_requests"
 	opPrefix        = "op_"
+	// providerPrefix is the per-provider split, same five counters as the
+	// per-op one: provider_<name>_<counter>.
+	providerPrefix = "provider_"
 
 	typeUsage = "usage"
 	granMonth = "month"
@@ -195,9 +225,10 @@ type Dynamo struct {
 }
 
 var (
-	_ Recorder     = (*Dynamo)(nil)
-	_ Reader       = (*Dynamo)(nil)
-	_ AWSCostStore = (*Dynamo)(nil)
+	_ Recorder       = (*Dynamo)(nil)
+	_ RequestCounter = (*Dynamo)(nil)
+	_ Reader         = (*Dynamo)(nil)
+	_ AWSCostStore   = (*Dynamo)(nil)
 )
 
 // NewDynamo builds the DynamoDB-backed recorder and reader.
@@ -233,22 +264,20 @@ func (d *Dynamo) Record(ctx context.Context, r Record) error {
 
 func (d *Dynamo) add(ctx context.Context, r Record, period, granularity string, ttl int64) error {
 	op := string(r.Op)
+	prov := providerName(r.Provider)
 	names := map[string]string{
-		"#type":  attrType,
 		"#cost":  attrCost,
 		"#calls": attrCalls,
 		"#opc":   opPrefix + op + "_" + attrCost,
 		"#opn":   opPrefix + op + "_" + attrCalls,
+		"#prc":   providerPrefix + prov + "_" + attrCost,
+		"#prn":   providerPrefix + prov + "_" + attrCalls,
 	}
 	values := map[string]types.AttributeValue{
-		":cost":   numAttr(r.CostMicros),
-		":one":    numAttr(1),
-		":type":   strAttr(typeUsage),
-		":tenant": strAttr(r.TenantID),
-		":period": strAttr(period),
-		":gran":   strAttr(granularity),
+		":cost": numAttr(r.CostMicros),
+		":one":  numAttr(1),
 	}
-	adds := []string{"#cost :cost", "#calls :one", "#opc :cost", "#opn :one"}
+	adds := []string{"#cost :cost", "#calls :one", "#opc :cost", "#opn :one", "#prc :cost", "#prn :one"}
 
 	// Units in a fixed order, so the expression is stable for a test to read.
 	units := make([]string, 0, len(r.Usage))
@@ -265,29 +294,62 @@ func (d *Dynamo) add(ctx context.Context, r Record, period, granularity string, 
 		}
 		total := fmt.Sprintf("#u%d", i)
 		perOp := fmt.Sprintf("#ou%d", i)
+		perProvider := fmt.Sprintf("#pu%d", i)
 		val := fmt.Sprintf(":u%d", i)
 		names[total] = unitAttrs[meter.Unit(unit)]
 		names[perOp] = opPrefix + op + "_" + unitAttrs[meter.Unit(unit)]
+		names[perProvider] = providerPrefix + prov + "_" + unitAttrs[meter.Unit(unit)]
 		values[val] = floatAttr(q)
-		adds = append(adds, total+" "+val, perOp+" "+val)
+		adds = append(adds, total+" "+val, perOp+" "+val, perProvider+" "+val)
 	}
+	return d.update(ctx, r.TenantID, period, granularity, ttl, adds, names, values)
+}
 
+// CountRequest adds one to api_requests on the tenant's month and day rows.
+// Two ADDs, like Record, and for the same reason: the row is shared with the
+// breaker's counters, and a read-then-write would lose increments to it.
+func (d *Dynamo) CountRequest(ctx context.Context, tenantID, day string) error {
+	if tenantID == "" {
+		return errors.New("usage: count request without a tenant")
+	}
+	if len(day) != len("2006-01-02") {
+		return fmt.Errorf("usage: day %q is not yyyy-mm-dd", day)
+	}
+	names := map[string]string{"#req": attrAPIRequests}
+	values := map[string]types.AttributeValue{":one": numAttr(1)}
+	adds := []string{"#req :one"}
+	if err := d.update(ctx, tenantID, MonthOf(day), granMonth, 0, adds, names, values); err != nil {
+		return err
+	}
+	return d.update(ctx, tenantID, day, granDay, d.now().Add(dayRetention).Unix(), adds, names, values)
+}
+
+// update is the one UpdateItem shape both writers use: ADD the counters given,
+// SET the row's identity, its TTL (day rows) or its GSI1 keys (month rows).
+// names and values are the caller's maps and are added to here.
+func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity string, ttl int64, adds []string, names map[string]string, values map[string]types.AttributeValue) error {
+	names["#type"] = attrType
+	values[":type"] = strAttr(typeUsage)
+	values[":tenant"] = strAttr(tenantID)
+	values[":period"] = strAttr(period)
+	values[":gran"] = strAttr(granularity)
 	sets := []string{"#type = :type", "tenant_id = :tenant", "period = :period", "granularity = :gran"}
 	if ttl > 0 {
 		names["#ttl"] = attrTTL
 		values[":ttl"] = numAttr(ttl)
 		sets = append(sets, "#ttl = :ttl")
 	} else {
-		// The month row is what a later admin listing queries GSI1 for.
+		// The month row is what the admin listing (chintanctl usage) queries
+		// GSI1 for.
 		values[":g1pk"] = strAttr(adminGSI1PKPrefix + period)
-		values[":g1sk"] = strAttr(adminGSI1SKPrefix + r.TenantID)
+		values[":g1sk"] = strAttr(adminGSI1SKPrefix + tenantID)
 		sets = append(sets, "gsi1pk = :g1pk", "gsi1sk = :g1sk")
 	}
 
 	_, err := d.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(d.table),
 		Key: map[string]types.AttributeValue{
-			"pk": strAttr(userPK(r.TenantID)),
+			"pk": strAttr(userPK(tenantID)),
 			"sk": strAttr(skPrefix + period),
 		},
 		UpdateExpression:          aws.String("ADD " + strings.Join(adds, ", ") + " SET " + strings.Join(sets, ", ")),
@@ -300,6 +362,24 @@ func (d *Dynamo) add(ctx context.Context, r Record, period, granularity string, 
 	return nil
 }
 
+// providerName is the provider as it appears in an attribute name: lowercase,
+// letters and digits only, so a name can neither collide with the counter
+// suffixes nor carry a character an expression attribute name refuses. An
+// empty name — no pipeline stage sends one — is "unknown" rather than an
+// attribute called provider__calls.
+func providerName(p string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(p)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		return "unknown"
+	}
+	return b.String()
+}
+
 // Month reads the month row and its day rows in one Query: the day rows'
 // sort keys extend the month's, so begins_with(sk, USAGE#yyyy-mm) is exactly
 // the set. A month with no usage answers zeros rather than not found — a new
@@ -308,7 +388,7 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 	if !ValidMonth(month) {
 		return Month{}, ErrBadMonth
 	}
-	out := Month{Month: month, Ops: map[string]Totals{}, Days: []Day{}}
+	out := Month{Month: month, Ops: map[string]Totals{}, Providers: map[string]Totals{}, Days: []Day{}}
 
 	var start map[string]types.AttributeValue
 	for {
@@ -332,9 +412,11 @@ func (d *Dynamo) Month(ctx context.Context, tenantID, month string) (Month, erro
 			switch {
 			case period == month:
 				out.Totals = totalsOf(item, "")
-				out.Ops = opsOf(item)
+				out.Ops = splitOf(item, opPrefix)
+				out.Providers = splitOf(item, providerPrefix)
+				out.APIRequests = readInt(item, attrAPIRequests)
 			case strings.HasPrefix(period, month+"-"):
-				out.Days = append(out.Days, Day{Date: period, Totals: totalsOf(item, "")})
+				out.Days = append(out.Days, Day{Date: period, Totals: totalsOf(item, ""), APIRequests: readInt(item, attrAPIRequests)})
 			}
 		}
 		start = res.LastEvaluatedKey
@@ -433,25 +515,70 @@ func totalsOf(item map[string]types.AttributeValue, prefix string) Totals {
 	}
 }
 
-// opsOf recovers the per-op table from the op_<op>_<counter> attributes.
-func opsOf(item map[string]types.AttributeValue) map[string]Totals {
-	ops := map[string]Totals{}
+// splitOf recovers one per-key table — per op for opPrefix, per provider for
+// providerPrefix — from the <prefix><key>_<counter> attributes.
+func splitOf(item map[string]types.AttributeValue, prefix string) map[string]Totals {
+	out := map[string]Totals{}
 	for name := range item {
-		rest, ok := strings.CutPrefix(name, opPrefix)
+		rest, ok := strings.CutPrefix(name, prefix)
 		if !ok {
 			continue
 		}
-		// The op name is everything before the last known counter suffix.
+		// The key is everything before the last known counter suffix.
 		for _, suffix := range []string{attrCost, attrCalls, unitAttrs[meter.UnitAudioSeconds], unitAttrs[meter.UnitInputTokens], unitAttrs[meter.UnitOutputTokens]} {
-			if op, found := strings.CutSuffix(rest, "_"+suffix); found && op != "" {
-				if _, seen := ops[op]; !seen {
-					ops[op] = totalsOf(item, opPrefix+op+"_")
+			if key, found := strings.CutSuffix(rest, "_"+suffix); found && key != "" {
+				if _, seen := out[key]; !seen {
+					out[key] = totalsOf(item, prefix+key+"_")
 				}
 				break
 			}
 		}
 	}
-	return ops
+	return out
+}
+
+// ---------------------------------------------------------- instance spend
+
+// spendPrefix is the sort key prefix of the breaker's daily counters on the
+// INSTANCE partition (internal/pipeline DynamoCounter). Spelled here as well
+// because that package cannot be imported without dragging the pipeline into
+// the API binary; the two are pinned together by TestInstanceSpendSumsTheDayCounters.
+const (
+	spendPrefix    = "SPEND#"
+	attrSpendMicro = "spend_micros"
+)
+
+// InstanceSpend sums the month's SPEND#<day> counters. It is the denominator
+// of a tenant's share of the AWS bill: what the whole instance spent at the
+// providers, of which the tenant's own month total is the numerator.
+func (d *Dynamo) InstanceSpend(ctx context.Context, month string) (int64, error) {
+	if !ValidMonth(month) {
+		return 0, ErrBadMonth
+	}
+	var total int64
+	var start map[string]types.AttributeValue
+	for {
+		res, err := d.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(d.table),
+			KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk": strAttr(instancePK),
+				":sk": strAttr(spendPrefix + month + "-"),
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return 0, fmt.Errorf("usage: query instance spend %s: %w", month, err)
+		}
+		for _, item := range res.Items {
+			total += readInt(item, attrSpendMicro)
+		}
+		start = res.LastEvaluatedKey
+		if len(start) == 0 {
+			break
+		}
+	}
+	return total, nil
 }
 
 func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }

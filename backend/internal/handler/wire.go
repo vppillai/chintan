@@ -223,6 +223,18 @@ type Capture struct {
 	HasSegments     bool    `json:"has_segments"`
 	HasPeaks        bool    `json:"has_peaks"`
 	Version         int64   `json:"version"`
+	// Targeted is true when a person chose the destination — the client
+	// named note_id at POST /v1/captures, or a person picked the note for a
+	// needs_target capture — and false when the router decided or nothing
+	// has yet. The Home screen's filing rows show only the false ones; a
+	// targeted capture is already visible in its note's Recordings tab.
+	//
+	// Promoted from CaptureIndex.TargetSource. A capture written before that
+	// field existed reads false even when its note_id was set at creation:
+	// after the fact there is nothing on the row that says who set it, and
+	// showing such a capture once more in the filing rows is the harmless
+	// side to be wrong on.
+	Targeted bool `json:"targeted"`
 }
 
 func captureOf(c model.CaptureIndex) Capture {
@@ -243,6 +255,7 @@ func captureOf(c model.CaptureIndex) Capture {
 		HasSegments: c.SegmentsKey != "",
 		HasPeaks:    c.PeaksKey != "",
 		Version:     c.Version,
+		Targeted:    c.TargetSource.Targeted(),
 	}
 	if c.NoteID != "" {
 		v := c.NoteID

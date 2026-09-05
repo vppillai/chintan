@@ -281,3 +281,132 @@ func TestAWSCostRowLivesOnTheInstancePartition(t *testing.T) {
 		t.Errorf("malformed month on read: err = %v, want ErrBadMonth", err)
 	}
 }
+
+// The same ADD also counts the call under its provider, so the month can be
+// read per provider without a second row.
+func TestRecordCountsTheCallUnderItsProvider(t *testing.T) {
+	api := &fakeAPI{}
+	d := NewDynamo(api, "t")
+	err := d.Record(context.Background(), Record{
+		TenantID: "tenant-a", Day: "2026-09-04", Provider: "OpenAI", Op: meter.OpAsk,
+		CostMicros: 90, Usage: meter.Quantities{meter.UnitInputTokens: 800, meter.UnitOutputTokens: 60},
+	})
+	if err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	for _, in := range api.updates {
+		want := map[string]bool{"provider_openai_cost_micros": false, "provider_openai_calls": false,
+			"provider_openai_input_tokens": false, "provider_openai_output_tokens": false,
+			"op_ask_cost_micros": false, "op_ask_calls": false}
+		for _, attr := range in.ExpressionAttributeNames {
+			if _, ok := want[attr]; ok {
+				want[attr] = true
+			}
+		}
+		for attr, seen := range want {
+			if !seen {
+				t.Errorf("%s: attribute %s is not in the ADD: %v", keyOf(in, "sk"), attr, in.ExpressionAttributeNames)
+			}
+		}
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"groq", "groq"}, {" OpenAI ", "openai"}, {"my-provider.v2", "myproviderv2"}, {"", "unknown"},
+	} {
+		if got := providerName(tc.in); got != tc.want {
+			t.Errorf("providerName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A request is one ADD of api_requests on the month row and one on the day
+// row, each carrying the row's identity so a month with requests and no calls
+// still has its GSI1 keys and its day rows their TTL.
+func TestCountRequestAddsOneToBothRows(t *testing.T) {
+	api := &fakeAPI{}
+	d := NewDynamo(api, "t")
+	d.now = func() time.Time { return time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC) }
+	if err := d.CountRequest(context.Background(), "tenant-a", "2026-09-04"); err != nil {
+		t.Fatalf("CountRequest: %v", err)
+	}
+	if len(api.updates) != 2 {
+		t.Fatalf("updates = %d, want 2", len(api.updates))
+	}
+	month, day := api.updates[0], api.updates[1]
+	if keyOf(month, "sk") != "USAGE#2026-09" || keyOf(day, "sk") != "USAGE#2026-09-04" {
+		t.Errorf("keys = %s, %s", keyOf(month, "sk"), keyOf(day, "sk"))
+	}
+	for _, in := range api.updates {
+		expr := *in.UpdateExpression
+		if !strings.HasPrefix(expr, "ADD #req :one SET ") || in.ExpressionAttributeNames["#req"] != "api_requests" {
+			t.Errorf("expression = %q names = %v", expr, in.ExpressionAttributeNames)
+		}
+		if strings.Contains(expr, "cost") {
+			t.Errorf("a request count moved a cost counter: %q", expr)
+		}
+	}
+	if _, has := month.ExpressionAttributeValues[":g1pk"]; !has {
+		t.Error("the month row lost its GSI1 key")
+	}
+	if _, has := day.ExpressionAttributeValues[":ttl"]; !has {
+		t.Error("the day row lost its TTL")
+	}
+	if err := d.CountRequest(context.Background(), "", "2026-09-04"); err == nil {
+		t.Error("an anonymous request was counted")
+	}
+	if err := d.CountRequest(context.Background(), "tenant-a", "2026-09"); err == nil {
+		t.Error("a malformed day was accepted")
+	}
+}
+
+// The read recovers the per-provider split and the request count from the
+// same items the per-op split comes from.
+func TestMonthReadsProvidersAndRequests(t *testing.T) {
+	api := &fakeAPI{items: []map[string]types.AttributeValue{
+		{
+			"sk": strAttr("USAGE#2026-09"), attrPeriod: strAttr("2026-09"),
+			attrCost: numAttr(1000), attrCalls: numAttr(3), attrAPIRequests: numAttr(312),
+			"op_ask_cost_micros": numAttr(400), "op_ask_calls": numAttr(1),
+			"provider_groq_cost_micros": numAttr(600), "provider_groq_calls": numAttr(2), "provider_groq_audio_seconds": floatAttr(41.5),
+			"provider_openai_cost_micros": numAttr(400), "provider_openai_calls": numAttr(1), "provider_openai_input_tokens": numAttr(900),
+		},
+		{"sk": strAttr("USAGE#2026-09-04"), attrPeriod: strAttr("2026-09-04"), attrCost: numAttr(1000), attrCalls: numAttr(3), attrAPIRequests: numAttr(12)},
+		{"sk": strAttr("USAGE#2026-09-05"), attrPeriod: strAttr("2026-09-05"), attrAPIRequests: numAttr(300)},
+	}}
+	got, err := NewDynamo(api, "t").Month(context.Background(), "tenant-a", "2026-09")
+	if err != nil {
+		t.Fatalf("Month: %v", err)
+	}
+	if got.APIRequests != 312 || got.Ops["ask"].CostMicros != 400 {
+		t.Errorf("month = %+v", got)
+	}
+	if got.Providers["groq"].CostMicros != 600 || got.Providers["groq"].AudioSeconds != 41.5 || got.Providers["openai"].InputTokens != 900 || len(got.Providers) != 2 {
+		t.Errorf("providers = %+v", got.Providers)
+	}
+	if len(got.Days) != 2 || got.Days[0].APIRequests != 12 || got.Days[1].APIRequests != 300 || got.Days[1].CostMicros != 0 {
+		t.Errorf("days = %+v; a day with requests and no calls is still a day", got.Days)
+	}
+}
+
+// The instance's provider spend for a month is the breaker's day counters
+// summed: INSTANCE / SPEND#<day>, spend_micros — the row and attribute
+// internal/pipeline's DynamoCounter writes.
+func TestInstanceSpendSumsTheDayCounters(t *testing.T) {
+	api := &fakeAPI{items: []map[string]types.AttributeValue{
+		{"pk": strAttr("INSTANCE"), "sk": strAttr("SPEND#2026-09-01"), "spend_micros": numAttr(1500)},
+		{"pk": strAttr("INSTANCE"), "sk": strAttr("SPEND#2026-09-02"), "spend_micros": numAttr(2500)},
+	}}
+	d := NewDynamo(api, "t")
+	got, err := d.InstanceSpend(context.Background(), "2026-09")
+	if err != nil {
+		t.Fatalf("InstanceSpend: %v", err)
+	}
+	if got != 4000 {
+		t.Errorf("InstanceSpend = %d, want 4000", got)
+	}
+	if _, err := d.InstanceSpend(context.Background(), "September"); !errors.Is(err, ErrBadMonth) {
+		t.Errorf("malformed month: err = %v", err)
+	}
+	if got, _ := NewDynamo(&fakeAPI{}, "t").InstanceSpend(context.Background(), "2026-01"); got != 0 {
+		t.Errorf("no counters: %d, want 0", got)
+	}
+}

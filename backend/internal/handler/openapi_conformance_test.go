@@ -395,6 +395,7 @@ func concretePath(p string) string {
 		"{noteId}", "sample-note",
 		"{captureId}", "sample-capture",
 		"{exportId}", "sample-export",
+		"{askId}", "sample-ask",
 	)
 	return r.Replace(p)
 }
@@ -648,6 +649,44 @@ func statusScenarios() map[string]scenario {
 		"GET /v1/usage -> 200": get("/v1/usage?month=2026-01", "user1"),
 		"GET /v1/usage -> 400": get("/v1/usage?month=January", "user1"),
 		"GET /v1/usage -> 401": get("/v1/usage", ""),
+
+		// ---- ask
+		"POST /v1/ask -> 202": send(http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "what did I decide about the roof?"}),
+		"POST /v1/ask -> 400": send(http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "   "}),
+		"POST /v1/ask -> 401": send(http.MethodPost, "/v1/ask", "", map[string]any{"question": "x?"}),
+		"POST /v1/ask -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			key := [2]string{"Idempotency-Key", "ask-conflict-1"}
+			h.do(t, http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "roof?"}, key)
+			return h.do(t, http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "garden?"}, key).Code
+		},
+		"POST /v1/ask -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			history := make([]map[string]string, 6)
+			for i := range history {
+				history[i] = map[string]string{"question": "q", "answer": strings.Repeat("a", 3500)}
+			}
+			return h.do(t, http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "x?", "history": history}).Code
+		},
+		"POST /v1/ask -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "roof?"}).Code
+		},
+		"POST /v1/ask -> 503": func(t *testing.T) int {
+			return newHarness(t, withoutAsk()).do(t, http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "roof?"}).Code
+		},
+		"GET /v1/ask/{askId} -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			w := h.do(t, http.MethodPost, "/v1/ask", "user1", map[string]any{"question": "roof?"})
+			var a struct {
+				ID string `json:"id"`
+			}
+			decodeInto(t, w, &a)
+			return h.do(t, http.MethodGet, "/v1/ask/"+a.ID, "user1", nil).Code
+		},
+		"GET /v1/ask/{askId} -> 401": get("/v1/ask/ask_1", ""),
+		"GET /v1/ask/{askId} -> 404": get("/v1/ask/ask_never", "user1"),
 
 		// ---- captures
 		"GET /v1/captures -> 200":  get("/v1/captures", "user1"),

@@ -192,6 +192,7 @@ export const noteDetail: NoteDetailWire = {
       "status": "appended",
       "suggested_note_id": null,
       "suggested_title": null,
+      "targeted": false,
       "version": 1
     }
   ],
@@ -310,6 +311,7 @@ export const capturesPage: Page<CaptureWire> = {
       "status": "failed",
       "suggested_note_id": null,
       "suggested_title": null,
+      "targeted": false,
       "version": 1
     },
     {
@@ -324,6 +326,7 @@ export const capturesPage: Page<CaptureWire> = {
       "status": "needs_target",
       "suggested_note_id": "contract-suggested-note",
       "suggested_title": null,
+      "targeted": false,
       "version": 1
     },
     {
@@ -338,6 +341,7 @@ export const capturesPage: Page<CaptureWire> = {
       "status": "needs_target",
       "suggested_note_id": null,
       "suggested_title": "Kitchen rebuild",
+      "targeted": false,
       "version": 1
     },
     {
@@ -352,6 +356,7 @@ export const capturesPage: Page<CaptureWire> = {
       "status": "appended",
       "suggested_note_id": null,
       "suggested_title": null,
+      "targeted": false,
       "version": 1
     }
   ]
@@ -370,6 +375,7 @@ export const captureSuggestedNote: CaptureWire = {
   "status": "needs_target",
   "suggested_note_id": "contract-suggested-note",
   "suggested_title": null,
+  "targeted": false,
   "version": 1
 };
 
@@ -386,6 +392,7 @@ export const captureFailed: CaptureWire = {
   "status": "failed",
   "suggested_note_id": null,
   "suggested_title": null,
+  "targeted": false,
   "version": 1
 };
 
@@ -409,6 +416,7 @@ export const captureCreated: CaptureCreatedWire = {
     "status": "uploaded",
     "suggested_note_id": null,
     "suggested_title": null,
+    "targeted": false,
     "version": 1
   },
   "peaks_upload": {
@@ -443,6 +451,7 @@ export const captureMoved: CaptureWire = {
   "status": "appended",
   "suggested_note_id": null,
   "suggested_title": null,
+  "targeted": false,
   "version": 2
 };
 
@@ -482,16 +491,22 @@ export const problemRetryable: ProblemWire = {
 
 /** GET /v1/usage?month=2026-01 → 200. The caller's own provider spend for the month in microdollars: totals, the split by pipeline stage, one line per day — and `aws`, the instance's AWS spend for the month as last read from the stack's budget. */
 export const usage: UsageWire = {
+  "api": {
+    "requests": 0
+  },
   "audio_seconds": 28.5,
   "aws": {
     "as_of": "2026-01-05T06:00:00Z",
     "budget_micros": 10000000,
-    "month_micros": 2345678
+    "month_micros": 2345678,
+    "share_basis": "provider_cost",
+    "share_micros": 2345678
   },
   "calls": 3,
   "cost_micros": 1371,
   "days": [
     {
+      "api_requests": 0,
       "audio_seconds": 28.5,
       "calls": 2,
       "cost_micros": 951,
@@ -500,6 +515,7 @@ export const usage: UsageWire = {
       "output_tokens": 300
     },
     {
+      "api_requests": 0,
       "calls": 1,
       "cost_micros": 420,
       "date": "2026-01-04",
@@ -528,17 +544,48 @@ export const usage: UsageWire = {
       "cost_micros": 311
     }
   },
-  "output_tokens": 400
+  "output_tokens": 400,
+  "providers": {
+    "groq": {
+      "audio_seconds": 28.5,
+      "calls": 1,
+      "cost_micros": 311
+    },
+    "openai": {
+      "calls": 2,
+      "cost_micros": 1060,
+      "input_tokens": 2100,
+      "output_tokens": 400
+    }
+  },
+  "storage": {
+    "approximate": false,
+    "audio_bytes": 0,
+    "audio_seconds": 0,
+    "notes": 0,
+    "recordings": 0
+  }
 };
 
 /** GET /v1/usage?month=2025-12 → 200 for a month with no usage: zeros and empty collections, never 404; `aws` is null when no reading has been recorded for the month. */
 export const usageEmpty: UsageWire = {
+  "api": {
+    "requests": 0
+  },
   "aws": null,
   "calls": 0,
   "cost_micros": 0,
   "days": [],
   "month": "2025-12",
-  "ops": {}
+  "ops": {},
+  "providers": {},
+  "storage": {
+    "approximate": false,
+    "audio_bytes": 0,
+    "audio_seconds": 0,
+    "notes": 0,
+    "recordings": 0
+  }
 };
 
 /** POST /v1/export → 202 */

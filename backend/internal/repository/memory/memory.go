@@ -43,6 +43,7 @@ type Store struct {
 	notes    map[string]map[string]model.NoteIndex
 	captures map[string]map[string]model.CaptureIndex
 	idem     map[string]map[string]idemEntry
+	asks     map[string]map[string]model.Ask
 }
 
 var _ repository.Store = (*Store)(nil)
@@ -54,6 +55,7 @@ func NewStore() *Store {
 		notes:    make(map[string]map[string]model.NoteIndex),
 		captures: make(map[string]map[string]model.CaptureIndex),
 		idem:     make(map[string]map[string]idemEntry),
+		asks:     make(map[string]map[string]model.Ask),
 	}
 }
 
@@ -563,6 +565,56 @@ func (s *Store) AbandonIdempotent(ctx context.Context, tenantID, key string) err
 	}
 	delete(s.idem[tenantID], key)
 	return nil
+}
+
+func (s *Store) PutAsk(ctx context.Context, tenantID string, a model.Ask) error {
+	if err := s.checkCtx(ctx); err != nil {
+		return err
+	}
+	if a.ID == "" {
+		return fmt.Errorf("repository: ask without an id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.asks[tenantID] == nil {
+		s.asks[tenantID] = make(map[string]model.Ask)
+	}
+	s.asks[tenantID][a.ID] = copyAsk(a)
+	return nil
+}
+
+func (s *Store) GetAsk(ctx context.Context, tenantID, askID string) (model.Ask, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.Ask{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.asks[tenantID][askID]
+	if !ok {
+		return model.Ask{}, repository.ErrNotFound
+	}
+	return copyAsk(a), nil
+}
+
+// DeleteAsk removes a question row, for a test that needs the row to vanish
+// under the worker the way a TTL collection would.
+func (s *Store) DeleteAsk(tenantID, askID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.asks[tenantID], askID)
+}
+
+// copyAsk copies the slices so a caller's later edits do not reach the store.
+// An empty non-nil slice stays non-nil, as the DynamoDB blob round-trips it.
+func copyAsk(a model.Ask) model.Ask {
+	out := a
+	if a.History != nil {
+		out.History = append(make([]model.AskTurn, 0, len(a.History)), a.History...)
+	}
+	if a.Sources != nil {
+		out.Sources = append(make([]model.AskSource, 0, len(a.Sources)), a.Sources...)
+	}
+	return out
 }
 
 func copyNote(n model.NoteIndex) model.NoteIndex {

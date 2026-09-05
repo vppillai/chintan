@@ -65,7 +65,11 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrInvalidRetentionDays),
 		errors.Is(err, service.ErrInvalidTheme),
 		errors.Is(err, service.ErrInvalidLanguage),
-		errors.Is(err, service.ErrInvalidNoteCleanMode):
+		errors.Is(err, service.ErrInvalidNoteCleanMode),
+		errors.Is(err, service.ErrAskQuestionRequired),
+		errors.Is(err, service.ErrAskQuestionTooLong),
+		errors.Is(err, service.ErrAskHistoryTooLong),
+		errors.Is(err, service.ErrAskHistoryTurnBad):
 		httperr.BadRequest(w, r, err.Error())
 
 	// ---- limits ----------------------------------------------------------
@@ -88,6 +92,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.ServiceUnavailable(w, r, "the capture pipeline is not configured on this instance")
 	case errors.Is(err, service.ErrNoteCreationUnavailable):
 		httperr.ServiceUnavailable(w, r, "creating a note from a capture is not configured on this instance")
+	case errors.Is(err, service.ErrAskUnavailable):
+		httperr.ServiceUnavailable(w, r, "ask is not configured on this instance")
 
 	// ---- rolled back, repeat the request ----------------------------------
 	case errors.Is(err, service.ErrMoveIncomplete):

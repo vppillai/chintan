@@ -103,6 +103,10 @@ func (w directInvoker) InvokeCleanNote(ctx context.Context, tenantID, noteID str
 	return w.p.CleanNote(ctx, tenantID, noteID, mode)
 }
 
+func (w directInvoker) InvokeAsk(ctx context.Context, tenantID, askID string) error {
+	return w.p.Ask(ctx, tenantID, askID)
+}
+
 func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 	f := newRoutingFixture(t,
 		"add this to my roof repair note the gutter is also leaking",

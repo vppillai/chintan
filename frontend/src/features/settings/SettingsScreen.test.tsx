@@ -304,10 +304,19 @@ describe('usage this month', () => {
     expect(figure.querySelectorAll('.usage__api-dot')).toHaveLength(2);
   });
 
-  it('renders what the backend sends today — no providers, api, storage or share — with nothing invented', async () => {
-    // The generated fixture is the shape of the API as deployed, and it must
-    // keep rendering while the frontend ships ahead of the backend.
-    mountSettings({ usage: USAGE_TODAY });
+  it('renders a response from a backend that predates providers, api, storage and share, with nothing invented', async () => {
+    // The generated fixture now carries every member; this is the shape an
+    // instance running the previous release answers, and the screen must keep
+    // rendering it while a frontend deploy is ahead of a backend deploy.
+    const { providers: _providers, api: _api, storage: _storage, aws, days, ...rest } = USAGE_TODAY;
+    const legacy: UsageWire = {
+      ...rest,
+      days: days.map(({ api_requests: _requests, ...day }) => day),
+      aws: aws
+        ? { month_micros: aws.month_micros, as_of: aws.as_of, budget_micros: aws.budget_micros }
+        : null,
+    };
+    mountSettings({ usage: legacy });
 
     expect(await screen.findByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
     expect(document.querySelector('.usage__providers')).toBeNull();

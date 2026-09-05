@@ -53,6 +53,11 @@ func (w *stubInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string
 	return nil
 }
 
+func (w *stubInvoker) InvokeAsk(_ context.Context, tenantID, askID string) error {
+	w.calls = append(w.calls, "ask/"+tenantID+"/"+askID)
+	return nil
+}
+
 func TestCaptureService_BeginCapture(t *testing.T) {
 	store := memory.NewStore()
 	objects := memory.NewObjects()

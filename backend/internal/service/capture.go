@@ -98,6 +98,9 @@ type Invoker interface {
 	// InvokeCleanNote asks the worker to regenerate the whole-note cleaned
 	// view of noteID in mode. See note_clean.go.
 	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error
+	// InvokeAsk asks the worker to answer the question stored under askID.
+	// See ask.go.
+	InvokeAsk(ctx context.Context, tenantID, askID string) error
 }
 
 // CaptureRequest is what a client asks for when it begins a capture.
@@ -232,6 +235,11 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 		DurationMS: req.DurationMS,
 		CreatedAt:  model.Now(),
 	}
+	if req.NoteID != "" {
+		// The client named the note — "Record into this" — so a person chose
+		// the destination and the Home screen need not offer to file it.
+		capture.TargetSource = model.TargetSourceClient
+	}
 
 	stored, err := s.store.PutCapture(ctx, capture)
 	if err != nil {
@@ -355,6 +363,9 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 		return nil, ErrCaptureTargetRequired
 	}
 
+	// Either way a person chose: an existing note by id, or a new one by
+	// title. The router's suggestion, if there was one, is superseded.
+	capture.TargetSource = model.TargetSourceUser
 	capture.Status = resumeStatusFor(capture)
 	capture.SuggestedNoteID = ""
 	capture.SuggestedTitle = ""

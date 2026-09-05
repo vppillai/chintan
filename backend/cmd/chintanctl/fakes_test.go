@@ -99,6 +99,46 @@ func (f *fakePartition) Update(ctx context.Context, pk, sk string, set Item, exp
 	return nil
 }
 
+func (f *fakePartition) Get(ctx context.Context, pk, sk string) (Item, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	it, ok := f.items[pk][sk]
+	if !ok {
+		return nil, false, nil
+	}
+	return cloneItem(it), true, nil
+}
+
+// ScanIndex answers a GSI query the way the real index would for an INCLUDE
+// projection: every item whose pkAttr matches, ordered by the corresponding
+// sort attribute (gsi1pk → gsi1sk), carrying its keys and index attributes.
+func (f *fakePartition) ScanIndex(ctx context.Context, _ string, pkAttr, pk string, fn func(Item) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	skAttr := strings.Replace(pkAttr, "pk", "sk", 1)
+	f.mu.Lock()
+	var hits []Item
+	for _, part := range f.items {
+		for _, it := range part {
+			if it.Str(pkAttr) == pk {
+				hits = append(hits, Item{"pk": it["pk"], "sk": it["sk"], pkAttr: it[pkAttr], skAttr: it[skAttr]})
+			}
+		}
+	}
+	f.mu.Unlock()
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Str(skAttr) < hits[j].Str(skAttr) })
+	for _, it := range hits {
+		if err := fn(it); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (f *fakePartition) Delete(ctx context.Context, pk, sk string) error {
 	if err := ctx.Err(); err != nil {
 		return err

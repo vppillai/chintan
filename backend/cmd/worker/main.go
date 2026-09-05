@@ -11,7 +11,8 @@
 // Everything reaches it asynchronously, through the `live` alias: S3 when a
 // recording lands in the content bucket, the API when the user retries a
 // capture or picks its destination, the API or this function itself with
-// {"task":"clean-note"} for a note's whole-note cleaned view, and two
+// {"task":"clean-note"} for a note's whole-note cleaned view, the API with
+// {"task":"ask"} for a question over the tenant's notes, and two
 // EventBridge rules: once a week with {"task":"sweep-expired"} and once a day
 // with {"task":"aws-cost"}. There is no queue in between. A returned error
 // makes Lambda retry the same payload twice, and an invocation that fails all
@@ -323,6 +324,12 @@ func Handler(ctx context.Context, raw json.RawMessage) error {
 		// /v1/notes/{id}/clean and for a recording moved or deleted from a
 		// note with auto_clean, and by this function to itself after an
 		// append to one.
+		return worker.Handle(ctx, raw)
+
+	case inv.task == pipeline.TaskAsk:
+		// A question over the tenant's notes, sent by the API for POST
+		// /v1/ask. Retrieval and the one model call run here; the API only
+		// wrote the row.
 		return worker.Handle(ctx, raw)
 
 	case inv.task != "":
