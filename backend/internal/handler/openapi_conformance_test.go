@@ -337,7 +337,9 @@ func parseGatewayRoutes(t *testing.T, path string) []gatewayRoute {
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	if len(routes) < 4 {
+	// The two health routes and $default. An OPTIONS route is not among them
+	// on purpose (TestPublicRoutesMatchTheGatewayRouteTable).
+	if len(routes) < 3 {
 		t.Fatalf("parsed %d gateway routes from %s; the reader and the template have diverged",
 			len(routes), path)
 	}
@@ -363,13 +365,20 @@ func TestPublicRoutesMatchTheGatewayRouteTable(t *testing.T) {
 
 	gateway := map[string]bool{}
 	for _, route := range parseGatewayRoutes(t, templatePath) {
+		// CORS preflights are the gateway's own: CorsConfiguration on the
+		// HttpApi answers them before any route or authorizer. An OPTIONS
+		// route would send every preflight to the Lambda again — a third of
+		// all invocations until 2026-09 — so none may exist.
+		if strings.HasPrefix(route.RouteKey, "OPTIONS ") {
+			t.Errorf("the template has an OPTIONS route %s (%s); preflights are answered by CorsConfiguration, not by a route",
+				route.RouteKey, route.Resource)
+			continue
+		}
 		if route.AuthType != "NONE" {
 			continue
 		}
-		// $default carries the authorizer and is the catch-all, and the CORS
-		// preflight is not an operation any document declares: the JWT
-		// authorizer does not answer OPTIONS, so it has to stay open.
-		if route.RouteKey == "$default" || strings.HasPrefix(route.RouteKey, "OPTIONS ") {
+		// $default carries the authorizer and is the catch-all.
+		if route.RouteKey == "$default" {
 			continue
 		}
 		gateway[route.RouteKey] = true

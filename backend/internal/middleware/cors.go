@@ -4,14 +4,19 @@ import (
 	"net/http"
 )
 
-// allowedRequestHeaders is the CORS header allowlist.
+// CORS marks a response as readable by exactly one origin.
 //
-// X-User-ID was removed deliberately. Advertising it made a header the server
-// trusted reachable from any browser; the server no longer reads it, and it
-// must not be re-added here.
-const allowedRequestHeaders = "Content-Type, Authorization, Idempotency-Key"
-
-// CORS restricts cross-origin access to exactly one origin.
+// Preflights are not answered here. API Gateway's CorsConfiguration
+// (infrastructure/template.yaml, HttpApi) answers every OPTIONS request itself,
+// before any route or authorizer, and that block is the single list of headers
+// and methods a browser is told. Until 2026-09 this middleware carried a second
+// list — three headers to the gateway's seven — and answered preflights with a
+// 204, which only ever ran because an explicit "OPTIONS /{proxy+}" route sent
+// them to the Lambda; the route is gone with the list. What remains is the part
+// the actual response needs: which origin may read it, with credentials. The
+// gateway sets these on its own responses too and overrides what the
+// integration returns, so this is the answer for a local run and for any path
+// that does not have the gateway in front.
 //
 // There is no wildcard branch. Reflecting an arbitrary origin alongside
 // Access-Control-Allow-Credentials: true defeats the same-origin policy
@@ -25,15 +30,6 @@ func CORS(allowedOrigin string) func(http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Add("Vary", "Origin")
 			}
-
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", allowedRequestHeaders)
-
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-
 			next.ServeHTTP(w, r)
 		})
 	}

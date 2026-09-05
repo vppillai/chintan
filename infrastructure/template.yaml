@@ -1592,13 +1592,20 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowCredentials: true
-        # API Gateway answers the preflight itself, before the Lambda's own CORS
-        # middleware ever runs, so this list — not the one in internal/middleware
-        # — is what a browser is told. They must agree: the client sends
-        # Idempotency-Key on every POST, and with it missing here the browser
-        # refuses the request before it is ever sent, reporting only
+        # API Gateway answers every preflight itself, before any route or
+        # authorizer, so this block is the only CORS list there is: the Lambda's
+        # middleware (internal/middleware/cors.go) marks the actual response
+        # readable by the allowed origin and declares nothing else. Until
+        # 2026-09 an explicit "OPTIONS /{proxy+}" route sent every preflight to
+        # the Lambda instead — a third of all invocations, a cold start on the
+        # first request of a new page load — and the middleware carried a second,
+        # shorter header list. The client sends Idempotency-Key on every POST;
+        # with it missing here the browser refuses the request before it is
+        # ever sent, reporting only
         #   "Response to preflight request doesn't pass access control check"
-        # with no clue which header was the problem.
+        # with no clue which header was the problem. X-User-ID must never be
+        # added: advertising it once made a header the server trusted reachable
+        # from any browser, and the server no longer reads it.
         AllowHeaders:
           - Authorization
           - Content-Type
@@ -1653,10 +1660,11 @@ Resources:
       PayloadFormatVersion: '2.0'
 
   # Liveness. Declared NONE explicitly: it is the gateway default for a route
-  # that omits the property, but the two health routes (and CORS preflight) are
-  # the entire unauthenticated surface, and that is worth stating rather than
-  # inheriting. Sign-in itself happens on the Cognito managed-login page, not
-  # on this API.
+  # that omits the property, but the two health routes are the entire
+  # unauthenticated surface, and that is worth stating rather than inheriting.
+  # CORS preflights are answered by the gateway's CorsConfiguration above and
+  # never reach a route. Sign-in itself happens on the Cognito managed-login
+  # page, not on this API.
   HealthRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -1678,15 +1686,6 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'GET /v1/health/ready'
-      AuthorizationType: NONE
-      Target: !Sub 'integrations/${LambdaIntegration}'
-
-  # $default JWT authorizer does not auto-answer CORS preflight; keep OPTIONS open.
-  OptionsRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref HttpApi
-      RouteKey: 'OPTIONS /{proxy+}'
       AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 
