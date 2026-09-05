@@ -159,6 +159,22 @@
   cursor: text;
 }
 
+/*
+ * The language select fits its column. A select is as wide as its longest
+ * option, and "Bahasa Indonesia · Indonesian" is wider than a 320 px phone's
+ * column; a grid or flex item does not shrink below its content unless its
+ * minimum size says it may, so the group scrolled sideways by eleven pixels
+ * (e2e layout check). Zero minimums on the select and on the two containers
+ * it lives in let `.settings-select`'s `max-inline-size: 100%` take effect.
+ * Here rather than in shell.css, which another branch is reworking; fold
+ * these three lines into `.settings-field` and `.language-field` when it lands.
+ */
+.language-select,
+.language-field,
+.settings-field--select {
+  min-inline-size: 0;
+}
+
 /* An inline fact in the meta line that opens the Details panel. The line is
    thirteen pixels tall; the target is not — the padding reaches the 44 px
    minimum and the negative margin gives the line its height back. */

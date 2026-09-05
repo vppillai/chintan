@@ -31,7 +31,7 @@ export function LanguageSelect({ id, value, onChange, inherit, disabled }: Langu
   return (
     <select
       id={id}
-      className="settings-select"
+      className="settings-select language-select"
       value={value}
       disabled={disabled}
       onChange={(event) => {

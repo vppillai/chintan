@@ -251,7 +251,7 @@ export function SettingsScreen() {
         <h2 id={languageId} className="settings-group__title">
           Transcription language
         </h2>
-        <div className="settings-field">
+        <div className="settings-field settings-field--select">
           <label className="visually-hidden" htmlFor={`${languageId}-select`}>
             Default transcription language
           </label>
