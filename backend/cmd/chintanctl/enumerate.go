@@ -248,10 +248,15 @@ func noteFromItem(it Item) (model.NoteIndex, error) {
 			return model.NoteIndex{}, fmt.Errorf("decode note %s: %w", it.SK(), err)
 		}
 		if n.ID != "" {
+			// The two fields the blob deliberately omits (json:"-") live only
+			// as promoted attributes.
+			n.SearchText = it.Str("search_text")
+			n.CleanedBody = it.Str("cleaned_body")
 			return n, nil
 		}
 	}
 	n.ID = it.Str("note_id")
+	n.CleanedBody = it.Str("cleaned_body")
 	n.Title = it.Str("title")
 	n.UpdatedAt = it.Str("updated_at")
 	n.S3MarkdownKey = it.Str("s3_markdown_key")

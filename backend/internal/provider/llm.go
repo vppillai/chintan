@@ -24,4 +24,8 @@ type Cleaned struct {
 // LLM interface for text cleanup/processing
 type LLM interface {
 	Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (Cleaned, error)
+	// CleanNote rewrites a whole note body (append markers already stripped)
+	// as one document in the given mode. The caller bounds the body and
+	// checks the answer with cleanup.NoteOutput.
+	CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (Cleaned, error)
 }

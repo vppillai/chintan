@@ -17,6 +17,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 )
 
@@ -266,6 +267,26 @@ func exportTenant(ctx context.Context, e *env, sink exportSink, tenantID string,
 		res.BytesCopied += int64(len(body))
 	}
 
+	// The whole-note cleaned view is on the index row, not in the bucket, so
+	// the prefix walk never meets it. It is written beside the note it
+	// belongs to, as a second Markdown file, for every note that has one.
+	cleanedIDs := make([]string, 0)
+	for id, n := range idx.Notes {
+		if n.CleanedBody != "" {
+			cleanedIDs = append(cleanedIDs, id)
+		}
+	}
+	sort.Strings(cleanedIDs)
+	for _, id := range cleanedIDs {
+		rel := path.Join(tenantID, cleanedNoteFileName(idx, id))
+		body := renderCleanedNote(idx.Notes[id])
+		if err := writeAll(sink, rel, body); err != nil {
+			return tr, err
+		}
+		res.ObjectsCopied++
+		res.BytesCopied += int64(len(body))
+	}
+
 	obs.Log(ctx).Info("exported tenant",
 		slog.Int("notes", tr.Notes),
 		slog.Int("captures", tr.Captures),
@@ -358,6 +379,38 @@ func noteFileName(idx *tenantIndex, noteID string) string {
 		slug = strings.TrimSpace(slug[:80])
 	}
 	return "notes/" + slug + "-" + sanitizeSegment(noteID) + ".md"
+}
+
+// cleanedNoteFileName is the whole-note cleaned view's file, beside the note:
+// notes/<slug>-<id>.cleaned.md.
+func cleanedNoteFileName(idx *tenantIndex, noteID string) string {
+	return strings.TrimSuffix(noteFileName(idx, noteID), ".md") + ".cleaned.md"
+}
+
+// renderCleanedNote is the cleaned view with a front matter block that says
+// which note it belongs to, how and when it was generated, and whether the
+// body has changed since.
+func renderCleanedNote(n model.NoteIndex) []byte {
+	var b bytes.Buffer
+	b.WriteString("---\n")
+	b.WriteString("id: " + yamlString(n.ID) + "\n")
+	b.WriteString("title: " + yamlString(n.Title) + "\n")
+	b.WriteString("cleaned_view: true\n")
+	if n.CleanedMode != "" {
+		b.WriteString("mode: " + yamlString(string(n.CleanedMode)) + "\n")
+	}
+	if n.CleanedAt != "" {
+		b.WriteString("generated_at: " + yamlString(n.CleanedAt) + "\n")
+	}
+	if n.CleanedStale {
+		b.WriteString("stale: true\n")
+	}
+	b.WriteString("---\n\n")
+	b.WriteString(n.CleanedBody)
+	if !strings.HasSuffix(n.CleanedBody, "\n") {
+		b.WriteString("\n")
+	}
+	return b.Bytes()
 }
 
 // renderFrontMatter builds the YAML block that heads an exported note.

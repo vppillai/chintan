@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vppillai/chintan/backend/internal/model"
 )
 
 func readExported(t *testing.T, root, rel string) string {
@@ -230,5 +232,45 @@ func TestSafeRelPathRefusesEscape(t *testing.T) {
 	got, err := safeRelPath("tenants/t1/notes/n1/note.md")
 	if err != nil || got != "tenants/t1/notes/n1/note.md" {
 		t.Errorf("safeRelPath rejected a legitimate key: %q %v", got, err)
+	}
+}
+
+// The whole-note cleaned view is an index-row attribute, so the prefix walk
+// never meets it; it is written beside its note as <slug>-<id>.cleaned.md, and
+// only for a note that has one.
+func TestExportWritesTheCleanedViewBesideTheNote(t *testing.T) {
+	ctx := context.Background()
+	e, part, blobs := newTestEnv(nil)
+	seedTenant(t, part, blobs, "tenantA")
+
+	// As the worker leaves the row: the view promoted to its own attribute,
+	// its metadata in the blob.
+	it := noteItem("tenantA", model.NoteIndex{
+		ID: "n2", Title: "Roof", UpdatedAt: "2026-08-07T11:00:00.000000000Z",
+		S3MarkdownKey: "tenants/tenantA/notes/n2/note.md",
+		CleanedMode:   model.NoteCleanStructured, CleanedAt: "2026-08-07T11:05:00.000000000Z", CleanedStale: true,
+		Version: 1,
+	})
+	it["cleaned_body"] = StringAttr("# Roof\n\n- the gutter leaks")
+	put(t, part, it)
+	blobs.seed(t, "tenants/tenantA/notes/n2/note.md", "the gutter leaks", "text/markdown")
+
+	out := t.TempDir()
+	if _, err := runExport(ctx, e, exportOptions{Out: out}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	got := readExported(t, out, "tenantA/notes/Roof-n2.cleaned.md")
+	for _, want := range []string{`id: "n2"`, `cleaned_view: true`, `mode: "structured"`, `generated_at: "2026-08-07T11:05:00.000000000Z"`, "stale: true", "\n\n# Roof\n\n- the gutter leaks\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("cleaned view file missing %q:\n%s", want, got)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, "tenantA", "notes", "Kitchen-Rebuild-Plan-n1.cleaned.md")); !os.IsNotExist(err) {
+		t.Errorf("a note without a cleaned view got a cleaned file (err=%v)", err)
+	}
+	// The body itself is still the raw note, untouched.
+	if body := readExported(t, out, "tenantA/notes/Roof-n2.md"); !strings.HasSuffix(body, "the gutter leaks") {
+		t.Errorf("note body = %q", body)
 	}
 }

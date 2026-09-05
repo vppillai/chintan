@@ -39,6 +39,9 @@ func (rt *router) routes() {
 	// One manifest of presigned audio URLs, so "download all" is one request
 	// and a client-side zip rather than a round trip per recording.
 	rt.handle("GET "+p+"/notes/{noteId}/recordings/urls", rt.noteRecordingURLs)
+	// The whole-note cleaned view. 202 and a worker invocation; the LLM pass
+	// never runs on the request path.
+	rt.handle("POST "+p+"/notes/{noteId}/clean", rt.cleanNote, idempotent())
 
 	// Tags and search.
 	rt.handle("GET "+p+"/tags", rt.listTags)

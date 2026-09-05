@@ -215,6 +215,9 @@ func TestACaptureLongerThanTheGatewayCeilingStillCompletes(t *testing.T) {
 type recordingInvoker struct{}
 
 func (recordingInvoker) InvokeCapture(context.Context, string, string, string) error { return nil }
+func (recordingInvoker) InvokeCleanNote(context.Context, string, string, model.NoteCleanMode) error {
+	return nil
+}
 
 // A cap rejection is a budget decision, not a fault: it gets its own status and
 // the provider is never contacted.

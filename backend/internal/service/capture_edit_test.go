@@ -45,7 +45,7 @@ func (h *editHarness) note(userID, title, body string) model.NoteIndex {
 	if err := h.objects.Put(h.ctx, n.S3MarkdownKey, []byte(body), "text/markdown"); err != nil {
 		h.t.Fatalf("Put body: %v", err)
 	}
-	if err := refreshNoteIndex(h.ctx, h.store, h.objects, userID, n.ID); err != nil {
+	if _, err := refreshNoteIndex(h.ctx, h.store, h.objects, userID, n.ID); err != nil {
 		h.t.Fatalf("refreshNoteIndex: %v", err)
 	}
 	n, err = h.store.GetNote(h.ctx, userID, n.ID)

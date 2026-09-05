@@ -977,11 +977,11 @@ func TestListedNoteCarriesEveryField(t *testing.T) {
 		}
 		want.Version = 1
 
-		// populatedNote sets DeletedAt, so the note is archived. SearchText is
-		// the one field a list carries only on request (it is up to 32 KB per
-		// note), so the list asks for it here and the plain list is checked to
-		// omit exactly that field and nothing else.
-		page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{IncludeSearchText: true})
+		// populatedNote sets DeletedAt, so the note is archived. SearchText and
+		// CleanedBody are the two fields a list carries only on request (32 KB
+		// and 200 KB per note respectively), so the list asks for both here and
+		// the plain list is checked to omit exactly those two and nothing else.
+		page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{IncludeSearchText: true, IncludeCleanedBody: true})
 		if err != nil {
 			t.Fatalf("ListArchivedNotes: %v", err)
 		}
@@ -996,10 +996,11 @@ func TestListedNoteCarriesEveryField(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListArchivedNotes (plain): %v", err)
 		}
-		withoutSearchText := want
-		withoutSearchText.SearchText = ""
-		if diffs := noteFieldDiffs(withoutSearchText, plain.Items[0]); len(diffs) > 0 {
-			t.Fatalf("the plain list differs from the full one in more than search_text:\n\t%s", strings.Join(diffs, "\n\t"))
+		withoutOptIns := want
+		withoutOptIns.SearchText = ""
+		withoutOptIns.CleanedBody = ""
+		if diffs := noteFieldDiffs(withoutOptIns, plain.Items[0]); len(diffs) > 0 {
+			t.Fatalf("the plain list differs from the full one in more than search_text and cleaned_body:\n\t%s", strings.Join(diffs, "\n\t"))
 		}
 	})
 }
@@ -1563,5 +1564,83 @@ func TestListNotesProjectsSearchTextOnlyWhenAsked(t *testing.T) {
 	}
 	if _, ok := raw.Item["search_text"].(*types.AttributeValueMemberS); !ok {
 		t.Errorf("search_text was not promoted to its own attribute: %v", raw.Item)
+	}
+}
+
+// cleaned_body is up to 200 KB per note and only the export and the note
+// detail read it, so it is treated exactly as search_text is: projected only
+// when asked, promoted to its own attribute, and never duplicated in the blob.
+func TestListNotesProjectsCleanedBodyOnlyWhenAsked(t *testing.T) {
+	store, api := newTestStore(t)
+	if _, err := store.PutNote(context.Background(), "tenant-a", model.NoteIndex{
+		ID: "note_1", Title: "Roof", UpdatedAt: model.Now(),
+		CleanedBody: "# Roof\n\nThe gutter is leaking.", CleanedMode: model.NoteCleanStructured,
+		CleanedAt: model.Now(), AutoClean: true,
+	}); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+
+	projectionOf := func(t *testing.T) string {
+		t.Helper()
+		if len(api.queries) == 0 {
+			t.Fatal("the list issued no query")
+		}
+		return *api.queries[len(api.queries)-1].ProjectionExpression
+	}
+
+	api.queries = nil
+	plain, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if strings.Contains(projectionOf(t), "cleaned_body") {
+		t.Errorf("a list that did not ask projected cleaned_body: %q", projectionOf(t))
+	}
+	if plain.Items[0].CleanedBody != "" {
+		t.Errorf("a list that did not ask carried a cleaned body %q", plain.Items[0].CleanedBody)
+	}
+	// The fields that describe the view are small and always listed, so a
+	// listed note can say it has a view without carrying it.
+	if !plain.Items[0].AutoClean || plain.Items[0].CleanedMode != model.NoteCleanStructured || plain.Items[0].CleanedAt == "" {
+		t.Errorf("the plain list dropped the cleaned view's metadata: %+v", plain.Items[0])
+	}
+
+	api.queries = nil
+	with, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{IncludeCleanedBody: true})
+	if err != nil {
+		t.Fatalf("ListNotes(include): %v", err)
+	}
+	if !strings.Contains(projectionOf(t), "cleaned_body") {
+		t.Errorf("the list asked for the cleaned body but did not project it: %q", projectionOf(t))
+	}
+	if with.Items[0].CleanedBody != "# Roof\n\nThe gutter is leaking." {
+		t.Errorf("cleaned body = %q, want the stored value", with.Items[0].CleanedBody)
+	}
+
+	got, err := store.GetNote(context.Background(), "tenant-a", "note_1")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if got.CleanedBody != "# Roof\n\nThe gutter is leaking." {
+		t.Errorf("GetNote cleaned body = %q", got.CleanedBody)
+	}
+
+	table := tableName
+	raw, err := api.GetItem(context.Background(), &dynamodb.GetItemInput{
+		TableName: &table,
+		Key: map[string]types.AttributeValue{
+			"pk": &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+			"sk": &types.AttributeValueMemberS{Value: "NOTE#note_1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("GetItem: %v", err)
+	}
+	blob, _ := raw.Item["data"].(*types.AttributeValueMemberS)
+	if blob == nil || strings.Contains(blob.Value, "gutter") {
+		t.Errorf("the record blob carries the cleaned body: %v", raw.Item["data"])
+	}
+	if _, ok := raw.Item["cleaned_body"].(*types.AttributeValueMemberS); !ok {
+		t.Errorf("cleaned_body was not promoted to its own attribute: %v", raw.Item)
 	}
 }

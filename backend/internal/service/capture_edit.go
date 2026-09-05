@@ -55,6 +55,9 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 		return ErrCaptureInFlight
 	}
 
+	// The note whose body this delete changed, once the paragraph is out, so
+	// its cleaned view can be regenerated after the row is gone.
+	var touched *model.NoteIndex
 	if capture.NoteID != "" {
 		note, err := s.store.GetNote(ctx, userID, capture.NoteID)
 		switch {
@@ -72,9 +75,11 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 				return fmt.Errorf("failed to remove the paragraph from the note: %w", err)
 			}
 			if cut {
-				if err := refreshNoteIndex(ctx, s.store, s.objects, userID, note.ID); err != nil {
+				refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, note.ID)
+				if err != nil {
 					return fmt.Errorf("failed to refresh the note index: %w", err)
 				}
+				touched = &refreshed
 			}
 		}
 	}
@@ -93,6 +98,13 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 		slog.String("note_id", capture.NoteID),
 		slog.String("status", string(capture.Status)))
 	obs.Count(ctx, "CapturesDeleted", map[string]string{"Stage": string(capture.Status)})
+
+	// The paragraph is out of the body, so the cleaned view is regenerated if
+	// the note asks for it — asynchronously; the request path never runs the
+	// model.
+	if touched != nil {
+		autoCleanAfterBodyWrite(ctx, s.worker, userID, *touched)
+	}
 	return nil
 }
 
@@ -135,35 +147,38 @@ func rewriteNoteBody(ctx context.Context, objects repository.Objects, key string
 }
 
 // refreshNoteIndex re-derives the index fields that follow the body — snippet,
-// search text, touch time — from the body now in object storage, under the
-// note's version. The body is authoritative, so a version conflict is answered
-// by re-reading rather than by overwriting whoever won. It is the API-side
-// twin of the worker's refresh after an append.
-func refreshNoteIndex(ctx context.Context, store repository.Store, objects repository.Objects, userID, noteID string) error {
+// search text, touch time, and the cleaned view's stale flag — from the body
+// now in object storage, under the note's version. The body is authoritative,
+// so a version conflict is answered by re-reading rather than by overwriting
+// whoever won. It is the API-side twin of the worker's refresh after an
+// append, and returns the note as stored so the caller can act on what it
+// carries (auto_clean).
+func refreshNoteIndex(ctx context.Context, store repository.Store, objects repository.Objects, userID, noteID string) (model.NoteIndex, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
 		note, err := store.GetNote(ctx, userID, noteID)
 		if err != nil {
-			return err
+			return model.NoteIndex{}, err
 		}
 		body, err := objects.Get(ctx, note.S3MarkdownKey)
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
-			return err
+			return model.NoteIndex{}, err
 		}
 		note.Snippet = generateSnippet(string(body))
 		note.SearchText = SearchText(string(body))
 		note.UpdatedAt = model.Now()
+		MarkCleanedStale(&note)
 
-		_, err = store.PutNote(ctx, userID, note)
+		stored, err := store.PutNote(ctx, userID, note)
 		if err == nil {
-			return nil
+			return stored, nil
 		}
 		if !errors.Is(err, repository.ErrVersionConflict) {
-			return err
+			return model.NoteIndex{}, err
 		}
 		lastErr = err
 	}
-	return lastErr
+	return model.NoteIndex{}, lastErr
 }
 
 // captureObjectKeys lists every object a capture may own, whether or not the

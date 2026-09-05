@@ -1314,6 +1314,13 @@ Resources:
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
+          # Its own live alias, spelled out for the same reason the API's
+          # invoke grant is (a !Ref would close the alias → function cycle).
+          # After an append to a note with auto_clean the worker queues the
+          # clean-note task for itself here, so the whole-note cleaned view
+          # runs as its own invocation with its own retries. MUST stay in step
+          # with FunctionName above and the alias Name below.
+          WORKER_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-${InstanceName}-${Environment}:live'
       Tags:
         - Key: Project
           Value: chintan

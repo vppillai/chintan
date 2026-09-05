@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 
+	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -45,12 +46,29 @@ func NewInvoker(client LambdaAPI, functionARN string) *Invoker {
 // one that fails all three attempts to the dead-letter queue, exactly as it
 // does for the S3 notification that starts a capture.
 func (i *Invoker) InvokeCapture(ctx context.Context, tenantID, captureID, reason string) error {
-	payload, err := json.Marshal(Invocation{
+	return i.invoke(ctx, Invocation{
 		TenantID:      tenantID,
 		CaptureID:     captureID,
 		Reason:        reason,
 		CorrelationID: obs.CorrelationID(ctx),
 	})
+}
+
+// InvokeCleanNote queues the clean-note task for one note, the same way and
+// with the same retries. The worker invokes itself through this after an
+// append to a note with auto_clean, so the clean runs as its own invocation.
+func (i *Invoker) InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+	return i.invoke(ctx, Invocation{
+		Task:          TaskCleanNote,
+		TenantID:      tenantID,
+		NoteID:        noteID,
+		Mode:          string(mode),
+		CorrelationID: obs.CorrelationID(ctx),
+	})
+}
+
+func (i *Invoker) invoke(ctx context.Context, inv Invocation) error {
+	payload, err := json.Marshal(inv)
 	if err != nil {
 		return fmt.Errorf("pipeline: encode invocation: %w", err)
 	}

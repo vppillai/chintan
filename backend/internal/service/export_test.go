@@ -59,6 +59,12 @@ type exportedDoc struct {
 		Title    string               `json:"title"`
 		Body     string               `json:"body"`
 		Captures []model.CaptureIndex `json:"captures"`
+		Cleaned  *struct {
+			Body        string `json:"body"`
+			Mode        string `json:"mode"`
+			GeneratedAt string `json:"generated_at"`
+			Stale       bool   `json:"stale"`
+		} `json:"cleaned"`
 	} `json:"notes"`
 	Unrouted  []model.CaptureIndex         `json:"unrouted_captures"`
 	Artifacts map[string]map[string]string `json:"artifact_keys"`
@@ -343,3 +349,53 @@ func TestExportSurfacesAFailureToReadANoteBody(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// The whole-note cleaned view lives on the index row, not in the bucket, and
+// the list carries it only on request — so an export has to ask for it, or the
+// one document the user may have been reading falls out of their backup.
+func TestExportCarriesTheCleanedViewWhenThereIsOne(t *testing.T) {
+	h := newExportHarness(t)
+	ctx := context.Background()
+
+	cleaned, err := h.notes.CreateNote(ctx, "user1", "Roof", nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	stored, err := h.store.GetNote(ctx, "user1", cleaned.ID)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	stored.CleanedBody = "# Roof\n\n- the gutter leaks"
+	stored.CleanedMode = model.NoteCleanStructured
+	stored.CleanedAt = "2026-01-01T00:00:00.000000000Z"
+	stored.CleanedStale = true
+	if _, err := h.store.PutNote(ctx, "user1", stored); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	plain, err := h.notes.CreateNote(ctx, "user1", "Never cleaned", nil)
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+
+	job, err := h.export.Start(ctx, "user1")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	doc := h.exportedDocument(t, "user1", job.ID)
+	for _, n := range doc.Notes {
+		switch n.ID {
+		case cleaned.ID:
+			if n.Cleaned == nil {
+				t.Fatalf("the cleaned note's view is missing from the export")
+			}
+			if n.Cleaned.Body != "# Roof\n\n- the gutter leaks" || n.Cleaned.Mode != "structured" ||
+				n.Cleaned.GeneratedAt != "2026-01-01T00:00:00.000000000Z" || !n.Cleaned.Stale {
+				t.Errorf("cleaned = %+v", n.Cleaned)
+			}
+		case plain.ID:
+			if n.Cleaned != nil {
+				t.Errorf("a note never cleaned carries a view: %+v", n.Cleaned)
+			}
+		}
+	}
+}

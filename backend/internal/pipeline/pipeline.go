@@ -98,6 +98,12 @@ type NoteCreator interface {
 	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
 }
 
+// NoteCleanInvoker is the slice of service.Invoker the pipeline needs to queue
+// a clean-note task for itself.
+type NoteCleanInvoker interface {
+	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error
+}
+
 // Config is everything the pipeline needs. Breaker is not optional: a nil one
 // would be a path to a provider that skips the spend check.
 type Config struct {
@@ -108,6 +114,12 @@ type Config struct {
 	Router  provider.Router
 	Notes   NoteCreator
 	Breaker *breaker.Breaker
+	// CleanInvoker hands a note with auto_clean back to the worker for its
+	// cleaned view after an append (TaskCleanNote). Optional: without it the
+	// view is regenerated inline, which is correct here — this is the worker,
+	// not the request path — but couples the clean's failure to the capture's
+	// invocation rather than giving it retries of its own.
+	CleanInvoker NoteCleanInvoker
 
 	// Provider and model names are what the price table is keyed on. They are
 	// passed in rather than inferred so an instance can point at a different
@@ -928,7 +940,8 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
-	if err := p.refreshNoteIndex(ctx, tenantID, note.ID, cleanedText); err != nil {
+	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID, cleanedText)
+	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
 
@@ -937,6 +950,10 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 		return *capture, fmt.Errorf("pipeline: complete capture append: %w", err)
 	}
 	*capture = appended
+
+	// Only now, with the capture marked appended: the cleaned view follows the
+	// body, and the body is settled.
+	p.autoCleanAfterAppend(ctx, tenantID, refreshed)
 	return appended, nil
 }
 
@@ -1030,15 +1047,16 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 	return fmt.Errorf("pipeline: update note after %d attempts: %w", maxAppendAttempts, lastErr)
 }
 
-// refreshNoteIndex re-derives the snippet and touch time from the note body that
-// is now in object storage. The body is authoritative, so a version conflict is
-// resolved by re-reading rather than by overwriting whoever won.
-func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallbackBody string) error {
+// refreshNoteIndex re-derives the snippet, search text, touch time and the
+// cleaned view's stale flag from the note body that is now in object storage,
+// and returns the note as stored. The body is authoritative, so a version
+// conflict is resolved by re-reading rather than by overwriting whoever won.
+func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallbackBody string) (model.NoteIndex, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
 		if err != nil {
-			return err
+			return model.NoteIndex{}, err
 		}
 		body := fallbackBody
 		if existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey); err == nil {
@@ -1047,16 +1065,18 @@ func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallb
 		note.Snippet = service.Snippet(body)
 		note.SearchText = service.SearchText(body)
 		note.UpdatedAt = model.FormatTime(p.now())
+		// The paragraph just appended is not in the cleaned view.
+		service.MarkCleanedStale(&note)
 
-		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {
-			return nil
+		if stored, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {
+			return stored, nil
 		} else if !errors.Is(err, repository.ErrVersionConflict) {
-			return err
+			return model.NoteIndex{}, err
 		} else {
 			lastErr = err
 		}
 	}
-	return lastErr
+	return model.NoteIndex{}, lastErr
 }
 
 // ---------------------------------------------------------------------------

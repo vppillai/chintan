@@ -45,7 +45,7 @@ func withBrokenStore() harnessOption {
 // withBrokenObjects makes deletes fail, so a purge cascade cannot complete.
 func withBrokenObjects() harnessOption {
 	return func(d *handler.Deps, h *harness) {
-		notes := service.NewNotesService(h.store, brokenObjects{h.objects})
+		notes := service.NewNotesService(h.store, brokenObjects{h.objects}).WithInvoker(h.worker)
 		d.Notes = notes
 	}
 }
@@ -72,7 +72,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		spend:   &fakeSpend{},
 		usage:   memory.NewUsage(),
 	}
-	h.notes = service.NewNotesService(h.store, h.objects)
+	h.notes = service.NewNotesService(h.store, h.objects).WithInvoker(h.worker)
 	h.captures = service.NewCaptureService(h.store, h.objects).
 		WithInvoker(h.worker).
 		WithNoteCreator(h.notes)
@@ -181,10 +181,23 @@ func problemOf(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 // recordingInvoker stands in for the worker Lambda: it records every hand-off
 // and runs nothing, which is exactly what the request path must observe.
-type recordingInvoker struct{ calls []string }
+type recordingInvoker struct {
+	calls []string
+	// cleanErr, when set, fails every clean-note hand-off, the way a Lambda
+	// Invoke that is refused looks from the request path.
+	cleanErr error
+}
 
 func (w *recordingInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reason string) error {
 	w.calls = append(w.calls, tenantID+"/"+captureID+"/"+reason)
+	return nil
+}
+
+func (w *recordingInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+	if w.cleanErr != nil {
+		return w.cleanErr
+	}
+	w.calls = append(w.calls, "clean-note/"+tenantID+"/"+noteID+"/"+string(mode))
 	return nil
 }
 

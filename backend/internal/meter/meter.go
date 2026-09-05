@@ -28,6 +28,9 @@ const (
 	OpTranscribe Op = "transcribe"
 	OpRoute      Op = "route"
 	OpCleanup    Op = "cleanup"
+	// OpCleanNote is the whole-note cleaned view: one call over the entire
+	// body, priced like cleanup (input and output tokens on the LLM model).
+	OpCleanNote Op = "clean_note"
 )
 
 // Quantities is what one call consumed, per unit. A call is priced as the sum

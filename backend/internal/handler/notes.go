@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -33,6 +35,17 @@ type noteUpdateRequest struct {
 	Tags     *[]string `json:"tags"`
 	Verbatim *bool     `json:"verbatim"`
 	Language *string   `json:"language"`
+	// AutoClean and CleanedMode are the whole-note cleaned view's
+	// preferences. The view itself cannot be written: it is regenerated from
+	// the body by the worker (POST /v1/notes/{id}/clean).
+	AutoClean   *bool   `json:"auto_clean"`
+	CleanedMode *string `json:"cleaned_mode"`
+}
+
+// noteCleanRequest is the OpenAPI NoteCleanRequest schema. The body is
+// optional; an absent mode means the note's own, else structured.
+type noteCleanRequest struct {
+	Mode string `json:"mode"`
 }
 
 func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +171,7 @@ func (rt *router) getNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: []Capture{}}
+	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: []Capture{}, Cleaned: cleanedOf(detail.NoteIndex)}
 	if rt.Captures != nil {
 		captures, err := rt.Captures.ListCapturesForNote(r.Context(), userID, noteID, repository.ListOptions{})
 		if err != nil {
@@ -190,15 +203,21 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := rt.Notes.UpdateNote(r.Context(), userID, noteID, service.NoteUpdates{
+	updates := service.NoteUpdates{
 		Title:           req.Title,
 		Body:            req.Body,
 		Aliases:         req.Aliases,
 		Tags:            req.Tags,
 		Verbatim:        req.Verbatim,
 		Language:        req.Language,
+		AutoClean:       req.AutoClean,
 		ExpectedVersion: req.Version,
-	})
+	}
+	if req.CleanedMode != nil {
+		mode := model.NoteCleanMode(*req.CleanedMode)
+		updates.CleanMode = &mode
+	}
+	updated, err := rt.Notes.UpdateNote(r.Context(), userID, noteID, updates)
 	if err != nil {
 		// A conflict carries the version the client should reconcile against,
 		// so the editor does not have to re-read to find out what it lost to.
@@ -210,6 +229,65 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, noteOf(updated))
+}
+
+// cleanNote queues the whole-note cleaned view and returns 202.
+//
+// It does no work inline, for the reason retryCapture gives: the request path
+// is bounded by the gateway's 30-second ceiling and an LLM pass over a whole
+// note is not. The spend gate answers first, so a capped instance is told
+// rather than left polling a view that never arrives. A second request while
+// one is queued is accepted: the worker regenerates from the current body, so
+// the later run simply wins.
+func (rt *router) cleanNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+
+	// The body is optional. An empty one means "the note's own mode".
+	raw, err := readBody(w, r, MaxSmallRequestBytes)
+	if err != nil {
+		if errors.Is(err, errBodyTooLarge) {
+			httperr.PayloadTooLarge(w, r, fmt.Sprintf("the request body exceeds %d bytes", MaxSmallRequestBytes))
+			return
+		}
+		httperr.BadRequest(w, r, "the request body could not be read")
+		return
+	}
+	var req noteCleanRequest
+	if len(bytes.TrimSpace(raw)) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil {
+			httperr.BadRequest(w, r, "the request body is not valid JSON for this endpoint")
+			return
+		}
+	}
+	if req.Mode != "" && !model.ValidNoteCleanMode(model.NoteCleanMode(req.Mode)) {
+		httperr.BadRequest(w, r, service.ErrInvalidNoteCleanMode.Error())
+		return
+	}
+
+	if rt.Spend != nil {
+		capped, err := rt.Spend.Capped(r.Context())
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		if capped {
+			fail(w, r, service.ErrSpendCapped)
+			return
+		}
+	}
+
+	mode, err := rt.Notes.RequestClean(r.Context(), userID, r.PathValue("noteId"), model.NoteCleanMode(req.Mode))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, NoteCleanQueued{Status: "queued", Mode: string(mode)})
 }
 
 func (rt *router) archiveNote(w http.ResponseWriter, r *http.Request) {
