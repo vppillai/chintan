@@ -37,8 +37,9 @@ daily_spend_cap_micros: 2000000
 # CloudWatch's always-free allowance is ten alarm-months for the whole account,
 # and the account's other project holds alarms too. The template declares four
 # — API function errors, the worker dead-letter queue (a capture or a
-# scheduled or queued worker task — sweep-expired, aws-cost, clean-note, ask —
-# that exhausted its retries), a rejected provider key, and the spend cap —
+# scheduled or queued worker task — sweep-expired, aws-cost, storage-snapshot,
+# clean-note, ask — that exhausted its retries), a rejected provider key, and
+# the spend cap —
 # and this stack's copies would be billed at $0.10 each to duplicate alarms
 # that nobody is subscribed to and that watch no user data.
 #

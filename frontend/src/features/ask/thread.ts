@@ -11,6 +11,7 @@
  */
 
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
+import { toPlainText } from '@/features/notes/markdown.ts';
 import type {
   AskRequestWire,
   AskSourceWire,
@@ -67,6 +68,14 @@ export interface AskTurn {
   /** Client-side identity, also the request's idempotency key. */
   key: string;
   question: string;
+  /**
+   * The body `POST /v1/ask` was sent, kept so the same request can be sent
+   * again under the same key: the server binds a key to the exact bytes it
+   * first saw, so a replay with a re-cut history would be refused rather than
+   * answered with the original 202. Absent on a thread saved before it was
+   * kept, which cannot be replayed and is asked afresh instead.
+   */
+  request?: AskRequestWire;
   status: TurnStatus;
   askId: string | null;
   /**
@@ -123,6 +132,27 @@ export function applyRow(turn: AskTurn, row: AskWire): AskTurn {
 /** The turn as failed on this side, with one of the fixed sentences. */
 export function failTurn(turn: AskTurn, message: string): AskTurn {
   return { ...turn, status: 'failed', error: message };
+}
+
+/**
+ * Whether Try again can send the very same request again, under the same
+ * key, instead of paying for a new question. True of a turn whose POST never
+ * came back to this side — a dropped connection, a timeout, a panel that was
+ * gone when the 202 arrived — as long as the body it was sent with is still
+ * held. `POST /v1/ask` is idempotent: if the first attempt did reach the
+ * server the replay is the original 202 at no cost, and if it did not the
+ * replay is the question asked once. A turn the server answered with an
+ * error is not resent: its key is bound to that answer.
+ */
+export function canResend(turn: AskTurn): boolean {
+  return (
+    turn.request !== undefined && turn.status === 'failed' && turn.error === NOT_SENT_MESSAGE
+  );
+}
+
+/** The turn back on its way to the server, with a fresh clock. */
+export function resendTurn(turn: AskTurn, now: number = Date.now()): AskTurn {
+  return { ...turn, status: 'asking', askId: null, error: null, since: now };
 }
 
 /** Still waiting on the server, one way or the other. */
@@ -245,7 +275,8 @@ export const ASK_NOTE_TAG = 'ask';
  * listed at the end so the reader can go and check. Plain text throughout —
  * a note's body is what the Text tab and the library snippet show verbatim,
  * where Markdown's asterisks and dashes are just asterisks and dashes — so
- * the bold the answers arrive with is unwrapped too. Turns without an answer
+ * the answers' Markdown is read by the same parser that renders it and
+ * written back as words (`toPlainText`). Turns without an answer
  * are left out: a failed question is not worth keeping. `null` when nothing
  * was answered, so there is nothing to save.
  *
@@ -259,7 +290,7 @@ export function noteFromThread(turns: readonly AskTurn[]): NoteCreateWire | null
   if (!first || answered.length === 0) return null;
 
   const exchanges = answered.map(
-    (turn) => `Q: ${turn.question}\n\nA: ${plainText(turn.answer ?? '')}`,
+    (turn) => `Q: ${turn.question}\n\nA: ${toPlainText(turn.answer ?? '')}`,
   );
   const sources = sourcesOf(answered);
   const parts = [...exchanges];
@@ -271,11 +302,6 @@ export function noteFromThread(turns: readonly AskTurn[]): NoteCreateWire | null
     body: parts.join('\n\n'),
     tags: [ASK_NOTE_TAG],
   };
-}
-
-/** An answer's light Markdown as text: `**bold**` unwrapped, lists left as lines. */
-function plainText(answer: string): string {
-  return answer.replace(/\*\*(.+?)\*\*/g, '$1');
 }
 
 /* ---------------------------------------------------------------------------
@@ -290,16 +316,21 @@ function isTurn(value: unknown): value is AskTurn {
     typeof turn.question === 'string' &&
     typeof turn.status === 'string' &&
     typeof turn.since === 'number' &&
-    Array.isArray(turn.sources)
+    Array.isArray(turn.sources) &&
+    (turn.request === undefined || (typeof turn.request === 'object' && turn.request !== null))
   );
 }
 
 /**
  * The thread as last saved, made honest about time passed. A question whose
- * POST never came back cannot be resumed — the panel has no id to poll — so
- * it is shown failed; one still pending resumes polling if there is any wait
- * left, and is timed out if not. Storage blocked or corrupt is an empty
- * thread, never a failure.
+ * POST was in flight when the panel went — a source chip tapped during the
+ * send — is kept `asking` while it is young and its request is held: the
+ * hook sends it again under the same key, which the server answers with the
+ * original 202 (or the question asked once), so it is polled rather than
+ * shown as never sent though it was answered and billed. An `asking` turn
+ * too old for that, or saved without its request, is shown failed; one still
+ * pending resumes polling if there is any wait left, and is timed out if
+ * not. Storage blocked or corrupt is an empty thread, never a failure.
  */
 export function loadThread(now: number = Date.now()): AskTurn[] {
   try {
@@ -308,7 +339,11 @@ export function loadThread(now: number = Date.now()): AskTurn[] {
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(isTurn).map((turn) => {
-      if (turn.status === 'asking' || (turn.status === 'pending' && turn.askId === null)) {
+      if (turn.status === 'asking') {
+        const young = now - (turn.sentAt ?? turn.since) < RESUME_WINDOW_MS;
+        return turn.request && young ? turn : failTurn(turn, NOT_SENT_MESSAGE);
+      }
+      if (turn.status === 'pending' && turn.askId === null) {
         return failTurn(turn, NOT_SENT_MESSAGE);
       }
       if (turn.status === 'pending' && now - turn.since >= ASK_POLL_TIMEOUT_MS) {

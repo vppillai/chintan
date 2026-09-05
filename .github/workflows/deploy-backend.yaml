@@ -42,8 +42,11 @@ env:
   # second bootstrap stack before an instance config may name it.
   AWS_REGION: us-west-2
 
+# Read-only by default. `id-token: write` — the right to mint an OIDC token
+# that AWS trusts as this repository — is granted per job below, to the three
+# jobs that assume an AWS role, and to nothing else: `discover` and `test` run
+# third-party actions over the checkout and have no business holding it.
 permissions:
-  id-token: write
   contents: read
 
 concurrency:
@@ -122,6 +125,9 @@ jobs:
     # without one gets a ref: subject that matches nothing.
     environment: build
     needs: test
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       artifact_key: ${{ steps.upload.outputs.key }}
       worker_key: ${{ steps.upload.outputs.worker_key }}
@@ -176,6 +182,9 @@ jobs:
     needs: [discover, build]
     if: needs.discover.outputs.has_staging == 'true'
     environment: staging
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       # One instance failing must not cancel its siblings mid-flight: a cancelled
       # CloudFormation deploy leaves a stack in UPDATE_IN_PROGRESS that the next
@@ -220,6 +229,9 @@ jobs:
       needs.build.result == 'success' &&
       (needs.deploy-staging.result == 'success' || needs.deploy-staging.result == 'skipped')
     environment: production
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -268,8 +280,9 @@ jobs:
   # `describe` answers `vX.Y.Z-N-g<sha>`, N commits past the last release,
   # which is the truthful description of that build.
   #
-  # `contents: write` is granted to this job only; every other job keeps the
-  # workflow's read-only default. GITHUB_TOKEN is enough for a tag push and
+  # `contents: write` is granted to this job only; every other job has the
+  # workflow's read-only default, plus `id-token: write` where it assumes an
+  # AWS role. GITHUB_TOKEN is enough for a tag push and
   # `gh release create`, and a push made with it does not trigger other
   # workflows — none of ours listen to tags anyway.
   release:

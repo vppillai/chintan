@@ -50,8 +50,12 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** Serves the capture list, and records every request for assertions. */
-function mount(items: CaptureWire[]) {
+/**
+ * Serves the capture list, and records every request for assertions. `retry`
+ * is what `POST /v1/captures/{id}/retry` answers, when a test needs it to
+ * refuse.
+ */
+function mount(items: CaptureWire[], { retry }: { retry?: Response } = {}) {
   const calls: { url: string; method: string }[] = [];
 
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -60,7 +64,7 @@ function mount(items: CaptureWire[]) {
     calls.push({ url, method });
 
     if (url.includes('/v1/captures/') && url.endsWith('/retry')) {
-      return json(capture({ status: 'transcribing' }));
+      return retry ?? json(capture({ status: 'transcribing' }));
     }
     if (url.includes('/v1/captures/') && url.endsWith('/target')) {
       return json(capture({ status: 'appending' }));
@@ -316,6 +320,31 @@ describe('a failed capture has a Retry that is actually wired', () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it('says why a Retry the server refused did nothing, under the row', async () => {
+    // Review S14: the row's Retry had an `onSuccess` and nothing for failure,
+    // so a 409 — the capture is terminal, or an identical retry is still in
+    // flight — left the button re-enabled and the user none the wiser.
+    const user = userEvent.setup();
+    mount([capture({ id: 'srv-9', status: 'failed', error: 'Timed out' })], {
+      retry: json(
+        {
+          type: 'about:blank',
+          title: 'Conflict',
+          status: 409,
+          detail: 'That recording has already been filed.',
+        },
+        409,
+      ),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'That recording has already been filed.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
   });
 
   it('offers no Retry while the capture is still progressing', async () => {

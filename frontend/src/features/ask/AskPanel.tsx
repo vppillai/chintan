@@ -1,4 +1,4 @@
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useCreateNote } from '@/api/queries.ts';
@@ -39,6 +39,23 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
   const note = noteFromThread(turns);
 
   /*
+   * Save as note can settle after the panel has gone — a source chip tapped
+   * while the POST was in flight. The note exists then whatever happens
+   * here, so the thread must still be ended (or the returning panel offers
+   * Save again under a fresh key, and a second note is made); what must not
+   * happen is a navigation the user did not just ask for, from a screen they
+   * have already left. `thread.clear` writes storage directly when no panel
+   * holds the state.
+   */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  /*
    * The date beside a source whose title another source shares. The wire
    * carries only id and title, so the date is the library's own copy on the
    * device — the corpus every list the user has seen is written to — which
@@ -65,15 +82,17 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
   const saveAsNote = (): void => {
     if (!note) return;
     setSaveError(null);
-    create.mutate(note, {
-      onSuccess: (created) => {
+    // Chained on the promise rather than given as per-call callbacks, which
+    // TanStack drops once the component has unmounted (see `mounted`).
+    void create.mutateAsync(note).then(
+      (created) => {
         thread.clear();
-        void navigate(ROUTES.note(created.id));
+        if (mounted.current) void navigate(ROUTES.note(created.id));
       },
-      onError: () => {
-        setSaveError('The note could not be saved. Try again.');
+      () => {
+        if (mounted.current) setSaveError('The note could not be saved. Try again.');
       },
-    });
+    );
   };
 
   return (

@@ -4,7 +4,17 @@ import (
 	"net/http"
 )
 
-// allowedRequestHeaders is the CORS header allowlist.
+// allowedRequestHeaders is the CORS header allowlist this middleware
+// advertises — which, behind API Gateway, is not what a browser is told.
+//
+// The gateway's CorsConfiguration (infrastructure/template.yaml, HttpApi)
+// overwrites Access-Control-Allow-Headers and -Methods on every response that
+// leaves it, this middleware's 204 to a preflight included; the template's
+// list is the one the browser sees and the one that has to name every header
+// the client sends. This list is what a run without the gateway advertises —
+// local tests, a bare binary — and it is kept in step with the template's by
+// hand; no test compares the two. The template's comment says why the OPTIONS
+// route reaches the Lambda at all.
 //
 // X-User-ID was removed deliberately. Advertising it made a header the server
 // trusted reachable from any browser; the server no longer reads it, and it

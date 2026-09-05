@@ -231,7 +231,9 @@
   --color-on-accent: #fbf9f4;
   /* The accent as a wash, for a surface that carries ink on it — the
      account roundel and the About page's section discs. Not a state colour:
-     at 12% it is a tint of the paper, and `ink` on it stays above 15:1. */
+     at 12% it is a tint of the paper, and `ink` on it is 14.08:1 on the
+     ground and above 12:1 on the surfaces it sits on (Nocturne: above 10:1)
+     — AAA throughout. */
   --color-accent-soft: rgb(194 65 12 / 12%);
 
   --color-overlay: rgb(26 25 23 / 38%);

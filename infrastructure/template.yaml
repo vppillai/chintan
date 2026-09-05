@@ -1690,13 +1690,29 @@ Resources:
       ProtocolType: HTTP
       CorsConfiguration:
         AllowCredentials: true
-        # API Gateway answers the preflight itself, before the Lambda's own CORS
-        # middleware ever runs, so this list — not the one in internal/middleware
-        # — is what a browser is told. They must agree: the client sends
-        # Idempotency-Key on every POST, and with it missing here the browser
-        # refuses the request before it is ever sent, reporting only
-        #   "Response to preflight request doesn't pass access control check"
-        # with no clue which header was the problem.
+        # This block is what a browser is told, but not because the gateway
+        # answers preflights on its own. HTTP API auto-answers an OPTIONS
+        # request only when NO route matches it, and `$default` below matches
+        # everything and carries the JWT authorizer, so a preflight that
+        # reached it would be answered 401 — measured on staging on 2026-09-05
+        # when #51 removed the OPTIONS route (reverted by #54; backlog R8b).
+        # What actually happens: `OptionsRoute` sends `OPTIONS /{proxy+}` to the
+        # Lambda with no authorizer, backend/internal/middleware/cors.go answers
+        # 204, and on the way out the gateway OVERWRITES the CORS headers of
+        # that response from this list — the live 204 carries these seven
+        # header names lower-cased, plus the Lambda's own x-correlation-id.
+        #
+        # Consequences. This list is what the browser sees, so it must name
+        # every header the client sends — the client sends Idempotency-Key on
+        # every POST and X-Correlation-Id on every request, and a name missing
+        # here has the browser refuse the request before it is sent, reporting
+        # only "Response to preflight request doesn't pass access control
+        # check" with no clue which header. The middleware's own list matters
+        # only for a run without the gateway. Every preflight is one Lambda
+        # invocation (about one in seven API invocations in the 2026-09-05 prod
+        # log); the only way to have the gateway answer them itself is to
+        # enumerate every route so that nothing matches OPTIONS. Keep this
+        # list and the middleware's in step by hand: no test compares them.
         AllowHeaders:
           - Authorization
           - Content-Type
@@ -1779,7 +1795,10 @@ Resources:
       AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 
-  # $default JWT authorizer does not auto-answer CORS preflight; keep OPTIONS open.
+  # See CorsConfiguration on HttpApi: without this route a preflight falls
+  # through to `$default`, whose JWT authorizer answers it 401 (staging, #51).
+  # The Lambda's middleware answers the OPTIONS 204 and the gateway rewrites
+  # the CORS headers from CorsConfiguration on the way out.
   OptionsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

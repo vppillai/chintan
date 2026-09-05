@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { AUTOSAVE_DELAY_MS } from './autosave.ts';
+import { APPEND_WAIT_LIMIT, AUTOSAVE_DELAY_MS } from './autosave.ts';
 import { useNoteEditor } from './useNoteEditor.ts';
 
 const NOTE: NoteDetailWire = {
@@ -422,5 +422,283 @@ describe('a 409 that is not a conflict', () => {
       expect(view.result.current.model.state).toBe('conflict');
     });
     expect(view.result.current.model.theirs?.draft.body).toBe('Appended by a recording.');
+  });
+});
+
+describe('a save that arrives while a recording is being filed into the note', () => {
+  /*
+   * The worker writes the dictated paragraph into the body and then refreshes
+   * the note's row; a save landing between the two used to pass both the
+   * version check and the body check and carry the paragraph away. The server
+   * now answers such a save 409 with `reason: append_in_progress` and a
+   * `Retry-After`. That is a wait, not a conflict: the same PATCH is sent
+   * again after the delay, the rebase for a version that moved without the
+   * text is not run (it would re-save straight into the window), and nothing
+   * is shown as failed or offered as a choice.
+   */
+  function appendInProgress(currentVersion: number, retryAfter: string): Response {
+    return new Response(
+      JSON.stringify({
+        type: 'about:blank',
+        title: 'Someone else changed this first',
+        status: 409,
+        current_version: currentVersion,
+        reason: 'append_in_progress',
+      }),
+      {
+        status: 409,
+        headers: { 'content-type': 'application/problem+json', 'retry-after': retryAfter },
+      },
+    );
+  }
+
+  it('waits the Retry-After and sends the same PATCH again, with no conflict and no rebase', async () => {
+    const patches: { at: number; body: Record<string, unknown> }[] = [];
+    let gets = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        patches.push({ at: Date.now(), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
+        if (patches.length === 1) return appendInProgress(NOTE.version, '1');
+        return new Response(JSON.stringify({ ...NOTE, version: NOTE.version + 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      gets += 1;
+      return new Response(JSON.stringify(NOTE), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+
+    // Refused once: the draft is still owed, and nothing is a failure or a choice.
+    expect(patches).toHaveLength(1);
+    expect(view.result.current.model.state).toBe('dirty');
+    expect(view.result.current.model.error).toBeNull();
+    expect(view.result.current.model.theirs).toBeNull();
+
+    await waitFor(
+      () => {
+        expect(view.result.current.model.state).toBe('saved');
+      },
+      { timeout: 3_000 },
+    );
+    expect(patches).toHaveLength(2);
+    // The same write, on the same version — not rebased, and not before the server's delay.
+    expect(patches.map((patch) => patch.body['version'])).toEqual([NOTE.version, NOTE.version]);
+    expect(patches[1]?.body['body']).toBe('My own words.');
+    expect((patches[1]?.at ?? 0) - (patches[0]?.at ?? 0)).toBeGreaterThanOrEqual(900);
+    // The note was never re-read: that is the rebase's move, and the rebase is not run here.
+    expect(gets).toBe(0);
+    expect(view.result.current.model.version).toBe(NOTE.version + 1);
+  });
+
+  it('stops waiting after the limit and shows the conflict it then must be', async () => {
+    let patches = 0;
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        patches += 1;
+        return appendInProgress(NOTE.version + 1, '0');
+      }
+      return new Response(
+        JSON.stringify({ ...NOTE, version: NOTE.version + 1, body: 'Appended by a recording.' }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    expect(patches).toBe(APPEND_WAIT_LIMIT + 1);
+    expect(view.result.current.model.theirs?.draft.body).toBe('Appended by a recording.');
+  });
+
+  it('treats a 409 without a reason as it always has', async () => {
+    // The backend that sends `reason` lands separately; until it does, and
+    // for every other 409, the words decide between a rebase and the prompt.
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        return new Response(
+          JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, current_version: 4 }),
+          { status: 409, headers: { 'content-type': 'application/problem+json', 'retry-after': '1' } },
+        );
+      }
+      return new Response(JSON.stringify({ ...NOTE, version: 4, body: 'Other words.' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+  });
+});
+
+describe('a conflict with a recording that landed while the user typed', () => {
+  /*
+   * The benign twin of the append race: the paragraph is in the body and the
+   * save lost the version check honestly. "Keep my edits" used to carry the
+   * recording's text away without a word; the prompt now knows a recording
+   * is at stake, and what it added is offered as an addition to the draft.
+   */
+  const FILED = {
+    id: 'cap-new',
+    status: 'appended' as const,
+    created_at: '2026-08-06T09:20:00.000Z',
+    version: 1,
+    note_id: NOTE.id,
+  };
+
+  function recordingLanded() {
+    const patches: Record<string, unknown>[] = [];
+    let serverVersion = NOTE.version + 1;
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        patches.push(body);
+        if (body['version'] !== serverVersion) {
+          return new Response(
+            JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, current_version: serverVersion }),
+            { status: 409, headers: { 'content-type': 'application/problem+json' } },
+          );
+        }
+        serverVersion += 1;
+        return new Response(JSON.stringify({ ...NOTE, version: serverVersion }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          ...NOTE,
+          version: serverVersion,
+          body: `${NOTE.body}\n\nEllis quoted nine hundred pounds.`,
+          captures: [FILED],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    return { patches, wrapper };
+  }
+
+  it('says a recording is at stake and knows the paragraph it added', async () => {
+    const { wrapper } = recordingLanded();
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    expect(view.result.current.model.theirs).toMatchObject({
+      version: NOTE.version + 1,
+      recording: true,
+      addition: 'Ellis quoted nine hundred pounds.',
+    });
+  });
+
+  it('keepBoth saves my words with the recording’s paragraph after them', async () => {
+    const { patches, wrapper } = recordingLanded();
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+
+    act(() => {
+      view.result.current.keepBoth();
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('saved');
+    });
+    expect(patches).toHaveLength(2);
+    expect(patches[1]).toMatchObject({
+      version: NOTE.version + 1,
+      body: 'My own words.\n\nEllis quoted nine hundred pounds.',
+    });
+  });
+
+  it('does not call an old recording a new one', async () => {
+    // The note already had a filed recording when it was opened; the other
+    // device's edit is just an edit.
+    const known = { ...FILED, id: 'cap-old' };
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        return new Response(
+          JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, current_version: 4 }),
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        );
+      }
+      return new Response(
+        JSON.stringify({ ...NOTE, version: 4, body: 'Other words.', captures: [known] }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor({ ...NOTE, captures: [known] }), { wrapper });
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    expect(view.result.current.model.theirs).toMatchObject({ recording: false, addition: null });
   });
 });
