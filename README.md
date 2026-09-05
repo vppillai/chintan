@@ -78,7 +78,7 @@ What each step needs and leaves behind:
 | `log_retention_days` | `14` | CloudWatch retention. |
 | `refresh_token_validity_days` | `30` | Cognito refresh token lifetime. |
 
-Per-user preferences — theme, cleanup mode, the default transcription language and each note's language — are settings in the app (**You**), stored per user, not instance configuration.
+Per-user preferences — theme, cleanup mode, the default transcription language and each note's language — are settings in the app (**You**), stored per user, not instance configuration. Each note can also keep a **cleaned view** of its whole body (`structured` or `polished`), regenerated on request or, with `auto_clean`, after every recording appended, moved or deleted; it is read-only and derived from the body, and costs one cleanup call per run under the daily spend cap.
 
 Check what the configs resolve to before pushing:
 
