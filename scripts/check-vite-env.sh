@@ -17,8 +17,13 @@
 # VITE_ENVIRONMENT and VITE_DISPLAY_NAME, invented by the pipeline and consumed
 # by nothing.
 #
-# VITE_BASE is excluded: Vite itself consumes it in vite.config.ts to set `base`,
-# so it never appears as an import.meta.env read in application code.
+# A "read" is any of the three places a VITE_* value can be consumed at build
+# time: `import.meta.env.VITE_X` in the bundle's source, `%VITE_X%` in
+# index.html (Vite substitutes it into the document), and `VITE_X` in
+# vite.config.ts (which sets `base` from VITE_BASE, emits preconnect hints and
+# feeds the PWA manifest). The app's name and description are consumed by the
+# second and third of those as much as by the first, so counting only the
+# source would report them as exported-but-unread.
 #
 # Usage:
 #   scripts/check-vite-env.sh [--json] [--self-test]
@@ -44,13 +49,20 @@ done
 
 SRC_DIR="${CHINTAN_FRONTEND_SRC:-frontend/src}"
 BUILD_SCRIPT="${CHINTAN_BUILD_SCRIPT:-scripts/ci-build-site.sh}"
-
-# Vite's own build-time variables, plus the one the config file consumes.
-EXCLUDED='VITE_BASE'
+# The two build-time consumers outside src/. The self-test points SRC_DIR at a
+# doctored tree that has neither, and a missing file is simply no reads.
+INDEX_HTML="${CHINTAN_FRONTEND_INDEX:-frontend/index.html}"
+VITE_CONFIG="${CHINTAN_FRONTEND_VITE_CONFIG:-frontend/vite.config.ts}"
 
 read_vars() {
-    grep -rhoE 'import\.meta\.env\.(VITE_[A-Z0-9_]+)' "$REPO_ROOT/$SRC_DIR" 2>/dev/null |
-        sed 's/^import\.meta\.env\.//' | LC_ALL=C sort -u || true
+    {
+        grep -rhoE 'import\.meta\.env\.(VITE_[A-Z0-9_]+)' "$REPO_ROOT/$SRC_DIR" 2>/dev/null |
+            sed 's/^import\.meta\.env\.//' || true
+        grep -oE '%VITE_[A-Z0-9_]+%' "$REPO_ROOT/$INDEX_HTML" 2>/dev/null | tr -d '%' || true
+        # Ends in a letter or digit, so prose such as "VITE_APP_*" in a comment
+        # is not mistaken for a variable.
+        grep -oE '\bVITE_[A-Z0-9_]*[A-Z0-9]\b' "$REPO_ROOT/$VITE_CONFIG" 2>/dev/null || true
+    } | LC_ALL=C sort -u
 }
 
 exported_vars() {
@@ -61,14 +73,14 @@ exported_vars() {
 run_check() {
     local reads exports v
     reads="$(read_vars)"
-    exports="$(exported_vars | grep -vxF "$EXCLUDED" || true)"
+    exports="$(exported_vars)"
 
     if [ -z "$reads" ] && [ -z "$exports" ]; then
         violation "found no VITE_* variables in either $SRC_DIR or $BUILD_SCRIPT — this check is inspecting nothing"
         return
     fi
 
-    info "read by $SRC_DIR:      $(printf '%s' "$reads" | tr '\n' ' ')"
+    info "read by $SRC_DIR, $INDEX_HTML and $VITE_CONFIG: $(printf '%s' "$reads" | tr '\n' ' ')"
     info "exported by $BUILD_SCRIPT: $(printf '%s' "$exports" | tr '\n' ' ')"
 
     for v in $reads; do
@@ -78,7 +90,7 @@ run_check() {
 
     for v in $exports; do
         printf '%s\n' "$reads" | grep -qxF "$v" ||
-            violation "$v is exported by $BUILD_SCRIPT but read by nothing in $SRC_DIR — remove it or wire it up"
+            violation "$v is exported by $BUILD_SCRIPT but read by nothing in $SRC_DIR, $INDEX_HTML or $VITE_CONFIG — remove it or wire it up"
     done
 }
 

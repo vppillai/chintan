@@ -6,14 +6,20 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <meta name="description" content="Speak a thought. It files itself." />
+    <!--
+      The name and the sentence come from the instance's YAML, exported by the
+      deploy as VITE_APP_*; Vite substitutes the percent-wrapped placeholders
+      below at build time, and vite.config.ts defines the same variables with
+      defaults so an undriven build gets "Chintan" rather than a placeholder.
+    -->
+    <meta name="description" content="%VITE_APP_DESCRIPTION%" />
     <meta name="color-scheme" content="light dark" />
     <!-- iOS standalone: without these the app opens in Safari chrome from the
          home screen, and the status bar sits over the header. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Chintan" />
+    <meta name="apple-mobile-web-app-title" content="%VITE_APP_SHORT_NAME%" />
     <!--
       Base-absolute, not relative. A bare `icon-192.png` resolves against the
       *document's* directory, so on a deep link such as /chintan/dev/notes/x it
@@ -23,7 +29,7 @@
     -->
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="%BASE_URL%icon-192.png" />
-    <title>Chintan</title>
+    <title>%VITE_APP_NAME%</title>
     <script type="text/javascript">
       // Undoes the redirect public/404.html made for a path GitHub Pages has
       // no server-side route for, restoring the real URL before the router

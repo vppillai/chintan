@@ -4,6 +4,7 @@ import { Outlet, useLocation } from 'react-router';
 import { ROUTES } from '@/app/routes.ts';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
+import { config } from '@/config/env.ts';
 import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
 import { useAuthGate } from '@/features/auth/useAuth.ts';
 import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
@@ -76,7 +77,7 @@ export function AppShell() {
     return (
       <div className="app" data-screen="signed-out" data-signed-out="true">
         <header className="app__banner">
-          <span className="app__wordmark">Chintan</span>
+          <span className="app__wordmark">{config.appName}</span>
         </header>
         <main id="main" ref={mainRef} tabIndex={-1} className="app__main" aria-label="Sign in">
           <SignedOutScreen {...auth} />
@@ -93,7 +94,7 @@ export function AppShell() {
 
       <div className="app" data-screen={screen}>
         <header className="app__banner">
-          <span className="app__wordmark">Chintan</span>
+          <span className="app__wordmark">{config.appName}</span>
           <OfflineBanner />
         </header>
 

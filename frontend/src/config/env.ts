@@ -8,6 +8,8 @@
  * new endpoint is a new bundle hash.
  */
 
+import { DEFAULT_APP_DESCRIPTION, DEFAULT_APP_NAME } from './identity.ts';
+
 export interface AppConfig {
   apiUrl: string;
   userPoolId: string;
@@ -22,6 +24,15 @@ export interface AppConfig {
    * build rather than an empty string or `undefined` on screen.
    */
   version: string;
+  /**
+   * What the app calls itself, from the instance's YAML by way of
+   * VITE_APP_NAME: the wordmark, the signed-out screen's title, the About
+   * heading. The document title and the manifest read the same variable at
+   * build time, so all of them agree by construction. See `identity.ts`.
+   */
+  appName: string;
+  /** The sentence under the name: the About lede and the signed-out hint. */
+  appDescription: string;
 }
 
 /** Shown wherever a build has no CI-injected version, which is every local one. */
@@ -37,6 +48,20 @@ function required(value: string | undefined, name: string): string {
   return '';
 }
 
+/**
+ * Like `required`, for the identity: a build the deploy script did not drive has
+ * a perfectly good default, so this is a note rather than a failure. It only
+ * fires outside a Vite build — `vite.config.ts` defines these three variables
+ * with the same defaults, so a bundle never reaches this branch.
+ */
+function named(value: string | undefined, name: string, fallback: string): string {
+  if (value && value.trim().length > 0) return value.trim();
+  if (import.meta.env.DEV) {
+    console.warn(`[config] ${name} is not set; using "${fallback}".`);
+  }
+  return fallback;
+}
+
 function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
@@ -50,6 +75,12 @@ export const config: AppConfig = {
   ),
   instance: import.meta.env.VITE_INSTANCE ?? 'dev',
   version: import.meta.env.VITE_VERSION || LOCAL_VERSION,
+  appName: named(import.meta.env.VITE_APP_NAME, 'VITE_APP_NAME', DEFAULT_APP_NAME),
+  appDescription: named(
+    import.meta.env.VITE_APP_DESCRIPTION,
+    'VITE_APP_DESCRIPTION',
+    DEFAULT_APP_DESCRIPTION,
+  ),
 };
 
 export function isConfigured(candidate: AppConfig = config): boolean {

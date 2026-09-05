@@ -13,15 +13,18 @@ import {
 import { beginSignIn } from './useAuth.ts';
 
 /**
- * "Sign in with a passkey", on You.
+ * "Passkeys", on You.
  *
  * Cognito's managed login never offers to register a passkey after a password
  * sign-in — it only offers to *use* one that already exists — so nobody ever
  * gets one unless something sends them to the page that makes it. This card
  * is that something. The ceremony cannot run in the app (the relying party is
  * Cognito's domain, see `passkeys.ts`), so the button is a hand-off to the
- * managed login's own `/passkeys/add` page, and the paragraph says so rather
- * than pretending the app did it.
+ * managed login's own `/passkeys/add` page, and the lead sentence says so
+ * rather than pretending the app did it. The heading is the noun, not the
+ * sign-in page's own "Sign in with a passkey" button: that is what appears
+ * *after* this card has done its work, and naming the section after it read
+ * as though signing in happened here.
  *
  * The answer comes back on the URL. `usePasskeyReturn` moves it here as
  * `?passkey=…`, and this card renders one sentence per outcome. The dismiss
@@ -51,8 +54,14 @@ export function PasskeyCard({
   return (
     <section className="settings-group" aria-labelledby={headingId}>
       <h2 id={headingId} className="settings-group__title">
-        Sign in with a passkey
+        Passkeys
       </h2>
+
+      <p className="settings-group__note">
+        A passkey is set up on Cognito&rsquo;s sign-in page, not here: it belongs to that
+        page&rsquo;s domain, so the app cannot register one itself. Once you have added one, the
+        sign-in page offers <em>Sign in with a passkey</em> in place of your password.
+      </p>
 
       {result === 'success' && (
         <p className="passkey-result" role="status">
@@ -103,8 +112,8 @@ export function PasskeyCard({
 
       {!supported ? (
         <p className="settings-group__note" role="note">
-          This browser cannot create passkeys. Open Chintan in Safari, Chrome or Edge on this
-          device to set one up.
+          This browser cannot create passkeys. Open {config.appName} in Safari, Chrome or Edge
+          on this device to set one up.
         </p>
       ) : (
         <button
@@ -125,10 +134,7 @@ export function PasskeyCard({
       )}
 
       <p className="settings-group__note">
-        Passkeys are made on the Cognito sign-in page, not in the app — the passkey belongs to
-        that page&rsquo;s domain, so only it may create one. Once added, the sign-in page offers
-        it in place of your password. To remove a passkey, delete it from this device&rsquo;s own
-        passkey manager.
+        To remove a passkey, delete it from this device&rsquo;s own passkey manager.
       </p>
     </section>
   );

@@ -18,6 +18,8 @@ const SETTINGS: AppConfig = {
   cognitoDomain: 'https://cognito.test',
   instance: 'dev',
   version: 'test',
+  appName: 'Chintan',
+  appDescription: 'Speak a thought. It files itself.',
 };
 
 /**

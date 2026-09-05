@@ -12,13 +12,12 @@
 name: dev
 environment: staging
 site_path: dev-staging
-display_name: Chintan Dev (staging)
-pwa:
-  name: Chintan Staging
-  short_name: Chintan-stg
-  description: Voice brain-dump notes (staging)
-  theme_color: "#1B4332"
-  background_color: "#F7F3EB"
+
+# Named so an installed staging icon and its tab cannot be mistaken for prod.
+# The display name is too long for a home-screen label, hence the short name.
+display_name: Chintan (staging)
+short_name: Chintan stg
+description: Speak a thought. It files itself.
 
 # Instance-wide, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1,
 # so this is $2/day — lower than prod because nothing here is user data and a smoke

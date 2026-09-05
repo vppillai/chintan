@@ -1,11 +1,11 @@
 name: dev
-display_name: Chintan Dev
-pwa:
-  name: Chintan
-  short_name: Chintan
-  description: Voice brain-dump notes
-  theme_color: "#1B4332"
-  background_color: "#F7F3EB"
+
+# What the app calls itself: the document title, the PWA manifest's name, the
+# shell's wordmark and the heading of About all come from here at build time.
+# `short_name` (the home-screen label, 12 characters at most) defaults to it.
+# Colours are not configured per instance; the design tokens own them.
+display_name: Chintan
+description: Speak a thought. It files itself.
 
 # Instance-wide, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1,
 # so this is $5/day — the same as the template default, written out so the
