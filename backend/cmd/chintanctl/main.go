@@ -45,7 +45,10 @@ Commands:
              objects, with a content hash per object.
   restore    Inverse of backup. Verifies every hash before it writes anything.
   reconcile  Report orphans in both directions: objects with no index row, and
-             index rows whose objects are gone.
+             index rows whose objects are gone; captures filed into a note
+             that has no row; and rows written before their attributes were
+             promoted, which the app lists poorly or not at all. --apply
+             deletes the first three and re-promotes the last.
   erase      Irreversibly delete one tenant everywhere, and report what went.
   backfill-search-text
              Fill in the search_text attribute of every note row from its

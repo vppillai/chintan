@@ -315,6 +315,22 @@ func (s *DynamoStore) PutSettings(ctx context.Context, tenantID string, settings
 
 // ---------------------------------------------------------------- notes
 
+// NoteItemAttributes is the item PutNote writes for n, and CaptureItemAttributes
+// the item PutCapture writes for c. They are exported for one caller:
+// `chintanctl reconcile`, which repairs a row written before these attributes
+// were promoted (August 2026) by writing the promoted set back onto it. The
+// command could spell the attribute names itself, and did for search_text; a
+// second spelling of thirty names is thirty ways for the store and its repair
+// tool to disagree, and this is how they agree by construction.
+func NoteItemAttributes(tenantID string, n model.NoteIndex) (map[string]types.AttributeValue, error) {
+	return noteItemAttrs(tenantID, n)
+}
+
+// CaptureItemAttributes: see NoteItemAttributes.
+func CaptureItemAttributes(c model.CaptureIndex) (map[string]types.AttributeValue, error) {
+	return captureItemAttrs(c)
+}
+
 func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.AttributeValue, error) {
 	blob, err := json.Marshal(n)
 	if err != nil {

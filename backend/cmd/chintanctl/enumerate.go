@@ -255,7 +255,12 @@ func noteFromItem(it Item) (model.NoteIndex, error) {
 			return n, nil
 		}
 	}
+	// A blob without an id, or no blob: the promoted attributes are all there
+	// is, and the sort key is the one identity a row cannot lack.
 	n.ID = it.Str("note_id")
+	if n.ID == "" {
+		n.ID = strings.TrimPrefix(it.SK(), "NOTE#")
+	}
 	n.CleanedBody = it.Str("cleaned_body")
 	n.Title = it.Str("title")
 	n.UpdatedAt = it.Str("updated_at")
@@ -274,7 +279,11 @@ func noteFromItem(it Item) (model.NoteIndex, error) {
 	return n, nil
 }
 
-// captureFromItem decodes the capture record, same contract as noteFromItem.
+// captureFromItem decodes the capture record, same contract as noteFromItem:
+// the blob when it identifies itself, the promoted attributes otherwise, and
+// the sort key when neither names the capture. A row written in August 2026 is
+// the blob alone, so what the blob says about note_id is what reconcile
+// judges it by.
 func captureFromItem(it Item) (model.CaptureIndex, error) {
 	var c model.CaptureIndex
 	if blob := it.Str("data"); blob != "" {
@@ -286,6 +295,9 @@ func captureFromItem(it Item) (model.CaptureIndex, error) {
 		}
 	}
 	c.ID = it.Str("capture_id")
+	if c.ID == "" {
+		c.ID = strings.TrimPrefix(it.SK(), "CAPTURE#")
+	}
 	c.NoteID = it.Str("note_id")
 	c.Status = model.CaptureStatus(it.Str("status"))
 	c.CreatedAt = it.Str("created_at")

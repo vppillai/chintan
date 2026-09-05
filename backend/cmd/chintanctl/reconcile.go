@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -38,7 +39,27 @@ const (
 	// note left its captures behind; the app lists captures through their
 	// note, so these are unreachable and cost storage for nothing. It is the
 	// one finding whose repair deletes an index row — see runReconcile.
+	//
+	// In production this is also what "delete forever" left behind on
+	// 2026-09-05: the purge listed each note's captures through GSI1, and a
+	// row written in August 2026 — the `data` blob and nothing promoted — is
+	// not in that index at all. The API has since learned to read such rows
+	// from the base table; this finding is how the rows it missed are found.
 	findingDanglingCapture = "dangling_capture"
+	// findingUnlistedNote is a NOTE row without the promoted attributes the
+	// notes list projects and filters on (note_id, deleted_at, updated_at,
+	// purge_after_epoch…): a row written before promotion (August 2026),
+	// which the list has to fetch whole by a second read and can only order
+	// by whatever the blob says. Its repair writes the promoted set back onto
+	// the row from the blob — the same attributes internal/repository writes —
+	// and touches neither the blob nor the version.
+	findingUnlistedNote = "unlisted_note"
+	// findingUnindexedCapture is a CAPTURE row without GSI1 keys, invisible
+	// to every note-scoped read: the note's Recordings tab, a move, and the
+	// purge cascade before it learned to read the base table. Same vintage
+	// and same repair as an unlisted note; a capture whose note is gone is a
+	// dangling capture instead, and is deleted rather than re-indexed.
+	findingUnindexedCapture = "unindexed_capture"
 )
 
 type finding struct {
@@ -128,7 +149,7 @@ func cmdReconcile(ctx context.Context, args []string, stdout, stderr io.Writer, 
 
 // repairPlan says what --apply would do, in the words the banner prints.
 func (r *reconcileResult) repairPlan() string {
-	orphans, dangling, danglingObjects := 0, 0, 0
+	orphans, dangling, danglingObjects, unlisted, unindexed := 0, 0, 0, 0, 0
 	for _, f := range r.Findings {
 		if !f.Repairable {
 			continue
@@ -137,6 +158,10 @@ func (r *reconcileResult) repairPlan() string {
 		case findingDanglingCapture:
 			dangling++
 			danglingObjects += len(f.Objects)
+		case findingUnlistedNote:
+			unlisted++
+		case findingUnindexedCapture:
+			unindexed++
 		default:
 			orphans++
 		}
@@ -144,6 +169,9 @@ func (r *reconcileResult) repairPlan() string {
 	plan := fmt.Sprintf("delete %d orphaned object(s)", orphans)
 	if dangling > 0 {
 		plan += fmt.Sprintf(" and %d dangling capture row(s) with %d object(s)", dangling, danglingObjects)
+	}
+	if unlisted > 0 || unindexed > 0 {
+		plan += fmt.Sprintf("; re-promote the attributes of %d note row(s) and %d capture row(s)", unlisted, unindexed)
 	}
 	return plan
 }
@@ -173,7 +201,21 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 	for _, tenantID := range tenants {
 		tctx := obs.WithTenant(ctx, tenantID)
 
-		idx, err := buildIndex(tctx, e.Part, tenantID, nil)
+		// The raw rows that predate attribute promotion, kept by sort key so
+		// the repair can rewrite exactly what it read. Judged on the row, not
+		// the decoded model: the model cannot say whether note_id was promoted
+		// or recovered from the blob.
+		legacy := map[string]Item{}
+		idx, err := buildIndex(tctx, e.Part, tenantID, func(it Item) error {
+			sk := it.SK()
+			switch {
+			case strings.HasPrefix(sk, "NOTE#") && !hasAttr(it, "note_id"):
+				legacy[sk] = it
+			case strings.HasPrefix(sk, "CAPTURE#") && !hasAttr(it, "gsi1pk"):
+				legacy[sk] = it
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -310,6 +352,34 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			})
 		}
 
+		legacySKs := make([]string, 0, len(legacy))
+		for sk := range legacy {
+			legacySKs = append(legacySKs, sk)
+		}
+		sort.Strings(legacySKs)
+		for _, sk := range legacySKs {
+			if id, ok := strings.CutPrefix(sk, "NOTE#"); ok {
+				n := idx.Notes[id]
+				res.Findings = append(res.Findings, finding{
+					Kind: findingUnlistedNote, TenantID: tenantID, SK: sk,
+					Detail:     "row carries only the record blob; " + describeNoteShelf(n),
+					Repairable: true,
+				})
+				continue
+			}
+			id := strings.TrimPrefix(sk, "CAPTURE#")
+			if _, isDangling := dangling[id]; isDangling {
+				// Deleted by the finding above; nothing to re-index.
+				continue
+			}
+			res.Findings = append(res.Findings, finding{
+				Kind: findingUnindexedCapture, TenantID: tenantID, SK: sk,
+				Owner:      "NOTE#" + idx.Captures[id].NoteID,
+				Detail:     "row carries no GSI1 keys, so no note-scoped read can find it",
+				Repairable: true,
+			})
+		}
+
 		obs.Log(tctx).Info("reconciled tenant",
 			slog.Int("items", idx.ItemCount),
 			slog.Int("objects", len(present)),
@@ -326,6 +396,33 @@ func runReconcile(ctx context.Context, e *env, explicitTenants []string, apply b
 			continue
 		}
 		switch f.Kind {
+		case findingUnlistedNote, findingUnindexedCapture:
+			// A conditional SET of the promoted attributes, the write
+			// backfill-search-text uses: the blob and the version are left as
+			// they are, so a row the API rewrote between the read and here is
+			// skipped and reported rather than overwritten.
+			it, ok, err := e.Part.Get(ctx, tenantPK(f.TenantID), f.SK)
+			if err != nil {
+				return res, err
+			}
+			if !ok {
+				f.Detail += "; gone before --apply reached it"
+				continue
+			}
+			set, err := promotedAttributes(f.TenantID, it)
+			if err != nil {
+				return res, err
+			}
+			err = e.Part.Update(ctx, it.PK(), it.SK(), set, it.Num("version"))
+			if errors.Is(err, ErrItemChanged) {
+				f.Detail += "; changed between the read and the write, not touched"
+				continue
+			}
+			if err != nil {
+				return res, err
+			}
+			obs.Log(ctx).Info("re-promoted a legacy row",
+				slog.String("sk", f.SK), slog.Int("attributes", len(set)))
 		case findingDanglingCapture:
 			// Objects first, then the row, the order erase uses: a run
 			// interrupted between the two leaves a row that the next run
