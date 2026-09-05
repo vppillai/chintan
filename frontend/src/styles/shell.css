@@ -2390,11 +2390,14 @@
   border-radius: var(--radius-full);
 }
 
+/* Three segments across a 280 px column on the narrowest phone: the side
+   padding is the track's own, and the label never wraps — a two-line tab
+   reads as two tabs. */
 .note-tabs__tab {
   flex: 1 1 0;
   min-inline-size: 0;
   min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
   border-radius: var(--radius-full);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -2423,6 +2426,14 @@
 
 .note-tabs__tab[aria-selected='true'] .note-tabs__count {
   color: var(--color-muted);
+}
+
+/* On a 320 px phone the three labels fill the track on their own; the count
+   is the one thing that can go, and the tab still says what it is. */
+@media (max-width: 22.5em) {
+  .note-tabs__count {
+    display: none;
+  }
 }
 
 /* --------------------------------------------------------------------------
