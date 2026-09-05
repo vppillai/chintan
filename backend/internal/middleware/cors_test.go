@@ -10,6 +10,7 @@ import (
 func corsResponse(t *testing.T, allowed, origin, method string) *httptest.ResponseRecorder {
 	t.Helper()
 	h := CORS(allowed)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Reached-Handler", r.Method)
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(method, "/v1/notes", nil)
@@ -21,16 +22,19 @@ func corsResponse(t *testing.T, allowed, origin, method string) *httptest.Respon
 	return w
 }
 
-// Advertising X-User-ID is what made the impersonation header reachable from a
-// browser. It must never reappear in the allowlist.
-func TestCORSDoesNotAdvertiseUserIDHeader(t *testing.T) {
-	w := corsResponse(t, "https://app.example", "https://app.example", http.MethodGet)
-	got := w.Header().Get("Access-Control-Allow-Headers")
-	if strings.Contains(strings.ToLower(got), "x-user-id") {
-		t.Fatalf("Access-Control-Allow-Headers still advertises X-User-ID: %q", got)
-	}
-	if !strings.Contains(got, "Authorization") {
-		t.Fatalf("Authorization must remain allowed: %q", got)
+// The allowed headers and methods live in one place — the gateway's
+// CorsConfiguration in infrastructure/template.yaml — so the middleware
+// declares neither. A second list here is how the two once disagreed (three
+// headers against seven), and how X-User-ID, a header the server trusted, was
+// once advertised to every browser.
+func TestCORSDeclaresNoHeaderOrMethodList(t *testing.T) {
+	for _, method := range []string{http.MethodGet, http.MethodOptions} {
+		w := corsResponse(t, "https://app.example", "https://app.example", method)
+		for _, h := range []string{"Access-Control-Allow-Headers", "Access-Control-Allow-Methods", "Access-Control-Max-Age"} {
+			if got := w.Header().Get(h); got != "" {
+				t.Errorf("%s: %s = %q; the list belongs to the gateway's CorsConfiguration alone", method, h, got)
+			}
+		}
 	}
 }
 
@@ -62,9 +66,17 @@ func TestCORSWildcardConfigurationReflectsNothing(t *testing.T) {
 	}
 }
 
-func TestCORSPreflightShortCircuits(t *testing.T) {
+// A preflight that reaches the Lambda is not answered by the middleware: in
+// front of the gateway none arrives (CorsConfiguration answers them), and
+// without the gateway the request goes on to the handler like any other, so
+// a local run can see what the router makes of it rather than a 204 that hides
+// it.
+func TestCORSPassesAPreflightThroughToTheHandler(t *testing.T) {
 	w := corsResponse(t, "https://app.example", "https://app.example", http.MethodOptions)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("status=%d", w.Code)
+	if got := w.Header().Get("X-Reached-Handler"); got != http.MethodOptions {
+		t.Fatalf("the handler did not see the OPTIONS request (reached=%q, status=%d)", got, w.Code)
+	}
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example" {
+		t.Errorf("allow-origin on the passed-through preflight = %q", got)
 	}
 }
