@@ -132,8 +132,10 @@ type harnessOpts struct {
 	// capture parks at needs_target instead of inventing a note.
 	noNotes bool
 	// routeAttemptTimeout shortens each routing attempt; zero keeps the
-	// pipeline's default.
+	// pipeline's default. stageTimeout does the same for the transcription,
+	// cleanup and clean-note deadlines together.
 	routeAttemptTimeout time.Duration
+	stageTimeout        time.Duration
 	// counter, when set, is the spend counter the breaker adds to, so a test
 	// can read back what the day was charged.
 	counter *memCounter
@@ -183,6 +185,9 @@ func newHarness(t *testing.T, opts harnessOpts) *harness {
 		LLMProvider:         "openai",
 		LLMModel:            "test-model",
 		RouteAttemptTimeout: opts.routeAttemptTimeout,
+		TranscribeTimeout:   opts.stageTimeout,
+		CleanupTimeout:      opts.stageTimeout,
+		CleanNoteTimeout:    opts.stageTimeout,
 		Now:                 clock.Now,
 	}
 	if !opts.noNotes {

@@ -109,13 +109,31 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		},
 		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
-		out, err := p.cfg.LLM.CleanNote(ctx, mode, body)
+		// The deadline is the call's, not the reservation's: breaker.Do
+		// releases on the outer context, which outlives this one.
+		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanNoteTimeout)
+		defer cancel()
+		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body)
 		if err != nil {
 			return breaker.Result{}, err
 		}
 		cleaned = out
 		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
 	})
+	if isDeadline(err) {
+		// Not a verdict: the model stalled, or the invocation is ending. No
+		// error is written to the row — the previous view and its stale flag
+		// stand — and Lambda's retry runs the whole task again, which is what
+		// an idempotent task is for. Same rule as handleProviderError.
+		stalled := ctx.Err() == nil
+		log.Warn("clean-note: provider call ran out of time; leaving the task for the retry",
+			slog.Bool("stage_deadline", stalled),
+			slog.String("error", err.Error()))
+		if stalled {
+			obs.Count(ctx, "ProviderTimedOut", map[string]string{"Stage": "clean_note"})
+		}
+		return fmt.Errorf("pipeline: clean-note: provider call ran out of time: %w", err)
+	}
 	if err != nil {
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
