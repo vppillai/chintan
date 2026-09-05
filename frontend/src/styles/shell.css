@@ -3094,7 +3094,14 @@
   box-shadow: var(--shadow-sheet);
 }
 
-.selection-bar__row {
+/* Two lines, always: the count and Select all, then the actions and Cancel.
+   See the component for why a wrap that falls differently per screen is worse. */
+.selection-bar__toolbar {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.selection-bar__line {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
