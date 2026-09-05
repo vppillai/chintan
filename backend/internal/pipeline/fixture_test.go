@@ -43,8 +43,8 @@ func (m *memCounter) total() int64 {
 }
 
 // newBreaker builds a breaker with the given instance-wide cap in
-// microdollars. A cap of 0 counts without enforcing, which is the default for
-// a fresh install.
+// microdollars. A cap of 0 counts without enforcing, which is what an
+// instance that deliberately set DailySpendCapMicros to 0 runs with.
 func newBreaker(capMicros int64) *breaker.Breaker {
 	return breaker.New(newMemCounter(), meter.DefaultPrices, capMicros)
 }

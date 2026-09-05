@@ -26,11 +26,11 @@
 #   monthly_budget_usd             AWS Budgets limit for this stack
 #   log_retention_days             CloudWatch retention
 #   daily_spend_cap_micros         INSTANCE-WIDE daily provider spend ceiling,
-#                                  in MICRODOLLARS (1000000 = $1); 0 or absent
-#                                  means the breaker records and enforces
-#                                  nothing. A tenant may set a lower cap of its
-#                                  own; the breaker enforces whichever is lower,
-#                                  so this is a ceiling, not a per-tenant budget
+#                                  in MICRODOLLARS (1000000 = $1). Absent means
+#                                  the template default, $5/day; an explicit 0
+#                                  disables the cap (the breaker records and
+#                                  enforces nothing, and the spend-cap alarm is
+#                                  not created) — do that only deliberately
 #   refresh_token_validity_days    Cognito refresh token lifetime
 #
 # Two files may share a `name` as long as their `environment` differs: that is
@@ -132,8 +132,9 @@ for path in sorted(config_dir.glob("*.yaml")):
         "AlarmEmail": doc.get("alarm_email"),
         "MonthlyBudgetUSD": doc.get("monthly_budget_usd"),
         "LogRetentionDays": doc.get("log_retention_days"),
-        # MICRODOLLARS: 1000000 = $1. Absent here means the template default of
-        # 0, which leaves HasSpendCap false and the spend-cap alarm uncreated.
+        # MICRODOLLARS: 1000000 = $1. Absent here means the template default,
+        # $5/day (5000000). An explicit 0 disables the cap and leaves
+        # HasSpendCap false and the spend-cap alarm uncreated.
         "DailySpendCapMicros": doc.get("daily_spend_cap_micros"),
         "RefreshTokenValidityDays": doc.get("refresh_token_validity_days"),
         # CloudWatch bills alarms beyond ten alarm-months, and this template

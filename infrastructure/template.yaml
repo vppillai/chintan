@@ -122,16 +122,20 @@ Parameters:
 
   DailySpendCapMicros:
     Type: Number
-    Default: 0
+    Default: 5000000
     MinValue: 0
     MaxValue: 1000000000
     Description: >
       Instance-wide, per-day provider spend ceiling in MICRODOLLARS — 1000000
       is one US dollar, so a ten-dollar day is 10000000. One counter for the
       whole instance, the SPEND#<day> row in the table; every paid call
-      reserves against it first. 0 means the counter still records every call
-      but the breaker enforces nothing, which is the default because a cap
-      that is guessed at is worse than one that is chosen. The ceiling here is
+      reserves against it first. The default is $5/day, about a hundred times
+      a single user's heaviest day, so a fresh instance is bounded before
+      anyone has thought about it: a runaway retry loop or a leaked login
+      stops at five dollars, not at the monthly budget email. 0 disables the
+      cap — the counter still records every call, the breaker enforces nothing
+      and the spend-cap alarm is not created. Do this only deliberately, for an
+      instance whose bill is bounded some other way. The ceiling here is
       $1000/day, high enough never to bind and low enough to catch a
       fat-fingered extra zero.
 

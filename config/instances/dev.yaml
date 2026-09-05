@@ -8,12 +8,13 @@ pwa:
   background_color: "#F7F3EB"
 
 # Instance-wide, per-day provider spend ceiling in MICRODOLLARS: 1000000 = $1,
-# so this is $5/day. One SPEND#<day> counter for the whole instance; the worker
-# reserves against it before every paid call and a capture that would cross it
-# fails with status spend_capped. Without a non-zero value here the template's
-# HasSpendCap is false and the chintan-dev-prod-spend-cap-tripped alarm is never
-# created, which leaves a runaway provider loop bounded only by the monthly
-# Budgets email.
+# so this is $5/day — the same as the template default, written out so the
+# number is chosen here rather than inherited. One SPEND#<day> counter for the
+# whole instance; the worker reserves against it before every paid call and a
+# capture that would cross it fails with status spend_capped. An explicit 0
+# disables the cap: the template's HasSpendCap goes false and the
+# chintan-dev-prod-spend-cap-tripped alarm is never created, which leaves a
+# runaway provider loop bounded only by the monthly Budgets email.
 daily_spend_cap_micros: 5000000
 
 # Alarms default on: API function errors, the worker dead-letter queue (a
