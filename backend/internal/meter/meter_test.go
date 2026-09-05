@@ -97,3 +97,64 @@ func TestDefaultPricesCoverBothProvidersAndBothTokenKinds(t *testing.T) {
 		t.Fatal("openai output tokens are unpriced in DefaultPrices")
 	}
 }
+
+// Resolve is the start-up check's question: does this provider and model
+// price at all, and from which row. The worker refuses to start on
+// ResolvedNone, because a zero price is a cap that enforces nothing.
+func TestResolveNamesTheRowACallWouldBePricedFrom(t *testing.T) {
+	p := PriceTable{
+		Key("groq", "*"):             {UnitAudioSeconds: 10},
+		Key("groq", "whisper-large"): {UnitAudioSeconds: 25},
+		Key("openai", "minimax-m3"):  {UnitInputTokens: 1},
+	}
+	cases := []struct {
+		provider, model string
+		want            Resolution
+	}{
+		{"groq", "whisper-large", ResolvedExact},
+		{"  GROQ ", "Whisper-Large", ResolvedExact},
+		{"groq", "whisper-tiny", ResolvedWildcard},
+		{"openai", "minimax-m3", ResolvedExact},
+		// A provider with an exact row but no wildcard does not price other
+		// models: that is the configuration the start-up check exists for.
+		{"openai", "gpt-5", ResolvedNone},
+		{"anthropic", "claude", ResolvedNone},
+	}
+	for _, tc := range cases {
+		if got := p.Resolve(tc.provider, tc.model); got != tc.want {
+			t.Errorf("Resolve(%q, %q) = %v, want %v", tc.provider, tc.model, got, tc.want)
+		}
+		if got := p.Resolves(tc.provider, tc.model); got != (tc.want != ResolvedNone) {
+			t.Errorf("Resolves(%q, %q) = %v, want %v", tc.provider, tc.model, got, tc.want != ResolvedNone)
+		}
+	}
+}
+
+// Resolve and CostMicros must agree: a model Resolve says is unpriced is one
+// CostMicros prices at zero, and vice versa.
+func TestResolveAgreesWithCostMicros(t *testing.T) {
+	p := PriceTable{
+		Key("groq", "*"):            {UnitAudioSeconds: 10},
+		Key("openai", "minimax-m3"): {UnitInputTokens: 1},
+	}
+	for _, tc := range []struct{ provider, model string }{
+		{"groq", "whisper-large-v3-turbo"}, {"openai", "minimax-m3"}, {"openai", "other"}, {"nobody", "x"},
+	} {
+		priced := p.CostMicros(tc.provider, tc.model, UnitAudioSeconds, 1)+p.CostMicros(tc.provider, tc.model, UnitInputTokens, 1) > 0
+		if priced != p.Resolves(tc.provider, tc.model) {
+			t.Errorf("%s/%s: CostMicros prices it = %v but Resolves = %v", tc.provider, tc.model, priced, !priced)
+		}
+	}
+}
+
+// The models the template deploys by default resolve exactly, so a fresh
+// install starts and prices at list.
+func TestDefaultPricesResolveTheDeployedModelsExactly(t *testing.T) {
+	for _, tc := range []struct{ provider, model string }{
+		{"groq", "whisper-large-v3-turbo"}, {"openai", "MiniMax-M3"},
+	} {
+		if got := DefaultPrices.Resolve(tc.provider, tc.model); got != ResolvedExact {
+			t.Errorf("DefaultPrices.Resolve(%q, %q) = %v, want ResolvedExact", tc.provider, tc.model, got)
+		}
+	}
+}

@@ -11,7 +11,10 @@ import (
 // maxStorageRows bounds each of the two index walks a storage summary makes.
 // Two thousand captures or notes is far beyond a personal corpus today; a
 // tenant past it gets a summary marked approximate rather than a request that
-// pages through the whole partition on every visit to the You screen.
+// pages through the whole partition on every visit to the You screen. (Each
+// notes page the walk asks for already costs the store a drain of the whole
+// partition — see repository.MaxNotesDrained — so the bound here is on how
+// many times that is paid, not on what one page reads.)
 const maxStorageRows = 2000
 
 // StorageSummary is what a tenant's recordings and notes add up to, computed

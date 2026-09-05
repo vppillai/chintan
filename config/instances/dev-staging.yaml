@@ -24,8 +24,9 @@ pwa:
 # so this is $2/day — lower than prod because nothing here is user data and a smoke
 # test should never approach it. The worker reserves against one SPEND#<day>
 # counter before every paid call and fails a capture that would cross the line
-# with status spend_capped. A zero (or absent) value means count but never
-# enforce, and leaves the spend-cap-tripped alarm uncreated.
+# with status spend_capped. Absent means the template default of $5/day; an
+# explicit 0 means count but never enforce, and leaves the spend-cap-tripped
+# alarm uncreated.
 #
 # The cap itself stays on here even with enable_alarms false: it is enforced in
 # the worker, costs nothing, and is the thing that actually stops a runaway

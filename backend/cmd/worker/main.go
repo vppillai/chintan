@@ -121,6 +121,20 @@ func setup() {
 		log.Fatalf("failed to create OpenAI Cleanup: %v", err)
 	}
 
+	// A model the price table cannot price is a cap that enforces nothing:
+	// meter prices an unknown provider at zero rather than failing the call,
+	// which is right at runtime and wrong at deploy time, where refusing to
+	// start is what gets the row added. Checked here, once, before anything
+	// paid is reachable.
+	for _, m := range []struct{ provider, model string }{
+		{"groq", stt.Model()},
+		{"openai", llm.Model()},
+	} {
+		if err := checkPriced(ctx, meter.DefaultPrices, m.provider, m.model); err != nil {
+			log.Fatalf("%v", err)
+		}
+	}
+
 	// The breaker owns every provider call. It is built here, once, and passed in
 	// — the pipeline refuses to start without it, so there is no build of this
 	// binary in which a paid API is reachable without reserving against the
@@ -194,6 +208,27 @@ func setup() {
 	if err != nil {
 		log.Fatalf("failed to build the aws-cost task: %v", err)
 	}
+}
+
+// checkPriced refuses a provider and model the price table has no row for,
+// exact or wildcard. When the wildcard stands in for the model it says so
+// once, in the log and as PriceWildcardUsed{Provider}, so an operator can see
+// that the instance is being priced at the provider's stand-in rate rather
+// than the model's own — over-reserved by design, but not what the cap was
+// set against.
+func checkPriced(ctx context.Context, prices meter.PriceTable, provider, model string) error {
+	switch prices.Resolve(provider, model) {
+	case meter.ResolvedNone:
+		return fmt.Errorf("no price for %q: add a row for it, or a %q wildcard, to meter.DefaultPrices in backend/internal/meter/meter.go — an unpriced model would make the daily spend cap enforce nothing",
+			meter.Key(provider, model), meter.Key(provider, "*"))
+	case meter.ResolvedWildcard:
+		obs.Log(ctx).Warn("model has no price row of its own; priced at the provider wildcard",
+			slog.String("provider", provider),
+			slog.String("model", model),
+			slog.String("wildcard", meter.Key(provider, "*")))
+		obs.Count(ctx, "PriceWildcardUsed", map[string]string{"Provider": provider})
+	}
+	return nil
 }
 
 func logLevel() slog.Level {

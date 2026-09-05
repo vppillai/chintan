@@ -33,6 +33,10 @@ type STT struct {
 	Duration float64
 	// OnCall runs before the call returns, so a test can advance a clock or block.
 	OnCall func()
+	// HangCalls makes that many leading calls block until their context is
+	// done and answer with its error, the way a stalled provider looks to the
+	// pipeline once the stage deadline fires.
+	HangCalls int
 
 	mu    sync.Mutex
 	calls int
@@ -44,11 +48,16 @@ type STT struct {
 func (f *STT) Transcribe(ctx context.Context, in provider.Audio) (provider.Transcription, error) {
 	f.mu.Lock()
 	f.calls++
+	call := f.calls - 1
 	f.Sources = append(f.Sources, in)
 	f.mu.Unlock()
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if call < f.HangCalls {
+		<-ctx.Done()
+		return provider.Transcription{}, fmt.Errorf("fake stt: groq request: %w", ctx.Err())
 	}
 	if f.Err != nil {
 		return provider.Transcription{}, f.Err
@@ -111,6 +120,10 @@ type LLM struct {
 	Answer  *provider.Answer
 	AskErrs []error
 	AskHang int
+	// HangCalls and NoteHang are AskHang for Cleanup and CleanNote: that many
+	// leading calls block until their context is done.
+	HangCalls int
+	NoteHang  int
 
 	mu    sync.Mutex
 	calls int
@@ -181,10 +194,15 @@ type NoteCall struct {
 func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (provider.Cleaned, error) {
 	f.mu.Lock()
 	f.noteCalls = append(f.noteCalls, NoteCall{Mode: mode, Body: body})
+	call := len(f.noteCalls) - 1
 	f.mu.Unlock()
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if call < f.NoteHang {
+		<-ctx.Done()
+		return provider.Cleaned{}, fmt.Errorf("fake llm: clean-note request: %w", ctx.Err())
 	}
 	if f.NoteErr != nil {
 		return provider.Cleaned{}, f.NoteErr
@@ -212,10 +230,15 @@ func (f *LLM) NoteCalls() []NoteCall {
 func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (provider.Cleaned, error) {
 	f.mu.Lock()
 	f.calls++
+	call := f.calls - 1
 	f.mu.Unlock()
 
 	if f.OnCall != nil {
 		f.OnCall()
+	}
+	if call < f.HangCalls {
+		<-ctx.Done()
+		return provider.Cleaned{}, fmt.Errorf("fake llm: cleanup request: %w", ctx.Err())
 	}
 	if f.Err != nil {
 		return provider.Cleaned{}, f.Err

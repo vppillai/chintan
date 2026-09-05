@@ -57,12 +57,11 @@ const (
 	// an existing note without asking. Below it, the user confirms first.
 	routeConfidenceThreshold = 0.75
 
-	// maxRouteCandidates bounds the note list handed to the router.
+	// maxRouteCandidates bounds the note list handed to the router: the most
+	// recently touched fifty. Both stores list notes in that order over the
+	// whole partition (repository.MaxNotesDrained), so the first page of the
+	// list IS the window; there is no separate pool to drain and cut.
 	maxRouteCandidates = 50
-
-	// maxRouteCandidatePool bounds how many notes are paged through before the
-	// most recent maxRouteCandidates are chosen.
-	maxRouteCandidatePool = 500
 
 	// maxAppendAttempts bounds the ETag-conditional retry when a note body is
 	// being written concurrently.
@@ -91,6 +90,31 @@ const (
 	// the second try, and a third would cost another timeout's worth of the
 	// user's patience for a diminishing return.
 	routeAttempts = 2
+
+	// Per-stage deadlines on the two long provider calls. The HTTP clients
+	// carry an 840 s timeout as the outer bound — just under the worker's 900 s
+	// Lambda limit — and before these existed that was the ONLY bound, so one
+	// stalled transcription held the invocation for fourteen minutes and then
+	// died with it, retried, and could do it twice more. Each stage now gets
+	// what it plausibly needs and no more; the rest of the Lambda's time is
+	// left for the stages after it and for the retry protocol. A deadline
+	// that fires is an infrastructure fault, classified retryable by
+	// handleProviderError, and the retry resumes at the stage whose artefact
+	// is missing — a transcript already in S3 is not transcribed again. See
+	// docs/design/pipeline-deadlines.md.
+	//
+	// Transcription: a twenty-minute recording comes back from Whisper turbo
+	// in well under a minute, so five minutes is several times the worst case
+	// this pipeline accepts (service.MaxCaptureBytes) and still leaves nine
+	// minutes of Lambda for what follows.
+	defaultTranscribeTimeout = 5 * time.Minute
+	// Cleanup rewrites one dictation; the output is about the size of the
+	// input, a few thousand tokens at most. Two minutes is generous.
+	defaultCleanupTimeout = 2 * time.Minute
+	// The whole-note clean reads up to 150 KB and writes up to 200 KB
+	// (model.MaxCleanNoteInputBytes, MaxCleanedBodyBytes), a longer completion
+	// than cleanup by an order of magnitude, so it gets a minute more.
+	defaultCleanNoteTimeout = 3 * time.Minute
 )
 
 // NoteCreator creates the destination note for a capture that has none.
@@ -135,6 +159,12 @@ type Config struct {
 	// AskAttemptTimeout bounds each of the askAttempts model calls of an ask
 	// task. Zero means defaultAskAttemptTimeout; tests shorten it.
 	AskAttemptTimeout time.Duration
+	// TranscribeTimeout, CleanupTimeout and CleanNoteTimeout bound the
+	// transcription, per-capture cleanup and whole-note clean provider calls.
+	// Zero means the default beside each; tests shorten them.
+	TranscribeTimeout time.Duration
+	CleanupTimeout    time.Duration
+	CleanNoteTimeout  time.Duration
 
 	Now func() time.Time
 }
@@ -171,6 +201,15 @@ func New(cfg Config) (*Pipeline, error) {
 	}
 	if cfg.AskAttemptTimeout <= 0 {
 		cfg.AskAttemptTimeout = defaultAskAttemptTimeout
+	}
+	if cfg.TranscribeTimeout <= 0 {
+		cfg.TranscribeTimeout = defaultTranscribeTimeout
+	}
+	if cfg.CleanupTimeout <= 0 {
+		cfg.CleanupTimeout = defaultCleanupTimeout
+	}
+	if cfg.CleanNoteTimeout <= 0 {
+		cfg.CleanNoteTimeout = defaultCleanNoteTimeout
 	}
 	now := cfg.Now
 	if now == nil {
@@ -413,7 +452,12 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		Usage:    meter.Quantities{meter.UnitAudioSeconds: estimateSeconds},
 		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
-		out, err := p.cfg.STT.Transcribe(ctx, provider.Audio{
+		// The deadline applies to the provider call only, as in routeOnce:
+		// breaker.Do releases the reservation on the caller's context, which
+		// is still live when this one has expired.
+		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.TranscribeTimeout)
+		defer cancel()
+		out, err := p.cfg.STT.Transcribe(stageCtx, provider.Audio{
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
 			Language:    language,
@@ -659,20 +703,23 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
 	}
 
-	// Notes are paged, and the router only ever sees the most recent
-	// maxRouteCandidates of them, so the pool has to be drained before it can be
-	// ordered.
-	active, err := repository.DrainPages(ctx, maxRouteCandidatePool, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	// The store orders the list most recently touched first over every note
+	// the tenant has, so the leading maxRouteCandidates are the window the
+	// router should see — the likeliest destinations. Until 2026-09 this
+	// drained a 500-note pool and cut it here, which was only right while the
+	// store's own order was by creation.
+	active, err := repository.DrainPages(ctx, maxRouteCandidates, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
 		return p.cfg.Store.ListNotes(ctx, tenantID, opts)
 	})
 	if err != nil {
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: list notes: %w", err)
 	}
 
-	// Most recently touched notes are the likeliest destinations. Compare parsed
-	// instants, never RFC3339Nano strings: Go trims trailing fractional zeros,
-	// so "…:00Z" sorts above "…:00.1Z" because 'Z' > '.' and the router would
-	// be handed the wrong fifty notes.
+	// Kept as a guard on the order the store promised, and because it is the
+	// place this lesson lives: compare parsed instants, never RFC3339Nano
+	// strings. Go trims trailing fractional zeros, so "…:00Z" sorts above
+	// "…:00.1Z" because 'Z' > '.' and the router would be handed the wrong
+	// fifty notes.
 	sort.SliceStable(active, func(i, j int) bool {
 		return noteTouchedAt(active[i]).After(noteTouchedAt(active[j]))
 	})
@@ -837,7 +884,9 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		},
 		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
-		out, err := p.cfg.LLM.Cleanup(ctx, capture.Mode, source)
+		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanupTimeout)
+		defer cancel()
+		out, err := p.cfg.LLM.Cleanup(stageCtx, capture.Mode, source)
 		if err != nil {
 			return breaker.Result{}, err
 		}
@@ -1258,6 +1307,17 @@ var ErrProviderKeyRejected = errors.New("the provider rejected this instance's A
 // handleProviderError records the capture's verdict and reports whether the
 // invocation itself should be retried.
 //
+// A call that ran out of time is not a verdict on the capture. The stage's own
+// deadline (TranscribeTimeout, CleanupTimeout) firing means the provider
+// stalled, and the invocation ending underneath the call means the same for
+// the Lambda; either way the recording is fine and the same call a minute
+// later usually is too. So the capture is left in the stage's status, nothing
+// is written, and the error goes back to Lambda for its retry, which resumes at
+// this stage because the artefact it was making is still missing. Marking it
+// failed here — which is what happened before the deadlines existed, when the
+// HTTP client's timeout eventually fired — put a permanent "capture failed" in
+// front of the user for a transient stall.
+//
 // A spend cap gets its own status because it is a budget decision, not a fault:
 // telling the user "your daily provider budget is spent" is actionable and
 // "capture failed" is not. Neither outcome asks Lambda to retry — the same call
@@ -1274,6 +1334,22 @@ var ErrProviderKeyRejected = errors.New("the provider rejected this instance's A
 // transition, which is what makes a dead key one email rather than one per
 // capture.
 func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.CaptureIndex, stage string, cause error) error {
+	if isDeadline(cause) {
+		// ctx is the invocation's context. Live here means the stage's own
+		// deadline fired, which is the case worth a counter: it says the
+		// number beside the stage is too small or the provider is stalling.
+		stalled := ctx.Err() == nil
+		obs.Log(ctx).Warn("provider call ran out of time; leaving the capture for the retry",
+			slog.String("capture_id", capture.ID),
+			slog.String("stage", stage),
+			slog.Bool("stage_deadline", stalled),
+			slog.String("error", cause.Error()))
+		if stalled {
+			obs.Count(ctx, "ProviderTimedOut", map[string]string{"Stage": stage})
+		}
+		return fmt.Errorf("pipeline: %s: provider call ran out of time: %w", stage, cause)
+	}
+
 	if errors.Is(cause, breaker.ErrSpendCapExceeded) {
 		obs.Log(ctx).Warn("capture stopped by the daily spend cap",
 			slog.String("capture_id", capture.ID),
@@ -1319,6 +1395,13 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 
 	obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
 	return p.markFailed(ctx, capture, cause)
+}
+
+// isDeadline reports whether a provider call ended because its context did —
+// the stage's deadline, or the invocation's. The providers wrap the transport
+// error with %w and *url.Error unwraps, so errors.Is reaches the sentinel.
+func isDeadline(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
 // providerForStage names the provider a stage's call was made against.
