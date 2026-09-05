@@ -1,7 +1,7 @@
 # Dependabot keeps three things current: the action pins in the workflows
-# (which are full commit SHAs in deploy-*.yaml, so a moved tag cannot reach a
-# job that holds the deploy role), the Go module graph, and the frontend
-# lockfile. Weekly, on one day, so the pull requests arrive together.
+# (full commit SHAs in every workflow, so a moved tag can reach neither a job
+# that holds the deploy role nor a CI gate), the Go module graph, and the
+# frontend lockfile. Weekly, on one day, so the pull requests arrive together.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
