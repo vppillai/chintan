@@ -196,7 +196,7 @@ func (w *recordingInvoker) InvokeCapture(_ context.Context, tenantID, captureID,
 	return nil
 }
 
-func (w *recordingInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+func (w *recordingInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string, mode model.NoteCleanMode, _ string) error {
 	if w.cleanErr != nil {
 		return w.cleanErr
 	}

@@ -55,14 +55,17 @@ func (i *Invoker) InvokeCapture(ctx context.Context, tenantID, captureID, reason
 }
 
 // InvokeCleanNote queues the clean-note task for one note, the same way and
-// with the same retries. The worker invokes itself through this after an
-// append to a note with auto_clean, so the clean runs as its own invocation.
-func (i *Invoker) InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error {
+// with the same retries, carrying the stamp the request left on the row so
+// the run can tell whether it is still the one asked for. The worker invokes
+// itself through this after an append to a note with auto_clean, so the clean
+// runs as its own invocation.
+func (i *Invoker) InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error {
 	return i.invoke(ctx, Invocation{
 		Task:          TaskCleanNote,
 		TenantID:      tenantID,
 		NoteID:        noteID,
 		Mode:          string(mode),
+		RequestedAt:   requestedAt,
 		CorrelationID: obs.CorrelationID(ctx),
 	})
 }

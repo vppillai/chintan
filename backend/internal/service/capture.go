@@ -97,7 +97,9 @@ type Invoker interface {
 	InvokeCapture(ctx context.Context, tenantID, captureID, reason string) error
 	// InvokeCleanNote asks the worker to regenerate the whole-note cleaned
 	// view of noteID in mode. See note_clean.go.
-	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error
+	// requestedAt is the stamp RecordCleanRequest left on the row for this
+	// run; the worker writes only while the row still carries it.
+	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error
 	// InvokeAsk asks the worker to answer the question stored under askID.
 	// See ask.go.
 	InvokeAsk(ctx context.Context, tenantID, askID string) error

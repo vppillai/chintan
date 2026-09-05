@@ -104,7 +104,7 @@ func (s *NotesService) RequestClean(ctx context.Context, userID, noteID string, 
 		obs.Count(ctx, "NoteCleanCoalesced", map[string]string{"Trigger": "user"})
 		return mode, nil
 	}
-	if err := s.worker.InvokeCleanNote(ctx, userID, noteID, mode); err != nil {
+	if err := s.worker.InvokeCleanNote(ctx, userID, noteID, mode, stamped.CleanedRequestedAt); err != nil {
 		ClearCleanRequest(ctx, s.store, userID, stamped)
 		return "", fmt.Errorf("failed to hand the note to the worker: %w", err)
 	}
@@ -213,7 +213,7 @@ func autoCleanAfterBodyWrite(ctx context.Context, store repository.Store, worker
 		obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": "auto"})
 		return
 	}
-	if err := worker.InvokeCleanNote(ctx, userID, note.ID, mode); err != nil {
+	if err := worker.InvokeCleanNote(ctx, userID, note.ID, mode, stamped.CleanedRequestedAt); err != nil {
 		ClearCleanRequest(ctx, store, userID, stamped)
 		obs.Log(ctx).Error("could not hand the note to the worker for auto-clean; the cleaned view stays stale",
 			slog.String("note_id", note.ID),

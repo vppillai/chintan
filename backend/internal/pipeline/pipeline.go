@@ -128,7 +128,7 @@ type NoteCreator interface {
 // NoteCleanInvoker is the slice of service.Invoker the pipeline needs to queue
 // a clean-note task for itself.
 type NoteCleanInvoker interface {
-	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode) error
+	InvokeCleanNote(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, requestedAt string) error
 }
 
 // Config is everything the pipeline needs. Breaker is not optional: a nil one
