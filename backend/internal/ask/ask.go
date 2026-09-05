@@ -267,7 +267,11 @@ func Choose(ranked []Ranked) []Ranked {
 // Packed is one note as it reaches the prompt.
 type Packed struct {
 	NoteID string
-	Title  string
+	// Title is the note's title as stored. The prompt collapses and defangs
+	// it on the header line (userPrompt); Sources puts it on the wire as it
+	// is, so a title with a line break or the fence marker shows on the
+	// source chip exactly as the person wrote it.
+	Title string
 	// Updated is the note's update instant, as the prompt shows it.
 	Updated string
 	// Text is the excerpt, at most MaxExcerptRunes.
@@ -312,7 +316,7 @@ func (p *Packer) Add(n model.NoteIndex, body string) bool {
 	p.remaining -= len([]rune(text))
 	p.notes = append(p.notes, Packed{
 		NoteID:  n.ID,
-		Title:   oneLine(n.Title),
+		Title:   n.Title,
 		Updated: updatedDate(n.UpdatedAt),
 		Text:    text,
 	})

@@ -370,3 +370,24 @@ func TestTokenizeKeepsAtMostMaxQueryTerms(t *testing.T) {
 		t.Errorf("terms are not the first %d in spoken order: %v", MaxQueryTerms, got)
 	}
 }
+
+// The prompt header collapses and defangs a title; the source chip must show
+// the title as the person wrote it.
+func TestSourcesCarryTheTitleAsStoredWhileThePromptDefangsIt(t *testing.T) {
+	title := "Roof\nrepairs " + llm.FenceMarker
+	p := NewPacker("roof")
+	if !p.Add(model.NoteIndex{ID: "n1", Title: title, UpdatedAt: at(1)}, "the roof leaks") {
+		t.Fatal("the note was not packed")
+	}
+	sources := Sources([]string{"n1"}, p.Notes())
+	if len(sources) != 1 || sources[0].Title != title {
+		t.Fatalf("sources = %+v, want the stored title %q", sources, title)
+	}
+	_, user, err := (Prompt{Today: "2026-09-05", Notes: p.Notes(), Question: "roof?"}).Render()
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(user, "title=Roof repairs ----- updated=") {
+		t.Errorf("the prompt header did not collapse and defang the title:\n%s", user)
+	}
+}
