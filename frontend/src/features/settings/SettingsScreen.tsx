@@ -303,9 +303,10 @@ export function SettingsScreen() {
         The read-only spend-cap sentence used to be here. Since v3 step 3 the
         cap is one number for the whole instance, set in the deploy config and
         echoed by the API, so the line said something about the deploy rather
-        than about the person. Their own usage does; the cap is a footnote to it.
+        than about the person. Their own usage does; the cap is mentioned once,
+        without its amount, on About (U13b).
       */}
-      <UsageSection dailyCapMicros={draft.daily_spend_cap_micros ?? 0} />
+      <UsageSection />
 
       <PasskeyCard />
 

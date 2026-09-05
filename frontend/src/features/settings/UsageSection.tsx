@@ -4,6 +4,8 @@ import { useUsage } from '@/api/queries.ts';
 import type { UsageWire } from '@/api/schema.ts';
 
 import {
+  asOfLabel,
+  combinedMicros,
   dayBars,
   dayLabel,
   formatAudioMinutes,
@@ -23,11 +25,18 @@ import {
  * the split by pipeline stage, and a bar per day — from `GET /v1/usage`, the
  * per-tenant accounting the worker writes on every priced provider call.
  *
- * The cap survives as one quiet line beneath, only when it is non-zero: it is
- * still the reason a capture can stop with `spend_capped`, so it belongs next
- * to the numbers it is compared against.
+ * Beneath the providers' figure sits what AWS charges to run the instance
+ * (D6b): the whole instance's month to date, read from the stack's Budget by
+ * a daily worker task, so it carries an as-of and, when the Budget has a
+ * limit, how much of it this is. The two are added into one Total, because
+ * "what does this cost" is the question the section exists to answer.
+ *
+ * The instance's daily spend cap is not named here at all (U13b): it is an
+ * operator's runaway guard, set far above any real day, and a sentence about
+ * it beneath someone's own cents read as a warning. About says, in one line,
+ * that a cap exists and what happens if it is ever reached.
  */
-export function UsageSection({ dailyCapMicros = 0 }: { dailyCapMicros?: number }) {
+export function UsageSection() {
   const headingId = useId();
   const { data, isLoading, isError } = useUsage();
 
@@ -52,30 +61,61 @@ export function UsageSection({ dailyCapMicros = 0 }: { dailyCapMicros?: number }
       {data && <Usage usage={data} />}
 
       <p className="settings-group__note">
-        Provider cost only — what transcription and the language model charged for this
-        account&rsquo;s recordings. It does not include what AWS charges to run the instance.
+        Providers are what transcription and the language model charged for this account&rsquo;s
+        recordings. AWS is what it costs to run the instance for everyone using it, updated once a
+        day.
       </p>
-
-      {dailyCapMicros > 0 && (
-        <p className="settings-group__note">
-          This instance stops taking recordings after{' '}
-          <span className="numeric">{formatDollars(dailyCapMicros)}</span> of provider spend in a
-          day, across everyone using it, and says so rather than failing vaguely.
-        </p>
-      )}
     </section>
   );
 }
 
 function Usage({ usage }: { usage: UsageWire }) {
   const rows = opRows(usage.ops);
+  const aws = usage.aws ?? null;
+  const total = combinedMicros(usage, aws);
 
   return (
     <div className="usage">
-      <p className="usage__total">
-        <span className="numeric usage__figure">{formatDollars(usage.cost_micros)}</span>{' '}
-        <span className="usage__month">in {monthLabel(usage.month)}</span>
-      </p>
+      <dl className="usage__headlines">
+        <div className="usage__headline">
+          <dt className="usage__headline-label">Providers this month</dt>
+          <dd className="usage__headline-figures">
+            <span className="numeric usage__figure">{formatDollars(usage.cost_micros)}</span>{' '}
+            <span className="usage__month">in {monthLabel(usage.month)}</span>
+          </dd>
+        </div>
+
+        <div className="usage__headline">
+          <dt className="usage__headline-label">AWS this month</dt>
+          <dd className="usage__headline-figures">
+            {aws ? (
+              <>
+                <span className="numeric usage__figure">{formatDollars(aws.month_micros)}</span>{' '}
+                <span className="usage__month">
+                  {asOfLabel(aws.as_of)}
+                  {aws.budget_micros !== null && (
+                    <>
+                      {' · '}of{' '}
+                      <span className="numeric">{formatDollars(aws.budget_micros)}</span> budget
+                    </>
+                  )}
+                </span>
+              </>
+            ) : (
+              <span className="usage__unrecorded">AWS cost not recorded yet</span>
+            )}
+          </dd>
+        </div>
+
+        {total !== null && (
+          <div className="usage__headline usage__headline--total">
+            <dt className="usage__headline-label">Total</dt>
+            <dd className="usage__headline-figures">
+              <span className="numeric usage__figure">{formatDollars(total)}</span>
+            </dd>
+          </div>
+        )}
+      </dl>
 
       {usage.calls === 0 ? (
         <p className="settings-group__note">No recordings have been processed this month yet.</p>

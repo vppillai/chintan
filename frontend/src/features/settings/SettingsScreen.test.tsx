@@ -231,17 +231,18 @@ describe('the default transcription language', () => {
  * person; what their own recordings cost does.
  */
 describe('usage this month', () => {
-  it('shows the month’s total in dollars, the split by stage, and the calls and minutes', async () => {
+  it('shows the month’s providers figure in dollars, the split by stage, and the calls and minutes', async () => {
     mountSettings({ usage: USAGE });
 
     // 1371 microdollars, three decimals under a dollar.
     expect(await screen.findByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
+    expect(screen.getByText('Providers this month')).toBeInTheDocument();
     expect(screen.getByText(/in January 2026/)).toBeInTheDocument();
     expect(screen.getByText('3 calls', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
     expect(screen.getByText('0.5 min', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
 
     // The stages, in the order a recording meets them.
-    const labels = screen.getAllByRole('term').map((term) => term.textContent);
+    const labels = Array.from(document.querySelectorAll('.usage__ops dt'), (term) => term.textContent);
     expect(labels).toEqual(['Transcribe', 'Route', 'Clean up']);
     // Transcribe (311) and route (420) both round to nothing; cleanup (640) does not.
     expect(screen.getAllByText('$0.000', { selector: '.usage__op-figures .numeric' })).toHaveLength(2);
@@ -265,16 +266,63 @@ describe('usage this month', () => {
     expect(screen.queryByRole('img', { name: /spend by day/i })).toBeNull();
   });
 
-  it('names the instance’s daily cap beneath, only when there is one', async () => {
-    mountSettings({ settings: { ...STORED, daily_spend_cap_micros: 5_000_000 } });
-    expect(await screen.findByText(/stops taking recordings after/i)).toHaveTextContent('$5.00');
+  /**
+   * "AWS this month" (D6b): the instance's month to date from the stack's
+   * Budget, read once a day by the worker, so it carries how old it is.
+   */
+  it('shows the AWS figure with how old it is, and adds it to the providers in a Total', async () => {
+    vi.useFakeTimers({ now: new Date('2026-01-04T12:00:00Z'), toFake: ['Date'] });
+    try {
+      mountSettings({
+        usage: {
+          ...USAGE,
+          aws: { month_micros: 3_120_000, as_of: '2026-01-04T09:00:00Z', budget_micros: null },
+        },
+      });
+
+      const aws = await screen.findByText('AWS this month');
+      const row = aws.closest('.usage__headline');
+      expect(row).toHaveTextContent('$3.12');
+      expect(row).toHaveTextContent(/as of 3 hours ago/);
+      expect(row).not.toHaveTextContent(/budget/);
+
+      // 3,120,000 + 1,371 microdollars.
+      const total = screen.getByText('Total').closest('.usage__headline');
+      expect(total).toHaveTextContent('$3.12');
+      expect(screen.queryByText(/not recorded yet/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it('does not mention a cap the instance does not enforce', async () => {
-    mountSettings();
+  it('says quietly how much of the budget this is, when the Budget has a limit', async () => {
+    mountSettings({
+      usage: {
+        ...USAGE,
+        aws: { month_micros: 3_120_000, as_of: new Date().toISOString(), budget_micros: 10_000_000 },
+      },
+    });
+
+    const row = (await screen.findByText('AWS this month')).closest('.usage__headline');
+    expect(row).toHaveTextContent(/of \$10\.00 budget/);
+    expect(row).toHaveTextContent(/as of a moment ago/);
+  });
+
+  it('says the AWS cost is not recorded yet, and leaves the Total out, when the API sends null', async () => {
+    mountSettings({ usage: { ...USAGE, aws: null } });
+
+    const row = (await screen.findByText('AWS this month')).closest('.usage__headline');
+    expect(row).toHaveTextContent(/AWS cost not recorded yet/);
+    expect(screen.queryByText('Total')).toBeNull();
+    // The providers' figure is still the one on top.
+    expect(screen.getByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
+  });
+
+  it('never names the instance’s daily cap, even when there is one (U13b)', async () => {
+    mountSettings({ settings: { ...STORED, daily_spend_cap_micros: 5_000_000 } });
     await screen.findByText(/no recordings have been processed/i);
     expect(screen.queryByText(/stops taking recordings/i)).toBeNull();
-    // And the old read-only sentence is gone.
-    expect(screen.queryByText(/daily spending cap/i)).toBeNull();
+    expect(screen.queryByText(/\bcap\b/i)).toBeNull();
+    expect(screen.queryByText('$5.00')).toBeNull();
   });
 });

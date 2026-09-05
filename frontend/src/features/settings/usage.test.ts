@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { usage, usageEmpty } from '@/api/__fixtures__/responses.ts';
 
 import {
+  asOfLabel,
+  combinedMicros,
   currentMonth,
   dayBars,
   dayLabel,
@@ -85,5 +87,30 @@ describe('the split by stage', () => {
     const rows = opRows({ summarise: { cost_micros: 7, calls: 1 } });
     expect(rows).toHaveLength(1);
     expect(rows[0]?.label).toBe('summarise');
+  });
+});
+
+describe('the AWS line', () => {
+  const now = new Date('2026-09-04T12:00:00Z');
+
+  it('says roughly how old the figure is, in coarse steps, because it is read once a day', () => {
+    expect(asOfLabel('2026-09-04T11:59:30Z', now)).toBe('as of a moment ago');
+    expect(asOfLabel('2026-09-04T11:40:00Z', now)).toBe('as of 20 minutes ago');
+    expect(asOfLabel('2026-09-04T11:00:00Z', now)).toBe('as of an hour ago');
+    expect(asOfLabel('2026-09-04T09:00:00Z', now)).toBe('as of 3 hours ago');
+    expect(asOfLabel('2026-09-03T12:00:00Z', now)).toBe('as of yesterday');
+    expect(asOfLabel('2026-09-01T12:00:00Z', now)).toBe('as of 3 days ago');
+  });
+
+  it('shows an unreadable timestamp as sent rather than dropping it', () => {
+    expect(asOfLabel('soon', now)).toBe('as of soon');
+  });
+
+  it('adds AWS to the providers only when AWS has been recorded', () => {
+    const aws = { month_micros: 3_120_000, as_of: '2026-09-04T09:00:00Z', budget_micros: null };
+    expect(combinedMicros({ ...usage, aws })).toBe(3_121_371);
+    expect(combinedMicros({ ...usage, aws: null })).toBeNull();
+    // A backend from before the field existed.
+    expect(combinedMicros(usage)).toBeNull();
   });
 });
