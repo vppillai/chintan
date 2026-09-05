@@ -44,6 +44,10 @@ lowercased, marker-stripped copy of its body (`search_text`, up to 32 KB).
 
 1. Load the tenant's active notes with `IncludeSearchText`, paginated, capped
    at 2,000 (`ask.MaxNotesConsidered`).
+   This is not a list the API exposes: the API's collections are
+   cursor-paginated and nothing on the wire is unbounded (`openapi.yaml`,
+   rule 3), while this is the worker draining its own tenant's pages to a
+   bound before it answers — an internal bounded drain, not a public list.
 2. Tokenise the question: lowercase, split on anything that is not a letter,
    digit or combining mark (so Devanagari and Han tokenise), drop English
    stopwords, keep tokens of at least two runes, dedupe.
