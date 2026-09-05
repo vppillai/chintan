@@ -625,7 +625,18 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		if errors.Is(err, breaker.ErrSpendCapExceeded) {
 			return p.handleProviderError(ctx, capture, "route", err)
 		}
+		if errors.Is(err, errRouteCandidates) {
+			// The router was never asked. Filing the dictation into a new note
+			// here would be the fault the GetNote branch below describes — a
+			// DynamoDB throttle starting a second note on the subject the user
+			// has been dictating into all week — one step earlier. The
+			// invocation is worth retrying; a duplicate note is not.
+			return err
+		}
 		// Routing is a convenience; a recording is never lost because of it.
+		// From here the failure is the router's own — a stall past both
+		// attempts, a 5xx, an answer that would not parse — and nothing the
+		// store said is being second-guessed.
 		obs.Log(ctx).Warn("routing failed; keeping the dictation in a new note",
 			slog.String("capture_id", capture.ID),
 			slog.String("error", err.Error()))
@@ -698,6 +709,11 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	return p.persist(ctx, capture)
 }
 
+// errRouteCandidates marks a routing failure that happened before the router
+// was asked: the store would not list the notes it chooses among. It is the
+// one routing error route() does not turn into a new note.
+var errRouteCandidates = errors.New("pipeline: list routing candidates")
+
 func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript string) (provider.RouteDecision, error) {
 	if p.cfg.Router == nil {
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
@@ -712,7 +728,7 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		return p.cfg.Store.ListNotes(ctx, tenantID, opts)
 	})
 	if err != nil {
-		return provider.RouteDecision{}, fmt.Errorf("pipeline: list notes: %w", err)
+		return provider.RouteDecision{}, fmt.Errorf("%w: %w", errRouteCandidates, err)
 	}
 
 	// Kept as a guard on the order the store promised, and because it is the
