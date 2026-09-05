@@ -275,3 +275,21 @@ export function saveThread(turns: readonly AskTurn[]): void {
     // Quota or private mode: the thread lives for this screen only.
   }
 }
+
+/**
+ * One turn rewritten in the saved thread, for an outcome that lands after
+ * the panel has gone (see `useAskThread`). Read raw rather than through
+ * `loadThread`, whose reading of time passed is for a panel about to show
+ * the thread, not for a write-through.
+ */
+export function updateStoredTurn(key: string, update: (turn: AskTurn) => AskTurn): void {
+  try {
+    const raw = sessionStorage.getItem(THREAD_KEY);
+    if (!raw) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    saveThread(parsed.filter(isTurn).map((turn) => (turn.key === key ? update(turn) : turn)));
+  } catch {
+    // Unreadable or blocked: the panel shows the question as not sent.
+  }
+}
