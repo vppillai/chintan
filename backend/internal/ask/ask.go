@@ -52,7 +52,10 @@ const (
 const (
 	// MaxNotesConsidered caps the notes the ranker reads. The index rows are
 	// paged from one partition; two thousand of them with search text is on
-	// the order of 60 MB, which is where a lexical pass stops being cheap.
+	// the order of 60 MB, which is where a lexical pass stops being cheap. The
+	// store lists most recently touched first over the whole partition
+	// (repository.MaxNotesDrained), so the cut drops the notes least recently
+	// touched, not the oldest created.
 	MaxNotesConsidered = 2000
 	// MaxRankedNotes is how many scoring notes are packed at most.
 	MaxRankedNotes = 12

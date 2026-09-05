@@ -237,7 +237,29 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 // ListNotes returns one page of active notes. Archived notes are excluded by
 // the store, so the filtering is no longer paid for in Go.
 func (s *NotesService) ListNotes(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-	return s.store.ListNotes(ctx, userID, opts)
+	page, err := s.store.ListNotes(ctx, userID, opts)
+	if err != nil {
+		return page, err
+	}
+	noteListTruncated(ctx, page, "active")
+	return page, nil
+}
+
+// noteListTruncated is the one place a list that hit repository.MaxNotesDrained
+// is reported. The store has no logger or metrics of its own, so it marks the
+// page and this layer says so: once per list call at WARN, and a counter an
+// operator can graph, because the symptom in the app — an old note touched
+// today is not at the top of the library — does not point at its cause.
+func noteListTruncated(ctx context.Context, page repository.Page[model.NoteIndex], shelf string) {
+	if !page.Truncated {
+		return
+	}
+	obs.Log(ctx).Warn("notes list hit the drain ceiling; the order is over an incomplete set",
+		slog.String("shelf", shelf),
+		slog.Int("ceiling", repository.MaxNotesDrained))
+	// No dimension: the log line carries the shelf, and one identity is
+	// enough for a counter whose healthy value is zero.
+	obs.Count(ctx, "NotesListTruncated", nil)
 }
 
 // GetNote retrieves a specific note
@@ -512,7 +534,12 @@ func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (
 // their purge deadline. Expiry itself belongs to DynamoDB TTL; the filter only
 // keeps an item the table has not collected yet out of the UI.
 func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-	return s.store.ListArchivedNotes(ctx, userID, opts)
+	page, err := s.store.ListArchivedNotes(ctx, userID, opts)
+	if err != nil {
+		return page, err
+	}
+	noteListTruncated(ctx, page, "archived")
+	return page, nil
 }
 
 // PermanentlyDeleteNote permanently deletes an archived note and all its captures

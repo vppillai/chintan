@@ -57,12 +57,11 @@ const (
 	// an existing note without asking. Below it, the user confirms first.
 	routeConfidenceThreshold = 0.75
 
-	// maxRouteCandidates bounds the note list handed to the router.
+	// maxRouteCandidates bounds the note list handed to the router: the most
+	// recently touched fifty. Both stores list notes in that order over the
+	// whole partition (repository.MaxNotesDrained), so the first page of the
+	// list IS the window; there is no separate pool to drain and cut.
 	maxRouteCandidates = 50
-
-	// maxRouteCandidatePool bounds how many notes are paged through before the
-	// most recent maxRouteCandidates are chosen.
-	maxRouteCandidatePool = 500
 
 	// maxAppendAttempts bounds the ETag-conditional retry when a note body is
 	// being written concurrently.
@@ -659,20 +658,23 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
 	}
 
-	// Notes are paged, and the router only ever sees the most recent
-	// maxRouteCandidates of them, so the pool has to be drained before it can be
-	// ordered.
-	active, err := repository.DrainPages(ctx, maxRouteCandidatePool, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	// The store orders the list most recently touched first over every note
+	// the tenant has, so the leading maxRouteCandidates are the window the
+	// router should see — the likeliest destinations. Until 2026-09 this
+	// drained a 500-note pool and cut it here, which was only right while the
+	// store's own order was by creation.
+	active, err := repository.DrainPages(ctx, maxRouteCandidates, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
 		return p.cfg.Store.ListNotes(ctx, tenantID, opts)
 	})
 	if err != nil {
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: list notes: %w", err)
 	}
 
-	// Most recently touched notes are the likeliest destinations. Compare parsed
-	// instants, never RFC3339Nano strings: Go trims trailing fractional zeros,
-	// so "…:00Z" sorts above "…:00.1Z" because 'Z' > '.' and the router would
-	// be handed the wrong fifty notes.
+	// Kept as a guard on the order the store promised, and because it is the
+	// place this lesson lives: compare parsed instants, never RFC3339Nano
+	// strings. Go trims trailing fractional zeros, so "…:00Z" sorts above
+	// "…:00.1Z" because 'Z' > '.' and the router would be handed the wrong
+	// fifty notes.
 	sort.SliceStable(active, func(i, j int) bool {
 		return noteTouchedAt(active[i]).After(noteTouchedAt(active[j]))
 	})

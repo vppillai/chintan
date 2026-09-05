@@ -3,6 +3,7 @@ package memory_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -310,5 +311,46 @@ func TestListNotesCarriesSearchTextOnlyWhenAsked(t *testing.T) {
 	}
 	if got.SearchText != "the body" {
 		t.Errorf("GetNote dropped the search text: %q", got.SearchText)
+	}
+}
+
+// TestListNotesOrdersEveryNoteByTouch holds the double to the production
+// order at a size where the DynamoDB store once cut the set before ordering
+// it: the oldest created note, touched most recently, leads the list.
+func TestListNotesOrdersEveryNoteByTouch(t *testing.T) {
+	store := memory.NewStore()
+	ctx := context.Background()
+	const total = 600
+	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < total; i++ {
+		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
+			ID:        fmt.Sprintf("note_%04d", i),
+			Title:     fmt.Sprintf("Note %d", i),
+			UpdatedAt: model.FormatTime(base.Add(time.Duration(total-i) * time.Second)),
+		}); err != nil {
+			t.Fatalf("seed note %d: %v", i, err)
+		}
+	}
+
+	var seen int
+	opts := repository.ListOptions{Limit: repository.MaxListLimit}
+	for {
+		page, err := store.ListNotes(ctx, "user1", opts)
+		if err != nil {
+			t.Fatalf("ListNotes: %v", err)
+		}
+		for _, n := range page.Items {
+			if want := fmt.Sprintf("note_%04d", seen); n.ID != want {
+				t.Fatalf("position %d holds %s, want %s (most recently touched first)", seen, n.ID, want)
+			}
+			seen++
+		}
+		if page.Cursor == "" {
+			break
+		}
+		opts.Cursor = page.Cursor
+	}
+	if seen != total {
+		t.Fatalf("listed %d notes, want %d", seen, total)
 	}
 }

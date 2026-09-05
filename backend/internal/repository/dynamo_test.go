@@ -174,7 +174,7 @@ func TestListNotesRejectsGarbageCursor(t *testing.T) {
 // titles pay for the whole corpus.
 //
 // The list reads the base table and orders in Go (there was an index for a
-// year; see maxNotesListed for why there is not one now), so the guarantee is a
+// year; see MaxNotesDrained for why there is not one now), so the guarantee is a
 // ProjectionExpression that never names `data`.
 func TestListNotesDoesNotTransferTheDataBlob(t *testing.T) {
 	store, api := newTestStore(t)

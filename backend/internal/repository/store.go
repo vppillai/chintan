@@ -69,9 +69,16 @@ func (o ListOptions) limit() int32 {
 
 // Page is one page of a list query. Cursor is empty when the query is
 // exhausted.
+//
+// Truncated is set by a NOTE list whose drain hit MaxNotesDrained: the order
+// the page was cut from is over an incomplete set, and a note past the ceiling
+// is absent however recently it was touched. It is a diagnostic for the
+// service to log and count, not a wire field — the client can do nothing
+// about it — so it is kept off the JSON.
 type Page[T any] struct {
-	Items  []T    `json:"items"`
-	Cursor string `json:"cursor,omitempty"`
+	Items     []T    `json:"items"`
+	Cursor    string `json:"cursor,omitempty"`
+	Truncated bool   `json:"-"`
 }
 
 // TenantNote is a note together with the tenant that owns it, for the one

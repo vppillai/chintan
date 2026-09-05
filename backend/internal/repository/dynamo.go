@@ -108,8 +108,9 @@ func captureGSI1SK(createdAt string) string {
 	return "CAPTURE#" + createdAt
 }
 
-// maxNotesListed bounds how many of a tenant's notes one list drains from the
-// base table before ordering them.
+// MaxNotesDrained is the safety ceiling on how many of a tenant's notes one
+// list reads from the base table before ordering them. It is a ceiling, not a
+// window: a list is meant to see every note.
 //
 // The notes list is ordered by when each note was last touched, and the base
 // table cannot answer that: its sort key is NOTE#<id> and a note id leads with
@@ -117,14 +118,19 @@ func captureGSI1SK(createdAt string) string {
 // as its sort key so DynamoDB could do the ordering; it cost a backfill
 // (`chintanctl reindex`), a two-step deploy procedure and an INCLUDE projection
 // that had to be kept in step with the model, all to order a few hundred notes.
-// The capture router had always drained the partition and sorted in Go
-// (pipeline.decideTarget); the list now does the same, with the same bound.
+// The v3 decision to drop it stands, so the partition is drained and sorted in
+// Go, and the drain has to reach every note for the order to be right: a
+// bound of 500 here once made the list "the 500 most recently CREATED notes,
+// ordered by touch", which silently dropped an old note dictated into today.
 //
-// The drain walks the base table newest-created first, so a tenant with more
-// notes than this sees the most recently created 500 ordered by touch, and a
-// note older than that which was touched today is not listed. Revisit if a
-// tenant ever has thousands of notes.
-const maxNotesListed = 500
+// What a full drain costs: the list projection is about 1 KB a row, so a
+// tenant at this ceiling reads about 5 MB per page served, and a caller that
+// pages through the whole list (DrainPages) pays that once per page. At the
+// scale this serves — one person, hundreds of notes — that is a few hundred
+// KB. If a tenant ever approaches the ceiling the remedy is the index, not a
+// smaller number here; the drain reports Page.Truncated when it hits the
+// ceiling so the service can log it and count NotesListTruncated.
+const MaxNotesDrained = 5000
 
 // ttlGraceSeconds is how long after its purge deadline a note's row is left
 // for DynamoDB TTL to collect: fourteen days.
@@ -436,7 +442,7 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 // listNotes drains the tenant's notes from the base table, keeps the ones on the
 // requested shelf, orders them most recently touched first and pages the result.
 //
-// Ordering in Go is the whole design: see maxNotesListed for why there is no
+// Ordering in Go is the whole design: see MaxNotesDrained for why there is no
 // index. The page cursor is not a DynamoDB key — the walk it resumes is over a
 // sorted slice this store built — so it carries the position in that order:
 // the touch instant and id of the last note served. Resuming re-derives the
@@ -453,7 +459,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		return Page[model.NoteIndex]{}, err
 	}
 
-	all, err := s.drainNotes(ctx, tenantID, opts)
+	all, truncated, err := s.drainNotes(ctx, tenantID, opts)
 	if err != nil {
 		return Page[model.NoteIndex]{}, err
 	}
@@ -479,7 +485,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		}
 	}
 	end := min(start+int(opts.limit()), len(kept))
-	page := Page[model.NoteIndex]{Items: kept[start:end]}
+	page := Page[model.NoteIndex]{Items: kept[start:end], Truncated: truncated}
 	if page.Items == nil {
 		page.Items = []model.NoteIndex{}
 	}
@@ -492,9 +498,12 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 	return page, nil
 }
 
-// drainNotes reads up to maxNotesListed of the tenant's note items, following
-// LastEvaluatedKey: an unpaginated Query silently truncates at ~1 MB.
-func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts ListOptions) ([]model.NoteIndex, error) {
+// drainNotes reads the tenant's note items, following LastEvaluatedKey (an
+// unpaginated Query silently truncates at ~1 MB) until the partition is
+// exhausted or MaxNotesDrained is reached. The bool reports the latter: the
+// table had more notes than the list was allowed to read, and the order the
+// caller builds is over an incomplete set.
+func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts ListOptions) ([]model.NoteIndex, bool, error) {
 	pk := userPK(tenantID)
 	var start map[string]types.AttributeValue
 	notes := make([]model.NoteIndex, 0, 64)
@@ -506,7 +515,7 @@ func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts List
 		projection += ", " + cleanedBodyAttr
 	}
 
-	for len(notes) < maxNotesListed {
+	for len(notes) < MaxNotesDrained {
 		out, err := s.client.Query(ctx, &dynamodb.QueryInput{
 			TableName:              aws.String(s.tableName),
 			KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
@@ -516,14 +525,14 @@ func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts List
 			},
 			ProjectionExpression:     aws.String(projection),
 			ExpressionAttributeNames: map[string]string{"#lang": languageAttr},
-			// Newest CREATED first, so when the bound bites it drops the oldest
-			// notes rather than the newest.
+			// Newest CREATED first, so on the day the ceiling ever bites it
+			// drops the oldest notes rather than the newest.
 			ScanIndexForward:  aws.Bool(false),
 			ExclusiveStartKey: start,
-			Limit:             aws.Int32(int32(maxNotesListed - len(notes))),
+			Limit:             aws.Int32(int32(MaxNotesDrained - len(notes))),
 		})
 		if err != nil {
-			return nil, fmt.Errorf("dynamo query notes: %w", err)
+			return nil, false, fmt.Errorf("dynamo query notes: %w", err)
 		}
 
 		for _, raw := range out.Items {
@@ -536,24 +545,28 @@ func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts List
 					continue
 				}
 				if err != nil {
-					return nil, err
+					return nil, false, err
 				}
 				notes = append(notes, n)
 				continue
 			}
 			n, err := noteFromItem(raw)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			notes = append(notes, n)
 		}
 
 		start = out.LastEvaluatedKey
 		if len(start) == 0 {
-			break
+			return notes, false, nil
 		}
 	}
-	return notes, nil
+	// The loop ended on the ceiling with a page still to read. (A tenant with
+	// exactly MaxNotesDrained notes lands here too, because DynamoDB hands back
+	// a LastEvaluatedKey whenever Limit is met; the false positive costs one
+	// warning on an account that is a note away from the real thing.)
+	return notes, true, nil
 }
 
 // noteOrderKey is the position of a note in the list: most recently touched
