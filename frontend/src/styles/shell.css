@@ -395,7 +395,17 @@
   background-color: var(--color-surface);
 }
 
+/* A tappable phrase inside a sentence — "Try again", "OK". The 44 px target
+   comes from the minimum block and inline size; the negative block margins
+   hand the extra height back to the line (`lh` is the line's own height), so
+   a sentence with a link in it keeps its rhythm and nothing around it moves. */
 .text-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--layout-touch-target-min);
+  min-block-size: var(--layout-touch-target-min);
+  margin-block: calc((1lh - var(--layout-touch-target-min)) / 2);
   color: var(--color-ink);
   font-weight: var(--font-weight-medium);
   text-decoration: underline;
