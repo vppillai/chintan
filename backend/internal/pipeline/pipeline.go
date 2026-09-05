@@ -402,7 +402,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, fmt.Errorf("pipeline: get note: %w", err)
 	}
 	if !service.NoteIsActive(note) {
-		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived)
+		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
 	}
 
 	if capture.CleanKey == "" {
@@ -1333,6 +1333,15 @@ func (p *Pipeline) concede(ctx context.Context, capture *model.CaptureIndex) err
 // failure on the wire, so it must not drift with a provider's error text.
 var ErrProviderKeyRejected = errors.New("the provider rejected this instance's API key")
 
+// captureProviderFailed is the verdict for every provider fault that is not
+// classified in handleProviderError: a 5xx, a rate limit, a dial or TLS
+// error, a reply that would not decode. One fixed sentence, for the reason
+// ErrProviderKeyRejected is one: it reaches the user, and the cause —
+// `Post "https://api.groq.com/…": dial tcp …`, `unexpected end of JSON input`
+// — tells them nothing they can act on while naming hosts and internals that
+// belong in the log. The log line written beside it carries the cause.
+const captureProviderFailed = "the transcription or cleanup provider failed; try again"
+
 // handleProviderError records the capture's verdict and reports whether the
 // invocation itself should be retried.
 //
@@ -1406,7 +1415,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 		// The user is told what actually happened. Every capture from here on
 		// fails the same way until the key is replaced, and "capture failed"
 		// would have them re-recording it.
-		return p.markFailed(ctx, capture, ErrProviderKeyRejected)
+		return p.markFailed(ctx, capture, ErrProviderKeyRejected.Error())
 
 	case provider.IsRateLimited(cause):
 		// Warn, not error: this is the expected shape of a busy provider.
@@ -1423,7 +1432,7 @@ func (p *Pipeline) handleProviderError(ctx context.Context, capture *model.Captu
 	}
 
 	obs.Count(ctx, "CaptureStageFailures", map[string]string{"Stage": stage})
-	return p.markFailed(ctx, capture, cause)
+	return p.markFailed(ctx, capture, captureProviderFailed)
 }
 
 // isDeadline reports whether a provider call ended because its context did —
@@ -1445,13 +1454,16 @@ func (p *Pipeline) providerForStage(stage string) string {
 	return p.cfg.LLMProvider
 }
 
-// markFailed records the capture's own verdict. It returns the write's error
-// rather than swallowing it: a conceded write here means another delivery owns
-// the capture, and reporting that as "recorded" would hide a duplicate delivery
-// behind a status this worker never actually wrote.
-func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, cause error) error {
+// markFailed records the capture's own verdict. reason is one of the fixed
+// sentences — never a provider's or Go's error text, which until 2026-09 the
+// default branch above wrote to capture.error and the API served as it was.
+// It returns the write's error rather than swallowing it: a conceded write
+// here means another delivery owns the capture, and reporting that as
+// "recorded" would hide a duplicate delivery behind a status this worker never
+// actually wrote.
+func (p *Pipeline) markFailed(ctx context.Context, capture *model.CaptureIndex, reason string) error {
 	capture.Status = model.StatusFailed
-	capture.Error = cause.Error()
+	capture.Error = reason
 	return p.persist(ctx, capture)
 }
 

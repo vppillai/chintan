@@ -169,8 +169,8 @@ func TestARateLimitIsNotARevokedKey(t *testing.T) {
 	if final.Status != model.StatusFailed {
 		t.Fatalf("status = %s, want %s", final.Status, model.StatusFailed)
 	}
-	if final.Error == ErrProviderKeyRejected.Error() {
-		t.Error("a throttle was recorded as a rejected key")
+	if final.Error != captureProviderFailed {
+		t.Errorf("error = %q, want the fixed sentence %q", final.Error, captureProviderFailed)
 	}
 	if hasMetric(records, "ProviderKeyRejected") {
 		t.Fatal("a 429 raised the key-rejected counter; that alarm emails on the first occurrence")
@@ -183,16 +183,24 @@ func TestARateLimitIsNotARevokedKey(t *testing.T) {
 
 // TestAnOrdinaryProviderFaultRaisesNeitherCounter keeps the two new alarms from
 // firing on a 500, a timeout or a decode failure. Those are already covered by
-// CaptureStageFailures and by the worker's own error alarm.
+// CaptureStageFailures and by the worker's own error alarm. It also pins the
+// verdict the user reads to the fixed sentence: the cause — a host, a Go
+// transport error, a decoder's complaint — goes to the log, never to the row.
 func TestAnOrdinaryProviderFaultRaisesNeitherCounter(t *testing.T) {
 	for name, err := range map[string]error{
 		"a server error":     &provider.StatusError{Op: "groq transcription failed", StatusCode: 500},
-		"a transport fault":  errors.New("provider: groq request: connection reset"),
+		"a transport fault":  errors.New(`provider: groq request: Post "https://api.groq.com/openai/v1/audio/transcriptions": dial tcp: connection reset`),
 		"a decode failure":   errors.New("provider: decode groq response: unexpected EOF"),
 		"a repository fault": repository.ErrNotFound,
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, records := runFailingTranscribe(t, err)
+			final, records := runFailingTranscribe(t, err)
+			if final.Status != model.StatusFailed {
+				t.Fatalf("status = %s, want %s", final.Status, model.StatusFailed)
+			}
+			if final.Error != captureProviderFailed {
+				t.Errorf("error = %q, want the fixed sentence %q; raw error text reaches the user through capture.error", final.Error, captureProviderFailed)
+			}
 			if hasMetric(records, "ProviderKeyRejected") {
 				t.Error("raised ProviderKeyRejected")
 			}
