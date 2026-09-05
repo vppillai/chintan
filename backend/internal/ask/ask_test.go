@@ -267,13 +267,13 @@ func TestPromptFencesEveryNoteAndEndsWithTheQuestion(t *testing.T) {
 	if !strings.Contains(user, "NOTE id=n1 title=Roof ----- repairs updated=2026-09-01\n"+llm.FenceMarker+"\n") {
 		t.Errorf("the note header or its fence is wrong:\n%s", user)
 	}
-	// Two notes, two fences of two markers each; the marker inside the note
-	// text was defanged, so it does not add a third boundary.
-	if got := strings.Count(user, llm.FenceMarker); got != 4 {
-		t.Errorf("fence markers = %d, want 4:\n%s", got, user)
+	// Two notes and one history turn, each a fence of two markers; the marker
+	// inside the note text was defanged, so it does not add a boundary.
+	if got := strings.Count(user, llm.FenceMarker); got != 6 {
+		t.Errorf("fence markers = %d, want 6:\n%s", got, user)
 	}
-	if !strings.Contains(user, "Q: what about the roof?\nA: The roofer comes on the 14th.") {
-		t.Errorf("history is not rendered:\n%s", user)
+	if !strings.Contains(user, llm.FenceMarker+"\nQ: what about the roof?\nA: The roofer comes on the 14th.\n"+llm.FenceMarker) {
+		t.Errorf("history is not rendered inside its own fence:\n%s", user)
 	}
 	if !strings.HasSuffix(user, "Question: and when was that decided?") {
 		t.Errorf("the question is not last:\n%s", user)
