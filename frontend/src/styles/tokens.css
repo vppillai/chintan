@@ -132,6 +132,19 @@
   --layout-focus-ring-width: 3px;
   --layout-focus-ring-offset: 2px;
 
+  /* ---- Depth ------------------------------------------------------------
+     The elevation model is three planes and a set of shadows (backlog N10).
+       ground-deep  the page: the plane the cards rest on
+       ground       the shell around it — banner, tab bar's frame
+       raised       a card in the list
+       raised-2     a sheet or dialog over the cards
+     Shadows are defined per theme below; the two gradients are the only
+     depth cues that are not a shadow. `--gradient-tonal` runs an outline
+     control from raised to surface so it reads as a pressed-out shape
+     rather than a line on the page; `--gradient-lift` (per theme) is the
+     highlight along the top of a filled control. */
+  --gradient-tonal: linear-gradient(to bottom, var(--color-raised), var(--color-surface));
+
   --z-content: 1;
   --z-sheet: 20;
   --z-bottom-bar: 30;
@@ -146,8 +159,10 @@
 
    Palette
      ground  #FBF9F4   warm off-white paper
+     ground-deep #F6F3EC  the page behind the cards, a shade below ground
      surface #F2EEE4   recessed / sheet ground
      raised  #F5F1E8   cards on ground
+     raised-2 #FDFCF9  sheets and dialogs above the cards
      ink     #1A1917   near-black
      muted   #534F48   secondary text
      faint   #716A5B   tertiary text
@@ -167,6 +182,15 @@
      accent (as fill)  4.92       4.47        4.59      3.0 (1.4.11) pass
      ground on accent  4.92          —           —      4.5 (AA)     pass
 
+     token          on ground-deep  on raised-2           requirement  verdict
+     ------------------------------------------------------------------------
+     ink                 15.85         17.12               4.5 (AA)     pass
+     muted                7.35          7.93               4.5 (AA)     pass
+     faint                4.84          5.23               4.5 (AA)     pass
+     accent-strong        5.86          6.33               4.5 (AA)     pass
+     line-strong          3.35          3.62               3.0 (1.4.11) pass
+     accent (as fill)     4.67          5.05               3.0 (1.4.11) pass
+
    `muted` (#534F48) and `faint` (#716A5B) are darkened from the palette's
    natural #8A8478 (3.53:1) and #A39C8D (2.59:1), which fall below AA as text,
    preserving hue and saturation. #8A8478 survives as `line-strong`, where 3:1
@@ -182,8 +206,10 @@
   color-scheme: light;
 
   --color-ground: #fbf9f4;
+  --color-ground-deep: #f6f3ec;
   --color-surface: #f2eee4;
   --color-raised: #f5f1e8;
+  --color-raised-2: #fdfcf9;
   --color-ink: #1a1917;
   --color-muted: #534f48;
   --color-faint: #716a5b;
@@ -197,10 +223,18 @@
   --color-overlay: rgb(26 25 23 / 38%);
   --color-selection: rgb(194 65 12 / 18%);
 
-  --shadow-sm: 0 1px 2px rgb(26 25 23 / 6%);
-  --shadow-md: 0 2px 8px rgb(26 25 23 / 8%);
-  --shadow-lg: 0 8px 28px rgb(26 25 23 / 12%);
+  /* Ink casts on paper: short, soft, barely tinted. Each step is two layers
+     — a tight one for the edge and a wide one for the lift — so a card reads
+     as resting on the page rather than outlined on it. */
+  --shadow-xs: 0 1px 1px rgb(26 25 23 / 5%);
+  --shadow-sm: 0 1px 2px rgb(26 25 23 / 6%), 0 2px 6px rgb(26 25 23 / 5%);
+  --shadow-md: 0 2px 4px rgb(26 25 23 / 6%), 0 6px 16px rgb(26 25 23 / 8%);
+  --shadow-lg: 0 8px 12px rgb(26 25 23 / 8%), 0 20px 40px rgb(26 25 23 / 14%);
   --shadow-sheet: 0 -6px 32px rgb(26 25 23 / 10%);
+  /* A field is a recess in the page; the record button is a bead on it. */
+  --shadow-inset: inset 0 1px 2px rgb(26 25 23 / 7%);
+  --shadow-highlight: inset 0 1px 0 rgb(255 255 255 / 28%);
+  --gradient-lift: linear-gradient(to bottom, rgb(255 255 255 / 9%), rgb(255 255 255 / 0%));
 }
 
 /* ==========================================================================
@@ -209,8 +243,10 @@
 
    Palette
      ground  #0A0C0B   near-black
+     ground-deep #070808  the page behind the cards
      surface #141816
      raised  #1C211F
+     raised-2 #1C211F  see below: the same as raised, by the numbers
      ink     #F2F5F3   soft off-white text
      muted   #A4ACA8   secondary text
      faint   #7C8C82   tertiary text
@@ -229,6 +265,20 @@
      line-strong       3.64       3.33        3.03      3.0 (1.4.11) pass
      ground on accent 14.64          —           —      4.5 (AA)     pass
 
+     token          on ground-deep                        requirement  verdict
+     ------------------------------------------------------------------------
+     ink                 18.27                             4.5 (AA)     pass
+     muted                8.64                             4.5 (AA)     pass
+     faint                5.66                             4.5 (AA)     pass
+     line-strong          3.72                             3.0 (1.4.11) pass
+
+   `raised-2` is `raised` in this theme. The contrast budget is spent at
+   raised: `line-strong` sits at 3.03 there and `faint` at 4.61, and the
+   very next step up (#1D2220) puts line-strong at 2.99 — a dialog's border
+   would fail 1.4.11 by the width of a hair. In the dark, elevation above the
+   cards is carried by the shadows, which are wider and deeper here for
+   exactly that reason.
+
    `muted` (#A4ACA8) and `faint` (#7C8C82) are lightened from #6B7570 (4.11:1)
    and #5E6B63 (3.51:1), which miss AA as text. #5E6B63 survives, nudged to
    #5E6E66, as `line-strong`.
@@ -241,8 +291,10 @@
   color-scheme: dark;
 
   --color-ground: #0a0c0b;
+  --color-ground-deep: #070808;
   --color-surface: #141816;
   --color-raised: #1c211f;
+  --color-raised-2: #1c211f;
   --color-ink: #f2f5f3;
   --color-muted: #a4aca8;
   --color-faint: #7c8c82;
@@ -256,10 +308,18 @@
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%);
-  --shadow-md: 0 2px 10px rgb(0 0 0 / 50%);
-  --shadow-lg: 0 10px 34px rgb(0 0 0 / 58%);
+  /* Darker and wider than Ink & Paper's: on a near-black page a shadow is
+     the only thing that separates one plane from the next. The lift is a
+     shade from below rather than a light from above, because `ink` here is
+     near-white and a white highlight on it would vanish. */
+  --shadow-xs: 0 1px 1px rgb(0 0 0 / 40%);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 35%);
+  --shadow-md: 0 2px 4px rgb(0 0 0 / 45%), 0 8px 20px rgb(0 0 0 / 45%);
+  --shadow-lg: 0 10px 14px rgb(0 0 0 / 50%), 0 24px 48px rgb(0 0 0 / 60%);
   --shadow-sheet: 0 -6px 34px rgb(0 0 0 / 55%);
+  --shadow-inset: inset 0 1px 2px rgb(0 0 0 / 55%);
+  --shadow-highlight: inset 0 1px 0 rgb(255 255 255 / 35%);
+  --gradient-lift: linear-gradient(to bottom, rgb(0 0 0 / 0%), rgb(0 0 0 / 7%));
 }
 
 /*
@@ -274,8 +334,10 @@
     color-scheme: dark;
 
     --color-ground: #0a0c0b;
+    --color-ground-deep: #070808;
     --color-surface: #141816;
     --color-raised: #1c211f;
+    --color-raised-2: #1c211f;
     --color-ink: #f2f5f3;
     --color-muted: #a4aca8;
     --color-faint: #7c8c82;
@@ -289,10 +351,14 @@
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
 
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%);
-    --shadow-md: 0 2px 10px rgb(0 0 0 / 50%);
-    --shadow-lg: 0 10px 34px rgb(0 0 0 / 58%);
+    --shadow-xs: 0 1px 1px rgb(0 0 0 / 40%);
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 45%), 0 2px 8px rgb(0 0 0 / 35%);
+    --shadow-md: 0 2px 4px rgb(0 0 0 / 45%), 0 8px 20px rgb(0 0 0 / 45%);
+    --shadow-lg: 0 10px 14px rgb(0 0 0 / 50%), 0 24px 48px rgb(0 0 0 / 60%);
     --shadow-sheet: 0 -6px 34px rgb(0 0 0 / 55%);
+    --shadow-inset: inset 0 1px 2px rgb(0 0 0 / 55%);
+    --shadow-highlight: inset 0 1px 0 rgb(255 255 255 / 35%);
+    --gradient-lift: linear-gradient(to bottom, rgb(0 0 0 / 0%), rgb(0 0 0 / 7%));
   }
 }
 

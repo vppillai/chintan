@@ -42,12 +42,21 @@
    Banner
    -------------------------------------------------------------------------- */
 
+/*
+ * A hairline and a soft shadow along its foot: the banner is the shell, and
+ * the page scrolls beneath it. `z-index` so the shadow is painted over the
+ * main region, which follows it in the DOM and would otherwise cover it.
+ */
 .app__banner {
+  position: relative;
+  z-index: var(--z-content);
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: var(--layout-touch-target-min);
   padding: var(--space-3) var(--space-4);
+  border-block-end: 1px solid var(--color-line);
+  box-shadow: var(--shadow-sm);
 }
 
 .app__wordmark {
@@ -75,7 +84,8 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
-  background-color: var(--color-ground);
+  /* A shade below the shell: the plane the cards rest on (backlog N10). */
+  background-color: var(--color-ground-deep);
 }
 
 /*
@@ -110,7 +120,9 @@
   border-radius: var(--radius-full);
   background-color: var(--color-accent);
   color: var(--color-on-accent);
-  box-shadow: var(--shadow-md);
+  /* The one bead on the page: a long shadow beneath and a catch of light
+     along its top edge, and it settles onto the bar when pressed. */
+  box-shadow: var(--shadow-lg), var(--shadow-highlight);
   transition:
     transform var(--motion-duration-fast) var(--motion-ease-spring),
     box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
@@ -118,6 +130,7 @@
 
 .record-button:active {
   transform: scale(0.96);
+  box-shadow: var(--shadow-sm), var(--shadow-highlight);
 }
 
 /* --------------------------------------------------------------------------
@@ -144,6 +157,7 @@
   padding-inline: max(var(--space-3), (100% - var(--layout-content-max)) / 2);
   background-color: var(--color-raised);
   border-block-start: 1px solid var(--color-line);
+  box-shadow: var(--shadow-sheet);
 }
 
 .tab-bar__record {
@@ -169,6 +183,10 @@
 .tab-bar__tab:hover,
 .tab-bar__tab[aria-current='page'] {
   color: var(--color-ink);
+}
+
+.tab-bar__tab:active {
+  background-color: var(--color-surface);
 }
 
 .tab-bar__label {
@@ -335,13 +353,22 @@
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-full);
+  background: var(--gradient-tonal);
+  box-shadow: var(--shadow-xs);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-ink);
   text-decoration: none;
 }
 
+.screen__action:active {
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
 .screen__action[disabled] {
+  background: none;
+  box-shadow: none;
   color: var(--color-faint);
   cursor: default;
 }
@@ -357,6 +384,10 @@
 
 .icon-button:hover {
   color: var(--color-ink);
+}
+
+.icon-button:active {
+  background-color: var(--color-surface);
 }
 
 .text-link {
@@ -386,17 +417,24 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
+  /* A card on the page: the hairline is the edge, the shadow is the rest.
+     It lifts a step under the pointer and settles back when pressed. */
+  box-shadow: var(--shadow-xs);
   transition:
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
     transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .note-row:hover {
   border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-sm);
 }
 
 .note-row:active {
   transform: scale(0.995);
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-xs);
 }
 
 /*
@@ -445,6 +483,7 @@
     transition:
       background-color var(--motion-duration-fast) var(--motion-ease-standard),
       border-color var(--motion-duration-fast) var(--motion-ease-standard),
+      box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
       padding var(--motion-duration-fast) var(--motion-ease-standard),
       transform var(--motion-duration-fast) var(--motion-ease-standard);
   }
@@ -638,6 +677,8 @@
   padding: var(--space-2) var(--space-4);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-full);
+  /* A tonal fill, not an outline alone: the chip is a shape on the page. */
+  background-color: var(--color-surface);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-muted);
@@ -645,6 +686,11 @@
   transition:
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip:not([aria-pressed='true']):active {
+  background-color: var(--color-line);
+  color: var(--color-ink);
 }
 
 .chip[aria-pressed='true'] {
@@ -701,6 +747,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-md);
   color: var(--color-ink);
 }
@@ -751,7 +798,13 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
   color: var(--color-muted);
+}
+
+.option:active {
+  background-color: var(--color-surface);
+  box-shadow: none;
 }
 
 .option[aria-pressed='true'] {
@@ -1117,10 +1170,10 @@
   gap: var(--space-2);
   inline-size: min(100%, 22rem);
   padding: var(--space-2);
-  background-color: var(--color-raised);
+  background-color: var(--color-raised-2);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
   text-align: start;
 }
 
@@ -1195,6 +1248,59 @@
   border-color: var(--color-ink);
 }
 
+.capture__control:not(.capture__control--primary):active {
+  background-color: var(--color-surface);
+}
+
+/*
+ * Every filled primary in the app, in one place: a catch of light along the
+ * top edge and the smallest shadow, so a solid control reads as a raised
+ * shape rather than a rectangle of ink. Pressed, it drops flat. The set is
+ * listed here rather than at each site so that the two themes' `--gradient-
+ * lift` — a highlight in one, a shade in the other — reach all of them.
+ */
+.capture__control--primary,
+.filing-row__action--primary,
+.note-bar__action--primary,
+.dialog__action--primary,
+.dialog__action--destructive,
+.signed-out__action,
+.resume-prompt__action--primary,
+.settings-status__action--primary,
+.passkey-nudge__action--primary,
+.cleaned__action--primary,
+.update-prompt__action,
+.review-player__play,
+.recording__play {
+  background-image: var(--gradient-lift);
+  box-shadow: var(--shadow-xs);
+}
+
+.capture__control--primary:active,
+.filing-row__action--primary:active,
+.note-bar__action--primary:active,
+.dialog__action--primary:active,
+.dialog__action--destructive:active,
+.signed-out__action:active,
+.resume-prompt__action--primary:active,
+.settings-status__action--primary:active,
+.passkey-nudge__action--primary:active,
+.cleaned__action--primary:active,
+.update-prompt__action:active,
+.review-player__play:active,
+.recording__play:active {
+  background-image: none;
+  box-shadow: none;
+}
+
+.dialog__action--destructive[disabled],
+.signed-out__action[disabled],
+.review-player__play[disabled],
+.recording__play[disabled] {
+  background-image: none;
+  box-shadow: none;
+}
+
 /* --------------------------------------------------------------------------
    Filing row — a recording on its way into the library, at the top of it
 
@@ -1216,6 +1322,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
 }
 
 /* The receipts past the cap, as one quiet line rather than more cards. */
@@ -1353,6 +1460,7 @@
   background-color: var(--color-ground);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-sm);
   color: var(--color-ink);
 }
@@ -1632,7 +1740,8 @@
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.transcript__line:hover {
+.transcript__line:hover,
+.transcript__line:active {
   background-color: var(--color-surface);
 }
 
@@ -1709,6 +1818,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
   color: var(--color-ink);
 }
 
@@ -1799,6 +1909,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-sm);
   color: var(--color-ink);
 }
@@ -1920,6 +2031,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-md);
   color: var(--color-ink);
 }
@@ -2074,7 +2186,7 @@
   gap: var(--space-3);
   inline-size: min(26rem, 100%);
   padding: var(--space-6);
-  background-color: var(--color-raised);
+  background-color: var(--color-raised-2);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg);
@@ -2106,6 +2218,10 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-ink);
+}
+
+.dialog__action:active {
+  background-color: var(--color-surface);
 }
 
 .dialog__action--primary {
@@ -2176,6 +2292,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-md);
   color: var(--color-ink);
 }
@@ -2353,7 +2470,8 @@
   color: var(--color-muted);
 }
 
-.back-link:hover {
+.back-link:hover,
+.back-link:active {
   color: var(--color-ink);
   background-color: var(--color-surface);
 }
@@ -2383,7 +2501,12 @@
   z-index: var(--z-content);
   margin-inline: calc(-1 * var(--layout-gutter));
   padding: var(--space-2) var(--layout-gutter);
-  background-color: var(--color-ground);
+  background-color: var(--color-ground-deep);
+  /* The panel scrolls under it; the hairline and the shadow say so. Static,
+     not scroll-driven — a shadow that appears only once something has
+     scrolled beneath is an observer for a cue this quiet does not need. */
+  border-block-end: 1px solid var(--color-line);
+  box-shadow: var(--shadow-sm);
 }
 
 /* The segmented control: a recessed track with the selected segment raised,
@@ -2417,6 +2540,10 @@
 
 .note-tabs__tab:hover {
   color: var(--color-ink);
+}
+
+.note-tabs__tab:not([aria-selected='true']):active {
+  background-color: var(--color-line);
 }
 
 .note-tabs__tab[aria-selected='true'] {
@@ -2629,6 +2756,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
   color: var(--color-ink);
 }
 
@@ -2753,11 +2881,15 @@
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   background-color: var(--color-raised);
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .recording[data-expanded] {
   border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-sm);
 }
 
 .recording__head {
@@ -2803,6 +2935,10 @@
   text-align: start;
   border-radius: var(--radius-md);
   color: var(--color-ink);
+}
+
+.recording__summary:active {
+  background-color: var(--color-surface);
 }
 
 .recording__when {
@@ -3058,6 +3194,7 @@
 }
 
 .overflow__trigger:hover,
+.overflow__trigger:active,
 .overflow__trigger[aria-expanded='true'] {
   color: var(--color-ink);
   background-color: var(--color-surface);
@@ -3074,10 +3211,10 @@
   display: grid;
   min-inline-size: 12rem;
   padding: var(--space-1);
-  background-color: var(--color-raised);
+  background-color: var(--color-raised-2);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
 }
 
 .overflow-menu__item {
@@ -3122,8 +3259,9 @@
   gap: var(--space-2);
   margin-block-start: var(--space-6);
   padding-block: var(--space-3) var(--space-4);
-  background-color: var(--color-ground);
+  background-color: var(--color-ground-deep);
   border-block-start: 1px solid var(--color-line);
+  box-shadow: var(--shadow-sheet);
 }
 
 .selection-bar__row {
@@ -3151,6 +3289,10 @@
   font-weight: var(--font-weight-medium);
   color: var(--color-ink);
   white-space: nowrap;
+}
+
+.selection-bar__action:active {
+  background-color: var(--color-surface);
 }
 
 .selection-bar__action[disabled] {
@@ -3189,6 +3331,7 @@
   background-color: var(--color-ground);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-md);
   color: var(--color-ink);
 }
@@ -3264,8 +3407,9 @@
   gap: var(--space-3);
   margin-block-start: var(--space-6);
   padding-block: var(--space-3) var(--space-4);
-  background-color: var(--color-ground);
+  background-color: var(--color-ground-deep);
   border-block-start: 1px solid var(--color-line);
+  box-shadow: var(--shadow-sheet);
 }
 
 /* `display: grid` above outranks the UA's `[hidden]`, so stepping aside for
@@ -3305,7 +3449,8 @@
   white-space: nowrap;
 }
 
-.note-bar__action[aria-expanded='true'] {
+.note-bar__action[aria-expanded='true'],
+.note-bar__action:not(.note-bar__action--primary):active {
   background-color: var(--color-surface);
 }
 
@@ -3352,6 +3497,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
 }
 
 .passkey-nudge__title {
@@ -3393,6 +3539,7 @@
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   background-color: var(--color-raised);
+  box-shadow: var(--shadow-xs);
   font-size: var(--font-size-sm);
   color: var(--color-ink);
 }
@@ -3422,6 +3569,7 @@
   background-color: var(--color-raised);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
   font-size: var(--font-size-md);
   color: var(--color-ink);
 }
