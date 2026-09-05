@@ -1270,7 +1270,8 @@ Resources:
   # Worker Lambda — the slow half of the pipeline. Transcribe, route, clean,
   # append. Invoked asynchronously by S3 and by the API, so its ceiling is
   # Lambda's 900s rather than the gateway's 30. Also the weekly expiry sweep
-  # (ExpirySweepRule), dispatched on the payload's task field.
+  # (ExpirySweepRule) and the daily AWS cost reading (AwsCostRule), both
+  # dispatched on the payload's task field.
   WorkerLambdaFunction:
     Type: AWS::Lambda::Function
     DependsOn: WorkerLogGroup
@@ -1321,6 +1322,16 @@ Resources:
           # runs as its own invocation with its own retries. MUST stay in step
           # with FunctionName above and the alias Name below.
           WORKER_FUNCTION_ARN: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:chintan-worker-${InstanceName}-${Environment}:live'
+          # The daily aws-cost task (AwsCostRule) reads this budget's
+          # month-to-date actual spend with budgets:DescribeBudget and stores
+          # it for GET /v1/usage. MonthlyBudget exists only with an alarm
+          # address, so a stack without one passes '' and the task is a logged
+          # no-op. !Ref on a budget is its name, so the generated name (see
+          # MonthlyBudget on why it is generated) follows a replacement here
+          # without anyone re-typing it. DescribeBudget addresses a budget by
+          # account and name, hence the account id beside it.
+          MONTHLY_BUDGET_NAME: !If [HasAlarmEmail, !Ref MonthlyBudget, '']
+          AWS_ACCOUNT_ID: !Ref AWS::AccountId
       Tags:
         - Key: Project
           Value: chintan
@@ -1467,6 +1478,35 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ExpirySweepRule.Arn
+
+  # Once a day the worker reads the stack budget's month-to-date actual spend
+  # (budgets:DescribeBudget — free; nothing here calls Cost Explorer, which is
+  # $0.01 a request) and stores it as INSTANCE / AWSCOST#<yyyy-mm>, the number
+  # behind the "AWS this month" line on GET /v1/usage. Daily is the right
+  # cadence: Budgets refreshes the figure up to three times a day, and the
+  # line carries an as-of date. Same target and retry story as the sweep
+  # above. The rule is not conditional on HasAlarmEmail: without a budget the
+  # task logs that it has nothing to read and returns, which is one free
+  # invocation a day and one fewer conditional to keep in step.
+  AwsCostRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'chintan-${InstanceName}-${Environment}-aws-cost'
+      Description: Daily reading of the stack budget's month-to-date AWS spend; invokes the worker with {"task":"aws-cost"}.
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Id: worker
+          Arn: !Ref WorkerLambdaLiveAlias
+          Input: '{"task":"aws-cost"}'
+
+  AwsCostRuleInvokesWorkerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref WorkerLambdaLiveAlias
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AwsCostRule.Arn
 
   # CloudWatch Log Group
   ApiLogGroup:
@@ -1910,7 +1950,10 @@ Resources:
         # hand. Letting CloudFormation generate the name — it derives one from
         # the stack and logical id — makes every future subscriber change an
         # ordinary replacement. The name is cosmetic; the budget is found by its
-        # stack, and its limit and notifications are declared here.
+        # stack, and its limit and notifications are declared here. The one
+        # consumer of the name — the worker's daily aws-cost task, through
+        # MONTHLY_BUDGET_NAME and WorkerReadsBudgetPolicy — takes it by !Ref,
+        # so a replacement carries it along.
         BudgetType: COST
         TimeUnit: MONTHLY
         BudgetLimit:
@@ -1933,6 +1976,28 @@ Resources:
           Subscribers:
             - SubscriptionType: EMAIL
               Address: !Ref AlarmEmail
+
+  # The worker may read that one budget, and only when it exists. A separate
+  # policy rather than a statement in LambdaExecutionRole because the grant is
+  # conditional with the budget and a role's inline statement cannot be; and
+  # scoped to the budget's own ARN, not budgets:* — the read is
+  # budgets:ViewBudget (the IAM action behind DescribeBudget), which reveals
+  # the account's spend, and the API function shares this role. Budget ARNs
+  # carry no region.
+  WorkerReadsBudgetPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasAlarmEmail
+    Properties:
+      PolicyName: !Sub 'chintan-${InstanceName}-${Environment}-read-budget'
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - budgets:ViewBudget
+            Resource: !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/${MonthlyBudget}'
 
 Outputs:
   ApiEndpoint:
