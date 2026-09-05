@@ -55,12 +55,25 @@ type Listener = (event: MediaQueryListEvent) => void;
 const listeners = new Map<string, Set<Listener>>();
 let prefersDark = false;
 let canHover = false;
+let narrowViewport = false;
 
 /** Whether `(hover: hover)` matches: a mouse or trackpad rather than a finger. */
 export function setCanHover(next: boolean): void {
   canHover = next;
   for (const [query, set] of listeners) {
     if (!query.includes('hover')) continue;
+    const matches = matchesQuery(query);
+    for (const listener of set) {
+      listener({ matches, media: query } as MediaQueryListEvent);
+    }
+  }
+}
+
+/** Whether a `(max-width: …)` query matches: a phone-sized viewport rather than a laptop's. */
+export function setNarrowViewport(next: boolean): void {
+  narrowViewport = next;
+  for (const [query, set] of listeners) {
+    if (!query.includes('max-width')) continue;
     const matches = matchesQuery(query);
     for (const listener of set) {
       listener({ matches, media: query } as MediaQueryListEvent);
@@ -82,6 +95,7 @@ function matchesQuery(query: string): boolean {
   if (query.includes('prefers-color-scheme: dark')) return prefersDark;
   if (query.includes('prefers-color-scheme: light')) return !prefersDark;
   if (query.includes('hover: hover')) return canHover;
+  if (query.includes('max-width')) return narrowViewport;
   return false;
 }
 
@@ -130,6 +144,7 @@ beforeEach(() => {
   listeners.clear();
   prefersDark = false;
   canHover = false;
+  narrowViewport = false;
   window.localStorage.clear();
   document.documentElement.removeAttribute('data-theme');
   document.documentElement.removeAttribute('data-resolved-theme');

@@ -31,8 +31,12 @@ import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { describeToday, groupByDay } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
+import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
+
+/** Below this the search field's share of its row no longer fits the long placeholder. */
+export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
 
 /**
  * The library. Home.
@@ -74,6 +78,10 @@ export function NotesScreen() {
   const [question, setQuestion] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const askThread = useAskThread();
+  // The field shares its row with the Search | Ask switch, and on a phone
+  // what is left of it clips the long placeholder mid-word ("…tags, tran").
+  // A placeholder cannot be changed from CSS, so the width is read here.
+  const narrowField = useMediaQuery(NARROW_FIELD_QUERY);
 
   const inputId = useId();
   const listId = useId();
@@ -352,7 +360,9 @@ export function NotesScreen() {
             className="search-input"
             type="search"
             value={asking ? question : query}
-            placeholder={asking ? 'Ask your notes…' : 'Search titles, tags, transcripts'}
+            placeholder={
+              asking ? 'Ask your notes…' : narrowField ? 'Search notes' : 'Search titles, tags, transcripts'
+            }
             autoComplete="off"
             enterKeyHint={asking ? 'send' : 'search'}
             maxLength={asking ? 1000 : undefined}

@@ -9,6 +9,7 @@ import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 import type { AskWire, NoteCreateWire } from '@/api/schema.ts';
 import { NotesScreen } from '@/screens/NotesScreen.tsx';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
+import { setNarrowViewport } from '@/test/setup.ts';
 
 import { COST_NOTE_KEY } from './costNote.ts';
 import { applyRow, newTurn, saveThread } from './thread.ts';
@@ -159,6 +160,18 @@ describe('the field has two modes', () => {
     expect(location()).toBe('/');
   });
 
+  it('shortens the search placeholder on a phone, where the switch leaves it no room for the long one', async () => {
+    setNarrowViewport(true);
+    mount(server().fetchImpl);
+    const field = await screen.findByRole('searchbox', { name: /search notes/i });
+    expect(field).toHaveAttribute('placeholder', 'Search notes');
+    // Asking has a short placeholder already, and keeps it.
+    await userEvent.setup().click(screen.getByRole('radio', { name: 'Ask' }));
+    expect(screen.getByRole('searchbox', { name: /ask your notes/i })).toHaveAttribute(
+      'placeholder',
+      'Ask your notes…',
+    );
+  });
 
   it('is deep-linkable: `?mode=ask` opens in Ask, and switching drops a filter that was typed', async () => {
     const user = userEvent.setup();
