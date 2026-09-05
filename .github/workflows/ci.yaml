@@ -13,8 +13,8 @@ name: CI
 # rule deploy-*.yaml follows. A moved tag or a new tool release therefore cannot
 # change what runs against a pull request without a diff here, which is what a
 # gate has to promise. Dependabot's github-actions ecosystem (.github/
-# dependabot.yml) opens the bump PRs for the action pins; the golangci-lint and
-# govulncheck versions below are bumped by hand.
+# dependabot.yml) opens the bump PRs for the action pins; the golangci-lint,
+# govulncheck, cfn-lint and PyYAML versions below are bumped by hand.
 
 on:
   pull_request:
@@ -70,12 +70,16 @@ jobs:
       # golangci-lint-action, whose major version has to be matched to
       # golangci-lint's major version — a mismatch fails with a config-format
       # error that says nothing about versions. The script is fetched at the
-      # release tag and told which release to install, so both halves are the
+      # commit the v2.13.2 tag points to — a commit, not the tag, because a tag
+      # can be moved and this file promises that nothing runs here without a
+      # diff — and told which release to install, so both halves are the
       # version named here rather than whatever HEAD and "latest" resolve to on
-      # the day. The backend has no .golangci.yml, so the v2 defaults apply.
+      # the day. Bump the SHA and the version together (`gh api
+      # repos/golangci/golangci-lint/commits/vX.Y.Z --jq .sha`). The backend
+      # has no .golangci.yml, so the v2 defaults apply.
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.13.2/install.sh |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/27774aaf853a4fd21f1dd5e69439459dc1b26e68/install.sh | # v2.13.2
             sh -s -- -b "$(go env GOPATH)/bin" v2.13.2
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: golangci-lint
@@ -108,9 +112,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
+      # Pinned like everything else here: an unpinned cfn-lint is a new rule
+      # set on the day it releases, failing a pull request that changed nothing.
       - name: cfn-lint
         run: |
-          python3 -m pip install --quiet --disable-pip-version-check cfn-lint
+          python3 -m pip install --quiet --disable-pip-version-check cfn-lint==1.56.0
           cfn-lint infrastructure/*.yaml
 
   shell:
@@ -168,11 +174,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml
+      - run: python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
       # A malformed or duplicate instance config must fail here, not half-way
       # through a deploy matrix.
       - name: list-instances
         run: scripts/list-instances.sh --format text
+      # The identity fields land in index.html unescaped, so the script refuses
+      # the characters that would break out of a title or an attribute. A check
+      # nobody has watched fail is not a check.
+      - name: Prove the check can fail
+        run: scripts/list-instances.sh --self-test
 
   frontend:
     name: Frontend

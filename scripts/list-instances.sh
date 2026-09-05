@@ -26,6 +26,13 @@
 #   description   One sentence: <meta name="description">, the manifest's
 #                 `description`, the lede on About. Required.
 #
+# None of the three may contain ", <, > or &. Vite writes them into
+# frontend/index.html by plain substitution (%VITE_APP_NAME% in <title>, the
+# other two in attribute values) with no HTML escaping, so any of those
+# characters would end the title, the attribute or the element and the page
+# would ship broken — or, in a fork whose configs are not its own, with
+# markup nobody wrote. Refused here, where every config is read.
+#
 # The identity fields reach the bundle as VITE_APP_NAME, VITE_APP_SHORT_NAME
 # and VITE_APP_DESCRIPTION, exported by scripts/ci-build-site.sh. Colours are
 # deliberately not here: the design tokens own them (frontend/manifest.config.ts
@@ -56,12 +63,14 @@
 #   scripts/list-instances.sh                        # every instance, as JSON
 #   scripts/list-instances.sh --environment staging  # only staging entries
 #   scripts/list-instances.sh --format text          # one "stack region" per line
+#   scripts/list-instances.sh --self-test            # prove the character check fails
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
 FILTER_ENV=""
 FORMAT="json"
+SELF_TEST=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -73,6 +82,7 @@ while [ $# -gt 0 ]; do
             FORMAT="${2:?--format needs a value}"
             shift
             ;;
+        --self-test) SELF_TEST=1 ;;
         -h | --help)
             usage_from_header "${BASH_SOURCE[0]}"
             exit 0
@@ -88,6 +98,45 @@ case "$FORMAT" in
 esac
 
 require_cmd python3 jq
+
+if [ "$SELF_TEST" = "1" ]; then
+    info "self-test: asserting the character check refuses what index.html cannot carry"
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    mkdir -p "$tmp/config/instances"
+    cat >"$tmp/config/instances/one.yaml" <<'YAML'
+name: one
+display_name: One
+description: A sentence with an apostrophe's worth of punctuation, and a dash.
+YAML
+    if ! CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text >/dev/null 2>&1; then
+        die "self-test inconclusive: a clean config was refused"
+    fi
+    ok "control: a clean config resolves"
+
+    # Each of the four characters, in each of the three fields, must be
+    # refused and named in the message. YAML single quotes, inside which all
+    # four are literal.
+    for field in display_name short_name description; do
+        for ch in '"' '<' '>' '&'; do
+            {
+                printf 'name: one\n'
+                printf 'display_name: One\n'
+                printf 'description: Fine.\n'
+                printf "%s: 'Bad %s here'\n" "$field" "$ch"
+            } >"$tmp/config/instances/one.yaml"
+            if out="$(CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text 2>&1)"; then
+                die "self-test FAILED: '$field' containing $ch resolved"
+            fi
+            case "$out" in
+                *"'$field' must not contain"*) ;;
+                *) die "self-test FAILED: '$field' containing $ch was refused for another reason: $out" ;;
+            esac
+        done
+    done
+    ok "self-test: every one of the four characters is refused in every identity field"
+    exit 0
+fi
 
 CONFIG_DIR="$REPO_ROOT/config/instances"
 [ -d "$CONFIG_DIR" ] || die "no config/instances directory at $CONFIG_DIR"
@@ -173,6 +222,19 @@ for path in sorted(config_dir.glob("*.yaml")):
             return None
         if not isinstance(value, str):
             sys.exit(f"{path}: '{key}' must be a string")
+        # These reach frontend/index.html by plain substitution — %VITE_APP_NAME%
+        # inside <title>, the other two inside attribute values — and Vite does
+        # not HTML-escape them, so any of these characters ends the element or
+        # the attribute and the page ships broken. Refused rather than escaped:
+        # the same strings also reach the manifest and the bundle as JSON, and
+        # one representation that is right everywhere beats two that must agree.
+        for ch in '"<>&':
+            if ch in value:
+                sys.exit(
+                    f"{path}: '{key}' must not contain {ch!r} — it is written into "
+                    f"frontend/index.html (the title, the meta description, the "
+                    f"home-screen title) without HTML escaping"
+                )
         return value.strip()
 
     display_name = text("display_name", required=True)
