@@ -196,6 +196,12 @@ type Store interface {
 	// body (up to 200 KB) into a poll that only wants to know the row is
 	// there.
 	NoteExists(ctx context.Context, tenantID, noteID string) (bool, error)
+	// NotesExist answers NoteExists for several notes in one round trip: the
+	// result holds true for every id that has a row and false for the rest.
+	// It is what a page of receipts asks — one BatchGetItem for the page's
+	// distinct notes rather than one GetItem each, on a list the client polls
+	// every second and a half (review 2026-09-05, S17).
+	NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error)
 	// PutNote writes n conditionally on n.Version matching the stored version,
 	// and returns the note with its new version. A losing write returns
 	// ErrVersionConflict rather than silently discarding the other writer.

@@ -857,6 +857,37 @@ func (s *DynamoStore) NoteExists(ctx context.Context, tenantID, noteID string) (
 	return len(result.Item) > 0, nil
 }
 
+// NotesExist is NoteExists for a set: one BatchGetItem projected to the sort
+// key, so a page of twenty receipts naming five notes costs one call, not five.
+func (s *DynamoStore) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(noteIDs))
+	keys := make([]map[string]types.AttributeValue, 0, len(noteIDs))
+	for _, id := range noteIDs {
+		if _, dup := out[id]; dup {
+			continue
+		}
+		out[id] = false
+		keys = append(keys, map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(noteSK(id)),
+		})
+	}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	items, err := s.batchGet(ctx, keys, "sk")
+	if err != nil {
+		return nil, fmt.Errorf("dynamo notes exist: %w", err)
+	}
+	for _, item := range items {
+		out[trimPrefix(readString(item, "sk"), "NOTE#")] = true
+	}
+	return out, nil
+}
+
 // PutNote writes conditionally on the version the caller read. An unconditional
 // PutItem loses a voice append that lands while the editor is open.
 func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.NoteIndex) (model.NoteIndex, error) {

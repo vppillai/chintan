@@ -226,3 +226,61 @@ func TestStampCleanRequestTouchesOnlyTheStampAndLeavesTheVersionAlone(t *testing
 		}
 	})
 }
+
+// One round trip for a page's worth of notes, true for the rows that exist
+// and false — present, not absent — for the ones that do not, duplicates asked
+// once.
+func TestNotesExistAnswersASetInOneCall(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store := newStore()
+		ctx := context.Background()
+		for _, id := range []string{"n1", "n2"} {
+			if _, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: id, Title: id, UpdatedAt: model.Now()}); err != nil {
+				t.Fatalf("PutNote: %v", err)
+			}
+		}
+		got, err := store.NotesExist(ctx, "tenant-a", []string{"n1", "missing", "n2", "n1"})
+		if err != nil {
+			t.Fatalf("NotesExist: %v", err)
+		}
+		want := map[string]bool{"n1": true, "n2": true, "missing": false}
+		if len(got) != len(want) {
+			t.Fatalf("NotesExist = %v, want %v", got, want)
+		}
+		for id, exists := range want {
+			if got[id] != exists {
+				t.Fatalf("NotesExist[%s] = %v, want %v", id, got[id], exists)
+			}
+		}
+		// Another tenant's note is absent from this tenant's answer.
+		other, err := store.NotesExist(ctx, "tenant-b", []string{"n1"})
+		if err != nil || other["n1"] {
+			t.Fatalf("NotesExist across tenants = %v, %v; want false", other, err)
+		}
+		empty, err := store.NotesExist(ctx, "tenant-a", nil)
+		if err != nil || len(empty) != 0 {
+			t.Fatalf("NotesExist(nil) = %v, %v", empty, err)
+		}
+	})
+}
+
+func TestNotesExistIsOneBatchGetProjectedToTheKey(t *testing.T) {
+	store, api := newTestStore(t)
+	ctx := context.Background()
+	seedNotes(t, store, "tenant-a", 5)
+	api.batchGets, api.gets = nil, 0
+
+	got, err := store.NotesExist(ctx, "tenant-a", []string{"note_000", "note_003", "nope"})
+	if err != nil {
+		t.Fatalf("NotesExist: %v", err)
+	}
+	if !got["note_000"] || !got["note_003"] || got["nope"] {
+		t.Fatalf("NotesExist = %v", got)
+	}
+	if api.gets != 0 || len(api.batchGets) != 1 {
+		t.Fatalf("NotesExist made %d GetItems and %d BatchGetItems; want one batch", api.gets, len(api.batchGets))
+	}
+	if p := *api.batchGets[0].RequestItems[tableName].ProjectionExpression; p != "sk" {
+		t.Fatalf("projection = %q; nothing but the key should cross the wire", p)
+	}
+}

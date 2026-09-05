@@ -297,6 +297,20 @@ func (s *Store) NoteExists(ctx context.Context, tenantID, noteID string) (bool, 
 	return ok, nil
 }
 
+func (s *Store) NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]bool, len(noteIDs))
+	for _, id := range noteIDs {
+		_, ok := s.notes[tenantID][id]
+		out[id] = ok
+	}
+	return out, nil
+}
+
 func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return model.NoteIndex{}, err
