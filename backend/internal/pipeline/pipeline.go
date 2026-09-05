@@ -570,12 +570,15 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		}
 	}
 
+	// Shape, never content. The shape is taken on its own line so the
+	// log-hygiene check, which reads an emitter's argument list for anything
+	// that names user content, sees only the summary being logged.
+	rawShape := obs.Redact(result.Text)
 	obs.Log(ctx).Info("transcribed capture",
 		slog.String("capture_id", capture.ID),
 		slog.Int64("duration_ms", result.DurationMS()),
 		slog.Int("segments", len(result.Segments)),
-		// Shape, never content.
-		slog.Any("raw", obs.Redact(result.Text)))
+		slog.Any("raw", rawShape))
 
 	capture.RawKey = rawKey
 	if segmentsKey != "" {
