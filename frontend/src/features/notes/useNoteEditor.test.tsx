@@ -292,6 +292,31 @@ describe('a note appended to on the server reaches the screen', () => {
     expect(view.result.current.model.version).toBe(NOTE.version);
   });
 
+  it('carries a draft being typed onto a newer version whose text is unchanged — a clean request bumped it', async () => {
+    const { wrapper } = harness();
+    const view = renderHook((note: NoteDetailWire) => useNoteEditor(note), {
+      wrapper,
+      initialProps: NOTE,
+    });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    // The same words on the server, one version on: the request was accepted
+    // and the cleaned view has since been written.
+    view.rerender({
+      ...NOTE,
+      version: NOTE.version + 2,
+      cleaned: { body: '# Roof', mode: 'structured', generated_at: '2026-09-05T12:00:00Z', stale: false },
+    });
+
+    await waitFor(() => {
+      expect(view.result.current.model.version).toBe(NOTE.version + 2);
+    });
+    expect(view.result.current.model.draft.body).toBe('My own words.');
+    expect(view.result.current.model.state).toBe('dirty');
+  });
+
   it('ignores a refetch that carries the same version', () => {
     const { wrapper } = harness();
     const view = renderHook((note: NoteDetailWire) => useNoteEditor(note), {
@@ -303,5 +328,99 @@ describe('a note appended to on the server reaches the screen', () => {
     });
     view.rerender({ ...NOTE });
     expect(view.result.current.model.draft.title).toBe('Roof repair — Ellis');
+  });
+});
+
+describe('a 409 that is not a conflict', () => {
+  /*
+   * A clean request bumps the note's version the moment it is accepted, so an
+   * autosave that was already on the wire loses the version check though
+   * nobody changed the words. That used to be shown as "this note changed
+   * somewhere else", offering to throw away one side of a difference that
+   * did not exist.
+   */
+  it('saves again with the server’s version when its copy has the same text, and shows no conflict', async () => {
+    const patches: Record<string, unknown>[] = [];
+    let serverVersion = NOTE.version + 1; // bumped by the clean request
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      const method = init?.method ?? 'GET';
+      if (method === 'PATCH') {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        patches.push(body);
+        if (body['version'] !== serverVersion) {
+          return new Response(
+            JSON.stringify({
+              type: 'about:blank',
+              title: 'Someone else changed this first',
+              status: 409,
+              current_version: serverVersion,
+            }),
+            { status: 409, headers: { 'content-type': 'application/problem+json' } },
+          );
+        }
+        serverVersion += 1;
+        return new Response(JSON.stringify({ ...NOTE, version: serverVersion }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      // The note as the server holds it: the same words, a newer version.
+      return new Response(JSON.stringify({ ...NOTE, version: serverVersion }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('saved');
+    });
+    expect(patches.map((body) => body['version'])).toEqual([NOTE.version, NOTE.version + 1]);
+    expect(patches[1]?.['body']).toBe('My own words.');
+    expect(view.result.current.model.version).toBe(NOTE.version + 2);
+    expect(view.result.current.model.theirs).toBeNull();
+  });
+
+  it('still shows the conflict when the server’s words differ', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        return new Response(
+          JSON.stringify({ type: 'about:blank', title: 'Conflict', status: 409, current_version: 4 }),
+          { status: 409, headers: { 'content-type': 'application/problem+json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ...NOTE, version: 4, body: 'Appended by a recording.' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    const api = testApiContext(fetchImpl);
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <TestProviders api={api}>{children}</TestProviders>
+    );
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    act(() => {
+      view.result.current.edit({ body: 'My own words.' });
+    });
+    await act(async () => {
+      await view.result.current.saveNow();
+    });
+
+    await waitFor(() => {
+      expect(view.result.current.model.state).toBe('conflict');
+    });
+    expect(view.result.current.model.theirs?.draft.body).toBe('Appended by a recording.');
   });
 });

@@ -82,6 +82,13 @@ export type EditorEvent =
   | { type: 'takeTheirs' }
   /** Re-apply my edit on top of the server's version and save again. */
   | { type: 'keepMine' }
+  /**
+   * The server's version moved without the text: a clean request, or the
+   * worker writing the cleaned view, bumps the note's `version` and changes
+   * nothing the editor holds. The draft is carried onto the new version as it
+   * is; a save that was on the wire is dirty again, so it goes out once more.
+   */
+  | { type: 'rebase'; version: number }
   | { type: 'reset'; draft: NoteDraft; version: number };
 
 export function emptyDraft(): NoteDraft {
@@ -101,6 +108,24 @@ export function initialEditor(draft: NoteDraft, version: number): EditorModel {
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Whether two drafts read the same — title, body, names and tags, language —
+ * ignoring the cleaned-view settings. This is the question "did anyone
+ * change the note's text?", which is what decides between carrying a draft
+ * onto a newer server version and showing the conflict prompt: a clean
+ * request and the worker's cleaned view bump the version and touch none of
+ * these, and the cleaned mode is the one field a clean may set on its own.
+ */
+export function sameText(a: NoteDraft, b: NoteDraft): boolean {
+  return (
+    a.title === b.title &&
+    a.body === b.body &&
+    sameList(a.aliases, b.aliases) &&
+    sameList(a.tags, b.tags) &&
+    (a.language ?? '') === (b.language ?? '')
+  );
 }
 
 export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
@@ -223,6 +248,15 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
         theirs: null,
       };
     }
+
+    case 'rebase':
+      if (event.version <= model.version || model.state === 'conflict') return model;
+      return {
+        ...model,
+        version: event.version,
+        state: model.state === 'saving' ? 'dirty' : model.state,
+        error: null,
+      };
 
     case 'reset':
       return initialEditor(event.draft, event.version);
