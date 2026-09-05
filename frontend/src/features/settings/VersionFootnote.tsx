@@ -1,10 +1,14 @@
 import { config } from '@/config/env.ts';
 
 /**
- * What is running, at the very bottom and deliberately quiet.
+ * What is running: the Version row of You's "About & support" card, and the
+ * build line on About.
  *
- * The first thing anyone needs when a bug report comes in, so it is real text
- * inside a `<code>` — selectable and copyable — rather than decoration.
+ * It was a footnote centred under the whole screen, the one line on You that
+ * belonged to no group; it is a row like the others now, but still
+ * deliberately quiet. The first thing anyone needs when a bug report comes
+ * in, so it is real text inside a `<code>` — selectable and copyable — rather
+ * than decoration.
  *
  * CI passes `git describe --tags --always`: `v0.5.0` when the build is exactly
  * a release, `v0.5.0-14-gabcdef` when it is fourteen commits past one. The raw
@@ -38,7 +42,7 @@ export function describeVersion(raw: string): BuildLabel {
 export function VersionFootnote({ version = config.version }: { version?: string }) {
   const { release, build } = describeVersion(version);
   return (
-    <p className="version-footnote">
+    <span className="version-footnote">
       <span className="visually-hidden">App version </span>
       <code>
         {release}
@@ -48,6 +52,6 @@ export function VersionFootnote({ version = config.version }: { version?: string
           </span>
         )}
       </code>
-    </p>
+    </span>
   );
 }

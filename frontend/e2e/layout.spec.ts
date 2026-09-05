@@ -58,6 +58,7 @@ const ROUTES = [
   { path: '/?q=roof', label: 'search with results' },
   { path: '/?q=nothingmatchesthis', label: 'search empty' },
   { path: '/settings', label: 'settings' },
+  { path: '/about', label: 'about' },
 ];
 
 /**
