@@ -33,6 +33,12 @@ func TestSniffDistinguishesTheThreeInvocations(t *testing.T) {
 			want: invocation{task: "sweep-expired"},
 		},
 		{
+			// The other EventBridge rule's constant input.
+			name: "the daily AWS cost reading",
+			raw:  `{"task":"aws-cost"}`,
+			want: invocation{task: "aws-cost"},
+		},
+		{
 			// The clean-note task, from the API or from the worker itself. It
 			// goes to the pipeline worker too, which dispatches on the task.
 			name: "a clean-note task",
