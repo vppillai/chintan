@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -306,5 +307,137 @@ func TestPurgeUnlinksACaptureTheNoteIndexCannotSee(t *testing.T) {
 	}
 	if _, err := f.store.GetCapture(ctx, "user1", "c_other"); err != nil {
 		t.Errorf("purging one note removed another note's legacy capture: %v", err)
+	}
+}
+
+// countingUnindexed counts the base-table reads of the captures the note index
+// cannot see. A batch purge made one per note: a hundred reads of the tenant's
+// whole capture partition for one "clear all".
+type countingUnindexed struct {
+	repository.Store
+	calls int
+}
+
+func (s *countingUnindexed) ListUnindexedCaptures(ctx context.Context, tenantID string) ([]model.CaptureIndex, error) {
+	s.calls++
+	return s.Store.ListUnindexedCaptures(ctx, tenantID)
+}
+
+func TestPurgeNotesListsTheUnindexedCapturesOncePerBatch(t *testing.T) {
+	f := newPurgeFixture(t)
+	ctx := context.Background()
+	counting := &countingUnindexed{Store: f.store}
+	notes := NewNotesService(counting, f.objects)
+
+	ids := []string{f.archivedNote(t, "a").ID, f.archivedNote(t, "b").ID, f.archivedNote(t, "c").ID}
+	// One of them owns a capture only the base table can see.
+	legacyAudio := "tenants/user1/captures/c_legacy/audio.webm"
+	f.store.PutLegacyCapture(model.CaptureIndex{
+		ID: "c_legacy", UserID: "user1", NoteID: ids[1], Status: model.StatusAppended,
+		CreatedAt: model.Now(), AudioKey: legacyAudio,
+	})
+	if err := f.objects.Put(ctx, legacyAudio, []byte("x"), "audio/webm"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	results, err := notes.PurgeNotes(ctx, "user1", ids)
+	if err != nil {
+		t.Fatalf("PurgeNotes: %v", err)
+	}
+	for _, r := range results {
+		if r.Status != PurgeStatusPurged {
+			t.Fatalf("result %+v, want purged", r)
+		}
+	}
+	if counting.calls != 1 {
+		t.Fatalf("ListUnindexedCaptures was called %d times for a batch of 3, want 1", counting.calls)
+	}
+	if _, err := f.objects.Get(ctx, legacyAudio); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("the legacy capture's audio survived the batch: err = %v", err)
+	}
+	if _, err := f.store.GetCapture(ctx, "user1", "c_legacy"); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("the legacy capture's row survived the batch: err = %v", err)
+	}
+}
+
+// slowObjects advances a clock on every delete, so a test can spend the batch's
+// time budget without spending the time.
+type slowObjects struct {
+	repository.Objects
+	advance func()
+}
+
+func (o *slowObjects) Delete(ctx context.Context, key string) error {
+	o.advance()
+	return o.Objects.Delete(ctx, key)
+}
+
+// A batch that cannot finish inside the API function's time stops starting
+// notes and reports the rest as failed, "not attempted", for the client to send
+// again. Before, it ran into the gateway's 504 with the client's idempotency
+// key still claimed, and the same-key retries answered 409 for a minute.
+func TestPurgeNotesStopsAtItsTimeBudgetAndReportsTheRestForRetry(t *testing.T) {
+	f := newPurgeFixture(t)
+	ctx := context.Background()
+	now := time.Date(2026, 9, 5, 16, 0, 0, 0, time.UTC)
+	// Each note's cascade deletes three objects (audio, body, meta); every
+	// delete costs four seconds of the clock, so the first note finishes at
+	// 12 s, the second is started (12 s < 20 s) and finishes at 24 s, and the
+	// third is never begun.
+	slow := &slowObjects{Objects: f.objects, advance: func() { now = now.Add(4 * time.Second) }}
+	notes := NewNotesService(f.store, slow).WithClock(func() time.Time { return now })
+	ids := []string{f.archivedNote(t, "a").ID, f.archivedNote(t, "b").ID, f.archivedNote(t, "c").ID}
+
+	results, err := notes.PurgeNotes(ctx, "user1", ids)
+	if err != nil {
+		t.Fatalf("PurgeNotes: %v", err)
+	}
+	if results[0].Status != PurgeStatusPurged || results[1].Status != PurgeStatusPurged {
+		t.Fatalf("the notes started inside the budget = %+v, want purged", results[:2])
+	}
+	if results[2].Status != PurgeStatusFailed || !strings.HasPrefix(results[2].Detail, "not attempted") {
+		t.Fatalf("the note past the budget = %+v, want failed and not attempted", results[2])
+	}
+	// Untouched: its row and its audio are exactly where a retry expects them.
+	if _, err := f.store.GetNote(ctx, "user1", ids[2]); err != nil {
+		t.Fatalf("the unattempted note's row is gone: %v", err)
+	}
+	if _, err := f.objects.Get(ctx, "tenants/user1/captures/c_c/audio.webm"); err != nil {
+		t.Fatalf("the unattempted note's audio is gone: %v", err)
+	}
+
+	// The retry, with time, finishes the job.
+	now = now.Add(time.Hour)
+	again, err := notes.PurgeNotes(ctx, "user1", ids[2:])
+	if err != nil || again[0].Status != PurgeStatusPurged {
+		t.Fatalf("retry = %+v, %v; want purged", again, err)
+	}
+}
+
+// The request's own deadline, when nearer than the budget, is what the batch
+// works against — less the margin the response needs — so a client that gave
+// the call five seconds is answered in five seconds with the rest for retry,
+// not cut off by its own timeout.
+func TestPurgeNotesHonoursANearerRequestDeadline(t *testing.T) {
+	f := newPurgeFixture(t)
+	now := time.Date(2026, 9, 5, 16, 0, 0, 0, time.UTC)
+	slow := &slowObjects{Objects: f.objects, advance: func() { now = now.Add(time.Second) }}
+	notes := NewNotesService(f.store, slow).WithClock(func() time.Time { return now })
+	ids := []string{f.archivedNote(t, "a").ID, f.archivedNote(t, "b").ID}
+
+	// Six seconds on the request: four are kept back, so the budget is about
+	// two seconds — the first note (three seconds of deletes) is started and
+	// finished, the second is not begun.
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	results, err := notes.PurgeNotes(ctx, "user1", ids)
+	if err != nil {
+		t.Fatalf("PurgeNotes: %v", err)
+	}
+	if results[0].Status != PurgeStatusPurged {
+		t.Fatalf("first note = %+v, want purged", results[0])
+	}
+	if results[1].Status != PurgeStatusFailed || !strings.HasPrefix(results[1].Detail, "not attempted") {
+		t.Fatalf("second note = %+v, want failed and not attempted under a six-second request", results[1])
 	}
 }

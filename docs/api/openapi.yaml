@@ -1308,7 +1308,11 @@ components:
             reports and is what makes a retry safe.
             `failed` — the note is still here. Either it was not archived, or
             part of its cascade failed and the index row was deliberately kept
-            so the delete can be retried.
+            so the delete can be retried, or the batch ran out of time before
+            it reached this note (`detail` begins "not attempted") — the
+            server stops starting notes about twenty seconds in rather than
+            run into the gateway's timeout, and the client sends the rest
+            again.
         detail:
           type: string
           description: Safe to display. Never contains provider or AWS internals.
