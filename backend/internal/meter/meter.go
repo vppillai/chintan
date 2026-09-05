@@ -48,7 +48,12 @@ type Quantities map[Unit]float64
 // Prices are configuration, not constants: they change without notice and
 // differ per account. A missing entry falls back to the provider-wide "*" row,
 // and a missing provider prices at zero rather than blocking the call — an
-// unpriced model must not become an outage.
+// unpriced model must not become an outage at runtime. It must not be silent
+// either: pricing at zero means the breaker enforces nothing and the cap the
+// operator set is a fiction, so the worker checks the configured models with
+// Resolve at start-up and refuses to run when neither row exists
+// (cmd/worker). The runtime fallback then only covers a table edited out from
+// under a running process, which is the case it was written for.
 //
 // The per-unit price is a float because the real numbers are fractions of a
 // microdollar: a MiniMax input token is 0.3 µ$. The total is still whole
@@ -60,15 +65,54 @@ func Key(provider, model string) string {
 	return strings.ToLower(strings.TrimSpace(provider)) + "/" + strings.ToLower(strings.TrimSpace(model))
 }
 
+// Resolution says which row, if any, prices a provider and model.
+type Resolution int
+
+const (
+	// ResolvedNone means neither the exact row nor the provider's "*" row
+	// exists: every call would price at zero.
+	ResolvedNone Resolution = iota
+	// ResolvedWildcard means the provider's "*" row stands in for a model
+	// that has no row of its own.
+	ResolvedWildcard
+	// ResolvedExact means the model has its own row.
+	ResolvedExact
+)
+
+// Resolve reports which row would price calls on provider and model. It is
+// the start-up check's question; CostMicros answers the per-call one with the
+// same lookup.
+func (p PriceTable) Resolve(provider, model string) Resolution {
+	if _, ok := p[Key(provider, model)]; ok {
+		return ResolvedExact
+	}
+	if _, ok := p[Key(provider, "*")]; ok {
+		return ResolvedWildcard
+	}
+	return ResolvedNone
+}
+
+// Resolves reports whether calls on provider and model would be priced at all.
+func (p PriceTable) Resolves(provider, model string) bool {
+	return p.Resolve(provider, model) != ResolvedNone
+}
+
+// row is the lookup CostMicros and Resolve share, so the two cannot disagree
+// about which row a call is priced from.
+func (p PriceTable) row(provider, model string) (map[Unit]float64, bool) {
+	if row, ok := p[Key(provider, model)]; ok {
+		return row, true
+	}
+	row, ok := p[Key(provider, "*")]
+	return row, ok
+}
+
 // CostMicros prices one unit of one call.
 func (p PriceTable) CostMicros(provider, model string, unit Unit, quantity float64) int64 {
 	if quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
 		return 0
 	}
-	row, ok := p[Key(provider, model)]
-	if !ok {
-		row, ok = p[Key(provider, "*")]
-	}
+	row, ok := p.row(provider, model)
 	if !ok {
 		return 0
 	}
