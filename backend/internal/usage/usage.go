@@ -326,8 +326,26 @@ func (d *Dynamo) CountRequest(ctx context.Context, tenantID, day string) error {
 
 // update is the one UpdateItem shape both writers use: ADD the counters given,
 // SET the row's identity, its TTL (day rows) or its GSI1 keys (month rows).
-// names and values are the caller's maps and are added to here.
-func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity string, ttl int64, adds []string, names map[string]string, values map[string]types.AttributeValue) error {
+//
+// The caller's maps are copied, never written to. CountRequest passes the same
+// two maps to the month write and then the day write, and when this function
+// added the month row's GSI1 placeholders straight into the caller's map the
+// day write carried :g1pk and :g1sk in its values with no expression that
+// used them — which DynamoDB rejects as a ValidationException ("value provided
+// in ExpressionAttributeValues unused"). In production that failed the day
+// row of every authenticated request from the moment request counting
+// shipped, logged a warning per request, and left days[].api_requests at zero
+// while the month total kept climbing. The test fake now refuses an unused
+// placeholder the way the service does, so this cannot pass the tests again.
+func (d *Dynamo) update(ctx context.Context, tenantID, period, granularity string, ttl int64, adds []string, callerNames map[string]string, callerValues map[string]types.AttributeValue) error {
+	names := make(map[string]string, len(callerNames)+2)
+	for k, v := range callerNames {
+		names[k] = v
+	}
+	values := make(map[string]types.AttributeValue, len(callerValues)+6)
+	for k, v := range callerValues {
+		values[k] = v
+	}
 	names["#type"] = attrType
 	values[":type"] = strAttr(typeUsage)
 	values[":tenant"] = strAttr(tenantID)
