@@ -2,7 +2,8 @@
 
 Status: implemented 2026-09-05 (external review, H2). `pipeline.Config`
 fields `TranscribeTimeout`, `CleanupTimeout`, `CleanNoteTimeout`; the
-existing `RouteAttemptTimeout` and `AskAttemptTimeout`.
+existing `RouteAttemptTimeout` and `AskAttemptTimeout` (the Ask retry gets
+three quarters of it).
 
 ## The budget
 
@@ -24,7 +25,7 @@ context (the same shape as `routeOnce`):
 | route (per attempt) | 15 s | A routing answer not back in fifteen seconds is stuck in the provider's queue; two attempts, then the new-note fallback. |
 | cleanup | 2 min | Rewrites one dictation; output about the size of the input. |
 | clean-note | 3 min | Reads up to 150 KB and writes up to 200 KB — an order of magnitude longer completion than cleanup. |
-| ask (per attempt) | 25 s | The client is waiting on the answer. |
+| ask | 20 s, then a 15 s retry | The client polls the row for 60 s (`ASK_POLL_TIMEOUT_MS`) and then reports the question as not sent; a cold start, the reads and both attempts must land inside that minute. |
 
 The HTTP client timeouts stay as the outer bound.
 

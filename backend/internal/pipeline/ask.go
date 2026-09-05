@@ -36,15 +36,27 @@ const (
 )
 
 const (
-	// defaultAskAttemptTimeout bounds one call to the model. Twenty-five
-	// seconds is long enough for a full 40,000-rune prompt to be answered
-	// and short enough that a request queued at the provider is retried
-	// rather than waited on; the person is watching a spinner.
-	defaultAskAttemptTimeout = 25 * time.Second
+	// defaultAskAttemptTimeout bounds the first call to the model; the retry
+	// gets askRetryTimeout of it. The budget is the client's: the app polls
+	// the row for sixty seconds (frontend/src/api/queries.ts
+	// ASK_POLL_TIMEOUT_MS) and then tells the person the question did not
+	// reach the server, so a cold start, the list and body reads, both
+	// attempts and the poll cadence have to land inside that minute. Twenty
+	// plus fifteen seconds of model time leaves about twenty for the rest.
+	// Two 25-second attempts did not: an answer that was still being written
+	// was shown as not arriving, and "Try again" asked — and billed — the
+	// question a second time. Twenty seconds is still long enough for a full
+	// 40,000-rune prompt to be answered.
+	defaultAskAttemptTimeout = 20 * time.Second
 	// askAttempts is how many times the model is asked before the row
 	// records a failure. Two, for the reason routing gives: a stall or a
 	// 5xx clears more often than not on the second try.
 	askAttempts = 2
+	// askRetryShare is the retry's timeout as a share of the first attempt's:
+	// three quarters, so 20 s becomes 15 s. A share rather than a second
+	// constant, so a test that shortens the attempt shortens the retry with
+	// it.
+	askRetryShare = 0.75
 	// askOutputTokensEstimate is what an answer is reserved against before
 	// the model reports: the completion cap itself, as routing and cleanup
 	// reserve near theirs. Reserving a few paragraphs (600) against a cap of
@@ -174,7 +186,7 @@ func (p *Pipeline) Ask(ctx context.Context, tenantID, askID string) error {
 func (p *Pipeline) askModel(ctx context.Context, tenantID string, prompt ask.Prompt) (provider.Answer, error) {
 	var lastErr error
 	for attempt := 1; attempt <= askAttempts; attempt++ {
-		answer, err := p.askOnce(ctx, tenantID, prompt)
+		answer, err := p.askOnce(ctx, tenantID, prompt, p.askAttemptTimeout(attempt))
 		if err == nil {
 			return answer, nil
 		}
@@ -194,17 +206,27 @@ func (p *Pipeline) askModel(ctx context.Context, tenantID string, prompt ask.Pro
 		obs.Log(ctx).Warn("ask: attempt failed; retrying once with a fresh context",
 			slog.Int("attempt", attempt),
 			slog.String("reason", reason),
-			slog.Int64("attempt_timeout_ms", p.cfg.AskAttemptTimeout.Milliseconds()),
+			slog.Int64("attempt_timeout_ms", p.askAttemptTimeout(attempt).Milliseconds()),
+			slog.Int64("retry_timeout_ms", p.askAttemptTimeout(attempt+1).Milliseconds()),
 			slog.String("error", err.Error()))
 		obs.Count(ctx, "AskRetried", map[string]string{"Reason": reason})
 	}
 	return provider.Answer{}, lastErr
 }
 
+// askAttemptTimeout is the deadline of the numbered attempt: the configured
+// one for the first, askRetryShare of it for the retry.
+func (p *Pipeline) askAttemptTimeout(attempt int) time.Duration {
+	if attempt <= 1 {
+		return p.cfg.AskAttemptTimeout
+	}
+	return time.Duration(float64(p.cfg.AskAttemptTimeout) * askRetryShare)
+}
+
 // askOnce is one reserved, bounded call. The attempt's deadline applies to the
 // provider call only, so the breaker's release still has a live context when
 // the attempt times out (see routeOnce).
-func (p *Pipeline) askOnce(ctx context.Context, tenantID string, prompt ask.Prompt) (provider.Answer, error) {
+func (p *Pipeline) askOnce(ctx context.Context, tenantID string, prompt ask.Prompt, timeout time.Duration) (provider.Answer, error) {
 	system, user, err := prompt.Render()
 	if err != nil {
 		return provider.Answer{}, err
@@ -220,7 +242,7 @@ func (p *Pipeline) askOnce(ctx context.Context, tenantID string, prompt ask.Prom
 		},
 		TenantID: tenantID,
 	}, func(ctx context.Context) (breaker.Result, error) {
-		attemptCtx, cancel := context.WithTimeout(ctx, p.cfg.AskAttemptTimeout)
+		attemptCtx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		out, err := p.cfg.LLM.Ask(attemptCtx, prompt)
 		if err != nil {

@@ -159,8 +159,9 @@ type Config struct {
 	// RouteAttemptTimeout bounds each of the routeAttempts routing calls. Zero
 	// means defaultRouteAttemptTimeout; tests shorten it.
 	RouteAttemptTimeout time.Duration
-	// AskAttemptTimeout bounds each of the askAttempts model calls of an ask
-	// task. Zero means defaultAskAttemptTimeout; tests shorten it.
+	// AskAttemptTimeout bounds the first model call of an ask task; the one
+	// retry gets askRetryShare of it. Zero means defaultAskAttemptTimeout;
+	// tests shorten it.
 	AskAttemptTimeout time.Duration
 	// TranscribeTimeout, CleanupTimeout and CleanNoteTimeout bound the
 	// transcription, per-capture cleanup and whole-note clean provider calls.

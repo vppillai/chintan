@@ -11,6 +11,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -384,5 +385,35 @@ func TestInvokerSendsAnAskTaskTheWorkerAccepts(t *testing.T) {
 	}
 	if _, isClean := parseCleanNoteTask(client.in.Payload); isClean {
 		t.Error("an ask payload was read as a clean-note task")
+	}
+}
+
+// clientAskPollWindow is how long the app polls an ask row before it tells the
+// person the question did not reach the server (frontend/src/api/queries.ts
+// ASK_POLL_TIMEOUT_MS). Go cannot read that file, so the number is written
+// down here.
+const clientAskPollWindow = 60 * time.Second
+
+// The worker's whole Ask budget — both model attempts plus a cold start, the
+// list and body reads and the poll cadence — has to fit inside the client's
+// window, or an answer still being written is shown as not arriving and "Try
+// again" bills the question twice. Twenty seconds is the allowance for
+// everything that is not the model.
+func TestAskAttemptBudgetFitsInsideTheClientsPollWindow(t *testing.T) {
+	p, err := New(Config{Store: memory.NewStore(), Objects: memory.NewObjects(), STT: &fake.STT{}, LLM: &fake.LLM{}, Router: &fake.Router{},
+		Breaker: newBreaker(0), STTProvider: "groq", STTModel: "whisper-large-v3-turbo", LLMProvider: "openai", LLMModel: "test-model"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var model time.Duration
+	for attempt := 1; attempt <= askAttempts; attempt++ {
+		model += p.askAttemptTimeout(attempt)
+	}
+	if allowance := clientAskPollWindow - model; allowance < 20*time.Second {
+		t.Fatalf("the model attempts take %s of the client's %s; %s is left for a cold start, the reads and the poll cadence, want at least 20s",
+			model, clientAskPollWindow, allowance)
+	}
+	if p.askAttemptTimeout(2) >= p.askAttemptTimeout(1) {
+		t.Errorf("retry timeout %s is not shorter than the first attempt's %s", p.askAttemptTimeout(2), p.askAttemptTimeout(1))
 	}
 }
