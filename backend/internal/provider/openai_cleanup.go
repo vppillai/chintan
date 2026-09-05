@@ -69,6 +69,22 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 	return Cleaned{Text: text, Usage: usage}, nil
 }
 
+// CleanNote rewrites a whole note as one document. Unlike Cleanup the
+// completion is capped: the answer is bounded by the input it rewrites, and a
+// model that starts repeating itself is cut off rather than billed to the end
+// of its context.
+func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (Cleaned, error) {
+	systemPrompt, userPrompt, err := cleanup.NotePrompt(mode, body)
+	if err != nil {
+		return Cleaned{}, err
+	}
+	text, usage, err := c.complete(ctx, systemPrompt, userPrompt, cleanup.NoteMaxTokens(body))
+	if err != nil {
+		return Cleaned{}, err
+	}
+	return Cleaned{Text: text, Usage: usage}, nil
+}
+
 // complete runs a single chat completion and returns the assistant message text
 // together with what it consumed. A positive maxTokens caps the completion;
 // zero leaves the provider's default, which cleanup needs because its output is

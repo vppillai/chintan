@@ -95,8 +95,55 @@ type LLM struct {
 	Response string
 	OnCall   func()
 
+	// NoteResponse, when set, is what CleanNote answers verbatim; otherwise
+	// the fake derives a document from the body. NoteErr fails CleanNote alone,
+	// so a test can have the per-capture cleanup succeed and the whole-note
+	// pass fail.
+	NoteResponse string
+	NoteErr      error
+
 	mu    sync.Mutex
 	calls int
+	// noteCalls records every whole-note request: the mode and the body, so a
+	// test can assert what the worker sent.
+	noteCalls []NoteCall
+}
+
+// NoteCall is one CleanNote request as the fake saw it.
+type NoteCall struct {
+	Mode model.NoteCleanMode
+	Body string
+}
+
+func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (provider.Cleaned, error) {
+	f.mu.Lock()
+	f.noteCalls = append(f.noteCalls, NoteCall{Mode: mode, Body: body})
+	f.mu.Unlock()
+
+	if f.OnCall != nil {
+		f.OnCall()
+	}
+	if f.NoteErr != nil {
+		return provider.Cleaned{}, f.NoteErr
+	}
+	if f.ShouldFail {
+		return provider.Cleaned{}, fmt.Errorf("fake LLM failed")
+	}
+	usage := provider.TokenUsage{InputTokens: len(strings.Fields(body)), OutputTokens: len(strings.Fields(body)) + 2}
+	if f.NoteResponse != "" {
+		return provider.Cleaned{Text: f.NoteResponse, Usage: usage}, nil
+	}
+	if mode == model.NoteCleanPolished {
+		return provider.Cleaned{Text: strings.Join(strings.Fields(body), " "), Usage: usage}, nil
+	}
+	return provider.Cleaned{Text: "# Cleaned\n\n" + body, Usage: usage}, nil
+}
+
+// NoteCalls reports every whole-note request, in order.
+func (f *LLM) NoteCalls() []NoteCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]NoteCall(nil), f.noteCalls...)
 }
 
 func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (provider.Cleaned, error) {

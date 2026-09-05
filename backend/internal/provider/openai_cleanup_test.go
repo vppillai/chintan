@@ -104,3 +104,58 @@ func TestOpenAICleanupRejectsEmptyRaw(t *testing.T) {
 		t.Fatal("expected error for empty raw")
 	}
 }
+
+// The whole-note call is the one completion that is capped: its answer is
+// bounded by the body it rewrites, so max_tokens is sent, at about one and a
+// half times the input, where per-capture cleanup deliberately sends none.
+func TestOpenAICleanNoteCapsTheCompletionAndFencesTheBody(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(b, &gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"# Roof\n\n- call the roofer"}}],"usage":{"prompt_tokens":120,"completion_tokens":20}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	llm, err := NewOpenAICleanup("test-llm-key", srv.URL, "MiniMax-M3", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+	body := strings.Repeat("the roof leaks and the roofer comes on the fourteenth. ", 100) // ~5.5 KB
+	got, err := llm.CleanNote(context.Background(), model.NoteCleanStructured, body)
+	if err != nil {
+		t.Fatalf("CleanNote: %v", err)
+	}
+	if got.Text != "# Roof\n\n- call the roofer" {
+		t.Fatalf("text = %q", got.Text)
+	}
+	if got.Usage.InputTokens != 120 || got.Usage.OutputTokens != 20 {
+		t.Errorf("usage = %+v", got.Usage)
+	}
+
+	maxTokens, ok := gotBody["max_tokens"].(float64)
+	if !ok {
+		t.Fatalf("max_tokens was not sent: %v", gotBody)
+	}
+	estimate := float64(len(body)/4 + 1)
+	if maxTokens < estimate*1.4 || maxTokens > estimate*1.6 {
+		t.Errorf("max_tokens = %v for a %d-byte body; want about 1.5x the 4-chars-per-token estimate (%v)", maxTokens, len(body), estimate)
+	}
+	messages := gotBody["messages"].([]any)
+	user := messages[1].(map[string]any)["content"].(string)
+	if !strings.Contains(user, "-----TRANSCRIPT-----\n"+body+"\n-----TRANSCRIPT-----") {
+		t.Errorf("the body was not fenced: %q", user[:80])
+	}
+	system := messages[0].(map[string]any)["content"].(string)
+	if !strings.Contains(strings.ToLower(system), "structured") {
+		t.Errorf("system prompt is not the structured brief: %q", system[:60])
+	}
+}
