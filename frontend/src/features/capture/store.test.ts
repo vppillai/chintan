@@ -216,3 +216,53 @@ describe('Cancel leaves nothing behind on the device', () => {
     expect(recorder.state).toBe('inactive');
   });
 });
+
+describe('the previous recording is gone before the next one is requested', () => {
+  class FakeAnalyser {
+    fftSize = 1024;
+    smoothingTimeConstant = 0;
+    getByteTimeDomainData(frame: Uint8Array): void {
+      frame.fill(255);
+    }
+  }
+
+  it('reads no amplitudes at the moment `requesting` becomes visible', async () => {
+    /*
+     * `RecorderController.start()` drops the old session, but the store used
+     * to dispatch `request` first — so the render that dispatch queued could
+     * be committed with the previous recording's peaks still there to read.
+     * Observed through a subscriber, which sees the store exactly as that
+     * render would.
+     */
+    useCaptureStore.getState().__configure({
+      recorder: {
+        ...fakeDeps(),
+        createAudioContext: () =>
+          ({
+            state: 'running',
+            createMediaStreamSource: () => ({ connect() {} }),
+            createAnalyser: () => new FakeAnalyser(),
+            close: () => Promise.resolve(),
+          }) as unknown as AudioContext,
+      },
+    });
+
+    await useCaptureStore.getState().start();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(useCaptureStore.getState().amplitudes(8).length).toBeGreaterThan(0);
+    recorder.emitChunk(10);
+    await useCaptureStore.getState().stop();
+    expect(useCaptureStore.getState().model.state).toBe('review');
+
+    let atRequest: number[] | null = null;
+    const unsubscribe = useCaptureStore.subscribe((state) => {
+      if (state.model.state === 'requesting' && atRequest === null) {
+        atRequest = state.amplitudes(8);
+      }
+    });
+    await useCaptureStore.getState().start();
+    unsubscribe();
+
+    expect(atRequest).toEqual([]);
+  });
+});
