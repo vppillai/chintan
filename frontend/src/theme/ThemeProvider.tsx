@@ -54,6 +54,23 @@ function systemPrefersDark(): boolean {
   return darkQuery()?.matches ?? false;
 }
 
+/**
+ * The browser's chrome follows the theme too. `index.html` carries one
+ * `theme-color` per colour scheme so the address bar is right before the
+ * stylesheet loads, but those are media queries, and an explicit Nocturne on
+ * a light-mode device would leave the chrome pale. Once the theme attribute
+ * is on the root, `--color-ground` resolves to the ground actually painted,
+ * and both tags are set to it; a stylesheet not yet parsed gives an empty
+ * value, and the media-selected defaults stand until the next run.
+ */
+function paintBrowserChrome(root: HTMLElement): void {
+  const ground = getComputedStyle(root).getPropertyValue('--color-ground').trim();
+  if (!ground) return;
+  for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+    meta.content = ground;
+  }
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setPreferenceState] = useState<ThemePreference>(() =>
     readStoredTheme(typeof window === 'undefined' ? undefined : window.localStorage),
@@ -75,6 +92,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     root.setAttribute('data-theme', preference);
     root.setAttribute('data-resolved-theme', resolved);
+    paintBrowserChrome(root);
   }, [preference, resolved]);
 
   const setPreference = useCallback((next: ThemePreference) => {
