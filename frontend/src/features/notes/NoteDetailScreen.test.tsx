@@ -749,3 +749,40 @@ describe('a recording sent into this note shows up on its recordings', () => {
     expect(screen.queryByText(/uploading…/i)).toBeNull();
   });
 });
+
+describe('a conflict takes the foot of the screen', () => {
+  it('closes the Details panel while the banner is up, so its buttons are not covered, and brings it back after', async () => {
+    /*
+     * QA 2026-09-05 (6): at 1280×800 the foot-anchored Details panel sat over
+     * "Use the newer version / Keep my edits". A conflict is resolved before
+     * anything else, so the panel steps aside for it.
+     */
+    // An earlier test may have left this note on its Recordings tab for the session.
+    sessionStorage.removeItem(noteTabStorageKey('roof-repair'));
+    const user = userEvent.setup();
+    const api = server([ROOF]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    const body = await screen.findByRole('textbox', { name: 'Note body' });
+    await waitFor(() => {
+      expect(body).toHaveValue('v1 body');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Details' }));
+    expect(screen.getByRole('combobox', { name: 'Transcription language' })).toBeInTheDocument();
+
+    // Another device saved first; this save is answered 409.
+    api.notes.set('roof-repair', { ...ROOF, body: 'v2 body', snippet: 'v2 body', version: 2 });
+    await user.type(body, ' mine');
+    await user.tab();
+
+    expect(await screen.findByText(/changed elsewhere/i)).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Transcription language' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false');
+
+    await user.click(screen.getByRole('button', { name: 'Use the newer version' }));
+    await waitFor(() => {
+      expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
+    });
+    expect(screen.getByRole('combobox', { name: 'Transcription language' })).toBeInTheDocument();
+  });
+});

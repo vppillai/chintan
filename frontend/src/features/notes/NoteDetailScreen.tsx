@@ -294,7 +294,10 @@ export function NoteDetailScreen() {
         note={note}
         editor={editor}
         hidden={selectingRecordings}
-        open={panel}
+        // A conflict is resolved before anything else, and at a laptop height
+        // the open Details panel covered the banner's two buttons. The panel
+        // steps aside while the banner is up and is back as it was after.
+        open={editor.model.state === 'conflict' ? null : panel}
         onOpenChange={setPanel}
       />
     </div>
