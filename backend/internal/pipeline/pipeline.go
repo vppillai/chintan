@@ -1015,7 +1015,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
-	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID, cleanedText)
+	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID)
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
@@ -1126,17 +1126,27 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 // cleaned view's stale flag from the note body that is now in object storage,
 // and returns the note as stored. The body is authoritative, so a version
 // conflict is resolved by re-reading rather than by overwriting whoever won.
-func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, fallbackBody string) (model.NoteIndex, error) {
+//
+// A body that cannot be read is an error, not a body to guess at. Until
+// 2026-09 a failed read fell back to the paragraph just appended, so one S3
+// 5xx or timeout at this moment rewrote the note's search text and snippet to
+// that paragraph alone; the capture was then marked appended, nothing retried,
+// and server search, the offline corpus and Ask lost the rest of the note
+// until the next body write. Returning the error fails the invocation instead.
+// The retry finds the capture's marker in the body and finishes the append
+// from here, so nothing is written twice.
+func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID string) (model.NoteIndex, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
 		if err != nil {
 			return model.NoteIndex{}, err
 		}
-		body := fallbackBody
-		if existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey); err == nil {
-			body = string(existing)
+		existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey)
+		if err != nil {
+			return model.NoteIndex{}, fmt.Errorf("read note body: %w", err)
 		}
+		body := string(existing)
 		note.Snippet = service.Snippet(body)
 		note.SearchText = service.SearchText(body)
 		note.UpdatedAt = model.FormatTime(p.now())
