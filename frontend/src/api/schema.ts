@@ -416,6 +416,57 @@ export interface SearchHitWire {
 }
 
 /* ---------------------------------------------------------------------------
+   Ask — a question answered from the notes
+   --------------------------------------------------------------------------- */
+
+export type AskStatus = 'pending' | 'answered' | 'failed';
+
+/** One earlier exchange of the same conversation, sent back as context. */
+export interface AskTurnWire {
+  question: string;
+  answer: string;
+}
+
+/**
+ * `POST /v1/ask`. The question is 1–1000 characters after trimming; `history`
+ * is at most the six most recent earlier turns of THIS conversation, oldest
+ * first, so a follow-up ("and when was that?") reads in context. Retrieval is
+ * over the notes only, never over the history.
+ */
+export interface AskRequestWire {
+  question: string;
+  history?: AskTurnWire[];
+}
+
+/** A note the model was given and cited, in relevance order. */
+export interface AskSourceWire {
+  note_id: string;
+  title: string;
+}
+
+/**
+ * `GET /v1/ask/{askId}`. The API answers `POST /v1/ask` with 202 and this row
+ * in `pending`; the worker fills in the rest and the client polls. `answer` is
+ * plain text with at most the light Markdown the cleaned view uses —
+ * paragraphs, `- ` lists, `**bold**` — and never headings. `grounded` is false
+ * when the honest answer is "that is not in your notes". `error` is a fixed
+ * user-facing sentence, never provider text. Rows live for a day.
+ */
+export interface AskWire {
+  id: string;
+  status: AskStatus;
+  question: string;
+  answer: string | null;
+  grounded: boolean;
+  sources: AskSourceWire[];
+  error: string | null;
+  /** How many notes were in the retrieval window. */
+  notes_considered: number;
+  created_at: string;
+  answered_at: string | null;
+}
+
+/* ---------------------------------------------------------------------------
    Usage
    --------------------------------------------------------------------------- */
 
@@ -431,7 +482,10 @@ export interface UsageTotalsWire {
 /**
  * The instance's AWS spend for the month, as last read from the stack's AWS
  * Budget by the worker's daily task. Instance-level — the account's bill, not
- * the caller's share of it — so every user sees the same figure.
+ * the caller's share of it — so every user sees the same figure. `share_micros`
+ * is the one per-user number: the instance figure scaled by this user's share
+ * of the instance's provider spend this month. Null when the instance has
+ * spent nothing on providers yet, so there is nothing to apportion by.
  */
 export interface UsageAwsWire {
   /** Month-to-date actual spend, microdollars. */
@@ -440,20 +494,55 @@ export interface UsageAwsWire {
   as_of: string;
   /** The budget's limit, microdollars; null when the budget has none. */
   budget_micros: number | null;
+  /**
+   * Optional rather than nullable-required because the frontend may deploy
+   * before the backend that sends it; the section falls back to the instance
+   * figure when it is absent.
+   */
+  share_micros?: number | null;
+  /** How the share was apportioned — `provider_cost` today; null with `share_micros`. */
+  share_basis?: string | null;
+}
+
+/** Authenticated API requests this month by this user. Health and 401s excluded. */
+export interface UsageApiWire {
+  requests: number;
+}
+
+/**
+ * What the tenant is keeping, counted from its index rows at read time.
+ * `approximate` is true when the count stopped at the row cap, so the figures
+ * are a floor rather than a total.
+ */
+export interface UsageStorageWire {
+  recordings: number;
+  audio_seconds: number;
+  audio_bytes: number;
+  notes: number;
+  approximate: boolean;
 }
 
 /**
  * `GET /v1/usage?month=yyyy-mm`: the caller's own provider usage for one
- * month — totals, the same split by pipeline stage, and one line per day. A
- * month with no usage is all zeros, not an error. `aws` is null when nothing
- * has been recorded for the month (no budget in the stack, or the daily task
- * has not run yet).
+ * month — totals, the same split by pipeline stage and by provider, one line
+ * per day, how many API requests the month took, and what is stored. A month
+ * with no usage is all zeros, not an error. `aws` is null when nothing has
+ * been recorded for the month (no budget in the stack, or the daily task has
+ * not run yet).
+ *
+ * `providers`, `api` and `storage` are required by contract but optional here:
+ * the screen has to render against a backend from before they existed, and
+ * each has a graceful absence (no line, rather than "0").
  */
 export interface UsageWire extends UsageTotalsWire {
   month: string;
   ops: Record<string, UsageTotalsWire>;
-  days: Array<UsageTotalsWire & { date: string }>;
+  days: Array<UsageTotalsWire & { date: string; api_requests?: number }>;
   aws?: UsageAwsWire | null;
+  /** The same totals split by provider name (`groq`, `minimax`…); absent providers omitted. */
+  providers?: Record<string, UsageTotalsWire>;
+  api?: UsageApiWire;
+  storage?: UsageStorageWire;
 }
 
 /* ---------------------------------------------------------------------------

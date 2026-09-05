@@ -32,6 +32,21 @@ export function formatCalls(calls: number): string {
   return `${String(calls)} ${calls === 1 ? 'call' : 'calls'}`;
 }
 
+/** `312 requests`, `1 request`. */
+export function formatRequests(requests: number): string {
+  return `${String(requests)} ${requests === 1 ? 'request' : 'requests'}`;
+}
+
+/** `8.7 MB`, or `0.4 MB` — one unit, so the figure sits still beside the minutes. */
+export function formatMegabytes(bytes: number): string {
+  return `${(Math.max(0, bytes) / 1_000_000).toFixed(1)} MB`;
+}
+
+/** `41 recordings`, `1 recording`; likewise notes. */
+export function formatCount(count: number, singular: string, plural = `${singular}s`): string {
+  return `${String(count)} ${count === 1 ? singular : plural}`;
+}
+
 /** `yyyy-mm`, UTC — the calendar the API keeps its rows in. */
 export function currentMonth(now: Date = new Date()): string {
   return `${String(now.getUTCFullYear())}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -79,19 +94,35 @@ export function asOfLabel(iso: string, now: Date = new Date()): string {
 }
 
 /**
- * Providers plus AWS, when AWS has been recorded; `null` otherwise, so the
+ * What the AWS half of the Total is: this user's estimated share of the
+ * instance's bill when the backend has apportioned one, else the whole
+ * instance figure as before; `null` when AWS has not been recorded at all.
+ */
+export type TotalBasis = 'share' | 'instance';
+
+export function totalBasis(aws: UsageAwsWire | null | undefined): TotalBasis | null {
+  if (!aws) return null;
+  return aws.share_micros !== null && aws.share_micros !== undefined ? 'share' : 'instance';
+}
+
+/**
+ * Providers plus AWS — the user's share of it when there is one, the instance
+ * figure otherwise — when AWS has been recorded; `null` otherwise, so the
  * screen leaves the Total line out rather than repeat the providers' figure
  * under a heading that promises more.
  */
 export function combinedMicros(usage: UsageWire, aws: UsageAwsWire | null | undefined = usage.aws): number | null {
-  if (!aws) return null;
-  return usage.cost_micros + aws.month_micros;
+  const basis = totalBasis(aws);
+  if (!aws || !basis) return null;
+  return usage.cost_micros + (basis === 'share' ? (aws.share_micros ?? 0) : aws.month_micros);
 }
 
 export interface DayBar {
   date: string;
   costMicros: number;
   calls: number;
+  /** Authenticated API requests that day; 0 from a backend that does not count them. */
+  apiRequests: number;
   today: boolean;
 }
 
@@ -121,18 +152,48 @@ export function dayBars(usage: UsageWire, now: Date = new Date()): DayBar[] {
       date,
       costMicros: row?.cost_micros ?? 0,
       calls: row?.calls ?? 0,
+      apiRequests: row?.api_requests ?? 0,
       today: date === today,
     });
   }
   return bars;
 }
 
-/** The pipeline stages in the order a recording meets them. */
+/**
+ * The pipeline stages in the order a recording meets them, then the two
+ * calls a person asks for by hand: the whole-note rewrite and a question.
+ */
 export const OPS: readonly { key: string; label: string }[] = [
   { key: 'transcribe', label: 'Transcribe' },
   { key: 'route', label: 'Route' },
   { key: 'cleanup', label: 'Clean up' },
+  { key: 'clean_note', label: 'Clean note' },
+  { key: 'ask', label: 'Ask' },
 ];
+
+/** The providers' names as they write them; the wire carries them lowercased. */
+export const PROVIDER_LABELS: Readonly<Record<string, string>> = {
+  groq: 'Groq',
+  minimax: 'MiniMax',
+};
+
+/**
+ * One line per provider that charged this month, the biggest bill first, so
+ * the split under "Providers" answers "which one" at a glance. A provider
+ * the frontend has no name for is shown by its wire name, capitalised.
+ */
+export function providerRows(
+  providers: Record<string, UsageTotalsWire> | undefined,
+): { key: string; label: string; totals: UsageTotalsWire }[] {
+  if (!providers) return [];
+  return Object.entries(providers)
+    .map(([key, totals]) => ({
+      key,
+      label: PROVIDER_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1),
+      totals,
+    }))
+    .sort((a, b) => b.totals.cost_micros - a.totals.cost_micros || a.key.localeCompare(b.key));
+}
 
 /** The stages that actually ran this month, in pipeline order, then any the API added since. */
 export function opRows(
