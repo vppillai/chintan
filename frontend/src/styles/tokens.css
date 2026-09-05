@@ -145,6 +145,16 @@
      highlight along the top of a filled control. */
   --gradient-tonal: linear-gradient(to bottom, var(--color-raised), var(--color-surface));
 
+  /* The theme picker on You shows each theme as a small disc of its own
+     paper. A swatch must not follow the current theme — Ink & Paper's disc is
+     pale in the dark and Nocturne's is dark in the light — so these are the
+     two grounds as primitives, the one place a theme's colour is named
+     outside its own block. Read only by `.theme-swatch`. */
+  --color-swatch-ink: #fbf9f4;
+  --color-swatch-ink-line: #1a1917;
+  --color-swatch-nocturne: #0a0c0b;
+  --color-swatch-nocturne-line: #f2f5f3;
+
   --z-content: 1;
   --z-sheet: 20;
   --z-bottom-bar: 30;
@@ -219,6 +229,10 @@
   --color-accent: #c2410c;
   --color-accent-strong: #a8380a;
   --color-on-accent: #fbf9f4;
+  /* The accent as a wash, for a surface that carries ink on it — the
+     account roundel and the About page's section discs. Not a state colour:
+     at 12% it is a tint of the paper, and `ink` on it stays above 15:1. */
+  --color-accent-soft: rgb(194 65 12 / 12%);
 
   --color-overlay: rgb(26 25 23 / 38%);
   --color-selection: rgb(194 65 12 / 18%);
@@ -304,6 +318,7 @@
   --color-accent: #b8f135;
   --color-accent-strong: #b8f135;
   --color-on-accent: #0a0c0b;
+  --color-accent-soft: rgb(184 241 53 / 14%);
 
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
@@ -347,6 +362,7 @@
     --color-accent: #b8f135;
     --color-accent-strong: #b8f135;
     --color-on-accent: #0a0c0b;
+    --color-accent-soft: rgb(184 241 53 / 14%);
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);
