@@ -64,6 +64,10 @@ export function AboutScreen() {
           <em>Polished</em> tidies the wording as well, and a note marked verbatim is left exactly
           as spoken.
         </p>
+        <p>
+          A daily spending cap on the transcription and cleanup providers protects against runaway
+          costs; if it is ever reached, recordings say so and resume the next day.
+        </p>
       </section>
 
       <section className="about__section" aria-labelledby="about-data">

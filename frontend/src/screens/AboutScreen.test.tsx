@@ -35,6 +35,13 @@ describe('About Chintan', () => {
     expect(screen.getByText(/thirty days after you archive it/i)).toBeInTheDocument();
   });
 
+  it('mentions the daily spending cap once, plainly, and never its amount (U13b)', () => {
+    mountAlone();
+    const line = screen.getByText(/a daily spending cap on the transcription and cleanup providers/i);
+    expect(line).toHaveTextContent(/recordings say so and resume the next day/i);
+    expect(line.textContent).not.toMatch(/\$/);
+  });
+
   it('names the build it is running, as the footnote on You does', () => {
     mountAlone();
     expect(screen.getByText(config.version, { selector: 'code' })).toBeInTheDocument();

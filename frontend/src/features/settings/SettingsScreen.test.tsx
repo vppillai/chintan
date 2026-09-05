@@ -265,16 +265,11 @@ describe('usage this month', () => {
     expect(screen.queryByRole('img', { name: /spend by day/i })).toBeNull();
   });
 
-  it('names the instance’s daily cap beneath, only when there is one', async () => {
+  it('never names the instance’s daily cap, even when there is one (U13b)', async () => {
     mountSettings({ settings: { ...STORED, daily_spend_cap_micros: 5_000_000 } });
-    expect(await screen.findByText(/stops taking recordings after/i)).toHaveTextContent('$5.00');
-  });
-
-  it('does not mention a cap the instance does not enforce', async () => {
-    mountSettings();
     await screen.findByText(/no recordings have been processed/i);
     expect(screen.queryByText(/stops taking recordings/i)).toBeNull();
-    // And the old read-only sentence is gone.
-    expect(screen.queryByText(/daily spending cap/i)).toBeNull();
+    expect(screen.queryByText(/\bcap\b/i)).toBeNull();
+    expect(screen.queryByText('$5.00')).toBeNull();
   });
 });

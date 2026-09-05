@@ -23,11 +23,12 @@ import {
  * the split by pipeline stage, and a bar per day — from `GET /v1/usage`, the
  * per-tenant accounting the worker writes on every priced provider call.
  *
- * The cap survives as one quiet line beneath, only when it is non-zero: it is
- * still the reason a capture can stop with `spend_capped`, so it belongs next
- * to the numbers it is compared against.
+ * The instance's daily spend cap is not named here at all (U13b): it is an
+ * operator's runaway guard, set far above any real day, and a sentence about
+ * it beneath someone's own cents read as a warning. About says, in one line,
+ * that a cap exists and what happens if it is ever reached.
  */
-export function UsageSection({ dailyCapMicros = 0 }: { dailyCapMicros?: number }) {
+export function UsageSection() {
   const headingId = useId();
   const { data, isLoading, isError } = useUsage();
 
@@ -55,14 +56,6 @@ export function UsageSection({ dailyCapMicros = 0 }: { dailyCapMicros?: number }
         Provider cost only — what transcription and the language model charged for this
         account&rsquo;s recordings. It does not include what AWS charges to run the instance.
       </p>
-
-      {dailyCapMicros > 0 && (
-        <p className="settings-group__note">
-          This instance stops taking recordings after{' '}
-          <span className="numeric">{formatDollars(dailyCapMicros)}</span> of provider spend in a
-          day, across everyone using it, and says so rather than failing vaguely.
-        </p>
-      )}
     </section>
   );
 }
