@@ -20,6 +20,7 @@
 }
 
 .you__header {
+  flex-wrap: nowrap;
   align-items: center;
   padding-block-end: 0;
 }
@@ -43,6 +44,12 @@
   font-size: var(--font-size-sm);
   color: var(--color-muted);
   text-align: end;
+}
+
+/* Empty means nothing to say: no reserved band under the heading (QA 11). The
+   region stays in the DOM so its next sentence is still announced. */
+.settings-status:empty {
+  min-block-size: 0;
 }
 
 .settings-status__text--saved {
@@ -486,6 +493,10 @@
   color: var(--color-ink);
 }
 
+.usage__provider--unattributed .usage__provider-figures {
+  color: var(--color-muted);
+}
+
 /* The stages as a quiet two-column table. */
 .usage__ops {
   display: grid;
@@ -526,12 +537,21 @@
   overflow: visible;
 }
 
-.usage__chart-caption {
+.usage__chart-caption,
+.usage__chart-scale {
   display: flex;
   justify-content: space-between;
   gap: var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--color-faint);
+}
+
+.usage__chart-scale {
+  justify-content: flex-end;
+}
+
+.usage__chart-caption > :nth-child(2) {
+  text-align: center;
 }
 
 .usage__baseline {

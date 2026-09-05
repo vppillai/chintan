@@ -109,6 +109,15 @@ function Usage({ usage }: { usage: UsageWire }) {
   const storage = usage.storage;
   const requests = usage.api?.requests;
   const hasFacts = requests !== undefined || storage !== undefined;
+  /*
+   * The split by provider was added to the accounting after the month's total
+   * had been running for a while, so for that month the provider rows sum to
+   * less than the figure above them. The difference is shown as its own line
+   * rather than left for the reader to notice: it is derived from the data,
+   * so it disappears on its own once every row of the month carries a name.
+   */
+  const attributed = providers.reduce((sum, row) => sum + row.totals.cost_micros, 0);
+  const unattributed = providers.length > 0 ? Math.max(0, usage.cost_micros - attributed) : 0;
 
   return (
     <div className="usage">
@@ -143,6 +152,14 @@ function Usage({ usage }: { usage: UsageWire }) {
                     </dd>
                   </div>
                 ))}
+                {unattributed > 0 && (
+                  <div className="usage__provider usage__provider--unattributed">
+                    <dt className="usage__provider-label">Before the split began</dt>
+                    <dd className="usage__provider-figures">
+                      <span className="numeric">{formatDollars(unattributed)}</span>
+                    </dd>
+                  </div>
+                )}
               </dl>
             </dd>
           )}
@@ -267,7 +284,10 @@ const DOT = 1.2;
  * that names both figures, and the whole figure is described in words for
  * anyone who cannot see it — the numbers themselves are already in the text
  * above, so the description says what the picture adds: which day was the
- * biggest, and how many requests the month took.
+ * biggest, and how many requests the month took. For the sighted reader the
+ * strip carries the same in print (QA 12): the tallest bar's value and day
+ * above it, the first and last day of the month beneath it, and a caption
+ * saying what the bars, the accent and the dots are.
  */
 function Sparkline({ usage }: { usage: UsageWire }) {
   const bars = dayBars(usage);
@@ -281,6 +301,12 @@ function Sparkline({ usage }: { usage: UsageWire }) {
 
   return (
     <figure className="usage__chart">
+      <p className="usage__chart-scale">
+        <span>
+          Tallest bar <span className="numeric">{formatDollars(peak.costMicros)}</span> on{' '}
+          {dayLabel(peak.date)}
+        </span>
+      </p>
       <svg
         className="usage__spark"
         viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`}
@@ -337,7 +363,9 @@ function Sparkline({ usage }: { usage: UsageWire }) {
       </svg>
       <figcaption className="usage__chart-caption">
         <span>{dayLabel(bars[0]!.date)}</span>
-        <span>Spend by day{maxRequests > 0 ? ' · dots are API requests' : ''}</span>
+        <span>
+          Spend by day, today in colour{maxRequests > 0 ? ' · dots mark API requests' : ''}
+        </span>
         <span>{dayLabel(bars[bars.length - 1]!.date)}</span>
       </figcaption>
     </figure>

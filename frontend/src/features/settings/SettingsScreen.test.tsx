@@ -289,6 +289,48 @@ describe('usage this month', () => {
     const minimax = screen.getByText('MiniMax').closest('.usage__provider');
     expect(minimax).toHaveTextContent('$0.002');
     expect(minimax).toHaveTextContent('4 calls');
+    // The rows add up to the figure, so there is nothing unattributed to show.
+    expect(screen.queryByText(/before the split began/i)).toBeNull();
+  });
+
+  it('shows what the provider rows do not account for, when the split began part-way through the month', async () => {
+    // The per-provider counters were added after the month's total had been
+    // accumulating; for that month the rows sum to less than the figure, and
+    // the difference is a line of its own rather than a puzzle. Derived from
+    // the data, so it disappears once every row carries a provider.
+    mountSettings({
+      usage: { ...USAGE, providers: { minimax: { calls: 2, cost_micros: 1200 } } },
+    });
+    await screen.findByText('Providers');
+
+    const rest = screen.getByText(/before the split began/i).closest('.usage__provider');
+    // 2,721 − 1,200 microdollars.
+    expect(rest).toHaveTextContent('$0.002');
+    expect(rest).toHaveClass('usage__provider--unattributed');
+  });
+
+  it('labels the day strip in print as well as for a screen reader: the scale, the ends, a caption', async () => {
+    mountSettings({ usage: USAGE });
+    const chart = (await screen.findByRole('img', { name: /spend by day/i })).closest('.usage__chart');
+
+    expect(chart?.querySelector('.usage__chart-scale')).toHaveTextContent(/Tallest bar \$0\.002 on (4 Jan|Jan 4)/);
+    const caption = chart?.querySelector('.usage__chart-caption');
+    expect(caption).toHaveTextContent(/^(1 Jan|Jan 1)/);
+    expect(caption).toHaveTextContent(/(31 Jan|Jan 31)$/);
+    expect(caption).toHaveTextContent(/spend by day, today in colour · dots mark API requests/i);
+  });
+
+  it('reserves no blank band for the status line while it has nothing to say (QA 11)', async () => {
+    mountSettings();
+    await screen.findByRole('combobox', { name: /transcription language/i });
+    await waitFor(() => {
+      expect(screen.queryByText(/loading your settings/i)).toBeNull();
+    });
+    // Empty, so `:empty` collapses it; the live region itself stays for the
+    // next Saved to be announced.
+    const status = screen.getByRole('status', { name: '' });
+    expect(status).toHaveClass('settings-status');
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('lists the month’s API requests and what is stored, as one row of facts', async () => {
