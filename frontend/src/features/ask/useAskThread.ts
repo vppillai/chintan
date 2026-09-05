@@ -8,11 +8,13 @@ import {
   LOST_MESSAGE,
   NOT_SENT_MESSAGE,
   applyRow,
+  canResume,
   failTurn,
   historyFor,
   isBusy,
   loadThread,
   newTurn,
+  resumeTurn,
   saveThread,
   type AskTurn,
 } from './thread.ts';
@@ -22,7 +24,10 @@ export interface AskThread {
   /** Waiting on the server for the latest question. */
   busy: boolean;
   ask: (question: string) => void;
-  /** Sends a failed or timed-out question again, in place. */
+  /**
+   * Picks a timed-out or lost question back up — polling its row again where
+   * there is one to poll — or sends it again, in place.
+   */
   retry: (key: string) => void;
   clear: () => void;
 }
@@ -95,7 +100,7 @@ export function useAskThread(): AskThread {
       const trimmed = question.trim();
       if (trimmed.length === 0) return;
       const turn = newTurn(newIdempotencyKey(), trimmed);
-      const history = historyFor(turns);
+      const history = historyFor(turns, trimmed);
       setTurns((prev) => [...prev, turn]);
       send.mutate(
         { body: { question: trimmed, ...(history.length > 0 ? { history } : {}) }, key: turn.key },
@@ -117,11 +122,19 @@ export function useAskThread(): AskThread {
   const retry = useCallback(
     (key: string): void => {
       const turn = turns.find((candidate) => candidate.key === key);
-      if (!turn || isBusy(turn)) return;
+      // One turn in flight at a time holds for a retry as for a question.
+      if (!turn || isBusy(turn) || isBusy(last)) return;
+      // The worker may have answered since the client gave up: the row is
+      // polled again rather than a second answer paid for. Only the last turn
+      // is ever polled, so an older one is asked again as a new turn.
+      if (turn === last && canResume(turn)) {
+        replace(key, (current) => resumeTurn(current));
+        return;
+      }
       setTurns((prev) => prev.filter((candidate) => candidate.key !== key));
       ask(turn.question);
     },
-    [turns, ask],
+    [turns, last, ask, replace],
   );
 
   const clear = useCallback((): void => {

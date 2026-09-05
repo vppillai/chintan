@@ -45,11 +45,13 @@ function json(body: unknown, status = 200): Response {
  * A library plus the Ask endpoints: the POST answers 202 with the pending
  * row, and the poll answers `pending` for the first `pendingPolls` reads of
  * each question and then `final`. What was posted, and how many polls there
- * were in all, are recorded.
+ * were in all, are recorded. `settle()` is the worker finishing late: every
+ * poll from then on answers `final`.
  */
 function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: number; final?: AskWire } = {}) {
   const posts: { question: string; history?: unknown }[] = [];
   const creates: NoteCreateWire[] = [];
+  let pendingLimit = pendingPolls;
   let polls = 0;
   let pollsThisQuestion = 0;
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -65,7 +67,7 @@ function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: numb
       polls += 1;
       pollsThisQuestion += 1;
       const id = url.pathname.slice(url.pathname.lastIndexOf('/') + 1);
-      return json({ ...(pollsThisQuestion <= pendingPolls ? askPending : final), id });
+      return json({ ...(pollsThisQuestion <= pendingLimit ? askPending : final), id });
     }
     if (url.pathname.endsWith('/v1/notes') && method === 'POST') {
       creates.push(JSON.parse(String(init?.body)) as NoteCreateWire);
@@ -75,7 +77,15 @@ function server({ pendingPolls = 1, final = askAnswered }: { pendingPolls?: numb
     if (url.pathname.endsWith('/v1/notes')) return json({ items: TEST_NOTES });
     return json({ items: [] });
   });
-  return { fetchImpl, posts, creates, polls: () => polls };
+  return {
+    fetchImpl,
+    posts,
+    creates,
+    polls: () => polls,
+    settle: () => {
+      pendingLimit = 0;
+    },
+  };
 }
 
 function location(): string {
@@ -313,6 +323,28 @@ describe('a question is sent on Enter and its answer polled for', () => {
       vi.advanceTimersByTime(10_000);
     });
     expect(api.polls()).toBe(settled);
+  });
+
+  it('picks the row back up on Try again after the minute, rather than asking — and paying — twice', async () => {
+    const user = fakeTime();
+    const api = server({ pendingPolls: Number.POSITIVE_INFINITY });
+    mount(api.fetchImpl);
+
+    const field = await switchToAsk(user);
+    await user.type(field, 'what did I decide about the roof?{Enter}');
+    await screen.findByText('Reading your notes…');
+    act(() => {
+      vi.advanceTimersByTime(ASK_POLL_TIMEOUT_MS + 1_000);
+    });
+    expect(await screen.findByText('This is taking too long.')).toBeInTheDocument();
+    const gaveUpAfter = api.polls();
+
+    // The worker got there in the meantime; the row is a day old at most.
+    api.settle();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText(/The tiler can start on the fourteenth/)).toBeInTheDocument();
+    expect(api.posts).toHaveLength(1);
+    expect(api.polls()).toBeGreaterThan(gaveUpAfter);
   });
 });
 
