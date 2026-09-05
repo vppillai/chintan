@@ -16,10 +16,13 @@ import {
 } from '@/api/queries.ts';
 import { ApiError } from '@/api/problem.ts';
 import type { NoteState, NoteWire } from '@/api/schema.ts';
-import { ARCHIVED_VIEW } from '@/app/routes.ts';
+import { ARCHIVED_VIEW, ASK_MODE } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { LoadMore } from '@/components/LoadMore.tsx';
 import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
+import { AskModeToggle } from '@/features/ask/AskModeToggle.tsx';
+import { AskPanel } from '@/features/ask/AskPanel.tsx';
+import { useAskThread } from '@/features/ask/useAskThread.ts';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
@@ -41,6 +44,12 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
  * All of it lives in the URL (`q`, `tag`, `view`), so a filter is shareable,
  * survives reload and is what Back returns to.
  *
+ * The field has a second mode, Ask (`mode=ask`, backlog D5): the same box
+ * takes a question instead of a filter, Enter sends it, and the Ask panel
+ * stands in for the list with the answer and the notes it came from. The
+ * mode is in the URL like the filters; the question and the thread are not
+ * (`features/ask/thread.ts`).
+ *
  * Bulk select carries over from the two screens this replaces. In the active
  * view the actions are Archive and Delete forever; in the archive, Restore and
  * Delete forever. Deleting is gated by a typed word in both, because it is the
@@ -53,12 +62,22 @@ export function NotesScreen() {
   const [params, setParams] = useSearchParams();
   const view: NoteState = params.get('view') === ARCHIVED_VIEW ? 'archived' : 'active';
   const tag = params.get('tag');
+  const asking = params.get('mode') === ASK_MODE;
   const query = params.get('q') ?? '';
   const trimmed = query.trim();
   const searching = trimmed.length > 0;
+  /*
+   * The question being typed. Component state rather than the URL: `q` is a
+   * filter and belongs there, but a question is sent once, on Enter, and
+   * should be in nobody's history or shared link.
+   */
+  const [question, setQuestion] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const askThread = useAskThread();
 
   const inputId = useId();
   const listId = useId();
+  const askPanelId = useId();
   const online = useOnline();
   const queryClient = useQueryClient();
 
@@ -297,77 +316,108 @@ export function NotesScreen() {
         </h1>
       </header>
 
-      <form
-        className="search-form"
-        role="search"
-        onSubmit={(event) => {
-          event.preventDefault();
-        }}
-      >
-        <label className="visually-hidden" htmlFor={inputId}>
-          Search notes
-        </label>
-        <input
-          id={inputId}
-          className="search-input"
-          type="search"
-          value={query}
-          placeholder="Search titles, tags, transcripts"
-          autoComplete="off"
-          aria-controls={listId}
-          onChange={(event) => {
-            setFilter({ q: event.target.value });
+      {/*
+        One field, two modes. Searching filters on every keystroke through
+        the URL's `q`; asking holds the question until Enter, because a
+        question is a request that costs a model call, not a filter to
+        narrow. The segment beside the field is the switch, and switching to
+        Ask drops the filter so coming back to Search shows the whole library.
+      */}
+      <div className="search-row">
+        <form
+          className="search-form"
+          role="search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!asking) return;
+            askThread.ask(question);
+            setQuestion('');
           }}
-        />
-      </form>
-
-      <div className="chips" role="group" aria-label="Filter notes">
-        <Chip
-          label="All"
-          pressed={view === 'active' && !tag}
-          onClick={() => {
-            setFilter({ view: null, tag: null });
-          }}
-        />
-        {tagNames.map((name) => (
-          <Chip
-            key={name}
-            label={name}
-            pressed={tag === name}
-            onClick={() => {
-              setFilter({ tag: tag === name ? null : name });
+        >
+          <label className="visually-hidden" htmlFor={inputId}>
+            {asking ? 'Ask your notes' : 'Search notes'}
+          </label>
+          <input
+            ref={inputRef}
+            id={inputId}
+            className="search-input"
+            type="search"
+            value={asking ? question : query}
+            placeholder={asking ? 'Ask your notes…' : 'Search titles, tags, transcripts'}
+            autoComplete="off"
+            enterKeyHint={asking ? 'send' : 'search'}
+            maxLength={asking ? 1000 : undefined}
+            aria-controls={asking ? askPanelId : listId}
+            onChange={(event) => {
+              if (asking) setQuestion(event.target.value);
+              else setFilter({ q: event.target.value });
             }}
           />
-        ))}
-        <Chip
-          label={
-            <>
-              Archived
-              {archivedCount !== undefined && (
-                <>
-                  {' · '}
-                  <span className="numeric">
-                    {archivedCount}
-                    {archived.hasNextPage ? '+' : ''}
-                  </span>
-                </>
-              )}
-            </>
-          }
-          name={archivedCount === undefined ? 'Archived' : `Archived · ${String(archivedCount)}`}
-          pressed={view === 'archived'}
-          onClick={() => {
-            setFilter({ view: view === 'archived' ? null : ARCHIVED_VIEW });
+        </form>
+        {/*
+          Beside the form, not inside it: the switch is not a search field,
+          and a form with one text field submits on Enter by itself.
+        */}
+        <AskModeToggle
+          mode={asking ? 'ask' : 'search'}
+          onChange={(mode) => {
+            setFilter(mode === 'ask' ? { mode: ASK_MODE, q: null } : { mode: null });
+            inputRef.current?.focus();
           }}
         />
       </div>
+
+      {asking && <AskPanel id={askPanelId} thread={askThread} />}
+
+      {!asking && (
+        <div className="chips" role="group" aria-label="Filter notes">
+          <Chip
+            label="All"
+            pressed={view === 'active' && !tag}
+            onClick={() => {
+              setFilter({ view: null, tag: null });
+            }}
+          />
+          {tagNames.map((name) => (
+            <Chip
+              key={name}
+              label={name}
+              pressed={tag === name}
+              onClick={() => {
+                setFilter({ tag: tag === name ? null : name });
+              }}
+            />
+          ))}
+          <Chip
+            label={
+              <>
+                Archived
+                {archivedCount !== undefined && (
+                  <>
+                    {' · '}
+                    <span className="numeric">
+                      {archivedCount}
+                      {archived.hasNextPage ? '+' : ''}
+                    </span>
+                  </>
+                )}
+              </>
+            }
+            name={archivedCount === undefined ? 'Archived' : `Archived · ${String(archivedCount)}`}
+            pressed={view === 'archived'}
+            onClick={() => {
+              setFilter({ view: view === 'archived' ? null : ARCHIVED_VIEW });
+            }}
+          />
+        </div>
+      )}
 
       {/*
         What the microphone produced, filed at the top of the library rather
         than floating over it: a recording stranded by a killed tab is offered
         back first, then whatever the pipeline is still working on.
       */}
-      {!searching && view === 'active' && (
+      {!asking && !searching && view === 'active' && (
         <>
           <PasskeyNudge />
           <ResumePrompt />
@@ -375,19 +425,19 @@ export function NotesScreen() {
         </>
       )}
 
-      {list.isLoading && !paused && !fromCache && (
+      {!asking && list.isLoading && !paused && !fromCache && (
         <p className="screen__count" role="status">
           Loading…
         </p>
       )}
 
-      {showingCached && (
+      {!asking && showingCached && (
         <p className="screen__count" role="status">
           Saved on this device. Recordings and transcripts need a connection.
         </p>
       )}
 
-      {searching && (
+      {!asking && searching && (
         <p className="screen__count" aria-live="polite">
           {`${String(hits.length)} ${hits.length === 1 ? 'result' : 'results'}${
             serverPending ? ' so far…' : ''
@@ -400,7 +450,7 @@ export function NotesScreen() {
         nothing matched — that is the one case where the user most needs to
         know a note they own was not actually looked for.
       */}
-      {searching && serverUnavailable && (
+      {!asking && searching && serverUnavailable && (
         <p className="search-offline" role="status">
           {online
             ? 'The server search did not respond, so only notes on this device were searched.'
@@ -408,7 +458,7 @@ export function NotesScreen() {
         </p>
       )}
 
-      {(!online || paused) && nothingToShow && !searching && (
+      {!asking && (!online || paused) && nothingToShow && !searching && (
         <p className="screen__empty" role="status">
           {view === 'archived'
             ? 'You are offline, so the archive could not be loaded.'
@@ -421,7 +471,7 @@ export function NotesScreen() {
         implement. The previous copy said "Pull down to try again." — there is
         no pull-to-refresh anywhere in the codebase.
       */}
-      {list.isError && online && !paused && nothingToShow && (
+      {!asking && list.isError && online && !paused && nothingToShow && (
         <div className="screen__empty" role="alert">
           <p>{failureMessage(list.error)}</p>
           <div className="screen__actions">
@@ -437,14 +487,15 @@ export function NotesScreen() {
         </div>
       )}
 
-      {searching && nothingToShow && !serverPending && (
+      {!asking && searching && nothingToShow && !serverPending && (
         <p className="screen__empty">
           Nothing matches &ldquo;{trimmed}&rdquo;
           {view === 'archived' ? ' in the archive.' : ' in the notes searched.'}
         </p>
       )}
 
-      {!searching &&
+      {!asking &&
+        !searching &&
         online &&
         !paused &&
         !list.isLoading &&
@@ -458,7 +509,7 @@ export function NotesScreen() {
           <p className="screen__empty">Tap Record to make your first note.</p>
         ))}
 
-      {searching ? (
+      {asking ? null : searching ? (
         <ul id={listId} className="note-list" role="list">
           {hits.map((hit) => (
             <li key={hit.noteId}>
@@ -502,7 +553,7 @@ export function NotesScreen() {
         day groups run on without a button to press (backlog U3). The button
         is still there, for a keyboard and a screen reader.
       */}
-      {!searching && (
+      {!asking && !searching && (
         <LoadMore
           hasMore={list.hasNextPage}
           loading={list.isFetchingNextPage}
@@ -510,7 +561,7 @@ export function NotesScreen() {
         />
       )}
 
-      {selecting && (
+      {!asking && selecting && (
         <SelectionBar
           label="Bulk actions"
           count={selectedIds.size}

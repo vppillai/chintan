@@ -1,0 +1,373 @@
+/* --------------------------------------------------------------------------
+   Ask — the library's field in its second mode, and the panel beneath it
+
+   Everything here reads its colours and sizes from tokens.css, and its
+   controls from the same vocabulary as the rest of the library: the field
+   is `.search-input`, the chips are the chips' shape, the actions are the
+   cleaned panel's pills. Kept in its own sheet so the shell's depth pass and
+   this feature could land in the same week without touching the same file.
+   -------------------------------------------------------------------------- */
+
+/* The field and its mode switch on one line; the form takes what is left,
+   and the row carries the gap beneath that the form used to. */
+.search-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding-block-end: var(--space-3);
+}
+
+.search-row .search-form {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  padding-block-end: 0;
+}
+
+/* Search | Ask: two radios drawn as one segmented control. The inputs are
+   real and focusable — stretched invisibly over their labels, the way the
+   cleaned panel's checkbox is — so the keyboard and the reader get radios
+   while the eye gets a segment. */
+.field-mode {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-1);
+  border: 0;
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+}
+
+.field-mode__option {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--layout-touch-target-min);
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.field-mode__input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.field-mode__option:has(.field-mode__input:checked) {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+
+/* The focus ring on the label, since the input that has focus is invisible. */
+.field-mode__option:has(.field-mode__input:focus-visible) {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: var(--layout-focus-ring-offset);
+}
+
+.field-mode__label {
+  pointer-events: none;
+}
+
+/* ---- The panel --------------------------------------------------------- */
+
+.ask {
+  display: grid;
+  gap: var(--space-4);
+  padding-block-end: var(--space-4);
+}
+
+.ask__intro {
+  padding-block: var(--space-6);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-align: center;
+}
+
+/* One line, said once: the cost of what this mode does, with the way to
+   stop being told beside it. */
+.ask__cost {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+  padding-inline: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
+
+.ask__cost-dismiss {
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.ask__thread {
+  display: grid;
+  gap: var(--space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ask__turn {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* The question, echoed in the UI face and set off from the answer's serif,
+   so a thread reads as an exchange rather than as one run of prose. */
+.ask__question {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+
+.ask__question::before {
+  content: 'Q ';
+  color: var(--color-faint);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+}
+
+.ask__waiting,
+.ask__error {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* The wait shows itself as a slow breath, in the motion tokens, so reduced
+   motion stills it along with everything else. */
+.ask__waiting {
+  animation: ask-breathe calc(var(--motion-duration-slow) * 5) var(--motion-ease-standard)
+    infinite alternate;
+}
+
+@keyframes ask-breathe {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.45;
+  }
+}
+
+.ask__error {
+  color: var(--color-accent-strong);
+}
+
+.ask__failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.ask__answer {
+  display: grid;
+  gap: var(--space-3);
+}
+
+/* The honest label for an answer the notes did not give. Small caps in the
+   eyebrow's manner, so it reads as a category, not a scolding. */
+.ask__ungrounded {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+/* The answer in the notes' own card and serif, the same as the cleaned view,
+   because it is made of the notes. Lists take their markers back from the
+   reset. */
+.ask__body {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-relaxed);
+  color: var(--color-ink);
+}
+
+.ask__body ul,
+.ask__body ol {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.ask__body ul {
+  list-style: disc;
+}
+
+.ask__body ol {
+  list-style: decimal;
+}
+
+.ask__body strong {
+  font-weight: var(--font-weight-semibold);
+}
+
+.ask__body code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+/* The notes an answer drew on, as chips that open them. */
+.ask__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ask__source {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+  text-align: start;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.ask__source:hover {
+  background-color: var(--color-raised);
+  border-color: var(--color-ink);
+}
+
+.ask__follow-up {
+  margin-block-start: var(--space-2);
+}
+
+.ask__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ask__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.ask__action--primary {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.ask__action[disabled] {
+  background-color: var(--color-raised);
+  border-color: var(--color-line);
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   Usage additions (You) — the richer per-user view, backlog N11
+
+   Here rather than in shell.css only because that file was under a depth
+   pass in the same week; these belong beside `.usage__*` and should move
+   there when the two can be touched together.
+   -------------------------------------------------------------------------- */
+
+/* The provider split, indented under the Providers headline. */
+.usage__providers {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+
+.usage__provider {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.usage__provider-label {
+  color: var(--color-muted);
+}
+
+.usage__provider-figures {
+  margin: 0;
+  color: var(--color-ink);
+}
+
+/* A line of quiet facts — requests, stored — under the headlines. */
+.usage__facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-block-start: var(--space-2);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.usage__fact {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.usage__fact-label {
+  color: var(--color-muted);
+}
+
+.usage__fact-figures {
+  margin: 0;
+  color: var(--color-ink);
+}
+
+/* Which two figures the Total adds, said beside the word. */
+.usage__headline-hint {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-faint);
+}
+
+/* The day's API requests, a dot above the cost bar at its own scale, in the
+   control-border grey so it reads as a second, quieter series. */
+.usage__api-dot {
+  fill: var(--color-line-strong);
+}
