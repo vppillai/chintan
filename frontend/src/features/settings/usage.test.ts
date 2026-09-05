@@ -65,9 +65,11 @@ describe('the other figures', () => {
     expect(formatMegabytes(0)).toBe('0.0 MB');
   });
 
-  it('says gigabyte-days to two decimals, the unit storage is billed in', () => {
+  it('says gigabyte-days to two decimals, in the binary gigabyte the bill uses', () => {
     expect(formatGigabyteDays(18_123_456)).toBe('0.02 GB·days');
-    expect(formatGigabyteDays(12_400_000_000)).toBe('12.40 GB·days');
+    expect(formatGigabyteDays(12.4 * 2 ** 30)).toBe('12.40 GB·days');
+    // The decimal figure would read 12.40 here; AWS counts 2^30 bytes to the GB.
+    expect(formatGigabyteDays(12_400_000_000)).toBe('11.55 GB·days');
     expect(formatGigabyteDays(0)).toBe('0.00 GB·days');
   });
 
@@ -83,11 +85,11 @@ describe('the other figures', () => {
 describe('the storage estimate', () => {
   it('prices byte-days as GB-months at the named S3 rate, and says it is an estimate', () => {
     // 31 GB-days in a 31-day month is one GB-month: the whole rate, in microdollars.
-    expect(estimateStorageMicros(31_000_000_000, '2026-01')).toBe(
+    expect(estimateStorageMicros(31 * 2 ** 30, '2026-01')).toBe(
       Math.round(S3_STANDARD_USD_PER_GB_MONTH * 1_000_000),
     );
     // Half as many days in the month, twice the GB-months.
-    expect(estimateStorageMicros(28_000_000_000, '2026-02')).toBe(
+    expect(estimateStorageMicros(28 * 2 ** 30, '2026-02')).toBe(
       Math.round(S3_STANDARD_USD_PER_GB_MONTH * 1_000_000),
     );
     expect(estimateStorageMicros(0, '2026-01')).toBe(0);

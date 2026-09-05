@@ -52,7 +52,12 @@ export function formatMegabytes(bytes: number): string {
  */
 export const S3_STANDARD_USD_PER_GB_MONTH = 0.023;
 
-const BYTES_PER_GB = 1_000_000_000;
+/**
+ * The gigabyte the price above is quoted per: AWS bills storage in binary
+ * gigabytes (2^30 bytes, what the bill calls "GB"), so the decimal figure
+ * would read about 7% high against it.
+ */
+const BYTES_PER_GB = 1024 ** 3;
 
 /** `0.02 GB·days`, `12.40 GB·days` — the unit storage is billed in, scaled to gigabytes. */
 export function formatGigabyteDays(byteDays: number): string {
