@@ -86,7 +86,7 @@ Performance (cold, Fast 3G + 4× CPU): library interactive ~2.95 s, `/capture` ~
 | N3 | Recording into a note returns to the library | **done** | Send returns to that note's Recordings tab with the filing row inside it. |
 | N4 | Whole-note cleaned view | **done** | `cleaned` on the note (structured or polished), regenerable, optional auto-refresh after each recording; Cleaned tab. |
 | U13b | Spend-cap sentence on You is operator noise | **done** | Keep the cap (runaway guard, 100× today's spend); drop the sentence from Usage; one line on About. |
-| D6b | Show AWS cost next to provider cost | **fixing** (frontend done; backend task in progress) | Daily worker task reads the stack Budget's month-to-date actual spend (`budgets:DescribeBudget`, free) → `GET /v1/usage` → "AWS this month" line, instance-level, with an as-of date. |
+| D6b | Show AWS cost next to provider cost | **done** | Daily worker task reads the stack Budget's month-to-date actual spend (`budgets:DescribeBudget`, free) → `GET /v1/usage` → "AWS this month" line, instance-level, with an as-of date. |
 
 ## Order of work
 

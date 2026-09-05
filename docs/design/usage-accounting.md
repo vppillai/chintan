@@ -1,6 +1,7 @@
 # Per-tenant usage accounting
 
-Status: implemented for recording and self-service reading (2026-09-04).
+Status: implemented for recording and self-service reading (2026-09-04);
+the instance's AWS cost beside it (2026-09-04, D6b).
 Admin listing: designed, not built.
 
 ## Why this exists, and what it is not
@@ -129,6 +130,111 @@ user's screen is not an error. Microdollars throughout, the unit the cap and
 `daily_spend_cap_micros` already use, so a "You" screen can show spend against
 budget without converting.
 
+Since D6b the same response carries one more member, `aws` — see the next
+section; the example above omits it.
+
+## The AWS cost beside it (D6b)
+
+The provider figure is what the user's speech cost in Groq and MiniMax. It is
+not what the instance costs: Lambda, DynamoDB, S3, Cognito, CloudWatch and
+the rest are billed by AWS to the account, and until now the only place that
+number existed was the console. `GET /v1/usage` now answers it too, as
+`aws`, so the You screen can put "AWS this month" under the provider line:
+
+```json
+{
+  "month": "2026-09",
+  "cost_micros": 40791, "...": "...",
+  "aws": {"month_micros": 2345678, "as_of": "2026-09-04T06:15:09Z", "budget_micros": 10000000}
+}
+```
+
+`aws` is `null` — the key present, the value null — when nothing has been
+recorded for the month: the stack has no budget, or the task below has not
+run since the month began. Null and zero are different answers and the
+frontend is meant to tell them apart.
+
+### Where the number comes from
+
+The stack's own `AWS::Budgets::Budget` (`MonthlyBudget`, declared whenever
+there is an alarm address). AWS keeps a budget's `CalculatedSpend.ActualSpend`
+current — the account's month-to-date actual cost, refreshed up to three
+times a day — and `budgets:DescribeBudget` is free. Cost Explorer would give
+the same figure by service, and charges $0.01 per request for it; nothing in
+this system calls Cost Explorer, and the worker role has no `ce:` grant.
+
+The budget is account-scoped on purpose (its comment in the template says
+why: a tag-filtered budget reads zero until the tag is activated for cost
+allocation). So the figure is **the account's** bill. On an account that runs
+only this instance that is the instance's cost; on a shared account it is an
+upper bound, which is still the honest number to show.
+
+### The task
+
+A third worker task, `{"task":"aws-cost"}` (`internal/awscost`), from
+`AwsCostRule` — `rate(1 day)`, same target and retry story as the weekly
+sweep. It:
+
+1. reads `MONTHLY_BUDGET_NAME` from the environment — `!Ref MonthlyBudget`,
+   which is the budget's generated name, or `''` when the stack has none —
+   and, with no name, logs at INFO that there is nothing to read and returns;
+2. calls `DescribeBudget(AccountId, BudgetName)`;
+3. converts `ActualSpend.Amount` (a decimal string in USD) to microdollars
+   digit by digit — exact by construction, truncated below the sixth decimal,
+   which is below what AWS bills — and `BudgetLimit.Amount` the same way;
+4. writes the reading under the **current UTC month**.
+
+The row: `pk = INSTANCE`, `sk = AWSCOST#<yyyy-mm>`, attributes `type =
+"aws_cost"`, `month`, `month_micros`, `budget_micros` (absent when the
+budget has no limit), `as_of` (RFC 3339, when it was read). `PutItem`, not
+`ADD`: the latest reading is the only one anybody wants, so the daily
+overwrite is the point and a retried invocation is harmless. No TTL —
+twelve rows a year is billing history.
+
+It lives on `INSTANCE` for the same reason `SPEND#<day>` does. The number
+belongs to the account, not to a tenant; chintanctl's per-tenant export,
+backup and erase must neither carry it nor delete it; and a tenant leaving
+does not un-spend it.
+
+Only a failed AWS call is returned as an error for Lambda to retry (and
+dead-letter to `CaptureDLQ`, under the existing alarm). A budget that has no
+`CalculatedSpend` yet — one created hours ago — or one whose unit is not USD
+is logged and dropped: retrying cannot change either, and the API keeps
+answering null until a later run succeeds.
+
+### Month boundaries and staleness
+
+The row is keyed by the wall-clock UTC month at the moment of the read, which
+is also Budgets' calendar. The last reading of a month is therefore whatever
+the last daily run saw, up to a day before the month ended; the first reading
+of the next month is small. `as_of` is on the wire precisely so the screen can
+say "as of the 4th" rather than imply the figure is live. If a month-end
+figure ever matters (billing), the fix is a second read of the previous
+period on the 1st, not a shorter interval.
+
+### No per-user split — deliberately
+
+AWS cost is instance-level. Every tenant sees the same `aws` object, and it is
+not their share of anything: apportioning the account's bill by provider
+share (a tenant that caused 40% of the provider spend caused roughly 40% of
+the Lambda seconds) or flat (per active tenant) is a policy decision, and it
+belongs in the admin view designed above, not in the self-service endpoint. A
+future admin listing has everything it needs for either: the per-tenant month
+rows for the shares and this row for the total.
+
+### The spend cap stays, and leaves the You screen (U13b)
+
+`daily_spend_cap_micros` is unchanged server-side: the breaker still refuses a
+provider call that would take the day's `SPEND#` over it, the API still
+reports the instance value read-only on Settings, and the template still sets
+it. It is a **runaway guard** — set at roughly a hundred times a normal day's
+spend so that a retry loop, a stuck recording or a leaked key cannot run up a
+bill overnight — not a budget anybody plans against. Showing "cap $X/day" next
+to a month's spend of a few cents made it read as one, so the You screen no
+longer shows it; a single line on About is enough for an operator to confirm
+the guard is on. Nothing about that is an API change, which is why this
+section is a paragraph and not a migration.
+
 ## The admin listing, when it is wanted
 
 Nothing cross-tenant is exposed today. When it is:
@@ -161,3 +267,5 @@ Nothing cross-tenant is exposed today. When it is:
   history starts at the deploy that ships this.
 - No admin endpoint, no UI. The API for the caller's own month is what a
   "You" screen needs; the design above is what an admin page would add.
+- No Cost Explorer, no per-service AWS breakdown, no per-tenant AWS share.
+  One free `DescribeBudget` a day answers the question that was asked.
