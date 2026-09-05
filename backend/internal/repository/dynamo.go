@@ -184,7 +184,8 @@ type dynamoItem struct {
 // written before the attributes were promoted can be read whole by its key.
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
 	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
-	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error"
+	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error, " +
+	"cleaned_requested_at, cleaned_requested_mode"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -203,8 +204,10 @@ const searchTextAttr = "search_text"
 // reason: it is up to 200 KB per note, the blob must not duplicate it, and a
 // list projects it only when asked (ListOptions.IncludeCleanedBody). The
 // small fields that describe it — auto_clean, clean_mode, cleaned_mode,
-// cleaned_at, cleaned_stale, cleaned_error — are promoted AND projected, so a
-// listed note says truthfully whether it has a view and whether it is stale.
+// cleaned_at, cleaned_stale, cleaned_error, and the clean request's stamp
+// cleaned_requested_at and cleaned_requested_mode — are promoted AND
+// projected, so a listed note says truthfully whether it has a view, whether
+// it is stale, and whether a run is in flight.
 const cleanedBodyAttr = "cleaned_body"
 
 func strAttr(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
@@ -360,6 +363,9 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		"cleaned_stale":   boolAttr(n.CleanedStale),
 		"cleaned_error":   strAttr(n.CleanedError),
 		"data":            strAttr(string(blob)),
+
+		"cleaned_requested_at":   strAttr(n.CleanedRequestedAt),
+		"cleaned_requested_mode": strAttr(string(n.CleanedRequestedMode)),
 	}
 	if n.Language != "" {
 		item[languageAttr] = strAttr(n.Language)
@@ -448,6 +454,12 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	}
 	if _, ok := m["cleaned_error"]; ok {
 		n.CleanedError = readString(m, "cleaned_error")
+	}
+	if _, ok := m["cleaned_requested_at"]; ok {
+		n.CleanedRequestedAt = readString(m, "cleaned_requested_at")
+	}
+	if _, ok := m["cleaned_requested_mode"]; ok {
+		n.CleanedRequestedMode = model.NoteCleanMode(readString(m, "cleaned_requested_mode"))
 	}
 	if n.Aliases == nil {
 		n.Aliases = []string{}

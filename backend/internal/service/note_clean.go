@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
+	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
 // The whole-note cleaned view (backlog D1).
@@ -27,6 +29,9 @@ import (
 //   - Every body write marks an existing view stale (MarkCleanedStale). The
 //     worker clears the flag when it regenerates the view from the current
 //     body, and only then.
+//   - Every hand-off to the worker is stamped on the row first
+//     (RecordCleanRequest), so a repeat request joins the run in flight and a
+//     run the person has since asked to replace writes nothing.
 //
 // The LLM call itself never runs on the request path. The API and the request
 // half of the capture service only ever invoke the worker asynchronously.
@@ -60,11 +65,17 @@ func (s *NotesService) WithInvoker(w Invoker) *NotesService {
 // RequestClean asks the worker to regenerate noteID's cleaned view in mode, or
 // in the note's own mode when mode is empty, and returns the mode that was
 // queued. It reads nothing from object storage and calls no provider: the
-// request path's whole job is to check the note and invoke the worker.
+// request path's whole job is to check the note, stamp the request on the row
+// and invoke the worker.
 //
-// A second request while one is queued is fine. The worker regenerates from
-// the body as it stands when it runs, so two runs produce the same view and
-// the later one simply wins.
+// A repeat while a run in the same mode is in flight is answered as queued
+// and hands nothing to the worker: the run already going reads the body as it
+// stands and its view is the one the repeat would have produced. Without the
+// stamp two taps, two tabs, or a manual clean racing an auto-clean ran — and
+// billed — the same regeneration twice, and when the two carried different
+// modes the later to finish decided the stored mode, whichever was asked for
+// last. A request in a different mode goes through and supersedes the run in
+// flight, which then writes nothing (pipeline.CleanNote).
 func (s *NotesService) RequestClean(ctx context.Context, userID, noteID string, mode model.NoteCleanMode) (model.NoteCleanMode, error) {
 	note, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
@@ -82,7 +93,19 @@ func (s *NotesService) RequestClean(ctx context.Context, userID, noteID string, 
 	if s.worker == nil {
 		return "", ErrCaptureWorkerUnavailable
 	}
+	stamped, inFlight, err := RecordCleanRequest(ctx, s.store, userID, note, mode, s.now(), true)
+	if err != nil {
+		return "", fmt.Errorf("failed to record the clean request: %w", err)
+	}
+	if inFlight {
+		obs.Log(ctx).Info("note clean already in flight in this mode; not handing it to the worker again",
+			slog.String("note_id", noteID),
+			slog.String("mode", string(mode)))
+		obs.Count(ctx, "NoteCleanCoalesced", map[string]string{"Trigger": "user"})
+		return mode, nil
+	}
 	if err := s.worker.InvokeCleanNote(ctx, userID, noteID, mode); err != nil {
+		ClearCleanRequest(ctx, s.store, userID, stamped)
 		return "", fmt.Errorf("failed to hand the note to the worker: %w", err)
 	}
 	obs.Log(ctx).Info("note clean handed to the worker",
@@ -92,11 +115,87 @@ func (s *NotesService) RequestClean(ctx context.Context, userID, noteID string, 
 	return mode, nil
 }
 
+// CleanNoteTimeout bounds the worker's one model call for a clean-note run;
+// pipeline.Config.CleanNoteTimeout defaults to it. It is also how long a
+// stamped request counts as in flight (RecordCleanRequest): a stamp older than
+// this was left by a run that never reached a verdict — an invocation killed
+// under it — and the next request invokes the worker again.
+const CleanNoteTimeout = 3 * time.Minute
+
+// maxCleanRequestAttempts bounds the optimistic-concurrency retry on the stamp.
+// The row is busy — every append and edit refreshes it — so a lost race is
+// ordinary; three re-reads is plenty for a write this small.
+const maxCleanRequestAttempts = 3
+
+// RecordCleanRequest stamps note's row with the clean-note run about to be
+// handed to the worker — when, and in which mode — under the note's version,
+// and returns the row as stored. With unlessInFlight set it first checks for
+// a stamp in the same mode younger than CleanNoteTimeout and, finding one,
+// stamps nothing and reports inFlight: the caller answers as if it had queued
+// the run and does not invoke the worker. The auto-clean paths pass false —
+// they run because the body changed, so the run in flight is by definition
+// working from an older body and is superseded rather than joined.
+//
+// The worker reads the stamp back at both ends of its run (pipeline.CleanNote):
+// a run whose stamp is no longer on the row writes nothing, and a run that
+// writes clears it. So a finished run never blocks the next request; the age
+// check is only for a run that died with the stamp on the row.
+func RecordCleanRequest(ctx context.Context, store repository.Store, userID string, note model.NoteIndex, mode model.NoteCleanMode, now time.Time, unlessInFlight bool) (stored model.NoteIndex, inFlight bool, err error) {
+	for attempt := 0; attempt < maxCleanRequestAttempts; attempt++ {
+		if unlessInFlight && cleanRequestInFlight(note, mode, now) {
+			return note, true, nil
+		}
+		note.CleanedRequestedAt = model.FormatTime(now)
+		note.CleanedRequestedMode = mode
+		stored, err := store.PutNote(ctx, userID, note)
+		if err == nil {
+			return stored, false, nil
+		}
+		if !errors.Is(err, repository.ErrVersionConflict) {
+			return model.NoteIndex{}, false, err
+		}
+		// Somebody else wrote the row — possibly this same request from
+		// another tab. Decide again on what they left.
+		if note, err = store.GetNote(ctx, userID, note.ID); err != nil {
+			return model.NoteIndex{}, false, err
+		}
+	}
+	return model.NoteIndex{}, false, fmt.Errorf("record clean request after %d attempts: %w", maxCleanRequestAttempts, repository.ErrVersionConflict)
+}
+
+// cleanRequestInFlight reports whether the row's stamp is a run in mode that
+// may still be going.
+func cleanRequestInFlight(n model.NoteIndex, mode model.NoteCleanMode, now time.Time) bool {
+	if n.CleanedRequestedMode != mode || n.CleanedRequestedAt == "" {
+		return false
+	}
+	at, err := model.ParseTime(n.CleanedRequestedAt)
+	if err != nil {
+		return false
+	}
+	return now.Sub(at) < CleanNoteTimeout
+}
+
+// ClearCleanRequest takes a stamp back after the hand-off it announced failed,
+// so the next request is not answered as queued against a run that never
+// started. Best effort: a lost race means another writer has since stamped or
+// refreshed the row, and what they wrote stands.
+func ClearCleanRequest(ctx context.Context, store repository.Store, userID string, n model.NoteIndex) {
+	n.CleanedRequestedAt, n.CleanedRequestedMode = "", ""
+	if _, err := store.PutNote(ctx, userID, n); err != nil {
+		obs.Log(ctx).Warn("could not clear the clean request after a failed hand-off",
+			slog.String("note_id", n.ID),
+			slog.String("error", err.Error()))
+	}
+}
+
 // autoCleanAfterBodyWrite invokes the worker for a note whose body this
 // request just changed, when the note asks for it. It never fails the caller:
 // the body write is done and correct, and a hand-off that could not be made
 // is a view that stays stale — which the note already says — not lost text.
-func autoCleanAfterBodyWrite(ctx context.Context, worker Invoker, userID string, note model.NoteIndex) {
+// note is the row as the body write left it, so the stamp goes under its
+// version.
+func autoCleanAfterBodyWrite(ctx context.Context, store repository.Store, worker Invoker, userID string, note model.NoteIndex) {
 	if !note.AutoClean || !NoteIsActive(note) {
 		return
 	}
@@ -106,7 +205,16 @@ func autoCleanAfterBodyWrite(ctx context.Context, worker Invoker, userID string,
 		return
 	}
 	mode := EffectiveCleanMode(note)
+	stamped, _, err := RecordCleanRequest(ctx, store, userID, note, mode, time.Now(), false)
+	if err != nil {
+		obs.Log(ctx).Error("could not record the auto-clean request; the cleaned view stays stale",
+			slog.String("note_id", note.ID),
+			slog.String("error", err.Error()))
+		obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": "auto"})
+		return
+	}
 	if err := worker.InvokeCleanNote(ctx, userID, note.ID, mode); err != nil {
+		ClearCleanRequest(ctx, store, userID, stamped)
 		obs.Log(ctx).Error("could not hand the note to the worker for auto-clean; the cleaned view stays stale",
 			slog.String("note_id", note.ID),
 			slog.String("error", err.Error()))

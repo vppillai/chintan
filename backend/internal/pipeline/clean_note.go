@@ -46,10 +46,16 @@ const maxCleanNoteStoreAttempts = 5
 //
 // It is idempotent in the only sense that matters for an at-least-once
 // transport: every run reads the current body and writes a view of it, so two
-// deliveries produce the same view and the later one wins. The return value is
-// the worker protocol — nil means the run reached a verdict (a view, or a
-// stored error the user can read) and must not be retried; an error means an
-// infrastructure fault interrupted it and Lambda should try again.
+// deliveries produce the same view. Which run writes is decided by the stamp
+// the request path left on the row (service.RecordCleanRequest): a run whose
+// stamp is no longer the one on the row — the person asked for the other mode,
+// or a body write asked for a fresh run — has been superseded and writes
+// nothing, so the stored view is always the most recently requested one and
+// never an older body's view landing after a newer one. The return value is
+// the worker protocol — nil means the run reached a verdict (a view, a stored
+// error the user can read, or a superseded run) and must not be retried; an
+// error means an infrastructure fault interrupted it and Lambda should try
+// again.
 //
 // One LLM call, through the breaker, priced like cleanup: output reserved at
 // about the size of the input, reconciled to what the provider reports.
@@ -74,6 +80,18 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 	if !model.ValidNoteCleanMode(mode) {
 		mode = service.EffectiveCleanMode(note)
 	}
+	// stamp is the request this run is acting on. Checked here so a run the
+	// person has already asked to replace with the other mode does not call
+	// the model — that only bills a view nobody wants — and again at the
+	// write, for a request that lands while the model works.
+	stamp := note.CleanedRequestedAt
+	if cleanRunSuperseded(note, mode, stamp) {
+		log.Info("clean-note: a later request asked for another mode; leaving the note to that run",
+			slog.String("mode", string(mode)),
+			slog.String("requested_mode", string(note.CleanedRequestedMode)))
+		obs.Count(ctx, "NoteCleanOutcome", map[string]string{"Outcome": "superseded"})
+		return nil
+	}
 
 	// The body and its ETag together. The ETag is re-read after the model
 	// answers: a body write that lands during the call — an append, an edit —
@@ -88,12 +106,12 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 
 	switch {
 	case body == "":
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, cleanNoteEmpty, "empty")
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteEmpty, "empty")
 	case len(body) > model.MaxCleanNoteInputBytes:
 		log.Warn("clean-note: the note is over the input cap",
 			slog.Int("body_bytes", len(body)),
 			slog.Int("limit_bytes", model.MaxCleanNoteInputBytes))
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, cleanNoteTooLong, "too_long")
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteTooLong, "too_long")
 	}
 
 	var cleaned provider.Cleaned
@@ -135,13 +153,13 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return fmt.Errorf("pipeline: clean-note: provider call ran out of time: %w", err)
 	}
 	if err != nil {
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, cleanNoteProviderVerdict(ctx, log, err), "provider")
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
 
 	text, err := cleanup.NoteOutput(cleaned.Text)
 	if err != nil {
 		log.Warn("clean-note: the model returned nothing usable")
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, cleanNoteUnusable, "unusable")
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")
 	}
 	if len(text) > model.MaxCleanedBodyBytes {
 		// Refused whole rather than cut: a truncated document presented as the
@@ -149,7 +167,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		log.Warn("clean-note: the cleaned text is over the output cap",
 			slog.Int("output_bytes", len(text)),
 			slog.Int("limit_bytes", model.MaxCleanedBodyBytes))
-		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, cleanNoteOutputTooLong, "output_too_long")
+		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteOutputTooLong, "output_too_long")
 	}
 
 	// Did the body move while the model was working?
@@ -159,7 +177,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 	}
 	stale := etagNow != etag
 
-	err = p.updateNoteRow(ctx, tenantID, noteID, func(n *model.NoteIndex) {
+	superseded, err := p.writeCleanNoteRow(ctx, tenantID, noteID, mode, stamp, func(n *model.NoteIndex) {
 		n.CleanedBody = text
 		n.CleanedMode = mode
 		n.CleanedAt = model.FormatTime(p.now())
@@ -168,6 +186,12 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 	})
 	if err != nil {
 		return fmt.Errorf("pipeline: clean-note: store the cleaned view: %w", err)
+	}
+	if superseded {
+		log.Info("clean-note: a later request superseded this run while the model worked; leaving the note to it",
+			slog.String("mode", string(mode)))
+		obs.Count(ctx, "NoteCleanOutcome", map[string]string{"Outcome": "superseded"})
+		return nil
 	}
 	log.Info("clean-note: cleaned view stored",
 		slog.String("mode", string(mode)),
@@ -204,9 +228,10 @@ func cleanNoteProviderVerdict(ctx context.Context, log *slog.Logger, cause error
 // kept: a stored error beside the previous document is more useful than an
 // empty pane, and the stale flag already says the view predates the body. With
 // no view, the mode and time describe the attempt so the client has something
-// to show.
-func (p *Pipeline) recordCleanNoteVerdict(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, reason, outcome string) error {
-	err := p.updateNoteRow(ctx, tenantID, noteID, func(n *model.NoteIndex) {
+// to show. A superseded run records nothing: its verdict is about a run the
+// person has already replaced.
+func (p *Pipeline) recordCleanNoteVerdict(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, stamp, reason, outcome string) error {
+	superseded, err := p.writeCleanNoteRow(ctx, tenantID, noteID, mode, stamp, func(n *model.NoteIndex) {
 		n.CleanedError = reason
 		if n.CleanedBody == "" {
 			n.CleanedMode = mode
@@ -217,21 +242,57 @@ func (p *Pipeline) recordCleanNoteVerdict(ctx context.Context, tenantID, noteID 
 	if err != nil {
 		return fmt.Errorf("pipeline: clean-note: record the verdict: %w", err)
 	}
+	if superseded {
+		outcome = "superseded"
+	}
 	obs.Count(ctx, "NoteCleanOutcome", map[string]string{"Outcome": outcome})
 	return nil
 }
 
+// cleanRunSuperseded reports whether the row's clean request is no longer the
+// one a run was invoked for: another mode, or a newer request in the same mode,
+// whose own run will write. An empty stamp claims nothing — a run invoked
+// before stamps existed, or one whose failed hand-off cleared it — and such a
+// run writes.
+func cleanRunSuperseded(n model.NoteIndex, mode model.NoteCleanMode, stamp string) bool {
+	if n.CleanedRequestedAt == "" && n.CleanedRequestedMode == "" {
+		return false
+	}
+	return n.CleanedRequestedMode != mode || n.CleanedRequestedAt != stamp
+}
+
+// writeCleanNoteRow applies change to the row under its version, unless the
+// clean request on the row is no longer the one this run was invoked for — then
+// nothing is written and superseded is true. A write clears the stamp: the run
+// it announced has reached its verdict, and the next request must invoke again.
+func (p *Pipeline) writeCleanNoteRow(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, stamp string, change func(*model.NoteIndex)) (superseded bool, err error) {
+	err = p.updateNoteRow(ctx, tenantID, noteID, func(n *model.NoteIndex) bool {
+		if cleanRunSuperseded(*n, mode, stamp) {
+			superseded = true
+			return false
+		}
+		change(n)
+		n.CleanedRequestedAt, n.CleanedRequestedMode = "", ""
+		return true
+	})
+	return superseded, err
+}
+
 // updateNoteRow applies change to the current row under its version, re-reading
 // on a lost race. Other writers touch this row constantly — every append and
-// edit refreshes it — so the loop is the normal path, not the exception.
-func (p *Pipeline) updateNoteRow(ctx context.Context, tenantID, noteID string, change func(*model.NoteIndex)) error {
+// edit refreshes it — so the loop is the normal path, not the exception. A
+// change that returns false has decided not to write, and the row is left as
+// read.
+func (p *Pipeline) updateNoteRow(ctx context.Context, tenantID, noteID string, change func(*model.NoteIndex) bool) error {
 	var lastErr error
 	for attempt := 0; attempt < maxCleanNoteStoreAttempts; attempt++ {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
 		if err != nil {
 			return err
 		}
-		change(&note)
+		if !change(&note) {
+			return nil
+		}
 		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {
 			return nil
 		} else if !errors.Is(err, repository.ErrVersionConflict) {
@@ -248,14 +309,25 @@ func (p *Pipeline) updateNoteRow(ctx context.Context, tenantID, noteID string, c
 // — a separate invocation, retried on its own — and inline otherwise, since
 // this is already the worker and not the request path. Neither outcome can
 // fail the capture: the dictation is in the note, and a view that stays stale
-// is what the row already says.
+// is what the row already says. The request is stamped first, like every
+// other hand-off, so a run already in flight over the older body yields to
+// this one. note is the row the index refresh just stored.
 func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, note model.NoteIndex) {
 	if !note.AutoClean {
 		return
 	}
 	mode := service.EffectiveCleanMode(note)
+	stamped, _, err := service.RecordCleanRequest(ctx, p.cfg.Store, tenantID, note, mode, p.now(), false)
+	if err != nil {
+		obs.Log(ctx).Error("could not record the auto-clean request; the cleaned view stays stale",
+			slog.String("note_id", note.ID),
+			slog.String("error", err.Error()))
+		obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": "append"})
+		return
+	}
 	if p.cfg.CleanInvoker != nil {
 		if err := p.cfg.CleanInvoker.InvokeCleanNote(ctx, tenantID, note.ID, mode); err != nil {
+			service.ClearCleanRequest(ctx, p.cfg.Store, tenantID, stamped)
 			obs.Log(ctx).Error("could not hand the note to the worker for auto-clean; the cleaned view stays stale",
 				slog.String("note_id", note.ID),
 				slog.String("error", err.Error()))

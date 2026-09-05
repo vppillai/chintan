@@ -113,8 +113,11 @@ const (
 	defaultCleanupTimeout = 2 * time.Minute
 	// The whole-note clean reads up to 150 KB and writes up to 200 KB
 	// (model.MaxCleanNoteInputBytes, MaxCleanedBodyBytes), a longer completion
-	// than cleanup by an order of magnitude, so it gets a minute more.
-	defaultCleanNoteTimeout = 3 * time.Minute
+	// than cleanup by an order of magnitude, so it gets a minute more. The
+	// number lives in service because the request path's in-flight guard is
+	// the same duration: a stamped request younger than this may still be
+	// running.
+	defaultCleanNoteTimeout = service.CleanNoteTimeout
 )
 
 // NoteCreator creates the destination note for a capture that has none.

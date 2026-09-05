@@ -237,8 +237,9 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 // is bounded by the gateway's 30-second ceiling and an LLM pass over a whole
 // note is not. The spend gate answers first, so a capped instance is told
 // rather than left polling a view that never arrives. A second request while
-// one is queued is accepted: the worker regenerates from the current body, so
-// the later run simply wins.
+// one is queued is accepted and answers 202 either way: in the same mode it
+// joins the run in flight rather than starting another (service.RequestClean);
+// in the other mode it supersedes it.
 func (rt *router) cleanNote(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {

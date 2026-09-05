@@ -139,7 +139,7 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 	// for (D2: "structured mode re-runs on both notes") — asynchronously, and
 	// only now that the row agrees with the paragraph.
 	for _, n := range touched {
-		autoCleanAfterBodyWrite(ctx, s.worker, userID, n)
+		autoCleanAfterBodyWrite(ctx, s.store, s.worker, userID, n)
 	}
 
 	obs.Log(ctx).Info("capture moved",

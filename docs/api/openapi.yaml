@@ -306,8 +306,9 @@ paths:
         The body is optional. `mode` is `polished` (coherent prose, light
         touch on wording) or `structured` (Markdown with short headings and
         lists); absent, the note's own `cleaned_mode` is used, else
-        `structured`. A second request while one is queued is accepted — the
-        worker regenerates from the body as it stands, so the later run wins.
+        `structured`. A second request while one is queued is accepted: in the
+        same mode it joins the run in flight rather than starting another; in the
+        other mode it supersedes it, and the superseded run stores nothing.
 
         The cleaned view is read-only. It is derived from the body, so an edit
         belongs in `body` (PATCH) and the view is regenerated from it; there

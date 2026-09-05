@@ -44,8 +44,14 @@ func TestCleanNoteQueuesTheWorkerAndRunsNothingInline(t *testing.T) {
 		t.Errorf("worker calls = %v, want two hand-offs", h.worker.calls)
 	}
 
-	// The note's own preference is the default once set.
-	h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": note.Version, "cleaned_mode": "polished"})
+	// The note's own preference is the default once set. Each hand-off stamped
+	// the row under its version, so the PATCH carries the version as it now is.
+	var current handler.NoteDetail
+	decodeInto(t, h.do(t, http.MethodGet, "/v1/notes/"+note.ID, "user1", nil), &current)
+	w = h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1", map[string]any{"version": current.Version, "cleaned_mode": "polished"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH cleaned_mode: status = %d body = %s", w.Code, w.Body.String())
+	}
 	w = h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil)
 	decodeInto(t, w, &queued)
 	if queued.Mode != "polished" {
