@@ -341,3 +341,35 @@ func TestAnAppendWaitsForAnotherCapturesFreshStampAndNotForAStaleOne(t *testing.
 		}
 	})
 }
+
+// A capture whose destination was purged before the worker reached it is not
+// an infrastructure fault: retrying cannot bring the note back, and
+// dead-lettering it raised the alarm for a question only the person can
+// answer. It becomes needs_target, unfiled, with its transcript and cleaned
+// text kept, and the person's choice of a new note resumes the pipeline.
+func TestACaptureWhoseDestinationWasPurgedAsksForANewNoteInsteadOfDeadLettering(t *testing.T) {
+	f := newAppendFixture(t, memory.NewObjects(), nil)
+	ctx := context.Background()
+	if err := f.store.DeleteNote(ctx, "user1", "note1"); err != nil {
+		t.Fatalf("purge the note: %v", err)
+	}
+
+	final, err := f.run(ctx)
+	if err != nil {
+		t.Fatalf("run returned %v; a purged destination must not fail the invocation into the dead-letter queue", err)
+	}
+	if final.Status != model.StatusNeedsTarget || final.NoteID != "" || final.TargetSource != "" {
+		t.Fatalf("capture = status %s note %q source %q; want needs_target, unfiled", final.Status, final.NoteID, final.TargetSource)
+	}
+	if final.CleanKey == "" {
+		t.Fatal("the cleaned text was dropped; the person's answer has nothing to resume from")
+	}
+	// It is where the "which note?" screen looks: the unrouted list.
+	unrouted, err := f.store.ListCapturesByNote(ctx, "user1", "", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCapturesByNote: %v", err)
+	}
+	if len(unrouted.Items) != 1 || unrouted.Items[0].ID != "capture1" {
+		t.Fatalf("unrouted captures = %v; want the capture waiting for a note", unrouted.Items)
+	}
+}

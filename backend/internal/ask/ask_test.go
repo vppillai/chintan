@@ -356,18 +356,30 @@ func TestSourcesKeepsOnlyPackedNotesInRankingOrder(t *testing.T) {
 }
 
 // A question of hundreds of distinct tokens must not become hundreds of scans
-// over every note; the first MaxQueryTerms terms are what retrieval sees.
-func TestTokenizeKeepsAtMostMaxQueryTerms(t *testing.T) {
+// over every note; MaxQueryTerms terms are what retrieval sees, and they are
+// the longest ones — a long question puts its subject last, after the
+// preamble, and keeping the first N ranked on the preamble.
+func TestTokenizeKeepsAtMostMaxQueryTermsAndPrefersTheLongest(t *testing.T) {
 	var words []string
 	for i := 0; i < MaxQueryTerms+10; i++ {
-		words = append(words, fmt.Sprintf("w%d", i))
+		words = append(words, fmt.Sprintf("wd%02d", i))
 	}
+	words = append(words, "underfloor", "insulation")
 	got := Tokenize(strings.Join(words, " "))
 	if len(got) != MaxQueryTerms {
 		t.Fatalf("terms = %d, want %d", len(got), MaxQueryTerms)
 	}
-	if got[0] != "w0" || got[MaxQueryTerms-1] != fmt.Sprintf("w%d", MaxQueryTerms-1) {
-		t.Errorf("terms are not the first %d in spoken order: %v", MaxQueryTerms, got)
+	if got[len(got)-2] != "underfloor" || got[len(got)-1] != "insulation" {
+		t.Fatalf("the long subject at the end of the question was cut: %v", got)
+	}
+	// Among words of one length the earliest spoken are kept, in spoken order.
+	if got[0] != "wd00" || got[MaxQueryTerms-3] != fmt.Sprintf("wd%02d", MaxQueryTerms-3) {
+		t.Errorf("the equal-length filler is not the first spoken, in order: %v", got)
+	}
+	// Under the cap nothing is cut or reordered.
+	short := Tokenize("gutter leak roofer quote")
+	if strings.Join(short, ",") != "gutter,leak,roofer,quote" {
+		t.Errorf("a short question was reordered: %v", short)
 	}
 }
 

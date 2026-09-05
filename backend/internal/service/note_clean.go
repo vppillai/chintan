@@ -120,6 +120,18 @@ func (s *NotesService) RequestClean(ctx context.Context, userID, noteID string, 
 // stamped request counts as in flight (RecordCleanRequest): a stamp older than
 // this was left by a run that never reached a verdict — an invocation killed
 // under it — and the next request invokes the worker again.
+//
+// It bounds the model call, not the whole run. A run is the call plus two
+// object reads and a row write, and Lambda retries a run that failed on an
+// infrastructure fault at about one and two minutes, so a run can still be
+// going when a same-mode request arrives past this window. That request then
+// invokes a second run and the model is billed twice — but the view is never
+// written twice: the second request re-stamps the row, and the first run,
+// finding its own stamp gone, writes nothing (pipeline.CleanNote). The other
+// way round — a window as long as the worker's 900 s lifetime — would leave a
+// dead run's stamp answering "queued" to every same-mode request for fifteen
+// minutes with nothing running. One extra model call in the rare slow case is
+// the cheaper side to be wrong on (review 2026-09-05, S19).
 const CleanNoteTimeout = 3 * time.Minute
 
 // maxCleanRequestAttempts bounds the optimistic-concurrency retry on the stamp.

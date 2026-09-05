@@ -399,6 +399,23 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+	if errors.Is(err, repository.ErrNotFound) {
+		// The destination was purged between the recording and this run — a
+		// "delete forever" while the capture was transcribing. Retrying cannot
+		// bring the note back, so this is not the infrastructure fault a
+		// dead-letter is for; it is the same question an unroutable capture
+		// asks: which note should this go in? The transcript and cleaned text
+		// are kept, and the person's answer resumes the pipeline from them.
+		obs.Log(ctx).Info("destination note no longer exists; asking for a new one",
+			slog.String("capture_id", capture.ID),
+			slog.String("note_id", capture.NoteID))
+		obs.Count(ctx, "CaptureDestinationPurged", nil)
+		capture.NoteID = ""
+		capture.TargetSource = ""
+		capture.Status = model.StatusNeedsTarget
+		capture.Error = ""
+		return *capture, p.persist(ctx, capture)
+	}
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: get note: %w", err)
 	}
