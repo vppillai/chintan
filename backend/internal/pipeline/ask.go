@@ -105,6 +105,9 @@ func (p *Pipeline) Ask(ctx context.Context, tenantID, askID string) error {
 	if err != nil {
 		return fmt.Errorf("pipeline: ask: list notes: %w", err)
 	}
+	// A thread the app saved as a note is an earlier answer; an answer does
+	// not get to be a source for the next one.
+	notes = ask.Retrievable(notes)
 	row.NotesConsidered = len(notes)
 	if len(notes) == 0 {
 		// An answer, not a failure: the honest reply to a question over an

@@ -159,6 +159,37 @@ type Ranked struct {
 	Score float64
 }
 
+// SavedAnswerTag marks a note the app wrote from an Ask thread ("Save as
+// note"). Such a note is an earlier answer, and an answer is not a source for
+// a later one: retrieval leaves these notes out (Retrievable), so the model is
+// never handed an answer to cite as if it were something the person recorded.
+// The desktop QA run cited the mobile run's saved thread as its first source
+// (live QA 2026-09-05 §4). The tag is the app's to set when it saves a thread;
+// compared case-insensitively, since tags are typed.
+const SavedAnswerTag = "ask"
+
+// Retrievable is notes without the ones retrieval must not see: those tagged
+// SavedAnswerTag. Order is kept.
+func Retrievable(notes []model.NoteIndex) []model.NoteIndex {
+	out := make([]model.NoteIndex, 0, len(notes))
+	for _, n := range notes {
+		if isSavedAnswer(n) {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func isSavedAnswer(n model.NoteIndex) bool {
+	for _, tag := range n.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), SavedAnswerTag) {
+			return true
+		}
+	}
+	return false
+}
+
 // Rank scores every note against the question's terms and returns them all,
 // best first. Ties — every note at zero, most often — break on the update
 // time, newest first, then on the id so the order is stable for a test.

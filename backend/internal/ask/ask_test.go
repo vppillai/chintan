@@ -391,3 +391,18 @@ func TestSourcesCarryTheTitleAsStoredWhileThePromptDefangsIt(t *testing.T) {
 		t.Errorf("the prompt header did not collapse and defang the title:\n%s", user)
 	}
 }
+
+// A note the app saved from an Ask thread is an earlier answer, not a source;
+// retrieval never sees it, whatever the case of the tag.
+func TestRetrievableLeavesOutNotesSavedFromAnAskThread(t *testing.T) {
+	notes := []model.NoteIndex{
+		{ID: "roof", Title: "Roof repairs", Tags: []string{"house"}},
+		{ID: "saved", Title: "What is leaking?", Tags: []string{"Ask"}},
+		{ID: "saved2", Title: "Another answer", Tags: []string{"house", " ask "}},
+		{ID: "plain", Title: "Garden"},
+	}
+	got := Retrievable(notes)
+	if len(got) != 2 || got[0].ID != "roof" || got[1].ID != "plain" {
+		t.Fatalf("Retrievable = %v, want roof and plain in that order", got)
+	}
+}

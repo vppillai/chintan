@@ -417,3 +417,30 @@ func TestAskAttemptBudgetFitsInsideTheClientsPollWindow(t *testing.T) {
 		t.Errorf("retry timeout %s is not shorter than the first attempt's %s", p.askAttemptTimeout(2), p.askAttemptTimeout(1))
 	}
 }
+
+// A note the app saved from an earlier Ask thread is not a source for a later
+// question, however well its words match: the desktop QA run cited the mobile
+// run's saved thread as its first source.
+func TestAskTaskDoesNotReadNotesSavedFromAnAskThread(t *testing.T) {
+	llmFake := &fake.LLM{}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	seedSearchableNote(t, h, "roof", "Roof", "the roof leaks near the downpipe", "")
+	seedNoteWithBody(t, h, "saved", "**Q: what is leaking?** The roof leaks near the downpipe. roof roof roof", func(n *model.NoteIndex) {
+		n.Title = "What is leaking?"
+		n.Tags = []string{ask.SavedAnswerTag}
+		n.SearchText = service.SearchText("the roof leaks near the downpipe. roof roof roof")
+	})
+	seedAsk(t, h, "a1", "where does the roof leak?", nil)
+	if err := NewWorker(h.pipeline).Handle(context.Background(), askTask("user1", "a1")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	prompt := llmFake.AskCalls()[0]
+	for _, n := range prompt.Notes {
+		if n.NoteID == "saved" {
+			t.Fatalf("the saved answer was packed into the prompt: %+v", prompt.Notes)
+		}
+	}
+	if a := getAsk(t, h, "a1"); a.NotesConsidered != 1 {
+		t.Errorf("notes_considered = %d, want 1: the saved answer is not a candidate", a.NotesConsidered)
+	}
+}

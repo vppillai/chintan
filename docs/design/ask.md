@@ -43,7 +43,10 @@ dictation — tens to a few hundred notes — and every row already carries a
 lowercased, marker-stripped copy of its body (`search_text`, up to 32 KB).
 
 1. Load the tenant's active notes with `IncludeSearchText`, paginated, capped
-   at 2,000 (`ask.MaxNotesConsidered`).
+   at 2,000 (`ask.MaxNotesConsidered`), and leave out every note tagged `ask`
+   (`ask.SavedAnswerTag`, the tag the app puts on a thread it saves as a
+   note): a saved thread is an earlier answer, and an answer is not a source
+   for a later one.
    This is not a list the API exposes: the API's collections are
    cursor-paginated and nothing on the wire is unbounded (`openapi.yaml`,
    rule 3), while this is the worker draining its own tenant's pages to a
