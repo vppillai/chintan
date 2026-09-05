@@ -234,19 +234,92 @@ describe('usage this month', () => {
   it('shows the month’s providers figure in dollars, the split by stage, and the calls and minutes', async () => {
     mountSettings({ usage: USAGE });
 
-    // 1371 microdollars, three decimals under a dollar.
-    expect(await screen.findByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
+    // 2721 microdollars, three decimals under a dollar.
+    expect(await screen.findByText('$0.003', { selector: '.usage__figure' })).toBeInTheDocument();
     expect(screen.getByText('Providers this month')).toBeInTheDocument();
     expect(screen.getByText(/in January 2026/)).toBeInTheDocument();
-    expect(screen.getByText('3 calls', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
+    expect(screen.getByText('5 calls', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
     expect(screen.getByText('0.5 min', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
 
-    // The stages, in the order a recording meets them.
+    // The stages, in the order a recording meets them, then the two a person asks for.
     const labels = Array.from(document.querySelectorAll('.usage__ops dt'), (term) => term.textContent);
-    expect(labels).toEqual(['Transcribe', 'Route', 'Clean up']);
-    // Transcribe (311) and route (420) both round to nothing; cleanup (640) does not.
-    expect(screen.getAllByText('$0.000', { selector: '.usage__op-figures .numeric' })).toHaveLength(2);
-    expect(screen.getAllByText('$0.001', { selector: '.usage__op-figures .numeric' })).toHaveLength(1);
+    expect(labels).toEqual(['Transcribe', 'Route', 'Clean up', 'Clean note', 'Ask']);
+    // Transcribe (311), route (420) and clean note (250) round to nothing; cleanup (640) and ask (1100) do not.
+    expect(screen.getAllByText('$0.000', { selector: '.usage__op-figures .numeric' })).toHaveLength(3);
+    expect(screen.getAllByText('$0.001', { selector: '.usage__op-figures .numeric' })).toHaveLength(2);
+  });
+
+  /**
+   * N11: the richer view. The split by provider under Providers, the facts
+   * row, and the user's share of AWS — each from a field the contract makes
+   * required and this screen treats as optional, so it can ship first.
+   */
+  it('splits the providers’ figure by provider, the biggest bill first', async () => {
+    mountSettings({ usage: USAGE });
+    await screen.findByText('Providers this month');
+
+    const labels = Array.from(document.querySelectorAll('.usage__providers dt'), (t) => t.textContent);
+    expect(labels).toEqual(['MiniMax', 'Groq']);
+    const minimax = screen.getByText('MiniMax').closest('.usage__provider');
+    expect(minimax).toHaveTextContent('$0.002');
+    expect(minimax).toHaveTextContent('4 calls');
+  });
+
+  it('lists the month’s API requests and what is stored, as one row of facts', async () => {
+    mountSettings({ usage: USAGE });
+    const facts = await screen.findByRole('group', { name: 'This month' });
+
+    expect(facts).toHaveTextContent(/API requests\s*312 requests/);
+    expect(facts).toHaveTextContent(/Recordings stored\s*41 recordings · 23.2 min · 9.1 MB/);
+    expect(facts).toHaveTextContent(/Notes\s*12 notes/);
+    expect(facts).not.toHaveTextContent(/approx/);
+  });
+
+  it('marks the stored figures approximate when the backend stopped counting at its cap', async () => {
+    mountSettings({ usage: { ...USAGE, storage: { ...USAGE.storage!, approximate: true } } });
+    const facts = await screen.findByRole('group', { name: 'This month' });
+    expect(facts).toHaveTextContent(/41 recordings · 23.2 min · 9.1 MB · approx\./);
+    expect(facts).toHaveTextContent(/12 notes · approx\./);
+  });
+
+  it('shows the user’s estimated share of AWS and totals with that, saying so', async () => {
+    mountSettings({ usage: USAGE });
+
+    const aws = (await screen.findByText('AWS this month')).closest('.usage__headline');
+    // The instance figure stays; the share sits beneath it.
+    expect(aws).toHaveTextContent('$2.35');
+    expect(aws).toHaveTextContent(/Your estimated share: \$0\.123 \(by provider spend\)/);
+
+    // 2,721 + 123,456 microdollars, not 2,721 + 2,345,678.
+    const total = screen.getByText(/^Total/).closest('.usage__headline');
+    expect(total).toHaveTextContent('$0.126');
+    expect(total).toHaveTextContent(/providers \+ your AWS share/);
+  });
+
+  it('draws a dot per day for API requests, and says how many the month took', async () => {
+    mountSettings({ usage: USAGE });
+    const figure = await screen.findByRole('img', { name: /spend by day in January 2026/i });
+    expect(figure).toHaveAccessibleName(/21 requests to the API, shown as dots/i);
+    expect(figure.querySelectorAll('.usage__api-dot')).toHaveLength(2);
+  });
+
+  it('renders the older shape — no providers, api, storage or share — with nothing invented', async () => {
+    const { providers: _p, api: _a, storage: _s, aws, days, ...older } = USAGE;
+    const { share_micros: _share, share_basis: _basis, ...olderAws } = aws!;
+    const olderDays = days.map(({ api_requests: _counted, ...day }) => day);
+    mountSettings({ usage: { ...older, aws: olderAws, days: olderDays } });
+
+    await screen.findByText('Providers this month');
+    expect(document.querySelector('.usage__providers')).toBeNull();
+    expect(screen.queryByRole('group', { name: 'This month' })).toBeNull();
+    expect(screen.queryByText(/estimated share/)).toBeNull();
+    // The Total falls back to providers plus the instance figure, and says so.
+    const total = screen.getByText(/^Total/).closest('.usage__headline');
+    expect(total).toHaveTextContent('$2.35');
+    expect(total).toHaveTextContent(/providers \+ instance AWS/);
+    const figure = screen.getByRole('img', { name: /spend by day/i });
+    expect(figure).not.toHaveAccessibleName(/API/);
+    expect(figure.querySelectorAll('.usage__api-dot')).toHaveLength(0);
   });
 
   it('draws a bar per day with usage, described in words for whoever cannot see it', async () => {
@@ -254,8 +327,8 @@ describe('usage this month', () => {
 
     const figure = await screen.findByRole('img', { name: /spend by day in January 2026/i });
     expect(figure).toHaveAccessibleName(/2 days with recordings/i);
-    // The day is rendered in the runtime's locale ("3 Jan" or "Jan 3"), so only its parts are pinned.
-    expect(figure).toHaveAccessibleName(/the most on (3 Jan|Jan 3) at \$0\.001/i);
+    // The day is rendered in the runtime's locale ("4 Jan" or "Jan 4"), so only its parts are pinned.
+    expect(figure).toHaveAccessibleName(/the most on (4 Jan|Jan 4) at \$0\.002/i);
     // Two rows, two bars — the empty days are not drawn as marks.
     expect(figure.querySelectorAll('.usage__bar')).toHaveLength(2);
   });
@@ -286,9 +359,10 @@ describe('usage this month', () => {
       expect(row).toHaveTextContent(/as of 3 hours ago/);
       expect(row).not.toHaveTextContent(/budget/);
 
-      // 3,120,000 + 1,371 microdollars.
-      const total = screen.getByText('Total').closest('.usage__headline');
+      // 3,120,000 + 2,721 microdollars: no share on this reading, so the instance figure.
+      const total = screen.getByText(/^Total/).closest('.usage__headline');
       expect(total).toHaveTextContent('$3.12');
+      expect(total).toHaveTextContent(/instance AWS/);
       expect(screen.queryByText(/not recorded yet/i)).toBeNull();
     } finally {
       vi.useRealTimers();
@@ -313,9 +387,9 @@ describe('usage this month', () => {
 
     const row = (await screen.findByText('AWS this month')).closest('.usage__headline');
     expect(row).toHaveTextContent(/AWS cost not recorded yet/);
-    expect(screen.queryByText('Total')).toBeNull();
+    expect(screen.queryByText(/^Total/)).toBeNull();
     // The providers' figure is still the one on top.
-    expect(screen.getByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
+    expect(screen.getByText('$0.003', { selector: '.usage__figure' })).toBeInTheDocument();
   });
 
   it('never names the instance’s daily cap, even when there is one (U13b)', async () => {
