@@ -625,3 +625,33 @@ func TestReconcileOnlyRestrictsWhatApplyRepairs(t *testing.T) {
 		t.Errorf("--only everything: err = %v", err)
 	}
 }
+
+// Terminal is one definition (model.IsTerminalStatus). Reconcile used to keep a
+// list of its own that lacked spend_capped, so every capture the spend cap had
+// stopped was reported as stuck.
+func TestReconcileDoesNotReportSpendCappedOrNeedsTargetAsStuck(t *testing.T) {
+	ctx := context.Background()
+	e, part, blobs := newTestEnv(nil)
+	seedTenant(t, part, blobs, "tenantA")
+	put(t, part, captureItem(model.CaptureIndex{
+		ID: "c_capped", NoteID: "n1", UserID: "tenantA",
+		Status: model.StatusSpendCapped, CreatedAt: "2026-08-07T09:00:00.000000000Z",
+	}))
+	put(t, part, captureItem(model.CaptureIndex{
+		ID: "c_asking", UserID: "tenantA",
+		Status: model.StatusNeedsTarget, CreatedAt: "2026-08-07T09:00:00.000000000Z",
+	}))
+	put(t, part, captureItem(model.CaptureIndex{
+		ID: "c_working", NoteID: "n1", UserID: "tenantA",
+		Status: model.StatusCleaning, CreatedAt: "2026-08-07T09:00:00.000000000Z",
+	}))
+
+	res, err := runReconcile(ctx, e, nil, false, nil)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	stuck := findingsOfKind(res, findingStuckCapture)
+	if len(stuck) != 1 || stuck[0].SK != "CAPTURE#c_working" {
+		t.Errorf("stuck_capture findings = %+v; want only the capture still in flight", stuck)
+	}
+}

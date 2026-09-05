@@ -141,6 +141,9 @@ type CaptureService struct {
 	uploads upload.Presigner
 	worker  Invoker
 	notes   NoteCreator
+	// now judges whether a worker can still be alive on a capture a retry
+	// names, and stamps the hand-offs this service makes; tests move it.
+	now func() time.Time
 }
 
 // NewCaptureService creates a new capture service.
@@ -152,7 +155,14 @@ func NewCaptureService(store repository.Store, objects repository.Objects) *Capt
 		store:   store,
 		objects: objects,
 		uploads: upload.NewObjects(objects),
+		now:     time.Now,
 	}
+}
+
+// WithClock replaces the wall clock, for tests.
+func (s *CaptureService) WithClock(now func() time.Time) *CaptureService {
+	s.now = now
+	return s
 }
 
 // WithNoteCreator sets the note creator.
@@ -286,29 +296,41 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 // RetryCapture hands a capture back to the worker so it resumes from its last
 // good stage. It does no work inline: running the whole pipeline on the request
 // path turns a gateway timeout into duplicated note content.
+//
+// A capture that stopped — failed, or by the spend cap — is reset to its last
+// good stage and handed over. A capture still in flight is refused with
+// ErrCaptureInFlight until no worker can still be working on it
+// (CaptureStuck): before, a retry on a `transcribing` capture started a second
+// delivery beside the live one, and a retry on an `appending` capture inside
+// the claim lease could not take the claim, dead-lettered, and raised the
+// alarm — the UI offered that Retry ten minutes in, the lease is twenty
+// (review 2026-09-05, S11 and S12). Every hand-off stamps LastProgressAt, so
+// two taps a second apart are one delivery.
 func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID string) (*model.CaptureIndex, error) {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
+	now := s.now()
 
-	switch capture.Status {
-	case model.StatusAppended, model.StatusNoContent:
-		return &capture, ErrCaptureTerminal
-	case model.StatusNeedsTarget:
-		// The destination is the user's to choose; re-running would only ask again.
-		return &capture, ErrCaptureTerminal
-	}
-
-	if capture.Error != "" || capture.Status == model.StatusFailed || capture.Status == StatusSpendCapped {
+	switch {
+	case capture.Status == model.StatusFailed || capture.Status == StatusSpendCapped || capture.Error != "":
 		capture.Error = ""
 		capture.Status = resumeStatusFor(capture)
-		updated, err := s.store.PutCapture(ctx, capture)
-		if err != nil {
-			return nil, fmt.Errorf("failed to reset capture: %w", err)
-		}
-		capture = updated
+	case model.IsTerminalStatus(capture.Status):
+		// Finished, or waiting on the person to choose a destination, which a
+		// re-run would only ask again.
+		return &capture, ErrCaptureTerminal
+	case !CaptureStuck(capture, now):
+		return &capture, ErrCaptureInFlight
 	}
+
+	capture.LastProgressAt = model.FormatTime(now)
+	updated, err := s.store.PutCapture(ctx, capture)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reset capture: %w", err)
+	}
+	capture = updated
 
 	if err := s.invokeWorker(ctx, userID, captureID, "retry"); err != nil {
 		return nil, err
@@ -372,6 +394,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 	capture.SuggestedNoteID = ""
 	capture.SuggestedTitle = ""
 	capture.Error = ""
+	capture.LastProgressAt = model.FormatTime(s.now())
 	updated, err := s.store.PutCapture(ctx, capture)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update capture: %w", err)

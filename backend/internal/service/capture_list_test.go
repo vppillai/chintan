@@ -398,6 +398,7 @@ func TestCaptureStatusGroupsCoverEveryDeclaredStatus(t *testing.T) {
 	}
 	terminal := []model.CaptureStatus{
 		model.StatusAppended, model.StatusNoContent, model.StatusFailed, model.StatusSpendCapped,
+		model.StatusNeedsTarget,
 	}
 	for _, s := range pending {
 		if !CaptureIsPending(s) {
@@ -415,9 +416,16 @@ func TestCaptureStatusGroupsCoverEveryDeclaredStatus(t *testing.T) {
 			t.Errorf("CaptureIsPending(%s) = true for a capture that has stopped", s)
 		}
 	}
-	// needs_target is neither: the pipeline is waiting on the user, not on itself.
-	if CaptureIsPending(model.StatusNeedsTarget) || CaptureIsTerminal(model.StatusNeedsTarget) {
-		t.Error("needs_target is neither pending nor terminal: it waits on the user, and calling it pending puts it in the progress card forever")
+	// needs_target is terminal for the pipeline — it will not move the capture
+	// on by itself — but not pending: calling it pending would put it in the
+	// progress card forever. One definition for terminal (model.IsTerminalStatus)
+	// is what keeps the worker, the API's retry, reconcile and the frontend's
+	// list from drifting apart again.
+	if CaptureIsPending(model.StatusNeedsTarget) {
+		t.Error("needs_target is pending; it waits on the user, and calling it pending puts it in the progress card forever")
+	}
+	if CaptureIsTerminal(model.StatusNeedsTarget) != model.IsTerminalStatus(model.StatusNeedsTarget) {
+		t.Error("the service and the model disagree about needs_target")
 	}
 }
 

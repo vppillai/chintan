@@ -279,6 +279,22 @@ type NoteIndex struct {
 // value and no wire representation.
 type CaptureStatus string
 
+// IsTerminalStatus reports whether the pipeline will not move a capture on
+// from s by itself: it finished (appended, no_content), it stopped on a
+// verdict (failed, spend_capped), or it is waiting on a person (needs_target).
+// This is the one definition; the worker, the API's retry and `chintanctl
+// reconcile` all read it, and the frontend's TERMINAL_CAPTURE_STATUSES lists
+// the same five. Until 2026-09-05 there were three lists that disagreed, and
+// reconcile reported every spend_capped capture as stuck.
+func IsTerminalStatus(s CaptureStatus) bool {
+	switch s {
+	case StatusAppended, StatusNoContent, StatusFailed, StatusSpendCapped, StatusNeedsTarget:
+		return true
+	default:
+		return false
+	}
+}
+
 const (
 	StatusUploaded    CaptureStatus = "uploaded"
 	StatusTranscribed CaptureStatus = "transcribed"
@@ -351,6 +367,14 @@ type CaptureIndex struct {
 	CleanKey  string        `json:"clean_key"`
 	Error     string        `json:"error,omitempty"`
 	CreatedAt string        `json:"created_at"`
+	// LastProgressAt is when the pipeline last wrote this row, or when the API
+	// last handed the capture to the worker. It is what says whether a worker
+	// can still be alive on this capture: the worker function's timeout is
+	// 900 s, so a row untouched for longer than that has no live worker, and a
+	// retry may start one without starting a second delivery
+	// (service.CaptureStuckAfter). Empty on rows written before 2026-09-05,
+	// which read as CreatedAt. In the record blob only; nothing lists on it.
+	LastProgressAt string `json:"last_progress_at,omitempty"`
 
 	// TargetSource says who set NoteID. Empty on rows written before 2026-09
 	// and on captures nothing has decided for yet.

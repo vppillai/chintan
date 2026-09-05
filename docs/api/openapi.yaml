@@ -763,6 +763,16 @@ paths:
         Genuinely idempotent. The append is guarded by a token written in the
         same conditional update that marks the capture appended, so a retry that
         finds a matching token skips the append rather than duplicating the text.
+
+        A capture that is `failed` or `spend_capped` is retried at once. A
+        capture still in flight (`uploaded`, `transcribing`, `transcribed`,
+        `routing`, `cleaned`, `cleaning`, `appending`) is refused with 409
+        while a worker may still be working on it: until the worker has not
+        written the row for 15 minutes (its own maximum lifetime), and for
+        `appending` until the append claim's 20-minute lease has run out — a
+        retry inside it cannot take the claim and would only dead-letter. A
+        client that offers Retry for a stalled capture should offer it no
+        earlier than that, and show the 409's `detail` when it is early.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
@@ -774,7 +784,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: The capture is already in a terminal state.
+          description: |
+            The capture has finished (`appended`, `no_content`) or is waiting
+            on a person (`needs_target`), or it is still in flight and a worker
+            may still be working on it — see the description for when a
+            stalled capture becomes retryable. `detail` says which.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }

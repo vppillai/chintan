@@ -1437,6 +1437,9 @@ func (p *Pipeline) setStatus(ctx context.Context, capture *model.CaptureIndex, s
 // losing it is neither to drop the condition nor to retry until we win, both of
 // which reintroduce the lost update it prevents. The answer is to concede.
 func (p *Pipeline) persist(ctx context.Context, capture *model.CaptureIndex) error {
+	// Every write is progress: the API's retry reads this to know whether a
+	// worker can still be alive on the capture (service.CaptureStuck).
+	capture.LastProgressAt = model.FormatTime(p.now())
 	updated, err := p.cfg.Store.PutCapture(ctx, *capture)
 	if err == nil {
 		*capture = updated
