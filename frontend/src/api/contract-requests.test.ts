@@ -143,8 +143,12 @@ describe('the requests the frontend actually sends', () => {
         tags: ['house'],
         verbatim: true,
         language: 'ml',
+        auto_clean: true,
+        cleaned_mode: 'structured',
       }),
     );
+    await call('cleanNote', () => api.cleanNote(NOTE_ID));
+    await call('cleanNoteMode', () => api.cleanNote(NOTE_ID, { mode: 'polished' }));
     await call('archiveNote', () => api.archiveNote(NOTE_ID));
     await call('restoreNote', () => api.restoreNote(ARCHIVED_NOTE_ID));
     await call('deleteNoteForever', () => api.deleteNoteForever(ARCHIVED_NOTE_ID));

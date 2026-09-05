@@ -2310,11 +2310,26 @@
    Note screen — back link, meta line, recordings, action bar
    ========================================================================== */
 
-/* The bar carries its own bottom padding, so the screen gives up the usual
-   one: a sticky element rests in its in-flow position at the end of the
-   scroll, and 2rem of screen padding beneath it would float it. */
+/*
+ * The bar carries its own bottom padding, so the screen gives up the usual
+ * one: a sticky element rests in its in-flow position at the end of the
+ * scroll, and 2rem of screen padding beneath it would float it.
+ *
+ * A column at least as tall as the scroll region, with the bars pushed to
+ * its foot. A sticky bar only sticks while there is something to scroll;
+ * on a short note — two paragraphs, or two recording rows on their own tab
+ * — it rested wherever the content ended, a third of the way up the screen,
+ * and the selection bar with it. The panel takes the slack instead.
+ */
 .note-screen {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100%;
   padding-block-end: 0;
+}
+
+.note-screen > .note-bar-anchor {
+  margin-block-start: auto;
 }
 
 .back-link {
@@ -2345,18 +2360,92 @@
 }
 
 /* --------------------------------------------------------------------------
-   Recordings — the sources, as dated rows beneath the body
+   Note views — Text · Recordings (N), a strip that sticks under the banner
    -------------------------------------------------------------------------- */
 
-.recordings {
-  display: grid;
-  gap: var(--space-3);
-  margin-block-start: var(--space-8);
-  padding-block-start: var(--space-4);
-  border-block-start: 1px solid var(--color-line);
+/*
+ * Sticky to the top of the scrolling region, which is the line under the
+ * banner: `.app__main` is the one thing that scrolls, so `inset-block-start: 0`
+ * is that line. Pulled out to the gutters and painted in the ground colour so
+ * the panel scrolling beneath does not show at the strip's sides. Same layer
+ * as the action bar at the foot — under the sheets and the dialogs.
+ */
+.note-tabs {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-content);
+  margin-inline: calc(-1 * var(--layout-gutter));
+  padding: var(--space-2) var(--layout-gutter);
+  background-color: var(--color-ground);
 }
 
-.recordings__header {
+/* The segmented control: a recessed track with the selected segment raised,
+   the same device as the transcript's Timestamped · Cleaned toggle, at the
+   width of the column so each segment is a generous target. */
+.note-tabs__list {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-full);
+}
+
+/* Three segments across a 280 px column on the narrowest phone: the side
+   padding is the track's own, and the label never wraps — a two-line tab
+   reads as two tabs. */
+.note-tabs__tab {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.note-tabs__tab:hover {
+  color: var(--color-ink);
+}
+
+.note-tabs__tab[aria-selected='true'] {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+
+/* The count is a numeral: serif figures, quieter than the label. */
+.note-tabs__count {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-faint);
+}
+
+.note-tabs__tab[aria-selected='true'] .note-tabs__count {
+  color: var(--color-muted);
+}
+
+/* On a 320 px phone the three labels fill the track on their own; the count
+   is the one thing that can go, and the tab still says what it is. */
+@media (max-width: 22.5em) {
+  .note-tabs__count {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Cleaned view — the worker's rewrite of the whole note, read-only
+   -------------------------------------------------------------------------- */
+
+.cleaned {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.cleaned__controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2364,13 +2453,280 @@
   gap: var(--space-3);
 }
 
-.recordings__heading {
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-caps);
-  text-transform: uppercase;
+/* Structured · Polished: the same recessed track as the transcript's toggle. */
+.cleaned__modes {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-full);
+}
+
+.cleaned__mode {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+
+.cleaned__mode[aria-pressed='true'] {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.cleaned__mode[disabled] {
   color: var(--color-faint);
+  cursor: default;
+}
+
+/* The toggle: a real checkbox stretched invisibly over its 44 px label, with
+   a drawn mark where the box would be. */
+.cleaned__auto {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-1);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.cleaned__auto-box {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  inline-size: 100%;
+  block-size: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.cleaned__auto-mark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-raised);
+  color: var(--color-ground);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.cleaned__auto-mark svg {
+  opacity: 0;
+}
+
+.cleaned__auto-box:checked + .cleaned__auto-mark {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+}
+
+.cleaned__auto-box:checked + .cleaned__auto-mark svg {
+  opacity: 1;
+}
+
+.cleaned__auto-box:checked ~ span:last-child {
+  color: var(--color-ink);
+}
+
+/* The hidden control's focus ring is drawn on the mark it stands behind. */
+.cleaned__auto-box:focus-visible + .cleaned__auto-mark {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: var(--layout-focus-ring-offset);
+}
+
+/* "Generated 3 minutes ago · Structured", with Regenerate on the same line. */
+.cleaned__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-3);
+}
+
+.cleaned__meta {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.cleaned__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  white-space: nowrap;
+}
+
+.cleaned__action--primary {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.cleaned__action[disabled] {
+  background-color: var(--color-raised);
+  border-color: var(--color-line);
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* The note moved on: said beside the way to catch up, in the accent border
+   the app reserves for "this needs you" (the resume prompt, a failed row). */
+.cleaned__stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.cleaned__progress,
+.cleaned__hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.cleaned__notice {
+  font-size: var(--font-size-sm);
+  color: var(--color-accent-strong);
+}
+
+/* The rendered rewrite reads like the note's own body: the same card, the
+   same serif measure. Headings step down from the title's serif; lists take
+   their markers back from the reset. */
+.cleaned__body {
+  padding: var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  color: var(--color-ink);
+}
+
+.cleaned__body[data-stale] {
+  color: var(--color-muted);
+}
+
+.cleaned__body h2,
+.cleaned__body h3,
+.cleaned__body h4,
+.cleaned__body h5,
+.cleaned__body h6 {
+  font-family: var(--font-serif);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-snug);
+}
+
+.cleaned__body h2 {
+  font-size: var(--font-size-xl);
+}
+
+.cleaned__body h3 {
+  font-size: var(--font-size-lg);
+}
+
+.cleaned__body h4,
+.cleaned__body h5,
+.cleaned__body h6 {
+  font-size: var(--font-size-md);
+}
+
+.cleaned__body ul,
+.cleaned__body ol {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+.cleaned__body ul {
+  list-style: disc;
+}
+
+.cleaned__body ol {
+  list-style: decimal;
+}
+
+.cleaned__body blockquote {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 2px solid var(--color-line-strong);
+  color: var(--color-muted);
+}
+
+.cleaned__body code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.cleaned__body hr {
+  border: 0;
+  border-block-start: 1px solid var(--color-line);
+}
+
+/* Nothing generated yet: what it would be, and the one thing to do. */
+.cleaned__empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px dashed var(--color-line-strong);
+  border-radius: var(--radius-lg);
+}
+
+.cleaned__empty-title {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-ink);
+}
+
+/* Grows to fill the column, so the recordings' selection bar — rendered
+   inside the panel — reaches the foot as the action bar does. */
+.note-tabpanel {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  padding-block-start: var(--space-3);
+}
+
+.note-tabpanel > .selection-bar {
+  margin-block-start: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Recordings — the sources, as dated rows beneath the body
+   -------------------------------------------------------------------------- */
+
+/* A panel of its own now, so no rule or margin separates it from a body
+   that is no longer above it. */
+.recordings {
+  display: grid;
+  gap: var(--space-3);
 }
 
 .recordings__empty {
@@ -2492,6 +2848,20 @@
 /* Inside a row the player has the row's padding already. */
 .recording .player {
   padding-block: 0;
+}
+
+/* The upload this device is still making, first in the list: the library's
+   filing row as it is, in a list item that adds no second card around it. */
+.recordings__filing {
+  display: grid;
+}
+
+/* The stage strip under a row that is still being filed, inset to the row's
+   text and clear of the head's controls. */
+.recording__progress {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
 }
 
 /* A row while recordings are being selected: the checkbox and its label

@@ -10,6 +10,8 @@ export const ROUTES = {
   home: '/',
   notes: '/',
   note: (id: string) => `/notes/${encodeURIComponent(id)}`,
+  /** The same note, opened on its recordings rather than its text. */
+  noteRecordings: (id: string) => `/notes/${encodeURIComponent(id)}?tab=recordings`,
   notePattern: '/notes/:id',
   /** Archived notes are the library with a filter chip, not a destination. */
   archive: '/?view=archived',

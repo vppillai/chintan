@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -9,9 +9,12 @@ import { onlineManager } from '@tanstack/react-query';
 import { CAPTURE_POLL_FAST_MS, queryKeys } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 import { routes } from '@/app/router.tsx';
+import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
+import { useCaptureStore } from '@/features/capture/store.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { LOADING_PATIENCE_MS } from './NoteDetailScreen.tsx';
+import { noteTabStorageKey } from './NoteTabs.tsx';
 
 /**
  * The note screen against a small stateful server: PATCH checks the version
@@ -116,6 +119,18 @@ const ROOF: StoredNote = {
   version: 1,
   archived: false,
   captures: [],
+};
+
+/** A recording that has landed, so the Recordings tab has a row to show. */
+const FILED: CaptureWire = {
+  id: 'cap-old',
+  status: 'appended',
+  created_at: '2026-08-06T09:10:00.000Z',
+  version: 1,
+  note_id: 'roof-repair',
+  duration_ms: 12_000,
+  has_peaks: false,
+  has_segments: false,
 };
 
 function mount(fetchImpl: typeof fetch, path: string) {
@@ -366,5 +381,238 @@ describe('an uncached note offline is not an endless Loading', () => {
     expect(screen.getByRole('heading', { name: 'Not on this device' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByText('Loading…')).toBeNull();
+  });
+});
+
+/**
+ * The note as panels under one strip — Text · Recordings (N) — so the
+ * recordings of a long note are one tap away rather than a scroll past every
+ * paragraph. The strip is a real tablist: arrow keys move between segments.
+ */
+describe('the note is panels under one strip', () => {
+  const withRecording: StoredNote = { ...ROOF, captures: [FILED] };
+
+  async function loaded() {
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+  }
+
+  it('opens on the text, counts the recordings on their tab, and switches on a tap', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    const { router } = mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    const tablist = screen.getByRole('tablist', { name: 'Note views' });
+    const tabs = within(tablist).getAllByRole('tab');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Text', 'Cleaned', 'Recordings (1)']);
+    expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('textbox', { name: 'Note body' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Recordings' })).toBeNull();
+    // One panel, named by its tab.
+    const panel = screen.getByRole('tabpanel');
+    expect(panel).toHaveAccessibleName('Text');
+
+    await user.click(screen.getByRole('tab', { name: /^Recordings/ }));
+
+    expect(screen.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('region', { name: 'Recordings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /more for recording from/i })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
+    // The bar is on every tab.
+    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+    // The URL says which tab, replacing the entry rather than stacking one.
+    expect(router.state.location.search).toBe('?tab=recordings');
+    expect(sessionStorage.getItem(noteTabStorageKey('roof-repair'))).toBe('recordings');
+
+    await user.click(screen.getByRole('tab', { name: 'Text' }));
+    expect(screen.getByRole('textbox', { name: 'Note body' })).toBeInTheDocument();
+    expect(router.state.location.search).toBe('');
+  });
+
+  it('moves between segments with the arrow keys, Home and End', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    const text = screen.getByRole('tab', { name: 'Text' });
+    const recordings = screen.getByRole('tab', { name: /^Recordings/ });
+    // Only the selected tab is in the Tab order.
+    expect(text).toHaveAttribute('tabindex', '0');
+    expect(recordings).toHaveAttribute('tabindex', '-1');
+
+    text.focus();
+    await user.keyboard('{ArrowRight}');
+    const cleaned = screen.getByRole('tab', { name: 'Cleaned' });
+    expect(cleaned).toHaveAttribute('aria-selected', 'true');
+    expect(cleaned).toHaveFocus();
+    expect(await screen.findByRole('region', { name: 'Cleaned view' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
+    expect(recordings).toHaveAttribute('aria-selected', 'true');
+    expect(recordings).toHaveFocus();
+    expect(await screen.findByRole('region', { name: 'Recordings' })).toBeInTheDocument();
+
+    await user.keyboard('{ArrowRight}');
+    // Wraps.
+    expect(text).toHaveAttribute('aria-selected', 'true');
+    expect(text).toHaveFocus();
+
+    await user.keyboard('{End}');
+    expect(recordings).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{Home}');
+    expect(text).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('names each of the three segments, and each panel is what its tab says', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await user.click(screen.getByRole('tab', { name: 'Cleaned' }));
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Cleaned');
+    expect(screen.getByText('No cleaned view yet')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
+    // The bar is here too.
+    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+  });
+
+  it('remembers the tab per note for the session, and a deep link outranks the memory', async () => {
+    sessionStorage.setItem(noteTabStorageKey('roof-repair'), 'recordings');
+    const api = server([
+      withRecording,
+      { ...ROOF, id: 'reading-list', title: 'Reading list', captures: [] },
+    ]);
+
+    // The remembered tab.
+    let view = mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+    expect(screen.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('region', { name: 'Recordings' })).toBeInTheDocument();
+    view.queryClient.clear();
+    cleanup();
+
+    // Another note has its own memory, which is empty: Text.
+    view = mount(api.fetchImpl, '/notes/reading-list');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Reading list');
+    });
+    expect(screen.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Recordings (0)' })).toBeInTheDocument();
+    view.queryClient.clear();
+    cleanup();
+
+    // A link that names a tab wins over what the session remembers.
+    sessionStorage.setItem(noteTabStorageKey('roof-repair'), 'text');
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+    await loaded();
+    expect(screen.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('brings the action bar back when the recordings panel is left mid-selection', async () => {
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+    await loaded();
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    expect(await screen.findByRole('toolbar', { name: 'Recording actions' })).toBeInTheDocument();
+    expect(screen.queryByRole('toolbar', { name: 'Note actions' })).toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: 'Text' }));
+    expect(screen.queryByRole('toolbar', { name: 'Recording actions' })).toBeNull();
+    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Send returns to the note's Recordings tab. The upload this device is making
+ * is the first row there, counted on the tab, until the server's row takes
+ * over — the hand-over the library's filing row used to be the only one to do.
+ */
+describe('a recording sent into this note shows up on its recordings', () => {
+  afterEach(() => {
+    useCaptureStore.setState({ model: INITIAL_CAPTURE });
+  });
+
+  it('counts the upload on the tab, shows it first, and hands over to the server row', async () => {
+    const api = server([{ ...ROOF, captures: [FILED] }]);
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploading',
+          localId: 'cap-local',
+          noteId: 'roof-repair',
+          elapsedMs: 6_000,
+          uploadProgress: 0.4,
+        },
+      });
+    });
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+
+    expect(await screen.findByRole('tab', { name: 'Recordings (2)' })).toBeInTheDocument();
+    const region = await screen.findByRole('region', { name: 'Recordings' });
+    const rows = () =>
+      within(region)
+        .getAllByRole('listitem')
+        .filter((item) => item.matches('.recording, .recordings__filing'));
+    expect(rows()[0]).toHaveTextContent('Uploading… 40%');
+
+    // The PUT lands and the server mints the row; the note is asked again.
+    const getsBefore = api.gets;
+    act(() => {
+      api.notes.set('roof-repair', {
+        ...(api.notes.get('roof-repair') as StoredNote),
+        captures: [
+          { ...FILED, id: 'cap-new', status: 'transcribing', created_at: new Date().toISOString() },
+          FILED,
+        ],
+      });
+      useCaptureStore.setState({
+        model: {
+          ...useCaptureStore.getState().model,
+          state: 'uploaded',
+          uploadProgress: 1,
+          serverCaptureId: 'cap-new',
+        },
+      });
+    });
+
+    // The server's row replaces the local one and the machine is released.
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('idle');
+    });
+    expect(api.gets).toBeGreaterThan(getsBefore);
+    await waitFor(() => {
+      expect(screen.queryByText(/uploading…/i)).toBeNull();
+    });
+    expect(screen.getByRole('tab', { name: 'Recordings (2)' })).toBeInTheDocument();
+    expect(rows()[0]).toHaveTextContent('Filing…');
+    expect(within(rows()[0]!).getByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
+  });
+
+  it('a recording aimed at another note stays off this one', async () => {
+    const api = server([{ ...ROOF, captures: [FILED] }]);
+    act(() => {
+      useCaptureStore.setState({
+        model: {
+          ...INITIAL_CAPTURE,
+          state: 'uploading',
+          localId: 'cap-local',
+          noteId: 'reading-list',
+          uploadProgress: 0.2,
+        },
+      });
+    });
+    mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
+
+    expect(await screen.findByRole('tab', { name: 'Recordings (1)' })).toBeInTheDocument();
+    await screen.findByRole('button', { name: /more for recording from/i });
+    expect(screen.queryByText(/uploading…/i)).toBeNull();
   });
 });

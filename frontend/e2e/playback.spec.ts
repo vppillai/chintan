@@ -7,14 +7,17 @@ import { ARTIFACT_ORIGIN, expect, test } from './fixtures.ts';
  *
  * The scrubber canvas is only reachable here — jsdom has no `getContext`.
  *
- * The recordings sit beneath the note as dated rows and the newest is open on
- * arrival, so the player and transcript these specs reach for are on screen
- * without a tap. `exact: true` on the region: the row's player is "Recording",
- * the section around it is "Recordings", and a substring match would find both.
+ * The recordings are the note's Recordings tab, reached here by its deep link
+ * (`?tab=recordings`); the newest is open on arrival, so the player and
+ * transcript these specs reach for are on screen without a further tap.
+ * `exact: true` on the region: the row's player is "Recording", the section
+ * around it is "Recordings", and a substring match would find both.
  */
 
+const RECORDINGS = '/notes/roof-repair?tab=recordings';
+
 test('plays inline, never in a new tab', async ({ page, context }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   await expect(page.getByRole('region', { name: 'Recording', exact: true })).toBeVisible();
 
@@ -23,7 +26,7 @@ test('plays inline, never in a new tab', async ({ page, context }) => {
 
   // Nothing here may hand the presigned S3 URL to window.open or a new tab.
   expect(context.pages()).toHaveLength(pagesBefore);
-  await expect(page).toHaveURL(/\/notes\/roof-repair$/);
+  await expect(page).toHaveURL(/\/notes\/roof-repair\?tab=recordings$/);
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
 });
 
@@ -41,7 +44,7 @@ test('downloads the recording it has just loaded, from the cross-origin bucket',
   browserName,
 }) => {
   test.skip(browserName !== 'chromium', 'the download event is asserted in Chromium only');
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   const audio = page.locator('audio');
   await expect(audio).toHaveAttribute('src', new RegExp(`^${ARTIFACT_ORIGIN}/`));
@@ -56,7 +59,7 @@ test('downloads the recording it has just loaded, from the cross-origin bucket',
 });
 
 test('renders the peaks waveform to canvas', async ({ page }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   const canvas = page.locator('.scrubber__canvas');
   await expect(canvas).toBeVisible();
@@ -92,7 +95,7 @@ async function waitForAudioReady(page: Page): Promise<void> {
 }
 
 test('tapping a transcript line seeks the audio', async ({ page }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
   await waitForAudioReady(page);
 
   const line = page.getByRole('button', { name: /Ellis quoted nine hundred/ });
@@ -107,7 +110,7 @@ test('tapping a transcript line seeks the audio', async ({ page }) => {
 });
 
 test('the scrubber is keyboard-operable', async ({ page }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
   await waitForAudioReady(page);
 
   const slider = page.getByRole('slider', { name: 'Playback position' });
@@ -122,7 +125,7 @@ test('the scrubber is keyboard-operable', async ({ page }) => {
 });
 
 test('the cleaned view drops timestamps and says why', async ({ page }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   // Raw view offers seeking.
   await expect(page.getByText(/tap any line to jump/i)).toBeVisible();
@@ -148,7 +151,7 @@ test('the Cleaned toggle is not offered when there is no cleaned text', async ({
   // what a capture that stopped at `no_content` looks like.
   await page.route('**/artifact/*/clean', (route) => route.fulfill({ status: 404, body: '' }));
 
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   await expect(page.getByRole('button', { name: /Ellis quoted nine hundred/ })).toBeVisible();
   // No control whose only possible outcome is an empty panel.
@@ -169,7 +172,7 @@ test('a capture with no artifacts falls back to a plain player', async ({ page, 
     },
   ];
 
-  await page.goto('/notes/reading-list');
+  await page.goto('/notes/reading-list?tab=recordings');
 
   await expect(page.getByRole('slider', { name: 'Playback position' })).toBeVisible();
   await expect(page.locator('.scrubber__canvas')).toHaveCount(0);
@@ -229,7 +232,7 @@ test('copies the transcript separately, and names which one', async ({
 }) => {
   test.skip(browserName !== 'chromium', 'clipboard permissions are Chromium-only in Playwright');
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   // Three different things could be meant by "copy" on this screen, so no
   // control is allowed to be called just "Copy" — and the one inside a

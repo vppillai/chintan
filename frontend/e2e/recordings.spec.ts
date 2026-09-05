@@ -13,6 +13,9 @@ import { expect, test, type ApiState } from './fixtures.ts';
 
 const ROW = /more for recording from/i;
 
+/** The note, opened on its Recordings tab — where every row below lives. */
+const RECORDINGS = '/notes/roof-repair?tab=recordings';
+
 /** A second recording on the roof note, so there is something to select together. */
 function twoRecordings(api: ApiState): void {
   api.notes['roof-repair']!.captures!.push({
@@ -37,7 +40,7 @@ async function longPress(page: Page, selector: string): Promise<void> {
 }
 
 test('a recording can be deleted with its paragraph, behind a typed word', async ({ page, api }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
   await expect(page.getByRole('button', { name: ROW })).toBeVisible();
 
   await page.getByRole('button', { name: ROW }).click();
@@ -54,7 +57,8 @@ test('a recording can be deleted with its paragraph, behind a typed word', async
   await expect(page.getByText('Recording deleted')).toBeVisible();
   expect(api.deletedCaptures).toEqual(['cap-old']);
   expect(api.notes['roof-repair']?.captures).toEqual([]);
-  // The body was rewritten by the server and the screen shows what it holds now.
+  // The body was rewritten by the server and the text shows what it holds now.
+  await page.getByRole('tab', { name: 'Text' }).click();
   await expect(page.getByLabel('Note body')).toHaveValue(api.notes['roof-repair']!.body);
 });
 
@@ -63,7 +67,7 @@ test('a recording that is still filing cannot be deleted yet, and the screen say
   api,
 }) => {
   api.notes['roof-repair']!.captures![0]!.status = 'transcribing';
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
 
   await page.getByRole('button', { name: ROW }).click();
   await page.getByRole('menuitem', { name: 'Delete recording' }).click();
@@ -78,7 +82,7 @@ test('a recording can be moved to another note, which is then one tap away', asy
   page,
   api,
 }) => {
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
   await page.getByRole('button', { name: ROW }).click();
   await page.getByRole('menuitem', { name: 'Move to…' }).click();
 
@@ -101,6 +105,9 @@ test('a recording can be moved to another note, which is then one tap away', asy
 
   await page.getByRole('button', { name: 'Open Reading list' }).click();
   await expect(page).toHaveURL(/\/notes\/reading-list$/);
+  // A note never opened this session arrives on its text; its recordings
+  // are one segment over.
+  await page.getByRole('tab', { name: /^Recordings/ }).click();
   await expect(page.getByRole('button', { name: ROW })).toHaveCount(1);
 });
 
@@ -111,7 +118,7 @@ test('several recordings download as one archive, with progress', async ({
 }) => {
   test.skip(browserName !== 'chromium', 'the download event is asserted in Chromium only');
   twoRecordings(api);
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
   await expect(page.getByRole('button', { name: ROW })).toHaveCount(2);
 
   await page.getByRole('button', { name: ROW }).first().click();
@@ -140,7 +147,7 @@ test('several recordings download as one archive, with progress', async ({
 
 test('a long press on a row starts selecting it', async ({ page, api }) => {
   twoRecordings(api);
-  await page.goto('/notes/roof-repair');
+  await page.goto(RECORDINGS);
   await expect(page.getByRole('button', { name: ROW })).toHaveCount(2);
 
   await longPress(page, '.recording__summary');

@@ -146,6 +146,10 @@ export interface NoteCleanedWire {
   error?: string;
 }
 
+/** `POST /v1/notes/{id}/clean` answers 202 with this; the worker does the rest. */
+export type CleanQueuedWire = NoteCleanQueuedWire;
+export type CleanRequestWire = NoteCleanRequestWire;
+
 export interface NoteDetailWire extends NoteWire {
   body: string;
   captures?: CaptureWire[];
@@ -457,3 +461,7 @@ export interface TokenSetWire {
   expires_in: number;
   token_type: string;
 }
+
+/** Aliases used by the note screen; the canonical names are the backend's. */
+export type CleanedWire = NoteCleanedWire;
+export type CleanedMode = NoteCleanMode;

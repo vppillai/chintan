@@ -1,12 +1,12 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import type { ApiContextValue } from '@/api/ApiProvider.tsx';
 
-import { CaptureScreen } from './CaptureScreen.tsx';
+import { CaptureScreen, captureReturnPath } from './CaptureScreen.tsx';
 import { INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
@@ -79,12 +79,25 @@ function fakeDeps(): RecorderDeps {
   };
 }
 
+/** Stands in for the note screen: says which note, and which tab was asked for. */
+function NoteProbe() {
+  const { id } = useParams();
+  const { search } = useLocation();
+  return (
+    <p>
+      Note {id}
+      {search}
+    </p>
+  );
+}
+
 function mount(path = '/capture', api?: ApiContextValue) {
   return render(
     <TestProviders {...(api ? { api } : {})}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/capture" element={<CaptureScreen />} />
+          <Route path="/notes/:id" element={<NoteProbe />} />
           <Route path="/" element={<p>Home</p>} />
         </Routes>
       </MemoryRouter>
@@ -210,7 +223,7 @@ describe('opening /capture arms a recording', () => {
 
 describe('review before send', () => {
   /** Puts the machine at review with a recording of the given length. */
-  function reviewed(elapsedMs = 8_000) {
+  function reviewed(elapsedMs = 8_000, noteId: string | null = 'roof-repair') {
     act(() => {
       useCaptureStore.setState({
         model: {
@@ -220,7 +233,7 @@ describe('review before send', () => {
           bytes: 12_000,
           chunks: 4,
           elapsedMs,
-          noteId: 'roof-repair',
+          noteId,
         },
       });
     });
@@ -249,12 +262,12 @@ describe('review before send', () => {
     expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
   });
 
-  it('Send hands off to the library at once, with the upload still running in the store', async () => {
+  it('Send hands off at once, with the upload still running in the store', async () => {
     /*
      * The upload has always lived in the store, outside the tree; the only
      * thing that kept the user watching "Sending 40%" was the screen waiting
-     * for it. Now Send is a tap and a navigation, and the library's filing
-     * row shows the progress.
+     * for it. Now Send is a tap and a navigation, and the filing row shows
+     * the progress. A recording with no target goes to the library.
      */
     useCaptureStore.getState().__configure({
       upload: {
@@ -294,7 +307,7 @@ describe('review before send', () => {
       return body({ items: [] });
     };
 
-    reviewed();
+    reviewed(8_000, null);
     mount('/capture', testApiContext(fetchImpl));
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Send' }));
@@ -308,6 +321,63 @@ describe('review before send', () => {
       expect(useCaptureStore.getState().model.state).toBe('uploaded');
     });
     expect(useCaptureStore.getState().model.serverCaptureId).toBe('srv-1');
+  });
+
+  it('Send from a recording aimed at a note returns to that note, on its recordings', async () => {
+    /*
+     * "Record into this", then Send, used to land on the library: a screen
+     * away from the note the user had just added to, with the filing row
+     * the only sign anything had happened. The note's Recordings tab shows
+     * the same row, so that is where Send goes.
+     */
+    useCaptureStore.getState().__configure({
+      upload: {
+        assemble: async () => new Blob(['audio']),
+        put: async () => {},
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const body = (payload: unknown, status = 200) =>
+        new Response(JSON.stringify(payload), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (String(input).includes('/v1/captures') && init?.method === 'POST') {
+        return body(
+          {
+            capture: { id: 'srv-2', status: 'uploaded', created_at: '', version: 1 },
+            upload: {
+              url: 'https://s3.test/audio',
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              max_bytes: 1_000_000,
+            },
+          },
+          201,
+        );
+      }
+      return body({ items: TEST_NOTES });
+    };
+    reviewed();
+    mount('/capture', testApiContext(fetchImpl));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Note roof-repair?tab=recordings')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('uploaded');
+    });
+  });
+
+  it('Discard from a recording aimed at a note returns to that note, on its text', async () => {
+    reviewed();
+    mount();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    expect(await screen.findByText('Note roof-repair')).toBeInTheDocument();
+    expect(useCaptureStore.getState().model.state).toBe('idle');
   });
 
   it('Re-record discards the take and opens the microphone again into the same note', async () => {
@@ -409,5 +479,14 @@ describe('the target chooser', () => {
     await user.click(screen.getByRole('button', { name: /into reading list/i }));
     await user.click(screen.getByRole('button', { name: 'New note' }));
     expect(useCaptureStore.getState().model.noteId).toBeNull();
+  });
+});
+
+describe('where the capture screen goes when it is done', () => {
+  it('returns to the target note — its recordings once sent — and otherwise to the library', () => {
+    expect(captureReturnPath('roof-repair', true)).toBe('/notes/roof-repair?tab=recordings');
+    expect(captureReturnPath('roof-repair', false)).toBe('/notes/roof-repair');
+    expect(captureReturnPath(null, true)).toBe('/');
+    expect(captureReturnPath(null, false)).toBe('/');
   });
 });

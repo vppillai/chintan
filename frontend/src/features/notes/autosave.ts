@@ -47,6 +47,16 @@ export interface NoteDraft {
    * `draftFrom` always sets it.
    */
   language?: string;
+  /**
+   * Regenerate the cleaned view after each recording, and the mode to do it
+   * in. On the draft for the same reason as `language`: they ride the note's
+   * own serialised PATCH with its version. Optional so a draft built before
+   * they existed still typechecks; `draftFrom` sets `auto_clean`, and
+   * `cleaned_mode` stays unset until the user chooses one or the note has a
+   * cleaned view to read it from.
+   */
+  auto_clean?: boolean;
+  cleaned_mode?: 'polished' | 'structured';
 }
 
 export interface EditorModel {
@@ -99,7 +109,9 @@ export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
     a.body === b.body &&
     sameList(a.aliases, b.aliases) &&
     sameList(a.tags, b.tags) &&
-    (a.language ?? '') === (b.language ?? '')
+    (a.language ?? '') === (b.language ?? '') &&
+    Boolean(a.auto_clean) === Boolean(b.auto_clean) &&
+    (a.cleaned_mode ?? '') === (b.cleaned_mode ?? '')
   );
 }
 

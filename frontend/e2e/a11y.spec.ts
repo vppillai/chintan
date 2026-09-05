@@ -17,6 +17,8 @@ const ROUTES = [
   '/settings?passkey=invalid_session',
   '/about',
   '/notes/roof-repair',
+  '/notes/roof-repair?tab=recordings',
+  '/notes/roof-repair?tab=cleaned',
 ] as const;
 const THEMES = ['ink', 'nocturne'] as const;
 
@@ -99,7 +101,7 @@ test('selection checkboxes and the playback slider are at least 24 px', async ({
       has_segments: false,
     },
   ];
-  await page.goto('/notes/reading-list');
+  await page.goto('/notes/reading-list?tab=recordings');
   const slider = await page.getByRole('slider', { name: 'Playback position' }).boundingBox();
   expect(slider?.height ?? 0).toBeGreaterThanOrEqual(24);
 });

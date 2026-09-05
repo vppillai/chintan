@@ -170,12 +170,87 @@ test('records into the note it was opened from, and the target can be changed be
   await page.getByRole('button', { name: 'Stop' }).click();
   await page.getByRole('button', { name: 'Send' }).click();
 
+  // Send goes to the note it was aimed at — the one chosen last — on its recordings.
+  await expect(page).toHaveURL(/\/notes\/reading-list\?tab=recordings$/);
+
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
   const create = api.requests.find(
     (request) => request.method === 'POST' && request.url === '/v1/captures',
   );
   expect(create).toBeTruthy();
   expect(api.captures[0]?.note_id).toBe('reading-list');
+});
+
+/**
+ * Record into a note, Send, and be back on that note: the upload is the first
+ * of its recordings, wearing the filing row's progress, and becomes an
+ * ordinary recording — with the text updated — when the pipeline lands it.
+ * Sending used to drop the user on the library, a screen away from the note
+ * they had just added to.
+ */
+test('Send returns to the note, where the recording files in front of the user', async ({
+  page,
+  api,
+}) => {
+  await page.goto('/notes/roof-repair');
+  await page.getByRole('button', { name: /record into this/i }).click();
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  await page.waitForTimeout(1_100);
+  await page.getByRole('button', { name: 'Stop' }).click();
+
+  // Hold the create so the local upload row is observable on the note.
+  let releaseCreate: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  await page.route('**/api/v1/captures', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.fallback();
+      return;
+    }
+    await held;
+    await route.fallback();
+  });
+
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page).toHaveURL(/\/notes\/roof-repair\?tab=recordings$/);
+  await expect(page.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
+  // Counted on the tab, first in the list, with the upload's own bar.
+  await expect(page.getByRole('tab', { name: 'Recordings (2)' })).toBeVisible();
+  const region = page.getByRole('region', { name: 'Recordings' });
+  const rows = region.getByRole('listitem');
+  await expect(rows.first()).toContainText(/uploading… \d+%/i);
+  // "Record into this" is still there to keep adding.
+  await expect(page.getByRole('button', { name: /record into this/i })).toBeVisible();
+
+  releaseCreate();
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  expect(api.captures[0]?.note_id).toBe('roof-repair');
+
+  // The server's row takes over and follows the pipeline, in the same place.
+  api.captures[0]!.status = 'transcribing';
+  await expect(rows.first()).toContainText('Filing…', { timeout: 10_000 });
+  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Recordings (2)' })).toBeVisible();
+  // And Back does not walk into a fresh recording: the capture entry was replaced.
+
+  // It lands: the worker wrote the paragraph, and the row is a recording now.
+  api.captures[0]!.status = 'appended';
+  api.captures[0]!.duration_ms = 1_100;
+  api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
+  api.notes['roof-repair']!.version += 1;
+  await expect(rows.first()).toContainText('Filed', { timeout: 10_000 });
+  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
+
+  await page.getByRole('tab', { name: 'Text' }).click();
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
+    /The gutter is leaking again\.$/,
+  );
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/\/capture/);
 });
 
 test('pause and stop are distinct controls', async ({ page }) => {

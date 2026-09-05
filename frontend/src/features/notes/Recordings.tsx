@@ -7,6 +7,7 @@ import { ApiError } from '@/api/problem.ts';
 import { useDeleteCaptures, useMoveCaptures, useRetryCapture } from '@/api/queries.ts';
 import {
   isTerminalStatus,
+  type CaptureStatus,
   type CaptureWire,
   type NoteDetailWire,
   type NoteWire,
@@ -17,7 +18,8 @@ import { DownloadButton, saveBlob } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { OverflowMenu } from '@/components/OverflowMenu.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
-import { TargetPrompt } from '@/features/capture/FilingRow.tsx';
+import { FilingStages, LocalUploadItem, TargetPrompt } from '@/features/capture/FilingRow.tsx';
+import type { CaptureModel } from '@/features/capture/machine.ts';
 import { useLongPress, type LongPress } from '@/hooks/useLongPress.ts';
 
 import { MoveSheet } from './MoveSheet.tsx';
@@ -39,8 +41,11 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  * recording was which and put the sources above the thing they were sources
  * for.
  *
- * Newest first, and the newest is open when the screen arrives: the recording
- * someone has just made is the one they came to check.
+ * Newest first, and the newest *finished* recording is open when the screen
+ * arrives: the recording someone has just made is the one they came to check.
+ * A recording still being made or filed is the first row, wearing the same
+ * upload bar or stage strip the library's filing row does — Send returns to
+ * this tab — and opens on its own when it lands.
  *
  * One row open at a time, which is also what makes "only one recording plays
  * at a time" hold without a registry of audio elements: a collapsed row has no
@@ -55,9 +60,12 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  */
 export function Recordings({
   note,
+  localUpload = null,
   onSelectingChange,
 }: {
   note: Pick<NoteDetailWire, 'id' | 'title' | 'captures'>;
+  /** An upload this device is still making into this note — see `useLocalUpload`. */
+  localUpload?: CaptureModel | null;
   /** Told when selection starts and ends, so the screen can make room for the bar. */
   onSelectingChange?: (selecting: boolean) => void;
 }) {
@@ -66,9 +74,24 @@ export function Recordings({
   const headingId = useId();
   const captures = note.captures ?? [];
   const ordered = [...captures].sort((a, b) => b.created_at.localeCompare(a.created_at));
-  const newest = ordered[0];
+  const newest = ordered.find((capture) => isTerminalStatus(capture.status));
 
   const [openId, setOpenId] = useState<string | null>(newest?.id ?? null);
+
+  /*
+   * A recording that has just landed opens itself: the user sent it, came
+   * back here, watched the strip, and the thing to look at now is the result.
+   * Only a transition counts — a row that arrived already filed is the
+   * ordinary case above. Derived while rendering from the previous list,
+   * React's own pattern for state that follows a prop, rather than from an
+   * effect that would paint the closed row first.
+   */
+  const [previous, setPrevious] = useState(note.captures);
+  if (note.captures !== previous) {
+    setPrevious(note.captures);
+    const landed = justLanded(previous ?? [], captures);
+    if (landed) setOpenId(landed.id);
+  }
   /** A row whose play control was tapped while it was closed. */
   const [autoplayId, setAutoplayId] = useState<string | null>(null);
   /*
@@ -102,6 +125,11 @@ export function Recordings({
 
   useEffect(() => {
     onSelectingChange?.(selecting);
+    // Leaving the panel mid-selection — another tab, another note — ends
+    // the selection, and the screen's action bar has to be told to come back.
+    return () => {
+      onSelectingChange?.(false);
+    };
   }, [selecting, onSelectingChange]);
 
   const onAutoplayed = useCallback(() => {
@@ -236,18 +264,22 @@ export function Recordings({
   return (
     <>
       <section className="recordings" aria-labelledby={headingId} data-selecting={selecting || undefined}>
-        <div className="recordings__header">
-          <h2 id={headingId} className="recordings__heading">
-            Recordings
-          </h2>
-        </div>
+        {/* The tab above already says it; the heading names the region for a reader. */}
+        <h2 id={headingId} className="visually-hidden">
+          Recordings
+        </h2>
 
-        {ordered.length === 0 ? (
+        {ordered.length === 0 && !localUpload ? (
           <p className="recordings__empty">
             Nothing recorded into this note yet. “Record into this” below adds one.
           </p>
         ) : (
           <ul className="recordings__list" role="list">
+            {localUpload && !selecting && (
+              <li className="recordings__filing">
+                <LocalUploadItem model={localUpload} />
+              </li>
+            )}
             {ordered.map((capture) => (
               <RecordingRow
                 key={capture.id}
@@ -392,6 +424,18 @@ export function Recordings({
   );
 }
 
+/** The capture that was moving on the last render and is `appended` on this one. */
+export function justLanded(
+  before: readonly CaptureWire[],
+  after: readonly CaptureWire[],
+): CaptureWire | undefined {
+  const was = new Map<string, CaptureStatus>(before.map((capture) => [capture.id, capture.status]));
+  return after.find(
+    (capture) =>
+      capture.status === 'appended' && was.has(capture.id) && was.get(capture.id) !== 'appended',
+  );
+}
+
 interface Notice {
   text: string;
   tone: 'ok' | 'error';
@@ -514,6 +558,7 @@ function RecordingRow({
    * round trip, and a note with six recordings should cost the request for the
    * one being read, not six times four.
    */
+  const running = !isTerminalStatus(capture.status);
   const artifacts = useQuery({
     queryKey: ['capture-artifacts', capture.id],
     queryFn: () =>
@@ -521,7 +566,9 @@ function RecordingRow({
         hasPeaks: capture.has_peaks ?? false,
         hasSegments: capture.has_segments ?? false,
       }),
-    enabled: expanded,
+    // Not while the pipeline is still writing them: the audio's presigned URL
+    // would 404 and the row would say the recording "is no longer stored".
+    enabled: expanded && !running,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -569,7 +616,6 @@ function RecordingRow({
   // Nothing to play: the artifacts answered and there is no audio behind them.
   const noAudio = expanded && artifacts.isSuccess && !audioUrl;
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
-  const running = !isTerminalStatus(capture.status);
 
   const summary = (
     <>
@@ -665,6 +711,17 @@ function RecordingRow({
         )}
       </div>
 
+      {/*
+        Still being filed: the same four segments the library's filing row
+        shows, under the row's own line, whether or not the row is open. The
+        row becomes an ordinary recording the moment the status settles.
+      */}
+      {running && !selecting && (
+        <div className="recording__progress">
+          <FilingStages capture={capture} />
+        </div>
+      )}
+
       {expanded && (
         <div id={bodyId} className="recording__body">
           {capture.error && (
@@ -695,7 +752,12 @@ function RecordingRow({
           )}
           {capture.status === 'needs_target' && <TargetPrompt capture={capture} />}
 
-          {unreachable ? (
+          {running ? (
+            <p className="screen__count" role="status">
+              Being filed. The recording and its transcript will be here once it has been
+              saved into the note.
+            </p>
+          ) : unreachable ? (
             <p className="screen__count" role="status">
               The recording and its transcript need a connection. The note&rsquo;s text is on
               this device.

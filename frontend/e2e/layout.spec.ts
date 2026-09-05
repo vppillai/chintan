@@ -52,6 +52,8 @@ const THEMES = ['ink', 'nocturne'] as const;
 const ROUTES = [
   { path: '/', label: 'library' },
   { path: '/notes/roof-repair', label: 'note detail' },
+  { path: '/notes/roof-repair?tab=recordings', label: 'note recordings' },
+  { path: '/notes/roof-repair?tab=cleaned', label: 'note cleaned' },
   { path: '/?view=archived', label: 'archive' },
   { path: '/?q=roof', label: 'search with results' },
   { path: '/?q=nothingmatchesthis', label: 'search empty' },
@@ -80,6 +82,24 @@ function stressTheFixture(api: ApiState): void {
   ];
   note.body = body;
   note.snippet = body.slice(0, 400);
+  // A cleaned view with every block the renderer draws, marked stale so the
+  // notice and its button are in the sweep too.
+  note.cleaned = {
+    mode: 'structured',
+    generated_at: '2026-08-06T09:20:00.000Z',
+    stale: true,
+    body: [
+      `# ${note.title}`,
+      '## What needs doing before the rain',
+      '- Ridge tiles on the south slope have slipped and want re-bedding',
+      '- The flashing around the chimney needs replacing',
+      '1. Get two quotes',
+      '2. Book the earlier one',
+      '> Ellis quoted nine hundred, which is *probably* fine.',
+      '---',
+      'A closing paragraph with `code` and **emphasis** that runs long enough to wrap on a phone.',
+    ].join('\n\n'),
+  };
 }
 
 async function useTheme(page: Page, theme: string): Promise<void> {
@@ -677,7 +697,7 @@ test('the selection bars sit above the tab bar on a phone', async ({ page, api }
   expect(bars.bar).toBeGreaterThan(bars.tabs - 200);
 
   // The note screen, with recordings selected.
-  await page.goto('/notes/roof-repair');
+  await page.goto('/notes/roof-repair?tab=recordings');
   await page.getByRole('button', { name: /more for recording from/i }).first().click();
   await page.getByRole('menuitem', { name: 'Select' }).click();
   await page.getByRole('button', { name: 'Select all' }).click();

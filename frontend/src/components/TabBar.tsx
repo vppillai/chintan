@@ -20,7 +20,7 @@ const TABS: readonly Tab[] = [
     // the same word on one screen read as two different places.
     label: 'Home',
     to: ROUTES.notes,
-    icon: 'notes',
+    icon: 'home',
     // A note is stacked on the library, so the Home tab stays lit while
     // reading one — the tab names the section, not the exact URL.
     matches: (pathname) => pathname === ROUTES.home || pathname.startsWith('/notes'),

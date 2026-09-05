@@ -113,15 +113,23 @@ const HANDOFF_GRACE_MS = 10_000;
 /**
  * The upload in progress, read from the capture store rather than the server.
  *
- * Send hands off to the library at once, so for the seconds between the tap
- * and `POST /v1/captures` returning there is no server row to show — and the
+ * Send hands off at once, so for the seconds between the tap and
+ * `POST /v1/captures` returning there is no server row to show — and the
  * server never knows about the PUT at all until the object lands. This row
  * covers that gap: "Uploading… 40%" from the store's own progress, then
- * "Uploaded" until the poll returns the real row, which replaces it and
- * releases the machine. A failed upload stays here with Retry and Discard,
- * because the bytes are still on this device and only this device can act.
+ * "Uploaded" until the server's row arrives, which replaces it and releases
+ * the machine. A failed upload stays here with Retry and Discard, because the
+ * bytes are still on this device and only this device can act.
+ *
+ * Two readers. The library's filing row shows every upload; a note's
+ * Recordings tab passes its own id and sees only an upload aimed at it, with
+ * the note's own captures as the server rows that take over. Whichever is
+ * mounted does the hand-over — they are never on screen together.
  */
-function useLocalUpload(serverItems: readonly CaptureWire[]): CaptureModel | null {
+export function useLocalUpload(
+  serverItems: readonly CaptureWire[],
+  noteId?: string,
+): CaptureModel | null {
   const model = useCaptureStore((state) => state.model);
   const reset = useCaptureStore((state) => state.reset);
   const queryClient = useQueryClient();
@@ -135,6 +143,7 @@ function useLocalUpload(serverItems: readonly CaptureWire[]): CaptureModel | nul
     landed &&
     model.serverCaptureId !== null &&
     serverItems.some((capture) => capture.id === model.serverCaptureId);
+  const target = model.noteId;
 
   useEffect(() => {
     if (!landed) return;
@@ -142,7 +151,10 @@ function useLocalUpload(serverItems: readonly CaptureWire[]): CaptureModel | nul
     // next tick, and the device's list of unsent recordings is one shorter.
     void queryClient.invalidateQueries({ queryKey: queryKeys.pendingCaptures() });
     void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
-  }, [landed, queryClient]);
+    // The note it went into has a new recording; its own poll takes over from
+    // there, since the new row is non-terminal.
+    if (target) void queryClient.invalidateQueries({ queryKey: queryKeys.note(target) });
+  }, [landed, target, queryClient]);
 
   useEffect(() => {
     if (!landed) return;
@@ -157,6 +169,7 @@ function useLocalUpload(serverItems: readonly CaptureWire[]): CaptureModel | nul
     };
   }, [landed, serverHasIt, reset]);
 
+  if (noteId !== undefined && target !== noteId) return null;
   if (uploading || failed || (landed && !serverHasIt)) return model;
   return null;
 }
@@ -262,7 +275,7 @@ export function FilingRow() {
 }
 
 /** The row for an upload this device is still making. See `useLocalUpload`. */
-function LocalUploadItem({ model }: { model: CaptureModel }) {
+export function LocalUploadItem({ model }: { model: CaptureModel }) {
   const api = useApi();
   const queryClient = useQueryClient();
   const send = useCaptureStore((state) => state.send);
@@ -362,8 +375,7 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
   const actionable = failed || stuck;
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
-  const current = stageIndex(capture.status);
-  const stage = STAGES[current];
+  const stage = STAGES[stageIndex(capture.status)];
 
   /*
    * The stage strip is for a capture that is still moving. It used to render
@@ -389,28 +401,7 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
         )}
       </div>
 
-      {running && (
-        <ol className="filing-row__stages" aria-label="Filing progress">
-          {STAGES.map((step, index) => (
-            <li
-              key={step.label}
-              className="filing-row__stage"
-              data-state={index < current ? 'done' : index === current ? 'active' : 'todo'}
-            >
-              <span className="visually-hidden">
-                {step.label}
-                {index < current ? ' complete' : index === current ? ' in progress' : ' pending'}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
-
-      {running && stage && (
-        <p className="filing-row__status" aria-hidden="true">
-          {stage.label}
-        </p>
-      )}
+      {running && <FilingStages capture={capture} />}
 
       {(done || actionable || capture.status === 'no_content') && (
         <div className="filing-row__actions">
@@ -464,6 +455,41 @@ function FilingItem({ capture, onOpen, onRetry, retrying, onDismiss }: FilingIte
       */}
       {needsTarget && <TargetPrompt capture={capture} />}
     </article>
+  );
+}
+
+/**
+ * The four stage segments and the name of the current one, for a capture that
+ * is still moving. The library's filing row draws it under the title; a note's
+ * recording row draws the same strip while its recording is being filed, so
+ * a recording made into a note shows the same progress wherever it is read
+ * from and turns into an ordinary row when it lands.
+ */
+export function FilingStages({ capture }: { capture: CaptureWire }) {
+  const current = stageIndex(capture.status);
+  const stage = STAGES[current];
+  return (
+    <>
+      <ol className="filing-row__stages" aria-label="Filing progress">
+        {STAGES.map((step, index) => (
+          <li
+            key={step.label}
+            className="filing-row__stage"
+            data-state={index < current ? 'done' : index === current ? 'active' : 'todo'}
+          >
+            <span className="visually-hidden">
+              {step.label}
+              {index < current ? ' complete' : index === current ? ' in progress' : ' pending'}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {stage && (
+        <p className="filing-row__status" aria-hidden="true">
+          {stage.label}
+        </p>
+      )}
+    </>
   );
 }
 

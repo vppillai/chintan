@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -8,25 +8,39 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
+import type { CaptureModel } from '@/features/capture/machine.ts';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
+import { CleanedPanel } from './CleanedPanel.tsx';
 import { NoteActions } from './NoteActions.tsx';
+import {
+  NoteTabList,
+  noteTabId,
+  noteTabPanelId,
+  useNoteTab,
+  type NoteTab,
+  type NoteTabDescriptor,
+} from './NoteTabs.tsx';
 import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
 import { describeMoment, describeRecordings } from './groups.ts';
-import { useNoteEditor } from './useNoteEditor.ts';
+import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
 import { countWords, describeWords } from './words.ts';
 
 /**
  * A note.
  *
- * Top to bottom: the way back, the title, one line of metadata, the body, the
- * recordings it was written from, and the action bar. The cleaned text is the
- * document; the recordings below are its sources. The player used to sit
- * *above* the body with its transcript, so the first thing on screen was the
- * raw material and the note itself was below the fold.
+ * Top to bottom: the way back, the title, one line of metadata, then a strip
+ * of segments — Text · Cleaned · Recordings (N) — and the one panel it
+ * selects, with the action bar at the foot. The strip sticks under the banner
+ * while the panel scrolls, so the recordings are one tap away from anywhere
+ * in a long note rather than a screen or five below its last paragraph, which
+ * is where they sat when body and recordings were one page. The text is the
+ * document; the cleaned view is the worker's rewrite of the whole of it; the
+ * recordings are its sources.
  */
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -45,9 +59,13 @@ export function NoteDetailScreen() {
   const editor = useNoteEditor(note);
   const [selectingRecordings, setSelectingRecordings] = useState(false);
 
-  // The body grows with its text; the page is the one thing that scrolls.
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-  useAutoGrow(bodyRef, editor.model.draft.body);
+  /*
+   * A recording this device is still sending into this note. Send returns
+   * here rather than to the library, so the upload's row — the same one the
+   * library shows — is the first recording until the server's row takes
+   * over; this hook does that hand-over while the screen is the one mounted.
+   */
+  const localUpload = useLocalUpload(note?.captures ?? [], id ?? '');
 
   // Pull down at the top to re-read this note — the one thing on this screen
   // that another device, or the pipeline appending a recording, can change.
@@ -162,6 +180,108 @@ export function NoteDetailScreen() {
 
       <SaveIndicator editor={editor} />
 
+      {/*
+        Keyed by the note: the tab strip's memory and the panels' own state
+        belong to one note, and "Open <title>" after a move walks from one
+        note to another without remounting this screen.
+      */}
+      <NoteViews
+        key={note.id}
+        note={note}
+        editor={editor}
+        localUpload={localUpload}
+        onSelectingRecordings={setSelectingRecordings}
+      />
+
+      {/*
+        While recordings are being selected their own bar takes the foot of
+        the screen, so the note's action bar steps aside rather than stacking
+        under it. Hidden, not unmounted: an open Tags or Share panel is still
+        there when the selection ends. The bar is outside the panels, so it is
+        there on every tab.
+      */}
+      <NoteActions note={note} editor={editor} hidden={selectingRecordings} />
+    </div>
+  );
+}
+
+/**
+ * The segmented strip and the panel it selects. One panel is mounted at a
+ * time — the recordings' players and the body's autosize measurement each
+ * belong to the panel that is on screen, and a hidden panel's `<audio>`
+ * would otherwise keep playing under the text.
+ */
+function NoteViews({
+  note,
+  editor,
+  localUpload,
+  onSelectingRecordings,
+}: {
+  note: NoteDetailWire;
+  editor: NoteEditor;
+  localUpload: CaptureModel | null;
+  onSelectingRecordings: (selecting: boolean) => void;
+}) {
+  const [tab, setTab] = useNoteTab(note.id);
+  // The upload on its way counts: it is a row on the tab already.
+  const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
+  const tabs: NoteTabDescriptor[] = [
+    { id: 'text', label: 'Text' },
+    { id: 'cleaned', label: 'Cleaned' },
+    { id: 'recordings', label: 'Recordings', count },
+  ];
+
+  return (
+    <>
+      <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
+      <NotePanel noteId={note.id} tab={tab}>
+        {tab === 'text' ? (
+          <TextPanel editor={editor} />
+        ) : tab === 'cleaned' ? (
+          <CleanedPanel note={note} editor={editor} />
+        ) : (
+          <Recordings
+            note={note}
+            localUpload={localUpload}
+            onSelectingChange={onSelectingRecordings}
+          />
+        )}
+      </NotePanel>
+    </>
+  );
+}
+
+function NotePanel({
+  noteId,
+  tab,
+  children,
+}: {
+  noteId: string;
+  tab: NoteTab;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="tabpanel"
+      id={noteTabPanelId(noteId, tab)}
+      aria-labelledby={noteTabId(noteId, tab)}
+      className="note-tabpanel"
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The editable body: as tall as its text, and the page is what scrolls. */
+function TextPanel({ editor }: { editor: NoteEditor }) {
+  // Measured here, in the panel, so re-opening the Text tab measures again:
+  // a hook in the screen would keep a ref to a textarea that had left the
+  // document and never see the one that replaced it.
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  useAutoGrow(bodyRef, editor.model.draft.body);
+
+  return (
+    <>
       <label className="visually-hidden" htmlFor="note-body">
         Note body
       </label>
@@ -176,17 +296,7 @@ export function NoteDetailScreen() {
         }}
         onBlur={() => void editor.saveNow()}
       />
-
-      {/*
-        While recordings are being selected their own bar takes the foot of
-        the screen, so the note's action bar steps aside rather than stacking
-        under it. Hidden, not unmounted: an open Tags or Share panel is still
-        there when the selection ends.
-      */}
-      <Recordings note={note} onSelectingChange={setSelectingRecordings} />
-
-      <NoteActions note={note} editor={editor} hidden={selectingRecordings} />
-    </div>
+    </>
   );
 }
 
