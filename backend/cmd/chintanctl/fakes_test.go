@@ -410,6 +410,7 @@ func seedTenant(t *testing.T, part *fakePartition, blobs *fakeBlobs, tenantID st
 		PeaksKey:    "tenants/" + tenantID + "/captures/c1/peaks.json",
 		CreatedAt:   "2026-08-07T09:59:00.000000000Z",
 		DurationMS:  42000,
+		AudioBytes:  int64(len("OPUSOPUSOPUS")),
 		Version:     2,
 	}
 	put(t, part, captureItem(capture))

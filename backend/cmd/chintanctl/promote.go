@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	dynamotypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -73,4 +76,28 @@ func describeNoteShelf(n model.NoteIndex) string {
 	default:
 		return "archived"
 	}
+}
+
+// blobWithAudioBytes is the row's record blob with audio_bytes set to size and
+// everything else as it was. The blob is handled as raw JSON — numbers kept as
+// their lexemes, unknown fields kept — because the model this build was
+// compiled with is not the authority on what an older or newer row may carry;
+// only the one field is this repair's business.
+func blobWithAudioBytes(it Item, size int64) (AttrValue, error) {
+	blob := it.Str("data")
+	if blob == "" {
+		return AttrValue{}, errors.New("row has no record blob to write the size into")
+	}
+	dec := json.NewDecoder(strings.NewReader(blob))
+	dec.UseNumber()
+	var record map[string]any
+	if err := dec.Decode(&record); err != nil {
+		return AttrValue{}, fmt.Errorf("decode record blob of %s: %w", it.SK(), err)
+	}
+	record["audio_bytes"] = json.Number(strconv.FormatInt(size, 10))
+	out, err := json.Marshal(record)
+	if err != nil {
+		return AttrValue{}, fmt.Errorf("encode record blob of %s: %w", it.SK(), err)
+	}
+	return StringAttr(string(out)), nil
 }
