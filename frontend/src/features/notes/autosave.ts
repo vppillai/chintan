@@ -59,6 +59,13 @@ export interface NoteDraft {
    */
   auto_clean?: boolean;
   cleaned_mode?: CleanedMode;
+  /**
+   * Prose or checklist. Changed only by the Details panel's switch, together
+   * with the converted body, and on the draft for the same reason as the
+   * rest: the two ride one PATCH with one version. Optional so a draft built
+   * before the field existed still typechecks; readers default to `'note'`.
+   */
+  kind?: 'note' | 'checklist';
 }
 
 export interface EditorModel {
@@ -157,7 +164,8 @@ export function sameText(a: NoteDraft, b: NoteDraft): boolean {
     a.body === b.body &&
     sameList(a.aliases, b.aliases) &&
     sameList(a.tags, b.tags) &&
-    (a.language ?? '') === (b.language ?? '')
+    (a.language ?? '') === (b.language ?? '') &&
+    (a.kind ?? 'note') === (b.kind ?? 'note')
   );
 }
 
@@ -191,6 +199,7 @@ export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
     sameList(a.aliases, b.aliases) &&
     sameList(a.tags, b.tags) &&
     (a.language ?? '') === (b.language ?? '') &&
+    (a.kind ?? 'note') === (b.kind ?? 'note') &&
     Boolean(a.auto_clean) === Boolean(b.auto_clean) &&
     (a.cleaned_mode ?? '') === (b.cleaned_mode ?? '')
   );

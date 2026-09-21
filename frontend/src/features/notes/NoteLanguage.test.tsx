@@ -159,7 +159,7 @@ describe('the language is where the user looks', () => {
     const labels = Array.from(panel!.querySelectorAll('.tag-editor__label')).map(
       (label) => label.textContent,
     );
-    expect(labels).toEqual(['Transcription language', 'Tags', 'Also called']);
+    expect(labels).toEqual(['Transcription language', 'Tags', 'Also called', 'Checklist']);
     expect(screen.queryByRole('button', { name: 'Tags' })).toBeNull();
   });
 

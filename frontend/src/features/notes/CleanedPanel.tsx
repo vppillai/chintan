@@ -7,11 +7,13 @@ import { queryKeys } from '@/api/queries.ts';
 import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
 
+import { ChecklistPreview } from './ChecklistEditor.tsx';
 import {
   CLEAN_POLL_MS,
   CLEAN_POLL_TIMEOUT_MS,
   CLEANED_MODE_HINTS,
   CLEANED_MODE_LABELS,
+  PLAIN_CLEANED_MODES,
   cleanSettled,
 } from './cleaned.ts';
 import { markTree, useReportTotal, useScrollToActiveMatch, type FindTarget } from './FindBar.tsx';
@@ -41,6 +43,12 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * every match marked where it stands, so a hit inside a heading or a bold
  * run is lit in place. With no view there is nothing to find, and the bar is
  * told so.
+ *
+ * For a checklist the tab is Split up: the one mode is `tasks` — the list
+ * rewritten as one task per action — so there is no mode to pick, the result
+ * is shown as the same rows with their boxes disabled, and Use this list
+ * makes it the body. The server applies the mode itself, so the request
+ * names none.
  */
 export function CleanedPanel({
   note,
@@ -56,6 +64,7 @@ export function CleanedPanel({
   const cleaned = note.cleaned ?? null;
   const { regenerate, pending, notice } = useRegenerateCleaned(note);
   const { draft } = editor.model;
+  const checklist = (draft.kind ?? note.kind ?? 'note') === 'checklist';
 
   const bodyRef = useRef<HTMLDivElement>(null);
   const cleanedBody = cleaned?.body ?? '';
@@ -65,12 +74,14 @@ export function CleanedPanel({
     () => markTree(renderMarkdown(cleanedBody), query, active),
     [cleanedBody, query, active],
   );
-  useReportTotal(find, rendered.total);
+  // The preview draws rows, not the marked tree, so it has no marks to count.
+  useReportTotal(find, checklist ? 0 : rendered.total);
   useScrollToActiveMatch(bodyRef, find ? active : null, rendered.total);
 
   // The mode the switch shows: the user's choice this session, else the mode
   // of the view on screen, else the rewrite that is the point of the feature.
-  const mode: CleanedMode = draft.cleaned_mode ?? cleaned?.mode ?? 'structured';
+  // A checklist has one mode and no switch.
+  const mode: CleanedMode = checklist ? 'tasks' : plainMode(draft.cleaned_mode ?? cleaned?.mode);
   const autoClean = draft.auto_clean ?? false;
 
   const chooseMode = (next: CleanedMode): void => {
@@ -83,33 +94,37 @@ export function CleanedPanel({
     regenerate(next);
   };
 
+  // The server refuses any mode but `tasks` for a checklist and picks it
+  // unasked, so the request names none and cannot disagree with it.
+  const regenerateNow = (): void => {
+    regenerate(checklist ? undefined : mode);
+  };
+
   return (
     <section className="cleaned" aria-labelledby={headingId}>
       <h2 id={headingId} className="visually-hidden">
-        Cleaned view
+        {checklist ? 'Split up' : 'Cleaned view'}
       </h2>
 
       <div className="cleaned__controls">
-        <div className="cleaned__modes" role="group" aria-label="Cleaned view mode">
-          {(Object.keys(CLEANED_MODE_LABELS) as CleanedMode[])
-            // tasks is a checklist's mode and the server refuses it for a
-            // plain note; the checklist screen has its own controls.
-            .filter((option) => option !== 'tasks')
-            .map((option) => (
-            <button
-              key={option}
-              type="button"
-              className="cleaned__mode"
-              aria-pressed={option === mode}
-              disabled={pending}
-              onClick={() => {
-                chooseMode(option);
-              }}
-            >
-              {CLEANED_MODE_LABELS[option]}
-            </button>
-          ))}
-        </div>
+        {!checklist && (
+          <div className="cleaned__modes" role="group" aria-label="Cleaned view mode">
+            {PLAIN_CLEANED_MODES.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className="cleaned__mode"
+                aria-pressed={option === mode}
+                disabled={pending}
+                onClick={() => {
+                  chooseMode(option);
+                }}
+              >
+                {CLEANED_MODE_LABELS[option]}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/*
           A real checkbox, drawn: the native control is stretched invisibly
@@ -141,16 +156,34 @@ export function CleanedPanel({
             <p className="cleaned__meta">
               Generated {describeAgo(cleaned.generated_at)} · {CLEANED_MODE_LABELS[cleaned.mode]}
             </p>
-            <button
-              type="button"
-              className="cleaned__action"
-              disabled={pending}
-              onClick={() => {
-                regenerate(mode);
-              }}
-            >
-              {pending ? 'Regenerating…' : 'Regenerate'}
-            </button>
+            <div className="checklist-preview__actions">
+              {/*
+                The split list as the body: the same edit-and-save a tick is,
+                so it rides the autosave and its conflict prompt like any
+                other change to the items.
+              */}
+              {checklist && (
+                <button
+                  type="button"
+                  className="cleaned__action cleaned__action--primary"
+                  disabled={pending}
+                  onClick={() => {
+                    editor.edit({ body: cleaned.body });
+                    void editor.saveNow();
+                  }}
+                >
+                  Use this list
+                </button>
+              )}
+              <button
+                type="button"
+                className="cleaned__action"
+                disabled={pending}
+                onClick={regenerateNow}
+              >
+                {pending ? 'Regenerating…' : 'Regenerate'}
+              </button>
+            </div>
           </div>
 
           {cleaned.stale && !pending && (
@@ -159,9 +192,7 @@ export function CleanedPanel({
               <button
                 type="button"
                 className="cleaned__action cleaned__action--primary"
-                onClick={() => {
-                  regenerate(mode);
-                }}
+                onClick={regenerateNow}
               >
                 Regenerate now
               </button>
@@ -170,22 +201,28 @@ export function CleanedPanel({
 
           <Progress pending={pending} notice={notice} />
 
-          <div ref={bodyRef} className="cleaned__body prose" data-stale={cleaned.stale || undefined}>
-            {rendered.nodes}
-          </div>
+          {checklist ? (
+            <div ref={bodyRef} className="cleaned__body" data-stale={cleaned.stale || undefined}>
+              <ChecklistPreview body={cleaned.body} label="Split up items" />
+            </div>
+          ) : (
+            <div ref={bodyRef} className="cleaned__body prose" data-stale={cleaned.stale || undefined}>
+              {rendered.nodes}
+            </div>
+          )}
         </>
       ) : (
         <div className="cleaned__empty">
-          <p className="cleaned__empty-title">No cleaned view yet</p>
+          <p className="cleaned__empty-title">
+            {checklist ? 'Not split up yet' : 'No cleaned view yet'}
+          </p>
           <p className="cleaned__hint">{CLEANED_MODE_HINTS[mode]}</p>
           <Progress pending={pending} notice={notice} />
           <button
             type="button"
             className="cleaned__action cleaned__action--primary"
             disabled={pending}
-            onClick={() => {
-              regenerate(mode);
-            }}
+            onClick={regenerateNow}
           >
             {pending ? 'Generating…' : 'Generate'}
           </button>
@@ -193,6 +230,15 @@ export function CleanedPanel({
       )}
     </section>
   );
+}
+
+/**
+ * A plain note's mode, never `tasks`: a note converted back from a checklist
+ * still carries the view its list was split into, and offering that mode to
+ * prose would be refused by the server.
+ */
+function plainMode(mode: CleanedMode | undefined): CleanedMode {
+  return mode && mode !== 'tasks' ? mode : 'structured';
 }
 
 /** The line that says a regeneration is under way, or why the last one did not happen. */

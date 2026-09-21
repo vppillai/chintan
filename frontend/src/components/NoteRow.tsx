@@ -5,12 +5,20 @@ import { ApiError } from '@/api/problem.ts';
 import { useArchiveNote, useDeleteNoteForever, useRestoreNote } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import {
+  describeProgress,
+  openItemsText,
+  parseChecklist,
+  progressOf,
+  snippetIsCut,
+} from '@/features/notes/checklist.ts';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useLongPress } from '@/hooks/useLongPress.ts';
 import { HOVER_QUERY, useMediaQuery } from '@/hooks/useMediaQuery.ts';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
+import { Icon } from './Icon.tsx';
 import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
 
 export interface SelectOptions {
@@ -46,6 +54,11 @@ export interface NoteRowProps {
  * of the note, then a meta line: the purge countdown for an archived note, the
  * tags, and — when the payload carries them — how many recordings are behind
  * it and how long they run.
+ *
+ * A checklist wears a glyph before its title, shows its open items as the two
+ * lines rather than raw `- [ ]` syntax, and says how far along it is in the
+ * meta line — counted from the snippet, which is the body's first 500 runes,
+ * so the total is a floor ("3 of 7+ done") when the snippet was cut.
  *
  * Two ways into selection, one per kind of pointer (backlog U2). A finger
  * presses and holds the row; a mouse gets a checkbox that slides in at the
@@ -93,13 +106,23 @@ export function NoteRow({
   const time = formatRowTime(note.updated_at);
   const recordings = describeRecordings(note);
   const countdown = note.archived ? purgeCountdown(note.purge_after) : null;
-  const snippet = excerpt ?? note.snippet;
-  const hasMeta = countdown !== null || tags.length > 0 || recordings !== null;
+  const checklist = note.kind === 'checklist';
+  const items = checklist ? parseChecklist(note.snippet ?? '') : [];
+  // A search hit's excerpt wins either way: it is where the match was.
+  const snippet = excerpt ?? (checklist ? openItemsText(items) : note.snippet);
+  const progress = checklist
+    ? describeProgress(progressOf(items), snippetIsCut(note.snippet ?? ''))
+    : null;
+  const hasMeta =
+    countdown !== null || progress !== null || tags.length > 0 || recordings !== null;
 
   const body = (
     <>
       <span className="note-row__head">
-        <span className="note-row__title">{note.title}</span>
+        <span className="note-row__title">
+          {checklist && <Icon name="checklist" size={16} className="note-row__kind" />}
+          {note.title}
+        </span>
         {time && (
           <time className="note-row__time numeric" dateTime={note.updated_at}>
             {time}
@@ -118,6 +141,7 @@ export function NoteRow({
               {describePurge(countdown)}
             </span>
           )}
+          {progress && <span className="note-row__progress numeric">{progress}</span>}
           {tags.length > 0 && (
             <span className="note-row__tags">
               {tags.map((tag) => (

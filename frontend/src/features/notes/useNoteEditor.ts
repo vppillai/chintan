@@ -35,6 +35,8 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
   return {
     title: note.title,
     body: note.body,
+    // Absent until every backend sends it; a note that says nothing is prose.
+    kind: note.kind ?? 'note',
     aliases: note.aliases ?? [],
     tags: note.tags ?? [],
     // Absent on the wire means "inherits the default", which the contract
@@ -239,6 +241,12 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       attempted.cleaned_mode !== current.saved.cleaned_mode
         ? { cleaned_mode: attempted.cleaned_mode }
         : {}),
+      // Same rule as the two above: named only when the switch was flipped,
+      // so the ordinary save stays on the contract a backend without `kind`
+      // still accepts.
+      ...(attempted.kind !== undefined && attempted.kind !== (current.saved.kind ?? 'note')
+        ? { kind: attempted.kind }
+        : {}),
     };
     commit({ type: 'saveStart' });
 
@@ -272,6 +280,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         // The list row the PATCH answers with may not carry it; the toggle
         // must not flip back to what the cache held before the save.
         ...(attempted.auto_clean !== undefined ? { auto_clean: attempted.auto_clean } : {}),
+        ...(attempted.kind !== undefined ? { kind: attempted.kind } : {}),
         ...(note.captures ? { captures: note.captures } : {}),
       });
       // The version is the server's, not `current.version + 1`. The two agree

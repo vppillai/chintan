@@ -45,7 +45,8 @@ export type IconName =
   | 'shield'
   | 'code'
   | 'pause'
-  | 'send';
+  | 'send'
+  | 'checklist';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -117,6 +118,9 @@ export const PATHS: Record<IconName, string> = {
   // An arrow up and out: the recording leaves for the server. The head is the
   // download arrow's, turned over, so Send and Save read as the same pen.
   send: 'M12 19.5V5M7.5 9.5 12 5l4.5 4.5',
+  // Two boxes with a line beside each, the first ticked: a checklist note.
+  // Worn by the library row before the title, so it is drawn to read at 16 px.
+  checklist: 'M4 5h5v5H4zM5.5 7.5l1 1 2-2.5M12 7.5h8M4 14h5v5H4zM12 16.5h8',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

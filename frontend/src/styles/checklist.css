@@ -1,0 +1,147 @@
+/* --------------------------------------------------------------------------
+   Checklist notes — the Items tab, the Split up preview, the row's progress
+   -------------------------------------------------------------------------- */
+
+/* The same card the body textarea is: a recess in the page, holding rows. */
+.checklist-editor {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
+}
+
+.checklist {
+  display: grid;
+}
+
+/* A row is the 44 px target its checkbox needs, and a hairline apart from the
+   next; the last one keeps the card's own edge. */
+.checklist__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  border-block-end: 1px solid var(--color-line);
+}
+
+.checklist__row:last-child {
+  border-block-end: 0;
+}
+
+/* The 24 px box inside its 44 px target, as the library's select box is. */
+.checklist__check {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  cursor: pointer;
+}
+
+.checklist__box {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  margin: 0;
+  accent-color: var(--color-ink);
+  cursor: pointer;
+}
+
+.checklist__box[disabled] {
+  cursor: default;
+}
+
+/* The item's words, in the note's serif, as tall as the row. An input for an
+   open item, a span for a done or previewed one — the same measure either way
+   so a tick does not reflow the text. */
+.checklist__text {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-1);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+
+span.checklist__text {
+  display: flex;
+  align-items: center;
+}
+
+.checklist__text::placeholder {
+  color: var(--color-faint);
+  opacity: 1;
+}
+
+/* The add row's plus stands where a box would, in the tertiary ink. */
+.checklist__add-mark {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* Done: greyed and struck through. The box stays live to reopen it. */
+.checklist__row--done .checklist__text {
+  color: var(--color-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.checklist__delete {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+  color: var(--color-faint);
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.checklist__delete:hover,
+.checklist__delete:focus-visible {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+}
+
+.checklist__done {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* The Split up tab's preview lives in the cleaned view's own card; the
+   stale state greys it the same way. */
+.checklist--preview .checklist__text {
+  cursor: default;
+}
+
+.cleaned__body[data-stale] .checklist--preview .checklist__text {
+  color: var(--color-muted);
+}
+
+/* Use this list · Regenerate, on the header's right. */
+.checklist-preview__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The library row: the glyph before the title, the progress in the meta line. */
+.note-row__kind {
+  /* Inline, against the reset's block svg: it sits in the title's line. */
+  display: inline-block;
+  margin-inline-end: var(--space-1);
+  vertical-align: -0.1em;
+  color: var(--color-muted);
+}
+
+.note-row__progress {
+  flex: none;
+  white-space: nowrap;
+}

@@ -15,7 +15,7 @@ import {
   useTags,
 } from '@/api/queries.ts';
 import { ApiError } from '@/api/problem.ts';
-import type { NoteState, NoteWire } from '@/api/schema.ts';
+import type { NoteKind, NoteState, NoteWire } from '@/api/schema.ts';
 import { ARCHIVED_VIEW, ASK_MODE } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { LoadMore } from '@/components/LoadMore.tsx';
@@ -44,9 +44,11 @@ export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
  * One screen for the active notes, the archive and search, because they are
  * one list with three filters, not three destinations: a search field that
  * narrows the list as you type from the corpus already on the device, a row of
- * chips — All, one per tag, Archived — and the rows grouped by day beneath.
- * All of it lives in the URL (`q`, `tag`, `view`), so a filter is shareable,
- * survives reload and is what Back returns to.
+ * chips — All, Checklists, one per tag, Archived — and the rows grouped by day
+ * beneath. All of it lives in the URL (`q`, `kind`, `tag`, `view`), so a filter
+ * is shareable, survives reload and is what Back returns to. Checklists is
+ * the one place every checklist can be found from, which is what the owner
+ * asked for; it combines with a tag and with the archive like any filter.
  *
  * The field has a second mode, Ask (`mode=ask`, backlog D5): the same box
  * takes a question instead of a filter, Enter sends it, and the Ask panel
@@ -66,6 +68,7 @@ export function NotesScreen() {
   const [params, setParams] = useSearchParams();
   const view: NoteState = params.get('view') === ARCHIVED_VIEW ? 'archived' : 'active';
   const tag = params.get('tag');
+  const kind: NoteKind | null = params.get('kind') === 'checklist' ? 'checklist' : null;
   const asking = params.get('mode') === ASK_MODE;
   const query = params.get('q') ?? '';
   const trimmed = query.trim();
@@ -130,7 +133,7 @@ export function NotesScreen() {
     setParams(next, { replace: true, flushSync: true });
   };
 
-  const list = useNotes({ state: view, ...(tag ? { tag } : {}) });
+  const list = useNotes({ state: view, ...(tag ? { tag } : {}), ...(kind ? { kind } : {}) });
   const cached = useCachedNotes(view);
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = list;
   const loadMore = useCallback(() => {
@@ -142,6 +145,8 @@ export function NotesScreen() {
    * and costs nothing extra.
    */
   const archived = useNotes({ state: 'archived' });
+  // The checklists, for their chip's count, on the same terms as the archive.
+  const checklists = useNotes({ state: 'active', kind: 'checklist' });
   const tags = useTags();
   /*
    * The search corpus — every active note with its searchable body — fetched
@@ -193,8 +198,8 @@ export function NotesScreen() {
    * The condition is `data === undefined`, not "offline": a server that has
    * answered is the authority even when it answered with an empty list, and
    * falling back on an empty *response* would resurrect notes the user had just
-   * archived on another device. The cache knows nothing of tags, so the tag
-   * filter is applied here by hand.
+   * archived on another device. The cache knows nothing of tags or kinds, so
+   * those filters are applied here by hand.
    */
   const serverNotes = useMemo(
     () => list.data?.pages.flatMap((page) => page.items),
@@ -202,8 +207,13 @@ export function NotesScreen() {
   );
   const notes: NoteWire[] = useMemo(
     () =>
-      serverNotes ?? cached.data?.filter((note) => !tag || (note.tags ?? []).includes(tag)) ?? [],
-    [serverNotes, cached.data, tag],
+      serverNotes ??
+      cached.data?.filter(
+        (note) =>
+          (!tag || (note.tags ?? []).includes(tag)) && (!kind || (note.kind ?? 'note') === kind),
+      ) ??
+      [],
+    [serverNotes, cached.data, tag, kind],
   );
   const fromCache = serverNotes === undefined && notes.length > 0;
   /*
@@ -259,6 +269,10 @@ export function NotesScreen() {
   const nothingToShow = visible.length === 0;
 
   const archivedCount = archived.data?.pages.reduce((sum, page) => sum + page.items.length, 0);
+  const checklistCount = checklists.data?.pages.reduce(
+    (sum, page) => sum + page.items.length,
+    0,
+  );
   const tagNames = (tags.data?.items ?? []).map((item) => item.name);
   // A tag from the URL that the server no longer lists still gets its chip,
   // or the filter would be applied with nothing on screen saying so.
@@ -392,9 +406,34 @@ export function NotesScreen() {
         <div className="chips" role="group" aria-label="Filter notes">
           <Chip
             label="All"
-            pressed={view === 'active' && !tag}
+            pressed={view === 'active' && !tag && !kind}
             onClick={() => {
-              setFilter({ view: null, tag: null });
+              setFilter({ view: null, tag: null, kind: null });
+            }}
+          />
+          <Chip
+            label={
+              <>
+                Checklists
+                {checklistCount !== undefined && (
+                  <>
+                    {' · '}
+                    <span className="numeric">
+                      {checklistCount}
+                      {checklists.hasNextPage ? '+' : ''}
+                    </span>
+                  </>
+                )}
+              </>
+            }
+            name={
+              checklistCount === undefined
+                ? 'Checklists'
+                : `Checklists · ${String(checklistCount)}`
+            }
+            pressed={kind === 'checklist'}
+            onClick={() => {
+              setFilter({ kind: kind ? null : 'checklist' });
             }}
           />
           {tagNames.map((name) => (
@@ -524,6 +563,10 @@ export function NotesScreen() {
           <p className="screen__empty">Nothing is archived.</p>
         ) : tag ? (
           <p className="screen__empty">No notes are tagged &ldquo;{tag}&rdquo;.</p>
+        ) : kind ? (
+          <p className="screen__empty">
+            No checklists yet. Open a note and turn it into one from Details.
+          </p>
         ) : (
           <p className="screen__empty">Tap Record to make your first note.</p>
         ))}

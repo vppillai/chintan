@@ -85,9 +85,23 @@ export interface SettingsWire {
    Notes
    --------------------------------------------------------------------------- */
 
+/**
+ * What a note is: prose, or a checklist whose body is one task-list item per
+ * line (`- [ ] text` / `- [x] text`, see `features/notes/checklist.ts`). The
+ * server maps its stored `""` to `note`, so the wire never carries the empty
+ * string.
+ */
+export type NoteKind = 'note' | 'checklist';
+
 export interface NoteWire {
   id: string;
   title: string;
+  /**
+   * Required on the wire by the 2026-09-21 contract; optional here only until
+   * the backend that sends it lands, so the generated fixtures keep compiling.
+   * Readers default an absent value to `'note'`.
+   */
+  kind?: NoteKind;
   aliases?: string[];
   tags?: string[];
   snippet?: string;
@@ -127,15 +141,13 @@ export interface NoteWire {
    * `'structured'`. Distinct from `cleaned.mode`, the mode of the stored view.
    */
   cleaned_mode?: NoteCleanMode;
-  /**
-   * `'note'` or `'checklist'` (a body of `- [ ] item` lines). Optional here
-   * only so existing literals keep compiling; the backend always sends it.
-   */
-  kind?: NoteKind;
 }
 
-export type NoteKind = 'note' | 'checklist';
-
+/**
+ * `tasks` is the one mode a checklist is cleaned in — the list rewritten as
+ * granular, actionable items — and the server refuses it for a plain note and
+ * the other two for a checklist.
+ */
 export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
 
 /**
@@ -193,6 +205,7 @@ export interface NoteCreateWire {
   body?: string;
   aliases?: string[];
   tags?: string[];
+  kind?: NoteKind;
 }
 
 export interface NoteUpdateWire {
@@ -201,6 +214,8 @@ export interface NoteUpdateWire {
   body?: string;
   aliases?: string[];
   tags?: string[];
+  /** Sent with the converted `body` when the Details panel flips the switch. */
+  kind?: NoteKind;
   verbatim?: boolean;
   /** `'auto'`, an ISO-639-1 code, or `''` to inherit the tenant default again. */
   language?: string;
@@ -261,6 +276,8 @@ export interface NotePurgeResponseWire {
 export interface NoteListQuery extends PageQuery {
   state?: NoteState;
   tag?: string;
+  /** Only notes of this kind — the library's Checklists chip. Filtered server-side like `tag`. */
+  kind?: NoteKind;
   /**
    * `search_text` adds each row's searchable body. Opt-in because the list is
    * fetched constantly and renders none of it; the offline corpus asks once.

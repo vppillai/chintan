@@ -76,12 +76,16 @@ interface NoteRecord {
   /** The worker's rewrite of the whole note, or nothing yet. */
   cleaned?: CleanedRecord | null;
   auto_clean?: boolean;
-  cleaned_mode?: 'polished' | 'structured';
+  cleaned_mode?: CleanMode;
+  /** Prose or a task list; absent is prose, as the server maps its stored `""`. */
+  kind?: 'note' | 'checklist';
 }
+
+type CleanMode = 'polished' | 'structured' | 'tasks';
 
 interface CleanedRecord {
   body: string;
-  mode: 'polished' | 'structured';
+  mode: CleanMode;
   generated_at: string;
   stale: boolean;
 }
@@ -89,9 +93,23 @@ interface CleanedRecord {
 /**
  * What the worker would write for a note: the structured rewrite is the
  * title and the note's sentences as a list under a heading; the polished one
- * is the body as it is. Enough Markdown to prove the renderer draws it.
+ * is the body as it is. Enough Markdown to prove the renderer draws it. For a
+ * checklist the one mode is `tasks`: every open item split at its "and" into
+ * one item per action, done items kept verbatim.
  */
-function cleanedFor(note: NoteRecord, mode: 'polished' | 'structured'): CleanedRecord {
+function cleanedFor(note: NoteRecord, mode: CleanMode): CleanedRecord {
+  if (mode === 'tasks') {
+    const body = note.body
+      .split('\n')
+      .filter((line) => line.trim())
+      .flatMap((line) => {
+        const match = /^- \[( |x)\] (.*)$/.exec(line);
+        if (!match || match[1] === 'x') return [line];
+        return (match[2] ?? '').split(/\s+and\s+/).map((task) => `- [ ] ${task.trim()}`);
+      })
+      .join('\n');
+    return { body, mode, generated_at: new Date().toISOString(), stale: false };
+  }
   const sentences = note.body
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => sentence.trim())
@@ -579,12 +597,15 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       // `state` defaults to active, exactly as `openapi.yaml` declares it.
       const wanted = url.searchParams.get('state') ?? 'active';
       const tag = url.searchParams.get('tag');
+      const kind = url.searchParams.get('kind');
       // `include=search_text` adds the lowercased body the server searches.
       const corpus = url.searchParams.get('include') === 'search_text';
       await json(route, {
         items: Object.values(state.notes)
           .filter((note) => (wanted === 'archived' ? note.archived : !note.archived))
           .filter((note) => !tag || (note.tags ?? []).includes(tag))
+          .filter((note) => !kind || (note.kind ?? 'note') === kind)
+          .map((note) => ({ ...note, kind: note.kind ?? 'note' }))
           .map((note) => (corpus ? { ...note, search_text: note.body.toLowerCase() } : note)),
       });
       return;
@@ -649,8 +670,12 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         await problem(route, 404, { title: 'Not found' });
         return;
       }
-      const body = (request.postDataJSON() ?? {}) as { mode?: 'polished' | 'structured' };
-      const mode = body.mode ?? note.cleaned_mode ?? note.cleaned?.mode ?? 'structured';
+      const body = (request.postDataJSON() ?? {}) as { mode?: CleanMode };
+      // A checklist has one mode, whatever was asked, as the real server rules.
+      const mode =
+        note.kind === 'checklist'
+          ? 'tasks'
+          : (body.mode ?? note.cleaned_mode ?? note.cleaned?.mode ?? 'structured');
       setTimeout(() => {
         note.cleaned = cleanedFor(note, mode);
       }, CLEAN_WORKER_MS);
@@ -666,8 +691,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         return;
       }
       if (method === 'GET') {
-        // The detail always carries the two cleaned-view fields.
-        await json(route, { ...note, cleaned: note.cleaned ?? null, auto_clean: note.auto_clean ?? false });
+        // The detail always carries the two cleaned-view fields and the kind.
+        await json(route, {
+          ...note,
+          kind: note.kind ?? 'note',
+          cleaned: note.cleaned ?? null,
+          auto_clean: note.auto_clean ?? false,
+        });
         return;
       }
       if (method === 'DELETE') {
@@ -708,6 +738,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         if (body['cleaned_mode'] === 'polished' || body['cleaned_mode'] === 'structured') {
           note.cleaned_mode = body['cleaned_mode'];
         }
+        if (body['kind'] === 'note' || body['kind'] === 'checklist') note.kind = body['kind'];
         if (Array.isArray(body['tags'])) note.tags = body['tags'] as string[];
         if (typeof body['language'] === 'string') {
           // The empty string means "inherit again", which the wire spells as absence.

@@ -13,9 +13,39 @@
  * replaced by the generated one and this file goes.
  */
 
-import type { AskWire, UsageWire } from '../schema.ts';
+import type { AskWire, NoteDetailWire, NoteWire, UsageWire } from '../schema.ts';
 
-import { usage } from './responses.ts';
+import { noteDetail, usage } from './responses.ts';
+
+/**
+ * GET /v1/notes/{id} → 200 for a checklist (2026-09-21 contract): `kind` on
+ * the row, a task-list body with a done item in the middle — the grouping
+ * into open and done is the client's — and a `tasks` cleaned view, which is
+ * the only mode a checklist is cleaned in.
+ */
+export const noteDetailChecklist: NoteDetailWire = {
+  ...noteDetail,
+  id: 'fixture-checklist-id',
+  kind: 'checklist',
+  title: 'Shopping',
+  body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter for the weekend',
+  snippet: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter for the weekend',
+  tags: ['house'],
+  aliases: [],
+  captures: [],
+  cleaned: {
+    body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] Butter',
+    mode: 'tasks',
+    generated_at: '2026-01-01T00:00:00.000000000Z',
+    stale: false,
+  },
+  cleaned_mode: 'tasks',
+};
+
+/** GET /v1/notes?kind=checklist → 200: the same note as a list row. */
+export const noteRowChecklist: NoteWire = (({ body: _body, captures: _captures, ...row }) => row)(
+  noteDetailChecklist,
+);
 
 /** POST /v1/ask → 202. The row as first written: pending, nothing answered yet. */
 export const askPending: AskWire = {
