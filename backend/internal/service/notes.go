@@ -473,39 +473,46 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	// Update timestamp
 	note.UpdatedAt = model.Now()
 
-	// Handle body update
+	// Handle body update. The client sends its whole draft with a Details
+	// change (language, kind, word-for-word, auto-clean), and a body that
+	// reads the same as the stored one is not an edit: CarryCaptureMarkers
+	// hands the stored bytes back for it, and nothing below is done — a
+	// language change that marked the cleaned view stale had the Split up tab
+	// offer a pointless Regenerate (review 2026-09-21 r4).
 	if updates.Body != nil {
-		// Write to markdown file, conditional on the object still carrying the
-		// ETag read above. An unconditional Put here destroys a voice append
-		// that landed in the meantime and only then reports the conflict — the
-		// client is told to re-read text that no longer exists anywhere.
 		body := CarryCaptureMarkers(string(storedBody), *updates.Body)
-		err = s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(body), "text/markdown", bodyETag)
-		if errors.Is(err, repository.ErrPreconditionFailed) {
-			// Somebody else wrote the body between the read and this write.
-			// That is the same 409 the version check answers, and the client
-			// reconciles it the same way.
-			return note, repository.ErrVersionConflict
-		}
-		if err != nil {
-			return model.NoteIndex{}, fmt.Errorf("failed to update markdown: %w", err)
-		}
+		if body != string(storedBody) {
+			// Write to markdown file, conditional on the object still carrying the
+			// ETag read above. An unconditional Put here destroys a voice append
+			// that landed in the meantime and only then reports the conflict — the
+			// client is told to re-read text that no longer exists anywhere.
+			err = s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(body), "text/markdown", bodyETag)
+			if errors.Is(err, repository.ErrPreconditionFailed) {
+				// Somebody else wrote the body between the read and this write.
+				// That is the same 409 the version check answers, and the client
+				// reconciles it the same way.
+				return note, repository.ErrVersionConflict
+			}
+			if err != nil {
+				return model.NoteIndex{}, fmt.Errorf("failed to update markdown: %w", err)
+			}
 
-		// Update snippet (first ~500 chars) and the search text, which are the
-		// two derivations of the body the index row carries.
-		note.Snippet = generateSnippet(*updates.Body)
-		note.SearchText = SearchText(*updates.Body)
-		// The cleaned view was generated from the body that just changed —
-		// unless the change was to adopt the view itself ("Use this list"): a
-		// body equal to CleanedBody, trailing whitespace aside, IS the view,
-		// so it is current whatever an earlier edit had marked it. Left
-		// stale, the tab offered to regenerate a list identical to the note
-		// (smoke 2026-09-21, finding 3).
-		trim := func(s string) string { return strings.TrimRightFunc(s, unicode.IsSpace) }
-		if note.CleanedBody != "" && trim(*updates.Body) == trim(note.CleanedBody) {
-			note.CleanedStale = false
-		} else {
-			MarkCleanedStale(&note)
+			// Update snippet (first ~500 chars) and the search text, which are the
+			// two derivations of the body the index row carries.
+			note.Snippet = generateSnippet(*updates.Body)
+			note.SearchText = SearchText(*updates.Body)
+			// The cleaned view was generated from the body that just changed —
+			// unless the change was to adopt the view itself ("Use this list"): a
+			// body equal to CleanedBody, trailing whitespace aside, IS the view,
+			// so it is current whatever an earlier edit had marked it. Left
+			// stale, the tab offered to regenerate a list identical to the note
+			// (smoke 2026-09-21, finding 3).
+			trim := func(s string) string { return strings.TrimRightFunc(s, unicode.IsSpace) }
+			if note.CleanedBody != "" && trim(*updates.Body) == trim(note.CleanedBody) {
+				note.CleanedStale = false
+			} else {
+				MarkCleanedStale(&note)
+			}
 		}
 	}
 
