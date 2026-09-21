@@ -310,9 +310,6 @@ jobs:
       - name: Install
         working-directory: frontend
         run: bun install --frozen-lockfile
-      # Chromium only — playwright.config.ts defines exactly one project, and
-      # installing the other two engines triples the setup time for browsers no
-      # spec runs in.
       - name: Install Chromium and WebKit
         working-directory: frontend
         # WebKit runs the non-microphone specs (playwright.config.ts's second
