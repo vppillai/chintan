@@ -139,13 +139,15 @@ Each note carries its own transcription `language` (absent, it inherits the user
 
 The table name is derived from the instance; the bucket is read from the stack's `ContentBucketName` output, so the principal needs `cloudformation:DescribeStacks` on `chintan-*`. Both can be overridden with `--table` / `--bucket`.
 
+**Users.** Self sign-up is closed on the pool, so every account is created by `scripts/invite-user.sh --instance dev --email them@example.com --apply`, which writes a temporary password to `./chintan-invite-<email>` (mode 600; `--print-password` shows it instead). Hand it over out of band — Cognito sends nothing — and delete the file once they are in. First sign-in: the username is the email, the temporary password must be changed within three days (`TemporaryPasswordValidityDays`), then **You → Passkeys → Add a passkey on this device** so the sign-in page offers the passkey from then on. Reset: the same command on an existing account issues a new temporary password and forces a change. Disable: `--disable` refuses sign-in and token refresh and keeps the notes, for a lost phone or a pause (`aws cognito-idp admin-enable-user` reverses it). Offboard, in this order: `chintanctl erase --instance dev --tenant <sub> --apply` (the script prints the sub; erase deletes every item and object under it), then `scripts/invite-user.sh … --delete`, because once the Cognito user is gone nothing maps the email to the tenant id. A second user shares the instance-wide daily spend cap and the API throttle; there is no per-tenant cap yet.
+
 **Workflows.** Each names the command or two involved; `--help` on any of them has the flags.
 
 | Workflow | Commands |
 |---|---|
 | Bootstrap an account | `scripts/bootstrap-agent.sh` once as an administrator, then `scripts/setup.sh`; `scripts/doctor.sh` says what is left. |
 | Deploy an instance | `gh workflow run deploy-backend.yaml` (the frontend follows), or `scripts/bootstrap.sh` from your own machine; `scripts/list-instances.sh --format text` shows what would deploy. |
-| Invite or reset a user | `scripts/invite-user.sh` |
+| Invite, reset, disable or offboard a user | `scripts/invite-user.sh` (`--disable`, `--delete`); `chintanctl erase` before a delete |
 | Recover failed processing | The app's Retry for one capture; `chintanctl reconcile` for what the table and the bucket disagree about. |
 | Back up, restore, export | `chintanctl backup` and `chintanctl restore`; `chintanctl export` for a vault Obsidian opens. |
 | Inspect usage | `chintanctl usage` for every tenant; **You → Usage** in the app for your own. |

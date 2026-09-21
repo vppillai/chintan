@@ -15,8 +15,15 @@
 # FORCE_CHANGE_PASSWORD so it must be changed at first sign-in. A --permanent
 # password would make the invitation password the account password indefinitely.
 #
+# --disable and --delete are the offboarding half. Neither touches the tenant's
+# data: a disabled account keeps its notes for when it is enabled again, and a
+# deleted one must be erased with chintanctl FIRST, because once the Cognito
+# user is gone nothing maps the email back to the tenant id its data lives under.
+#
 # Usage:
 #   scripts/invite-user.sh --instance dev --email you@example.com [--apply]
+#   scripts/invite-user.sh --instance dev --email you@example.com --disable [--apply]
+#   scripts/invite-user.sh --instance dev --email you@example.com --delete [--apply]
 #
 # Options:
 #   --instance NAME       instance name                        (required)
@@ -25,6 +32,9 @@
 #   --region REGION       AWS region                           (default: $AWS_REGION)
 #   --password-out PATH   write the temporary password here    (default: ./chintan-invite-<email>)
 #   --print-password      print it to the terminal instead of writing a file
+#   --disable             refuse the user's sign-in and token refresh; their notes stay
+#   --delete              remove the account from the pool; run
+#                         `chintanctl erase --instance <name> --tenant <sub> --apply` first
 #   --apply               execute; without it, print the plan and change nothing
 #
 # TEMP_PASSWORD may be supplied in the environment to use a specific value.
@@ -37,6 +47,7 @@ EMAIL=""
 ENVIRONMENT="prod"
 PASSWORD_OUT=""
 PRINT_PASSWORD=0
+MODE=invite
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -62,6 +73,8 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --print-password) PRINT_PASSWORD=1 ;;
+        --disable) MODE=disable ;;
+        --delete) MODE=delete ;;
         --apply) APPLY=1 ;;
         --dry-run) APPLY=0 ;;
         -h | --help)
@@ -101,6 +114,34 @@ fi
 EXISTS=0
 if aws_cli cognito-idp admin-get-user --user-pool-id "$POOL_ID" --username "$EMAIL" >/dev/null 2>&1; then
     EXISTS=1
+fi
+
+if [ "$MODE" != "invite" ]; then
+    [ "$EXISTS" = "1" ] || die "$EMAIL is not in $POOL_ID"
+    # The sub is the tenant id every DynamoDB key and S3 prefix hangs off
+    # (README → Tenancy). It is printed before a delete because afterwards
+    # nothing maps the email back to the data.
+    SUB="$(aws_cli cognito-idp admin-get-user --user-pool-id "$POOL_ID" --username "$EMAIL" \
+        --query "UserAttributes[?Name=='sub'].Value | [0]" --output text)"
+    info "tenant id:  $SUB"
+    if [ "$MODE" = "delete" ]; then
+        warn "deleting the account leaves the tenant's notes and recordings in place; erase them first:"
+        dim "  chintanctl erase --instance $INSTANCE --environment $ENVIRONMENT --tenant $SUB --apply"
+    fi
+    if ! confirm_apply "$APPLY" "$MODE $EMAIL in $POOL_ID"; then
+        exit 0
+    fi
+    if [ "$MODE" = "disable" ]; then
+        aws_cli cognito-idp admin-disable-user --user-pool-id "$POOL_ID" --username "$EMAIL"
+        ok "disabled $EMAIL: sign-in and token refresh are refused until admin-enable-user"
+    else
+        aws_cli cognito-idp admin-delete-user --user-pool-id "$POOL_ID" --username "$EMAIL"
+        ok "deleted $EMAIL from $POOL_ID"
+    fi
+    exit 0
+fi
+
+if [ "$EXISTS" = "1" ]; then
     info "user exists; this will reset the password and force a change at next sign-in"
 else
     info "user does not exist; this will create it"
