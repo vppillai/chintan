@@ -87,20 +87,25 @@ export async function cacheNoteDetail(note: NoteDetailWire): Promise<void> {
  * awaiting a read inside the write transaction closes it and the puts that
  * follow are silently lost — silently, because the caller deliberately swallows
  * cache failures. The symptom is an offline library that is always empty.
+ *
+ * Only this page's rows are read, by key. This ran `getAll('notes')` — every
+ * cached note deserialised, bodies and all — on every library mount and every
+ * `['notes']` invalidation, to compare twenty of them.
  */
 export async function cacheNoteList(notes: readonly NoteWire[]): Promise<void> {
   if (notes.length === 0) return;
   const db = await openChintanDB();
 
-  const existing = new Map((await db.getAll('notes')).map((entry) => [entry.id, entry]));
+  const reads = db.transaction('notes');
+  const existing = await Promise.all(notes.map((note) => reads.store.get(note.id)));
 
   const tx = db.transaction('notes', 'readwrite');
   const store = tx.objectStore('notes');
-  for (const note of notes) {
+  notes.forEach((note, index) => {
     const next = record(note, false);
-    if (!supersedes(next, existing.get(note.id))) continue;
+    if (!supersedes(next, existing[index])) return;
     void store.put(next);
-  }
+  });
   await tx.done;
 }
 

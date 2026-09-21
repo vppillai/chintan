@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { NoteDetailWire, NoteWire } from '@/api/schema.ts';
 
@@ -84,6 +84,24 @@ describe('what the device keeps', () => {
 
     const [note] = await cachedNotes('active');
     expect(note?.title).toBe('Roof repair — Ellis');
+  });
+
+  it('reads only the page’s own rows to decide what to write, not the whole corpus', async () => {
+    // Every library mount and every `['notes']` invalidation writes a page;
+    // deserialising every cached note — bodies included — to compare twenty
+    // of them is the cost this exists to remove.
+    await cacheNoteList(
+      Array.from({ length: 30 }, (_, index) =>
+        row({ id: `note-${String(index)}`, updated_at: `2026-08-${String(1 + index).padStart(2, '0')}T00:00:00.000Z` }),
+      ),
+    );
+    const getAll = vi.spyOn(IDBObjectStore.prototype, 'getAll');
+
+    await cacheNoteList([row({ id: 'note-1', version: 4, title: 'Renamed' })]);
+
+    expect(getAll).not.toHaveBeenCalled();
+    expect((await cachedNote('note-1'))?.title).toBe('Renamed');
+    expect(await cachedNotes('active')).toHaveLength(30);
   });
 
   it('forgets a note that was destroyed', async () => {
