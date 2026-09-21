@@ -494,6 +494,35 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    /*
+     * Transcribe again (contract 2026-09-21, T7): a settled recording goes
+     * back to `transcribing` and the pipeline runs from its audio; one still
+     * in flight is refused. The stub keeps the paragraph — the real server
+     * cuts it and the run writes a new one — because what the app shows
+     * either way is the row wearing the stage strip again.
+     */
+    const retranscribeMatch = /^\/v1\/captures\/([^/]+)\/retranscribe$/.exec(path);
+    if (retranscribeMatch && method === 'POST') {
+      const found = findCapture(state, retranscribeMatch[1] ?? '');
+      const capture =
+        found?.capture ?? state.captures.find((item) => item.id === retranscribeMatch[1]);
+      if (!capture) {
+        await problem(route, 404, { title: 'Not found' });
+        return;
+      }
+      if (!TERMINAL.has(capture.status)) {
+        await problem(route, 409, {
+          title: 'Still filing',
+          detail: 'the capture is still being processed; wait for it to finish or fail',
+        });
+        return;
+      }
+      capture.status = 'transcribing';
+      capture.error = null;
+      await json(route, capture, 202);
+      return;
+    }
+
     const downloadMatch = /^\/v1\/captures\/([^/]+)\/download$/.exec(path);
     if (downloadMatch) {
       const kind = url.searchParams.get('kind');

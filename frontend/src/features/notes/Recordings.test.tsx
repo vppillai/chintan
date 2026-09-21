@@ -12,7 +12,7 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
 import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { Recordings, filedLabel, justLanded } from './Recordings.tsx';
+import { Recordings, filedLabel, justLanded, retranscribeLabel } from './Recordings.tsx';
 import { describeMoment } from './groups.ts';
 
 /**
@@ -82,7 +82,10 @@ function json(body: unknown, status = 200): Response {
 function apiStub(
   initial: NoteDetailWire = NOTE,
   overrides: Partial<
-    Record<'delete' | 'move' | 'manifest' | 'segments', (init?: RequestInit) => Response>
+    Record<
+      'delete' | 'move' | 'manifest' | 'segments' | 'retranscribe',
+      (init?: RequestInit) => Response
+    >
   > = {},
 ) {
   const note: NoteDetailWire = structuredClone(initial);
@@ -131,6 +134,13 @@ function apiStub(
       if (overrides.move) return overrides.move(init);
       drop(captureId);
       return json({ ...CAPTURE, id: captureId, note_id: 'reading-list' });
+    }
+    if (method === 'POST' && url.pathname.endsWith('/retranscribe')) {
+      if (overrides.retranscribe) return overrides.retranscribe(init);
+      // Back at the start of the pipeline, as the real server answers.
+      const row = (note.captures ?? []).find((capture) => capture.id === captureId);
+      if (row) row.status = 'transcribing';
+      return json({ ...CAPTURE, id: captureId, status: 'transcribing' }, 202);
     }
     if (url.pathname.endsWith('/v1/notes')) {
       return json({
@@ -259,7 +269,7 @@ describe('the audio is fetched the same way twice', () => {
 });
 
 describe('a row’s More menu', () => {
-  it('offers Move to…, Delete recording, Download audio and Select', async () => {
+  it('offers Move to…, Delete recording, Download audio, Transcribe again and Select', async () => {
     const user = userEvent.setup();
     bucketStub();
     mount(apiStub().fetchImpl);
@@ -270,6 +280,7 @@ describe('a row’s More menu', () => {
       'Move to…',
       'Delete recording',
       'Download audio',
+      'Transcribe again in English',
       'Select',
     ]);
     // Escape closes it and puts focus back on the trigger.
@@ -353,7 +364,64 @@ describe('copying from a row’s menu', () => {
       within(screen.getByRole('menu'))
         .getAllByRole('menuitem')
         .map((item) => item.textContent),
-    ).toEqual(['Move to…', 'Delete recording', 'Download audio', 'Select']);
+    ).toEqual(['Move to…', 'Delete recording', 'Download audio', 'Transcribe again in English', 'Select']);
+  });
+});
+
+/**
+ * Transcribe again (T7): a recording that came back in the wrong script, or
+ * with sentences missing, could only be deleted and re-recorded — the
+ * pipeline transcribes once, and Retry resumes from the last good artifact.
+ */
+describe('transcribing a recording again', () => {
+  it('is worded for the note’s language, posts to the capture and follows the run', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub({ ...NOTE, language: 'ml' });
+    mount(api.fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Transcribe again in Malayalam' }));
+
+    await waitFor(() => {
+      expect(api.calls).toContainEqual(
+        expect.objectContaining({ method: 'POST', path: '/v1/captures/cap-1/retranscribe', body: {} }),
+      );
+    });
+    // The 202's capture is on the row at once: the stage strip is back.
+    expect(await screen.findByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
+    expect(screen.getByText('Filing…')).toBeInTheDocument();
+  });
+
+  it('is not offered while the recording is still moving', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    mount(apiStub({ ...NOTE, captures: [{ ...CAPTURE, status: 'cleaning' }] }).fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    expect(screen.queryByRole('menuitem', { name: /transcribe again/i })).toBeNull();
+  });
+
+  it('says so when the server is older than the route', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub(NOTE, {
+      retranscribe: () => json({ type: 'about:blank', title: 'Not found', status: 404 }, 404),
+    });
+    mount(api.fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Transcribe again in English' }));
+
+    expect(
+      await screen.findByText('Transcribing again is not available on this server yet.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
+  });
+
+  it('is honest about auto-detect', () => {
+    expect(retranscribeLabel('ta')).toBe('Transcribe again in Tamil');
+    expect(retranscribeLabel('auto')).toBe('Transcribe again (auto-detect)');
   });
 });
 

@@ -1,10 +1,16 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { useDeleteCaptures, useMoveCaptures, useRetryCapture } from '@/api/queries.ts';
+import {
+  queryKeys,
+  useDeleteCaptures,
+  useMoveCaptures,
+  useRetryCapture,
+  useSettings,
+} from '@/api/queries.ts';
 import {
   isTerminalStatus,
   type CaptureStatus,
@@ -22,6 +28,7 @@ import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { FilingStages, LocalUploadItem, TargetPrompt } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
+import { AUTO_LANGUAGE, languageName } from '@/features/settings/languages.ts';
 import { useLongPress, type LongPress } from '@/hooks/useLongPress.ts';
 
 import { MoveSheet } from './MoveSheet.tsx';
@@ -65,13 +72,22 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  * buttons inside the open row as well, which stacked five control clusters
  * on one recording (review 2026-09-21, T41); the menu is the one place now,
  * and the outcome is said on the notice line under the rows.
+ *
+ * A settled row's menu also offers "Transcribe again in <language>" (T7):
+ * once a recording has come back in the wrong script, or with sentences
+ * missing, changing the note's language did nothing for it — the pipeline
+ * transcribes once and Retry starts from the last good artifact. The server
+ * cuts the paragraph, runs the audio again in the note's effective language
+ * and answers 202 with the capture back at `transcribing`; the row follows
+ * it as it does a new recording. The request names no language, so the
+ * server's reading of the note's setting is the one that counts.
  */
 export function Recordings({
   note,
   localUpload = null,
   onSelectingChange,
 }: {
-  note: Pick<NoteDetailWire, 'id' | 'title' | 'captures'>;
+  note: Pick<NoteDetailWire, 'id' | 'title' | 'captures' | 'language'>;
   /** An upload this device is still making into this note — see `useLocalUpload`. */
   localUpload?: CaptureModel | null;
   /** Told when selection starts and ends, so the screen can make room for the bar. */
@@ -126,6 +142,11 @@ export function Recordings({
 
   const deleteCaptures = useDeleteCaptures();
   const moveCaptures = useMoveCaptures();
+  const retranscribe = useRetranscribeCapture(note.id, setNotice);
+  // What a recording made into this note is transcribed in, for the menu's
+  // wording — the note's own choice, else the You screen's default.
+  const { data: settings } = useSettings();
+  const effectiveLanguage = note.language || settings?.default_language || 'en';
 
   const present = new Set(ordered.map((capture) => capture.id));
   const selected = new Set([...selectedIds].filter((id) => present.has(id)));
@@ -340,6 +361,11 @@ export function Recordings({
                 }}
                 onDownload={() => void runDownload([capture.id])}
                 onCopy={runCopy}
+                retranscribeLabel={retranscribeLabel(effectiveLanguage)}
+                onRetranscribe={() => {
+                  setNotice(null);
+                  retranscribe.mutate(capture.id);
+                }}
               />
             ))}
           </ul>
@@ -472,6 +498,50 @@ interface Notice {
   target?: NoteWire;
 }
 
+/** "Transcribe again in Malayalam", or the honest form for Auto-detect. */
+export function retranscribeLabel(language: string): string {
+  return language === AUTO_LANGUAGE
+    ? 'Transcribe again (auto-detect)'
+    : `Transcribe again in ${languageName(language)}`;
+}
+
+/**
+ * Asks the server to transcribe one recording again. The 202 carries the
+ * capture back at `transcribing`, which is written straight onto the cached
+ * note so the row wears the stage strip before the refetch; the note query
+ * then follows the pipeline as it does for a new recording. A 404 is a
+ * backend older than the route, and is said as "not yet" rather than as a
+ * missing recording.
+ */
+function useRetranscribeCapture(noteId: string, onNotice: (notice: Notice) => void) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (captureId: string) => api.retranscribeCapture(captureId),
+    onSuccess: (capture) => {
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(noteId), (current) =>
+        current?.captures
+          ? {
+              ...current,
+              captures: current.captures.map((row) => (row.id === capture.id ? capture : row)),
+            }
+          : current,
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+      void queryClient.invalidateQueries({ queryKey: ['captures'] });
+    },
+    onError: (error) => {
+      onNotice({
+        text:
+          error instanceof ApiError && error.isNotFound
+            ? 'Transcribing again is not available on this server yet.'
+            : failureText(error),
+        tone: 'error',
+      });
+    },
+  });
+}
+
 type DownloadProgress = { phase: 'idle' } | { phase: 'working'; done: number; total: number };
 
 /** "Wait until it has finished filing" for a 409; the server's own words otherwise. */
@@ -558,6 +628,9 @@ interface RecordingRowProps {
   onDownload: () => void;
   /** Text from this row's menu for the clipboard; the outcome is the panel's to say. */
   onCopy: (text: string) => void;
+  /** "Transcribe again in Malayalam": the menu item, worded for the note's language. */
+  retranscribeLabel: string;
+  onRetranscribe: () => void;
 }
 
 function RecordingRow({
@@ -577,6 +650,8 @@ function RecordingRow({
   onDelete,
   onDownload,
   onCopy,
+  retranscribeLabel,
+  onRetranscribe,
 }: RecordingRowProps) {
   const api = useApi();
   const bodyId = useId();
@@ -784,6 +859,11 @@ function RecordingRow({
                     } satisfies OverflowMenuItem,
                   ]
                 : []),
+              // Only a settled recording: the server refuses one in flight,
+              // and the row is already following that run.
+              ...(running
+                ? []
+                : [{ label: retranscribeLabel, onSelect: onRetranscribe } satisfies OverflowMenuItem]),
               { label: 'Select', onSelect: onStartSelecting },
             ]}
           />
