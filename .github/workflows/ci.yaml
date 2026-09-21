@@ -204,22 +204,18 @@ jobs:
       - name: Install
         working-directory: frontend
         run: bun install --frozen-lockfile
-      # Fails on a high or critical advisory against the lockfile. The ignore
-      # list is for advisories in dev-only dependencies with no path to the
-      # bundle; each entry says which and why, and comes out when the fix
-      # lands in bun.lock. fast-uri (eslint > ajv, and workbox-build > ajv via
-      # vite-plugin-pwa) parses URIs in a linter and a build step, never
-      # anything from a user; fixed in 3.1.6, which Dependabot's security
-      # updates will bring. `--ignore` is repeated because a comma-separated
-      # value is not split (checked against Bun 1.3.13).
+      # Fails on a high or critical advisory against the lockfile. Dependabot
+      # never sees a bun.lock transitive (the dependency graph holds only the
+      # package.json entries), so a transitive advisory is fixed by hand: edit
+      # that one entry in bun.lock to a fixed version its dependents' ranges
+      # still accept, then `bun install --frozen-lockfile` to check it. Only an
+      # advisory with no such version, in a dependency with no path to the
+      # bundle, may be silenced, with a repeated `--ignore=GHSA-…` (a
+      # comma-separated value is not split; Bun 1.3.13) and a comment saying
+      # which dependency and why.
       - name: Audit
         working-directory: frontend
-        run: >-
-          bun audit --audit-level=high
-          --ignore=GHSA-5jgf-p345-68v8
-          --ignore=GHSA-f65p-4m7j-42xc
-          --ignore=GHSA-fph4-wmhf-6fwf
-          --ignore=GHSA-jqff-g426-hqxp
+        run: bun audit --audit-level=high
       - name: Typecheck
         working-directory: frontend
         run: bun run typecheck
