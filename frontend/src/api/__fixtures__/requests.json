@@ -253,5 +253,15 @@
     "name": "downloadUrl_peaks",
     "method": "GET",
     "path": "/v1/captures/contract-capture/download?kind=peaks"
+  },
+  {
+    "name": "startExport",
+    "method": "POST",
+    "path": "/v1/export"
+  },
+  {
+    "name": "getExport",
+    "method": "GET",
+    "path": "/v1/export/contract-export"
   }
 ]

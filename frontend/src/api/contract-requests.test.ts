@@ -34,6 +34,8 @@ const BASE_URL = 'https://contract.invalid';
 const NOTE_ID = 'contract-note';
 const ARCHIVED_NOTE_ID = 'contract-archived-note';
 const CAPTURE_ID = 'contract-capture';
+/** Not seeded: the Go replay accepts a 404 for an id it does not hold, and the route is what is checked. */
+const EXPORT_ID = 'contract-export';
 
 /**
  * Stands in for a continuation token.
@@ -196,6 +198,10 @@ describe('the requests the frontend actually sends', () => {
     for (const kind of ['audio', 'raw', 'clean', 'segments', 'peaks'] as const) {
       await call(`downloadUrl_${kind}`, () => api.downloadUrl(CAPTURE_ID, kind));
     }
+
+    /* ---- export ------------------------------------------------------- */
+    await call('startExport', () => api.startExport('export-local-1'));
+    await call('getExport', () => api.getExport(EXPORT_ID));
 
     /* ---- what the recording itself has to be true of ------------------- */
 
