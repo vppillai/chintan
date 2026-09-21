@@ -647,15 +647,21 @@ func ParseAnswer(raw string) (Answer, error) {
 }
 
 // noteIDPattern is a note id (internal/keys: note_<hex>_<hex>) as it stands in
-// prose. The word boundary keeps "footnote_a" out of it.
-var noteIDPattern = regexp.MustCompile(`\bnote_[0-9a-f_]+`)
+// prose, with the parenthetical a model sometimes writes after it — the title
+// it was told to use instead — and the character before it. The character is
+// matched rather than \b because a model that italicised an id (`_note_…_`)
+// put a word character there; "footnote_a" still stays out, its n following
+// a letter.
+var noteIDPattern = regexp.MustCompile(`(^|[^0-9A-Za-z])(note_[0-9a-f]+_[0-9a-f]+)(?:[ \t]*\(([^)]*)\))?`)
 
 // NameNotesInProse returns text with every note id in it replaced by the
-// packed note's title, or removed when no packed note has that id. The prompt
-// tells the model to name notes by title and keep ids to "sources"; a model
-// that wrote an id into the answer anyway had it rendered with the
-// underscores read as italics (QA 2026-09-21, finding 4). Titles go in as
-// one line, the way the prompt showed them.
+// packed note's title. The prompt tells the model to name notes by title and
+// keep ids to "sources"; a model that wrote an id into the answer anyway had
+// it rendered with the underscores read as italics (QA 2026-09-21, finding
+// 4). Titles go in as one line, the way the prompt showed them, once when the
+// model already wrote the title in brackets after the id. An id no packed
+// note has — the model made it up, or read it in a note's text — becomes "a
+// note", or the name the model gave it in brackets.
 func NameNotesInProse(text string, packed []Packed) string {
 	if !strings.Contains(text, "note_") {
 		return text
@@ -664,7 +670,20 @@ func NameNotesInProse(text string, packed []Packed) string {
 	for _, n := range packed {
 		titles[n.NoteID] = oneLine(n.Title)
 	}
-	return noteIDPattern.ReplaceAllStringFunc(text, func(id string) string { return titles[id] })
+	return noteIDPattern.ReplaceAllStringFunc(text, func(m string) string {
+		g := noteIDPattern.FindStringSubmatch(m)
+		lead, id, paren := g[1], g[2], strings.TrimSpace(g[3])
+		title, ok := titles[id]
+		switch {
+		case !ok && paren != "":
+			return lead + paren
+		case !ok:
+			return lead + "a note"
+		case paren == "" || strings.EqualFold(paren, title):
+			return lead + title
+		}
+		return lead + title + " (" + paren + ")"
+	})
 }
 
 // Sources keeps, of the ids the model cited, only the notes that were packed
