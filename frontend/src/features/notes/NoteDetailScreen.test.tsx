@@ -234,7 +234,9 @@ describe('what was just saved is what the app shows next', () => {
       expect(api.patches).toHaveLength(2);
     });
     expect(api.patches[1]).toEqual(expect.objectContaining({ version: 2, status: 200 }));
-    expect(api.patches[1]?.body['body']).toBe('v1 body more words here.');
+    // The tag alone: the body the cache handed back is the server's, and an
+    // unchanged body is not an edit (QA 2026-09-21, finding 1).
+    expect(api.patches[1]?.body).toEqual({ version: 2, tags: ['vtag'] });
     expect(screen.queryByText(/changed elsewhere/i)).toBeNull();
     expect(api.notes.get('roof-repair')?.tags).toEqual(['vtag']);
   });

@@ -702,3 +702,25 @@ describe('a conflict with a recording that landed while the user typed', () => {
     expect(view.result.current.model.theirs).toMatchObject({ recording: false, addition: null });
   });
 });
+
+describe('a Details change goes out without the body', () => {
+  it('PATCHes the language with the version and nothing else (QA 2026-09-21, finding 1)', async () => {
+    /*
+     * The server takes any body it is sent as the user's words, carries the
+     * recordings' markers out of it and re-appends them at the end, where
+     * "Transcribe again" then duplicates the paragraph and Delete recording
+     * cuts nothing. The language, kind, verbatim and auto-clean switches all
+     * rode the whole draft, body included.
+     */
+    const { patches, wrapper } = harness();
+    const view = renderHook(() => useNoteEditor(NOTE), { wrapper });
+
+    await act(async () => {
+      view.result.current.edit({ language: 'ml' });
+      await view.result.current.saveNow();
+    });
+
+    expect(patches).toHaveLength(1);
+    expect(patches[0]?.body).toEqual({ version: NOTE.version, language: 'ml' });
+  });
+});

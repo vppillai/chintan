@@ -101,12 +101,12 @@ describe('a note’s transcription language', () => {
     await waitFor(() => {
       expect(patches).toHaveLength(1);
     });
-    expect(patches[0]?.['language']).toBe('hi');
     // The same serialised save as the text, carrying the version the note was
     // loaded at — a separate request would bump the version under a dirty
-    // draft and turn the user's own change into a conflict prompt.
-    expect(patches[0]?.['version']).toBe(NOTE.version);
-    expect(patches[0]?.['title']).toBe('Roof repair');
+    // draft and turn the user's own change into a conflict prompt. And only
+    // the language: an unchanged body sent with it detached every recording's
+    // marker (QA 2026-09-21, finding 1).
+    expect(patches[0]).toEqual({ version: NOTE.version, language: 'hi' });
   });
 
   it('offers auto-detect and the curated languages, each in its own script and in English', async () => {

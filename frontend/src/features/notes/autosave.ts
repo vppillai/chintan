@@ -12,7 +12,7 @@
  *    automatic clobber in either direction.
  */
 
-import type { CleanedMode } from '@/api/schema.ts';
+import type { CleanedMode, NoteUpdateWire } from '@/api/schema.ts';
 
 export type SaveState =
   | 'clean'
@@ -79,8 +79,18 @@ export interface NoteDraft {
 
 export interface EditorModel {
   draft: NoteDraft;
-  /** The last draft the server acknowledged, for dirty comparison. */
+  /** The last draft this editor sent or queued, for dirty comparison. */
   saved: NoteDraft;
+  /**
+   * The draft the server holds at `version`, as far as this editor knows;
+   * the PATCH names only the fields of `draft` that differ from it
+   * (`patchFor`). Usually `saved`, but the two part where it matters: an
+   * offline save moves `saved` and not this, so the queued PATCH — which
+   * replaces the one before it — carries every change since the server's
+   * copy; a resolved conflict puts the server's copy here, so "Keep my
+   * edits" still writes back everything of mine that differs from theirs.
+   */
+  server: NoteDraft;
   version: number;
   state: SaveState;
   error: string | null;
@@ -148,6 +158,7 @@ export function initialEditor(draft: NoteDraft, version: number): EditorModel {
   return {
     draft,
     saved: draft,
+    server: draft,
     version,
     state: 'clean',
     error: null,
@@ -157,6 +168,54 @@ export function initialEditor(draft: NoteDraft, version: number): EditorModel {
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/** The fields `sameText` compares: the note's words and what they are filed under. */
+function textOf(draft: NoteDraft): Partial<NoteDraft> {
+  const { title, body, aliases, tags, language, kind } = draft;
+  return {
+    title,
+    body,
+    aliases,
+    tags,
+    ...(language !== undefined ? { language } : {}),
+    ...(kind !== undefined ? { kind } : {}),
+  };
+}
+
+/**
+ * The PATCH for the draft: `version`, then only the fields that differ from
+ * the server's copy.
+ *
+ * An unchanged `body` is not an edit, but the server cannot tell: any body
+ * written is taken as the user's words, the recordings' markers are carried
+ * out of it and re-appended at its end, and from then on "Transcribe again"
+ * duplicates the paragraph and Delete recording cuts nothing (QA 2026-09-21,
+ * finding 1). Changing the language in Details used to send the whole draft
+ * and did exactly that. The cleaned-view settings were already sent only
+ * when touched, so a save stays on the contract a backend without them
+ * still accepts; the same rule now covers the text.
+ */
+export function patchFor(model: EditorModel): NoteUpdateWire {
+  const { draft, server } = model;
+  return {
+    version: model.version,
+    ...(draft.title !== server.title ? { title: draft.title } : {}),
+    ...(draft.body !== server.body ? { body: draft.body } : {}),
+    ...(sameList(draft.aliases, server.aliases) ? {} : { aliases: draft.aliases }),
+    ...(sameList(draft.tags, server.tags) ? {} : { tags: draft.tags }),
+    ...((draft.language ?? '') !== (server.language ?? '') ? { language: draft.language ?? '' } : {}),
+    ...((draft.kind ?? 'note') !== (server.kind ?? 'note') ? { kind: draft.kind ?? 'note' } : {}),
+    ...(draft.verbatim !== undefined && Boolean(draft.verbatim) !== Boolean(server.verbatim)
+      ? { verbatim: draft.verbatim }
+      : {}),
+    ...(draft.auto_clean !== undefined && Boolean(draft.auto_clean) !== Boolean(server.auto_clean)
+      ? { auto_clean: draft.auto_clean }
+      : {}),
+    ...(draft.cleaned_mode !== undefined && draft.cleaned_mode !== server.cleaned_mode
+      ? { cleaned_mode: draft.cleaned_mode }
+      : {}),
+  };
 }
 
 /**
@@ -261,6 +320,10 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       return {
         ...model,
         saved: draft,
+        // Every field sent is now the server's; every field not sent already
+        // was. Spread over the old copy so a `cleaned_mode` the draft never
+        // carried is not forgotten.
+        server: { ...model.server, ...draft },
         version: event.version,
         state: stillDirty ? 'dirty' : 'saved',
         error: null,
@@ -312,6 +375,7 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       return {
         draft: model.theirs.draft,
         saved: model.theirs.draft,
+        server: model.theirs.draft,
         version: model.theirs.version,
         state: 'saved',
         error: null,
@@ -323,9 +387,11 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       if (!model.theirs) return model;
       // Adopt their version number so the next PATCH is accepted, keeping the
       // local text. This overwrites their text, which is exactly what the user
-      // just chose — it is not something the app decided on its own.
+      // just chose — it is not something the app decided on its own; `server`
+      // is their copy, so the PATCH names everything of mine that differs.
       return {
         ...model,
+        server: model.theirs.draft,
         version: model.theirs.version,
         state: 'dirty',
         error: null,
@@ -340,6 +406,7 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       return {
         ...model,
         draft: { ...model.draft, body: withAddition(model.draft.body, model.theirs.addition) },
+        server: model.theirs.draft,
         version: model.theirs.version,
         state: 'dirty',
         error: null,
@@ -352,6 +419,12 @@ export function editorReducer(model: EditorModel, event: EditorEvent): EditorMod
       return {
         ...model,
         version: event.version,
+        // The version moved without the text, so the server's words are the
+        // ones this editor last saved — or queued, and has since had flushed.
+        // Its cleaned-view settings stay as this editor knew them: the mode a
+        // clean ran in is not a preference the user set, and must not be
+        // written back as one.
+        server: { ...model.server, ...textOf(model.saved) },
         state: model.state === 'saving' ? 'dirty' : model.state,
         error: null,
       };

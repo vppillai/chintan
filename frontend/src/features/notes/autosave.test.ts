@@ -5,6 +5,7 @@ import {
   editorReducer,
   hasUnsavedWork,
   initialEditor,
+  patchFor,
   reconcileQueued,
   sameText,
   withAddition,
@@ -416,5 +417,70 @@ describe('reconcileQueued', () => {
       message: 'changed elsewhere',
     });
     expect(reconcileQueued(conflicted, stale).state).toBe('conflict');
+  });
+});
+
+describe('the PATCH names only what changed since the server’s copy', () => {
+  const edited = (patch: Partial<NoteDraft>, model: EditorModel = start()): EditorModel =>
+    editorReducer(model, { type: 'edit', patch });
+
+  it('sends a Details change without the body: an unchanged body is not an edit (QA 2026-09-21, finding 1)', () => {
+    // The server takes any body it is sent as the user's words and carries
+    // the recordings' markers out of it; the language rode the whole draft.
+    expect(patchFor(edited({ language: 'ml' }))).toEqual({ version: 3, language: 'ml' });
+    expect(patchFor(edited({ tags: ['house'] }))).toEqual({ version: 3, tags: ['house'] });
+    expect(patchFor(edited({ verbatim: true }))).toEqual({ version: 3, verbatim: true });
+  });
+
+  it('sends the body alone when only the body changed, and the version alone when nothing did', () => {
+    expect(patchFor(edited({ body: 'Ridge tiles slipped.' }))).toEqual({
+      version: 3,
+      body: 'Ridge tiles slipped.',
+    });
+    expect(patchFor(start())).toEqual({ version: 3 });
+  });
+
+  it('moves the baseline when a save lands, so the next PATCH carries only the next change', () => {
+    const slipped = { ...BASE, body: 'Ridge tiles slipped.' };
+    const landed = editorReducer(edited({ body: slipped.body }), {
+      type: 'saveSuccess',
+      version: 4,
+      draft: slipped,
+    });
+    expect(patchFor(edited({ title: 'Roof' }, landed))).toEqual({ version: 4, title: 'Roof' });
+  });
+
+  it('keeps every change since the server’s copy in a queued PATCH, which replaces the one before it', () => {
+    // Offline, the second save's PATCH takes the first's place in the queue;
+    // named against the last thing sent, it would have dropped the body.
+    const first = edited({ body: 'Ridge tiles slipped.' });
+    const queued = editorReducer(first, { type: 'saveQueued', draft: first.draft });
+    expect(patchFor(edited({ title: 'Roof' }, queued))).toEqual({
+      version: 3,
+      title: 'Roof',
+      body: 'Ridge tiles slipped.',
+    });
+  });
+
+  it('after "Keep my edits", writes back everything of mine that differs from theirs; after "Take theirs", nothing', () => {
+    const theirs: NoteDraft = { ...BASE, body: 'Ridge tiles. Quote from Ellis: 900.', tags: ['house'] };
+    const saving = editorReducer(edited({ title: 'Roof' }), { type: 'saveStart' });
+    const conflict = editorReducer(saving, { type: 'conflict', theirs, version: 4, message: 'changed' });
+
+    expect(patchFor(editorReducer(conflict, { type: 'keepMine' }))).toEqual({
+      version: 4,
+      title: 'Roof',
+      body: BASE.body,
+      tags: [],
+    });
+    expect(patchFor(editorReducer(conflict, { type: 'takeTheirs' }))).toEqual({ version: 4 });
+  });
+
+  it('carries a flushed queue’s text onto a rebased version, leaving the cleaned-view settings as this editor knew them', () => {
+    const first = edited({ body: 'Ridge tiles slipped.' });
+    const queued = editorReducer(first, { type: 'saveQueued', draft: first.draft });
+    const rebased = editorReducer(queued, { type: 'rebase', version: 5 });
+    expect(rebased.server.body).toBe('Ridge tiles slipped.');
+    expect(patchFor(edited({ language: 'ml' }, rebased))).toEqual({ version: 5, language: 'ml' });
   });
 });
