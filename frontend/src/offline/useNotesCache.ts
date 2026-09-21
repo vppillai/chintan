@@ -69,6 +69,8 @@ export const PREFETCH_BODIES = 20;
 /** `${id}@${version}` of every body asked for this session, fetched or not. */
 const attempted = new Set<string>();
 let prefetching = false;
+/** Rows landed while a pass was running, so the pass goes once more when it ends. */
+let rowsArrivedMeanwhile = false;
 
 /**
  * Fetches the bodies of the newest notes into IndexedDB while the app is idle.
@@ -107,9 +109,40 @@ function whenIdle(work: () => void): () => void {
   };
 }
 
+/**
+ * Runs passes until one ends with no rows having landed during it.
+ *
+ * Home fires four list GETs at mount — active, archived, the Checklists
+ * chip's `kind=checklist`, the search corpus — and each one's write
+ * re-triggers the hook. A trigger that found a pass running used to be
+ * dropped, and when the one-row checklist page landed first that pass fetched
+ * one body while the other three pages landed during its GET: five cold loads
+ * stored 20, 1, 1, 20 and 1 bodies. `attempted` keeps the extra pass cheap —
+ * it asks only for rows no pass has asked for yet.
+ */
 async function prefetchBodies(api: ChintanApi, session: Session): Promise<void> {
-  if (prefetching) return;
+  if (prefetching) {
+    rowsArrivedMeanwhile = true;
+    return;
+  }
   prefetching = true;
+  try {
+    let again = true;
+    while (again) {
+      rowsArrivedMeanwhile = false;
+      again = (await prefetchPass(api, session)) && rowsArrivedMeanwhile;
+    }
+  } finally {
+    prefetching = false;
+  }
+}
+
+/**
+ * One pass over the newest rows without a body. False when it stopped early —
+ * the connection or the session went — since another pass would end the same
+ * way; the next list arrival tries again.
+ */
+async function prefetchPass(api: ChintanApi, session: Session): Promise<boolean> {
   try {
     const wanted = (await notesWithoutBody(PREFETCH_BODIES)).filter(
       (note) => !attempted.has(`${note.id}@${String(note.version)}`),
@@ -122,24 +155,24 @@ async function prefetchBodies(api: ChintanApi, session: Session): Promise<void> 
        * prevent — so the session is checked on both sides of the GET: it can
        * go while the request is in the air.
        */
-      if (!session.isAuthenticated()) break;
+      if (!session.isAuthenticated()) return false;
       attempted.add(`${note.id}@${String(note.version)}`);
       try {
         const detail = await api.getNote(note.id);
-        if (!session.isAuthenticated()) break;
+        if (!session.isAuthenticated()) return false;
         await cacheNoteDetail(detail);
       } catch (error) {
         // The connection went, or the session did: the rest would fail the
         // same way, so stop here and let the next list arrival try again. A
         // single refusal — a note purged since the list was read — skips only
         // that note.
-        if (error instanceof ApiError && (error.isOffline || error.isUnauthorized)) break;
+        if (error instanceof ApiError && (error.isOffline || error.isUnauthorized)) return false;
       }
     }
+    return true;
   } catch {
     /* Storage denied: no offline copy this time, and the screen is unaffected. */
-  } finally {
-    prefetching = false;
+    return false;
   }
 }
 

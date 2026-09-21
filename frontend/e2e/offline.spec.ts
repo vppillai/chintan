@@ -252,6 +252,55 @@ test('a note never opened on this device is still readable offline once the list
   await context.setOffline(false);
 });
 
+test('every first-page body lands even when a one-row list page arrives first', async ({
+  page,
+  api,
+}) => {
+  /*
+   * Home fires four list GETs at mount, and the Checklists chip's
+   * `kind=checklist` page is the smallest. When it landed first the prefetch
+   * began on its one row, the other pages landed during that body's GET, and
+   * their re-triggers were dropped: five cold loads of the live site stored
+   * 20, 1, 1, 20 and 1 bodies (QA 2026-09-21, finding 5). Forced here: the
+   * checklist page answers at once, every other list page and every body take
+   * long enough that the order cannot come out any other way.
+   */
+  api.notes['shopping'] = {
+    id: 'shopping',
+    kind: 'checklist',
+    title: 'Shopping',
+    body: '- [ ] Milk',
+    snippet: '- [ ] Milk',
+    tags: [],
+    aliases: [],
+    updated_at: '2026-08-05T10:00:00.000Z',
+    version: 1,
+    archived: false,
+    captures: [],
+  };
+  await page.route(
+    (url) => url.pathname.endsWith('/api/v1/notes') && !url.searchParams.has('kind'),
+    async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await route.fallback();
+    },
+  );
+  await page.route(
+    (url) => /\/api\/v1\/notes\/[^/]+$/.test(url.pathname),
+    async (route) => {
+      if (route.request().method() === 'GET') await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await route.fallback();
+    },
+  );
+
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /shopping/i })).toBeVisible();
+
+  for (const id of ['shopping', 'roof-repair', 'reading-list']) {
+    await expect.poll(() => bodyOnDevice(page, id), { timeout: 15_000 }).toBe(true);
+  }
+});
+
 test('a note never opened on this device says so, rather than claiming it was purged', async ({
   page,
   context,
