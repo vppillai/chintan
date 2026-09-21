@@ -1,6 +1,9 @@
-import { useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Suspense, useEffect, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router';
 
+import { useApi } from '@/api/ApiProvider.tsx';
+import { queryKeys } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
@@ -17,13 +20,14 @@ import { StatusRegion } from './StatusRegion.tsx';
 import { TabBar } from './TabBar.tsx';
 
 /** Which of the app's surfaces a URL is. Drives layout and announcements. */
-export type Screen = 'library' | 'note' | 'you' | 'about' | 'capture' | 'other';
+export type Screen = 'library' | 'note' | 'you' | 'usage' | 'about' | 'capture' | 'other';
 
 export function screenForPath(pathname: string): Screen {
   const path = pathname.length > 1 ? pathname.replace(/\/$/, '') : pathname;
   if (path === ROUTES.home) return 'library';
   if (path === ROUTES.capture) return 'capture';
   if (path === ROUTES.settings) return 'you';
+  if (path === ROUTES.usage) return 'usage';
   if (path === ROUTES.about) return 'about';
   if (path.startsWith('/notes/')) return 'note';
   return 'other';
@@ -33,6 +37,7 @@ const SCREEN_TITLES: Record<Screen, string> = {
   library: 'Notes',
   note: 'Note',
   you: 'You',
+  usage: 'Usage',
   about: 'About',
   capture: 'Recording',
   other: 'Screen',
@@ -54,6 +59,8 @@ export function AppShell() {
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const auth = useAuthGate();
+  const api = useApi();
+  const queryClient = useQueryClient();
 
   useBackGuard();
   usePasskeyReturn();
@@ -63,6 +70,24 @@ export function AppShell() {
   useResendOnReconnect();
 
   const screen = screenForPath(location.pathname);
+
+  /*
+   * The settings, read once for the session (round-3 T48). The note screen
+   * fetched them after the note — a second waterfall step for one language
+   * label — and You and the capture chooser read them too. Never stale here:
+   * `useSaveSettings` writes what the server stored into this same cache, so
+   * the device's own changes are always reflected and a refetch would only
+   * repeat them. Not on the capture screen, where the Record shortcut's one
+   * request must stay the recording's own.
+   */
+  useEffect(() => {
+    if (auth.phase !== 'signed-in' || screen === 'capture') return;
+    void queryClient.prefetchQuery({
+      queryKey: queryKeys.settings(),
+      queryFn: () => api.getSettings(),
+      staleTime: Infinity,
+    });
+  }, [auth.phase, screen, api, queryClient]);
 
   /*
    * The gate is here, above the outlet, rather than per screen.
@@ -93,8 +118,15 @@ export function AppShell() {
       </a>
 
       <div className="app" data-screen={screen}>
+        {/*
+          On the library the wordmark moves into the screen's own heading row
+          (round-3 T17: the banner, the h1 and the tab named the same place
+          three times in the top 45 percent of a phone), and the banner keeps
+          only the offline pill. It stays in the DOM because it is the shell
+          grid's first row; `home.css` collapses it while it is empty.
+        */}
         <header className="app__banner">
-          <span className="app__wordmark">{config.appName}</span>
+          {screen !== 'library' && <span className="app__wordmark">{config.appName}</span>}
           <OfflineBanner />
         </header>
 
@@ -105,7 +137,10 @@ export function AppShell() {
           className="app__main"
           aria-label={SCREEN_TITLES[screen]}
         >
-          <Outlet />
+          {/* The lazy screens (`router.tsx`) resolve here; nothing else suspends. */}
+          <Suspense fallback={null}>
+            <Outlet />
+          </Suspense>
         </main>
 
         {/*
