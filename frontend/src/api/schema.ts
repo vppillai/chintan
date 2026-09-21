@@ -329,6 +329,13 @@ export interface CaptureWire {
   error?: string | null;
   created_at: string;
   /**
+   * When the pipeline last wrote the row, re-stamped at every stage hand-off.
+   * The server measures "still in flight" for a Retry from it
+   * (`service.CaptureStuck`); the API does not send it yet, so the filing row
+   * reads it when carried and measures from `created_at` until then.
+   */
+  last_progress_at?: string | null;
+  /**
    * Where the router thinks this recording belongs. Exactly one of the two is
    * ever set, and only on a `needs_target` capture: `suggested_note_id` names an
    * existing note it was confident enough to propose but not to append to

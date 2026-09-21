@@ -481,9 +481,25 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
       capture({ id: 'sixteen', status: 'transcribing', created_at: ago(16) }),
       capture({ id: 'appending-sixteen', status: 'appending', created_at: ago(16) }),
       capture({ id: 'appending-twenty-one', status: 'appending', created_at: ago(21) }),
+      // The server measures from the row's last write, not its creation. No
+      // backend sends `last_progress_at` yet, so `sixteen` above is offered
+      // Retry whether or not it moved; when the field is carried, a capture
+      // that made progress twelve minutes ago is not, however old its row.
+      capture({
+        id: 'progressed',
+        status: 'transcribing',
+        created_at: ago(16),
+        last_progress_at: ago(12),
+      }),
+      capture({
+        id: 'stalled',
+        status: 'transcribing',
+        created_at: ago(30),
+        last_progress_at: ago(16),
+      }),
     ]);
 
-    expect(await screen.findAllByText(/still not done/i)).toHaveLength(4);
+    expect(await screen.findAllByText(/still not done/i)).toHaveLength(6);
     const rows = document.querySelectorAll<HTMLElement>('.filing-row');
     const retryIn = (row: HTMLElement | undefined) =>
       row ? within(row).queryByRole('button', { name: 'Retry' }) !== null : null;
@@ -491,8 +507,10 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     expect(retryIn(rows[1])).toBe(true);
     expect(retryIn(rows[2])).toBe(false);
     expect(retryIn(rows[3])).toBe(true);
+    expect(retryIn(rows[4])).toBe(false);
+    expect(retryIn(rows[5])).toBe(true);
     // Dismiss is still the way off the screen for every one of them.
-    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(4);
+    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(6);
   });
 });
 

@@ -94,17 +94,21 @@ function isStuck(capture: CaptureWire): boolean {
  * timeout), or the twenty-minute append lease while `appending`. The row
  * offered Retry at ten minutes, so for five to ten minutes every tap came
  * back "still in flight". The copy keeps `STUCK_AFTER_MS`; the button waits
- * for this. `last_progress_at` is read when a backend sends it, else
- * `created_at`, as the server does.
+ * for this.
+ *
+ * The server measures from `last_progress_at`, which every stage hand-off
+ * re-stamps, and the API does not put that field on the wire yet — so until
+ * it does, the row measures from `created_at`: exact for a capture that never
+ * moved, early by however long it did move for one that reached transcribing
+ * before it stalled, and the tap inside that gap is answered by the 409's
+ * own sentence. Read when carried, so the gap closes the day it is sent.
  */
 const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
 const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
 
 function retryAccepted(capture: CaptureWire): boolean {
   if (isTerminalStatus(capture.status)) return false;
-  const since = Date.parse(
-    (capture as CaptureWire & { last_progress_at?: string }).last_progress_at ?? capture.created_at,
-  );
+  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
   if (Number.isNaN(since)) return false;
   const after =
     capture.status === 'appending' ? RETRY_ACCEPTED_APPENDING_MS : RETRY_ACCEPTED_AFTER_MS;
