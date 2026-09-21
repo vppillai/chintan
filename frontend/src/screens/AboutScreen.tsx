@@ -100,8 +100,9 @@ export function AboutScreen() {
           <p>
             Say where it goes — &ldquo;add this to the roof note&rdquo; — and the router matches
             that against your notes&rsquo; titles, their other names and their tags. Or choose the
-            note first: <em>Record into this</em> on a note, or the target picker on the recording
-            screen, files straight there with no guessing. When the router is not sure, the
+            note first: open it and tap the microphone, which then reads <em>Into this note</em>,
+            or pick the note on the recording screen; either files straight there with no
+            guessing. When the router is not sure, the
             recording waits at the top of your notes with its best guess until you pick a note or
             start a new one.
           </p>
