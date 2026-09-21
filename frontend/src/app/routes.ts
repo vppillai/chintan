@@ -20,6 +20,8 @@ export const ROUTES = {
   settings: '/settings',
   /** What Chintan is and where its data lives. Reached from You. */
   about: '/about',
+  /** What this month has cost. Reached from one row on You. */
+  usage: '/usage',
   capture: '/capture',
   /** Record straight into a note the user is already reading. */
   captureInto: (noteId: string) => `/capture?note=${encodeURIComponent(noteId)}`,

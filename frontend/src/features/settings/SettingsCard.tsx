@@ -24,14 +24,22 @@ export function SettingsCard({
   title,
   lead,
   foot,
+  more,
   children,
   className,
 }: {
   title: ReactNode;
   /** One sentence under the title on what the card is for. */
   lead?: ReactNode;
-  /** The card's footnote: the sentences that qualify what the controls do. */
+  /** The card's footnote: the one sentence that qualifies what the controls do. */
   foot?: ReactNode;
+  /**
+   * The rest of the footnote, behind a native "More" disclosure. The
+   * Recording card's foot had grown to nine to twelve lines of prose on a
+   * phone (round-3 T20); one sentence stays in view and the qualifications
+   * are a tap away, in the DOM the whole time for a screen reader.
+   */
+  more?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
@@ -48,7 +56,17 @@ export function SettingsCard({
         {lead && <p className="you-card__lead">{lead}</p>}
       </header>
       <div className="you-card__body">{children}</div>
-      {foot && <div className="you-card__foot">{foot}</div>}
+      {(foot || more) && (
+        <div className="you-card__foot">
+          {foot}
+          {more && (
+            <details className="you-card__more">
+              <summary className="you-card__more-summary">More</summary>
+              <div className="you-card__more-body">{more}</div>
+            </details>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -111,14 +129,21 @@ export function RowLink({
   external,
   label,
   hint,
+  value,
   icon,
-}: RowActionProps & { to: string; external?: boolean }) {
+}: RowActionProps & {
+  to: string;
+  external?: boolean;
+  /** A figure at the row's end, before the glyph: the month's usage on its row. */
+  value?: ReactNode;
+}) {
   const body = (
     <>
       <span className="you-row__label">
         <span className="you-row__label-text">{label}</span>
         {hint && <span className="you-row__hint">{hint}</span>}
       </span>
+      {value !== undefined && <span className="you-row__value numeric">{value}</span>}
       <Icon name={icon ?? (external ? 'external' : 'chevron-right')} size={18} className="you-row__glyph" />
     </>
   );
