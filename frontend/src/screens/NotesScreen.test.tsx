@@ -392,6 +392,8 @@ describe('the chips filter the list', () => {
 
     const row = screen.getByRole('link', { name: /^Archive/ });
     expect(row).toHaveAttribute('href', '/?view=archived');
+    // And the row hides the zero the chip hides (QA 2026-09-21, finding 13).
+    expect(row).toHaveTextContent(/^Archive$/);
     await user.click(row);
     expect(await screen.findByText(/nothing is archived/i)).toBeInTheDocument();
     // In the archive itself the chip is there, pressed, so All is one tap away.

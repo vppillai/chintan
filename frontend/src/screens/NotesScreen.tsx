@@ -708,7 +708,9 @@ export function NotesScreen() {
         The way into the archive from the active list, whatever its chip is
         doing — once there is a library to walk from or an archive to walk
         into. A first-run screen showed "Tap Record to make your first note."
-        and then "Archive · 0", the nothing T17 took out of the chips.
+        and then "Archive · 0", the nothing T17 took out of the chips; the
+        row hides a zero for the same reason the chip does (QA 2026-09-21,
+        finding 13).
       */}
       {!asking &&
         !searching &&
@@ -718,7 +720,7 @@ export function NotesScreen() {
             <Icon name="archive" size={18} />
             <span>
               Archive
-              {archivedCount !== undefined && (
+              {archivedCount !== undefined && archivedCount > 0 && (
                 <>
                   {' · '}
                   <span className="numeric">
