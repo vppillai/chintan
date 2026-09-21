@@ -18,10 +18,12 @@
 }
 
 /* A row is the 44 px target its checkbox needs, and a hairline apart from the
-   next; the last one keeps the card's own edge. */
+   next; the last one keeps the card's own edge. Its parts align to the top,
+   not the middle: an item that wraps onto more lines grows downward and its
+   box stays beside the first line, where a reader's eye starts. */
 .checklist__row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   min-block-size: var(--layout-touch-target-min);
   border-block-end: 1px solid var(--color-line);
@@ -53,7 +55,7 @@
   cursor: default;
 }
 
-/* The item's words, in the note's serif, as tall as the row. An input for an
+/* The item's words, in the note's serif, as tall as the row. A textarea for an
    open item, a span for a done or previewed one — the same measure either way
    so a tick does not reflow the text. */
 .checklist__text {
@@ -71,6 +73,21 @@
 span.checklist__text {
   display: flex;
   align-items: center;
+}
+
+/* An open item wraps and grows with its words — a dictated item is a whole
+   sentence — and never scrolls inside itself: `field-sizing: content` where
+   it is understood, `useAutoGrow` elsewhere. The block padding is what
+   centres one line on the 44 px box beside it, so a short item sits exactly
+   where the single-line input did and a long one grows downward from there. */
+textarea.checklist__text {
+  display: block;
+  padding-block: calc(
+    (var(--layout-touch-target-min) - var(--line-height-normal) * var(--font-size-md)) / 2
+  );
+  field-sizing: content;
+  resize: none;
+  overflow-y: hidden;
 }
 
 .checklist__text::placeholder {

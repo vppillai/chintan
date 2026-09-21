@@ -1,6 +1,16 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type Ref,
+  type TextareaHTMLAttributes,
+} from 'react';
 
 import { Icon } from '@/components/Icon.tsx';
+import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 
 import {
   insertItemAfter,
@@ -15,8 +25,9 @@ import type { NoteEditor } from './useNoteEditor.ts';
 /**
  * The Items tab: a checklist note's body as rows to tick off.
  *
- * Open items first, in body order, each a real checkbox and a one-line text
- * field; an "Add an item" row under them; then the done items, greyed and
+ * Open items first, in body order, each a real checkbox and a text field
+ * that wraps and grows with its words; an "Add an item" row under them; then
+ * the done items, greyed and
  * struck through, each with its checkbox to reopen it and a × to delete it.
  * Ticking an item moves it down to Done, as Google Keep does — the body keeps
  * its order and only the item's own line changes (`toggleItem`), so a
@@ -44,15 +55,19 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
    * the effect after the render that drew the new rows — the new item's input
    * does not exist until then.
    */
-  const inputs = useRef(new Map<number, HTMLInputElement>());
-  const addRef = useRef<HTMLInputElement>(null);
+  const inputs = useRef(new Map<number, HTMLTextAreaElement>());
+  const addRef = useRef<HTMLTextAreaElement>(null);
   const focusAfterWrite = useRef<number | null>(null);
   useEffect(() => {
     const target = focusAfterWrite.current;
     if (target === null) return;
     focusAfterWrite.current = null;
-    if (target === ADD_ROW) addRef.current?.focus();
-    else inputs.current.get(target)?.focus();
+    const field = target === ADD_ROW ? addRef.current : inputs.current.get(target);
+    if (!field) return;
+    field.focus();
+    // At the end of its words, where a Backspace goes on editing them: a
+    // textarea focused by script starts with the caret before the first one.
+    field.setSelectionRange(field.value.length, field.value.length);
   });
 
   const write = (next: string, focus?: number): void => {
@@ -82,7 +97,7 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
   const open = items.map((item, index) => ({ item, index })).filter(({ item }) => !item.done);
   const done = items.map((item, index) => ({ item, index })).filter(({ item }) => item.done);
 
-  const onItemKeyDown = (event: KeyboardEvent<HTMLInputElement>, index: number): void => {
+  const onItemKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number): void => {
     if (event.key === 'Enter') {
       event.preventDefault();
       // The new item sits right under this one, in the body and on screen.
@@ -115,17 +130,14 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
               />
               <span className="visually-hidden">{item.text || `Item ${String(position + 1)}`}</span>
             </label>
-            <input
+            <ItemField
               ref={(element) => {
                 if (element) inputs.current.set(index, element);
                 else inputs.current.delete(index);
               }}
-              type="text"
-              className="checklist__text"
               value={item.text}
               aria-label={`Item ${String(position + 1)}`}
               enterKeyHint="next"
-              autoComplete="off"
               onChange={(event) => {
                 write(setItemText(body, index, event.target.value));
               }}
@@ -140,15 +152,12 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
           <span className="checklist__check checklist__add-mark" aria-hidden="true">
             <Icon name="plus" size={18} />
           </span>
-          <input
+          <ItemField
             ref={addRef}
-            type="text"
-            className="checklist__text"
             value={adding}
             placeholder="Add an item"
             aria-label="Add an item"
             enterKeyHint="done"
-            autoComplete="off"
             onChange={(event) => {
               setAdding(event.target.value);
             }}
@@ -215,6 +224,38 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
 
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
+
+/**
+ * An item's words: a textarea that wraps and grows with them. A recording
+ * becomes one item, so a whole dictated sentence is the normal case, and a
+ * single-line input clipped it on a phone (smoke 2026-09-21, finding 2). It
+ * is still one line of the body — the caller takes Enter for "new item", and
+ * `setItemText`/`insertItemAfter` turn a pasted line break into a space — so
+ * the field only ever wraps, never holds a newline. `field-sizing: content`
+ * sizes it where understood; `useAutoGrow` measures elsewhere.
+ */
+function ItemField({
+  ref,
+  value,
+  ...rest
+}: { ref: Ref<HTMLTextAreaElement>; value: string } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const own = useRef<HTMLTextAreaElement | null>(null);
+  useAutoGrow(own, value);
+  return (
+    <textarea
+      ref={(element) => {
+        own.current = element;
+        if (typeof ref === 'function') ref(element);
+        else if (ref) ref.current = element;
+      }}
+      rows={1}
+      className="checklist__text"
+      value={value}
+      autoComplete="off"
+      {...rest}
+    />
+  );
+}
 
 /**
  * A `tasks` cleaned view, or a checklist a reader cannot edit: the same rows
