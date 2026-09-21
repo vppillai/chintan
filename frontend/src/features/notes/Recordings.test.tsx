@@ -12,7 +12,8 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
 import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { Recordings, justLanded } from './Recordings.tsx';
+import { Recordings, filedLabel, justLanded } from './Recordings.tsx';
+import { describeMoment } from './groups.ts';
 
 /**
  * The audio lives in a bucket on another origin, behind a presigned URL. Two
@@ -52,6 +53,15 @@ const NOTE: NoteDetailWire = {
   archived: false,
   captures: [CAPTURE],
 };
+
+/**
+ * The row's disclosure button, named by when the recording was made and how
+ * long it runs: a filed row says nothing about being filed (T19), so the
+ * moment is what tells the rows apart.
+ */
+function isSummary(name: string): boolean {
+  return [CAPTURE, OLDER].some((capture) => name.startsWith(describeMoment(capture.created_at)));
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -292,7 +302,7 @@ describe('a row swiped aside', () => {
     const user = userEvent.setup();
     bucketStub();
     mount(apiStub().fetchImpl);
-    const summary = await screen.findByRole('button', { name: /filed/i, expanded: true });
+    const summary = await screen.findByRole('button', { name: isSummary, expanded: true });
 
     swipeOpen(summary);
     await user.click(screen.getByRole('button', { name: 'Delete' }));
@@ -475,7 +485,7 @@ describe('selecting several recordings', () => {
   it('enters selection on a long press, and the press is not also a tap', async () => {
     bucketStub();
     mount(apiStub(TWO).fetchImpl);
-    const rows = await screen.findAllByRole('button', { name: /filed/i });
+    const rows = await screen.findAllByRole('button', { name: isSummary });
     const older = rows[1]!;
 
     fireEvent.pointerDown(older, { pointerType: 'touch', clientX: 10, clientY: 10 });
@@ -492,7 +502,7 @@ describe('selecting several recordings', () => {
   it('a press that moves is a scroll, not a selection', async () => {
     bucketStub();
     mount(apiStub(TWO).fetchImpl);
-    const [row] = await screen.findAllByRole('button', { name: /filed/i });
+    const [row] = await screen.findAllByRole('button', { name: isSummary });
 
     fireEvent.pointerDown(row!, { pointerType: 'touch', clientX: 10, clientY: 10 });
     fireEvent.pointerMove(row!, { pointerType: 'touch', clientX: 10, clientY: 40 });
@@ -591,8 +601,10 @@ describe('a recording still being made into this note', () => {
     const rows = await recordingRows();
     expect(rows[0]).toHaveTextContent('Uploading… 40%');
     expect(rows[0]).toHaveTextContent('0:09');
-    // The filed recording is still there, after it.
-    expect(rows[1]).toHaveTextContent('Filed');
+    // The filed recording is still there, after it — and says nothing about
+    // being filed, which every row on this tab is.
+    expect(rows[1]).toHaveTextContent('0:12');
+    expect(rows[1]).not.toHaveTextContent('Filed');
   });
 
   it('shows the filing stages under a row the pipeline is still working on, and asks for no audio', async () => {
@@ -607,7 +619,7 @@ describe('a recording still being made into this note', () => {
     expect(within(rows[0]!).getByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
     expect(within(rows[0]!).getByText(/transcribing in progress/i)).toBeInTheDocument();
     // The finished one is the row that opened on arrival.
-    expect(within(rows[1]!).getByRole('button', { name: /filed/i })).toHaveAttribute(
+    expect(within(rows[1]!).getByRole('button', { name: isSummary })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -637,7 +649,14 @@ describe('a recording still being made into this note', () => {
 
     expect(await screen.findByRole('region', { name: 'Recording' })).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
-    expect(screen.getByRole('button', { name: /filed/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: isSummary })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('says nothing about a row that is filed, and names every other state', () => {
+    expect(filedLabel(CAPTURE)).toBe('');
+    expect(filedLabel({ ...CAPTURE, status: 'transcribing' })).toBe('Filing…');
+    expect(filedLabel({ ...CAPTURE, status: 'needs_target' })).toBe('Needs a target');
+    expect(filedLabel({ ...CAPTURE, status: 'failed' })).toBe('Failed');
   });
 
   it('knows a landing from a row that arrived already filed', () => {

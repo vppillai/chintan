@@ -240,8 +240,12 @@ test('Send returns to the note, where the recording files in front of the user',
   api.captures[0]!.duration_ms = 1_100;
   api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
   api.notes['roof-repair']!.version += 1;
-  await expect(rows.first()).toContainText('Filed', { timeout: 10_000 });
-  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+  // A filed row says nothing about being filed (T19): the strip goes, and
+  // the row is an ordinary recording with its length.
+  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0, {
+    timeout: 10_000,
+  });
+  await expect(rows.first()).toContainText('0:01');
   await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
 
   await page.getByRole('tab', { name: 'Text' }).click();

@@ -484,21 +484,22 @@ function describeOutcome(
 }
 
 /**
- * How a recording was filed, in the words of the row.
+ * How a recording was filed, in the words of the row — when there is
+ * something to say.
  *
- * The wire says *where* a capture went and *whether* it got there; it does not
- * say who decided. `CaptureWire` carries `note_id`, the router's
- * `suggested_*` fields (cleared the moment a target is set) and `appended_at`
- * — nothing that separates "the router chose this note" from "the user chose
- * it" or "it was recorded into this note from the start". So an appended
- * recording says "Filed" and no more, rather than guessing at a provenance the
- * backend does not record. The moment the contract grows a field for it, this
- * is the one function to change.
+ * A recording that reached the note says nothing: every row on this tab is
+ * in the note by definition, and "Filed" repeated down the list said so
+ * six times (review 2026-09-21, T19). The wire says *where* a capture went
+ * and *whether* it got there, not who decided — `CaptureWire` carries
+ * `note_id`, the router's `suggested_*` fields (cleared the moment a target
+ * is set) and `appended_at`, nothing that separates "the router chose this
+ * note" from "the user chose it" — so there is no truer word to put there.
+ * The states that are worth a word are the ones still moving or gone wrong.
  */
 export function filedLabel(capture: CaptureWire): string {
   switch (capture.status) {
     case 'appended':
-      return 'Filed';
+      return '';
     case 'needs_target':
       return 'Needs a target';
     case 'failed':
@@ -620,12 +621,17 @@ function RecordingRow({
   const noAudio = expanded && artifacts.isSuccess && !audioUrl;
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
 
+  const filed = filedLabel(capture);
   const summary = (
     <>
       <span className="recording__when">{when}</span>{' '}
-      <span className="recording__filed" data-running={running || undefined}>
-        {filedLabel(capture)}
-      </span>{' '}
+      {filed && (
+        <>
+          <span className="recording__filed" data-running={running || undefined}>
+            {filed}
+          </span>{' '}
+        </>
+      )}
       <span className="recording__duration numeric">{durationLabel}</span>
     </>
   );
