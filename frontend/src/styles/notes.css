@@ -110,12 +110,22 @@
   box-shadow: var(--shadow-sheet);
 }
 
-/* "DETAILS" as an eyebrow, the close control flush with the gutter line. */
+/* "DETAILS" as an eyebrow, the close control flush with the gutter line.
+   Stuck to the sheet's top while the content scrolls beneath it: once the
+   sheet was capped, a phone's Details scrolled Close away with the first
+   section, and Escape and ⋮ were the only ways left to put it away. A
+   sticky box rests inside its scroll container's padding, so the inset
+   takes the sheet's top padding back off and the head sits flush with the
+   sheet's edge, nothing showing above it. */
 .note-panel__head {
+  position: sticky;
+  inset-block-start: calc(-1 * var(--space-2));
+  z-index: var(--z-content);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  background-color: var(--color-raised);
 }
 
 .note-panel__heading {
