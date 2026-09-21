@@ -836,93 +836,6 @@
 }
 
 /* --------------------------------------------------------------------------
-   Capture
-   -------------------------------------------------------------------------- */
-
-.capture {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-6);
-  inline-size: 100%;
-  min-inline-size: 0;
-  max-inline-size: var(--layout-content-max);
-  margin-inline: auto;
-  padding: var(--space-8) var(--layout-gutter);
-  text-align: center;
-}
-
-.capture__title {
-  font-size: var(--font-size-lg);
-  color: var(--color-muted);
-}
-
-.capture__timer {
-  font-size: var(--font-size-4xl);
-  font-weight: var(--font-weight-regular);
-  line-height: var(--line-height-tight);
-  color: var(--color-ink);
-}
-
-/*
- * A single explicitly-sized grid area, and `overflow: hidden` as the backstop.
- * The canvas inside is a replaced element, and a replaced element is the one
- * thing that will happily ignore the box you drew for it.
- */
-.capture__waveform {
-  display: grid;
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  place-items: center;
-  inline-size: 100%;
-  block-size: 6rem;
-  padding: var(--space-3);
-  overflow: hidden;
-  background-color: var(--color-surface);
-  border-radius: var(--radius-lg);
-}
-
-.capture__waveform-placeholder {
-  inline-size: 60%;
-  block-size: 1px;
-  background-color: var(--color-line-strong);
-}
-
-.capture__status {
-  max-inline-size: 24rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
-/*
- * Wrapping, and allowed to be narrower than its buttons.
- *
- * Three pill buttons side by side have a min-content width of ~281px, and a
- * grid item's automatic minimum size is that width — so on a 320px phone the
- * capture surface measured 320.53px and pushed the document half a pixel wide.
- * At a larger browser text size the same rule pushes Stop off the screen
- * entirely, which is the version of this bug that actually loses a recording.
- */
-.capture__controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-4);
-  min-inline-size: 0;
-}
-
-.capture__control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-3) var(--space-5);
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-ink);
-}
-
-/* --------------------------------------------------------------------------
    Live waveform
 
    Real amplitudes on a canvas, coloured from `currentColor` so the drawing
@@ -949,20 +862,6 @@
   min-inline-size: 0;
   min-block-size: 0;
   color: var(--color-accent);
-}
-
-.capture__state {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-caps);
-  text-transform: uppercase;
-  color: var(--color-muted);
-}
-
-.capture__hint {
-  max-inline-size: 24rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-faint);
 }
 
 /* --------------------------------------------------------------------------
@@ -1162,40 +1061,6 @@
   padding: var(--space-2) var(--space-3);
   font-size: var(--font-size-xs);
   color: var(--color-muted);
-}
-
-.capture__warning {
-  max-inline-size: 26rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
-.capture__error {
-  max-inline-size: 26rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-ink);
-}
-
-/* "Resumed — the microphone is back." Quiet: good news needs no emphasis. */
-.capture__notice {
-  max-inline-size: 26rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
-.capture__progress {
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
-.capture__control--primary {
-  background-color: var(--color-ink);
-  color: var(--color-ground);
-  border-color: var(--color-ink);
-}
-
-.capture__control:not(.capture__control--primary):active {
-  background-color: var(--color-surface);
 }
 
 /*
@@ -1826,7 +1691,6 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
 }
-
 
 /* --------------------------------------------------------------------------
    Tag editor

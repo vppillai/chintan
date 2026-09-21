@@ -2,6 +2,7 @@
 @import './reset.css';
 @import './base.css';
 @import './shell.css';
+@import './capture.css';
 @import './you.css';
 @import './ask.css';
 @import './note-find.css';
