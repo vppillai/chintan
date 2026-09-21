@@ -95,6 +95,13 @@
 .note-panel {
   display: grid;
   gap: var(--space-3);
+  /* A sheet, not a wall: at most three fifths of the screen, scrolling
+     inside itself. Content-height, Details took 715 of a phone's 915 px and
+     hid the title, meta and tabs, and on a desktop climbed over the header's
+     Back, Find and ⋮ (QA 2026-09-21, finding 7). */
+  max-block-size: 60dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-2) var(--layout-gutter) var(--space-4);
   background-color: var(--color-raised);
   border-block-start: 1px solid var(--color-line);
