@@ -137,15 +137,18 @@ FAILURE_EVENT_JQ='
 # after it, then today's operation with one root cause, a cancellation cascade,
 # and the rollback events that follow.
 # refuse_stateful_replacements reads a describe-change-set response and returns
-# non-zero if it would replace a resource in STATEFUL_RESOURCES that was not
-# named in --allow-replacement. .Replacement is "True", "False" or
+# non-zero if it would replace or remove a resource in STATEFUL_RESOURCES that
+# was not named in --allow-replacement. .Replacement is "True", "False" or
 # "Conditional"; Conditional means CloudFormation only decides at execution
-# time, which is too late to ask, so it is treated as a replacement.
+# time, which is too late to ask, so it is treated as a replacement. A Remove
+# (the resource deleted from the template) is the same outcome by another
+# route: Retain keeps the data, but the stack no longer points at it.
 refuse_stateful_replacements() {
     local describe="$1" replacing id r a stateful allowed refused=0
     replacing="$(printf '%s' "$describe" | jq -r '
         [.Changes[].ResourceChange
-         | select(.Action == "Modify" and (.Replacement == "True" or .Replacement == "Conditional"))
+         | select((.Action == "Modify" and (.Replacement == "True" or .Replacement == "Conditional"))
+                  or .Action == "Remove")
          | .LogicalResourceId] | .[]
     ')"
     while IFS= read -r id; do
@@ -158,7 +161,7 @@ refuse_stateful_replacements() {
         if [ "$allowed" = "1" ]; then
             warn "replacing $id because --allow-replacement $id was passed"
         else
-            err "change set would REPLACE $id, a stateful resource; refusing"
+            err "change set would REPLACE or REMOVE $id, a stateful resource; refusing"
             refused=1
         fi
     done <<<"$replacing"
@@ -235,11 +238,20 @@ JSON
     fi
     ok "a Conditional table replacement is refused"
 
+    info "self-test: a change set that removes the bucket is refused"
+    removing_bucket='{"Changes":[
+     {"ResourceChange":{"Action":"Remove","LogicalResourceId":"ContentBucket","ResourceType":"AWS::S3::Bucket"}}]}'
+    if refuse_stateful_replacements "$removing_bucket" 2>/dev/null; then
+        die "self-test FAILED: removing the bucket from the template was not refused"
+    fi
+    ok "a bucket removal is refused"
+
     info "self-test: replacing a stateless resource, or a modify in place, is allowed"
     harmless='{"Changes":[
      {"ResourceChange":{"Action":"Modify","LogicalResourceId":"ApiLambdaFunction","ResourceType":"AWS::Lambda::Function","Replacement":"False"}},
      {"ResourceChange":{"Action":"Modify","LogicalResourceId":"UserPool","ResourceType":"AWS::Cognito::UserPool","Replacement":"False"}},
      {"ResourceChange":{"Action":"Modify","LogicalResourceId":"ApiLogGroup","ResourceType":"AWS::Logs::LogGroup","Replacement":"True"}},
+     {"ResourceChange":{"Action":"Remove","LogicalResourceId":"OldAlarm","ResourceType":"AWS::CloudWatch::Alarm"}},
      {"ResourceChange":{"Action":"Add","LogicalResourceId":"NewAlarm","ResourceType":"AWS::CloudWatch::Alarm"}}]}'
     refuse_stateful_replacements "$harmless" 2>/dev/null ||
         die "self-test FAILED: a harmless change set was refused"
