@@ -462,3 +462,27 @@ func TestFoldScriptJoinsTheTwoChilluSpellings(t *testing.T) {
 		}
 	}
 }
+
+// An id the model wrote into the answer becomes the note's title, and an id
+// of nothing that was packed disappears; prose without one is left alone.
+func TestNameNotesInProseSwapsIdsForTitles(t *testing.T) {
+	packed := []Packed{
+		{NoteID: "note_18d238868aef1800_ff6ee72b91682a42", Title: "Stale check mobile"},
+		{NoteID: "note_18d2000000000000_0000000000000001", Title: "Roof\nrepair"},
+	}
+	for _, tc := range []struct{ name, in, want string }{
+		{"no id", "The roofer comes on the 14th.", "The roofer comes on the 14th."},
+		{"id in prose", `note_18d238868aef1800_ff6ee72b91682a42 (Stale check mobile): "Ask the roofer"`,
+			`Stale check mobile (Stale check mobile): "Ask the roofer"`},
+		{"two ids, one on each line", "- note_18d238868aef1800_ff6ee72b91682a42 says no\n- `note_18d2000000000000_0000000000000001` says yes",
+			"- Stale check mobile says no\n- `Roof repair` says yes"},
+		{"an id of nothing packed is removed", "see note_18d2ffffffffffff_ffffffffffffffff for that", "see  for that"},
+		{"footnote is not a note id", "a footnote_1 here", "a footnote_1 here"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NameNotesInProse(tc.in, packed); got != tc.want {
+				t.Errorf("NameNotesInProse(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

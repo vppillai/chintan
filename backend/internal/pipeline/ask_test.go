@@ -444,3 +444,28 @@ func TestAskTaskDoesNotReadNotesSavedFromAnAskThread(t *testing.T) {
 		t.Errorf("notes_considered = %d, want 1: the saved answer is not a candidate", a.NotesConsidered)
 	}
 }
+
+// The chips are the citations. An id the model wrote into the prose anyway is
+// stored as the note's title, not rendered with its underscores as italics.
+func TestAskTaskNamesNotesByTitleInTheStoredAnswer(t *testing.T) {
+	const roof = "note_18d238868aef1800_ff6ee72b91682a42"
+	llmFake := &fake.LLM{Answer: &provider.Answer{
+		Text:     "In " + roof + " you decided to replace the whole roof.",
+		Sources:  []string{roof},
+		Grounded: true,
+	}}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	seedSearchableNote(t, h, roof, "Roof repairs", "replace the whole roof, the roofer comes on the fourteenth", "")
+	seedAsk(t, h, "a1", "what did I decide about the roof?", nil)
+
+	if err := NewWorker(h.pipeline).Handle(context.Background(), askTask("user1", "a1")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	a := getAsk(t, h, "a1")
+	if want := "In Roof repairs you decided to replace the whole roof."; a.Answer != want {
+		t.Errorf("answer = %q, want %q", a.Answer, want)
+	}
+	if len(a.Sources) != 1 || a.Sources[0].NoteID != roof {
+		t.Errorf("sources = %+v, want the roof note", a.Sources)
+	}
+}
