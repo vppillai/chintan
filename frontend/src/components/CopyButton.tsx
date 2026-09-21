@@ -67,7 +67,7 @@ function copyViaSelection(value: string): boolean {
     scratch.setSelectionRange(0, value.length);
     copied = document.execCommand('copy');
   } catch {
-    copied = false;
+    // execCommand threw rather than returning false; nothing was copied.
   } finally {
     scratch.remove();
     if (previous instanceof HTMLElement) previous.focus({ preventScroll: true });
