@@ -266,14 +266,16 @@ func score(n model.NoteIndex, terms []string) float64 {
 	if len(terms) == 0 {
 		return 0
 	}
-	title := strings.ToLower(n.Title)
-	names := strings.ToLower(strings.Join(n.Aliases, " ") + " " + strings.Join(n.Tags, " "))
-	// SearchText is already lowercased and marker-stripped. A note written
-	// before the field existed has none and falls back to its snippet, which
-	// is the first few hundred runes of the body.
+	// Folded the way Tokenize folds the question, so a title in either
+	// chillu spelling scores for a question in either (T58).
+	title := strings.ToLower(FoldScript(n.Title))
+	names := strings.ToLower(FoldScript(strings.Join(n.Aliases, " ") + " " + strings.Join(n.Tags, " ")))
+	// SearchText is already lowercased, folded and marker-stripped. A note
+	// written before the field existed has none and falls back to its
+	// snippet, which is the first few hundred runes of the body.
 	body := n.SearchText
 	if body == "" {
-		body = strings.ToLower(n.Snippet)
+		body = strings.ToLower(FoldScript(n.Snippet))
 	}
 	var total float64
 	for _, term := range terms {

@@ -62,10 +62,24 @@ func TestSearchTextAndQueryFoldChilluSpellings(t *testing.T) {
 	if SearchText(old) != SearchText(atomic) {
 		t.Fatalf("SearchText differs by chillu spelling: %q vs %q", SearchText(old), SearchText(atomic))
 	}
-	for _, tc := range []struct{ body, query string }{{old, atomic}, {atomic, old}} {
-		note := model.NoteIndex{Title: "Trip", SearchText: SearchText(tc.body)}
-		if _, ok := matchNote(note, searchTerms(tc.query)); !ok {
-			t.Errorf("query %q did not match a body spelled %q", tc.query, tc.body)
+	// Both sides fold: a title, alias or tag stored in either spelling is
+	// found by a query in either, including the old spelling typed the old
+	// way, which matched before the fold and must not stop.
+	for _, tc := range []struct{ stored, query string }{{old, atomic}, {atomic, old}, {old, old}, {atomic, atomic}} {
+		terms := searchTerms(tc.query)
+		if _, ok := matchNote(model.NoteIndex{Title: "Trip", SearchText: SearchText(tc.stored)}, terms); !ok {
+			t.Errorf("query %q did not match a body spelled %q", tc.query, tc.stored)
+		}
+		for field, note := range map[string]model.NoteIndex{
+			MatchTitle: {Title: tc.stored},
+			MatchAlias: {Title: "Trip", Aliases: []string{tc.stored}},
+			MatchTag:   {Title: "Trip", Tags: []string{tc.stored}},
+			MatchBody:  {Title: "Trip", Snippet: tc.stored},
+		} {
+			hit, ok := matchNote(note, terms)
+			if !ok || len(hit.MatchedIn) != 1 || hit.MatchedIn[0] != field {
+				t.Errorf("query %q against a %s spelled %q: ok=%v matched_in=%v", tc.query, field, tc.stored, ok, hit.MatchedIn)
+			}
 		}
 	}
 }

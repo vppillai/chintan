@@ -448,4 +448,17 @@ func TestFoldScriptJoinsTheTwoChilluSpellings(t *testing.T) {
 	if len(old) != 2 || len(atomic) != 2 || old[0] != atomic[0] || old[1] != atomic[1] {
 		t.Errorf("Tokenize differs by chillu spelling: %q vs %q", old, atomic)
 	}
+	// The title and the names fold too, or a title stored the old way would
+	// score nothing for its own spelling asked the old way.
+	for _, tc := range []struct{ stored, question string }{{"അവന്\u200d", "അവൻ"}, {"അവൻ", "അവന്\u200d"}, {"അവന്\u200d", "അവന്\u200d"}} {
+		for _, n := range []model.NoteIndex{
+			{ID: "title", Title: tc.stored},
+			{ID: "alias", Title: "x", Aliases: []string{tc.stored}},
+			{ID: "snippet", Title: "x", Snippet: tc.stored},
+		} {
+			if got := score(n, Tokenize(tc.question)); got <= 0 {
+				t.Errorf("score(%s %q, question %q) = %v, want > 0", n.ID, tc.stored, tc.question, got)
+			}
+		}
+	}
 }
