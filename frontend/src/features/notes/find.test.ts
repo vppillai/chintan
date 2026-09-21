@@ -6,6 +6,7 @@ import {
   describeMatches,
   findMatches,
   findReducer,
+  foldMalayalam,
   foldText,
   splitRuns,
   type FindState,
@@ -30,6 +31,11 @@ describe('finding a query in a text', () => {
     { name: 'a Malayalam vowel sign is a letter, not a diacritic', text: 'കാ കി കു', query: 'കി', expected: ['കി'] },
     { name: 'so a word with a vowel sign is not found in one without', text: 'മല', query: 'മലാ', expected: [] },
     { name: 'a Malayalam virama is kept too', text: 'എന്റെ എനറെ', query: 'എന്റെ', expected: ['എന്റെ'] },
+    // The chillu ൻ (U+0D7B) and its older spelling ന + virama + ZWJ render the same.
+    { name: 'a Malayalam chillu is found by its <consonant, virama, ZWJ> spelling', text: 'അവൻ വന്നു', query: 'അവന്\u200D', expected: ['അവൻ'] },
+    { name: 'and the sequence spelling by the atomic letter, all three code points', text: 'അവന്\u200D വന്നു', query: 'അവൻ', expected: ['അവന്\u200D'] },
+    { name: 'a dead consonant with no joiner is a conjunct, not a chillu', text: 'വന്നു', query: 'വൻ', expected: [] },
+    { name: 'a zero-width non-joiner is not a letter', text: 'ab\u200Cc abc', query: 'abc', expected: ['ab\u200Cc', 'abc'] },
     { name: 'Hindi', text: 'मेरा नाम राम है। राम।', query: 'राम', expected: ['राम', 'राम'] },
     { name: 'a Hindi matra is a letter', text: 'कर कुर', query: 'कर', expected: ['कर'] },
     { name: 'across a newline boundary no match is invented', text: 'first\nsecond', query: 'first second', expected: [] },
@@ -81,6 +87,20 @@ describe('folding', () => {
     for (let index = 1; index < offsets.length; index += 1) {
       expect(offsets[index]).toBeGreaterThanOrEqual(offsets[index - 1] ?? 0);
     }
+  });
+});
+
+describe('the chillu rule on its own', () => {
+  it('folds every sequence spelling to its atomic letter and drops stray joiners', () => {
+    expect(foldMalayalam('അവന്\u200D')).toBe('അവൻ');
+    expect(foldMalayalam('പുസ്തകങ്ങള്\u200D')).toBe('പുസ്തകങ്ങൾ');
+    expect(foldMalayalam('ണ്\u200D ര്\u200D ല്\u200D ക്\u200D')).toBe('ൺ ർ ൽ ൿ');
+    expect(foldMalayalam('ab\u200Cc\u200Dd')).toBe('abcd');
+  });
+
+  it('leaves a conjunct-forming virama, and everything else, alone', () => {
+    expect(foldMalayalam('വന്നു')).toBe('വന്നു');
+    expect(foldMalayalam('Café')).toBe('Café');
   });
 });
 

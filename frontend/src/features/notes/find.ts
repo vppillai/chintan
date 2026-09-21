@@ -9,7 +9,8 @@
  * their own right: stripping them would make "മല" and "മലാ" the same word,
  * and a search in Malayalam or Hindi would light up half the note. Both the
  * text and the query are folded the same way, so a composed and a decomposed
- * spelling of the same word still meet.
+ * spelling of the same word still meet — and so do the two spellings of a
+ * Malayalam chillu, below.
  *
  * Folding changes lengths — one letter can become none — so every folded
  * character remembers where in the original it came from, and a match is
@@ -65,17 +66,68 @@ function foldCharacter(character: string): string {
   return piece;
 }
 
+/**
+ * Malayalam's chillu letters — the bare consonants that close a syllable, the
+ * ൻ of അവൻ or the ൾ of പുസ്തകങ്ങൾ — have two encodings. Unicode 5.1 gave the
+ * six their own code points (U+0D7A–U+0D7F); before that, and on many
+ * keyboards still, a chillu is spelt <consonant, virama, ZWJ>, and Whisper
+ * writes whichever its training data favoured. Rendered identically, compared
+ * unequal: a word searched in one spelling was never found in the other. Both
+ * fold to the atomic letter. A joiner left over — a ZWNJ holding two letters
+ * apart, a ZWJ with nothing to join — is dropped, since neither is a letter.
+ */
+const CHILLU_BY_CONSONANT: Readonly<Record<string, string>> = {
+  '\u0D15': '\u0D7F', // ക → ൿ
+  '\u0D23': '\u0D7A', // ണ → ൺ
+  '\u0D28': '\u0D7B', // ന → ൻ
+  '\u0D30': '\u0D7C', // ര → ർ
+  '\u0D32': '\u0D7D', // ല → ൽ
+  '\u0D33': '\u0D7E', // ള → ൾ
+};
+const VIRAMA = '\u0D4D';
+const ZWNJ = '\u200C';
+const ZWJ = '\u200D';
+/** The table's keys, then virama and ZWJ. */
+const CHILLU_SEQUENCE = /([\u0D15\u0D23\u0D28\u0D30\u0D32\u0D33])\u0D4D\u200D/gu;
+const JOINER = /\u200C|\u200D/gu;
+
+/**
+ * The chillu and joiner rule on its own, for text that is only compared and
+ * never mapped back to a position. The instant search ranks every cached note
+ * on every keystroke, and two regex passes over a field cost a fraction of
+ * `foldText`'s per-character walk. Case and Latin diacritics are the caller's.
+ */
+export function foldMalayalam(text: string): string {
+  return text
+    .replace(CHILLU_SEQUENCE, (sequence, consonant: string) => CHILLU_BY_CONSONANT[consonant] ?? sequence)
+    .replace(JOINER, '');
+}
+
 export function foldText(text: string): FoldedText {
   let folded = '';
   const offsets: number[] = [];
   let index = 0;
+  const points = Array.from(text);
   // One code point at a time, so a letter that folds to two characters — or
   // to none — still maps back to where it began.
-  for (const character of text) {
-    const piece = foldCharacter(character);
+  for (let at = 0; at < points.length; at += 1) {
+    const character = points[at] ?? '';
+    let piece: string;
+    let consumed = character.length;
+    const chillu = CHILLU_BY_CONSONANT[character];
+    if (chillu !== undefined && points[at + 1] === VIRAMA && points[at + 2] === ZWJ) {
+      // Three code points, one letter: the whole sequence maps to the consonant's index.
+      piece = chillu;
+      consumed += VIRAMA.length + ZWJ.length;
+      at += 2;
+    } else if (character === ZWJ || character === ZWNJ) {
+      piece = '';
+    } else {
+      piece = foldCharacter(character);
+    }
     for (let produced = 0; produced < piece.length; produced += 1) offsets.push(index);
     folded += piece;
-    index += character.length;
+    index += consumed;
   }
   offsets.push(text.length);
   return { folded, offsets };

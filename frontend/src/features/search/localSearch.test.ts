@@ -134,6 +134,36 @@ describe('rankLocal over the body, when the corpus carries it', () => {
   });
 });
 
+/**
+ * The chillu ൻ (U+0D7B) and the older ന + virama + ZWJ render identically and
+ * compared unequal, so a word Whisper wrote one way was never found typed the
+ * other way.
+ */
+describe('rankLocal meets both spellings of a Malayalam chillu', () => {
+  const atomic = 'അവൻ';
+  const sequence = 'അവന്\u200D';
+  const malayalam: NoteWire[] = [
+    note({ id: 'title-atomic', title: `${atomic} വന്നു`, snippet: 'ഇന്നലെ.' }),
+    note({ id: 'body-sequence', title: 'വീട്', snippet: `${sequence} പോയി.` }),
+  ];
+
+  it('finds a title and a snippet in either spelling from a query in the other', () => {
+    expect(rankLocal(malayalam, sequence).map((hit) => hit.noteId)).toEqual([
+      'title-atomic',
+      'body-sequence',
+    ]);
+    expect(rankLocal(malayalam, atomic).map((hit) => hit.noteId)).toEqual([
+      'title-atomic',
+      'body-sequence',
+    ]);
+  });
+
+  it('excerpts the snippet as it was written', () => {
+    const hit = rankLocal(malayalam, atomic).find((entry) => entry.noteId === 'body-sequence');
+    expect(hit?.excerpt).toContain(sequence);
+  });
+});
+
 describe('excerptAround', () => {
   it('returns short text unchanged', () => {
     expect(excerptAround('short text', 'text')).toBe('short text');
