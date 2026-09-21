@@ -302,9 +302,11 @@ describe('the note screen is shaped for reading', () => {
     /*
      * QA D18: twelve fixed rows with an inner scrollbar — a long note scrolled
      * inside a box inside the scrolling page, and a short note wasted three
-     * hundred pixels. Where `field-sizing: content` is missing (jsdom, older
-     * WebKit) the hook measures the scroll height and sets the height to it.
+     * hundred pixels. Where `field-sizing: content` is missing (older WebKit)
+     * the hook measures the scroll height and sets the height to it. jsdom 30
+     * knows `field-sizing`, so the fallback has to be pinned here.
      */
+    vi.spyOn(CSS, 'supports').mockReturnValue(false);
     const lineHeight = 24;
     const scrollHeight = vi
       .spyOn(HTMLTextAreaElement.prototype, 'scrollHeight', 'get')
