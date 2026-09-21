@@ -331,8 +331,8 @@ export interface CaptureWire {
   /**
    * When the pipeline last wrote the row, re-stamped at every stage hand-off.
    * The server measures "still in flight" for a Retry from it
-   * (`service.CaptureStuck`); the API does not send it yet, so the filing row
-   * reads it when carried and measures from `created_at` until then.
+   * (`service.CaptureStuck`). Null on captures from before it was recorded
+   * (2026-09-05), which the filing row measures from `created_at`.
    */
   last_progress_at?: string | null;
   /**

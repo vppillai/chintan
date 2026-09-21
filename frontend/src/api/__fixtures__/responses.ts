@@ -192,6 +192,7 @@ export const noteDetail: NoteDetailWire = {
       "has_peaks": true,
       "has_segments": true,
       "id": "fixture-id",
+      "last_progress_at": null,
       "note_id": "fixture-note-id",
       "status": "appended",
       "suggested_note_id": null,
@@ -260,7 +261,7 @@ export const noteDetailChecklist: NoteDetailWire = {
   "version": 2
 };
 
-/** GET /v1/notes?kind=checklist → 200. Only the checklists; the filter is applied after the page, like tag, so a page can be short with cursor set. */
+/** GET /v1/notes?kind=checklist → 200. Only the checklists, filtered before the page is cut like tag: up to `limit` matches, and cursor set only when more matches exist. */
 export const notesPageChecklists: Page<NoteWire> = {
   "items": [
     {
@@ -380,6 +381,7 @@ export const capturesPage: Page<CaptureWire> = {
       "has_peaks": false,
       "has_segments": false,
       "id": "fixture-id",
+      "last_progress_at": null,
       "note_id": "fixture-note-id",
       "status": "failed",
       "suggested_note_id": null,
@@ -395,6 +397,7 @@ export const capturesPage: Page<CaptureWire> = {
       "has_peaks": false,
       "has_segments": false,
       "id": "fixture-id",
+      "last_progress_at": null,
       "note_id": null,
       "status": "needs_target",
       "suggested_note_id": "contract-suggested-note",
@@ -410,6 +413,7 @@ export const capturesPage: Page<CaptureWire> = {
       "has_peaks": false,
       "has_segments": false,
       "id": "fixture-id",
+      "last_progress_at": null,
       "note_id": null,
       "status": "needs_target",
       "suggested_note_id": null,
@@ -425,6 +429,7 @@ export const capturesPage: Page<CaptureWire> = {
       "has_peaks": true,
       "has_segments": true,
       "id": "fixture-id",
+      "last_progress_at": null,
       "note_id": "fixture-note-id",
       "status": "appended",
       "suggested_note_id": null,
@@ -444,6 +449,7 @@ export const captureSuggestedNote: CaptureWire = {
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
+  "last_progress_at": null,
   "note_id": null,
   "status": "needs_target",
   "suggested_note_id": "contract-suggested-note",
@@ -461,6 +467,7 @@ export const captureFailed: CaptureWire = {
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
+  "last_progress_at": null,
   "note_id": "fixture-note-id",
   "status": "failed",
   "suggested_note_id": null,
@@ -485,6 +492,7 @@ export const captureCreated: CaptureCreatedWire = {
     "has_peaks": true,
     "has_segments": false,
     "id": "fixture-id",
+    "last_progress_at": null,
     "note_id": null,
     "status": "uploaded",
     "suggested_note_id": null,
@@ -520,6 +528,7 @@ export const captureMoved: CaptureWire = {
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
+  "last_progress_at": null,
   "note_id": "fixture-note-id",
   "status": "appended",
   "suggested_note_id": null,
@@ -561,6 +570,7 @@ export const captureRetranscribing: CaptureWire = {
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
+  "last_progress_at": "2026-01-01T00:00:00.000000000Z",
   "note_id": "fixture-note-id",
   "status": "transcribing",
   "suggested_note_id": null,

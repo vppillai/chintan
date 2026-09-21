@@ -235,7 +235,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"GET /v1/notes/{noteId} → 200 for a checklist. kind is checklist and body is one task-list item per line (`- [ ] open`, `- [x] done`).",
 		h.do(t, http.MethodGet, "/v1/notes/"+checklist.ID, contractUser, nil))
 	add("notesPageChecklists", "Page<NoteWire>",
-		"GET /v1/notes?kind=checklist → 200. Only the checklists; the filter is applied after the page, like tag, so a page can be short with cursor set.",
+		"GET /v1/notes?kind=checklist → 200. Only the checklists, filtered before the page is cut like tag: up to `limit` matches, and cursor set only when more matches exist.",
 		h.do(t, http.MethodGet, "/v1/notes?kind=checklist", contractUser, nil))
 	// The checklist's cleaned view: tasks mode, task-list lines and nothing
 	// else. Seeded like noteDetailCleaned, since the API never writes the view.
@@ -489,18 +489,19 @@ const contractTime = "2026-01-01T00:00:00.000000000Z"
 // type: a null stays null, so the difference between `"error": null` and
 // `"error": "…"` — which is the difference the progress card renders — survives.
 var volatileStrings = map[string]string{
-	"id":             "fixture-id",
-	"note_id":        "fixture-note-id",
-	"auto_select_id": "fixture-note-id",
-	"correlation_id": "00000000-0000-4000-8000-000000000000",
-	"instance":       "/v1/fixture",
-	"url":            "https://example.invalid/presigned",
-	"created_at":     contractTime,
-	"updated_at":     contractTime,
-	"expires_at":     contractTime,
-	"appended_at":    contractTime,
-	"purge_after":    contractTime,
-	"generated_at":   contractTime,
+	"id":               "fixture-id",
+	"note_id":          "fixture-note-id",
+	"auto_select_id":   "fixture-note-id",
+	"correlation_id":   "00000000-0000-4000-8000-000000000000",
+	"instance":         "/v1/fixture",
+	"url":              "https://example.invalid/presigned",
+	"created_at":       contractTime,
+	"updated_at":       contractTime,
+	"expires_at":       contractTime,
+	"appended_at":      contractTime,
+	"last_progress_at": contractTime,
+	"purge_after":      contractTime,
+	"generated_at":     contractTime,
 }
 
 // volatileNumbers is the same idea for measured values.

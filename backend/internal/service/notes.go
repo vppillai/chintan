@@ -495,8 +495,18 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		// two derivations of the body the index row carries.
 		note.Snippet = generateSnippet(*updates.Body)
 		note.SearchText = SearchText(*updates.Body)
-		// The cleaned view was generated from the body that just changed.
-		MarkCleanedStale(&note)
+		// The cleaned view was generated from the body that just changed —
+		// unless the change was to adopt the view itself ("Use this list"): a
+		// body equal to CleanedBody, trailing whitespace aside, IS the view,
+		// so it is current whatever an earlier edit had marked it. Left
+		// stale, the tab offered to regenerate a list identical to the note
+		// (smoke 2026-09-21, finding 3).
+		trim := func(s string) string { return strings.TrimRightFunc(s, unicode.IsSpace) }
+		if note.CleanedBody != "" && trim(*updates.Body) == trim(note.CleanedBody) {
+			note.CleanedStale = false
+		} else {
+			MarkCleanedStale(&note)
+		}
 	}
 
 	// Update metadata

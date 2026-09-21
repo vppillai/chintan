@@ -141,14 +141,17 @@ paths:
             default: active
         - name: tag
           in: query
-          description: Restrict to notes carrying this tag.
+          description: |
+            Restrict to notes carrying this tag. Applied before the page is
+            cut, so a page holds up to `limit` matches and `cursor` is set
+            only when more matches exist.
           schema: { type: string, maxLength: 40 }
         - name: kind
           in: query
           description: |
-            Restrict to notes of this kind. Applied after the page, like
-            `tag`: a page may come back short, or empty, with `cursor` still
-            set, and the client keeps paging. Cursor semantics are unchanged.
+            Restrict to notes of this kind. Applied before the page is cut,
+            like `tag`: a page holds up to `limit` matches and `cursor` is
+            set only when more matches exist. Cursor semantics are unchanged.
           schema:
             type: string
             enum: [note, checklist]
@@ -1522,6 +1525,17 @@ components:
             `suggested_note_id`.
         created_at: { type: string, format: date-time }
         appended_at: { type: string, format: date-time, nullable: true }
+        last_progress_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            When the capture last moved: the pipeline's last write to it, or
+            the API's last hand-off to the worker. Null on captures from
+            before it was recorded (2026-09-05), which a client reads as
+            `created_at`. The filing row gates Retry on it: a capture
+            untouched for longer than the worker's 900 s timeout has no live
+            worker.
         duration_ms: { type: integer, nullable: true }
         has_segments: { type: boolean }
         has_peaks: { type: boolean }

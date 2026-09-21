@@ -159,6 +159,25 @@ describe('ChecklistEditor', () => {
     expect(screen.queryByRole('region', { name: /^Done/ })).toBeNull();
   });
 
+  it('an item is a wrapping field: a pasted line break becomes a space, and Enter still starts a new item', async () => {
+    const user = userEvent.setup();
+    const { body } = mount(LIST);
+    const milk = screen.getByRole('textbox', { name: 'Item 1' });
+    // A textarea, so a dictated sentence wraps instead of clipping; one row
+    // tall until its words need more.
+    expect(milk.tagName).toBe('TEXTAREA');
+    expect(milk).toHaveAttribute('rows', '1');
+
+    await user.click(milk);
+    await user.paste(' and\ncream');
+    expect(body()).toBe('- [ ] Milk and cream\n- [x] Eggs\n- [ ] Bread');
+    expect(milk).toHaveValue('Milk and cream');
+
+    await user.keyboard('{Enter}');
+    expect(body()).toBe('- [ ] Milk and cream\n- [ ] \n- [x] Eggs\n- [ ] Bread');
+    expect(screen.getByRole('textbox', { name: 'Item 2' })).toHaveFocus();
+  });
+
   it('shows a legacy prose line as an open item and normalises it on the first write', async () => {
     const user = userEvent.setup();
     const { body } = mount('Ridge tiles have slipped.\n\nCall Ellis');

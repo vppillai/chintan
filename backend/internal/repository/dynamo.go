@@ -519,7 +519,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 	}
 	kept := make([]model.NoteIndex, 0, len(all))
 	for _, n := range all {
-		if keep(n) {
+		if keep(n) && opts.Keeps(n) {
 			kept = append(kept, n)
 		}
 	}

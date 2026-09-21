@@ -159,7 +159,7 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 	type entry struct{ sortKey, id string }
 	entries := make([]entry, 0, len(s.notes[tenantID]))
 	for id, n := range s.notes[tenantID] {
-		if !keep(n) {
+		if !keep(n) || !opts.Keeps(n) {
 			continue
 		}
 		// Fixed-width instant, then id to break a tie deterministically. The

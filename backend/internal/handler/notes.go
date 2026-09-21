@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
@@ -76,6 +77,34 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// tag and kind are handed to the store as its Keep filter rather than
+	// applied to the page it returns: filtered after the cut, a page was as
+	// short as its matches and its cursor said only that the partition had
+	// more ROWS, so `?kind=checklist` over sixty notes answered one item and
+	// a cursor to an empty page, and Home read that as "Checklists · 0+".
+	// Filtered before the cut, the page holds up to `limit` matches and the
+	// cursor is set only when more matches exist.
+	tag := r.URL.Query().Get("tag")
+	if len([]rune(tag)) > MaxTagRunes {
+		httperr.BadRequest(w, r, "tag is longer than this API stores")
+		return
+	}
+	// The wire's "note" is stored as "", so whether a kind was asked for is
+	// remembered apart from which.
+	kind, byKind := "", r.URL.Query().Get("kind") != ""
+	if byKind {
+		var ok bool
+		if kind, ok = storedNoteKind(r.URL.Query().Get("kind")); !ok {
+			httperr.BadRequest(w, r, service.ErrInvalidNoteKind.Error())
+			return
+		}
+	}
+	if tag != "" || byKind {
+		opts.Keep = func(n model.NoteIndex) bool {
+			return (!byKind || n.Kind == kind) && (tag == "" || slices.Contains(n.Tags, tag))
+		}
+	}
+
 	state := r.URL.Query().Get("state")
 	var got repository.Page[model.NoteIndex]
 	switch state {
@@ -93,43 +122,6 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := got.Items
-	// The tag filter is applied after the page, exactly as a DynamoDB
-	// FilterExpression would be: a page can legitimately come back short with a
-	// cursor still set, and the client keeps paging.
-	if tag := r.URL.Query().Get("tag"); tag != "" {
-		if len([]rune(tag)) > MaxTagRunes {
-			httperr.BadRequest(w, r, "tag is longer than this API stores")
-			return
-		}
-		filtered := items[:0:0]
-		for _, n := range items {
-			for _, t := range n.Tags {
-				if t == tag {
-					filtered = append(filtered, n)
-					break
-				}
-			}
-		}
-		items = filtered
-	}
-	// The kind filter is the same mechanism as the tag filter: applied after
-	// the page, so a page of plain notes comes back empty with its cursor set
-	// and the client keeps paging.
-	if kind := r.URL.Query().Get("kind"); kind != "" {
-		want, ok := storedNoteKind(kind)
-		if !ok {
-			httperr.BadRequest(w, r, service.ErrInvalidNoteKind.Error())
-			return
-		}
-		filtered := items[:0:0]
-		for _, n := range items {
-			if n.Kind == want {
-				filtered = append(filtered, n)
-			}
-		}
-		items = filtered
-	}
-
 	out := notesOf(items)
 	if opts.IncludeSearchText {
 		for i := range out {
