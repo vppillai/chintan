@@ -43,6 +43,15 @@ export interface ManifestIcon {
   purpose?: string;
 }
 
+/** One of the two install-sheet pictures; `form_factor` picks which sheet shows it. */
+export interface ManifestScreenshot {
+  src: string;
+  sizes: string;
+  type: string;
+  form_factor: 'narrow' | 'wide';
+  label: string;
+}
+
 /** Joins the base to a bundled asset, with exactly one slash between them. */
 export function basedPath(base: string, path: string): string {
   const prefix = base.endsWith('/') ? base : `${base}/`;
@@ -64,6 +73,13 @@ export function chintanManifest(base: string, identity: AppIdentity) {
      */
     start_url: at(''),
     scope: at(''),
+    /*
+     * The installed app's identity, so the browser matches an update to the
+     * app already installed however `start_url` moves (round-3 T57). Per
+     * instance by construction: the base is the instance's path.
+     */
+    id: at(''),
+    categories: ['productivity'],
     display: 'standalone' as const,
     background_color: GROUND,
     theme_color: GROUND,
@@ -86,6 +102,30 @@ export function chintanManifest(base: string, identity: AppIdentity) {
         purpose: 'maskable' as const,
       },
     ] satisfies ManifestIcon[],
+    /*
+     * What the richer install sheet shows (round-3 T57): Home on a phone and
+     * on a desktop, taken by `e2e/screenshots.spec.ts` from the build with
+     * the stub API, so they are the app and not a mock-up. JPEG rather than
+     * PNG on purpose: the service worker precaches every PNG under the base,
+     * and two pictures for an install sheet are not worth 300 KB on every
+     * device's first visit.
+     */
+    screenshots: [
+      {
+        src: at('screenshots/home-narrow.jpg'),
+        sizes: '390x844',
+        type: 'image/jpeg',
+        form_factor: 'narrow' as const,
+        label: 'Your notes, grouped by day, with the record button beneath',
+      },
+      {
+        src: at('screenshots/home-wide.jpg'),
+        sizes: '1280x800',
+        type: 'image/jpeg',
+        form_factor: 'wide' as const,
+        label: 'The same library on a desktop',
+      },
+    ] satisfies ManifestScreenshot[],
     shortcuts: [
       {
         name: 'Record a thought',
