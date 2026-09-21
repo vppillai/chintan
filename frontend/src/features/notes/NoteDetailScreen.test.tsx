@@ -41,6 +41,12 @@ function snippetOf(body: string): string {
   return body.split('\n').find((line) => line.trim().length > 0)?.trim() ?? '';
 }
 
+/** Details and Share live in the header's ⋮ menu, and open a drawer at the foot. */
+async function openPanel(user: ReturnType<typeof userEvent.setup>, item: 'Details' | 'Share') {
+  await user.click(screen.getByRole('button', { name: 'Note actions' }));
+  await user.click(screen.getByRole('menuitem', { name: item }));
+}
+
 function server(initial: StoredNote[]) {
   const notes = new Map(initial.map((note) => [note.id, note]));
   const patches: { version: number; status: number; body: Record<string, unknown> }[] = [];
@@ -197,7 +203,7 @@ describe('what was just saved is what the app shows next', () => {
       'v1 body more words here.',
     );
 
-    await user.click(screen.getByRole('button', { name: 'Details' }));
+    await openPanel(user, 'Details');
     await user.type(screen.getByRole('textbox', { name: 'Add a tag' }), 'vtag{Enter}');
 
     await waitFor(() => {
@@ -422,8 +428,8 @@ describe('the note is panels under one strip', () => {
     expect(await screen.findByRole('region', { name: 'Recordings' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /more for recording from/i })).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
-    // The bar is on every tab.
-    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+    // The note's menu is on every tab.
+    expect(screen.getByRole('button', { name: 'Note actions' })).toBeInTheDocument();
     // The URL says which tab, replacing the entry rather than stacking one.
     expect(router.state.location.search).toBe('?tab=recordings');
     expect(sessionStorage.getItem(noteTabStorageKey('roof-repair'))).toBe('recordings');
@@ -478,8 +484,8 @@ describe('the note is panels under one strip', () => {
     expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Cleaned');
     expect(screen.getByText('No cleaned view yet')).toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
-    // The bar is here too.
-    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+    // The note's menu is here too.
+    expect(screen.getByRole('button', { name: 'Note actions' })).toBeInTheDocument();
   });
 
   it('remembers the tab per note for the session, and a deep link outranks the memory', async () => {
@@ -514,20 +520,43 @@ describe('the note is panels under one strip', () => {
     expect(screen.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('brings the action bar back when the recordings panel is left mid-selection', async () => {
+  it('hides an open drawer while recordings are selected, and brings it back when the panel is left', async () => {
     const user = userEvent.setup();
     const api = server([withRecording]);
     mount(api.fetchImpl, '/notes/roof-repair?tab=recordings');
     await loaded();
+    await openPanel(user, 'Details');
+    expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
 
     await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
     await user.click(screen.getByRole('menuitem', { name: 'Select' }));
     expect(await screen.findByRole('toolbar', { name: 'Recording actions' })).toBeInTheDocument();
-    expect(screen.queryByRole('toolbar', { name: 'Note actions' })).toBeNull();
+    // Hidden, not closed: the selection bar has the foot of the screen.
+    expect(screen.queryByRole('heading', { name: 'Details' })).toBeNull();
 
     await user.click(screen.getByRole('tab', { name: 'Text' }));
     expect(screen.queryByRole('toolbar', { name: 'Recording actions' })).toBeNull();
-    expect(screen.getByRole('toolbar', { name: 'Note actions' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
+  });
+
+  it('sends focus into the drawer it opens, and back to the menu when it closes', async () => {
+    // The menuitem that opened the drawer unmounts on select, and the drawer
+    // is at the far end of the screen: without this a keyboard user is left
+    // on <body> with the whole note to Tab through.
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await openPanel(user, 'Details');
+    expect(screen.getByRole('combobox', { name: 'Transcription language' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Close details' }));
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+
+    await openPanel(user, 'Share');
+    expect(screen.getByRole('heading', { name: 'Share' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Close share' }));
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
   });
 });
 
@@ -848,7 +877,7 @@ describe('a conflict takes the foot of the screen', () => {
       expect(body).toHaveValue('v1 body');
     });
 
-    await user.click(screen.getByRole('button', { name: 'Details' }));
+    await openPanel(user, 'Details');
     expect(screen.getByRole('combobox', { name: 'Transcription language' })).toBeInTheDocument();
 
     // Another device saved first; this save is answered 409.
@@ -858,7 +887,7 @@ describe('a conflict takes the foot of the screen', () => {
 
     expect(await screen.findByText(/changed elsewhere/i)).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Transcription language' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('heading', { name: 'Details' })).toBeNull();
 
     await user.click(screen.getByRole('button', { name: 'Use the newer version' }));
     await waitFor(() => {

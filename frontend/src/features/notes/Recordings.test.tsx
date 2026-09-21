@@ -12,7 +12,8 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
 import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { Recordings, justLanded } from './Recordings.tsx';
+import { Recordings, filedLabel, heardAs, justLanded, retranscribeLabel } from './Recordings.tsx';
+import { describeMoment } from './groups.ts';
 
 /**
  * The audio lives in a bucket on another origin, behind a presigned URL. Two
@@ -53,6 +54,15 @@ const NOTE: NoteDetailWire = {
   captures: [CAPTURE],
 };
 
+/**
+ * The row's disclosure button, named by when the recording was made and how
+ * long it runs: a filed row says nothing about being filed (T19), so the
+ * moment is what tells the rows apart.
+ */
+function isSummary(name: string): boolean {
+  return [CAPTURE, OLDER].some((capture) => name.startsWith(describeMoment(capture.created_at)));
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -71,7 +81,12 @@ function json(body: unknown, status = 200): Response {
  */
 function apiStub(
   initial: NoteDetailWire = NOTE,
-  overrides: Partial<Record<'delete' | 'move' | 'manifest', (init?: RequestInit) => Response>> = {},
+  overrides: Partial<
+    Record<
+      'delete' | 'move' | 'manifest' | 'segments' | 'retranscribe',
+      (init?: RequestInit) => Response
+    >
+  > = {},
 ) {
   const note: NoteDetailWire = structuredClone(initial);
   const calls: { method: string; path: string; body?: unknown }[] = [];
@@ -90,6 +105,9 @@ function apiStub(
     if (url.pathname.endsWith('/download')) {
       if (url.searchParams.get('kind') === 'audio') {
         return json({ url: AUDIO_URL, expires_at: new Date(Date.now() + 900_000).toISOString() });
+      }
+      if (url.searchParams.get('kind') === 'segments' && overrides.segments) {
+        return overrides.segments(init);
       }
       return json({ type: 'about:blank', title: 'Not found', status: 404 }, 404);
     }
@@ -116,6 +134,13 @@ function apiStub(
       if (overrides.move) return overrides.move(init);
       drop(captureId);
       return json({ ...CAPTURE, id: captureId, note_id: 'reading-list' });
+    }
+    if (method === 'POST' && url.pathname.endsWith('/retranscribe')) {
+      if (overrides.retranscribe) return overrides.retranscribe(init);
+      // Back at the start of the pipeline, as the real server answers.
+      const row = (note.captures ?? []).find((capture) => capture.id === captureId);
+      if (row) row.status = 'transcribing';
+      return json({ ...CAPTURE, id: captureId, status: 'transcribing' }, 202);
     }
     if (url.pathname.endsWith('/v1/notes')) {
       return json({
@@ -224,12 +249,19 @@ describe('the audio is fetched the same way twice', () => {
     try {
       const bucket = bucketStub();
       mount(apiStub().fetchImpl);
-      await user.click(await screen.findByRole('button', { name: 'Download audio' }));
+      // From the row's menu: the open row's own Download button is gone (T41).
+      await screen.findByRole('region', { name: 'Recording' });
+      expect(screen.queryByRole('button', { name: 'Download audio' })).toBeNull();
+      await user.click(screen.getByRole('button', { name: /more for recording from/i }));
+      await user.click(screen.getByRole('menuitem', { name: 'Download audio' }));
 
       expect(await screen.findByText('Downloaded')).toBeInTheDocument();
-      expect(bucket).toHaveBeenCalledWith(AUDIO_URL, expect.objectContaining({ cache: 'no-store' }));
-      // Named after the object's real extension, not the query string.
-      expect(saves.names).toEqual(['chintan-cap-1.webm']);
+      expect(bucket).toHaveBeenCalledWith(
+        'https://chintan-content.s3.test/cap-1/audio.webm?sig=1',
+        expect.objectContaining({ cache: 'no-store' }),
+      );
+      // Named by the server's manifest, like every download from this tab.
+      expect(saves.names).toEqual(['roof-repair-cap-1.webm']);
     } finally {
       saves.restore();
     }
@@ -237,7 +269,7 @@ describe('the audio is fetched the same way twice', () => {
 });
 
 describe('a row’s More menu', () => {
-  it('offers Move to…, Delete recording, Download audio and Select', async () => {
+  it('offers Move to…, Delete recording, Download audio, Transcribe again and Select', async () => {
     const user = userEvent.setup();
     bucketStub();
     mount(apiStub().fetchImpl);
@@ -248,12 +280,245 @@ describe('a row’s More menu', () => {
       'Move to…',
       'Delete recording',
       'Download audio',
+      'Transcribe again in English',
       'Select',
     ]);
     // Escape closes it and puts focus back on the trigger.
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByRole('button', { name: /more for recording from/i })).toHaveFocus();
+  });
+});
+
+const SEGMENTS_DOC = {
+  version: 1,
+  language: 'English',
+  segments: [
+    { start_ms: 0, end_ms: 3_000, text: ' Ridge tiles have slipped.' },
+    { start_ms: 3_000, end_ms: 6_000, text: ' Ellis quoted nine hundred.' },
+  ],
+};
+
+/**
+ * The bucket answers the segments document for its URL and audio bytes for
+ * the rest. `doc` is what it answers next, so a test can land a new one.
+ */
+function artifactsStub(language = 'English'): { doc: typeof SEGMENTS_DOC } {
+  const bucket = { doc: { ...SEGMENTS_DOC, language } };
+  // jsdom implements no scrolling, and the transcript follows playback.
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<typeof fetch>(async (input) =>
+      String(input).includes('/segments')
+        ? new Response(JSON.stringify(bucket.doc), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        : new Response('webm bytes', { status: 200, headers: { 'content-type': 'audio/webm' } }),
+    ),
+  );
+  return bucket;
+}
+
+/** The roof note with a transcript behind its newest recording, and a presigned URL for it. */
+function withSegments(note: Partial<NoteDetailWire> = {}, captures = [{ ...CAPTURE, has_segments: true }, OLDER]) {
+  return apiStub(
+    { ...NOTE, ...note, captures },
+    {
+      segments: () =>
+        json({
+          url: 'https://chintan-content.s3.test/cap-1/segments.json?sig=1',
+          expires_at: new Date(Date.now() + 900_000).toISOString(),
+        }),
+    },
+  );
+}
+
+describe('copying from a row’s menu', () => {
+
+  it('copies this recording’s transcript from the open row and says so on the notice line', async () => {
+    // The item sits in one recording's menu. "Copy transcript" read as the
+    // note's transcript; a whole-note copy already exists under Share, so this
+    // one says which recording it copies.
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    artifactsStub();
+    mount(withSegments().fetchImpl);
+
+    await screen.findByRole('button', { name: /Ellis quoted nine hundred\./ });
+    await user.click(screen.getAllByRole('button', { name: /more for recording from/i })[0]!);
+    await user.click(screen.getByRole('menuitem', { name: 'Copy this transcript' }));
+
+    expect(writeText).toHaveBeenCalledWith('Ridge tiles have slipped.\nEllis quoted nine hundred.');
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
+    // The transcript panel has no copy control of its own any more.
+    expect(screen.queryByRole('button', { name: /copy/i })).toBeNull();
+  });
+
+  it('offers no copy on a closed row, whose text is not in hand', async () => {
+    const user = userEvent.setup();
+    artifactsStub();
+    mount(withSegments().fetchImpl);
+
+    await screen.findByRole('button', { name: /Ellis quoted nine hundred\./ });
+    await user.click(screen.getAllByRole('button', { name: /more for recording from/i })[1]!);
+    expect(
+      within(screen.getByRole('menu'))
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Move to…', 'Delete recording', 'Download audio', 'Transcribe again in English', 'Select']);
+  });
+});
+
+/**
+ * What Whisper heard (T8): the worker has always stored the detected language
+ * in `segments.json` and the app never read it, so a Malayalam recording that
+ * came back in Tamil script looked like any other. On the open row a chip says
+ * "Heard as Tamil" when that is not the language the note asked for, and is
+ * the way to transcribe it again.
+ */
+describe('the language Whisper heard', () => {
+  it('is a chip, and the fix, when it is not the note’s language', async () => {
+    const user = userEvent.setup();
+    artifactsStub('Tamil');
+    const api = withSegments({ language: 'ml' }, [{ ...CAPTURE, has_segments: true }]);
+    mount(api.fetchImpl);
+
+    const chip = await screen.findByRole('button', {
+      name: 'Heard as Tamil — transcribe again in Malayalam',
+    });
+    await user.click(chip);
+    await waitFor(() => {
+      expect(api.calls).toContainEqual(
+        expect.objectContaining({ method: 'POST', path: '/v1/captures/cap-1/retranscribe' }),
+      );
+    });
+  });
+
+  it('says nothing when Whisper heard what was asked for', async () => {
+    artifactsStub('English');
+    mount(withSegments({}, [{ ...CAPTURE, has_segments: true }]).fetchImpl);
+    await screen.findByRole('button', { name: /Ellis quoted nine hundred\./ });
+    expect(screen.queryByText(/heard as/i)).toBeNull();
+  });
+
+  it('is decided by name against the effective language, and always said under auto-detect', () => {
+    expect(heardAs('Tamil', 'ml')).toBe('Tamil');
+    expect(heardAs('malayalam', 'ml')).toBeNull();
+    expect(heardAs('English', 'en')).toBeNull();
+    expect(heardAs('English', 'auto')).toBe('English');
+    expect(heardAs(null, 'ml')).toBeNull();
+    // A code the curated list lacks still compares by its Intl name.
+    expect(heardAs('Icelandic', 'is')).toBeNull();
+    expect(heardAs('Icelandic', 'en')).toBe('Icelandic');
+  });
+});
+
+/**
+ * Transcribe again (T7): a recording that came back in the wrong script, or
+ * with sentences missing, could only be deleted and re-recorded — the
+ * pipeline transcribes once, and Retry resumes from the last good artifact.
+ */
+describe('transcribing a recording again', () => {
+  it('is worded for the note’s language, posts to the capture and follows the run', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub({ ...NOTE, language: 'ml' });
+    mount(api.fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Transcribe again in Malayalam' }));
+
+    await waitFor(() => {
+      expect(api.calls).toContainEqual(
+        expect.objectContaining({ method: 'POST', path: '/v1/captures/cap-1/retranscribe', body: {} }),
+      );
+    });
+    // The 202's capture is on the row at once: the stage strip is back.
+    expect(await screen.findByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
+    expect(screen.getByText('Filing…')).toBeInTheDocument();
+  });
+
+  it('shows the transcript the run lands, not the one the row had in hand', async () => {
+    const user = userEvent.setup();
+    const bucket = artifactsStub('Tamil');
+    const api = withSegments({ language: 'ml' }, [{ ...CAPTURE, has_segments: true }]);
+    const { queryClient } = mount(api.fetchImpl);
+
+    const chip = await screen.findByRole('button', {
+      name: 'Heard as Tamil — transcribe again in Malayalam',
+    });
+    expect(screen.getByRole('button', { name: /Ellis quoted nine hundred\./ })).toBeInTheDocument();
+    await user.click(chip);
+
+    // While it runs the row says so; the old text and its chip are not
+    // offered, because a second tap on the chip would be a 409.
+    await screen.findByRole('list', { name: 'Filing progress' });
+    expect(screen.queryByText(/heard as/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Ellis quoted/ })).toBeNull();
+    // The 202's refetch of the note has settled, so what lands next stays.
+    await waitFor(() => {
+      expect(queryClient.getQueryState(queryKeys.note(NOTE.id))?.fetchStatus).toBe('idle');
+    });
+
+    // The worker writes a new document, and every stage bumps the capture's
+    // version; the poll brings the landed row.
+    bucket.doc = {
+      ...SEGMENTS_DOC,
+      language: 'Malayalam',
+      segments: [{ start_ms: 0, end_ms: 3_000, text: ' Nine hundred, Ellis said, in Malayalam.' }],
+    };
+    const landed: CaptureWire = {
+      ...CAPTURE,
+      has_segments: true,
+      status: 'appended',
+      version: CAPTURE.version + 1,
+    };
+    api.note.captures = [landed];
+    act(() => {
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(NOTE.id), (current) =>
+        current ? { ...current, captures: [landed] } : current,
+      );
+    });
+
+    expect(
+      await screen.findByRole('button', { name: /Nine hundred, Ellis said, in Malayalam\./ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ellis quoted/ })).toBeNull();
+    expect(screen.queryByText(/heard as/i)).toBeNull();
+  });
+
+  it('is not offered while the recording is still moving', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    mount(apiStub({ ...NOTE, captures: [{ ...CAPTURE, status: 'cleaning' }] }).fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    expect(screen.queryByRole('menuitem', { name: /transcribe again/i })).toBeNull();
+  });
+
+  it('says so when the server is older than the route', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub(NOTE, {
+      retranscribe: () => json({ type: 'about:blank', title: 'Not found', status: 404 }, 404),
+    });
+    mount(api.fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Transcribe again in English' }));
+
+    expect(
+      await screen.findByText('Transcribing again is not available on this server yet.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
+  });
+
+  it('is honest about auto-detect', () => {
+    expect(retranscribeLabel('ta')).toBe('Transcribe again in Tamil');
+    expect(retranscribeLabel('auto')).toBe('Transcribe again (auto-detect)');
   });
 });
 
@@ -292,7 +557,7 @@ describe('a row swiped aside', () => {
     const user = userEvent.setup();
     bucketStub();
     mount(apiStub().fetchImpl);
-    const summary = await screen.findByRole('button', { name: /filed/i, expanded: true });
+    const summary = await screen.findByRole('button', { name: isSummary, expanded: true });
 
     swipeOpen(summary);
     await user.click(screen.getByRole('button', { name: 'Delete' }));
@@ -401,6 +666,10 @@ describe('moving a recording to another note', () => {
     expect(within(sheet).queryByPlaceholderText(/new note/i)).toBeNull();
     expect(within(sheet).queryByRole('button', { name: /create/i })).toBeNull();
     expect(options.length).toBe(2);
+    // Each option says when it was touched and how its text begins (T42), so
+    // two notes with the same dictated title can be told apart.
+    expect(options[0]).toHaveTextContent(/Ridge tiles on the south slope have slip…/);
+    expect(options[0]).toHaveTextContent(/Aug/);
 
     // The search field narrows the list.
     await user.type(within(sheet).getByRole('searchbox', { name: 'Search notes' }), 'fence');
@@ -475,7 +744,7 @@ describe('selecting several recordings', () => {
   it('enters selection on a long press, and the press is not also a tap', async () => {
     bucketStub();
     mount(apiStub(TWO).fetchImpl);
-    const rows = await screen.findAllByRole('button', { name: /filed/i });
+    const rows = await screen.findAllByRole('button', { name: isSummary });
     const older = rows[1]!;
 
     fireEvent.pointerDown(older, { pointerType: 'touch', clientX: 10, clientY: 10 });
@@ -492,7 +761,7 @@ describe('selecting several recordings', () => {
   it('a press that moves is a scroll, not a selection', async () => {
     bucketStub();
     mount(apiStub(TWO).fetchImpl);
-    const [row] = await screen.findAllByRole('button', { name: /filed/i });
+    const [row] = await screen.findAllByRole('button', { name: isSummary });
 
     fireEvent.pointerDown(row!, { pointerType: 'touch', clientX: 10, clientY: 10 });
     fireEvent.pointerMove(row!, { pointerType: 'touch', clientX: 10, clientY: 40 });
@@ -591,8 +860,10 @@ describe('a recording still being made into this note', () => {
     const rows = await recordingRows();
     expect(rows[0]).toHaveTextContent('Uploading… 40%');
     expect(rows[0]).toHaveTextContent('0:09');
-    // The filed recording is still there, after it.
-    expect(rows[1]).toHaveTextContent('Filed');
+    // The filed recording is still there, after it — and says nothing about
+    // being filed, which every row on this tab is.
+    expect(rows[1]).toHaveTextContent('0:12');
+    expect(rows[1]).not.toHaveTextContent('Filed');
   });
 
   it('shows the filing stages under a row the pipeline is still working on, and asks for no audio', async () => {
@@ -607,7 +878,7 @@ describe('a recording still being made into this note', () => {
     expect(within(rows[0]!).getByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
     expect(within(rows[0]!).getByText(/transcribing in progress/i)).toBeInTheDocument();
     // The finished one is the row that opened on arrival.
-    expect(within(rows[1]!).getByRole('button', { name: /filed/i })).toHaveAttribute(
+    expect(within(rows[1]!).getByRole('button', { name: isSummary })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -637,7 +908,14 @@ describe('a recording still being made into this note', () => {
 
     expect(await screen.findByRole('region', { name: 'Recording' })).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Filing progress' })).toBeNull();
-    expect(screen.getByRole('button', { name: /filed/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: isSummary })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('says nothing about a row that is filed, and names every other state', () => {
+    expect(filedLabel(CAPTURE)).toBe('');
+    expect(filedLabel({ ...CAPTURE, status: 'transcribing' })).toBe('Filing…');
+    expect(filedLabel({ ...CAPTURE, status: 'needs_target' })).toBe('Needs a target');
+    expect(filedLabel({ ...CAPTURE, status: 'failed' })).toBe('Failed');
   });
 
   it('knows a landing from a row that arrived already filed', () => {

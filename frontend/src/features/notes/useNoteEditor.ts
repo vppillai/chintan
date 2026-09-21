@@ -43,6 +43,7 @@ function draftFrom(note: NoteDetailWire): NoteDraft {
     // spells as the empty string on the way back up.
     language: note.language ?? '',
     auto_clean: note.auto_clean ?? false,
+    verbatim: note.verbatim ?? false,
     // The mode is only known from a cleaned view that exists; with none, the
     // draft leaves it unset and nothing is sent until the user picks one.
     ...(note.cleaned?.mode ? { cleaned_mode: note.cleaned.mode } : {}),
@@ -237,6 +238,10 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
       Boolean(attempted.auto_clean) !== Boolean(current.saved.auto_clean)
         ? { auto_clean: attempted.auto_clean }
         : {}),
+      ...(attempted.verbatim !== undefined &&
+      Boolean(attempted.verbatim) !== Boolean(current.saved.verbatim)
+        ? { verbatim: attempted.verbatim }
+        : {}),
       ...(attempted.cleaned_mode !== undefined &&
       attempted.cleaned_mode !== current.saved.cleaned_mode
         ? { cleaned_mode: attempted.cleaned_mode }
@@ -280,6 +285,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
         // The list row the PATCH answers with may not carry it; the toggle
         // must not flip back to what the cache held before the save.
         ...(attempted.auto_clean !== undefined ? { auto_clean: attempted.auto_clean } : {}),
+        ...(attempted.verbatim !== undefined ? { verbatim: attempted.verbatim } : {}),
         ...(attempted.kind !== undefined ? { kind: attempted.kind } : {}),
         ...(note.captures ? { captures: note.captures } : {}),
       });

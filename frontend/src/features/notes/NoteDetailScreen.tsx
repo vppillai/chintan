@@ -34,7 +34,13 @@ import {
   useScrollToActiveMatch,
   type FindTarget,
 } from './FindBar.tsx';
-import { NoteActions, noteLanguageFieldId, type NotePanelKind } from './NoteActions.tsx';
+import {
+  NoteDrawer,
+  NoteMenu,
+  noteLanguageFieldId,
+  notePanelHeadingId,
+  type NotePanelKind,
+} from './NoteActions.tsx';
 import {
   NoteTabList,
   noteTabId,
@@ -46,23 +52,29 @@ import {
 import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
 import { FIND_CLOSED, findMatches, findReducer, type FindState, type FindAction } from './find.ts';
-import { describeMoment, describeRecordings } from './groups.ts';
+import { describeRecordings, formatRowTime } from './groups.ts';
 import { ChecklistEditor } from './ChecklistEditor.tsx';
 import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
+import { describePurge, purgeCountdown } from './purge.ts';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
-import { countWords, describeWords } from './words.ts';
 
 /**
  * A note.
  *
- * Top to bottom: the way back, the title, one line of metadata, then a strip
- * of segments — Text · Cleaned · Recordings (N) — and the one panel it
- * selects, with the action bar at the foot. The strip sticks under the banner
- * while the panel scrolls, so the recordings are one tap away from anywhere
- * in a long note rather than a screen or five below its last paragraph, which
- * is where they sat when body and recordings were one page. The text is the
- * document; the cleaned view is the worker's rewrite of the whole of it; the
- * recordings are its sources.
+ * Top to bottom: the way back with Find and the note's ⋮ menu, the title, one
+ * line of metadata, then a strip of segments — Text · Cleaned · Recordings (N)
+ * — and the one panel it selects. The strip sticks under the banner while the
+ * panel scrolls, so the recordings are one tap away from anywhere in a long
+ * note rather than a screen or five below its last paragraph, which is where
+ * they sat when body and recordings were one page. The text is the document;
+ * the cleaned view is the worker's rewrite of the whole of it; the recordings
+ * are its sources.
+ *
+ * Nothing else stands between the strip and the tab bar: the action bar that
+ * did (Details · Share · Archive · Record into this) took a third of a phone
+ * with the header and the meta, and its Record sat 30 px above the tab bar's
+ * mic. The mic records into this note while it is open, and the three actions
+ * are in the header's menu (review 2026-09-21, T6).
  */
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -84,23 +96,48 @@ export function NoteDetailScreen() {
   // flipped, not after the save lands.
   const checklist = (editor.model.draft.kind ?? note?.kind ?? 'note') === 'checklist';
   const [selectingRecordings, setSelectingRecordings] = useState(false);
+  // The language the note's text is in, for `lang` on everything that
+  // renders it — announced, spell-checked and hyphenated as that language
+  // rather than as the document's English (review 2026-09-21, T60).
+  const { data: settings } = useSettings();
+  const lang = contentLanguage(editor.model.draft.language ?? '', settings?.default_language);
 
   /*
-   * Which of the action bar's disclosures is open. Held here rather than in
-   * the bar because the meta line opens one of them: "· Malayalam" up by the
+   * Which of the menu's disclosures is open. Held here rather than in the
+   * menu because the meta line opens one of them: "· Malayalam" up by the
    * title is a fact about the note, and tapping a fact should go to where it
    * is set.
    */
   const [panel, setPanel] = useState<NotePanelKind | null>(null);
+  /*
+   * Opening takes the focus with it: the menuitem that asked has just
+   * unmounted and the drawer is at the far end of the screen. Rendered
+   * synchronously so the target exists. Details lands on the language
+   * select — the control the meta line's fact came from — and Share on its
+   * heading, with its controls a Tab away.
+   */
+  const openPanel = useCallback(
+    (kind: NotePanelKind) => {
+      if (!note) return;
+      flushSync(() => {
+        setPanel(kind);
+      });
+      const target =
+        kind === 'details' ? noteLanguageFieldId(note.id) : notePanelHeadingId(note.id);
+      document.getElementById(target)?.focus();
+    },
+    [note],
+  );
   const openDetails = useCallback(() => {
-    if (!note) return;
-    // Rendered synchronously so the select exists to take the focus: a
-    // keyboard or screen-reader user lands on the control the fact came from.
-    flushSync(() => {
-      setPanel('details');
-    });
-    document.getElementById(noteLanguageFieldId(note.id))?.focus();
-  }, [note]);
+    openPanel('details');
+  }, [openPanel]);
+  // Closed from its X, the drawer hands focus back to the ⋮ it belongs to
+  // rather than dropping it on <body>.
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const changePanel = useCallback((next: NotePanelKind | null) => {
+    setPanel(next);
+    if (next === null) menuRef.current?.focus();
+  }, []);
 
   // Find in this note: the state lives with the screen so the header's toggle
   // and the bar under the strip — different branches of the tree — share it.
@@ -233,6 +270,7 @@ export function NoteDetailScreen() {
         >
           <Icon name="search" size={20} />
         </button>
+        <NoteMenu note={note} triggerRef={menuRef} onOpenPanel={openPanel} />
       </header>
 
       {offlineCopy && (
@@ -269,6 +307,12 @@ export function NoteDetailScreen() {
         onOpenDetails={openDetails}
       />
 
+      {note.archived && (
+        <p className="note-actions__state" role="status">
+          This note is archived. {describePurge(purgeCountdown(note.purge_after))}.
+        </p>
+      )}
+
       <SaveIndicator editor={editor} />
 
       {/*
@@ -283,6 +327,7 @@ export function NoteDetailScreen() {
         note={note}
         editor={editor}
         checklist={checklist}
+        lang={lang}
         localUpload={localUpload}
         onSelectingRecordings={setSelectingRecordings}
         find={find}
@@ -293,12 +338,12 @@ export function NoteDetailScreen() {
 
       {/*
         While recordings are being selected their own bar takes the foot of
-        the screen, so the note's action bar steps aside rather than stacking
-        under it. Hidden, not unmounted: an open Details or Share panel is
-        still there when the selection ends. The bar is outside the panels, so
-        it is there on every tab.
+        the screen, so an open Details or Share drawer steps aside rather than
+        stacking under it. Hidden, not unmounted: it is still there when the
+        selection ends. The drawer is outside the panels, so it is there on
+        every tab.
       */}
-      <NoteActions
+      <NoteDrawer
         note={note}
         editor={editor}
         hidden={selectingRecordings}
@@ -306,7 +351,7 @@ export function NoteDetailScreen() {
         // the open Details panel covered the banner's two buttons. The panel
         // steps aside while the banner is up and is back as it was after.
         open={editor.model.state === 'conflict' ? null : panel}
-        onOpenChange={setPanel}
+        onOpenChange={changePanel}
       />
     </div>
   );
@@ -322,6 +367,7 @@ function NoteViews({
   note,
   editor,
   checklist,
+  lang,
   localUpload,
   onSelectingRecordings,
   find,
@@ -332,6 +378,8 @@ function NoteViews({
   note: NoteDetailWire;
   editor: NoteEditor;
   checklist: boolean;
+  /** The text's language tag, or none under Auto-detect. */
+  lang: string | undefined;
   localUpload: CaptureModel | null;
   onSelectingRecordings: (selecting: boolean) => void;
   find: FindState;
@@ -407,16 +455,18 @@ function NoteViews({
           <TextPanel
             editor={editor}
             checklist={checklist}
+            lang={lang}
             find={target}
             onDismissFind={() => {
               dispatchFind({ type: 'close' });
             }}
           />
         ) : tab === 'cleaned' ? (
-          <CleanedPanel note={note} editor={editor} find={target} />
+          <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
         ) : (
           <Recordings
             note={note}
+            lang={lang}
             localUpload={localUpload}
             onSelectingChange={onSelectingRecordings}
           />
@@ -463,11 +513,13 @@ function NotePanel({
 function TextPanel({
   editor,
   checklist,
+  lang,
   find,
   onDismissFind,
 }: {
   editor: NoteEditor;
   checklist: boolean;
+  lang: string | undefined;
   find: FindTarget | null;
   /** A tap on the mirror: close the bar and go back to editing. */
   onDismissFind: () => void;
@@ -525,6 +577,7 @@ function TextPanel({
       <section
         ref={mirrorRef}
         className="note-body-mirror prose"
+        lang={lang}
         aria-label="Note body, read-only while finding"
         // A pointer's way back to editing. The keyboard's is Escape in the
         // bar, which does the same thing; the mirror itself is text, not a
@@ -547,6 +600,7 @@ function TextPanel({
         id="note-body"
         ref={bodyRef}
         className="note-body-input prose"
+        lang={lang}
         value={body}
         rows={6}
         onChange={(event) => {
@@ -585,19 +639,22 @@ function useTimedOut(active: boolean, ms: number): boolean {
 }
 
 /**
- * "Updated today 14:02 · house · 3 recordings · 4:12 · 412 words · Malayalam".
+ * "5 Sept · house · 3 rec · 0:17 · Malayalam" — one line, always.
  *
- * The tags and the word count are the draft's, not the server's, so adding a
- * tag in the bar or typing a sentence shows up here at once rather than after
- * the save lands. For a checklist the count is of items — "3 of 7 done" —
- * because how much of a list is left is what someone looks up here.
+ * The tags are the draft's, not the server's, so adding a tag in Details
+ * shows up here at once rather than after the save lands. For a checklist the
+ * line also says "3 of 7 done", because how much of a list is left is what
+ * someone looks up here. It used to begin "Updated today 14:02" and end with
+ * the word count, and wrapped to two lines on a phone (40 px, review
+ * 2026-09-21 T6); the time is the row's own short form and the count is gone
+ * — a body's length is visible in the body.
  *
  * The language is the last fact, and only when it is worth a word: the
  * note's own choice when it differs from the default, or the default itself
  * when that is not English. An English note under an English default says
  * nothing — the common case should not carry a label. It is a button because
- * the control that sets it is in the Details panel at the foot, and the
- * owner's trial found it there by accident or not at all.
+ * the control that sets it is in the Details drawer, and the owner's trial
+ * found it there by accident or not at all.
  */
 function NoteMeta({
   note,
@@ -616,15 +673,11 @@ function NoteMeta({
   onOpenDetails: () => void;
 }) {
   const { data: settings } = useSettings();
-  const updated = describeMoment(note.updated_at);
   const parts = [
-    // "Updated today 14:02", but "Updated 6 Aug 09:14" — a month keeps its case.
-    updated ? `Updated ${updated.replace(/^(Today|Yesterday)/, (day) => day.toLowerCase())}` : null,
+    formatRowTime(note.updated_at),
     ...tags,
-    describeRecordings(note),
-    checklist
-      ? describeProgress(progressOf(parseChecklist(body)))
-      : describeWords(countWords(body)),
+    describeRecordings(note, { short: true }),
+    checklist ? describeProgress(progressOf(parseChecklist(body))) : null,
   ].filter((part): part is string => Boolean(part));
 
   const effective = effectiveLanguage(language, settings?.default_language);
@@ -645,6 +698,20 @@ function NoteMeta({
       )}
     </p>
   );
+}
+
+/**
+ * The `lang` tag for the note's text: the note's language, else the default,
+ * and none under Auto-detect or while the default is still being fetched — a
+ * tag that says "English" over Malayalam is worse than no tag, and under
+ * `auto` nobody knows. Pure and exported for the test.
+ */
+export function contentLanguage(
+  noteLanguage: string,
+  defaultLanguage: string | undefined,
+): string | undefined {
+  const effective = noteLanguage || defaultLanguage;
+  return !effective || effective === 'auto' ? undefined : effective;
 }
 
 /**

@@ -221,7 +221,7 @@ test('Send returns to the note, where the recording files in front of the user',
   const region = page.getByRole('region', { name: 'Recordings' });
   const rows = region.getByRole('listitem');
   await expect(rows.first()).toContainText(/uploading… \d+%/i);
-  // "Record into this" is still there to keep adding.
+  // The mic still records into this note, to keep adding.
   await expect(page.getByRole('button', { name: /record into this/i })).toBeVisible();
 
   releaseCreate();
@@ -240,8 +240,12 @@ test('Send returns to the note, where the recording files in front of the user',
   api.captures[0]!.duration_ms = 1_100;
   api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
   api.notes['roof-repair']!.version += 1;
-  await expect(rows.first()).toContainText('Filed', { timeout: 10_000 });
-  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+  // A filed row says nothing about being filed (T19): the strip goes, and
+  // the row is an ordinary recording with its length.
+  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0, {
+    timeout: 10_000,
+  });
+  await expect(rows.first()).toContainText('0:01');
   await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
 
   await page.getByRole('tab', { name: 'Text' }).click();
@@ -280,7 +284,11 @@ test('Send while recording stops the recorder, then uploads', async ({ page, api
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
   expect(api.captures[0]?.note_id).toBe('roof-repair');
   api.captures[0]!.status = 'appended';
-  await expect(page.getByText('Filed').first()).toBeVisible({ timeout: 10_000 });
+  // A filed row says nothing about being filed (T19): the strip goes.
+  await expect(page.getByRole('list', { name: 'Filing progress' })).toHaveCount(0, {
+    timeout: 10_000,
+  });
+  await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
 });
 
 /**

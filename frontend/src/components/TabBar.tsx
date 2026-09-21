@@ -1,5 +1,6 @@
-import { Link, useLocation } from 'react-router';
+import { Link, matchPath, useLocation } from 'react-router';
 
+import { useNote } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 
 import { Icon, type IconName } from './Icon.tsx';
@@ -43,16 +44,32 @@ const TABS: readonly Tab[] = [
  *
  * Tabs are links, not buttons: each is a navigation to a real URL, which is
  * what makes Back work without any state of its own.
+ *
+ * While a note is open the mic records into it: the URL and whether the note
+ * is archived are the two facts the bar needs, and reading them here keeps
+ * the note screen out of the shell.
  */
 export function TabBar() {
   const { pathname } = useLocation();
   const [home, you] = TABS as [Tab, Tab];
+  const noteId = matchPath(ROUTES.notePattern, pathname)?.params.id ?? null;
+  // Not into an archived note: the server refuses the recording, and the
+  // uploader would then offer a Resend that can never land. The screen's own
+  // query answers this, so the bar costs no second request.
+  const { data: note } = useNote(noteId ?? undefined);
+  const into = noteId !== null && !note?.archived ? noteId : null;
 
   return (
     <nav className="tab-bar" aria-label="Main">
       <TabLink tab={home} current={home.matches(pathname)} />
       <div className="tab-bar__record">
-        <RecordButton />
+        <RecordButton noteId={into} />
+        {/* The sighted reading of the button's name; the name itself is the button's. */}
+        {into !== null && (
+          <span className="tab-bar__into" aria-hidden="true">
+            Into this note
+          </span>
+        )}
       </div>
       <TabLink tab={you} current={you.matches(pathname)} />
     </nav>

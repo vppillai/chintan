@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { expect, noteAction, test } from './fixtures.ts';
 
 /**
  * Removing a note: archive, see the archive, restore, delete forever.
@@ -20,7 +20,7 @@ test('a note can be archived from its own screen', async ({ page, api }) => {
   await page.goto('/notes/roof-repair');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
-  await page.getByRole('button', { name: 'Archive' }).click();
+  await noteAction(page, 'Archive');
 
   // Archiving is reversible, so it asks once and plainly rather than demanding
   // the title be typed — that discipline is reserved for the irreversible one.
@@ -65,7 +65,7 @@ test('an archived note can be restored', async ({ page, api }) => {
   await page.getByRole('button', { name: /old fence/i }).click();
 
   await expect(page.getByText(/this note is archived/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Restore' }).click();
+  await noteAction(page, 'Restore');
 
   await expect(page).toHaveURL(/\/notes\/old-fence$/);
   await expect(page.getByText(/this note is archived/i)).toHaveCount(0);
@@ -75,10 +75,10 @@ test('an archived note can be restored', async ({ page, api }) => {
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
 });
 
-test('delete forever is gated by typing the title, and cascades', async ({ page, api }) => {
+test('delete forever is gated by typing "delete", and cascades', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
-  await page.getByRole('button', { name: 'Delete forever' }).click();
+  await noteAction(page, 'Delete forever');
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
@@ -86,13 +86,15 @@ test('delete forever is gated by typing the title, and cascades', async ({ page,
   // recoverable either, and a dialog that only names the note is not consent.
   await expect(dialog).toContainText(/recordings and transcripts/i);
 
+  // And which note: the title is in the sentence, not the thing to type.
+  await expect(dialog).toContainText('Old fence');
   const confirm = dialog.getByRole('button', { name: 'Delete forever' });
   await expect(confirm).toBeDisabled();
 
-  await dialog.getByRole('textbox').fill('Old fenc');
+  await dialog.getByRole('textbox').fill('delet');
   await expect(confirm).toBeDisabled();
 
-  await dialog.getByRole('textbox').fill('Old fence');
+  await dialog.getByRole('textbox').fill('delete');
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
@@ -168,7 +170,7 @@ test('the archive can be emptied: select all, delete forever, type the word', as
 test('escape closes the delete dialog without deleting anything', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
-  await page.getByRole('button', { name: 'Delete forever' }).click();
+  await noteAction(page, 'Delete forever');
   await expect(page.getByRole('dialog')).toBeVisible();
 
   await page.keyboard.press('Escape');

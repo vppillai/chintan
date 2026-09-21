@@ -310,6 +310,26 @@ export class ChintanApi {
       { query: { kind } },
     );
   }
+
+  /**
+   * Transcribes a settled recording again — in `language`, or without one in
+   * the note's effective language — cutting the paragraph it dictated and
+   * running the pipeline from the audio (contract 2026-09-21, T7). 202 with
+   * the capture, now `transcribing`; 409 while it is still in flight; 404
+   * from a backend older than the route, which the caller reads as "not
+   * available yet" rather than "no such recording".
+   */
+  retranscribeCapture(
+    captureId: string,
+    body: { language?: string } = {},
+    idempotencyKey?: string,
+  ): Promise<CaptureWire> {
+    return this.client.request(`/v1/captures/${encodeURIComponent(captureId)}/retranscribe`, {
+      method: 'POST',
+      body,
+      idempotencyKey,
+    });
+  }
 }
 
 /**

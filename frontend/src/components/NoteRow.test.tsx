@@ -111,7 +111,7 @@ describe('NoteRow swipe actions', () => {
     });
   });
 
-  it('deletes only behind the typed title, archiving first from the library', async () => {
+  it('deletes only behind the typed word, archiving first from the library', async () => {
     const user = userEvent.setup();
     const { calls } = mount(ACTIVE);
     const tray = swipeOpen();
@@ -121,10 +121,9 @@ describe('NoteRow swipe actions', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Delete this note forever?' });
     const confirm = within(dialog).getByRole('button', { name: 'Delete forever' });
     expect(confirm).toBeDisabled();
-    await user.type(
-      within(dialog).getByLabelText("Type the note's title to confirm: Roof repair"),
-      'Roof repair',
-    );
+    // The word, not the title — a dictated title is a chore on a phone keyboard.
+    expect(within(dialog).getByText(/“Roof repair”/)).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('Type "delete" to confirm'), 'delete');
     await user.click(confirm);
 
     // The server refuses to purge an active note, so the row archives it first.
@@ -143,7 +142,7 @@ describe('NoteRow swipe actions', () => {
 
     fireEvent.click(within(tray).getByRole('button', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByRole('textbox'), 'roof repair');
+    await user.type(within(dialog).getByRole('textbox'), 'delete');
     await user.click(within(dialog).getByRole('button', { name: 'Delete forever' }));
 
     await waitFor(() => {

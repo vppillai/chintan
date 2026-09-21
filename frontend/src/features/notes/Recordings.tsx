@@ -1,10 +1,16 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
-import { useDeleteCaptures, useMoveCaptures, useRetryCapture } from '@/api/queries.ts';
+import {
+  queryKeys,
+  useDeleteCaptures,
+  useMoveCaptures,
+  useRetryCapture,
+  useSettings,
+} from '@/api/queries.ts';
 import {
   isTerminalStatus,
   type CaptureStatus,
@@ -14,13 +20,15 @@ import {
 } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
-import { DownloadButton, saveBlob } from '@/components/DownloadButton.tsx';
+import { copyText } from '@/components/CopyButton.tsx';
+import { saveBlob } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
-import { OverflowMenu } from '@/components/OverflowMenu.tsx';
+import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { FilingStages, LocalUploadItem, TargetPrompt } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
+import { AUTO_LANGUAGE, languageName } from '@/features/settings/languages.ts';
 import { useLongPress, type LongPress } from '@/hooks/useLongPress.ts';
 
 import { MoveSheet } from './MoveSheet.tsx';
@@ -53,20 +61,36 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  * `<audio>` in the document, so it cannot be playing.
  *
  * Each row has a More control — Move to…, Delete recording, Download audio,
- * Select — and a long press (or Select) enters a selection mode in which the
- * same three actions apply to several rows at once from a bar at the foot of
- * the screen. On a phone the row also swipes aside for Delete and Move (N8),
- * which open the same dialog and sheet the menu does. Moving and deleting take
- * the paragraph the recording dictated with them (backlog D2, D3); downloading
- * several is one zip built on the device from the server's manifest of
- * presigned URLs (D4).
+ * and on an open row Copy this transcript / Copy this cleaned text, then
+ * Select — and a long press (or Select) enters a selection mode in which
+ * move, delete and download apply to several rows at once from a bar at the
+ * foot of the screen. On a phone the row also swipes aside for Delete and
+ * Move (N8), which open the same dialog and sheet the menu does. Moving and
+ * deleting take the paragraph the recording dictated with them (backlog D2,
+ * D3); downloading several is one zip built on the device from the server's
+ * manifest of presigned URLs (D4). Copy and a second Download used to be
+ * buttons inside the open row as well, which stacked five control clusters
+ * on one recording (review 2026-09-21, T41); the menu is the one place now,
+ * and the outcome is said on the notice line under the rows.
+ *
+ * A settled row's menu also offers "Transcribe again in <language>" (T7):
+ * once a recording has come back in the wrong script, or with sentences
+ * missing, changing the note's language did nothing for it — the pipeline
+ * transcribes once and Retry starts from the last good artifact. The server
+ * cuts the paragraph, runs the audio again in the note's effective language
+ * and answers 202 with the capture back at `transcribing`; the row follows
+ * it as it does a new recording. The request names no language, so the
+ * server's reading of the note's setting is the one that counts.
  */
 export function Recordings({
   note,
+  lang,
   localUpload = null,
   onSelectingChange,
 }: {
-  note: Pick<NoteDetailWire, 'id' | 'title' | 'captures'>;
+  note: Pick<NoteDetailWire, 'id' | 'title' | 'captures' | 'language'>;
+  /** The note text's language tag, for the transcripts (T60). */
+  lang?: string | undefined;
   /** An upload this device is still making into this note — see `useLocalUpload`. */
   localUpload?: CaptureModel | null;
   /** Told when selection starts and ends, so the screen can make room for the bar. */
@@ -121,6 +145,11 @@ export function Recordings({
 
   const deleteCaptures = useDeleteCaptures();
   const moveCaptures = useMoveCaptures();
+  const retranscribe = useRetranscribeCapture(note.id, setNotice);
+  // What a recording made into this note is transcribed in, for the menu's
+  // wording — the note's own choice, else the You screen's default.
+  const { data: settings } = useSettings();
+  const effectiveLanguage = note.language || settings?.default_language || 'en';
 
   const present = new Set(ordered.map((capture) => capture.id));
   const selected = new Set([...selectedIds].filter((id) => present.has(id)));
@@ -261,6 +290,26 @@ export function Recordings({
     }
   };
 
+  /*
+   * Copy is offered only while the row is open and its artifacts are loaded,
+   * so the text is in hand when the item is tapped: Safari refuses a
+   * clipboard write that is not inside the gesture, and a fetch first would
+   * put it outside.
+   */
+  const runCopy = (text: string): void => {
+    setNotice(null);
+    void copyText(text).then((copied) => {
+      setNotice(
+        copied
+          ? { text: 'Copied', tone: 'ok' }
+          : {
+              text: 'Could not copy — this browser would not allow it. Open the recording and select the text by hand.',
+              tone: 'error',
+            },
+      );
+    });
+  };
+
   const busy = deleteCaptures.isPending || moveCaptures.isPending || download.phase === 'working';
   const selectedList = [...selected];
 
@@ -274,7 +323,7 @@ export function Recordings({
 
         {ordered.length === 0 && !localUpload ? (
           <p className="recordings__empty">
-            Nothing recorded into this note yet. “Record into this” below adds one.
+            Nothing recorded into this note yet. The microphone below records into it.
           </p>
         ) : (
           <ul className="recordings__list" role="list">
@@ -314,6 +363,14 @@ export function Recordings({
                   setPending({ kind: 'delete', ids: [capture.id] });
                 }}
                 onDownload={() => void runDownload([capture.id])}
+                onCopy={runCopy}
+                lang={lang}
+                effectiveLanguage={effectiveLanguage}
+                retranscribeLabel={retranscribeLabel(effectiveLanguage)}
+                onRetranscribe={() => {
+                  setNotice(null);
+                  retranscribe.mutate(capture.id);
+                }}
               />
             ))}
           </ul>
@@ -446,6 +503,68 @@ interface Notice {
   target?: NoteWire;
 }
 
+/**
+ * "Tamil" — the language Whisper heard, when it is worth a chip: under
+ * Auto-detect always, because what it picked is the one thing the reader
+ * cannot otherwise know; under a chosen language only when the two differ,
+ * which is the transcript that came back in the wrong script. The worker
+ * stores Whisper's English name, so the comparison is by name; a code the
+ * curated list lacks still compares by `Intl` name through `languageName`.
+ */
+export function heardAs(detected: string | null, effective: string): string | null {
+  if (!detected) return null;
+  const name = detected.charAt(0).toUpperCase() + detected.slice(1);
+  if (effective === AUTO_LANGUAGE) return name;
+  const same = [languageName(effective), effective].some(
+    (candidate) => candidate.toLowerCase() === detected.toLowerCase(),
+  );
+  return same ? null : name;
+}
+
+/** "Transcribe again in Malayalam", or the honest form for Auto-detect. */
+export function retranscribeLabel(language: string): string {
+  return language === AUTO_LANGUAGE
+    ? 'Transcribe again (auto-detect)'
+    : `Transcribe again in ${languageName(language)}`;
+}
+
+/**
+ * Asks the server to transcribe one recording again. The 202 carries the
+ * capture back at `transcribing`, which is written straight onto the cached
+ * note so the row wears the stage strip before the refetch; the note query
+ * then follows the pipeline as it does for a new recording. A 404 is a
+ * backend older than the route, and is said as "not yet" rather than as a
+ * missing recording.
+ */
+function useRetranscribeCapture(noteId: string, onNotice: (notice: Notice) => void) {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (captureId: string) => api.retranscribeCapture(captureId),
+    onSuccess: (capture) => {
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(noteId), (current) =>
+        current?.captures
+          ? {
+              ...current,
+              captures: current.captures.map((row) => (row.id === capture.id ? capture : row)),
+            }
+          : current,
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+      void queryClient.invalidateQueries({ queryKey: ['captures'] });
+    },
+    onError: (error) => {
+      onNotice({
+        text:
+          error instanceof ApiError && error.isNotFound
+            ? 'Transcribing again is not available on this server yet.'
+            : failureText(error),
+        tone: 'error',
+      });
+    },
+  });
+}
+
 type DownloadProgress = { phase: 'idle' } | { phase: 'working'; done: number; total: number };
 
 /** "Wait until it has finished filing" for a 409; the server's own words otherwise. */
@@ -484,21 +603,22 @@ function describeOutcome(
 }
 
 /**
- * How a recording was filed, in the words of the row.
+ * How a recording was filed, in the words of the row — when there is
+ * something to say.
  *
- * The wire says *where* a capture went and *whether* it got there; it does not
- * say who decided. `CaptureWire` carries `note_id`, the router's
- * `suggested_*` fields (cleared the moment a target is set) and `appended_at`
- * — nothing that separates "the router chose this note" from "the user chose
- * it" or "it was recorded into this note from the start". So an appended
- * recording says "Filed" and no more, rather than guessing at a provenance the
- * backend does not record. The moment the contract grows a field for it, this
- * is the one function to change.
+ * A recording that reached the note says nothing: every row on this tab is
+ * in the note by definition, and "Filed" repeated down the list said so
+ * six times (review 2026-09-21, T19). The wire says *where* a capture went
+ * and *whether* it got there, not who decided — `CaptureWire` carries
+ * `note_id`, the router's `suggested_*` fields (cleared the moment a target
+ * is set) and `appended_at`, nothing that separates "the router chose this
+ * note" from "the user chose it" — so there is no truer word to put there.
+ * The states that are worth a word are the ones still moving or gone wrong.
  */
 export function filedLabel(capture: CaptureWire): string {
   switch (capture.status) {
     case 'appended':
-      return 'Filed';
+      return '';
     case 'needs_target':
       return 'Needs a target';
     case 'failed':
@@ -529,6 +649,14 @@ interface RecordingRowProps {
   onMove: () => void;
   onDelete: () => void;
   onDownload: () => void;
+  /** Text from this row's menu for the clipboard; the outcome is the panel's to say. */
+  onCopy: (text: string) => void;
+  lang: string | undefined;
+  /** The code a recording into this note is transcribed in, for the "Heard as" chip. */
+  effectiveLanguage: string;
+  /** "Transcribe again in Malayalam": the menu item, worded for the note's language. */
+  retranscribeLabel: string;
+  onRetranscribe: () => void;
 }
 
 function RecordingRow({
@@ -547,6 +675,11 @@ function RecordingRow({
   onMove,
   onDelete,
   onDownload,
+  onCopy,
+  lang,
+  effectiveLanguage,
+  retranscribeLabel: retranscribeText,
+  onRetranscribe,
 }: RecordingRowProps) {
   const api = useApi();
   const bodyId = useId();
@@ -563,7 +696,10 @@ function RecordingRow({
    */
   const running = !isTerminalStatus(capture.status);
   const artifacts = useQuery({
-    queryKey: ['capture-artifacts', capture.id],
+    // Keyed on the capture's write version as well as its id: transcribing
+    // again replaces the segments behind the same id, and the landed row
+    // must fetch afresh where a five-minute-fresh entry would be shown as is.
+    queryKey: ['capture-artifacts', capture.id, capture.version],
     queryFn: () =>
       loadCaptureArtifacts(api, capture.id, {
         hasPeaks: capture.has_peaks ?? false,
@@ -601,6 +737,12 @@ function RecordingRow({
 
   const segments = artifacts.data?.segments ?? [];
   const peaks = artifacts.data?.peaks ?? [];
+  const cleanedText = artifacts.data?.cleanedText ?? '';
+  // Not while the pipeline runs: what is in hand is the transcript being
+  // replaced, and the chip's tap would post a second run into a 409.
+  const heard = running
+    ? null
+    : heardAs(artifacts.data?.detectedLanguage ?? null, effectiveLanguage);
   // A capture recorded before segments and peaks were stored has neither and
   // gets a plain player. There is no backfill, so this is a permanent branch,
   // not a migration window.
@@ -620,12 +762,17 @@ function RecordingRow({
   const noAudio = expanded && artifacts.isSuccess && !audioUrl;
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
 
+  const filed = filedLabel(capture);
   const summary = (
     <>
       <span className="recording__when">{when}</span>{' '}
-      <span className="recording__filed" data-running={running || undefined}>
-        {filedLabel(capture)}
-      </span>{' '}
+      {filed && (
+        <>
+          <span className="recording__filed" data-running={running || undefined}>
+            {filed}
+          </span>{' '}
+        </>
+      )}
       <span className="recording__duration numeric">{durationLabel}</span>
     </>
   );
@@ -715,12 +862,44 @@ function RecordingRow({
             {summary}
           </button>
 
+          {/*
+            Named for what they copy, because "copy" on this screen could mean
+            three different things — the note, what was said, or the rewrite —
+            and an item that might mean any of them means none of them.
+            "This", because they copy this recording only; the whole note is
+            copied from Share. Offered only once the open row has the text.
+          */}
           <OverflowMenu
             label={`More for recording from ${when}`}
             items={[
               { label: 'Move to…', onSelect: onMove },
               { label: 'Delete recording', onSelect: onDelete, destructive: true },
               { label: 'Download audio', onSelect: onDownload },
+              ...(expanded && segments.length > 0
+                ? [
+                    {
+                      label: 'Copy this transcript',
+                      onSelect: () => {
+                        onCopy(segments.map((segment) => segment.text).join('\n'));
+                      },
+                    } satisfies OverflowMenuItem,
+                  ]
+                : []),
+              ...(expanded && cleanedText
+                ? [
+                    {
+                      label: 'Copy this cleaned text',
+                      onSelect: () => {
+                        onCopy(cleanedText);
+                      },
+                    } satisfies OverflowMenuItem,
+                  ]
+                : []),
+              // Only a settled recording: the server refuses one in flight,
+              // and the row is already following that run.
+              ...(running
+                ? []
+                : [{ label: retranscribeText, onSelect: onRetranscribe } satisfies OverflowMenuItem]),
               { label: 'Select', onSelect: onStartSelecting },
             ]}
           />
@@ -745,6 +924,21 @@ function RecordingRow({
               {capture.error}
             </p>
           )}
+
+          {/*
+            What Whisper heard, when it is not what was asked for: the one
+            diagnostic the owner's wrong-script transcripts lacked (T8). Under
+            a chosen language the chip is the way to put it right; under
+            Auto-detect it is a fact, and the fix is a language in Details.
+          */}
+          {heard &&
+            (effectiveLanguage === AUTO_LANGUAGE ? (
+              <p className="recording__heard recording__heard--fact">Heard as {heard}</p>
+            ) : (
+              <button type="button" className="recording__heard" onClick={onRetranscribe}>
+                Heard as {heard} — {retranscribeText.replace(/^Transcribe/, 'transcribe')}
+              </button>
+            ))}
 
           {/*
             The same controls the library's filing row offers, because a
@@ -799,10 +993,11 @@ function RecordingRow({
                 it the element fetches the presigned URL in no-cors mode, S3
                 answers without `Access-Control-Allow-Origin` (no `Origin` was
                 sent), and Chromium keeps that response in the HTTP cache — so
-                the CORS `fetch()` behind "Download audio" was served the
-                cached no-cors response and failed its CORS check on every
-                attempt. With the attribute both requests are CORS requests to
-                a bucket whose rule already allows this origin.
+                the CORS `fetch()` behind the menu's "Download audio" was
+                served the cached no-cors response and failed its CORS check
+                on every attempt. With the attribute both requests are CORS
+                requests to a bucket whose rule already allows this origin;
+                `runDownload` also asks for `no-store`.
               */}
               <audio ref={audioRef} src={audioUrl} preload="metadata" crossOrigin="anonymous" />
 
@@ -833,46 +1028,20 @@ function RecordingRow({
 
               <TranscriptPanel
                 segments={segments}
-                cleanedText={artifacts.data?.cleanedText ?? ''}
+                cleanedText={cleanedText}
                 view={view}
                 onViewChange={onViewChange}
                 currentTime={player.currentTime}
                 onSeek={player.seekAndPlay}
                 hasSegments={hasSegments}
+                lang={lang}
               />
-
-              <div className="player__actions">
-                <DownloadButton
-                  label="Download audio"
-                  filename={() => `chintan-${capture.id}${audioExtension(audioUrl)}`}
-                  blob={async () => {
-                    // `no-store`: never the media element's cached response,
-                    // whatever mode it was fetched in — see the element above.
-                    const response = await fetch(audioUrl, { cache: 'no-store' });
-                    if (!response.ok) throw new Error(`audio fetch failed: ${response.status}`);
-                    return response.blob();
-                  }}
-                />
-              </div>
             </section>
           ) : null}
         </div>
       )}
     </li>
   );
-}
-
-/**
- * The real file extension off a presigned S3 URL's path, not its query
- * string — `audio.webm?X-Amz-...` should download as `.webm`, not as
- * whatever came after the `?`. Falls back to `.webm`, the format every
- * capture in this app is actually recorded in; a bare fallback with no
- * extension at all is the one outcome a save dialog can't recover from.
- */
-function audioExtension(url: string): string {
-  const path = url.split('?')[0] ?? '';
-  const match = /\.[a-z0-9]+$/i.exec(path);
-  return match ? match[0] : '.webm';
 }
 
 function PlainScrubber({

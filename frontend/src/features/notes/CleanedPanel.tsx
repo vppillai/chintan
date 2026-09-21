@@ -53,10 +53,13 @@ import type { NoteEditor } from './useNoteEditor.ts';
 export function CleanedPanel({
   note,
   editor,
+  lang,
   find = null,
 }: {
   note: NoteDetailWire;
   editor: NoteEditor;
+  /** The note text's language tag, for the rendered view (T60). */
+  lang?: string | undefined;
   find?: FindTarget | null;
 }) {
   const headingId = useId();
@@ -202,11 +205,21 @@ export function CleanedPanel({
           <Progress pending={pending} notice={notice} />
 
           {checklist ? (
-            <div ref={bodyRef} className="cleaned__body" data-stale={cleaned.stale || undefined}>
+            <div
+              ref={bodyRef}
+              className="cleaned__body"
+              lang={lang}
+              data-stale={cleaned.stale || undefined}
+            >
               <ChecklistPreview body={cleaned.body} label="Split up items" />
             </div>
           ) : (
-            <div ref={bodyRef} className="cleaned__body prose" data-stale={cleaned.stale || undefined}>
+            <div
+              ref={bodyRef}
+              className="cleaned__body prose"
+              lang={lang}
+              data-stale={cleaned.stale || undefined}
+            >
               {rendered.nodes}
             </div>
           )}

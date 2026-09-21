@@ -30,6 +30,13 @@ export interface TranscriptSegment {
 
 export interface SegmentsDocument {
   segments: TranscriptSegment[];
+  /**
+   * The language Whisper decided the recording was in, as the worker wrote
+   * it — an English name such as "Malayalam", or nothing for a document from
+   * before it was stored. Under Auto-detect this is the whole story of a
+   * transcript that came back in the wrong script (review 2026-09-21, T8).
+   */
+  language: string | null;
 }
 
 /**
@@ -70,10 +77,18 @@ function segmentSpan(candidate: WireSegment): { start: number; end: number } | n
 
 /** Tolerates a bare array as well as the enveloped form, and both time shapes. */
 export function parseSegments(raw: unknown): TranscriptSegment[] {
-  const list: unknown = Array.isArray(raw)
-    ? raw
-    : (raw as { segments?: unknown } | null)?.segments;
-  if (!Array.isArray(list)) return [];
+  return parseSegmentsDocument(raw).segments;
+}
+
+/** The segments and the detected language; a bare array has no language to give. */
+export function parseSegmentsDocument(raw: unknown): SegmentsDocument {
+  const envelope = Array.isArray(raw) ? null : (raw as { segments?: unknown; language?: unknown } | null);
+  const list: unknown = Array.isArray(raw) ? raw : envelope?.segments;
+  const language =
+    typeof envelope?.language === 'string' && envelope.language.trim()
+      ? envelope.language.trim()
+      : null;
+  if (!Array.isArray(list)) return { segments: [], language };
 
   const parsed: TranscriptSegment[] = [];
   list.forEach((value, index) => {
@@ -92,7 +107,7 @@ export function parseSegments(raw: unknown): TranscriptSegment[] {
     });
   });
 
-  return parsed.sort((a, b) => a.start - b.start);
+  return { segments: parsed.sort((a, b) => a.start - b.start), language };
 }
 
 export function parsePeaks(raw: unknown): number[] {
@@ -130,6 +145,8 @@ export interface CaptureArtifacts {
    * hard-coded to `''` for every capture in the app.
    */
   cleanedText: string;
+  /** See `SegmentsDocument.language`. Null when the segments are missing or predate it. */
+  detectedLanguage: string | null;
 }
 
 /**
@@ -153,7 +170,8 @@ export async function loadCaptureArtifacts(
       throw error;
     });
 
-  const [peaks, segments, cleanedText] = await Promise.all([
+  const none: SegmentsDocument = { segments: [], language: null };
+  const [peaks, transcript, cleanedText] = await Promise.all([
     options.hasPeaks === false
       ? Promise.resolve([])
       : api
@@ -162,12 +180,12 @@ export async function loadCaptureArtifacts(
           .then(parsePeaks)
           .catch(() => []),
     options.hasSegments === false
-      ? Promise.resolve([])
+      ? Promise.resolve(none)
       : api
           .downloadUrl(captureId, 'segments')
           .then((link) => fetchJson(link.url, options.signal))
-          .then(parseSegments)
-          .catch(() => []),
+          .then(parseSegmentsDocument)
+          .catch(() => none),
     // No `has_clean` flag exists on the contract, so this is asked for and
     // allowed to 404 like the other optional artifacts.
     api
@@ -177,7 +195,13 @@ export async function loadCaptureArtifacts(
       .catch(() => ''),
   ]);
 
-  return { audioUrl: audio?.url ?? null, peaks, segments, cleanedText };
+  return {
+    audioUrl: audio?.url ?? null,
+    peaks,
+    segments: transcript.segments,
+    cleanedText,
+    detectedLanguage: transcript.language,
+  };
 }
 
 /** The segment covering `time`, or the last one before it. Binary search. */

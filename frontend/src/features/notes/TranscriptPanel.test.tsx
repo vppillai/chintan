@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TranscriptPanel } from './TranscriptPanel.tsx';
+import { TRANSCRIPT_HINT_KEY, TranscriptPanel } from './TranscriptPanel.tsx';
 import type { TranscriptSegment } from './artifacts.ts';
 
 const SEGMENTS: TranscriptSegment[] = [
@@ -28,6 +28,7 @@ function mount(props: Partial<React.ComponentProps<typeof TranscriptPanel>> = {}
 beforeEach(() => {
   // jsdom implements no scrolling, and the panel follows playback.
   Element.prototype.scrollIntoView = vi.fn();
+  localStorage.clear();
 });
 
 describe('the Cleaned view is only offered when there is cleaned text', () => {
@@ -88,21 +89,31 @@ describe('a capture with no segments does not contradict itself', () => {
   });
 });
 
-describe('the copy control names its scope', () => {
-  it('copies this recording\'s transcript, and says so', async () => {
-    // The button sits inside one recording's row. "Copy transcript" read as the
-    // note's transcript; a whole-note copy already exists under Share, so this
-    // one says which recording it copies.
+describe('the panel is the transcript and its switch, nothing else', () => {
+  it('has no copy control of its own; that is the row menu’s (T41)', () => {
+    mount({ cleanedText: 'Cleaned.' });
+    expect(screen.queryByRole('button', { name: /copy/i })).toBeNull();
+    expect(screen.getByRole('group', { name: 'Transcript view' })).toBeInTheDocument();
+  });
+
+  it('shows "tap any line" until a line is tapped on this device, then not again', async () => {
     const user = userEvent.setup();
-    const writeText = vi.fn(async () => {});
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const onSeek = vi.fn();
+    const view = mount({ onSeek });
+    expect(screen.getByText(/tap any line to jump/i)).toBeInTheDocument();
 
+    await user.click(screen.getByRole('button', { name: /Ellis quoted nine hundred\./ }));
+    expect(onSeek).toHaveBeenCalledWith(4);
+    expect(screen.queryByText(/tap any line to jump/i)).toBeNull();
+    expect(localStorage.getItem(TRANSCRIPT_HINT_KEY)).toBe('1');
+
+    // A later recording, a later day: the sentence has done its job.
+    view.unmount();
     mount();
-    await user.click(screen.getByRole('button', { name: 'Copy this transcript' }));
-
-    expect(writeText).toHaveBeenCalledWith(
-      'Ridge tiles on the south slope have slipped.\nEllis quoted nine hundred.',
-    );
-    expect(screen.queryByRole('button', { name: 'Copy transcript' })).toBeNull();
+    expect(screen.queryByText(/tap any line to jump/i)).toBeNull();
+    // The cleaned view's reason for having no timestamps is not a tutorial.
+    view.unmount();
+    mount({ cleanedText: 'Cleaned.', view: 'cleaned' });
+    expect(screen.getByText(/no reliable timestamps/i)).toBeInTheDocument();
   });
 });

@@ -143,7 +143,8 @@ describe('a checklist note', () => {
     await screen.findByRole('textbox', { name: 'Note body' });
     expect(tabNames()[0]).toBe('Text');
 
-    await user.click(screen.getByRole('button', { name: 'Details' }));
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Details' }));
     const toggle = screen.getByRole('checkbox', { name: 'This note is a checklist' });
     expect(toggle).not.toBeChecked();
     await user.click(toggle);

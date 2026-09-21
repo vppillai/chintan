@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useState, type RefObject } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -10,35 +10,35 @@ import { CopyButton } from '@/components/CopyButton.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
+import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
 
 import { checklistToProse, proseToChecklist } from './checklist.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
-import { describePurge, purgeCountdown } from './purge.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
- * The note's action bar: Details · Share · Archive · Record into this.
+ * The note's actions: Details · Share · Archive (or Restore · Delete forever),
+ * behind the ⋮ in the header, and the two disclosures they open in a drawer
+ * at the foot of the screen.
  *
- * Sticky at the foot of the note, so none of it is buried under a long body
- * and six transcripts — "Record into this" in particular is the one-tap path
- * to add to a note you are already reading, and a control the user has to
- * scroll two screens to find is not one tap.
+ * They were a sticky bar at the foot with a fourth, primary "Record into
+ * this". On a phone that bar wrapped to two rows (96 px) and sat 30 px above
+ * the tab bar's mic, which recorded into a *new* note — two record controls
+ * with different glyphs, recording to different places, from one screen. The
+ * mic is now contextual (`RecordButton`), the bar is gone, and these three
+ * actions taken once a month live where the row's actions already do: in an
+ * overflow menu. About 130 px of the phone went back to the note's body.
  *
- * Details and Share are disclosures: the language, tag and alias editors and
- * the copy and download controls open above the bar when asked for and are
- * otherwise out of the way. The editors used to sit inline between the body
- * and Archive, which put a copy control adjacent to a destructive one — how a
- * stray thumb destroys a note it meant to keep. Archive is the far side of the
- * bar from Record for the same reason. Which disclosure is open belongs to the
- * screen (`open` / `onOpenChange`): the meta line under the title opens
- * Details when its language fact is tapped.
- *
- * Details was called Tags, and held the transcription language as its third
- * control. The owner tried the app and reported no sign of multilingual
- * support: a language control filed under "Tags" is a control nobody looks
- * for. The language is now the panel's first field and named in full.
+ * Details and Share are still disclosures — the language, tag and alias
+ * editors and the copy and download controls open where they always did,
+ * above the tab bar, and close from their own heading. Which one is open
+ * belongs to the screen (`open` / `onOpenChange`): the meta line under the
+ * title opens Details when its language fact is tapped. So does the focus:
+ * the drawer opens at the far end of the screen from the menu, and the
+ * menuitem that opened it is gone, so the screen sends focus into it and
+ * back to the menu's trigger (`triggerRef`) when it closes.
  *
  * Getting rid of a note, and getting it back, keep their two confirmation
  * disciplines, because these are two different promises:
@@ -46,13 +46,13 @@ import type { NoteEditor } from './useNoteEditor.ts';
  *   Archive       reversible for as long as the purge window lasts, so it asks
  *                 once, plainly.
  *   Delete for    irreversible, and it takes the recordings and the transcripts
- *   ever          with it, so it names what goes and requires the note's title
- *                 to be typed before the control unlocks.
- *
- * All three operations — archive, restore and purge — are served by the
- * backend, wrapped in `endpoints.ts`, and reachable from here. Without these
- * controls the app is append-only and the note screen's own "may have been
- * archived or purged" describes states it cannot reach.
+ *   ever          with it, so it names what goes and requires "delete" to be
+ *                 typed before the control unlocks. The word, not the title:
+ *                 a dictated or fallback title ("Voice note 2026-09-21 06:59")
+ *                 is 27 characters of digits and punctuation on a phone
+ *                 keyboard, and the bulk and recording deletes already ask
+ *                 for the word (review 2026-09-21, T18). The title stays in
+ *                 the sentence, so the dialog still says which note goes.
  */
 export type NotePanelKind = 'details' | 'share';
 
@@ -61,213 +61,72 @@ export function noteLanguageFieldId(noteId: string): string {
   return `note-language-${noteId}`;
 }
 
-export function NoteActions({
+/** The id of the open drawer's heading, so the screen can send focus to it. */
+export function notePanelHeadingId(noteId: string): string {
+  return `note-panel-heading-${noteId}`;
+}
+
+/** The header's ⋮: the note's actions, with the dialogs they need. */
+export function NoteMenu({
   note,
-  editor,
-  hidden = false,
-  open,
-  onOpenChange,
+  triggerRef,
+  onOpenPanel,
 }: {
   note: NoteDetailWire;
-  editor: NoteEditor;
-  /** Stepping aside for another bar at the foot of the screen; state is kept. */
-  hidden?: boolean;
-  open: NotePanelKind | null;
-  onOpenChange: (open: NotePanelKind | null) => void;
+  /** The screen's handle on the ⋮, for the drawer to hand focus back to. */
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  onOpenPanel: (panel: NotePanelKind) => void;
 }) {
   const navigate = useNavigate();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const purge = useDeleteNoteForever();
-
-  const detailsId = useId();
-  const shareId = useId();
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
 
   const busy = archive.isPending || restore.isPending || purge.isPending;
   const failure = archive.error ?? restore.error ?? purge.error;
-  const { draft } = editor.model;
-  const cleaned = note.cleaned?.body.trim() ? note.cleaned : null;
+
+  const items: OverflowMenuItem[] = [
+    { label: 'Details', onSelect: () => onOpenPanel('details') },
+    { label: 'Share', onSelect: () => onOpenPanel('share') },
+    ...(note.archived
+      ? [
+          {
+            label: restore.isPending ? 'Restoring…' : 'Restore',
+            disabled: busy,
+            onSelect: () => {
+              restore.mutate(note.id);
+            },
+          },
+          {
+            label: 'Delete forever',
+            destructive: true,
+            disabled: busy,
+            onSelect: () => {
+              setConfirming('purge');
+            },
+          },
+        ]
+      : [
+          {
+            label: archive.isPending ? 'Archiving…' : 'Archive',
+            disabled: busy,
+            onSelect: () => {
+              setConfirming('archive');
+            },
+          },
+        ]),
+  ];
 
   return (
-    <div className="note-bar-anchor" hidden={hidden}>
-      {open === 'details' && (
-        <div id={detailsId} className="note-panel">
-          <NoteLanguage
-            id={noteLanguageFieldId(note.id)}
-            value={draft.language ?? ''}
-            onChange={(language) => {
-              editor.edit({ language });
-              void editor.saveNow();
-            }}
-          />
-          <TagEditor
-            label="Tags"
-            values={draft.tags}
-            placeholder="Add a tag"
-            onChange={(tags) => {
-              editor.edit({ tags });
-            }}
-            onCommit={() => void editor.saveNow()}
-          />
-          <TagEditor
-            label="Also called"
-            values={draft.aliases}
-            placeholder="Add another name"
-            maxLength={120}
-            onChange={(aliases) => {
-              editor.edit({ aliases });
-            }}
-            onCommit={() => void editor.saveNow()}
-          />
-          <ChecklistSwitch
-            checked={(draft.kind ?? note.kind ?? 'note') === 'checklist'}
-            onChange={(checklist) => {
-              // The body is converted with the kind, in the one PATCH: a
-              // checklist whose body is still prose would show every
-              // paragraph as one open item and normalise it on the first
-              // write, which is the conversion done by surprise.
-              editor.edit({
-                kind: checklist ? 'checklist' : 'note',
-                body: checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body),
-              });
-              void editor.saveNow();
-            }}
-          />
-        </div>
-      )}
+    <>
+      <OverflowMenu label="Note actions" items={items} triggerRef={triggerRef} />
 
-      {open === 'share' && (
-        /*
-         * Title first, then the body: a body pasted somewhere else with no
-         * title loses what it was about, and re-typing that is exactly the
-         * friction this is meant to remove.
-         */
-        <div id={shareId} className="note-panel note-copy">
-          <CopyButton
-            label="Copy note"
-            text={() => [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')}
-          />
-          <DownloadButton
-            label="Download note"
-            filename={() => `${filenameFor(draft.title)}.md`}
-            blob={() =>
-              Promise.resolve(
-                new Blob([`# ${draft.title.trim()}\n\n${draft.body.trim()}\n`], {
-                  type: 'text/markdown',
-                }),
-              )
-            }
-          />
-          {/*
-            The worker's rewrite, when there is one, named for what it is: a
-            control called "Copy" next to another called "Copy" would mean
-            neither. Stale or not — the user can see which it is on its tab.
-          */}
-          {cleaned && (
-            <>
-              <CopyButton
-                label="Copy cleaned view"
-                text={() => cleanedDocument(draft.title, cleaned.body)}
-              />
-              <DownloadButton
-                label="Download cleaned view"
-                filename={() => `${filenameFor(draft.title)} (cleaned).md`}
-                blob={() =>
-                  Promise.resolve(
-                    new Blob([cleanedMarkdown(draft.title, cleaned.body)], {
-                      type: 'text/markdown',
-                    }),
-                  )
-                }
-              />
-            </>
-          )}
-        </div>
-      )}
-
-      {note.archived && (
-        <p className="note-actions__state" role="status">
-          This note is archived. {describePurge(purgeCountdown(note.purge_after))}.
+      {failure && (
+        <p className="note-actions__error note-menu__error" role="alert">
+          {failure instanceof ApiError ? failure.userMessage : 'That did not go through.'}
         </p>
       )}
-
-      {failure && <Failure error={failure} />}
-
-      <div className="note-bar" role="toolbar" aria-label="Note actions">
-        <button
-          type="button"
-          className="note-bar__action"
-          aria-expanded={open === 'details'}
-          aria-controls={detailsId}
-          onClick={() => {
-            onOpenChange(open === 'details' ? null : 'details');
-          }}
-        >
-          Details
-        </button>
-        <button
-          type="button"
-          className="note-bar__action"
-          aria-expanded={open === 'share'}
-          aria-controls={shareId}
-          onClick={() => {
-            onOpenChange(open === 'share' ? null : 'share');
-          }}
-        >
-          Share
-        </button>
-
-        {note.archived ? (
-          <>
-            <button
-              type="button"
-              className="note-bar__action"
-              disabled={busy}
-              onClick={() => {
-                restore.mutate(note.id);
-              }}
-            >
-              {restore.isPending ? 'Restoring…' : 'Restore'}
-            </button>
-            <button
-              type="button"
-              className="note-bar__action note-bar__action--destructive"
-              disabled={busy}
-              onClick={() => {
-                setConfirming('purge');
-              }}
-            >
-              Delete forever
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              className="note-bar__action"
-              disabled={busy}
-              onClick={() => {
-                setConfirming('archive');
-              }}
-            >
-              {archive.isPending ? 'Archiving…' : 'Archive'}
-            </button>
-            {/*
-              The server refuses an archived note as a capture target, so the
-              control is only offered where it can work.
-            */}
-            <button
-              type="button"
-              className="note-bar__action note-bar__action--primary"
-              onClick={() => void navigate(ROUTES.captureInto(note.id))}
-            >
-              <Icon name="plus" size={16} className="note-bar__icon" />
-              Record into this
-            </button>
-          </>
-        )}
-      </div>
 
       <ConfirmDialog
         open={confirming === 'archive'}
@@ -281,6 +140,9 @@ export function NoteActions({
         onConfirm={() => {
           setConfirming(null);
           archive.mutate(note.id, {
+            // `replace: true` on both paths is deliberate: the note's own URL
+            // is now either archived or gone, and leaving it in the history
+            // means Back walks straight into a screen that 404s.
             onSuccess: () => void navigate(ROUTES.notes, { replace: true }),
           });
         }}
@@ -291,8 +153,8 @@ export function NoteActions({
         title="Delete this note forever?"
         body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel="Delete forever"
-        requireText={note.title}
-        requireLabel={`Type the note's title to confirm: ${note.title}`}
+        requireText="delete"
+        requireLabel='Type "delete" to confirm'
         destructive
         onCancel={() => {
           setConfirming(null);
@@ -306,6 +168,155 @@ export function NoteActions({
           });
         }}
       />
+    </>
+  );
+}
+
+/**
+ * The open disclosure — Details or Share — in a drawer at the foot of the
+ * scroll region, above the tab bar. Nothing is rendered while neither is
+ * open, so the note's body has the whole screen.
+ */
+export function NoteDrawer({
+  note,
+  editor,
+  hidden = false,
+  open,
+  onOpenChange,
+}: {
+  note: NoteDetailWire;
+  editor: NoteEditor;
+  /** Stepping aside for another bar at the foot of the screen; state is kept. */
+  hidden?: boolean;
+  open: NotePanelKind | null;
+  onOpenChange: (open: NotePanelKind | null) => void;
+}) {
+  const headingId = notePanelHeadingId(note.id);
+  const { draft } = editor.model;
+  const cleaned = note.cleaned?.body.trim() ? note.cleaned : null;
+
+  if (!open) return null;
+
+  return (
+    <div className="note-drawer" hidden={hidden}>
+      <section className="note-panel" aria-labelledby={headingId}>
+        <div className="note-panel__head">
+          {/* Focusable by script only: where Share lands a keyboard user, its controls a Tab away. */}
+          <h2 id={headingId} className="note-panel__heading" tabIndex={-1}>
+            {open === 'details' ? 'Details' : 'Share'}
+          </h2>
+          <button
+            type="button"
+            className="note-panel__close"
+            aria-label={open === 'details' ? 'Close details' : 'Close share'}
+            onClick={() => {
+              onOpenChange(null);
+            }}
+          >
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+
+        {open === 'details' ? (
+          <>
+            <NoteLanguage
+              id={noteLanguageFieldId(note.id)}
+              value={draft.language ?? ''}
+              onChange={(language) => {
+                editor.edit({ language });
+                void editor.saveNow();
+              }}
+            />
+            <TagEditor
+              label="Tags"
+              values={draft.tags}
+              placeholder="Add a tag"
+              onChange={(tags) => {
+                editor.edit({ tags });
+              }}
+              onCommit={() => void editor.saveNow()}
+            />
+            <TagEditor
+              label="Also called"
+              values={draft.aliases}
+              placeholder="Add another name"
+              maxLength={120}
+              onChange={(aliases) => {
+                editor.edit({ aliases });
+              }}
+              onCommit={() => void editor.saveNow()}
+            />
+            <VerbatimSwitch
+              checked={draft.verbatim ?? note.verbatim ?? false}
+              onChange={(verbatim) => {
+                editor.edit({ verbatim });
+                void editor.saveNow();
+              }}
+            />
+            <ChecklistSwitch
+              checked={(draft.kind ?? note.kind ?? 'note') === 'checklist'}
+              onChange={(checklist) => {
+                // The body is converted with the kind, in the one PATCH: a
+                // checklist whose body is still prose would show every
+                // paragraph as one open item and normalise it on the first
+                // write, which is the conversion done by surprise.
+                editor.edit({
+                  kind: checklist ? 'checklist' : 'note',
+                  body: checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body),
+                });
+                void editor.saveNow();
+              }}
+            />
+          </>
+        ) : (
+          /*
+           * Title first, then the body: a body pasted somewhere else with no
+           * title loses what it was about, and re-typing that is exactly the
+           * friction this is meant to remove.
+           */
+          <div className="note-copy">
+            <CopyButton
+              label="Copy note"
+              text={() => [draft.title.trim(), draft.body.trim()].filter(Boolean).join('\n\n')}
+            />
+            <DownloadButton
+              label="Download note"
+              filename={() => `${filenameFor(draft.title)}.md`}
+              blob={() =>
+                Promise.resolve(
+                  new Blob([`# ${draft.title.trim()}\n\n${draft.body.trim()}\n`], {
+                    type: 'text/markdown',
+                  }),
+                )
+              }
+            />
+            {/*
+              The worker's rewrite, when there is one, named for what it is: a
+              control called "Copy" next to another called "Copy" would mean
+              neither. Stale or not — the user can see which it is on its tab.
+            */}
+            {cleaned && (
+              <>
+                <CopyButton
+                  label="Copy cleaned view"
+                  text={() => cleanedDocument(draft.title, cleaned.body)}
+                />
+                <DownloadButton
+                  label="Download cleaned view"
+                  filename={() => `${filenameFor(draft.title)} (cleaned).md`}
+                  blob={() =>
+                    Promise.resolve(
+                      new Blob([cleanedMarkdown(draft.title, cleaned.body)], {
+                        type: 'text/markdown',
+                      }),
+                    )
+                  }
+                />
+              </>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -317,9 +328,14 @@ export function NoteActions({
  * The inherit entry names what it inherits — "Default (Malayalam)" — read from
  * the You screen's setting, so the choice is between real languages rather
  * than between a language and a word. The helper line says what the setting
- * reaches: only a recording made *into* this note. A recording that is routed
- * here afterwards was transcribed before anyone knew where it was going, so
- * only the default could apply to it.
+ * reaches: every recording that lands in this note. One the router files
+ * here was transcribed in the default before anyone knew where it was going,
+ * and is transcribed again in this language when the two differ (review
+ * 2026-09-21, T2, backend).
+ *
+ * The second line is the owner's lived problem (T3): under Auto-detect
+ * Whisper picks one language per recording, and on real Malayalam it chose
+ * Tamil script and dropped the Malayalam sentence from a mixed clip.
  */
 function NoteLanguage({
   id,
@@ -345,8 +361,52 @@ function NoteLanguage({
         onChange={onChange}
       />
       <p className="language-field__hint">
-        For recordings made into this note — Record into this, or chosen as the target. A
-        recording filed automatically is transcribed in your default language.
+        For every recording that lands in this note — made into it, or filed here automatically.
+      </p>
+      <p className="language-field__hint">
+        Mix Malayalam and English in one recording? Choose Malayalam. Auto-detect picks one
+        language per recording and drops or re-scripts the other.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Skip the cleanup for this note. The wire has carried `verbatim` since the
+ * start, README and About promise it, and no control ever set it (review
+ * 2026-09-21, T11); the pipeline half — appending the raw transcript and
+ * calling no model — lands with the backend stream. Between the language
+ * and the checklist switch: it is about what a recording becomes, like both.
+ */
+function VerbatimSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const id = useId();
+  return (
+    <section className="language-field">
+      <h2 className="tag-editor__label">Word for word</h2>
+      <label className="cleaned__auto" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          className="cleaned__auto-box"
+          checked={checked}
+          onChange={(event) => {
+            onChange(event.target.checked);
+          }}
+        />
+        <span className="cleaned__auto-mark" aria-hidden="true">
+          <Icon name="check" size={16} />
+        </span>
+        <span>Keep recordings as spoken</span>
+      </label>
+      <p className="language-field__hint">
+        Skips the cleanup: a recording&rsquo;s transcript goes into this note exactly as it was
+        transcribed, fillers and all.
       </p>
     </section>
   );
@@ -394,19 +454,6 @@ function ChecklistSwitch({
         Turning it off makes every item a paragraph again.
       </p>
     </section>
-  );
-}
-
-/**
- * `replace: true` above is deliberate on both paths: the note's own URL is now
- * either archived or gone, and leaving it in the history means Back walks
- * straight into a screen that 404s.
- */
-function Failure({ error }: { error: unknown }) {
-  return (
-    <p className="note-actions__error" role="alert">
-      {error instanceof ApiError ? error.userMessage : 'That did not go through.'}
-    </p>
   );
 }
 

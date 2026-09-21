@@ -7,7 +7,7 @@ import type { NoteDetailWire, SettingsWire } from '@/api/schema.ts';
 import { languageLabel } from '@/features/settings/languages.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { NoteDetailScreen, effectiveLanguage } from './NoteDetailScreen.tsx';
+import { NoteDetailScreen, contentLanguage, effectiveLanguage } from './NoteDetailScreen.tsx';
 
 const NOTE: NoteDetailWire = {
   id: 'roof-repair',
@@ -73,9 +73,15 @@ function mount(note: NoteDetailWire = NOTE) {
   return { patches };
 }
 
+/** Details is an item of the header's ⋮ menu, and opens a drawer at the foot. */
+async function openDetails(): Promise<void> {
+  await userEvent.click(screen.getByRole('button', { name: 'Note actions' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Details' }));
+}
+
 async function openLanguage(): Promise<HTMLSelectElement> {
   await screen.findByDisplayValue('Roof repair');
-  await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+  await openDetails();
   return (await screen.findByRole('combobox', {
     name: 'Transcription language',
   })) as HTMLSelectElement;
@@ -132,11 +138,11 @@ describe('a note’s transcription language', () => {
     expect(patches[0]?.['language']).toBe('');
   });
 
-  it('says what the setting reaches', async () => {
+  it('says what the setting reaches, and warns about Auto-detect on mixed speech (T3)', async () => {
     mount();
     await openLanguage();
-    expect(screen.getByText(/recordings made into this note/i)).toBeInTheDocument();
-    expect(screen.getByText(/filed automatically is transcribed in your default/i)).toBeInTheDocument();
+    expect(screen.getByText(/every recording that lands in this note/i)).toBeInTheDocument();
+    expect(screen.getByText(/auto-detect picks one language per recording/i)).toBeInTheDocument();
   });
 });
 
@@ -150,7 +156,7 @@ describe('the language is where the user looks', () => {
   it('is the first field of Details, before the tags and the other names', async () => {
     mount();
     await screen.findByDisplayValue('Roof repair');
-    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+    await openDetails();
 
     const panel = screen.getByRole('combobox', { name: 'Transcription language' }).closest(
       '.note-panel',
@@ -159,8 +165,40 @@ describe('the language is where the user looks', () => {
     const labels = Array.from(panel!.querySelectorAll('.tag-editor__label')).map(
       (label) => label.textContent,
     );
-    expect(labels).toEqual(['Transcription language', 'Tags', 'Also called', 'Checklist']);
+    expect(labels).toEqual([
+      'Transcription language',
+      'Tags',
+      'Also called',
+      'Word for word',
+      'Checklist',
+    ]);
     expect(screen.queryByRole('button', { name: 'Tags' })).toBeNull();
+  });
+
+  it('offers the verbatim switch, which writes `verbatim` through the note’s PATCH once (T11)', async () => {
+    const { patches } = mount();
+    await screen.findByDisplayValue('Roof repair');
+    await openDetails();
+
+    const toggle = screen.getByRole('checkbox', { name: 'Keep recordings as spoken' });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    await waitFor(() => {
+      expect(patches).toHaveLength(1);
+    });
+    expect(patches[0]).toEqual(expect.objectContaining({ version: NOTE.version, verbatim: true }));
+
+    // A later change to another field does not carry it again: a backend
+    // that refuses unknown fields is sent only what moved.
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Transcription language' }),
+      'hi',
+    );
+    await waitFor(() => {
+      expect(patches).toHaveLength(2);
+    });
+    expect(patches[1]).not.toHaveProperty('verbatim');
   });
 
   it('names the effective language in the meta line when it is not plain English', async () => {
@@ -190,8 +228,35 @@ describe('the language is where the user looks', () => {
 
     const select = screen.getByRole('combobox', { name: 'Transcription language' });
     expect(select).toHaveFocus();
-    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
   });
+});
+
+describe('the text carries its language (T60)', () => {
+  it('tags the body with the note’s language, and with the default when it inherits', async () => {
+    mount({ ...NOTE, language: 'ta' });
+    expect(await screen.findByRole('textbox', { name: 'Note body' })).toHaveAttribute('lang', 'ta');
+  });
+
+  it('has no tag under Auto-detect, when nobody knows', async () => {
+    mount({ ...NOTE, language: 'auto' });
+    expect(await screen.findByRole('textbox', { name: 'Note body' })).not.toHaveAttribute('lang');
+  });
+
+  const cases: [note: string, fallback: string | undefined, expected: string | undefined][] = [
+    ['', 'ml', 'ml'],
+    // The settings have not answered yet: no tag, rather than English over
+    // what may be Malayalam.
+    ['', undefined, undefined],
+    ['ta', 'ml', 'ta'],
+    ['auto', 'ml', undefined],
+    ['', 'auto', undefined],
+  ];
+  for (const [note, fallback, expected] of cases) {
+    it(`content language for ${JSON.stringify(note)} under ${JSON.stringify(fallback)} → ${JSON.stringify(expected)}`, () => {
+      expect(contentLanguage(note, fallback)).toBe(expected);
+    });
+  }
 });
 
 describe('when the language is worth a word', () => {

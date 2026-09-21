@@ -134,8 +134,6 @@ test('several recordings download as one archive, with progress', async ({
   const barBox = await page.locator('.selection-bar').boundingBox();
   const tabBox = await page.locator('.tab-bar').boundingBox();
   expect(barBox!.y + barBox!.height).toBeLessThanOrEqual(tabBox!.y + 1);
-  // And the note's own action bar has stepped aside.
-  await expect(page.getByRole('toolbar', { name: 'Note actions' })).toBeHidden();
 
   const download = page.waitForEvent('download');
   await bar.getByRole('button', { name: 'Download' }).click();
@@ -159,4 +157,26 @@ test('a long press on a row starts selecting it', async ({ page, api }) => {
   await expect(page.getByRole('region', { name: 'Recording', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('toolbar', { name: 'Recording actions' })).toHaveCount(0);
+});
+
+/**
+ * Transcribe again (T7): a recording that came back in the wrong script is
+ * sent through the pipeline once more from its audio, in the note's
+ * language, and the row follows the run as it does a new recording.
+ */
+test('a settled recording can be transcribed again, and the row follows the run', async ({
+  page,
+  api,
+}) => {
+  api.notes['roof-repair']!.language = 'ml';
+  await page.goto(RECORDINGS);
+  await page.getByRole('button', { name: ROW }).click();
+  await page.getByRole('menuitem', { name: 'Transcribe again in Malayalam' }).click();
+
+  await expect(page.getByRole('list', { name: 'Filing progress' })).toBeVisible();
+  const posted = api.requests.find(
+    (r) => r.method === 'POST' && r.url === '/v1/captures/cap-old/retranscribe',
+  );
+  expect(posted).toBeTruthy();
+  expect(api.notes['roof-repair']?.captures?.[0]?.status).toBe('transcribing');
 });
