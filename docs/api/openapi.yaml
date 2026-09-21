@@ -971,10 +971,7 @@ components:
       in: header
       description: |
         Replaying a key returns the original response. A double-tap on a flaky
-        mobile link must not create two notes. Only a settled answer is
-        replayed: a 409 or a 429 is not recorded, so the same key sent again
-        once the cause has cleared (the cap reset, the capture finished) is
-        answered afresh rather than with yesterday's refusal.
+        mobile link must not create two notes.
       schema: { type: string, minLength: 8, maxLength: 128 }
 
   responses:
