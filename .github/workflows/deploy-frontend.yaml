@@ -85,7 +85,7 @@ jobs:
       # bundle cannot point at a stack that no longer exists. The build role
       # can DescribeStacks on chintan-* and upload Lambda zips, and nothing
       # else; see deploy-backend.yaml for the BUILD_ROLE_ARN fallback.
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.BUILD_ROLE_ARN || format('arn:aws:iam::{0}:role/chintan-github-actions', secrets.AWS_ACCOUNT_ID) }}
           aws-region: ${{ env.AWS_REGION }}
