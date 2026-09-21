@@ -43,7 +43,9 @@ export type IconName =
   | 'sparkle'
   | 'append'
   | 'shield'
-  | 'code';
+  | 'code'
+  | 'pause'
+  | 'send';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -109,6 +111,12 @@ export const PATHS: Record<IconName, string> = {
   shield: 'M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z',
   // Two angle brackets with a slash: the source.
   code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
+  // Two bars, the width of the stop square, so Pause and Stop sit as a pair
+  // on the capture screen.
+  pause: 'M8.5 7v10M15.5 7v10',
+  // An arrow up and out: the recording leaves for the server. The head is the
+  // download arrow's, turned over, so Send and Save read as the same pen.
+  send: 'M12 19.5V5M7.5 9.5 12 5l4.5 4.5',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

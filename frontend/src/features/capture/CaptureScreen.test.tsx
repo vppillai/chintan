@@ -521,6 +521,84 @@ describe('review before send', () => {
   });
 });
 
+describe('Send from the recording screen', () => {
+  /** The stubbed server for a create; nothing else is asked for. */
+  function acceptingFetch(): typeof fetch {
+    return async (input, init) => {
+      const body = (payload: unknown, status = 200) =>
+        new Response(JSON.stringify(payload), {
+          status,
+          headers: { 'content-type': 'application/json' },
+        });
+      if (String(input).includes('/v1/captures') && init?.method === 'POST') {
+        return body(
+          {
+            capture: { id: 'srv-3', status: 'uploaded', created_at: '', version: 1 },
+            upload: {
+              url: 'https://s3.test/audio',
+              expires_at: new Date(Date.now() + 60_000).toISOString(),
+              max_bytes: 1_000_000,
+            },
+          },
+          201,
+        );
+      }
+      return body({ items: TEST_NOTES });
+    };
+  }
+
+  it('names every control, and swaps Pause for Resume while paused', async () => {
+    // The words under the discs are the accessible names; a screen reader and
+    // these queries read the same thing.
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    for (const name of ['Cancel', 'Pause', 'Stop', 'Send']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
+    expect(screen.getAllByRole('button', { name: /^(Cancel|Pause|Stop|Send)$/ })).toHaveLength(4);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Pause' }));
+    expect(useCaptureStore.getState().model.state).toBe('paused');
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull();
+    // Send is the one filled shape, whichever state the row is in.
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveClass('capture__control--primary');
+  });
+
+  it('Send while recording stops, hands off to the note at once, and uploads', async () => {
+    /*
+     * One tap where there were two. The recorder is stopped first — the
+     * upload cannot read a buffer still being written — and the screen leaves
+     * as Send from review does, to the note's recordings, where the filing
+     * row shows the upload.
+     */
+    useCaptureStore.getState().__configure({
+      upload: {
+        assemble: async () => new Blob(['audio']),
+        put: async () => {},
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+    mount('/capture?note=roof-repair', testApiContext(acceptingFetch()));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    recorder.emitChunk(10);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByText('Note roof-repair?tab=recordings')).toBeInTheDocument();
+    expect(recorder.state).toBe('inactive');
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('uploaded');
+    });
+    expect(useCaptureStore.getState().model.serverCaptureId).toBe('srv-3');
+  });
+});
+
 describe('the capture route does not wait on the library', () => {
   it('asks for no notes until the microphone is live', async () => {
     /*

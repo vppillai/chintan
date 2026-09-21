@@ -1070,7 +1070,7 @@
  * listed here rather than at each site so that the two themes' `--gradient-
  * lift` — a highlight in one, a shade in the other — reach all of them.
  */
-.capture__control--primary,
+.capture__control--primary .capture__control-disc,
 .filing-row__action--primary,
 .note-bar__action--primary,
 .dialog__action--primary,
@@ -1087,7 +1087,7 @@
   box-shadow: var(--shadow-xs);
 }
 
-.capture__control--primary:active,
+.capture__control--primary:active .capture__control-disc,
 .filing-row__action--primary:active,
 .note-bar__action--primary:active,
 .dialog__action--primary:active,

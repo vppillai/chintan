@@ -64,33 +64,92 @@
 }
 
 /*
- * Wrapping, and allowed to be narrower than its buttons.
+ * One row, never two.
  *
- * Three pill buttons side by side have a min-content width of ~281px, and a
- * grid item's automatic minimum size is that width — so on a 320px phone the
- * capture surface measured 320.53px and pushed the document half a pixel wide.
- * At a larger browser text size the same rule pushes Stop off the screen
- * entirely, which is the version of this bug that actually loses a recording.
+ * Four round targets share the width as equal grid columns rather than
+ * flexing. Three pill buttons had a min-content width of ~281px, which on a
+ * 320px phone pushed the document half a pixel wide and, at a larger text
+ * size, pushed Stop off the screen — the version of that bug that loses a
+ * recording. A column a quarter of the row wide cannot: at 320px the four are
+ * 70px each around 64px discs, and the words under them wrap before anything
+ * leaves the screen. The quarter is also the column when there are three or
+ * two, so a control sits the same distance from its neighbour in every state
+ * rather than spreading to fill the row; 6rem caps it on a wide screen.
  */
 .capture__controls {
-  display: flex;
-  flex-wrap: wrap;
+  /* 64px on a phone, tapped at arm's length; 56px under a pointer. */
+  --capture-control-size: 4rem;
+
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, min(6rem, 25%));
   justify-content: center;
-  gap: var(--space-4);
+  justify-items: center;
+  inline-size: 100%;
   min-inline-size: 0;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .capture__controls {
+    --capture-control-size: 3.5rem;
+  }
+}
+
+/*
+ * The whole thing — disc and word — is the button, so the target is never
+ * smaller than the disc and the word is the accessible name.
+ */
 .capture__control {
-  display: flex;
-  align-items: center;
+  display: grid;
+  justify-items: center;
   gap: var(--space-2);
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-3) var(--space-5);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding-block: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  color: var(--color-muted);
+}
+
+/* Ink on a shape pressed out of the page, like the app's other outline controls. */
+.capture__control-disc {
+  display: grid;
+  place-items: center;
+  inline-size: var(--capture-control-size);
+  block-size: var(--capture-control-size);
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  background-color: var(--color-raised);
+  background-image: var(--gradient-tonal);
   color: var(--color-ink);
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-spring),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.capture__control:active .capture__control-disc {
+  transform: scale(0.94);
+}
+
+.capture__control:not(.capture__control--primary):active .capture__control-disc {
+  background-color: var(--color-surface);
+  background-image: none;
+}
+
+/*
+ * Send: the row's only filled shape, so at arm's length the eye lands on it
+ * first. Filled ink like the app's other primaries (the lift and shadow come
+ * from the shared rule in shell.css); the accent stays the record button's.
+ */
+.capture__control--primary {
+  color: var(--color-ink);
+}
+
+.capture__control--primary .capture__control-disc {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
 }
 
 .capture__state {
@@ -129,14 +188,4 @@
 .capture__progress {
   font-size: var(--font-size-sm);
   color: var(--color-muted);
-}
-
-.capture__control--primary {
-  background-color: var(--color-ink);
-  color: var(--color-ground);
-  border-color: var(--color-ink);
-}
-
-.capture__control:not(.capture__control--primary):active {
-  background-color: var(--color-surface);
 }

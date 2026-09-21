@@ -253,6 +253,80 @@ test('Send returns to the note, where the recording files in front of the user',
   await expect(page).not.toHaveURL(/\/capture/);
 });
 
+/**
+ * Send while recording: one tap where there were two.
+ *
+ * The real recorder hands over its last chunk after `stop()` returns, so the
+ * thing to prove here — and only here, with a real MediaRecorder — is that the
+ * create the server sees was made after the stop settled: a length and a size.
+ */
+test('Send while recording stops the recorder, then uploads', async ({ page, api }) => {
+  await page.goto('/notes/roof-repair');
+  await page.getByRole('button', { name: /record into this/i }).click();
+  await expect(page.locator('.capture__state')).toHaveText('Recording');
+  await page.waitForTimeout(1_100);
+
+  const create = page.waitForRequest(
+    (request) => request.method() === 'POST' && request.url().endsWith('/api/v1/captures'),
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  // Gone at once, to where a Send from review goes.
+  await expect(page).toHaveURL(/\/notes\/roof-repair\?tab=recordings$/);
+  const body = (await create).postDataJSON() as { duration_ms: number; size_bytes: number };
+  expect(body.duration_ms).toBeGreaterThan(900);
+  expect(body.size_bytes).toBeGreaterThan(0);
+
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  expect(api.captures[0]?.note_id).toBe('roof-repair');
+  api.captures[0]!.status = 'appended';
+  await expect(page.getByText('Filed').first()).toBeVisible({ timeout: 10_000 });
+});
+
+/**
+ * The narrowest phone still in use, held in a hand: four round targets in one
+ * row, none of them narrower than the finger. Touch emulation gives the coarse
+ * pointer that selects the 64px size; the viewport is the iPhone SE's.
+ */
+test.describe('the control row on a 320px phone', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 320, height: 568 } });
+
+  test('keeps Cancel, Pause, Stop and Send on one row at 64px', async ({ page }) => {
+    await page.goto('/capture');
+    await expect(page.locator('.capture__state')).toHaveText('Recording');
+
+    const row = async () =>
+      page.locator('.capture__control').evaluateAll((controls) =>
+        controls.map((control) => {
+          const box = control.getBoundingClientRect();
+          const disc = control.querySelector('.capture__control-disc')!.getBoundingClientRect();
+          return { top: Math.round(box.top), left: box.left, right: box.right, disc: disc.width };
+        }),
+      );
+
+    let controls = await row();
+    expect(controls).toHaveLength(4);
+    expect(new Set(controls.map((control) => control.top)).size, 'the row wrapped').toBe(1);
+    for (const control of controls) {
+      expect(control.left).toBeGreaterThanOrEqual(0);
+      expect(control.right).toBeLessThanOrEqual(320);
+      expect(control.disc).toBeGreaterThanOrEqual(64);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+
+    // And the words are there to read, not only to be announced.
+    for (const label of ['Cancel', 'Pause', 'Stop', 'Send']) {
+      await expect(page.getByText(label, { exact: true })).toBeVisible();
+    }
+
+    await page.getByRole('button', { name: 'Stop' }).click();
+    await expect(page.locator('.capture__state')).toHaveText('Ready to send');
+    controls = await row();
+    expect(controls).toHaveLength(3);
+    expect(new Set(controls.map((control) => control.top)).size, 'the review row wrapped').toBe(1);
+  });
+});
+
 test('pause and stop are distinct controls', async ({ page }) => {
   await page.goto('/capture');
 
