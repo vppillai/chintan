@@ -143,6 +143,15 @@ paths:
           in: query
           description: Restrict to notes carrying this tag.
           schema: { type: string, maxLength: 40 }
+        - name: kind
+          in: query
+          description: |
+            Restrict to notes of this kind. Applied after the page, like
+            `tag`: a page may come back short, or empty, with `cursor` still
+            set, and the client keeps paging. Cursor semantics are unchanged.
+          schema:
+            type: string
+            enum: [note, checklist]
         - name: include
           in: query
           description: |
@@ -1092,10 +1101,23 @@ components:
 
     Note:
       type: object
-      required: [id, title, updated_at, version, archived]
+      required: [id, title, updated_at, version, archived, kind]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 200 }
+        kind:
+          type: string
+          enum: [note, checklist]
+          description: |
+            What the body is. `note` is free-form Markdown. `checklist` is one
+            item per line in GitHub task-list syntax — `- [ ] text` open,
+            `- [x] text` done; blank lines are ignored — and nothing else. A
+            recording filed into a checklist is appended as one open item
+            (the cleaned transcript collapsed to one line, at most 2,000
+            runes), and its cleaned view runs in `tasks` mode only. Settable
+            through `NoteCreate` and `NoteUpdate`; the server never converts
+            the body, the client sends it converted. Always present; a note
+            from before the field existed reads `note`.
         aliases:
           type: array
           maxItems: 32
@@ -1233,6 +1255,11 @@ components:
       properties:
         title: { type: string, minLength: 1, maxLength: 200 }
         body: { type: string, maxLength: 1048576 }
+        kind:
+          type: string
+          enum: [note, checklist]
+          default: note
+          description: See `Note.kind`. Any other value is 400 `kind must be note or checklist`.
         aliases:
           type: array
           maxItems: 32
@@ -1249,6 +1276,14 @@ components:
         version: { type: integer }
         title: { type: string, minLength: 1, maxLength: 200 }
         body: { type: string, maxLength: 1048576 }
+        kind:
+          type: string
+          enum: [note, checklist]
+          description: |
+            See `Note.kind`. Switching kind does not touch the body: send the
+            converted `body` in the same request (plain → checklist: one
+            `- [ ] paragraph` per paragraph; checklist → plain: one paragraph
+            per item). Any other value is 400 `kind must be note or checklist`.
         aliases:
           type: array
           maxItems: 32

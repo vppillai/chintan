@@ -20,6 +20,8 @@ type noteCreateRequest struct {
 	Body    string   `json:"body"`
 	Aliases []string `json:"aliases"`
 	Tags    []string `json:"tags"`
+	// Kind is "note" (the default) or "checklist".
+	Kind string `json:"kind"`
 }
 
 // noteUpdateRequest is the OpenAPI NoteUpdate schema.
@@ -40,6 +42,9 @@ type noteUpdateRequest struct {
 	// the body by the worker (POST /v1/notes/{id}/clean).
 	AutoClean   *bool   `json:"auto_clean"`
 	CleanedMode *string `json:"cleaned_mode"`
+	// Kind switches the note between "note" and "checklist". The client sends
+	// the converted body in the same request; the server converts nothing.
+	Kind *string `json:"kind"`
 }
 
 // noteCleanRequest is the OpenAPI NoteCleanRequest schema. The body is
@@ -107,6 +112,23 @@ func (rt *router) listNotes(w http.ResponseWriter, r *http.Request) {
 		}
 		items = filtered
 	}
+	// The kind filter is the same mechanism as the tag filter: applied after
+	// the page, so a page of plain notes comes back empty with its cursor set
+	// and the client keeps paging.
+	if kind := r.URL.Query().Get("kind"); kind != "" {
+		want, ok := storedNoteKind(kind)
+		if !ok {
+			httperr.BadRequest(w, r, service.ErrInvalidNoteKind.Error())
+			return
+		}
+		filtered := items[:0:0]
+		for _, n := range items {
+			if n.Kind == want {
+				filtered = append(filtered, n)
+			}
+		}
+		items = filtered
+	}
 
 	out := notesOf(items)
 	if opts.IncludeSearchText {
@@ -131,6 +153,14 @@ func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {
 	if answerValidation(w, r, validateNoteFields(&req.Title, &req.Body, &req.Aliases, &req.Tags)) {
 		return
 	}
+	kind := ""
+	if req.Kind != "" {
+		var ok bool
+		if kind, ok = storedNoteKind(req.Kind); !ok {
+			httperr.BadRequest(w, r, service.ErrInvalidNoteKind.Error())
+			return
+		}
+	}
 
 	note, err := rt.Notes.CreateNoteWithTags(r.Context(), userID, req.Title, req.Aliases, req.Tags)
 	if err != nil {
@@ -138,15 +168,19 @@ func (rt *router) createNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A body supplied at creation is written through the same path an edit
-	// takes, so there is one place that maintains the snippet and the meta
-	// mirror.
-	if req.Body != "" {
+	// A body or a kind supplied at creation is written through the same path
+	// an edit takes, so there is one place that maintains the snippet and the
+	// meta mirror.
+	if req.Body != "" || kind != "" {
 		version := note.Version
-		updated, err := rt.Notes.UpdateNote(r.Context(), userID, note.ID, service.NoteUpdates{
-			Body:            &req.Body,
-			ExpectedVersion: &version,
-		})
+		updates := service.NoteUpdates{ExpectedVersion: &version}
+		if req.Body != "" {
+			updates.Body = &req.Body
+		}
+		if kind != "" {
+			updates.Kind = &kind
+		}
+		updated, err := rt.Notes.UpdateNote(r.Context(), userID, note.ID, updates)
 		if err != nil {
 			fail(w, r, err)
 			return
@@ -216,6 +250,14 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 	if req.CleanedMode != nil {
 		mode := model.NoteCleanMode(*req.CleanedMode)
 		updates.CleanMode = &mode
+	}
+	if req.Kind != nil {
+		kind, ok := storedNoteKind(*req.Kind)
+		if !ok {
+			httperr.BadRequest(w, r, service.ErrInvalidNoteKind.Error())
+			return
+		}
+		updates.Kind = &kind
 	}
 	updated, err := rt.Notes.UpdateNote(r.Context(), userID, noteID, updates)
 	if err != nil {
