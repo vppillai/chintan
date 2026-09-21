@@ -235,7 +235,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"GET /v1/notes/{noteId} → 200 for a checklist. kind is checklist and body is one task-list item per line (`- [ ] open`, `- [x] done`).",
 		h.do(t, http.MethodGet, "/v1/notes/"+checklist.ID, contractUser, nil))
 	add("notesPageChecklists", "Page<NoteWire>",
-		"GET /v1/notes?kind=checklist → 200. Only the checklists; the filter is applied after the page, like tag, so a page can be short with cursor set.",
+		"GET /v1/notes?kind=checklist → 200. Only the checklists, filtered before the page is cut like tag: up to `limit` matches, and cursor set only when more matches exist.",
 		h.do(t, http.MethodGet, "/v1/notes?kind=checklist", contractUser, nil))
 	// The checklist's cleaned view: tasks mode, task-list lines and nothing
 	// else. Seeded like noteDetailCleaned, since the API never writes the view.

@@ -260,7 +260,7 @@ export const noteDetailChecklist: NoteDetailWire = {
   "version": 2
 };
 
-/** GET /v1/notes?kind=checklist → 200. Only the checklists; the filter is applied after the page, like tag, so a page can be short with cursor set. */
+/** GET /v1/notes?kind=checklist → 200. Only the checklists, filtered before the page is cut like tag: up to `limit` matches, and cursor set only when more matches exist. */
 export const notesPageChecklists: Page<NoteWire> = {
   "items": [
     {

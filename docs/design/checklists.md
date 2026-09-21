@@ -18,8 +18,9 @@ before 2026-09-21 carries no attribute and needs no backfill;
 `NoteItemAttributes` includes it, so `chintanctl reconcile` re-promotes it
 with the rest. The wire maps `""` to `"note"` and `kind` is required on every
 `Note` and `NoteDetail`, the search-corpus rows included. `GET
-/v1/notes?kind=checklist` filters after the page, exactly as `?tag=` does, so
-the cursor is unchanged and a page can come back short.
+/v1/notes?kind=checklist` filters before the page is cut, exactly as `?tag=`
+does, so a page holds up to `limit` matches and the cursor is set only when
+more matches exist.
 
 A checklist body is GitHub task-list syntax, one item per line — `- [ ] text`
 open, `- [x] text` done — and nothing else. Blank lines are ignored by every

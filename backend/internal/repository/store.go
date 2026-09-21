@@ -54,6 +54,20 @@ type ListOptions struct {
 	// and more so: it is up to 200 KB per note, and the export is the one
 	// reader that wants it for every note at once.
 	IncludeCleanedBody bool
+	// Keep restricts a NOTE list to the notes it accepts (the wire's ?tag= and
+	// ?kind=). It is applied where the shelf filter is — to the drained
+	// partition, before the order is cut into a page and the cursor minted —
+	// so a filtered page is as full of matches as the partition allows and its
+	// cursor is set only when more matches exist. Filtering the page after the
+	// store had cut it gave a page of one match with a cursor that led to an
+	// empty page, and the Home screen counted that as "Checklists · 0+"
+	// (smoke 2026-09-21, finding 1). Nil keeps every note.
+	Keep func(model.NoteIndex) bool
+}
+
+// Keeps reports whether n passes the caller's Keep filter; no filter keeps all.
+func (o ListOptions) Keeps(n model.NoteIndex) bool {
+	return o.Keep == nil || o.Keep(n)
 }
 
 func (o ListOptions) limit() int32 {

@@ -141,14 +141,17 @@ paths:
             default: active
         - name: tag
           in: query
-          description: Restrict to notes carrying this tag.
+          description: |
+            Restrict to notes carrying this tag. Applied before the page is
+            cut, so a page holds up to `limit` matches and `cursor` is set
+            only when more matches exist.
           schema: { type: string, maxLength: 40 }
         - name: kind
           in: query
           description: |
-            Restrict to notes of this kind. Applied after the page, like
-            `tag`: a page may come back short, or empty, with `cursor` still
-            set, and the client keeps paging. Cursor semantics are unchanged.
+            Restrict to notes of this kind. Applied before the page is cut,
+            like `tag`: a page holds up to `limit` matches and `cursor` is
+            set only when more matches exist. Cursor semantics are unchanged.
           schema:
             type: string
             enum: [note, checklist]

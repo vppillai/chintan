@@ -1,7 +1,10 @@
 package handler_test
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -104,5 +107,73 @@ func TestNotesListFiltersByKind(t *testing.T) {
 	}
 	if kinds[packing.ID] != "checklist" || kinds[groceries.ID] != "checklist" {
 		t.Errorf("corpus rows do not carry kind: %v", kinds)
+	}
+}
+
+// A filter is applied before the page is cut, not to the page the store had
+// already cut: with sixty plain notes and one checklist, `?kind=checklist`
+// used to answer the one match WITH a cursor — the raw page of fifty rows was
+// full — and the page after it was empty, which Home rendered as
+// "Checklists · 0+" (smoke 2026-09-21, finding 1). Now a page holds up to
+// `limit` matches and the cursor is set only when more matches exist.
+func TestFilteredListPagesOverMatchesNotRows(t *testing.T) {
+	cases := []struct {
+		name     string
+		plain    int
+		matching int
+		match    map[string]any // what makes a note match the query
+		query    string
+		// Items per page, following the cursor until there is none.
+		wantPages []int
+	}{
+		{"one checklist among sixty plain notes", 60, 1,
+			map[string]any{"kind": "checklist"}, "kind=checklist&limit=50", []int{1}},
+		{"a hundred and twenty checklists in pages of a hundred", 0, 120,
+			map[string]any{"kind": "checklist"}, "kind=checklist&limit=100", []int{100, 20}},
+		{"thirty tagged notes spread over three raw pages of fifty", 90, 30,
+			map[string]any{"tags": []string{"house"}}, "tag=house&limit=50", []int{30}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			// Interleaved, so the matches sit among the rest in list order
+			// rather than all on the first raw page.
+			total := tc.plain + tc.matching
+			for i, made := 0, 0; i < total; i++ {
+				if made < tc.matching && i*tc.matching/total >= made {
+					h.createNote(t, "user1", fmt.Sprintf("Match %d", made), tc.match)
+					made++
+					continue
+				}
+				h.createNote(t, "user1", fmt.Sprintf("Plain %d", i), nil)
+			}
+
+			var got []int
+			path := "/v1/notes?" + tc.query
+			for {
+				w := h.do(t, http.MethodGet, path, "user1", nil)
+				if w.Code != http.StatusOK {
+					t.Fatalf("%s: status = %d body = %s", path, w.Code, w.Body.String())
+				}
+				var page handler.Page[handler.Note]
+				decodeInto(t, w, &page)
+				for _, n := range page.Items {
+					if !strings.HasPrefix(n.Title, "Match ") {
+						t.Errorf("%q came through the filter", n.Title)
+					}
+				}
+				got = append(got, len(page.Items))
+				if page.Cursor == "" {
+					break
+				}
+				if len(got) > len(tc.wantPages) {
+					t.Fatalf("still a cursor after %d pages: %v", len(got), got)
+				}
+				path = "/v1/notes?" + tc.query + "&cursor=" + url.QueryEscape(page.Cursor)
+			}
+			if !slices.Equal(got, tc.wantPages) {
+				t.Errorf("pages = %v, want %v", got, tc.wantPages)
+			}
+		})
 	}
 }
