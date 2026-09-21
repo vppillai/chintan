@@ -743,7 +743,14 @@ describe('the next page arrives as the list is scrolled', () => {
     const base = library({ active: PAGE_ONE });
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input));
-      if (url.pathname.endsWith('/v1/notes') && (url.searchParams.get('state') ?? 'active') === 'active' && !url.searchParams.has('include')) {
+      // The unfiltered active list only: the corpus and the Checklists chip's
+      // count are lists of their own and page on their own.
+      if (
+        url.pathname.endsWith('/v1/notes') &&
+        (url.searchParams.get('state') ?? 'active') === 'active' &&
+        !url.searchParams.has('include') &&
+        !url.searchParams.has('kind')
+      ) {
         const cursor = url.searchParams.get('cursor');
         cursors.push(cursor);
         return cursor === 'page-2' ? json({ items: PAGE_TWO }) : json({ items: PAGE_ONE, cursor: 'page-2' });
