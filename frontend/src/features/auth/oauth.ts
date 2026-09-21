@@ -22,12 +22,18 @@ import { tokenSetFromWire, type TokenSet } from '@/api/tokens.ts';
 import { CODE_CHALLENGE_METHOD } from './pkce.ts';
 
 /**
- * What the hosted UI is asked for. `openid` is what mints the id_token.
- * `aws.cognito.signin.user.admin` is what lets the access token call the
- * user-facing Cognito APIs — listing and removing the user's own passkeys —
- * from the app; without it those calls are refused with NotAuthorizedException.
+ * What the hosted UI is asked for. `openid` is what mints the id_token, which
+ * is the bearer the API takes; `email` and `profile` fill its claims.
+ *
+ * Not `aws.cognito.signin.user.admin`. It was added for an in-app passkey list
+ * that never shipped (`passkeys.ts` says why it cannot), and every access
+ * token carried it unused: with the token set in `localStorage`, any script
+ * that read it could call `DeleteUser`, change the recovery email or strip the
+ * person's passkeys for an hour. Asking for less than the client allows is
+ * always accepted, so this works against a pool that still grants the scope
+ * and against one that no longer does; re-add it with the feature that needs it.
  */
-const SCOPES = ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'] as const;
+const SCOPES = ['openid', 'email', 'profile'] as const;
 
 /**
  * Where Cognito sends the browser back to.

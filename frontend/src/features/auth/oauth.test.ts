@@ -50,6 +50,21 @@ describe('the authorize request', () => {
     expect(url.searchParams.get('redirect_uri')).toBe('https://app.test/repo/dev/');
   });
 
+  it('asks for no Cognito admin scope, which nothing in the app calls', () => {
+    // `aws.cognito.signin.user.admin` on the access token is the power to
+    // delete the account or strip its passkeys; requested for a passkey list
+    // that never shipped, it sat in localStorage for anything to read.
+    const url = new URL(
+      authorizeUrl({
+        state: 'st-1',
+        challenge: 'ch-1',
+        redirectUri: 'https://app.test/',
+        settings: SETTINGS,
+      }),
+    );
+    expect(url.searchParams.get('scope')?.split(' ')).toEqual(['openid', 'email', 'profile']);
+  });
+
   it('never puts the verifier in the URL', () => {
     const url = authorizeUrl({
       state: 'st-1',
