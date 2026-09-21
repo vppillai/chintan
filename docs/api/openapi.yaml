@@ -1078,9 +1078,12 @@ components:
           pattern: '^(auto|[a-z]{2})$'
           description: |
             The transcription language for a capture whose destination note
-            sets none — or is not yet known: a capture recorded without a
-            `note_id` is transcribed before it is routed, so only this value
-            can apply to it. `auto` sends no language and lets Whisper detect
+            sets none, and the first language every routed capture is
+            transcribed in: a capture recorded without a `note_id` is
+            transcribed before it is routed, and transcribed once more in
+            the destination note's `language` when that differs from what
+            was sent. A note the router creates starts with this value when
+            it is a code. `auto` sends no language and lets Whisper detect
             one per recording. There is no mixed-language mode, and
             auto-detection is not one: it picks a single language per
             recording and drops or re-scripts the speech in any other, so for
@@ -1152,12 +1155,15 @@ components:
           type: string
           pattern: '^(auto|[a-z]{2})$'
           description: |
-            The transcription language for captures recorded into this note
-            (`POST /v1/captures` with this `note_id`). `auto` or an ISO-639-1
-            code. Absent when the note inherits the tenant's
-            `default_language`. Settable through `NoteUpdate`. It cannot
-            apply to a capture that is routed to this note after the fact,
-            because routing reads the transcript.
+            The transcription language for this note's captures: `auto` or
+            an ISO-639-1 code. Absent when the note inherits the tenant's
+            `default_language`. Settable through `NoteUpdate`. A capture
+            recorded into the note (`POST /v1/captures` with this `note_id`)
+            is transcribed in it from the start; one the router files here
+            afterwards was transcribed in the default first, and is
+            transcribed again in this language when the two differ. A note
+            the router creates starts with the language its first recording
+            was transcribed in, unless that was `auto`.
         search_text:
           type: string
           maxLength: 32768

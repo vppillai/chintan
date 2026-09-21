@@ -423,6 +423,33 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
 	}
 
+	if capture.CleanKey == "" && wantsNoteLanguage(*capture, note) {
+		// The destination was not known when the recording was transcribed
+		// (it was routed, or a person chose it afterwards), so the transcript
+		// is in the tenant's default and the note's "Transcription language"
+		// was never applied — a Malayalam dictation aimed by voice at an ml
+		// note went to Whisper as auto and came back in Tamil script (review
+		// 2026-09-21, T2). Transcribing once more in the note's language is
+		// the promise that field makes; it costs one more STT call only in
+		// the mismatch case. The routed text goes too, so the instruction
+		// strip below runs over the new transcript with the destination
+		// pinned. Language is written with RawKey, so a retry that finds the
+		// second transcript does not make a third.
+		obs.Log(ctx).Info("destination note asks for another language; transcribing again",
+			slog.String("capture_id", capture.ID),
+			slog.String("note_id", note.ID),
+			slog.String("language_sent", capture.Language),
+			slog.String("language_wanted", note.Language))
+		obs.Count(ctx, "CaptureRetranscribedForNote", nil)
+		capture.RawKey, capture.SegmentsKey, capture.RoutedKey = "", "", ""
+		if err := p.transcribe(ctx, tenantID, capture); err != nil {
+			return *capture, err
+		}
+		if service.CaptureIsTerminal(capture.Status) {
+			return *capture, nil
+		}
+	}
+
 	if capture.RoutedKey == "" && capture.CleanKey == "" {
 		// Recorded into a note, so routing — and with it the removal of the
 		// words addressed to the app — was skipped.
@@ -444,6 +471,15 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	return p.append(ctx, tenantID, capture, note)
+}
+
+// wantsNoteLanguage reports whether the transcript at RawKey was made in a
+// language other than the one its destination note asks for. A note that
+// inherits the default, or asks for auto-detection, never asks for a second
+// transcription: the first was in the default, and auto is what the review
+// found unreliable for the languages this matters for.
+func wantsNoteLanguage(c model.CaptureIndex, note model.NoteIndex) bool {
+	return note.Language != "" && note.Language != model.LanguageAuto && c.Language != note.Language
 }
 
 // stripInstructions removes a spoken app instruction from a capture that was
@@ -535,6 +571,11 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if err != nil {
 		return err
 	}
+	// "auto" is the setting's word for it; the provider's is an absent field.
+	sent := language
+	if sent == model.LanguageAuto {
+		sent = ""
+	}
 
 	var result provider.Transcription
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
@@ -552,7 +593,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		out, err := p.cfg.STT.Transcribe(stageCtx, provider.Audio{
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
-			Language:    language,
+			Language:    sent,
 		})
 		if err != nil {
 			return breaker.Result{}, err
@@ -595,20 +636,18 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	// the name Whisper answered with. Sixteen days of prod logs could not say
 	// whether Malayalam was being transcribed as Tamil until these two fields
 	// existed (review 2026-09-21, T10).
-	languageSent := language
-	if languageSent == "" {
-		languageSent = model.LanguageAuto
-	}
 	obs.Log(ctx).Info("transcribed capture",
 		slog.String("capture_id", capture.ID),
 		slog.Int64("duration_ms", result.DurationMS()),
 		slog.Int("segments", len(result.Segments)),
-		slog.String("language_sent", languageSent),
+		slog.String("language_sent", language),
 		slog.String("language_detected", result.Language),
 		slog.Any("raw", rawShape))
-	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(language, result.Language)})
+	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
 
 	capture.RawKey = rawKey
+	capture.Language = language
+	capture.LanguageDetected = result.Language
 	if segmentsKey != "" {
 		capture.SegmentsKey = segmentsKey
 	}
@@ -620,16 +659,17 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	return p.persist(ctx, capture)
 }
 
-// transcriptionLanguage decides what the speech provider is told the recording
-// is in: the target note's language when the capture was started with one,
-// else the tenant's default, with "auto" becoming "" (send no language).
+// transcriptionLanguage decides what the recording is transcribed in: the
+// destination note's language when the capture has a note, else the tenant's
+// default. It returns model.LanguageAuto or a code — the setting's own words,
+// which is what the capture records; the caller turns "auto" into the absent
+// field the provider reads it as.
 //
-// The note wins only when it is already known. Routing runs AFTER
-// transcription — the router reads the transcript to pick the note — so a
-// capture without note_id cannot be transcribed in the language of a note
-// nobody has chosen yet, and gets the tenant's default. That is the honest
-// limit of a per-note setting on this pipeline, and it is why the setting
-// also exists per tenant.
+// Routing runs AFTER transcription — the router reads the transcript to pick
+// the note — so a capture without note_id is transcribed in the default
+// first. run() compares that with the note the router lands on and, when the
+// note asks for another language, comes back here with the note set and
+// transcribes once more (review 2026-09-21, T2).
 //
 // A note or settings read that fails is a retryable fault, not a reason to
 // guess: guessing English for a Tamil note and appending the result is the
@@ -654,9 +694,6 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 	}
 	if language == "" {
 		language = model.DefaultLanguage
-	}
-	if language == model.LanguageAuto {
-		return "", nil
 	}
 	return language, nil
 }
@@ -827,6 +864,17 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	note, err := p.cfg.Notes.CreateNote(ctx, tenantID, title, nil)
 	if err != nil {
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
+	}
+	if capture.Language != "" && capture.Language != model.LanguageAuto {
+		// The note starts in the language its first recording was
+		// transcribed in, so a later change of the tenant's default does not
+		// silently change what "Record into this" sends for it. Auto is not
+		// written: the note then follows the default, as a note a person
+		// creates does.
+		note.Language = capture.Language
+		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err != nil {
+			return fmt.Errorf("pipeline: set language on the new note: %w", err)
+		}
 	}
 	capture.NoteID = note.ID
 	capture.TargetSource = model.TargetSourceRouter
