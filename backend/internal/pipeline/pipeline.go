@@ -462,7 +462,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	if capture.CleanKey == "" {
-		if err := p.clean(ctx, tenantID, capture); err != nil {
+		if err := p.clean(ctx, tenantID, capture, note.Verbatim); err != nil {
 			return *capture, err
 		}
 		if service.CaptureIsTerminal(capture.Status) {
@@ -1106,7 +1106,14 @@ func routeRetryReason(err error) (string, bool) {
 // Stage 3 — clean
 // ---------------------------------------------------------------------------
 
-func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.CaptureIndex) error {
+// clean rewrites the transcript in the capture's mode, or — for a verbatim
+// note — records the transcript itself as the cleaned text. README, the
+// OpenAPI document and the About screen promised that a verbatim note
+// bypasses cleanup, and until 2026-09-21 nothing in the pipeline read the
+// switch: the verifier seeded a verbatim note and counted one paid cleanup
+// call (review T11). Pointing CleanKey at the source key, rather than copying
+// the text, keeps every reader of CleanKey working and costs no write.
+func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.CaptureIndex, verbatim bool) error {
 	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
 		return err
 	}
@@ -1125,6 +1132,13 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		// The speaker only told the app what to do, so the note they asked for
 		// exists and there is nothing to clean or append.
 		capture.Status = model.StatusNoContent
+		capture.Error = ""
+		return p.persist(ctx, capture)
+	}
+	if verbatim {
+		obs.Count(ctx, "CaptureCleanupBypassed", map[string]string{"Stage": string(service.StatusCleaning)})
+		capture.CleanKey = sourceKey
+		capture.Status = model.StatusCleaned
 		capture.Error = ""
 		return p.persist(ctx, capture)
 	}
