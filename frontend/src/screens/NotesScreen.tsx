@@ -3,6 +3,7 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -361,12 +362,16 @@ export function NotesScreen() {
         wordmark's second line now, out of the heading, so a screen reader
         hears "Notes, 12" and the a11y sweep and the route tests still find
         a heading that starts with "Notes". The count is what has been
-        loaded, with "+" while there is more.
+        loaded, with "+" while there is more. The archive is headed
+        "Archived": under "Notes" its only label was a pressed chip at the
+        far end of a row scrolled to its start, off a phone's screen, and
+        with notes in it the view was indistinguishable from Home (QA
+        2026-09-21, finding 6).
       */}
       <header className="screen__header library-header">
         <h1 className="library-heading">
           <span className="library-heading__title">
-            <span>Notes</span>
+            <span>{view === 'archived' ? 'Archived' : 'Notes'}</span>
             {count !== undefined && (
               <>
                 <span aria-hidden="true" className="library-heading__separator">
@@ -860,8 +865,28 @@ function Chip({
   pressed: boolean;
   onClick: () => void;
 }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  /*
+   * The pressed chip is where the reader is, so the row is scrolled to show
+   * it: the Archived chip sits at the row's far end and was off a phone's
+   * screen whether you arrived by the Archive row or `?view=archived` (QA
+   * 2026-09-21, finding 6). The row's own scrollLeft, not scrollIntoView:
+   * Chromium moves the sequential focus navigation starting point to the
+   * element it scrolls to, so the first Tab landed after the pressed chip
+   * instead of on the skip link. In jsdom every box is empty and nothing
+   * moves, which is the right thing there.
+   */
+  useEffect(() => {
+    const chip = ref.current;
+    const row = chip?.parentElement;
+    if (!pressed || !chip || !row) return;
+    const gutter = Number.parseFloat(getComputedStyle(row).paddingInlineEnd) || 0;
+    const by = chipScrollBy(row.getBoundingClientRect(), chip.getBoundingClientRect(), gutter);
+    if (by !== 0) row.scrollLeft += by;
+  }, [pressed]);
   return (
     <button
+      ref={ref}
       type="button"
       className="chip"
       aria-pressed={pressed}
@@ -871,6 +896,21 @@ function Chip({
       {label}
     </button>
   );
+}
+
+/**
+ * How far a chip row must scroll sideways for `chip` to sit inside it, a
+ * gutter in from the edge: positive to the right, negative to the left, zero
+ * when it already does. Exported for its test.
+ */
+export function chipScrollBy(
+  row: Pick<DOMRect, 'left' | 'right'>,
+  chip: Pick<DOMRect, 'left' | 'right'>,
+  gutter: number,
+): number {
+  if (chip.right > row.right - gutter) return chip.right - (row.right - gutter);
+  if (chip.left < row.left + gutter) return chip.left - (row.left + gutter);
+  return 0;
 }
 
 /**
