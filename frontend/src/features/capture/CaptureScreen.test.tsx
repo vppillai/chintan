@@ -761,6 +761,20 @@ describe('the target chooser', () => {
     expect(meta('short')).toMatch(/· short$/);
     expect(meta('')).not.toContain('·');
   });
+
+  it('shows a checklist’s open items as words, not its `- [ ]` lines (QA 2026-09-21, finding 9)', () => {
+    expect(
+      optionMeta({
+        id: 'n',
+        title: 'Packing',
+        kind: 'checklist',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 1,
+        archived: false,
+        snippet: '- [ ] passport\n- [x] charger\n- [ ] book',
+      }),
+    ).toMatch(/· passport · book$/);
+  });
 });
 
 describe('live is signalled, not only spelt', () => {

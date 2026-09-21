@@ -4,6 +4,7 @@ import { useId, useState } from 'react';
 import { useApi } from '@/api/ApiProvider.tsx';
 import { queryKeys, useNotes } from '@/api/queries.ts';
 import type { NoteWire, SettingsWire } from '@/api/schema.ts';
+import { openItemsText, parseChecklist } from '@/features/notes/checklist.ts';
 import { formatRowTime } from '@/features/notes/groups.ts';
 import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
@@ -177,7 +178,13 @@ const META_SNIPPET_GRAPHEMES = 40;
 
 export function optionMeta(note: NoteWire): string {
   const when = formatRowTime(note.updated_at);
-  const graphemes = Array.from(GRAPHEMES.segment((note.snippet ?? '').trim()), (s) => s.segment);
+  // A checklist's snippet is its raw `- [ ]` lines; the row and the Move
+  // sheet show the open items as words (QA 2026-09-21, finding 9).
+  const text =
+    note.kind === 'checklist'
+      ? openItemsText(parseChecklist(note.snippet ?? ''))
+      : (note.snippet ?? '');
+  const graphemes = Array.from(GRAPHEMES.segment(text.trim()), (s) => s.segment);
   const snippet =
     graphemes.length > META_SNIPPET_GRAPHEMES
       ? `${graphemes.slice(0, META_SNIPPET_GRAPHEMES).join('')}…`
