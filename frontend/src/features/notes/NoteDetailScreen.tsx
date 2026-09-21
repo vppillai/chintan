@@ -90,6 +90,11 @@ export function NoteDetailScreen() {
   // flipped, not after the save lands.
   const checklist = (editor.model.draft.kind ?? note?.kind ?? 'note') === 'checklist';
   const [selectingRecordings, setSelectingRecordings] = useState(false);
+  // The language the note's text is in, for `lang` on everything that
+  // renders it — announced, spell-checked and hyphenated as that language
+  // rather than as the document's English (review 2026-09-21, T60).
+  const { data: settings } = useSettings();
+  const lang = contentLanguage(editor.model.draft.language ?? '', settings?.default_language);
 
   /*
    * Which of the menu's disclosures is open. Held here rather than in the
@@ -296,6 +301,7 @@ export function NoteDetailScreen() {
         note={note}
         editor={editor}
         checklist={checklist}
+        lang={lang}
         localUpload={localUpload}
         onSelectingRecordings={setSelectingRecordings}
         find={find}
@@ -335,6 +341,7 @@ function NoteViews({
   note,
   editor,
   checklist,
+  lang,
   localUpload,
   onSelectingRecordings,
   find,
@@ -345,6 +352,8 @@ function NoteViews({
   note: NoteDetailWire;
   editor: NoteEditor;
   checklist: boolean;
+  /** The text's language tag, or none under Auto-detect. */
+  lang: string | undefined;
   localUpload: CaptureModel | null;
   onSelectingRecordings: (selecting: boolean) => void;
   find: FindState;
@@ -420,16 +429,18 @@ function NoteViews({
           <TextPanel
             editor={editor}
             checklist={checklist}
+            lang={lang}
             find={target}
             onDismissFind={() => {
               dispatchFind({ type: 'close' });
             }}
           />
         ) : tab === 'cleaned' ? (
-          <CleanedPanel note={note} editor={editor} find={target} />
+          <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
         ) : (
           <Recordings
             note={note}
+            lang={lang}
             localUpload={localUpload}
             onSelectingChange={onSelectingRecordings}
           />
@@ -476,11 +487,13 @@ function NotePanel({
 function TextPanel({
   editor,
   checklist,
+  lang,
   find,
   onDismissFind,
 }: {
   editor: NoteEditor;
   checklist: boolean;
+  lang: string | undefined;
   find: FindTarget | null;
   /** A tap on the mirror: close the bar and go back to editing. */
   onDismissFind: () => void;
@@ -538,6 +551,7 @@ function TextPanel({
       <section
         ref={mirrorRef}
         className="note-body-mirror prose"
+        lang={lang}
         aria-label="Note body, read-only while finding"
         // A pointer's way back to editing. The keyboard's is Escape in the
         // bar, which does the same thing; the mirror itself is text, not a
@@ -560,6 +574,7 @@ function TextPanel({
         id="note-body"
         ref={bodyRef}
         className="note-body-input prose"
+        lang={lang}
         value={body}
         rows={6}
         onChange={(event) => {
@@ -657,6 +672,20 @@ function NoteMeta({
       )}
     </p>
   );
+}
+
+/**
+ * The `lang` tag for the note's text: the note's language, else the default,
+ * and none under Auto-detect — a tag that says "English" over Malayalam is
+ * worse than no tag, and under `auto` nobody knows. Pure and exported for
+ * the test.
+ */
+export function contentLanguage(
+  noteLanguage: string,
+  defaultLanguage: string | undefined,
+): string | undefined {
+  const effective = noteLanguage || defaultLanguage || 'en';
+  return effective === 'auto' ? undefined : effective;
 }
 
 /**

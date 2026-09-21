@@ -56,6 +56,8 @@ export interface TranscriptPanelProps {
   onSeek: (seconds: number) => void;
   /** False when the capture has no usable `segments.json` — there is no backfill. */
   hasSegments: boolean;
+  /** The note text's language tag, for the lines (T60). */
+  lang?: string | undefined;
 }
 
 export function TranscriptPanel({
@@ -66,6 +68,7 @@ export function TranscriptPanel({
   currentTime,
   onSeek,
   hasSegments,
+  lang,
 }: TranscriptPanelProps) {
   const headingId = useId();
   /*
@@ -90,7 +93,7 @@ export function TranscriptPanel({
   }, [activeIndex]);
 
   return (
-    <section className="transcript" aria-labelledby={headingId}>
+    <section className="transcript" aria-labelledby={headingId} lang={lang}>
       <div className="transcript__header">
         <h2 id={headingId} className="transcript__heading">
           Transcript

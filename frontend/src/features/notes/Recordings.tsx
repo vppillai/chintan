@@ -84,10 +84,13 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  */
 export function Recordings({
   note,
+  lang,
   localUpload = null,
   onSelectingChange,
 }: {
   note: Pick<NoteDetailWire, 'id' | 'title' | 'captures' | 'language'>;
+  /** The note text's language tag, for the transcripts (T60). */
+  lang?: string | undefined;
   /** An upload this device is still making into this note — see `useLocalUpload`. */
   localUpload?: CaptureModel | null;
   /** Told when selection starts and ends, so the screen can make room for the bar. */
@@ -361,6 +364,7 @@ export function Recordings({
                 }}
                 onDownload={() => void runDownload([capture.id])}
                 onCopy={runCopy}
+                lang={lang}
                 effectiveLanguage={effectiveLanguage}
                 retranscribeLabel={retranscribeLabel(effectiveLanguage)}
                 onRetranscribe={() => {
@@ -647,6 +651,7 @@ interface RecordingRowProps {
   onDownload: () => void;
   /** Text from this row's menu for the clipboard; the outcome is the panel's to say. */
   onCopy: (text: string) => void;
+  lang: string | undefined;
   /** The code a recording into this note is transcribed in, for the "Heard as" chip. */
   effectiveLanguage: string;
   /** "Transcribe again in Malayalam": the menu item, worded for the note's language. */
@@ -671,6 +676,7 @@ function RecordingRow({
   onDelete,
   onDownload,
   onCopy,
+  lang,
   effectiveLanguage,
   retranscribeLabel: retranscribeText,
   onRetranscribe,
@@ -1021,6 +1027,7 @@ function RecordingRow({
                 currentTime={player.currentTime}
                 onSeek={player.seekAndPlay}
                 hasSegments={hasSegments}
+                lang={lang}
               />
             </section>
           ) : null}

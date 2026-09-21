@@ -7,7 +7,7 @@ import type { NoteDetailWire, SettingsWire } from '@/api/schema.ts';
 import { languageLabel } from '@/features/settings/languages.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { NoteDetailScreen, effectiveLanguage } from './NoteDetailScreen.tsx';
+import { NoteDetailScreen, contentLanguage, effectiveLanguage } from './NoteDetailScreen.tsx';
 
 const NOTE: NoteDetailWire = {
   id: 'roof-repair',
@@ -217,3 +217,28 @@ describe('when the language is worth a word', () => {
     });
   }
 });
+describe('the text carries its language (T60)', () => {
+  it('tags the body with the note’s language, and with the default when it inherits', async () => {
+    mount({ ...NOTE, language: 'ta' });
+    expect(await screen.findByRole('textbox', { name: 'Note body' })).toHaveAttribute('lang', 'ta');
+  });
+
+  it('has no tag under Auto-detect, when nobody knows', async () => {
+    mount({ ...NOTE, language: 'auto' });
+    expect(await screen.findByRole('textbox', { name: 'Note body' })).not.toHaveAttribute('lang');
+  });
+
+  const cases: [note: string, fallback: string | undefined, expected: string | undefined][] = [
+    ['', 'ml', 'ml'],
+    ['', undefined, 'en'],
+    ['ta', 'ml', 'ta'],
+    ['auto', 'ml', undefined],
+    ['', 'auto', undefined],
+  ];
+  for (const [note, fallback, expected] of cases) {
+    it(`content language for ${JSON.stringify(note)} under ${JSON.stringify(fallback)} → ${JSON.stringify(expected)}`, () => {
+      expect(contentLanguage(note, fallback)).toBe(expected);
+    });
+  }
+});
+
