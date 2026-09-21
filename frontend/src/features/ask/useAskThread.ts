@@ -51,8 +51,8 @@ export interface AskThread {
 /**
  * The conversation behind the Ask panel.
  *
- * One turn at a time is ever in flight — the follow-up field is held while
- * the last question is unanswered — so the poll is always for the last turn.
+ * One turn at a time is ever in flight — `ask` drops a question while the
+ * last one is unanswered — so the poll is always for the last turn.
  * `POST /v1/ask` answers 202 with the row; `useAsk` then asks for it on the
  * cadence in `queries.ts` until it settles, and the settled row is folded
  * into the turn here, where it outlives the query cache (in `sessionStorage`,
@@ -195,6 +195,11 @@ export function useAskThread(): AskThread {
     (question: string): void => {
       const trimmed = question.trim();
       if (trimmed.length === 0) return;
+      // One turn in flight at a time. The panel's follow-up field was held
+      // while a question was unanswered, but the library's own field was
+      // not, and posted a second question mid-flight (round-3 T21); the
+      // guard belongs here, where every question arrives.
+      if (isBusy(last)) return;
       const history = historyFor(turns, trimmed);
       const turn: AskTurn = {
         ...newTurn(newIdempotencyKey(), trimmed),
@@ -203,7 +208,7 @@ export function useAskThread(): AskThread {
       setTurns((prev) => [...prev, turn]);
       post(turn);
     },
-    [turns, post],
+    [turns, last, post],
   );
 
   const retry = useCallback(

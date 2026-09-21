@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 
 import { useCreateNote } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
+import type { NoteWire } from '@/api/schema.ts';
 import { formatRowTime } from '@/features/notes/groups.ts';
 import { renderMarkdown } from '@/features/notes/markdown.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
@@ -15,11 +16,14 @@ import type { AskThread } from './useAskThread.ts';
  * The Ask panel: what stands in for the list while the field is in Ask mode.
  *
  * A short thread — each question echoed, then its answer drawn from the
- * notes, then the notes it drew on as chips that open them — with a
- * follow-up field beneath so "and when was that?" reads in context, and two
- * ways out: Save as note, which turns the thread into a note titled by the
- * first question, and Clear. The whole thread is one polite live region, so
- * an answer landing is read out without anyone having to go and find it.
+ * notes, then the notes it drew on as chips that open them, three at a time
+ * with the rest behind "+n more" — and two ways out: Save as note, which
+ * turns the thread into a note titled by the first question, and Clear. The
+ * follow-up is typed into the library's own field above the panel, which
+ * changes its placeholder once a thread is open: two fields for one
+ * conversation was one too many (round-3 T21). The whole thread is one
+ * polite live region, so an answer landing is read out without anyone
+ * having to go and find it.
  *
  * An answer the notes could not give is still an answer: the worker says so
  * plainly with `grounded` false, and the panel labels it "Not in your notes"
@@ -28,10 +32,8 @@ import type { AskThread } from './useAskThread.ts';
  */
 export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
   const headingId = useId();
-  const followUpId = useId();
   const navigate = useNavigate();
   const create = useCreateNote();
-  const [followUp, setFollowUp] = useState('');
   const [costNoteShown, setCostNoteShown] = useState(() => !costNoteDismissed());
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -56,28 +58,17 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
   }, []);
 
   /*
-   * The date beside a source whose title another source shares. The wire
-   * carries only id and title, so the date is the library's own copy on the
-   * device — the corpus every list the user has seen is written to — which
-   * is what the row for the same note shows.
+   * The date and snippet beside a source whose title another source shares.
+   * The wire carries only id and title, so both come from the library's own
+   * copy on the device — the corpus every list the user has seen is written
+   * to — which is what the row for the same note shows.
    */
   const cached = useCachedNotes('active');
   const notes = cached.data;
-  const when = useCallback(
-    (noteId: string): string | null => {
-      const found = notes?.find((candidate) => candidate.id === noteId);
-      return found ? formatRowTime(found.updated_at) || null : null;
-    },
+  const lookup = useCallback(
+    (noteId: string): NoteWire | undefined => notes?.find((candidate) => candidate.id === noteId),
     [notes],
   );
-
-  const submitFollowUp = (): void => {
-    if (busy) return;
-    const question = followUp.trim();
-    if (question.length === 0) return;
-    thread.ask(question);
-    setFollowUp('');
-  };
 
   const saveAsNote = (): void => {
     if (!note) return;
@@ -130,7 +121,7 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
                 <p className="ask__question">{turn.question}</p>
                 <Answer
                   turn={turn}
-                  when={when}
+                  lookup={lookup}
                   onRetry={() => {
                     thread.retry(turn.key);
                   }}
@@ -141,31 +132,6 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
               </li>
             ))}
           </ol>
-
-          <form
-            className="ask__follow-up"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitFollowUp();
-            }}
-          >
-            <label className="visually-hidden" htmlFor={followUpId}>
-              Ask a follow-up
-            </label>
-            <input
-              id={followUpId}
-              className="search-input"
-              type="text"
-              value={followUp}
-              placeholder="Ask a follow-up…"
-              autoComplete="off"
-              disabled={busy}
-              maxLength={1000}
-              onChange={(event) => {
-                setFollowUp(event.target.value);
-              }}
-            />
-          </form>
 
           <div className="ask__actions">
             <button
@@ -199,18 +165,24 @@ export function AskPanel({ thread, id }: { thread: AskThread; id?: string }) {
   );
 }
 
+/** How many source chips an answer shows before "+n more". */
+export const SOURCE_CHIPS_SHOWN = 3;
+
 function Answer({
   turn,
-  when,
+  lookup,
   onRetry,
   onOpen,
 }: {
   turn: AskTurn;
-  /** The date a source chip adds when its title is not enough (see `sourceLabels`). */
-  when: (noteId: string) => string | null;
+  /** The device's copy of a note, for the date or words a chip adds when its title is not enough. */
+  lookup: (noteId: string) => NoteWire | undefined;
   onRetry: () => void;
   onOpen: (noteId: string) => void;
 }) {
+  // Every source, once asked for; an answer over eight notes was a wall of
+  // chips taller than the answer (round-3 T21).
+  const [allSources, setAllSources] = useState(false);
   switch (turn.status) {
     case 'asking':
     case 'pending':
@@ -226,14 +198,23 @@ function Answer({
         </div>
       );
     default: {
-      const labels = sourceLabels(turn.sources, when);
+      const labels = sourceLabels(
+        turn.sources,
+        (noteId) => {
+          const note = lookup(noteId);
+          return note ? formatRowTime(note.updated_at) || null : null;
+        },
+        (noteId) => lookup(noteId)?.snippet ?? null,
+      );
+      const shown = allSources ? turn.sources : turn.sources.slice(0, SOURCE_CHIPS_SHOWN);
+      const hidden = turn.sources.length - shown.length;
       return (
         <div className="ask__answer">
           {!turn.grounded && <p className="ask__ungrounded">Not in your notes</p>}
           <div className="ask__body">{renderMarkdown(turn.answer ?? '')}</div>
           {turn.sources.length > 0 && (
             <ul className="ask__sources" aria-label="Sources">
-              {turn.sources.map((source, index) => (
+              {shown.map((source, index) => (
                 <li key={source.note_id}>
                   <button
                     type="button"
@@ -246,6 +227,19 @@ function Answer({
                   </button>
                 </li>
               ))}
+              {hidden > 0 && (
+                <li>
+                  <button
+                    type="button"
+                    className="ask__source"
+                    onClick={() => {
+                      setAllSources(true);
+                    }}
+                  >
+                    {`+${String(hidden)} more`}
+                  </button>
+                </li>
+              )}
             </ul>
           )}
         </div>

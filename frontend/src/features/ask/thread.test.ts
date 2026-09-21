@@ -243,7 +243,7 @@ describe('what a source chip says', () => {
     ]);
   });
 
-  it('numbers the repeats when even the dates collide', () => {
+  it('numbers the repeats when even the dates collide and the device holds no snippets', () => {
     const sources = [
       { note_id: 'a', title: 'Gutter leak' },
       { note_id: 'b', title: 'Gutter leak' },
@@ -253,6 +253,37 @@ describe('what a source chip says', () => {
       'Gutter leak · 4 Sept',
       'Gutter leak · 4 Sept (2)',
       'Gutter leak · 4 Sept (3)',
+    ]);
+  });
+
+  it('tells same-day twins apart by the first words where their snippets differ, not a number (round-3 T21)', () => {
+    const sources = [
+      { note_id: 'a', title: 'Gutter leak' },
+      { note_id: 'b', title: 'Gutter leak' },
+      { note_id: 'c', title: 'Roof repair' },
+    ];
+    const snippets = (map: Record<string, string>) => (noteId: string) => map[noteId] ?? null;
+    expect(
+      sourceLabels(
+        sources,
+        dated({ a: '4 Sept', b: '4 Sept' }),
+        snippets({ a: 'The south gutter drips over the porch.', b: 'The garage gutter is blocked again.' }),
+      ),
+    ).toEqual(['Gutter leak · 4 Sept · south gutter drips', 'Gutter leak · 4 Sept · garage gutter is', 'Roof repair']);
+    // No dates at all: the words alone carry it.
+    expect(
+      sourceLabels(sources, dated({}), snippets({ a: 'South side.', b: 'Garage side.' })),
+    ).toEqual(['Gutter leak · South side.', 'Gutter leak · Garage side.', 'Roof repair']);
+    // A snippet missing on one, or identical snippets: back to numbering.
+    expect(sourceLabels(sources, dated({}), snippets({ a: 'South side.' }))).toEqual([
+      'Gutter leak (1)',
+      'Gutter leak (2)',
+      'Roof repair',
+    ]);
+    expect(sourceLabels(sources, dated({}), snippets({ a: 'Same words.', b: 'Same words.' }))).toEqual([
+      'Gutter leak (1)',
+      'Gutter leak (2)',
+      'Roof repair',
     ]);
   });
 });
