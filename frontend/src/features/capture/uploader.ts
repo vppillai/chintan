@@ -85,9 +85,14 @@ function resumeKey(localId: string): string {
  * A capture sits at `uploaded` from the moment it is created until the object
  * event fires, so any other status means the audio arrived and the pipeline
  * moved on — and sending again would append the same dictation to the note
- * twice. This is only ever asked on a resume whose credential is at least
- * thirty minutes old, so there is no window where the object has landed and
- * the status has not caught up.
+ * twice. Asked on every resend that names a server capture: a Retry seconds
+ * after a failed PUT as much as a resume of a credential half an hour old.
+ * At `uploaded` the answer is "not yet" whether the bytes never left, are
+ * still in flight, or landed a moment ago with the event still to come — and
+ * the resend then replays the same create and PUTs the same bytes to the
+ * same key, which is the same object once more. Only a dead credential
+ * (`presignExpired`) mints a second capture, by which time the object event
+ * has long since fired or never will.
  *
  * An error here is deliberately not fatal: if the server cannot be reached the
  * upload is not going to succeed either, and the ordinary path reports that
