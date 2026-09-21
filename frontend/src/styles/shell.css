@@ -969,6 +969,8 @@
    -------------------------------------------------------------------------- */
 
 .target-chooser {
+  /* The anchor for the sheet below. */
+  position: relative;
   display: grid;
   justify-items: center;
   gap: var(--space-2);
@@ -1010,10 +1012,23 @@
   color: var(--color-faint);
 }
 
+/*
+ * An overlay under the pill, not a block in the screen's flow: opened in the
+ * flow, it pushed "Recording" from y 248 to 77 and the control row from 618
+ * to 839 on a 915 px phone — the screen moved under the thumb (QA
+ * 2026-09-21, finding 10). Absolute against the chooser, so the state line,
+ * the clock and the controls stay exactly where they were.
+ */
 .target-chooser__sheet {
+  position: absolute;
+  inset-block-start: 100%;
+  inset-inline: 0;
+  z-index: var(--z-sheet);
   display: grid;
   gap: var(--space-2);
   inline-size: min(100%, 22rem);
+  margin-block-start: var(--space-2);
+  margin-inline: auto;
   padding: var(--space-2);
   background-color: var(--color-raised-2);
   border: 1px solid var(--color-line);

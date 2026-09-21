@@ -744,6 +744,27 @@ describe('the target chooser', () => {
     expect(useCaptureStore.getState().model.noteId).toBeNull();
   });
 
+  it('closes on a tap beside the sheet or Escape, since it overlays the controls (QA 2026-09-21, finding 10)', async () => {
+    const user = userEvent.setup();
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    const sheet = () => screen.queryByRole('group', { name: 'Where this recording goes' });
+
+    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    expect(sheet()).not.toBeNull();
+    await user.click(document.body);
+    expect(sheet()).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    expect(sheet()).not.toBeNull();
+    await user.keyboard('{Escape}');
+    expect(sheet()).toBeNull();
+    // The recording itself is untouched by any of it.
+    expect(useCaptureStore.getState().model.state).toBe('recording');
+  });
+
   it('cuts the meta snippet at a grapheme and marks the cut', () => {
     // Thirty-nine letters and then കാ (ka with the aa sign): the fortieth
     // code point is the vowel sign, and a code-point cut left a bare ക on

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { queryKeys, useNotes } from '@/api/queries.ts';
@@ -60,6 +60,28 @@ export function TargetChooser({
   const [open, setOpen] = useState(false);
   const listId = useId();
   const api = useApi();
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * The sheet is an overlay over the controls (finding 10), so a tap beside
+   * it or Escape closes it, as the ⋮ menu's does; before, the pill was the
+   * only way to put it away.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open]);
 
   const served = useNotes({ state: 'active' }, { enabled: fetchList });
   // Held back with the list, for the same reason: nothing but the microphone
@@ -90,7 +112,7 @@ export function TargetChooser({
   };
 
   return (
-    <div className="target-chooser">
+    <div ref={rootRef} className="target-chooser">
       <button
         type="button"
         className="target-chooser__pill"
