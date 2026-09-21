@@ -34,7 +34,13 @@ import {
   useScrollToActiveMatch,
   type FindTarget,
 } from './FindBar.tsx';
-import { NoteDrawer, NoteMenu, noteLanguageFieldId, type NotePanelKind } from './NoteActions.tsx';
+import {
+  NoteDrawer,
+  NoteMenu,
+  noteLanguageFieldId,
+  notePanelHeadingId,
+  type NotePanelKind,
+} from './NoteActions.tsx';
 import {
   NoteTabList,
   noteTabId,
@@ -103,15 +109,35 @@ export function NoteDetailScreen() {
    * is set.
    */
   const [panel, setPanel] = useState<NotePanelKind | null>(null);
+  /*
+   * Opening takes the focus with it: the menuitem that asked has just
+   * unmounted and the drawer is at the far end of the screen. Rendered
+   * synchronously so the target exists. Details lands on the language
+   * select — the control the meta line's fact came from — and Share on its
+   * heading, with its controls a Tab away.
+   */
+  const openPanel = useCallback(
+    (kind: NotePanelKind) => {
+      if (!note) return;
+      flushSync(() => {
+        setPanel(kind);
+      });
+      const target =
+        kind === 'details' ? noteLanguageFieldId(note.id) : notePanelHeadingId(note.id);
+      document.getElementById(target)?.focus();
+    },
+    [note],
+  );
   const openDetails = useCallback(() => {
-    if (!note) return;
-    // Rendered synchronously so the select exists to take the focus: a
-    // keyboard or screen-reader user lands on the control the fact came from.
-    flushSync(() => {
-      setPanel('details');
-    });
-    document.getElementById(noteLanguageFieldId(note.id))?.focus();
-  }, [note]);
+    openPanel('details');
+  }, [openPanel]);
+  // Closed from its X, the drawer hands focus back to the ⋮ it belongs to
+  // rather than dropping it on <body>.
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const changePanel = useCallback((next: NotePanelKind | null) => {
+    setPanel(next);
+    if (next === null) menuRef.current?.focus();
+  }, []);
 
   // Find in this note: the state lives with the screen so the header's toggle
   // and the bar under the strip — different branches of the tree — share it.
@@ -244,7 +270,7 @@ export function NoteDetailScreen() {
         >
           <Icon name="search" size={20} />
         </button>
-        <NoteMenu note={note} onOpenPanel={setPanel} />
+        <NoteMenu note={note} triggerRef={menuRef} onOpenPanel={openPanel} />
       </header>
 
       {offlineCopy && (
@@ -325,7 +351,7 @@ export function NoteDetailScreen() {
         // the open Details panel covered the banner's two buttons. The panel
         // steps aside while the banner is up and is back as it was after.
         open={editor.model.state === 'conflict' ? null : panel}
-        onOpenChange={setPanel}
+        onOpenChange={changePanel}
       />
     </div>
   );

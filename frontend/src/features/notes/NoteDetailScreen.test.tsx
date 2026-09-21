@@ -538,6 +538,26 @@ describe('the note is panels under one strip', () => {
     expect(screen.queryByRole('toolbar', { name: 'Recording actions' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
   });
+
+  it('sends focus into the drawer it opens, and back to the menu when it closes', async () => {
+    // The menuitem that opened the drawer unmounts on select, and the drawer
+    // is at the far end of the screen: without this a keyboard user is left
+    // on <body> with the whole note to Tab through.
+    const user = userEvent.setup();
+    const api = server([withRecording]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await openPanel(user, 'Details');
+    expect(screen.getByRole('combobox', { name: 'Transcription language' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Close details' }));
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+
+    await openPanel(user, 'Share');
+    expect(screen.getByRole('heading', { name: 'Share' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Close share' }));
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+  });
 });
 
 /**

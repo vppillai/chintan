@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 
 import { Icon } from './Icon.tsx';
 
@@ -27,15 +27,23 @@ export interface OverflowMenuItem {
 export function OverflowMenu({
   label,
   items,
+  triggerRef: ownerRef,
 }: {
   /** The trigger's accessible name, naming the row: "More for recording from Today 14:02". */
   label: string;
   items: readonly OverflowMenuItem[];
+  /**
+   * The owner's handle on the trigger, when what an item opens should hand
+   * focus back to it on closing. Selecting an item unmounts the focused
+   * menuitem, so without this the owner has nothing to return to.
+   */
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
+  const ownRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = ownerRef ?? ownRef;
 
   useEffect(() => {
     if (!open) return;
@@ -58,7 +66,7 @@ export function OverflowMenu({
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKeyDown, true);
     };
-  }, [open]);
+  }, [open, triggerRef]);
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;

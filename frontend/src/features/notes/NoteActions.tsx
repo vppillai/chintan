@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useState, type RefObject } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -35,7 +35,10 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * editors and the copy and download controls open where they always did,
  * above the tab bar, and close from their own heading. Which one is open
  * belongs to the screen (`open` / `onOpenChange`): the meta line under the
- * title opens Details when its language fact is tapped.
+ * title opens Details when its language fact is tapped. So does the focus:
+ * the drawer opens at the far end of the screen from the menu, and the
+ * menuitem that opened it is gone, so the screen sends focus into it and
+ * back to the menu's trigger (`triggerRef`) when it closes.
  *
  * Getting rid of a note, and getting it back, keep their two confirmation
  * disciplines, because these are two different promises:
@@ -58,12 +61,20 @@ export function noteLanguageFieldId(noteId: string): string {
   return `note-language-${noteId}`;
 }
 
+/** The id of the open drawer's heading, so the screen can send focus to it. */
+export function notePanelHeadingId(noteId: string): string {
+  return `note-panel-heading-${noteId}`;
+}
+
 /** The header's ⋮: the note's actions, with the dialogs they need. */
 export function NoteMenu({
   note,
+  triggerRef,
   onOpenPanel,
 }: {
   note: NoteDetailWire;
+  /** The screen's handle on the ⋮, for the drawer to hand focus back to. */
+  triggerRef: RefObject<HTMLButtonElement | null>;
   onOpenPanel: (panel: NotePanelKind) => void;
 }) {
   const navigate = useNavigate();
@@ -109,7 +120,7 @@ export function NoteMenu({
 
   return (
     <>
-      <OverflowMenu label="Note actions" items={items} />
+      <OverflowMenu label="Note actions" items={items} triggerRef={triggerRef} />
 
       {failure && (
         <p className="note-actions__error note-menu__error" role="alert">
@@ -180,7 +191,7 @@ export function NoteDrawer({
   open: NotePanelKind | null;
   onOpenChange: (open: NotePanelKind | null) => void;
 }) {
-  const headingId = useId();
+  const headingId = notePanelHeadingId(note.id);
   const { draft } = editor.model;
   const cleaned = note.cleaned?.body.trim() ? note.cleaned : null;
 
@@ -190,7 +201,8 @@ export function NoteDrawer({
     <div className="note-drawer" hidden={hidden}>
       <section className="note-panel" aria-labelledby={headingId}>
         <div className="note-panel__head">
-          <h2 id={headingId} className="note-panel__heading">
+          {/* Focusable by script only: where Share lands a keyboard user, its controls a Tab away. */}
+          <h2 id={headingId} className="note-panel__heading" tabIndex={-1}>
             {open === 'details' ? 'Details' : 'Share'}
           </h2>
           <button
