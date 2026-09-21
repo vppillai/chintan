@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
@@ -282,5 +284,85 @@ func TestNotesExistIsOneBatchGetProjectedToTheKey(t *testing.T) {
 	}
 	if p := *api.batchGets[0].RequestItems[tableName].ProjectionExpression; p != "sk" {
 		t.Fatalf("projection = %q; nothing but the key should cross the wire", p)
+	}
+}
+
+// A whole-row PutNote from a copy read before a Clean tap must not put the
+// stamp back. StampCleanRequest leaves the version alone, so the version check
+// admits the write; before the stamp was pinned in PutNote's condition, the
+// autosave's own GetNote → S3 → PutNote window, or CleanedPanel firing saveNow()
+// and regenerate() in one tick, erased the request and the worker judged
+// itself superseded (review 2026-09-21, T12). The safe outcome is the conflict
+// every caller already re-reads on.
+func TestPutNoteFromACopyReadBeforeACleanStampIsRefused(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store := newStore()
+		ctx := context.Background()
+		seeded, err := store.PutNote(ctx, "tenant-a", model.NoteIndex{ID: "n1", Title: "T", UpdatedAt: model.Now()})
+		if err != nil {
+			t.Fatalf("PutNote: %v", err)
+		}
+		editorCopy, err := store.GetNote(ctx, "tenant-a", "n1")
+		if err != nil {
+			t.Fatalf("GetNote: %v", err)
+		}
+		const at = "2026-09-21T10:00:00.000000000Z"
+		if _, err := store.StampCleanRequest(ctx, "tenant-a", "n1", model.NoteCleanStructured, at, seeded.Version); err != nil {
+			t.Fatalf("StampCleanRequest: %v", err)
+		}
+
+		editorCopy.Title = "Retitled"
+		if _, err := store.PutNote(ctx, "tenant-a", editorCopy); !errors.Is(err, repository.ErrVersionConflict) {
+			t.Fatalf("PutNote from the pre-stamp copy: err = %v, want ErrVersionConflict", err)
+		}
+		got, err := store.GetNote(ctx, "tenant-a", "n1")
+		if err != nil {
+			t.Fatalf("GetNote: %v", err)
+		}
+		if got.CleanedRequestedAt != at || got.Title != "T" {
+			t.Fatalf("after the refused write: stamp=%q title=%q; want the stamp kept and the row untouched", got.CleanedRequestedAt, got.Title)
+		}
+
+		// The re-read carries the stamp, so the same save now lands and keeps it.
+		got.Title = "Retitled"
+		stored, err := store.PutNote(ctx, "tenant-a", got)
+		if err != nil {
+			t.Fatalf("PutNote after re-reading: %v", err)
+		}
+		again, _ := store.GetNote(ctx, "tenant-a", "n1")
+		if again.CleanedRequestedAt != at || again.Title != "Retitled" || again.Version != stored.Version {
+			t.Fatalf("after the re-read save: %+v", again)
+		}
+
+		// The stamp can also be cleared under an unchanged version (a failed
+		// hand-off); a copy still holding it is just as stale.
+		if err := store.ClearCleanStamp(ctx, "tenant-a", "n1", at); err != nil {
+			t.Fatalf("ClearCleanStamp: %v", err)
+		}
+		if _, err := store.PutNote(ctx, "tenant-a", again); !errors.Is(err, repository.ErrVersionConflict) {
+			t.Fatalf("PutNote from a copy holding a cleared stamp: err = %v, want ErrVersionConflict", err)
+		}
+	})
+}
+
+// A row written before cleaned_requested_at was promoted carries no such
+// attribute; the pin must admit it rather than lock the note until a migration.
+func TestPutNoteAdmitsARowWrittenBeforeTheStampWasPromoted(t *testing.T) {
+	store, api := newTestStore(t)
+	ctx := context.Background()
+	api.put(map[string]types.AttributeValue{
+		"pk":      &types.AttributeValueMemberS{Value: "USER#tenant-a"},
+		"sk":      &types.AttributeValueMemberS{Value: "NOTE#legacy"},
+		"type":    &types.AttributeValueMemberS{Value: "note"},
+		"version": &types.AttributeValueMemberN{Value: "4"},
+		"data":    &types.AttributeValueMemberS{Value: `{"id":"legacy","title":"Written by v1","version":4}`},
+	})
+	got, err := store.GetNote(ctx, "tenant-a", "legacy")
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	got.Title = "Retitled"
+	if _, err := store.PutNote(ctx, "tenant-a", got); err != nil {
+		t.Fatalf("PutNote on a pre-promotion row: %v", err)
 	}
 }

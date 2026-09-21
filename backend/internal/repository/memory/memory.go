@@ -320,7 +320,9 @@ func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex)
 	if s.notes[tenantID] == nil {
 		s.notes[tenantID] = make(map[string]model.NoteIndex)
 	}
-	if existing, ok := s.notes[tenantID][n.ID]; ok && existing.Version != n.Version {
+	// The clean stamp is pinned beside the version, as DynamoStore.PutNote
+	// does: StampCleanRequest moves the stamp without moving the version.
+	if existing, ok := s.notes[tenantID][n.ID]; ok && (existing.Version != n.Version || existing.CleanedRequestedAt != n.CleanedRequestedAt) {
 		return model.NoteIndex{}, repository.ErrVersionConflict
 	}
 	next := copyNote(n)

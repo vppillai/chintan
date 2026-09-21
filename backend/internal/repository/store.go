@@ -202,9 +202,13 @@ type Store interface {
 	// distinct notes rather than one GetItem each, on a list the client polls
 	// every second and a half (review 2026-09-05, S17).
 	NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error)
-	// PutNote writes n conditionally on n.Version matching the stored version,
-	// and returns the note with its new version. A losing write returns
-	// ErrVersionConflict rather than silently discarding the other writer.
+	// PutNote writes n conditionally on n.Version matching the stored version
+	// AND n.CleanedRequestedAt matching the stored clean stamp, and returns the
+	// note with its new version. A losing write returns ErrVersionConflict
+	// rather than silently discarding the other writer. The stamp is pinned
+	// because StampCleanRequest sets it without moving the version, so the
+	// version alone cannot tell a whole-row write that it is about to put the
+	// stamp back from a copy read before the tap.
 	PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error)
 	// StampNoteAppend records on the note row, conditionally on expectedVersion,
 	// that captureID's paragraph is about to be written into the body: it bumps
