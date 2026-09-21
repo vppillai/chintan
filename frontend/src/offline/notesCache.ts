@@ -140,6 +140,27 @@ export async function cachedNotes(
 }
 
 /**
+ * The newest active notes — the library's first page — whose body is not on
+ * the device, up to `limit` rows examined. What the idle prefetch has left to
+ * fetch, so it never asks for a note the device already holds in full.
+ */
+export async function notesWithoutBody(limit: number): Promise<{ id: string; version: number }[]> {
+  const db = await openChintanDB();
+  const missing: { id: string; version: number }[] = [];
+  let examined = 0;
+  const byUpdatedAt = db.transaction('notes').store.index('byUpdatedAt');
+  for await (const cursor of byUpdatedAt.iterate(null, 'prev')) {
+    if (cursor.value.archived) continue;
+    if (!cursor.value.detail) {
+      missing.push({ id: cursor.value.id, version: cursor.value.note.version });
+    }
+    examined += 1;
+    if (examined >= limit) break;
+  }
+  return missing;
+}
+
+/**
  * Forgets one note.
  *
  * Called when the server says it is gone for good. Leaving it would make the
