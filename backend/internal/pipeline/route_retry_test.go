@@ -104,8 +104,8 @@ func TestRoutingFallsBackAfterTheRetryAlsoTimesOut(t *testing.T) {
 		t.Fatalf("status = %q, want appended into the fallback note", capture.Status)
 	}
 	titles := f.h.creator.createdTitles()
-	if len(titles) != 1 || !strings.HasPrefix(titles[0], "Voice note ") {
-		t.Fatalf("created titles = %v, want one timestamped fallback note", titles)
+	if len(titles) != 1 || titles[0] != "add this to my roof repair" {
+		t.Fatalf("created titles = %v, want one fallback note titled from the first six words spoken", titles)
 	}
 	body, _ := f.objects.Get(context.Background(), mustGetNote(t, f.store, f.userID, capture.NoteID).S3MarkdownKey)
 	if !strings.Contains(string(body), "the gutter is also leaking") {

@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/keys"
@@ -861,7 +862,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 
 	title := service.SanitizeTitle(decision.Title)
 	if title == "" {
-		title = fallbackNoteTitle(p.now())
+		title = service.SanitizeTitle(fallbackNoteTitle(decision.Content, p.now()))
 	}
 	if p.cfg.Notes == nil {
 		capture.SuggestedTitle = title
@@ -1935,8 +1936,36 @@ func estimateCandidateTokens(candidates []routing.Candidate) float64 {
 	return float64(total)/4 + 1
 }
 
-func fallbackNoteTitle(now time.Time) string {
-	return "Voice note " + now.UTC().Format("2006-01-02 15:04")
+// fallbackNoteTitle names a note the router could not title: the first words
+// of what was said, so the row reads as the thought it holds. Until
+// 2026-09-21 it was "Voice note <UTC date and time>", which sat beside the
+// row's own local time and disagreed with it by the timezone offset (review
+// T40). Six words or forty characters, whichever comes first, trailing
+// punctuation dropped; only an empty transcript falls back to "Voice note
+// <date>", with no clock, because the row's own time already carries one.
+func fallbackNoteTitle(content string, now time.Time) string {
+	const maxWords, maxRunes = 6, 40
+	title := ""
+	for i, word := range strings.Fields(content) {
+		if i == maxWords {
+			break
+		}
+		next := word
+		if title != "" {
+			next = title + " " + word
+		}
+		if i > 0 && utf8.RuneCountInString(next) > maxRunes {
+			break
+		}
+		title = next
+	}
+	if runes := []rune(title); len(runes) > maxRunes {
+		title = string(runes[:maxRunes])
+	}
+	if title = strings.TrimRight(strings.TrimSpace(title), ".,;:!?"); title == "" {
+		return "Voice note " + now.UTC().Format("2006-01-02")
+	}
+	return title
 }
 
 // noteTouchedAt parses a note's update time, tolerating the RFC3339 and

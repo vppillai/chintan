@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
@@ -434,8 +435,8 @@ func TestCompleteCaptureSavesNoteWhenRouterFails(t *testing.T) {
 	if len(titles) != 1 {
 		t.Fatalf("created titles = %v, want one fallback note", titles)
 	}
-	if !strings.HasPrefix(titles[0], "Voice note ") {
-		t.Errorf("fallback title = %q, want a timestamped voice note", titles[0])
+	if titles[0] != "some dictated words" {
+		t.Errorf("fallback title = %q, want the transcript's first words", titles[0])
 	}
 
 	body, _ := f.objects.Get(ctx, mustGetNote(t, f.store, f.userID, capture.NoteID).S3MarkdownKey)
@@ -508,5 +509,26 @@ func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 	}
 	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Roof repairs" {
 		t.Errorf("created titles = %v, want the new title as given (\"Roof repairs\" is not \"Roof repair\")", titles)
+	}
+}
+
+// A note the router could not title is named from what was said: six words
+// or forty characters, trailing punctuation dropped. Only silence gets the
+// dated "Voice note", and without the UTC clock that used to sit beside the
+// row's own local time (review 2026-09-21, T40).
+func TestFallbackNoteTitleIsTheFirstWordsOfTheTranscript(t *testing.T) {
+	now := time.Date(2026, 9, 21, 6, 59, 0, 0, time.UTC)
+	for _, tc := range []struct{ content, want string }{
+		{"the gutter is leaking again, call the roofer on tuesday", "the gutter is leaking again, call"},
+		{"remind me to book the dentist.", "remind me to book the dentist"},
+		{"supercalifragilisticexpialidocious antidisestablishmentarianism words", "supercalifragilisticexpialidocious"},
+		{"ഇന്ന് പാൽ വാങ്ങണം പിന്നെ അമ്മയെ വിളിക്കണം കൂടാതെ", "ഇന്ന് പാൽ വാങ്ങണം പിന്നെ അമ്മയെ"}, // six words would pass forty runes
+		{strings.Repeat("x", 60), strings.Repeat("x", 40)},
+		{"", "Voice note 2026-09-21"},
+		{"  \n ", "Voice note 2026-09-21"},
+	} {
+		if got := fallbackNoteTitle(tc.content, now); got != tc.want {
+			t.Errorf("fallbackNoteTitle(%q) = %q, want %q", tc.content, got, tc.want)
+		}
 	}
 }
