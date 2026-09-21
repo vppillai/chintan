@@ -11,6 +11,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
 type exportHarness struct {
@@ -396,6 +397,26 @@ func TestExportCarriesTheCleanedViewWhenThereIsOne(t *testing.T) {
 			if n.Cleaned != nil {
 				t.Errorf("a note never cleaned carries a view: %+v", n.Cleaned)
 			}
+		}
+	}
+}
+
+// Both snapshots carry the tag the bucket's one-day lifecycle rule keys on. An
+// export that outlived its download link was a whole-corpus copy in S3 that
+// nothing ever removed.
+func TestExportObjectsCarryTheExpiryTag(t *testing.T) {
+	h := newExportHarness(t)
+	job, err := h.export.Start(context.Background(), "user1")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	for _, name := range []string{"export.json", "job.json"} {
+		key, err := exportKey("user1", job.ID, name)
+		if err != nil {
+			t.Fatalf("exportKey: %v", err)
+		}
+		if got := h.objects.Tags(key)[upload.ArtifactTagKey]; got != exportArtifact {
+			t.Errorf("%s: tag %s = %q, want %q so the lifecycle rule can expire it", name, upload.ArtifactTagKey, got, exportArtifact)
 		}
 	}
 }

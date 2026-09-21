@@ -14,6 +14,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
 // Export job states, matching the OpenAPI ExportJob enum.
@@ -42,6 +43,17 @@ type ExportJob struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 	Bytes     int64  `json:"bytes,omitempty"`
 }
+
+// exportArtifact is the value of the artifact tag on both export objects. The
+// bucket's lifecycle rule expires objects carrying it a day after they are
+// written: a snapshot of the whole corpus that never expired was a latent leak
+// the moment the export became reachable from the app (review 2026-09-21,
+// T55). The download link is minted per read for fifteen minutes; a day is
+// generous cover for the person who taps Download and comes back later.
+const exportArtifact = "export"
+
+// exportTags is the tag set every export object is written with.
+var exportTags = map[string]string{upload.ArtifactTagKey: exportArtifact}
 
 // exportIDRe bounds an export id to what the OpenAPI path parameter declares.
 // The id becomes part of an object key, so it is validated rather than trusted.
@@ -147,7 +159,7 @@ func (s *ExportService) Start(ctx context.Context, userID string) (ExportJob, er
 	if err != nil {
 		return ExportJob{}, err
 	}
-	if err := s.objects.Put(ctx, dataKey, payload, "application/json"); err != nil {
+	if err := s.objects.PutTagged(ctx, dataKey, payload, "application/json", exportTags); err != nil {
 		return ExportJob{}, fmt.Errorf("export: write payload: %w", err)
 	}
 
@@ -213,7 +225,7 @@ func (s *ExportService) writeJob(ctx context.Context, userID string, job ExportJ
 	if err != nil {
 		return fmt.Errorf("export: encode job: %w", err)
 	}
-	if err := s.objects.Put(ctx, key, body, "application/json"); err != nil {
+	if err := s.objects.PutTagged(ctx, key, body, "application/json", exportTags); err != nil {
 		return fmt.Errorf("export: write job: %w", err)
 	}
 	return nil

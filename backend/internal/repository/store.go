@@ -312,6 +312,11 @@ type Store interface {
 // Objects stores blob content addressed by S3-style keys.
 type Objects interface {
 	Put(ctx context.Context, key string, body []byte, contentType string) error
+	// PutTagged is Put with object tags bound at write time, for an object a
+	// lifecycle rule must be allowed to expire — the export snapshots — since
+	// the bucket's rules key on tags. As on S3, tags is the object's whole
+	// tag set, not a merge.
+	PutTagged(ctx context.Context, key string, body []byte, contentType string, tags map[string]string) error
 	Get(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
 	PresignPut(ctx context.Context, key string, contentType string, ttl time.Duration) (url string, err error)

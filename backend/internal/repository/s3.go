@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -39,17 +40,31 @@ func NewS3Objects(client *s3.Client, bucket string) *S3Objects {
 }
 
 func (o *S3Objects) Put(ctx context.Context, key string, body []byte, contentType string) error {
+	return o.PutTagged(ctx, key, body, contentType, nil)
+}
+
+// PutTagged binds tags on the write itself, the way the presigned upload does
+// through x-amz-tagging: S3 encodes the set as a query string in the Tagging
+// parameter.
+func (o *S3Objects) PutTagged(ctx context.Context, key string, body []byte, contentType string, tags map[string]string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	_, err := o.client.PutObject(ctx, &s3.PutObjectInput{
+	in := &s3.PutObjectInput{
 		Bucket:      aws.String(o.bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(body),
 		ContentType: aws.String(contentType),
-	})
-	if err != nil {
+	}
+	if len(tags) > 0 {
+		tagging := url.Values{}
+		for k, v := range tags {
+			tagging.Set(k, v)
+		}
+		in.Tagging = aws.String(tagging.Encode())
+	}
+	if _, err := o.client.PutObject(ctx, in); err != nil {
 		return fmt.Errorf("s3 put object: %w", err)
 	}
 
