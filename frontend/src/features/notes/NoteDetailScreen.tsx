@@ -47,6 +47,8 @@ import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
 import { FIND_CLOSED, findMatches, findReducer, type FindState, type FindAction } from './find.ts';
 import { describeMoment, describeRecordings } from './groups.ts';
+import { ChecklistEditor } from './ChecklistEditor.tsx';
+import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
 import { countWords, describeWords } from './words.ts';
 
@@ -77,6 +79,10 @@ export function NoteDetailScreen() {
   const note = served ?? cached.data ?? undefined;
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
+  // The draft's, not the server's: the Details switch changes what this
+  // screen is — Items for Text, Split up for Cleaned — the moment it is
+  // flipped, not after the save lands.
+  const checklist = (editor.model.draft.kind ?? note?.kind ?? 'note') === 'checklist';
   const [selectingRecordings, setSelectingRecordings] = useState(false);
 
   /*
@@ -258,6 +264,7 @@ export function NoteDetailScreen() {
         note={note}
         tags={editor.model.draft.tags}
         body={editor.model.draft.body}
+        checklist={checklist}
         language={editor.model.draft.language ?? ''}
         onOpenDetails={openDetails}
       />
@@ -275,6 +282,7 @@ export function NoteDetailScreen() {
         key={note.id}
         note={note}
         editor={editor}
+        checklist={checklist}
         localUpload={localUpload}
         onSelectingRecordings={setSelectingRecordings}
         find={find}
@@ -313,6 +321,7 @@ export function NoteDetailScreen() {
 function NoteViews({
   note,
   editor,
+  checklist,
   localUpload,
   onSelectingRecordings,
   find,
@@ -322,6 +331,7 @@ function NoteViews({
 }: {
   note: NoteDetailWire;
   editor: NoteEditor;
+  checklist: boolean;
   localUpload: CaptureModel | null;
   onSelectingRecordings: (selecting: boolean) => void;
   find: FindState;
@@ -332,9 +342,10 @@ function NoteViews({
   const [tab, selectTab] = useNoteTab(note.id);
   // The upload on its way counts: it is a row on the tab already.
   const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
+  // A checklist's text is its items, and its cleaned view splits them up.
   const tabs: NoteTabDescriptor[] = [
-    { id: 'text', label: 'Text' },
-    { id: 'cleaned', label: 'Cleaned' },
+    { id: 'text', label: checklist ? 'Items' : 'Text' },
+    { id: 'cleaned', label: checklist ? 'Split up' : 'Cleaned' },
     { id: 'recordings', label: 'Recordings', count },
   ];
 
@@ -395,6 +406,7 @@ function NoteViews({
         {tab === 'text' ? (
           <TextPanel
             editor={editor}
+            checklist={checklist}
             find={target}
             onDismissFind={() => {
               dispatchFind({ type: 'close' });
@@ -443,13 +455,19 @@ function NotePanel({
  * a textarea. Closing the bar — or tapping the mirror — brings the textarea
  * back with the caret on the match that was current, so finding a word and
  * editing it is one gesture, not a find followed by a hunt.
+ *
+ * A checklist's body is items, not a text: `ChecklistEditor` stands in for the
+ * textarea. The mirror still serves the find bar — the raw lines, marked — so
+ * a word in a long list can still be found.
  */
 function TextPanel({
   editor,
+  checklist,
   find,
   onDismissFind,
 }: {
   editor: NoteEditor;
+  checklist: boolean;
   find: FindTarget | null;
   /** A tap on the mirror: close the bar and go back to editing. */
   onDismissFind: () => void;
@@ -518,6 +536,8 @@ function TextPanel({
     );
   }
 
+  if (checklist) return <ChecklistEditor editor={editor} />;
+
   return (
     <>
       <label className="visually-hidden" htmlFor="note-body">
@@ -569,7 +589,8 @@ function useTimedOut(active: boolean, ms: number): boolean {
  *
  * The tags and the word count are the draft's, not the server's, so adding a
  * tag in the bar or typing a sentence shows up here at once rather than after
- * the save lands.
+ * the save lands. For a checklist the count is of items — "3 of 7 done" —
+ * because how much of a list is left is what someone looks up here.
  *
  * The language is the last fact, and only when it is worth a word: the
  * note's own choice when it differs from the default, or the default itself
@@ -582,12 +603,14 @@ function NoteMeta({
   note,
   tags,
   body,
+  checklist,
   language,
   onOpenDetails,
 }: {
   note: NoteDetailWire;
   tags: readonly string[];
   body: string;
+  checklist: boolean;
   /** The draft's `language`: a code, `auto`, or the empty string to inherit. */
   language: string;
   onOpenDetails: () => void;
@@ -599,7 +622,9 @@ function NoteMeta({
     updated ? `Updated ${updated.replace(/^(Today|Yesterday)/, (day) => day.toLowerCase())}` : null,
     ...tags,
     describeRecordings(note),
-    describeWords(countWords(body)),
+    checklist
+      ? describeProgress(progressOf(parseChecklist(body)))
+      : describeWords(countWords(body)),
   ].filter((part): part is string => Boolean(part));
 
   const effective = effectiveLanguage(language, settings?.default_language);
