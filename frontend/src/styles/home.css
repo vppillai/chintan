@@ -45,9 +45,13 @@
   inline-size: auto;
 }
 
+/* Shrinkable, so the caps date wraps onto two lines on a 320 px phone rather
+   than pushing the row 3 px past the gutter (the layout sweep's fence); the
+   heading beside it keeps its width. */
 .library-brand {
   display: grid;
-  flex: none;
+  flex: 0 1 auto;
+  min-inline-size: 0;
   justify-items: end;
   gap: var(--space-1);
   padding-block-start: var(--space-1);
