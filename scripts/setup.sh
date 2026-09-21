@@ -102,7 +102,7 @@ fi
 log ""
 info "plan"
 dim "  deploy stack        $CHINTAN_BOOTSTRAP_STACK in $REGION"
-dim "  gh secret           AWS_ACCOUNT_ID, AWS_REGION"
+dim "  gh secret           AWS_ACCOUNT_ID"
 dim "  gh variable         BUILD_ROLE_ARN, CFN_DEPLOY_ROLE_ARN"
 dim "  gh environment      production (reviewers: ${REVIEWERS[*]}, protected branches only)"
 dim "  gh environment      staging"
@@ -165,10 +165,9 @@ ok "artifact bucket: $BUCKET"
 
 info "setting repository secrets and variables"
 gh secret set AWS_ACCOUNT_ID --repo "$REPO" --body "$ACCOUNT_ID"
-gh secret set AWS_REGION --repo "$REPO" --body "$REGION"
 gh variable set BUILD_ROLE_ARN --repo "$REPO" --body "$BUILD_ROLE_ARN"
 gh variable set CFN_DEPLOY_ROLE_ARN --repo "$REPO" --body "$CFN_DEPLOY_ROLE_ARN"
-ok "AWS_ACCOUNT_ID and AWS_REGION set; BUILD_ROLE_ARN and CFN_DEPLOY_ROLE_ARN set"
+ok "AWS_ACCOUNT_ID set; BUILD_ROLE_ARN and CFN_DEPLOY_ROLE_ARN set"
 
 # ---------------------------------------------------------------------------
 # Environments
