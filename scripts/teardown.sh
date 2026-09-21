@@ -148,6 +148,10 @@ if [ "$HAS_BOOTSTRAP" = "1" ]; then
         empty_s3_bucket "$bucket"
     done < <(stack_resources_of_type "$CHINTAN_BOOTSTRAP_STACK" 'AWS::S3::Bucket')
 
+    # The owner may have protected the bootstrap stack by hand (round-3 T25);
+    # the typed confirmation above is the deliberate step past that.
+    aws_cli cloudformation update-termination-protection \
+        --no-enable-termination-protection --stack-name "$CHINTAN_BOOTSTRAP_STACK" >/dev/null
     aws_cli cloudformation delete-stack --stack-name "$CHINTAN_BOOTSTRAP_STACK"
     aws_cli cloudformation wait stack-delete-complete --stack-name "$CHINTAN_BOOTSTRAP_STACK"
     ok "$CHINTAN_BOOTSTRAP_STACK deleted"

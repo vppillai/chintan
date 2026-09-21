@@ -613,6 +613,19 @@ if [ "${NO_CHANGES:-0}" != "1" ]; then
             show_failure_events
             die "$STACK failed to create"
         }
+        # The deploy role holds cloudformation:DeleteStack on chintan-*, and
+        # Retain covers only the pool, the table and the bucket. Termination
+        # protection is the one switch that makes a delete-stack fail instead
+        # of asking, so it goes on the moment a stack first completes; the
+        # teardown scripts switch it off again on purpose. Not fatal: a
+        # bootstrap stack that predates the UpdateTerminationProtection grant
+        # still deploys, and the owner enables it by hand.
+        if aws_cli cloudformation update-termination-protection \
+            --enable-termination-protection --stack-name "$STACK" >/dev/null; then
+            ok "termination protection enabled on $STACK"
+        else
+            warn "could not enable termination protection on $STACK; run: aws cloudformation update-termination-protection --enable-termination-protection --stack-name $STACK"
+        fi
     else
         aws_cli cloudformation wait stack-update-complete --stack-name "$STACK" || {
             show_failure_events

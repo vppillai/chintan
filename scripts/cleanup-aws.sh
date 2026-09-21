@@ -183,6 +183,10 @@ done
 # ---------------------------------------------------------------------------
 
 info "deleting stack $STACK"
+# deploy.sh enables termination protection on every stack it creates; this
+# script is the deliberate path past it, after the typed confirmation above.
+aws_cli cloudformation update-termination-protection \
+    --no-enable-termination-protection --stack-name "$STACK" >/dev/null
 aws_cli cloudformation delete-stack --stack-name "$STACK"
 aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK"
 ok "stack deleted"
