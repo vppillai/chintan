@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { queryKeys, useNotes } from '@/api/queries.ts';
 import type { NoteWire, SettingsWire } from '@/api/schema.ts';
+import { openItemsText, parseChecklist } from '@/features/notes/checklist.ts';
 import { formatRowTime } from '@/features/notes/groups.ts';
 import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
@@ -59,6 +60,35 @@ export function TargetChooser({
   const [open, setOpen] = useState(false);
   const listId = useId();
   const api = useApi();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLButtonElement>(null);
+
+  /*
+   * The sheet is an overlay over the controls (finding 10), so a tap beside
+   * it or Escape closes it, as the ⋮ menu's does; before, the pill was the
+   * only way to put it away. Escape also hands focus back to the pill: the
+   * option it was on is unmounted, and focus would otherwise fall to the
+   * body and the next Tab start from the top of the document.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        pillRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open]);
 
   const served = useNotes({ state: 'active' }, { enabled: fetchList });
   // Held back with the list, for the same reason: nothing but the microphone
@@ -89,8 +119,9 @@ export function TargetChooser({
   };
 
   return (
-    <div className="target-chooser">
+    <div ref={rootRef} className="target-chooser">
       <button
+        ref={pillRef}
         type="button"
         className="target-chooser__pill"
         aria-expanded={open}
@@ -177,7 +208,13 @@ const META_SNIPPET_GRAPHEMES = 40;
 
 export function optionMeta(note: NoteWire): string {
   const when = formatRowTime(note.updated_at);
-  const graphemes = Array.from(GRAPHEMES.segment((note.snippet ?? '').trim()), (s) => s.segment);
+  // A checklist's snippet is its raw `- [ ]` lines; the row and the Move
+  // sheet show the open items as words (QA 2026-09-21, finding 9).
+  const text =
+    note.kind === 'checklist'
+      ? openItemsText(parseChecklist(note.snippet ?? ''))
+      : (note.snippet ?? '');
+  const graphemes = Array.from(GRAPHEMES.segment(text.trim()), (s) => s.segment);
   const snippet =
     graphemes.length > META_SNIPPET_GRAPHEMES
       ? `${graphemes.slice(0, META_SNIPPET_GRAPHEMES).join('')}…`

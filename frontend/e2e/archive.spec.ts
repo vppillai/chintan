@@ -143,6 +143,29 @@ test('several notes can be archived at once from the library', async ({ page, ap
   await expect(page.getByRole('button', { name: 'Archived · 4' })).toBeVisible();
 });
 
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 412, height: 915 } });
+
+  test('a reload of the archive keeps its pressed chip on screen once the tag chips land', async ({
+    page,
+    api,
+  }) => {
+    // Enough tags to push the Archived chip past a 412 px row. On a reload
+    // they reach the row late, from IndexedDB, after the row had already
+    // scrolled its pressed chip in — and pushed it back out (finding 6).
+    api.notes['roof-repair']!.tags = ['house', 'garden', 'insurance', 'roofer quotes'];
+    api.notes['reading-list']!.tags = ['books', 'to read'];
+    await page.goto('/');
+    await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+
+    await page.goto('/?view=archived');
+    await expect(page.getByRole('button', { name: 'roofer quotes' })).toBeVisible();
+    const archived = page.getByRole('button', { name: /^Archived/ });
+    await expect(archived).toHaveAttribute('aria-pressed', 'true');
+    await expect(archived).toBeInViewport();
+  });
+});
+
 test('the archive can be emptied: select all, delete forever, type the word', async ({
   page,
   api,

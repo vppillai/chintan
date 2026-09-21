@@ -9,7 +9,7 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import { setCanHover } from '@/test/setup.ts';
 
-import { NotesScreen } from './NotesScreen.tsx';
+import { NotesScreen, chipScrollBy } from './NotesScreen.tsx';
 
 const ARCHIVED_NOTES = TEST_NOTES.map((note) => ({
   ...note,
@@ -392,6 +392,8 @@ describe('the chips filter the list', () => {
 
     const row = screen.getByRole('link', { name: /^Archive/ });
     expect(row).toHaveAttribute('href', '/?view=archived');
+    // And the row hides the zero the chip hides (QA 2026-09-21, finding 13).
+    expect(row).toHaveTextContent(/^Archive$/);
     await user.click(row);
     expect(await screen.findByText(/nothing is archived/i)).toBeInTheDocument();
     // In the archive itself the chip is there, pressed, so All is one tap away.
@@ -433,6 +435,32 @@ describe('the chips filter the list', () => {
   it('says so when the archive is empty', async () => {
     mount(library({ archived: [] }), '/?view=archived');
     expect(await screen.findByText(/nothing is archived/i)).toBeInTheDocument();
+  });
+
+  it('is headed "Archived · N" (QA 2026-09-21, finding 6)', async () => {
+    // Headed "Notes · 0" with the pressed chip off a phone's screen, the
+    // archive read as Home.
+    mount(library(), '/?view=archived');
+    await screen.findByRole('button', { name: /roof repair/i });
+
+    const heading = screen.getByRole('heading', { level: 1 });
+    expect(heading).toHaveAccessibleName(/^Archived/);
+    expect(within(heading).getByText(String(ARCHIVED_NOTES.length))).toHaveClass('numeric');
+    expect(screen.getByRole('button', { name: /^Archived ·/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('scrolls the chip row so the pressed chip sits a gutter in from the edge, and no further', () => {
+    // The pressed "Archived · 0" chip sat at x 629–741 in a 412 px row
+    // scrolled to its start (finding 6). jsdom lays nothing out, so the
+    // arithmetic is what is tested; the row, not scrollIntoView, is what
+    // moves, because Chromium would otherwise start Tab from the chip.
+    const row = { left: 0, right: 412 };
+    expect(chipScrollBy(row, { left: 629, right: 741 }, 16)).toBe(741 - (412 - 16));
+    expect(chipScrollBy(row, { left: 100, right: 180 }, 16)).toBe(0);
+    expect(chipScrollBy(row, { left: -60, right: 20 }, 16)).toBe(-60 - 16);
   });
 
   it('never divides by a missing purge date', async () => {
@@ -565,6 +593,20 @@ describe('doing something to several notes at once', () => {
     await waitFor(() => {
       expect(screen.queryByRole('toolbar')).toBeNull();
     });
+  });
+
+  it('names the one selected note in the delete dialog, as the row’s own dialog does (QA 2026-09-21, finding 14)', async () => {
+    const user = userEvent.setup();
+    setCanHover(true);
+    mount(library());
+
+    await startSelecting(user, 'Roof repair');
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Delete 1 note forever?');
+    expect(dialog).toHaveTextContent('“Roof repair” and its recordings and transcripts are destroyed.');
+    expect(within(dialog).getByRole('button', { name: 'Delete it forever' })).toBeDisabled();
   });
 
   it('deletes every selected note forever: archives, then purges, behind a typed confirmation', async () => {

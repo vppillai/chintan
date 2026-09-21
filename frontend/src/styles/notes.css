@@ -95,6 +95,13 @@
 .note-panel {
   display: grid;
   gap: var(--space-3);
+  /* A sheet, not a wall: at most three fifths of the screen, scrolling
+     inside itself. Content-height, Details took 715 of a phone's 915 px and
+     hid the title, meta and tabs, and on a desktop climbed over the header's
+     Back, Find and ⋮ (QA 2026-09-21, finding 7). */
+  max-block-size: 60dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-2) var(--layout-gutter) var(--space-4);
   background-color: var(--color-raised);
   border-block-start: 1px solid var(--color-line);
@@ -103,12 +110,22 @@
   box-shadow: var(--shadow-sheet);
 }
 
-/* "DETAILS" as an eyebrow, the close control flush with the gutter line. */
+/* "DETAILS" as an eyebrow, the close control flush with the gutter line.
+   Stuck to the sheet's top while the content scrolls beneath it: once the
+   sheet was capped, a phone's Details scrolled Close away with the first
+   section, and Escape and ⋮ were the only ways left to put it away. A
+   sticky box rests inside its scroll container's padding, so the inset
+   takes the sheet's top padding back off and the head sits flush with the
+   sheet's edge, nothing showing above it. */
 .note-panel__head {
+  position: sticky;
+  inset-block-start: calc(-1 * var(--space-2));
+  z-index: var(--z-content);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  background-color: var(--color-raised);
 }
 
 .note-panel__heading {

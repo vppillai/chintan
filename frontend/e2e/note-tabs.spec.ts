@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures.ts';
+import { expect, noteAction, test } from './fixtures.ts';
 
 /**
  * The note as panels under one strip: Text · Cleaned · Recordings (N).
@@ -82,4 +82,22 @@ test('the strip sticks under the banner while a long note scrolls', async ({ pag
   // under the banner — the top of the scroll region.
   expect(measured!.before).toBeGreaterThan(measured!.top);
   expect(Math.abs(measured!.top - measured!.mainTop)).toBeLessThanOrEqual(1);
+});
+
+test('the Details sheet keeps Close in reach while its content scrolls', async ({ page }) => {
+  // Short enough that the sheet's 60dvh cap is less than Details' content, so
+  // the sheet scrolls inside itself; Close scrolled away with the first
+  // section until the head was made sticky (QA 2026-09-21, finding 7).
+  await page.setViewportSize({ width: 412, height: 560 });
+  await page.goto('/notes/roof-repair');
+  await noteAction(page, 'Details');
+  const close = page.getByRole('button', { name: 'Close details' });
+  await expect(close).toBeVisible();
+
+  const scrolled = await page.locator('.note-panel').evaluate((panel) => {
+    panel.scrollTop = panel.scrollHeight;
+    return panel.scrollTop;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+  await expect(close).toBeInViewport();
 });

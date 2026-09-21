@@ -24,6 +24,7 @@ import {
   historyFor,
   isBusy,
   loadThread,
+  nameSources,
   newTurn,
   noteFromThread,
   resendTurn,
@@ -285,6 +286,41 @@ describe('what a source chip says', () => {
       'Gutter leak (2)',
       'Roof repair',
     ]);
+  });
+});
+
+describe('a raw note id in an answer', () => {
+  const ID = 'note_18d238868aef1800_ff6ee72b91682a42';
+  const sources = [{ note_id: ID, title: 'Stale check mobile' }];
+
+  it('is replaced by the cited note’s title, or removed, before the Markdown renderer sees it (QA 2026-09-21, finding 4)', () => {
+    // The observed shape: the id, the title in brackets, then the quote.
+    expect(nameSources(`${ID} (Stale check mobile): "Ask the roofer."`, sources)).toBe(
+      'Stale check mobile: "Ask the roofer."',
+    );
+    expect(nameSources(`See ${ID} for the quote.`, sources)).toBe(
+      'See Stale check mobile for the quote.',
+    );
+    // A bracketed name that is not the title is kept beside it.
+    expect(nameSources(`${ID} (the roof one)`, sources)).toBe('Stale check mobile (the roof one)');
+    // An id the sources do not name reads "a note", so the model's punctuation
+    // is never left orphaned; a name the model gave it stands alone.
+    expect(nameSources('note_0000000000000000_0000000000000000 (Roof) says so.', sources)).toBe(
+      'Roof says so.',
+    );
+    expect(nameSources('note_0000000000000000_0000000000000000 says so.', sources)).toBe(
+      'a note says so.',
+    );
+    expect(nameSources(`${ID}: "q"`, [])).toBe('a note: "q"');
+    // An empty title is no name either.
+    expect(nameSources(`${ID} says so.`, [{ ...sources[0]!, title: '' }])).toBe('a note says so.');
+    // Nothing else is touched: a word, and the emphasis the renderer draws.
+    expect(nameSources('A note_taking habit, _kept_.', sources)).toBe('A note_taking habit, _kept_.');
+  });
+
+  it('is applied as the row lands, so the thread, its history and Save as note all read the title', () => {
+    const turn = answered('Which note?', `${ID} says so.`, sources);
+    expect(turn.answer).toBe('Stale check mobile says so.');
   });
 });
 

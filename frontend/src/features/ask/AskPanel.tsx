@@ -181,7 +181,9 @@ function Answer({
   onOpen: (noteId: string) => void;
 }) {
   // Every source, once asked for; an answer over eight notes was a wall of
-  // chips taller than the answer (round-3 T21).
+  // chips taller than the answer (round-3 T21). "+1 more" hid one chip
+  // behind a chip of the same size, so a fourth is shown outright (QA
+  // 2026-09-21, finding 11).
   const [allSources, setAllSources] = useState(false);
   switch (turn.status) {
     case 'asking':
@@ -206,7 +208,10 @@ function Answer({
         },
         (noteId) => lookup(noteId)?.snippet ?? null,
       );
-      const shown = allSources ? turn.sources : turn.sources.slice(0, SOURCE_CHIPS_SHOWN);
+      const shown =
+        allSources || turn.sources.length <= SOURCE_CHIPS_SHOWN + 1
+          ? turn.sources
+          : turn.sources.slice(0, SOURCE_CHIPS_SHOWN);
       const hidden = turn.sources.length - shown.length;
       return (
         <div className="ask__answer">

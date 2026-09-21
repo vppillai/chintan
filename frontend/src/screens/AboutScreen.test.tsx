@@ -45,7 +45,9 @@ describe('About', () => {
 
     // The two ways a recording finds its note, both named, and what happens when it is not sure.
     expect(screen.getByText(/add this to the roof note/i)).toBeInTheDocument();
-    expect(screen.getByText(/record into this/i)).toBeInTheDocument();
+    // The tab bar's mic, not the control T6 removed (QA 2026-09-21, finding 12).
+    expect(screen.getByText(/into this note/i)).toBeInTheDocument();
+    expect(screen.queryByText(/record into this/i)).toBeNull();
     expect(screen.getByText(/waits at the top of your notes/i)).toBeInTheDocument();
     // Cleanup follows the note.
     expect(screen.getByText(/a note marked verbatim is left exactly as spoken/i)).toBeInTheDocument();

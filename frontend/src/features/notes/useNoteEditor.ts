@@ -24,6 +24,7 @@ import {
   editorReducer,
   hasUnsavedWork,
   initialEditor,
+  patchFor,
   reconcileQueued,
   sameText,
   type EditorEvent,
@@ -218,41 +219,10 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     if (current.state !== 'dirty' && current.state !== 'error') return;
 
     const attempted = current.draft;
-    /*
-     * The cleaned-view fields go out only when they changed. Every other
-     * field is sent whole on every save; these two are the one part of the
-     * contract the backend is still growing into, and a PATCH that names a
-     * field the server does not yet accept is refused outright
-     * (`DisallowUnknownFields`) — which would turn every keystroke's save
-     * into "Couldn't save" until the backend caught up. Sending them only
-     * when the user touched them keeps the ordinary save on the old contract.
-     */
-    const body = {
-      version: current.version,
-      title: attempted.title,
-      body: attempted.body,
-      aliases: attempted.aliases,
-      tags: attempted.tags,
-      ...(attempted.language !== undefined ? { language: attempted.language } : {}),
-      ...(attempted.auto_clean !== undefined &&
-      Boolean(attempted.auto_clean) !== Boolean(current.saved.auto_clean)
-        ? { auto_clean: attempted.auto_clean }
-        : {}),
-      ...(attempted.verbatim !== undefined &&
-      Boolean(attempted.verbatim) !== Boolean(current.saved.verbatim)
-        ? { verbatim: attempted.verbatim }
-        : {}),
-      ...(attempted.cleaned_mode !== undefined &&
-      attempted.cleaned_mode !== current.saved.cleaned_mode
-        ? { cleaned_mode: attempted.cleaned_mode }
-        : {}),
-      // Same rule as the two above: named only when the switch was flipped,
-      // so the ordinary save stays on the contract a backend without `kind`
-      // still accepts.
-      ...(attempted.kind !== undefined && attempted.kind !== (current.saved.kind ?? 'note')
-        ? { kind: attempted.kind }
-        : {}),
-    };
+    // Only what changed since the server's copy, and always the version: an
+    // unchanged body sent along with a language change is what detached the
+    // recordings' markers (see `patchFor`).
+    const body = patchFor(current);
     commit({ type: 'saveStart' });
 
     try {

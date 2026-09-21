@@ -744,6 +744,33 @@ describe('the target chooser', () => {
     expect(useCaptureStore.getState().model.noteId).toBeNull();
   });
 
+  it('closes on a tap beside the sheet or Escape, since it overlays the controls (QA 2026-09-21, finding 10)', async () => {
+    const user = userEvent.setup();
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    const sheet = () => screen.queryByRole('group', { name: 'Where this recording goes' });
+
+    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    expect(sheet()).not.toBeNull();
+    await user.click(document.body);
+    expect(sheet()).toBeNull();
+
+    const pill = screen.getByRole('button', { name: /into new note/i });
+    await user.click(pill);
+    expect(sheet()).not.toBeNull();
+    // Tabbed into the list, as a keyboard user is when Escape unmounts the
+    // option under focus: focus comes back to the pill, not the body.
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'New note' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(sheet()).toBeNull();
+    expect(pill).toHaveFocus();
+    // The recording itself is untouched by any of it.
+    expect(useCaptureStore.getState().model.state).toBe('recording');
+  });
+
   it('cuts the meta snippet at a grapheme and marks the cut', () => {
     // Thirty-nine letters and then കാ (ka with the aa sign): the fortieth
     // code point is the vowel sign, and a code-point cut left a bare ക on
@@ -760,6 +787,20 @@ describe('the target chooser', () => {
     expect(meta(`${'x'.repeat(39)}കാ and on`)).toMatch(/xകാ…$/);
     expect(meta('short')).toMatch(/· short$/);
     expect(meta('')).not.toContain('·');
+  });
+
+  it('shows a checklist’s open items as words, not its `- [ ]` lines (QA 2026-09-21, finding 9)', () => {
+    expect(
+      optionMeta({
+        id: 'n',
+        title: 'Packing',
+        kind: 'checklist',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 1,
+        archived: false,
+        snippet: '- [ ] passport\n- [x] charger\n- [ ] book',
+      }),
+    ).toMatch(/· passport · book$/);
   });
 });
 

@@ -3,6 +3,7 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -98,6 +99,7 @@ export function NotesScreen() {
    */
   const [question, setQuestion] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const chipsRef = useRef<HTMLDivElement>(null);
   const askThread = useAskThread();
   /** A thread is open, so the field is its follow-up rather than a first question. */
   const following = askThread.turns.length > 0;
@@ -311,10 +313,35 @@ export function NotesScreen() {
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [activeCache.data, serverNotes, view, tag, kind]);
 
+  /*
+   * The pressed chip is where the reader is, so the row is scrolled to show
+   * it: the Archived chip sits at the row's far end and was off a phone's
+   * screen whether you arrived by the Archive row or `?view=archived` (QA
+   * 2026-09-21, finding 6). Keyed on what lays the row out, not on the chip
+   * becoming pressed: on a cold `?view=archived` the tag chips land later
+   * from IndexedDB and the counts from the network, and they pushed a chip
+   * that had scrolled itself in straight back off the screen. The row's own
+   * scrollLeft, not scrollIntoView: Chromium moves the sequential focus
+   * navigation starting point to the element it scrolls to, so the first Tab
+   * landed after the pressed chip instead of on the skip link. In jsdom every
+   * box is empty and nothing moves, which is the right thing there.
+   */
+  useEffect(() => {
+    const row = chipsRef.current;
+    const chip = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!row || !chip) return;
+    const gutter = Number.parseFloat(getComputedStyle(row).paddingInlineEnd) || 0;
+    const by = chipScrollBy(row.getBoundingClientRect(), chip.getBoundingClientRect(), gutter);
+    if (by !== 0) row.scrollLeft += by;
+  }, [asking, view, tag, kind, tagNames, checklistCount, archivedCount]);
+
   const selectableIds = visible.map((note) => note.id);
   const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
-  // One note selected reads as one note (round-3 T63): "Delete it forever", not "them".
+  // One note selected reads as one note (round-3 T63): "Delete it forever", not
+  // "them" — and, as the row's own dialog does, the sentence names it (QA
+  // 2026-09-21, finding 14).
   const one = selectedIds.size === 1;
+  const onlySelected = one ? visible.find((note) => selectedIds.has(note.id)) : undefined;
   // Known once something — the server or the device — has answered.
   const count = serverNotes !== undefined || fromCache ? notes.length : undefined;
 
@@ -361,12 +388,16 @@ export function NotesScreen() {
         wordmark's second line now, out of the heading, so a screen reader
         hears "Notes, 12" and the a11y sweep and the route tests still find
         a heading that starts with "Notes". The count is what has been
-        loaded, with "+" while there is more.
+        loaded, with "+" while there is more. The archive is headed
+        "Archived": under "Notes" its only label was a pressed chip at the
+        far end of a row scrolled to its start, off a phone's screen, and
+        with notes in it the view was indistinguishable from Home (QA
+        2026-09-21, finding 6).
       */}
       <header className="screen__header library-header">
         <h1 className="library-heading">
           <span className="library-heading__title">
-            <span>Notes</span>
+            <span>{view === 'archived' ? 'Archived' : 'Notes'}</span>
             {count !== undefined && (
               <>
                 <span aria-hidden="true" className="library-heading__separator">
@@ -463,7 +494,7 @@ export function NotesScreen() {
       )}
 
       {!asking && (
-        <div className="chips" role="group" aria-label="Filter notes">
+        <div ref={chipsRef} className="chips" role="group" aria-label="Filter notes">
           <Chip
             label="All"
             pressed={view === 'active' && !tag && !kind}
@@ -703,7 +734,9 @@ export function NotesScreen() {
         The way into the archive from the active list, whatever its chip is
         doing — once there is a library to walk from or an archive to walk
         into. A first-run screen showed "Tap Record to make your first note."
-        and then "Archive · 0", the nothing T17 took out of the chips.
+        and then "Archive · 0", the nothing T17 took out of the chips; the
+        row hides a zero for the same reason the chip does (QA 2026-09-21,
+        finding 13).
       */}
       {!asking &&
         !searching &&
@@ -713,7 +746,7 @@ export function NotesScreen() {
             <Icon name="archive" size={18} />
             <span>
               Archive
-              {archivedCount !== undefined && (
+              {archivedCount !== undefined && archivedCount > 0 && (
                 <>
                   {' · '}
                   <span className="numeric">
@@ -828,7 +861,9 @@ export function NotesScreen() {
         open={confirming === 'delete' || confirming === 'purge'}
         title={`Delete ${countLabel(selectedIds.size)} forever?`}
         body={`${
-          one ? 'Its recordings and transcripts are' : 'Their recordings and transcripts are'
+          one
+            ? `${onlySelected ? `“${onlySelected.title}” and its` : 'Its'} recordings and transcripts are`
+            : 'Their recordings and transcripts are'
         } destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel={one ? 'Delete it forever' : 'Delete them forever'}
         requireText="delete"
@@ -871,6 +906,21 @@ function Chip({
       {label}
     </button>
   );
+}
+
+/**
+ * How far a chip row must scroll sideways for `chip` to sit inside it, a
+ * gutter in from the edge: positive to the right, negative to the left, zero
+ * when it already does. Exported for its test.
+ */
+export function chipScrollBy(
+  row: Pick<DOMRect, 'left' | 'right'>,
+  chip: Pick<DOMRect, 'left' | 'right'>,
+  gutter: number,
+): number {
+  if (chip.right > row.right - gutter) return chip.right - (row.right - gutter);
+  if (chip.left < row.left + gutter) return chip.left - (row.left + gutter);
+  return 0;
 }
 
 /**
