@@ -184,11 +184,15 @@ describe('coming back from the managed login', () => {
       </TestProviders>,
     );
 
+    // The redirect is two navigations (the shell moves the answer into
+    // `?passkey=`); waiting on the pathname alone let the search be read
+    // between them, and under the full parallel run the card's own render
+    // then missed the default one-second window once in a while.
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/settings');
+      expect(router.state.location.search).toBe('?passkey=success');
     });
-    expect(router.state.location.search).toBe('?passkey=success');
-    expect(await screen.findByText(/passkey added/i)).toBeInTheDocument();
+    expect(await screen.findByText(/passkey added/i, {}, { timeout: 5_000 })).toBeInTheDocument();
     expect(window.localStorage.getItem(PASSKEY_NUDGE_KEY)).toBe('added');
 
     // Back is the library, not out of the app.
