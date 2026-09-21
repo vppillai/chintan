@@ -168,3 +168,12 @@ button.recording__heard:hover,
 button.recording__heard:active {
   background-color: var(--color-surface);
 }
+
+/* Under Auto-detect every open row says what Whisper heard, so there it is a
+   fact, not the warning: no wash and no edge, or the alarm stops reading as
+   one where it matters. */
+.recording__heard--fact {
+  padding-inline: 0;
+  border-color: transparent;
+  background-color: transparent;
+}

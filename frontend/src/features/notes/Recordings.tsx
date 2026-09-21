@@ -933,7 +933,7 @@ function RecordingRow({
           */}
           {heard &&
             (effectiveLanguage === AUTO_LANGUAGE ? (
-              <p className="recording__heard">Heard as {heard}</p>
+              <p className="recording__heard recording__heard--fact">Heard as {heard}</p>
             ) : (
               <button type="button" className="recording__heard" onClick={onRetranscribe}>
                 Heard as {heard} — {retranscribeText.replace(/^Transcribe/, 'transcribe')}
