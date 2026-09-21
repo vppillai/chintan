@@ -549,3 +549,25 @@ func TestDeleteCaptureAfterAnUnchangedBodySaveCutsTheParagraph(t *testing.T) {
 		t.Errorf("body = %q, want the paragraph cut: %q", got, "typed intro")
 	}
 }
+
+// Typed below the recording, the text is the user's own. Kept beside its
+// paragraph the marker would claim it — the paragraph runs to the next marker
+// or the end of the body — so the save carries the marker to the end, and
+// deleting the recording afterwards cuts the marker alone (review 2026-09-21
+// r4).
+func TestDeleteCaptureAfterTypingBelowTheParagraphKeepsTheTypedText(t *testing.T) {
+	h := newEditHarness(t)
+	note := h.note("u1", "Typed below", "typed intro\n\n"+CaptureMarker("c_1")+"\nwhat was said")
+	h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+
+	body := "typed intro\n\nwhat was said\n\nmy typed notes"
+	if _, err := h.notes.UpdateNote(h.ctx, "u1", note.ID, NoteUpdates{Body: &body}); err != nil {
+		t.Fatalf("UpdateNote: %v", err)
+	}
+	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	if got := h.body(note); got != body {
+		t.Errorf("body = %q, want the user's text untouched: %q", got, body)
+	}
+}

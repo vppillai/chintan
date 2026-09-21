@@ -300,9 +300,11 @@ func TestCarryCaptureMarkersKeepsAMarkerBesideItsUnchangedParagraph(t *testing.T
 			appended, "a longer intro\n\nP1\n\nP2\n\nP3",
 			"a longer intro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2\n\n" + m3 + "\nP3",
 		},
+		// P1's marker goes too: kept, its paragraph would run on through the
+		// rewritten P2 to m3.
 		"one paragraph edited": {
 			appended, "intro\n\nP1\n\nP2 rewritten\n\nP3",
-			"intro\n\n" + m1 + "\nP1\n\nP2 rewritten\n\n" + m3 + "\nP3\n" + m2,
+			"intro\n\nP1\n\nP2 rewritten\n\n" + m3 + "\nP3\n" + m1 + "\n" + m2,
 		},
 		"paragraph deleted": {
 			appended, "intro\n\nP1\n\nP3",
@@ -311,16 +313,53 @@ func TestCarryCaptureMarkersKeepsAMarkerBesideItsUnchangedParagraph(t *testing.T
 		"paragraph typed into is no longer it": {
 			"intro\n\n" + m1 + "\nP1", "intro\n\nP1 and more", "intro\n\nP1 and more\n" + m1,
 		},
+		// Moved above the typed intro, P3 is followed by it, so its marker
+		// cannot stay without claiming the intro.
 		"paragraph moved to the top": {
 			appended, "P3\n\nintro\n\nP1\n\nP2",
-			m3 + "\nP3\n\nintro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2",
+			"P3\n\nintro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2\n" + m3,
+		},
+		"paragraph moved to the bottom": {
+			appended, "intro\n\nP2\n\nP3\n\nP1",
+			"intro\n\n" + m2 + "\nP2\n\n" + m3 + "\nP3\n\n" + m1 + "\nP1",
 		},
 		"multi-line paragraph": {
 			"intro\n\n" + m1 + "\nline one\nline two\n\n" + m2 + "\nP2", "intro edited\n\nline one\nline two\n\nP2",
 			"intro edited\n\n" + m1 + "\nline one\nline two\n\n" + m2 + "\nP2",
 		},
 		"two recordings said the same sentence, the second edited": {
-			m1 + "\nSame\n\n" + m2 + "\nSame", "Same\n\nSame changed", m1 + "\nSame\n\nSame changed\n" + m2,
+			m1 + "\nSame\n\n" + m2 + "\nSame", "Same\n\nSame changed", "Same\n\nSame changed\n" + m1 + "\n" + m2,
+		},
+		"two recordings said the same sentence, the first deleted": {
+			m1 + "\nSame\n\n" + m2 + "\nSame", "Same", m1 + "\nSame\n" + m2,
+		},
+		// The most ordinary edit: dictate, then type below. The typed text is
+		// the user's own, not the recording's paragraph (review 2026-09-21 r4).
+		"typed after the last paragraph": {
+			"intro\n\n" + m1 + "\nP1", "intro\n\nP1\n\ntyped", "intro\n\nP1\n\ntyped\n" + m1,
+		},
+		"typed between paragraphs": {
+			"intro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2", "intro\n\nP1\n\ntyped between\n\nP2",
+			"intro\n\nP1\n\ntyped between\n\n" + m2 + "\nP2\n" + m1,
+		},
+		// Every marker whose paragraph would run on to the typed text goes:
+		// kept, m1's paragraph would be P1, P2 and the typed text together.
+		"typed after the last of two paragraphs": {
+			"intro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2", "intro\n\nP1\n\nP2\n\ntyped",
+			"intro\n\nP1\n\nP2\n\ntyped\n" + m1 + "\n" + m2,
+		},
+		"blank line between paragraphs removed": {
+			"intro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2", "intro\n\nP1\nP2", "intro\n\nP1\nP2\n" + m1 + "\n" + m2,
+		},
+		// The same lines inside a block the user typed are not the paragraph,
+		// whether the block runs on after them or ends the body.
+		"paragraph's lines inside a typed block": {
+			"intro\n\n" + m1 + "\nline one\nline two", "line zero\nline one\nline two\nline three",
+			"line zero\nline one\nline two\nline three\n" + m1,
+		},
+		"paragraph's lines end a typed block": {
+			"intro\n\n" + m1 + "\nline one\nline two", "line zero\nline one\nline two",
+			"line zero\nline one\nline two\n" + m1,
 		},
 		"whole body rewritten": {
 			appended, "the user rewrote everything", "the user rewrote everything\n" + m1 + "\n" + m2 + "\n" + m3,

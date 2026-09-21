@@ -92,10 +92,20 @@ func StripCaptureMarkers(body string) string {
 //
 // Otherwise each marker follows its paragraph: the stored paragraph's text
 // (the positional rule below) is looked for in the edited body as a paragraph
-// of its own — on its own lines, verbatim — and the marker is written ahead
-// of the first occurrence no other marker has claimed. A paragraph the user
-// rewrote or deleted has nowhere to go, so its marker is carried at the end;
-// the guard asks whether the marker is anywhere in the body, not where.
+// of its own — opening the body or following a blank line, and running to the
+// end of a line, verbatim — and the marker is written ahead of the first
+// occurrence no other marker has claimed. A paragraph the user rewrote or
+// deleted has nowhere to go, so its marker is carried at the end; the guard
+// asks whether the marker is anywhere in the body, not where.
+//
+// A marker beside its paragraph claims everything up to the next marker, so
+// it stays there only while nothing but line breaks separates the paragraph
+// from the next kept marker or the end of the body. Text typed below the last
+// recording, or between two, would otherwise join the paragraph — and be cut
+// with it by "delete recording", carried by "move to" and replaced by
+// "transcribe again" (review 2026-09-21 r4). Its marker is carried at the end
+// instead, and so is every marker before it whose paragraph would now run on
+// to that text: the rule can say where a paragraph starts, not where it ends.
 func CarryCaptureMarkers(stored, edited string) string {
 	markers := captureMarkerFind.FindAllString(stored, -1)
 	edited = StripCaptureMarkers(edited)
@@ -107,50 +117,68 @@ func CarryCaptureMarkers(stored, edited string) string {
 	}
 
 	type placed struct {
-		at     int
-		marker string
+		marker  string
+		at, end int
 	}
+	var unique []string
 	var inPlace []placed
 	var claimed [][2]int
-	var trailer []string
 	seen := make(map[string]bool, len(markers))
 	for _, m := range markers {
 		if seen[m] {
 			continue
 		}
 		seen[m] = true
+		unique = append(unique, m)
 		id := strings.TrimSuffix(strings.TrimPrefix(m, captureMarkerPrefix), captureMarkerSuffix)
 		p, _ := findCaptureParagraph(stored, id)
-		at := paragraphIndex(edited, p.text, claimed)
-		if at < 0 {
-			trailer = append(trailer, m)
-			continue
+		if at := paragraphIndex(edited, p.text, claimed); at >= 0 {
+			inPlace = append(inPlace, placed{marker: m, at: at, end: at + len(p.text)})
+			claimed = append(claimed, [2]int{at, at + len(p.text)})
 		}
-		inPlace = append(inPlace, placed{at: at, marker: m})
-		claimed = append(claimed, [2]int{at, at + len(p.text)})
 	}
 	sort.Slice(inPlace, func(i, j int) bool { return inPlace[i].at < inPlace[j].at })
+
+	// Walked from the end, because demoting a marker hands the text after it
+	// to the marker before.
+	kept := make(map[string]bool, len(inPlace))
+	nextAt := len(edited)
+	for i := len(inPlace) - 1; i >= 0; i-- {
+		p := inPlace[i]
+		if strings.Trim(edited[p.end:nextAt], "\r\n") != "" {
+			continue
+		}
+		kept[p.marker] = true
+		nextAt = p.at
+	}
 
 	var b strings.Builder
 	prev := 0
 	for _, p := range inPlace {
+		if !kept[p.marker] {
+			continue
+		}
 		b.WriteString(edited[prev:p.at])
 		b.WriteString(p.marker)
 		b.WriteString("\n")
 		prev = p.at
 	}
 	b.WriteString(edited[prev:])
-	for _, m := range trailer {
-		b.WriteString("\n")
-		b.WriteString(m)
+	for _, m := range unique {
+		if !kept[m] {
+			b.WriteString("\n")
+			b.WriteString(m)
+		}
 	}
 	return b.String()
 }
 
-// paragraphIndex is where text stands in body as a paragraph of its own — at
-// the start of a line and running to the end of one — outside the claimed
-// spans, or -1. Two recordings can say the same sentence, so each claims one
-// occurrence, in body order.
+// paragraphIndex is where text stands in body as a paragraph of its own —
+// opening the body or following a blank line, as an append places it, and
+// running to the end of a line — outside the claimed spans, or -1. The blank
+// line keeps the same lines inside a block the user typed from being taken
+// for the paragraph. Two recordings can say the same sentence, so each claims
+// one occurrence, in body order.
 func paragraphIndex(body, text string, claimed [][2]int) int {
 	if text == "" {
 		return -1
@@ -162,7 +190,7 @@ func paragraphIndex(body, text string, claimed [][2]int) int {
 		}
 		at, end := from+i, from+i+len(text)
 		from = at + 1
-		if at > 0 && body[at-1] != '\n' {
+		if at > 0 && !strings.HasSuffix(body[:at], "\n\n") && !strings.HasSuffix(body[:at], "\n\r\n") {
 			continue
 		}
 		if end < len(body) && body[end] != '\n' && body[end] != '\r' {
