@@ -65,7 +65,7 @@ test('an archived note can be restored', async ({ page, api }) => {
   await page.getByRole('button', { name: /old fence/i }).click();
 
   await expect(page.getByText(/this note is archived/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Restore' }).click();
+  await noteAction(page, 'Restore');
 
   await expect(page).toHaveURL(/\/notes\/old-fence$/);
   await expect(page.getByText(/this note is archived/i)).toHaveCount(0);
