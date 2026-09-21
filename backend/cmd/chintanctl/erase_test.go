@@ -6,18 +6,29 @@ import (
 	"testing"
 )
 
+// seedExport gives a tenant an export snapshot. It lives here rather than in
+// seedTenant because reconcile still classifies the exports group as
+// unknown_object; erase is the command that has to walk it.
+func seedExport(t *testing.T, blobs *fakeBlobs, tenantID string) {
+	t.Helper()
+	base := "tenants/" + tenantID + "/exports/e1/"
+	blobs.seed(t, base+"export.json", `{"notes":[{"id":"n1"}]}`, "application/json")
+	blobs.seed(t, base+"job.json", `{"id":"e1","status":"ready"}`, "application/json")
+}
+
 func TestEraseDryRunPlansEverythingAndDeletesNothing(t *testing.T) {
 	ctx := context.Background()
 	e, part, blobs := newTestEnv(nil)
 	seedTenant(t, part, blobs, "tenantA")
+	seedExport(t, blobs, "tenantA")
 	seedTenant(t, part, blobs, "tenantB")
 
 	res, err := runErase(ctx, e, "tenantA", false, "")
 	if err != nil {
 		t.Fatalf("erase dry run: %v", err)
 	}
-	if res.ItemsPlanned != 3 || res.ObjectsPlanned != 7 {
-		t.Errorf("plan = %d items, %d objects; want 3 and 7", res.ItemsPlanned, res.ObjectsPlanned)
+	if res.ItemsPlanned != 3 || res.ObjectsPlanned != 9 {
+		t.Errorf("plan = %d items, %d objects; want 3 and 9", res.ItemsPlanned, res.ObjectsPlanned)
 	}
 	if res.ItemsDeleted != 0 || res.ObjectsDeleted != 0 {
 		t.Errorf("dry run deleted something")
@@ -73,7 +84,9 @@ func TestEraseRemovesOneTenantAndProvesIt(t *testing.T) {
 	ctx := context.Background()
 	e, part, blobs := newTestEnv(strings.NewReader("tenantA\n"))
 	seedTenant(t, part, blobs, "tenantA")
+	seedExport(t, blobs, "tenantA")
 	seedTenant(t, part, blobs, "tenantB")
+	seedExport(t, blobs, "tenantB")
 
 	res, err := runErase(ctx, e, "tenantA", true, "")
 	if err != nil {
@@ -89,8 +102,16 @@ func TestEraseRemovesOneTenantAndProvesIt(t *testing.T) {
 	if blobs.has("tenants/tenantA/notes/n1/note.md") {
 		t.Error("tenantA still has objects")
 	}
+	// An export snapshot is the whole corpus again under a prefix no index row
+	// names; an erase that walked only the index's keys would leave it behind.
+	if blobs.has("tenants/tenantA/exports/e1/export.json") || blobs.has("tenants/tenantA/exports/e1/job.json") {
+		t.Error("tenantA still has export snapshots")
+	}
 	if !blobs.has("tenants/tenantB/notes/n1/note.md") {
 		t.Error("erase reached tenantB")
+	}
+	if !blobs.has("tenants/tenantB/exports/e1/export.json") || !blobs.has("tenants/tenantB/exports/e1/job.json") {
+		t.Error("erase reached tenantB's exports")
 	}
 	if len(part.items[tenantPK("tenantB")]) != 3 {
 		t.Errorf("tenantB has %d index rows, want 3", len(part.items[tenantPK("tenantB")]))
