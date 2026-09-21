@@ -185,6 +185,32 @@ describe('SwipeRow', () => {
     expect(row.style.getPropertyValue('--swipe-x')).toBe('0px');
   });
 
+  it('keeps the drag when the pressed button hands its implicit touch capture to the row', () => {
+    render(<Row />);
+    const row = swipe('row');
+    const inner = screen.getByRole('button', { name: 'row' });
+    // Chrome captures a touch to the element under the finger, the inner
+    // button, and the row's own `setPointerCapture` takes it from there: the
+    // button's `lostpointercapture` bubbles up through the row. jsdom has no
+    // pointer capture, so the row's method stands in for the browser here.
+    row.setPointerCapture = vi.fn((pointerId: number) => {
+      fireEvent.lostPointerCapture(inner, { pointerId, pointerType: 'touch' });
+    });
+
+    fireEvent.pointerDown(inner, { ...touch, clientX: 300, clientY: 10 });
+    fireEvent.pointerMove(inner, { ...touch, clientX: 280, clientY: 12 });
+    expect(row.setPointerCapture).toHaveBeenCalledWith(touch.pointerId);
+
+    // The hand-over was not a cancel: the drag is still live and following.
+    fireEvent.pointerMove(inner, { ...touch, clientX: 180, clientY: 12 });
+    expect(row).toHaveAttribute('data-dragging');
+    expect(row.style.getPropertyValue('--swipe-x')).toBe('-100px');
+
+    fireEvent.pointerUp(inner, { ...touch, clientX: 180, clientY: 12 });
+    expect(row).toHaveAttribute('data-open');
+    expect(row.style.getPropertyValue('--swipe-x')).toBe(`${String(-WIDTH)}px`);
+  });
+
   it('keeps one row open at a time', () => {
     render(
       <>

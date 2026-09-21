@@ -271,6 +271,15 @@ export function useSwipeActions({
   }, []);
   const onLostPointerCapture = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
+      // A touch is implicitly captured to the element under the finger — the
+      // row's inner button — and the `setPointerCapture` above takes it from
+      // there. That hand-over fires `lostpointercapture` on the button, and
+      // it bubbles up here. Read as a cancel, it nulled the gesture one frame
+      // after the drag committed: every later move was ignored, `--swipe-x`
+      // stayed at 0 and the tray never opened on a phone (review 2026-09-21
+      // T1). Only this element losing its own capture is the browser taking
+      // the drag away.
+      if (event.target !== event.currentTarget) return;
       end(event, true);
     },
     [end],
