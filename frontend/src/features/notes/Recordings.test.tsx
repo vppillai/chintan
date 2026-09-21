@@ -299,21 +299,26 @@ const SEGMENTS_DOC = {
   ],
 };
 
-/** The bucket answers the segments document for its URL and audio bytes for the rest. */
-function artifactsStub(language = 'English'): void {
+/**
+ * The bucket answers the segments document for its URL and audio bytes for
+ * the rest. `doc` is what it answers next, so a test can land a new one.
+ */
+function artifactsStub(language = 'English'): { doc: typeof SEGMENTS_DOC } {
+  const bucket = { doc: { ...SEGMENTS_DOC, language } };
   // jsdom implements no scrolling, and the transcript follows playback.
   Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     'fetch',
     vi.fn<typeof fetch>(async (input) =>
       String(input).includes('/segments')
-        ? new Response(JSON.stringify({ ...SEGMENTS_DOC, language }), {
+        ? new Response(JSON.stringify(bucket.doc), {
             status: 200,
             headers: { 'content-type': 'application/json' },
           })
         : new Response('webm bytes', { status: 200, headers: { 'content-type': 'audio/webm' } }),
     ),
   );
+  return bucket;
 }
 
 /** The roof note with a transcript behind its newest recording, and a presigned URL for it. */
@@ -434,6 +439,55 @@ describe('transcribing a recording again', () => {
     // The 202's capture is on the row at once: the stage strip is back.
     expect(await screen.findByRole('list', { name: 'Filing progress' })).toBeInTheDocument();
     expect(screen.getByText('Filing…')).toBeInTheDocument();
+  });
+
+  it('shows the transcript the run lands, not the one the row had in hand', async () => {
+    const user = userEvent.setup();
+    const bucket = artifactsStub('Tamil');
+    const api = withSegments({ language: 'ml' }, [{ ...CAPTURE, has_segments: true }]);
+    const { queryClient } = mount(api.fetchImpl);
+
+    const chip = await screen.findByRole('button', {
+      name: 'Heard as Tamil — transcribe again in Malayalam',
+    });
+    expect(screen.getByRole('button', { name: /Ellis quoted nine hundred\./ })).toBeInTheDocument();
+    await user.click(chip);
+
+    // While it runs the row says so; the old text and its chip are not
+    // offered, because a second tap on the chip would be a 409.
+    await screen.findByRole('list', { name: 'Filing progress' });
+    expect(screen.queryByText(/heard as/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Ellis quoted/ })).toBeNull();
+    // The 202's refetch of the note has settled, so what lands next stays.
+    await waitFor(() => {
+      expect(queryClient.getQueryState(queryKeys.note(NOTE.id))?.fetchStatus).toBe('idle');
+    });
+
+    // The worker writes a new document, and every stage bumps the capture's
+    // version; the poll brings the landed row.
+    bucket.doc = {
+      ...SEGMENTS_DOC,
+      language: 'Malayalam',
+      segments: [{ start_ms: 0, end_ms: 3_000, text: ' Nine hundred, Ellis said, in Malayalam.' }],
+    };
+    const landed: CaptureWire = {
+      ...CAPTURE,
+      has_segments: true,
+      status: 'appended',
+      version: CAPTURE.version + 1,
+    };
+    api.note.captures = [landed];
+    act(() => {
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(NOTE.id), (current) =>
+        current ? { ...current, captures: [landed] } : current,
+      );
+    });
+
+    expect(
+      await screen.findByRole('button', { name: /Nine hundred, Ellis said, in Malayalam\./ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ellis quoted/ })).toBeNull();
+    expect(screen.queryByText(/heard as/i)).toBeNull();
   });
 
   it('is not offered while the recording is still moving', async () => {

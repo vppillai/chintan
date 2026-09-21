@@ -696,7 +696,10 @@ function RecordingRow({
    */
   const running = !isTerminalStatus(capture.status);
   const artifacts = useQuery({
-    queryKey: ['capture-artifacts', capture.id],
+    // Keyed on the capture's write version as well as its id: transcribing
+    // again replaces the segments behind the same id, and the landed row
+    // must fetch afresh where a five-minute-fresh entry would be shown as is.
+    queryKey: ['capture-artifacts', capture.id, capture.version],
     queryFn: () =>
       loadCaptureArtifacts(api, capture.id, {
         hasPeaks: capture.has_peaks ?? false,
@@ -735,7 +738,11 @@ function RecordingRow({
   const segments = artifacts.data?.segments ?? [];
   const peaks = artifacts.data?.peaks ?? [];
   const cleanedText = artifacts.data?.cleanedText ?? '';
-  const heard = heardAs(artifacts.data?.detectedLanguage ?? null, effectiveLanguage);
+  // Not while the pipeline runs: what is in hand is the transcript being
+  // replaced, and the chip's tap would post a second run into a 409.
+  const heard = running
+    ? null
+    : heardAs(artifacts.data?.detectedLanguage ?? null, effectiveLanguage);
   // A capture recorded before segments and peaks were stored has neither and
   // gets a plain player. There is no backfill, so this is a permanent branch,
   // not a migration window.
