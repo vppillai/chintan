@@ -41,17 +41,26 @@ function detailFetch(): ReturnType<typeof vi.fn<typeof fetch>> {
   });
 }
 
+/** The library: the one screen that asks for the bodies. */
 function Library() {
+  useCachedNotes('active', { prefetchBodies: true });
+  return null;
+}
+
+/** The capture screen and Ask read the same rows and ask for nothing more. */
+function Reader() {
   useCachedNotes('active');
   return null;
 }
 
-function mount(fetchImpl: typeof fetch) {
-  return render(
-    <TestProviders api={testApiContext(fetchImpl)}>
-      <Library />
+function mount(fetchImpl: typeof fetch, Screen: () => null = Library) {
+  const api = testApiContext(fetchImpl);
+  render(
+    <TestProviders api={api}>
+      <Screen />
     </TestProviders>,
   );
+  return api;
 }
 
 const fetchedIds = (fetchImpl: ReturnType<typeof vi.fn<typeof fetch>>): string[] =>
@@ -120,6 +129,45 @@ describe('the first page\'s bodies reach the device on their own', () => {
     const asked = new Set(fetchedIds(fetchImpl));
     for (const skipped of rows.slice(0, 5)) expect(asked.has(skipped.id)).toBe(false);
     for (const wanted of rows.slice(5)) expect(asked.has(wanted.id)).toBe(true);
+  });
+
+  it('asks for nothing unless the screen opts in', async () => {
+    // A cold launch of the Record shortcut reads these rows too, and twenty
+    // GETs two seconds in would compete with `getUserMedia` for the connection.
+    await cacheNoteList([row('p6-a')]);
+    const fetchImpl = detailFetch();
+
+    mount(fetchImpl, Reader);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing once the session is gone, even a body already in the air', async () => {
+    // Sign-out drops the token and empties the device, then leaves for
+    // Cognito. A GET that resolves in between must not put one person's note
+    // back on the device for the next.
+    await cacheNoteList([row('p5-a')]);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const detail = detailFetch();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      await gate;
+      return detail(input, init);
+    });
+
+    const api = mount(fetchImpl);
+
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+    api.session.clear();
+    release();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await cachedNote('p5-a', { requireDetail: true })).toBeNull();
   });
 
   it('asks the network for nothing while offline', async () => {

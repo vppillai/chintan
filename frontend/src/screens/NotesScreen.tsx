@@ -154,7 +154,7 @@ export function NotesScreen() {
   };
 
   const list = useNotes({ state: view, ...(tag ? { tag } : {}), ...(kind ? { kind } : {}) });
-  const cached = useCachedNotes(view);
+  const cached = useCachedNotes(view, { prefetchBodies: true });
   const { fetchNextPage, hasNextPage, isFetchingNextPage } = list;
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage();

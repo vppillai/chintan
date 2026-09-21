@@ -17,10 +17,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
-import { useApi } from '@/api/ApiProvider.tsx';
+import { useApi, useSession } from '@/api/ApiProvider.tsx';
 import type { ChintanApi } from '@/api/endpoints.ts';
 import { ApiError } from '@/api/problem.ts';
 import type { NoteDetailWire, NoteState, NoteWire } from '@/api/schema.ts';
+import type { Session } from '@/api/session.ts';
 
 import { cacheNoteDetail, cachedNote, cachedNotes, notesWithoutBody } from './notesCache.ts';
 
@@ -29,7 +30,20 @@ export const cacheKeys = {
   note: (noteId: string) => ['notes', 'offline', 'note', noteId] as const,
 };
 
-export function useCachedNotes(state: NoteState = 'active') {
+export interface CachedNotesOptions {
+  /**
+   * Fetch the first page's bodies once its rows are on the device. Only the
+   * library asks for this. The capture screen and Ask read the same rows, and
+   * a cold launch of the Record shortcut must not have twenty GETs competing
+   * with `getUserMedia` for the connection a couple of seconds in.
+   */
+  prefetchBodies?: boolean;
+}
+
+export function useCachedNotes(
+  state: NoteState = 'active',
+  { prefetchBodies: wantBodies = false }: CachedNotesOptions = {},
+) {
   const query = useQuery({
     queryKey: cacheKeys.notes(state),
     queryFn: () => cachedNotes(state),
@@ -45,7 +59,7 @@ export function useCachedNotes(state: NoteState = 'active') {
     staleTime: 0,
     retry: false,
   });
-  usePrefetchBodies(state === 'active' ? query.data : undefined);
+  usePrefetchBodies(wantBodies && state === 'active' ? query.data : undefined);
   return query;
 }
 
@@ -63,20 +77,20 @@ let prefetching = false;
  * one landed on "Not on this device". After the list arrives — every write to
  * the device invalidates this hook's key, so the rows are the trigger — the
  * first page's bodies are fetched one at a time, in an idle callback so the
- * fetch never competes with the list rendering or with `getUserMedia` on the
- * capture screen, and only for rows the device holds as a list row alone. Each
- * body is asked for once per session per version; a failure leaves the row as
- * it was, and the next session asks again.
+ * fetch never competes with the list rendering, and only for rows the device
+ * holds as a list row alone. Each body is asked for once per session per
+ * version; a failure leaves the row as it was, and the next session asks again.
  */
 function usePrefetchBodies(rows: readonly NoteWire[] | undefined): void {
   const api = useApi();
+  const session = useSession();
   useEffect(() => {
     if (!rows || rows.length === 0) return;
     if (typeof navigator !== 'undefined' && !navigator.onLine) return;
     return whenIdle(() => {
-      void prefetchBodies(api);
+      void prefetchBodies(api, session);
     });
-  }, [rows, api]);
+  }, [rows, api, session]);
 }
 
 /** Safari has no `requestIdleCallback`; a short delay is the next best "later". */
@@ -93,7 +107,7 @@ function whenIdle(work: () => void): () => void {
   };
 }
 
-async function prefetchBodies(api: ChintanApi): Promise<void> {
+async function prefetchBodies(api: ChintanApi, session: Session): Promise<void> {
   if (prefetching) return;
   prefetching = true;
   try {
@@ -101,14 +115,25 @@ async function prefetchBodies(api: ChintanApi): Promise<void> {
       (note) => !attempted.has(`${note.id}@${String(note.version)}`),
     );
     for (const note of wanted) {
+      /*
+       * Sign-out drops the token, empties the device, and then leaves for
+       * Cognito's `/logout`. A body written in between is one person's note
+       * left on the device for the next — the very thing sign-out exists to
+       * prevent — so the session is checked on both sides of the GET: it can
+       * go while the request is in the air.
+       */
+      if (!session.isAuthenticated()) break;
       attempted.add(`${note.id}@${String(note.version)}`);
       try {
-        await cacheNoteDetail(await api.getNote(note.id));
+        const detail = await api.getNote(note.id);
+        if (!session.isAuthenticated()) break;
+        await cacheNoteDetail(detail);
       } catch (error) {
-        // The connection went: the rest would fail the same way, so stop here
-        // and let the next list arrival try again. A single refusal — a note
-        // purged since the list was read — skips only that note.
-        if (error instanceof ApiError && error.isOffline) break;
+        // The connection went, or the session did: the rest would fail the
+        // same way, so stop here and let the next list arrival try again. A
+        // single refusal — a note purged since the list was read — skips only
+        // that note.
+        if (error instanceof ApiError && (error.isOffline || error.isUnauthorized)) break;
       }
     }
   } catch {
