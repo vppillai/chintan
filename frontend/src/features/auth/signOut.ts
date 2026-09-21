@@ -6,16 +6,20 @@
  * has to leave the device with nothing on it and leave Cognito with no session
  * to sign the same person straight back in.
  *
- * Four things, in this order:
+ * Five things, in this order:
  *
  *   1. Drop the token set.
  *   2. Empty the query cache and IndexedDB.
  *   3. Empty the app's Web Storage of anything that is one person's.
- *   4. Hand the browser to Cognito's `/logout`.
+ *   4. Revoke the refresh token at Cognito, best-effort.
+ *   5. Hand the browser to Cognito's `/logout`.
  *
- * The redirect is last because it ends this document. Nothing here talks to
- * the API: every credential lives with Cognito, so ending the hosted-UI session
- * is the whole of the server-side half.
+ * The redirect is last because it ends this document. The revoke is what
+ * makes step 1 mean anything for the phone this exists for: `/logout` ends the
+ * hosted UI's cookie and nothing else, so a refresh token copied out of
+ * storage before the sign-out would otherwise go on minting access tokens for
+ * its full thirty days. Nothing here talks to the API; every credential lives
+ * with Cognito.
  */
 
 import type { QueryClient } from '@tanstack/react-query';
@@ -105,6 +109,7 @@ export interface SignOutInput {
   queryClient: QueryClient;
   /** Injected by tests; production navigates for real. */
   navigate?: (url: string) => void;
+  fetchImpl?: typeof fetch;
 }
 
 export async function performSignOut({
@@ -113,7 +118,11 @@ export async function performSignOut({
   navigate = (url) => {
     window.location.assign(url);
   },
+  fetchImpl = globalThis.fetch.bind(globalThis),
 }: SignOutInput): Promise<void> {
+  // Read before the clear takes it away; sent only once the device is clean.
+  const refreshToken = session.current()?.refreshToken ?? null;
+
   session.clear();
   clearPending();
   queryClient.clear();
@@ -127,6 +136,35 @@ export async function performSignOut({
   // Unconfigured build (or a test): there is no hosted UI to end a session at,
   // and navigating to `/logout` on an empty origin would strand the user.
   if (config.cognitoDomain.length > 0 && config.clientId.length > 0) {
+    if (refreshToken) await revokeRefreshToken(refreshToken, fetchImpl);
     navigate(logoutUrl(redirectUri()));
+  }
+}
+
+/** A captive portal or a hung connection must not hold the sign-out hostage. */
+const REVOKE_TIMEOUT_MS = 5_000;
+
+/**
+ * `POST /oauth2/revoke`, RFC 7009 as Cognito serves it for a public client:
+ * the token and the client id, form-encoded, no secret. Cognito then refuses
+ * the refresh grant and every token that grant produced; the id token already
+ * in a copier's hands still passes the API's stateless JWT check until it
+ * expires, an hour at most, and nothing shorter is available without a
+ * server-side denylist.
+ *
+ * Best-effort on purpose. The device is already clean by the time this runs,
+ * and a sign-out with no connection still has to finish: an offline failure,
+ * a refusal or the timeout all fall through to `/logout`.
+ */
+async function revokeRefreshToken(refreshToken: string, fetchImpl: typeof fetch): Promise<void> {
+  try {
+    await fetchImpl(`${config.cognitoDomain}/oauth2/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token: refreshToken, client_id: config.clientId }),
+      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+    });
+  } catch {
+    /* Offline, refused or timed out: the token ages out at Cognito on its own. */
   }
 }
