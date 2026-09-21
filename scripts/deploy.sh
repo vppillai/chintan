@@ -142,13 +142,16 @@ FAILURE_EVENT_JQ='
 # "Conditional"; Conditional means CloudFormation only decides at execution
 # time, which is too late to ask, so it is treated as a replacement. A Remove
 # (the resource deleted from the template) is the same outcome by another
-# route: Retain keeps the data, but the stack no longer points at it.
+# route: Retain keeps the data, but the stack no longer points at it. A
+# Dynamic action — CloudFormation cannot say until execution whether the
+# resource is modified or replaced — is refused for the same reason as
+# Conditional.
 refuse_stateful_replacements() {
     local describe="$1" replacing id r a stateful allowed refused=0
     replacing="$(printf '%s' "$describe" | jq -r '
         [.Changes[].ResourceChange
          | select((.Action == "Modify" and (.Replacement == "True" or .Replacement == "Conditional"))
-                  or .Action == "Remove")
+                  or .Action == "Remove" or .Action == "Dynamic")
          | .LogicalResourceId] | .[]
     ')"
     while IFS= read -r id; do
@@ -159,7 +162,7 @@ refuse_stateful_replacements() {
         allowed=0
         for a in "${ALLOW_REPLACEMENT[@]+"${ALLOW_REPLACEMENT[@]}"}"; do [ "$id" = "$a" ] && allowed=1; done
         if [ "$allowed" = "1" ]; then
-            warn "replacing $id because --allow-replacement $id was passed"
+            warn "replacing or removing $id because --allow-replacement $id was passed"
         else
             err "change set would REPLACE or REMOVE $id, a stateful resource; refusing"
             refused=1
@@ -245,6 +248,14 @@ JSON
         die "self-test FAILED: removing the bucket from the template was not refused"
     fi
     ok "a bucket removal is refused"
+
+    info "self-test: a Dynamic action on the user pool is refused"
+    dynamic_pool='{"Changes":[
+     {"ResourceChange":{"Action":"Dynamic","LogicalResourceId":"UserPool","ResourceType":"AWS::Cognito::UserPool"}}]}'
+    if refuse_stateful_replacements "$dynamic_pool" 2>/dev/null; then
+        die "self-test FAILED: a Dynamic action on the user pool was not refused"
+    fi
+    ok "a Dynamic action on the user pool is refused"
 
     info "self-test: replacing a stateless resource, or a modify in place, is allowed"
     harmless='{"Changes":[
