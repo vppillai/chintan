@@ -135,8 +135,13 @@ func RetentionTierFor(days int) int {
 // code; supplying it "will improve accuracy and latency" (console.groq.com/docs
 // /speech-to-text), and omitting it leaves the model to guess, which on a
 // short clip is how English dictation comes back transliterated into another
-// script. There is no mixed-language mode: auto-detection is the only option
-// for code-switching, and it decides per request, not per segment.
+// script. There is no mixed-language mode, and auto-detection is not one: it
+// decides per request, not per segment, so on code-switched speech it keeps
+// the language it picked and drops or re-scripts the rest — real Malayalam
+// came back in Tamil script, and the Malayalam sentence of an
+// English–Malayalam clip was dropped (review 2026-09-21, T3). For mixed speech
+// the better choice is the code of the language that matters most: forcing
+// `ml` kept both languages and transcribed pure English verbatim.
 const (
 	// LanguageAuto asks the provider to detect the language: the code sends no
 	// `language` field.

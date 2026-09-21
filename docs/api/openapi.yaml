@@ -1081,11 +1081,13 @@ components:
             sets none — or is not yet known: a capture recorded without a
             `note_id` is transcribed before it is routed, so only this value
             can apply to it. `auto` sends no language and lets Whisper detect
-            one per recording (there is no mixed-language mode; a
-            code-switching recording is detected as one language). Any other
-            value is an ISO-639-1 code passed to the provider as-is;
-            supplying one improves accuracy and latency. A record written
-            before this field existed reads as `en`.
+            one per recording. There is no mixed-language mode, and
+            auto-detection is not one: it picks a single language per
+            recording and drops or re-scripts the speech in any other, so for
+            a recording that mixes two languages choose the code of the one
+            that matters most. Any other value is an ISO-639-1 code passed to
+            the provider as-is; supplying one improves accuracy and latency.
+            A record written before this field existed reads as `en`.
         daily_spend_cap_micros:
           type: integer
           minimum: 0
