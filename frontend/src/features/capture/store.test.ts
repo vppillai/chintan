@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChintanApi } from '@/api/endpoints.ts';
 import { openChintanDB } from '@/offline/db.ts';
@@ -385,5 +385,146 @@ describe('Send from the recording screen', () => {
     await flush();
     expect(useCaptureStore.getState().model.state).toBe('review');
     expect(creates).toHaveLength(0);
+  });
+});
+
+describe('a Send outside review does nothing', () => {
+  it('ignores a send while the recorder is still finishing, and sends once it has', async () => {
+    /*
+     * The reducer drops an `uploadStart` from `stopping`, but the uploader
+     * used to run regardless: it assembled and PUT a buffer the recorder was
+     * still writing to — the last 512 bytes of a take were missing from the
+     * body — then pruned it, with the machine never having said "uploading".
+     * `stopAndSend` is the supported way to send from the recording screen;
+     * a bare `send` in any other state has to be a no-op.
+     */
+    let assembled = 0;
+    const creates: string[] = [];
+    useCaptureStore.getState().__configure({
+      recorder: fakeDeps(),
+      upload: {
+        assemble: async () => {
+          assembled += 1;
+          return new Blob(['audio']);
+        },
+        put: async () => {},
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+    const api = {
+      createCapture: async (_body: unknown, key: string) => {
+        creates.push(key);
+        return {
+          capture: { id: 'srv-1', status: 'uploaded', created_at: '', version: 1 },
+          upload: {
+            url: 'https://s3.test/audio',
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            max_bytes: 1_000_000,
+          },
+        };
+      },
+    } as unknown as ChintanApi;
+
+    await useCaptureStore.getState().start();
+    recorder.emitChunk(1_024);
+    // The machine is told to stop without the recorder finishing: the state
+    // a Send tapped on the frame after Stop finds.
+    useCaptureStore.getState().dispatch({ type: 'stop', now: Date.now() });
+    expect(useCaptureStore.getState().model.state).toBe('stopping');
+
+    await useCaptureStore.getState().send(api);
+    expect(assembled).toBe(0);
+    expect(creates).toEqual([]);
+    expect(useCaptureStore.getState().model.state).toBe('stopping');
+
+    // Once the recorder has handed over its last chunk, the same send works.
+    useCaptureStore.getState().dispatch({ type: 'finalised' });
+    expect(useCaptureStore.getState().model.state).toBe('review');
+    await useCaptureStore.getState().send(api);
+    expect(assembled).toBe(1);
+    expect(creates).toHaveLength(1);
+    expect(useCaptureStore.getState().model.state).toBe('uploaded');
+  });
+});
+
+describe('Retry after the upload link has expired', () => {
+  const STALE = 'https://s3.test/stale';
+  const FRESH = 'https://s3.test/fresh';
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('asks for a fresh credential under a new key instead of replaying the dead one', async () => {
+    /*
+     * The uploader has re-keyed a resume past an expired presign since
+     * 2026-08-08, but only when the request names the server capture — and
+     * the store never passed it, although the machine held it from the first
+     * create. So every Retry tap, and every resend on reconnect after a long
+     * offline stretch, replayed the original create verbatim and landed on
+     * "the upload link had expired"; only a reload, through ResumePrompt,
+     * ever recovered.
+     */
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const creates: string[] = [];
+    const puts: string[] = [];
+    let putFails = true;
+    useCaptureStore.getState().__configure({
+      recorder: fakeDeps(),
+      upload: {
+        assemble: async () => new Blob(['audio']),
+        put: async (upload) => {
+          puts.push(upload.url);
+          if (putFails) throw new Error('socket closed');
+        },
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+    const api = {
+      // The server replays the first create, credential and all, for the
+      // recording's own key; any other key mints a live one.
+      createCapture: async (_body: unknown, key: string) => {
+        creates.push(key);
+        const first = creates.length === 1 || key === creates[0];
+        return {
+          capture: { id: first ? 'srv-1' : 'srv-2', status: 'uploaded', created_at: '', version: 1 },
+          upload: {
+            url: first ? STALE : FRESH,
+            expires_at: new Date(
+              (first ? Date.parse('2026-09-21T10:30:00.000Z') : Date.now() + 30 * 60_000),
+            ).toISOString(),
+            max_bytes: 1_000_000,
+          },
+        };
+      },
+      getCapture: async () => ({ id: 'srv-1', status: 'uploaded', created_at: '', version: 1 }),
+    } as unknown as ChintanApi;
+
+    vi.setSystemTime(Date.parse('2026-09-21T10:00:00.000Z'));
+    await useCaptureStore.getState().start();
+    recorder.emitChunk(1_024);
+    await useCaptureStore.getState().stop();
+    expect(useCaptureStore.getState().model.state).toBe('review');
+
+    // The create lands, the PUT does not: a Retry is what the row offers.
+    await useCaptureStore.getState().send(api);
+    expect(useCaptureStore.getState().model.state).toBe('failed');
+    expect(useCaptureStore.getState().model.serverCaptureId).toBe('srv-1');
+    expect(puts).toEqual([STALE]);
+
+    // Forty-five minutes later — a reconnect, or a tap.
+    vi.setSystemTime(Date.parse('2026-09-21T10:45:00.000Z'));
+    putFails = false;
+    await useCaptureStore.getState().send(api);
+
+    expect(useCaptureStore.getState().model.state).toBe('uploaded');
+    expect(useCaptureStore.getState().model.serverCaptureId).toBe('srv-2');
+    const localId = creates[0];
+    expect(creates).toHaveLength(3);
+    expect(creates[1]).toBe(localId);
+    expect(creates[2]).not.toBe(localId);
+    expect(puts).toEqual([STALE, FRESH]);
   });
 });

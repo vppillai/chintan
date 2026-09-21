@@ -245,6 +245,14 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
 
     async send(api) {
       const { model } = get();
+      /*
+       * Only a finished recording is sent. The reducer already drops an
+       * `uploadStart` from any other state, but the uploader did not know
+       * that: it went on to assemble, PUT and prune a buffer the recorder was
+       * still writing to, and the machine never showed it. `stopAndSend` is
+       * how a Send from the recording screen waits for the last chunk.
+       */
+      if (model.state !== 'review' && model.state !== 'failed') return;
       const encoder = controller?.current()?.encoder;
       // A Send the instant Stop finishes must not assemble a buffer that is
       // still being written.
@@ -257,6 +265,11 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
           durationMs: model.elapsedMs,
           noteId: model.noteId,
           peaks: controller?.envelope() ?? [],
+          // A Retry after a create that succeeded is a resume: the server
+          // replays that create verbatim, presigned URL included, and only
+          // the uploader's re-key branch can get past a credential that has
+          // since expired. It runs on this field, which used to be left out.
+          serverCaptureId: model.serverCaptureId,
         },
         dispatch,
         uploadDeps,
