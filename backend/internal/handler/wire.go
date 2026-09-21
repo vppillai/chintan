@@ -254,10 +254,15 @@ type Capture struct {
 	SuggestedNoteID *string `json:"suggested_note_id"`
 	SuggestedTitle  *string `json:"suggested_title"`
 	AppendedAt      *string `json:"appended_at"`
-	DurationMS      *int64  `json:"duration_ms"`
-	HasSegments     bool    `json:"has_segments"`
-	HasPeaks        bool    `json:"has_peaks"`
-	Version         int64   `json:"version"`
+	// LastProgressAt is when the capture last moved — the pipeline's last
+	// write, or the API's last hand-off to the worker
+	// (CaptureIndex.LastProgressAt) — and null on rows from before it was
+	// stamped. The filing row gates Retry on it, as RetryCapture itself does.
+	LastProgressAt *string `json:"last_progress_at"`
+	DurationMS     *int64  `json:"duration_ms"`
+	HasSegments    bool    `json:"has_segments"`
+	HasPeaks       bool    `json:"has_peaks"`
+	Version        int64   `json:"version"`
 	// Targeted is true when a person chose the destination — the client
 	// named note_id at POST /v1/captures, or a person picked the note for a
 	// needs_target capture — and false when the router decided or nothing
@@ -315,6 +320,10 @@ func captureOf(c model.CaptureIndex) Capture {
 	if c.DurationMS != 0 {
 		v := c.DurationMS
 		out.DurationMS = &v
+	}
+	if c.LastProgressAt != "" {
+		v := c.LastProgressAt
+		out.LastProgressAt = &v
 	}
 	return out
 }

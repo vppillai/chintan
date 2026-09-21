@@ -489,18 +489,19 @@ const contractTime = "2026-01-01T00:00:00.000000000Z"
 // type: a null stays null, so the difference between `"error": null` and
 // `"error": "…"` — which is the difference the progress card renders — survives.
 var volatileStrings = map[string]string{
-	"id":             "fixture-id",
-	"note_id":        "fixture-note-id",
-	"auto_select_id": "fixture-note-id",
-	"correlation_id": "00000000-0000-4000-8000-000000000000",
-	"instance":       "/v1/fixture",
-	"url":            "https://example.invalid/presigned",
-	"created_at":     contractTime,
-	"updated_at":     contractTime,
-	"expires_at":     contractTime,
-	"appended_at":    contractTime,
-	"purge_after":    contractTime,
-	"generated_at":   contractTime,
+	"id":               "fixture-id",
+	"note_id":          "fixture-note-id",
+	"auto_select_id":   "fixture-note-id",
+	"correlation_id":   "00000000-0000-4000-8000-000000000000",
+	"instance":         "/v1/fixture",
+	"url":              "https://example.invalid/presigned",
+	"created_at":       contractTime,
+	"updated_at":       contractTime,
+	"expires_at":       contractTime,
+	"appended_at":      contractTime,
+	"last_progress_at": contractTime,
+	"purge_after":      contractTime,
+	"generated_at":     contractTime,
 }
 
 // volatileNumbers is the same idea for measured values.
