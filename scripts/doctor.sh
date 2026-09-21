@@ -303,16 +303,20 @@ if [ "$HAVE_AWS" = 1 ]; then
                 # checked on the live pool rather than trusted from the file.
                 pool_id="$(stack_output "$stack" UserPoolId 2>/dev/null || echo "")"
                 if [ -n "$pool_id" ] && [ "$pool_id" != "None" ]; then
-                    if admin_only="$(aws_probe cognito-idp describe-user-pool --user-pool-id "$pool_id" --query 'UserPool.AdminCreateUserConfig.AllowAdminCreateUserOnly' --output text)"; then
-                        if [ "$admin_only" = "True" ]; then
-                            record "self sign-up $stack" ok "closed; only scripts/invite-user.sh creates accounts"
-                        else
-                            record "self sign-up $stack" missing "OPEN on $pool_id: anyone can register against this instance"
-                            suggest "redeploy infrastructure/template.yaml (AdminCreateUserConfig.AllowAdminCreateUserOnly: true)"
-                        fi
-                    else
-                        record "self sign-up $stack" unknown "cognito-idp:DescribeUserPool is denied to these credentials"
-                    fi
+                    rc=0
+                    admin_only="$(aws_probe cognito-idp describe-user-pool --user-pool-id "$pool_id" --query 'UserPool.AdminCreateUserConfig.AllowAdminCreateUserOnly' --output text)" || rc=$?
+                    case "$rc" in
+                        0)
+                            if [ "$admin_only" = "True" ]; then
+                                record "self sign-up $stack" ok "closed; only scripts/invite-user.sh creates accounts"
+                            else
+                                record "self sign-up $stack" missing "OPEN on $pool_id: anyone can register against this instance"
+                                suggest "redeploy infrastructure/template.yaml (AdminCreateUserConfig.AllowAdminCreateUserOnly: true)"
+                            fi
+                            ;;
+                        1) record "self sign-up $stack" missing "pool $pool_id, the stack's UserPoolId output, no longer exists" ;;
+                        *) record "self sign-up $stack" unknown "could not read pool $pool_id (denied or error)" ;;
+                    esac
                 fi
             else
                 record "stack $stack" missing "not deployed in $stack_region"
