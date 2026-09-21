@@ -27,7 +27,10 @@ const RECENT_LIMIT = 20;
 export interface TargetChooserProps {
   noteId: string | null;
   onChoose: (noteId: string | null) => void;
-  /** After Send the target has left the device and cannot be changed here. */
+  /**
+   * After Send the target has left the device and cannot be changed here;
+   * after a failure there is nothing to aim.
+   */
   disabled?: boolean;
   /**
    * Whether to fetch the list yet. The capture screen holds it back until the

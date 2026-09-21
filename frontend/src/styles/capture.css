@@ -172,10 +172,36 @@
   color: var(--color-muted);
 }
 
-.capture__error {
+/*
+ * A failure stands where the level box stood, at its width, so the screen
+ * keeps its shape; the sentence is body size, because a failure is read
+ * rather than glanced at, and the step that fixes it sits under it muted.
+ */
+.capture__failure {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  inline-size: 100%;
   max-inline-size: 26rem;
-  font-size: var(--font-size-sm);
+  padding: var(--space-5) var(--space-4);
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-lg);
+}
+
+.capture__failure-icon {
+  color: var(--color-accent-strong);
+}
+
+.capture__failure-message {
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-snug);
   color: var(--color-ink);
+}
+
+.capture__failure-hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
 }
 
 /* "Resumed — the microphone is back." Quiet: good news needs no emphasis. */

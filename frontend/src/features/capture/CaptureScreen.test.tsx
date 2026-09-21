@@ -684,6 +684,72 @@ describe('the target chooser', () => {
   });
 });
 
+describe('a failure is a card, not a dead screen', () => {
+  it('explains a refused microphone, names the way back, and asks again on Try again', async () => {
+    /*
+     * After a denied prompt the screen used to keep its clock at 00:00 over
+     * an empty level box, with the target pill still live and twenty-one
+     * notes to choose from, and the failure marked unrecoverable so nothing
+     * offered a second try. The browser that refused gives no way back to
+     * its prompt from inside the page, so the card says where the switch is.
+     */
+    let refuse = true;
+    useCaptureStore.getState().__configure({
+      recorder: fakeDeps({
+        requestMicrophone: async () => {
+          micRequests += 1;
+          if (refuse) throw Object.assign(new Error('denied'), { name: 'NotAllowedError' });
+          return new FakeStream() as unknown as MediaStream;
+        },
+      }),
+    });
+    mount('/capture?note=roof-repair');
+
+    const card = await screen.findByRole('alert');
+    expect(card).toHaveTextContent(/needs microphone access to record/i);
+    expect(card).toHaveTextContent(/site settings, then try again/i);
+    // No clock and no level box for a recording that never began, and the
+    // chooser cannot aim one.
+    expect(document.querySelector('.capture__timer')).toBeNull();
+    expect(document.querySelector('.capture__waveform')).toBeNull();
+    expect(screen.getByRole('button', { name: /^into/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+
+    refuse = false;
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    expect(micRequests).toBe(2);
+    // Into the same note the screen was opened for.
+    expect(useCaptureStore.getState().model.noteId).toBe('roof-repair');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('offers a second try for a missing microphone, and only Close where recording is impossible', async () => {
+    useCaptureStore.getState().__configure({
+      recorder: fakeDeps({
+        requestMicrophone: async () => {
+          throw Object.assign(new Error('none'), { name: 'NotFoundError' });
+        },
+      }),
+    });
+    const view = mount();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no microphone was found/i);
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    view.unmount();
+    act(() => {
+      useCaptureStore.setState({ model: INITIAL_CAPTURE });
+    });
+
+    useCaptureStore.getState().__configure({ recorder: fakeDeps({ isSupported: () => false }) });
+    mount();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot record audio/i);
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+});
+
 describe('where the capture screen goes when it is done', () => {
   it('returns to the target note — its recordings once sent — and otherwise to the library', () => {
     expect(captureReturnPath('roof-repair', true)).toBe('/notes/roof-repair?tab=recordings');
