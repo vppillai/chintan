@@ -1551,7 +1551,8 @@ components:
           nullable: true
           description: >
             The language the transcription provider reported the speech to be
-            in, by the name it uses (`English`, `Malayalam`). Under a chosen
+            in, spelled as the provider spells it and passed through unchanged
+            (Groq: `English`, `Malayalam`). Under a chosen
             `language` the provider echoes that language back, so the two
             differ only under `auto`. Null until transcribed.
         has_segments: { type: boolean }
