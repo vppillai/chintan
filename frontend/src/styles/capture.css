@@ -1,0 +1,191 @@
+/*
+ * The capture screen: timer, live waveform panel, the review player's frame
+ * and the control row. Split from shell.css so the screen's own rules live
+ * where its component does; the live waveform canvas (`.waveform`), the review
+ * player and the target chooser stay in shell.css with the note screen's
+ * player they share drawing code with.
+ */
+
+/* --------------------------------------------------------------------------
+   Capture
+   -------------------------------------------------------------------------- */
+
+.capture {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-6);
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: var(--layout-content-max);
+  margin-inline: auto;
+  padding: var(--space-8) var(--layout-gutter);
+  text-align: center;
+}
+
+.capture__title {
+  font-size: var(--font-size-lg);
+  color: var(--color-muted);
+}
+
+.capture__timer {
+  font-size: var(--font-size-4xl);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-tight);
+  color: var(--color-ink);
+}
+
+/*
+ * A single explicitly-sized grid area, and `overflow: hidden` as the backstop.
+ * The canvas inside is a replaced element, and a replaced element is the one
+ * thing that will happily ignore the box you drew for it.
+ */
+.capture__waveform {
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  inline-size: 100%;
+  block-size: 6rem;
+  padding: var(--space-3);
+  overflow: hidden;
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+}
+
+.capture__waveform-placeholder {
+  inline-size: 60%;
+  block-size: 1px;
+  background-color: var(--color-line-strong);
+}
+
+.capture__status {
+  max-inline-size: 24rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/*
+ * One row, never two.
+ *
+ * Four round targets share the width as equal grid columns rather than
+ * flexing. Three pill buttons had a min-content width of ~281px, which on a
+ * 320px phone pushed the document half a pixel wide and, at a larger text
+ * size, pushed Stop off the screen — the version of that bug that loses a
+ * recording. A column a quarter of the row wide cannot: at 320px the four are
+ * 70px each around 64px discs, and the words under them wrap before anything
+ * leaves the screen. The quarter is also the column when there are three or
+ * two, so a control sits the same distance from its neighbour in every state
+ * rather than spreading to fill the row; 6rem caps it on a wide screen.
+ */
+.capture__controls {
+  /* 64px on a phone, tapped at arm's length; 56px under a pointer. */
+  --capture-control-size: 4rem;
+
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, min(6rem, 25%));
+  justify-content: center;
+  justify-items: center;
+  inline-size: 100%;
+  min-inline-size: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .capture__controls {
+    --capture-control-size: 3.5rem;
+  }
+}
+
+/*
+ * The whole thing — disc and word — is the button, so the target is never
+ * smaller than the disc and the word is the accessible name.
+ */
+.capture__control {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding-block: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  color: var(--color-muted);
+}
+
+/* Ink on a shape pressed out of the page, like the app's other outline controls. */
+.capture__control-disc {
+  display: grid;
+  place-items: center;
+  inline-size: var(--capture-control-size);
+  block-size: var(--capture-control-size);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--color-raised);
+  background-image: var(--gradient-tonal);
+  color: var(--color-ink);
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-spring),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.capture__control:active .capture__control-disc {
+  transform: scale(0.94);
+}
+
+.capture__control:not(.capture__control--primary):active .capture__control-disc {
+  background-color: var(--color-surface);
+  background-image: none;
+}
+
+/*
+ * Send: the row's only filled shape, so at arm's length the eye lands on it
+ * first. Filled ink like the app's other primaries (the lift and shadow come
+ * from the shared rule in shell.css); the accent stays the record button's.
+ */
+.capture__control--primary {
+  color: var(--color-ink);
+}
+
+.capture__control--primary .capture__control-disc {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.capture__state {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.capture__hint {
+  max-inline-size: 24rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+.capture__warning {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.capture__error {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+/* "Resumed — the microphone is back." Quiet: good news needs no emphasis. */
+.capture__notice {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.capture__progress {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}

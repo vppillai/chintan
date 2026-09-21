@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { ROUTES } from '@/app/routes.ts';
-import { Icon } from '@/components/Icon.tsx';
+import { Icon, type IconName } from '@/components/Icon.tsx';
 import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 
 import { ReviewPlayer } from './ReviewPlayer.tsx';
@@ -21,8 +21,9 @@ import { useCaptureStore } from './store.ts';
 
 /**
  * The capture surface. Full screen: the shell drops the tab bar here, so the
- * only way off is Stop, Cancel or system Back — and Back keeps the microphone
- * open, with the shell's recording indicator saying so on the next screen.
+ * only way off is Stop, Send, Cancel or system Back — and Back keeps the
+ * microphone open, with the shell's recording indicator saying so on the next
+ * screen.
  *
  * Every claim this screen makes is one the machine can back: it says
  * "Starting" while `getUserMedia` is pending and only says "Recording" once
@@ -41,6 +42,7 @@ export function CaptureScreen() {
   const pause = useCaptureStore((state) => state.pause);
   const resume = useCaptureStore((state) => state.resume);
   const stop = useCaptureStore((state) => state.stop);
+  const stopAndSend = useCaptureStore((state) => state.stopAndSend);
   const discard = useCaptureStore((state) => state.discard);
   const rerecord = useCaptureStore((state) => state.rerecord);
   const send = useCaptureStore((state) => state.send);
@@ -133,12 +135,17 @@ export function CaptureScreen() {
    * through the machine, which the row reads. The target is read before the
    * hand-off: `send` is what the machine's `noteId` is for, and where the user
    * goes next is decided by the same fact.
+   *
+   * From the recording screen Send is Stop and Send in one tap: the store
+   * stops the recorder and sends the moment its last chunk has landed, and
+   * this screen leaves just the same — the filing row picks the upload up.
    */
   const handOff = useCallback(() => {
-    const to = captureReturnPath(useCaptureStore.getState().model.noteId, true);
-    void send(api);
+    const { state, noteId } = useCaptureStore.getState().model;
+    const to = captureReturnPath(noteId, true);
+    void (state === 'recording' || state === 'paused' ? stopAndSend(api) : send(api));
     leave(to);
-  }, [send, api, leave]);
+  }, [send, stopAndSend, api, leave]);
 
   // The envelope is read once per review, not per render: the recorder has
   // finished, so it will not change, and the player redraws on its own clock.
@@ -326,7 +333,14 @@ interface ControlsProps {
   onLeave: () => void;
 }
 
-/** Pause, cancel, and stop are distinct controls — never one toggle. */
+/**
+ * Pause, cancel, stop and send are distinct controls — never one toggle.
+ *
+ * Round targets with a word under each. The screen is read at arm's length
+ * while walking, and the one control that matters most has to be found
+ * without reading: Send is the row's only filled shape. The words stay
+ * visible because they are also the accessible names.
+ */
 function Controls({
   model,
   onPause,
@@ -340,30 +354,23 @@ function Controls({
   if (model.state === 'requesting') {
     return (
       <div className="capture__controls">
-        <button type="button" className="capture__control" onClick={onDiscard}>
-          <span>Cancel</span>
-        </button>
+        <Control icon="close" label="Cancel" onClick={onDiscard} />
       </div>
     );
   }
 
   if (model.state === 'recording' || model.state === 'paused') {
+    const paused = model.state === 'paused';
     return (
       <div className="capture__controls">
-        <button type="button" className="capture__control" onClick={onDiscard}>
-          <span>Cancel</span>
-        </button>
-        <button
-          type="button"
-          className="capture__control"
-          onClick={model.state === 'paused' ? onResume : onPause}
-        >
-          <span>{model.state === 'paused' ? 'Resume' : 'Pause'}</span>
-        </button>
-        <button type="button" className="capture__control capture__control--primary" onClick={onStop}>
-          <Icon name="stop" size={20} />
-          <span>Stop</span>
-        </button>
+        <Control icon="close" label="Cancel" onClick={onDiscard} />
+        <Control
+          icon={paused ? 'play' : 'pause'}
+          label={paused ? 'Resume' : 'Pause'}
+          onClick={paused ? onResume : onPause}
+        />
+        <Control icon="stop" label="Stop" onClick={onStop} />
+        <Control icon="send" label="Send" primary onClick={onSend} />
       </div>
     );
   }
@@ -371,16 +378,13 @@ function Controls({
   if (model.state === 'review') {
     return (
       <div className="capture__controls">
-        <button type="button" className="capture__control" onClick={onDiscard}>
-          <span>Discard</span>
-        </button>
-        {/* Discard and start again into the same note, in one tap. */}
-        <button type="button" className="capture__control" onClick={onRerecord}>
-          <span>Re-record</span>
-        </button>
-        <button type="button" className="capture__control capture__control--primary" onClick={onSend}>
-          <span>Send</span>
-        </button>
+        <Control icon="trash" label="Discard" onClick={onDiscard} />
+        {/*
+          Discard and start again into the same note, in one tap. The restore
+          arrow — back around, once more — is the gesture.
+        */}
+        <Control icon="restore" label="Re-record" onClick={onRerecord} />
+        <Control icon="send" label="Send" primary onClick={onSend} />
       </div>
     );
   }
@@ -394,29 +398,45 @@ function Controls({
   }
 
   if (model.state === 'failed') {
+    const retry = canRetryUpload(model);
     return (
       <div className="capture__controls">
-        <button type="button" className="capture__control" onClick={onDiscard}>
-          <span>{canRetryUpload(model) ? 'Discard' : 'Close'}</span>
-        </button>
-        {canRetryUpload(model) && (
-          <button
-            type="button"
-            className="capture__control capture__control--primary"
-            onClick={onSend}
-          >
-            <span>Try again</span>
-          </button>
-        )}
+        <Control
+          icon={retry ? 'trash' : 'close'}
+          label={retry ? 'Discard' : 'Close'}
+          onClick={onDiscard}
+        />
+        {retry && <Control icon="send" label="Try again" primary onClick={onSend} />}
       </div>
     );
   }
 
   return (
     <div className="capture__controls">
-      <button type="button" className="capture__control" onClick={onLeave}>
-        <span>Done</span>
-      </button>
+      <Control icon="check" label="Done" onClick={onLeave} />
     </div>
+  );
+}
+
+interface ControlProps {
+  icon: IconName;
+  label: string;
+  /** The one filled shape in the row. */
+  primary?: boolean;
+  onClick: () => void;
+}
+
+function Control({ icon, label, primary = false, onClick }: ControlProps) {
+  return (
+    <button
+      type="button"
+      className={primary ? 'capture__control capture__control--primary' : 'capture__control'}
+      onClick={onClick}
+    >
+      <span className="capture__control-disc">
+        <Icon name={icon} size={26} />
+      </span>
+      <span className="capture__control-label">{label}</span>
+    </button>
   );
 }

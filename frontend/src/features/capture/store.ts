@@ -47,6 +47,11 @@ export interface CaptureStore {
   pause: () => void;
   resume: () => void;
   stop: () => Promise<void>;
+  /**
+   * Send from the recording screen: stops, and sends the moment the recorder
+   * has handed over its last chunk. The screen leaves at once, as with `send`.
+   */
+  stopAndSend: (api: ChintanApi) => Promise<void>;
   /** Abandon: stops the recorder and deletes the buffered audio. */
   discard: () => Promise<void>;
   /** Discard, then start again into the same target. The review screen's "Re-record". */
@@ -68,12 +73,28 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
   let controller: RecorderController | null = null;
   let recorderDeps: RecorderDeps = defaultRecorderDeps;
   let uploadDeps: UploadDeps | undefined;
+  /** Set by `stopAndSend`; consumed by `dispatch` when the stop settles. */
+  let sendWhenReviewed: ChintanApi | null = null;
 
   const dispatch = (event: CaptureEvent): void => {
     const before = get().model;
     const after = captureReducer(before, event);
     if (after === before) return;
     set({ model: after });
+
+    /*
+     * Stop-and-Send. MediaRecorder delivers its final chunk after `stop()`
+     * returns, so the send cannot follow the stop on the same call stack; it
+     * waits for the machine to leave `stopping`, which is this transition.
+     * `review` sends. Anything else — nothing recorded, a discard, a recorder
+     * error with no audio — drops the request: there is nothing to send, or
+     * the user changed their mind.
+     */
+    if (sendWhenReviewed && before.state === 'stopping' && after.state !== 'stopping') {
+      const api = sendWhenReviewed;
+      sendWhenReviewed = null;
+      if (after.state === 'review') void get().send(api);
+    }
 
     // A cap does not just flag itself, it stops the recording. The machine
     // moves to `stopping`; something has to actually tell the recorder.
@@ -176,6 +197,16 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
       const active = controller;
       stopFeedback(active?.current()?.audioContext ?? null);
       await active?.stop();
+    },
+
+    async stopAndSend(api) {
+      const { state } = get().model;
+      // A stop that has already settled — the cap, or a tap landing on the
+      // frame the recorder finished — has nothing to wait for.
+      if (state === 'review') return get().send(api);
+      if (state !== 'recording' && state !== 'paused' && state !== 'stopping') return;
+      sendWhenReviewed = api;
+      await get().stop();
     },
 
     async discard() {

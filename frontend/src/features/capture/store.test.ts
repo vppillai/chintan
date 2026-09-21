@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { ChintanApi } from '@/api/endpoints.ts';
 import { openChintanDB } from '@/offline/db.ts';
 
 import { appendChunk, readCaptureRecord, unconfirmedCaptures } from './buffer.ts';
@@ -264,5 +265,125 @@ describe('the previous recording is gone before the next one is requested', () =
     unsubscribe();
 
     expect(atRequest).toEqual([]);
+  });
+});
+
+describe('Send from the recording screen', () => {
+  /** A server that answers every create with a credential the fake `put` never uses. */
+  function fakeApi(creates: { body: unknown; key: string }[]): ChintanApi {
+    return {
+      createCapture: async (body: unknown, key: string) => {
+        creates.push({ body, key });
+        return {
+          capture: { id: `srv-${creates.length}`, status: 'uploaded', created_at: '', version: 1 },
+          upload: {
+            url: 'https://s3.test/audio',
+            expires_at: new Date(Date.now() + 60_000).toISOString(),
+            max_bytes: 1_000_000,
+          },
+        };
+      },
+    } as unknown as ChintanApi;
+  }
+
+  /** The state the machine was in each time the uploader read the buffer. */
+  let assembledAt: string[] = [];
+
+  beforeEach(() => {
+    assembledAt = [];
+    useCaptureStore.getState().__configure({
+      recorder: {
+        ...fakeDeps(),
+        // The real recorder's timing: the last chunk and `onstop` land after
+        // `stop()` has returned, which is the whole reason this is not
+        // `await stop(); await send()`.
+        createRecorder: () => {
+          recorder = new LateChunkRecorder();
+          return recorder as unknown as MediaRecorder;
+        },
+        // A fixed clock, so two recordings report the same length.
+        now: () => 1_000,
+      },
+      upload: {
+        assemble: async () => {
+          assembledAt.push(useCaptureStore.getState().model.state);
+          return new Blob(['audio']);
+        },
+        put: async () => {},
+        confirm: async () => {},
+        saveRecord: async () => {},
+      },
+    });
+  });
+
+  const settled = async (state: string) => {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (useCaptureStore.getState().model.state === state) return;
+      await flush();
+    }
+    throw new Error(`never reached ${state}: ${useCaptureStore.getState().model.state}`);
+  };
+
+  it('stops first, then sends what Stop followed by Send would have sent', async () => {
+    const creates: { body: unknown; key: string }[] = [];
+    const api = fakeApi(creates);
+    const states: string[] = [];
+    const unsubscribe = useCaptureStore.subscribe((state) => {
+      if (states.at(-1) !== state.model.state) states.push(state.model.state);
+    });
+
+    // One tap: Send while recording.
+    await useCaptureStore.getState().start('roof-repair');
+    recorder.emitChunk(2_048);
+    await useCaptureStore.getState().stopAndSend(api);
+    await settled('uploaded');
+    unsubscribe();
+
+    // Two taps: Stop, then Send from review.
+    useCaptureStore.getState().reset();
+    await useCaptureStore.getState().start('roof-repair');
+    recorder.emitChunk(2_048);
+    await useCaptureStore.getState().stop();
+    await settled('review');
+    await useCaptureStore.getState().send(api);
+    await settled('uploaded');
+
+    // The recorder was stopped and the buffer complete before it was read.
+    expect(states).toEqual(['requesting', 'recording', 'stopping', 'review', 'uploading', 'uploaded']);
+    expect(assembledAt).toEqual(['uploading', 'uploading']);
+    // And the server saw the same request both ways, under each take's own key.
+    expect(creates).toHaveLength(2);
+    expect(creates[0]?.body).toEqual(creates[1]?.body);
+    expect(creates[0]?.body).toMatchObject({ note_id: 'roof-repair', content_type: 'audio/mp4' });
+    expect(creates[0]?.key).not.toBe(creates[1]?.key);
+  });
+
+  it('sends nothing when the stop finds no audio, and does not send the next take by itself', async () => {
+    const creates: { body: unknown; key: string }[] = [];
+    const api = fakeApi(creates);
+
+    await useCaptureStore.getState().start();
+    // The late recorder's final chunk is what makes this take non-empty, so
+    // a plain fake is used here to have a stop with nothing behind it.
+    recorder = new FakeRecorder();
+    useCaptureStore.getState().__configure({
+      recorder: { ...fakeDeps(), now: () => 1_000 },
+    });
+    await useCaptureStore.getState().start();
+    await useCaptureStore.getState().stopAndSend(api);
+    await settled('failed');
+    expect(useCaptureStore.getState().model.failure?.message).toBe('Nothing was recorded.');
+    expect(creates).toHaveLength(0);
+
+    // The request died with that take: the next Stop lands on review and stays there.
+    useCaptureStore.getState().reset();
+    await useCaptureStore.getState().start();
+    recorder.emitChunk(512);
+    await useCaptureStore.getState().stop();
+    await settled('review');
+    await flush();
+    await flush();
+    expect(useCaptureStore.getState().model.state).toBe('review');
+    expect(creates).toHaveLength(0);
   });
 });
