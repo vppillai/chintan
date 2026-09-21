@@ -205,7 +205,14 @@ export function useLocalUpload(
   }, [landed, serverHasIt, reset]);
 
   if (noteId !== undefined && target !== noteId) return null;
-  if (options.homeOnly && target !== null) return null;
+  /*
+   * A failed upload is shown on Home whatever it was aimed at. The note's
+   * Recordings tab is where a moving one belongs, but nobody is on that tab
+   * after a spend cap or an expired link has bounced them, and ResumePrompt
+   * leaves the machine's own recording out — so a recording that exists on
+   * this device alone had no handle anywhere until a reload.
+   */
+  if (options.homeOnly && target !== null && !failed) return null;
   if (uploading || failed || (landed && !serverHasIt)) return model;
   return null;
 }

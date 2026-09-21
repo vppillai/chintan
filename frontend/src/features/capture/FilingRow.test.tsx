@@ -228,6 +228,38 @@ describe('the upload this device is still making has a row of its own', () => {
     });
   });
 
+  it('shows a failed upload that was aimed at a note, since only this device holds it', async () => {
+    /*
+     * A moving upload aimed at a note is that note's Recordings tab's to
+     * show, and Home left it out. A failed one was left out too — while
+     * ResumePrompt leaves the machine's own recording out — so after a spend
+     * cap or an expired link bounced the person to Home, the recording had
+     * no handle anywhere until a reload.
+     */
+    sending({
+      state: 'failed',
+      noteId: 'roof-repair',
+      failure: {
+        kind: 'spend-capped',
+        message: 'Daily spending cap reached. Resend tomorrow.',
+        recoverable: true,
+      },
+    });
+    mount([]);
+
+    expect(await screen.findByText(/spending cap reached/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  });
+
+  it('still leaves a moving upload aimed at a note to that note', async () => {
+    sending({ noteId: 'roof-repair' });
+    mount([]);
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
   it('shows nothing of its own for a recording that failed before any upload', async () => {
     // A refused microphone is the capture screen's to explain, not the library's.
     sending({
