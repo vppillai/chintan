@@ -63,6 +63,9 @@ func (rt *router) routes() {
 	rt.handle("GET "+p+"/captures/{captureId}", rt.getCapture)
 	rt.handle("POST "+p+"/captures/{captureId}/target", rt.setCaptureTarget, idempotent())
 	rt.handle("POST "+p+"/captures/{captureId}/retry", rt.retryCapture, idempotent())
+	// Transcribe a finished recording again, in another language; the worker
+	// replaces its paragraph in the note by the marker.
+	rt.handle("POST "+p+"/captures/{captureId}/retranscribe", rt.retranscribeCapture, idempotent())
 	rt.handle("GET "+p+"/captures/{captureId}/download", rt.downloadCapture)
 	// Deleting one recording takes its paragraph out of the note with it. There
 	// is no confirmation step here: the typed confirmation is the client's.

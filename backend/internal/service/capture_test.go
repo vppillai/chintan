@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,6 +415,104 @@ func TestRetryCaptureRefusesAnInFlightCaptureUntilNoWorkerCanBeAlive(t *testing.
 			}
 			if len(worker.calls) != 1 {
 				t.Fatalf("worker calls after the second tap = %v, want still one", worker.calls)
+			}
+		})
+	}
+}
+
+// A recording that came back in the wrong script has a way back: its
+// transcription is run again, in the language asked for, and the worker
+// replaces its paragraph. The request path resets the row and hands it over;
+// it refuses a capture a worker may still be on, and one whose audio the
+// retention rule has already deleted (review 2026-09-21, T7).
+func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testing.T) {
+	now := time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC)
+	audioKey := "tenants/user1/captures/c_1/audio.webm"
+	appended := model.CaptureIndex{
+		Status: model.StatusAppended, CreatedAt: model.FormatTime(now.Add(-time.Hour)), AppendedAt: now.Add(-time.Hour).Unix(),
+		AppendToken: "tok", AppendClaimedAt: now.Add(-time.Hour).Unix(),
+		RawKey: "tenants/user1/captures/c_1/raw.txt", SegmentsKey: "tenants/user1/captures/c_1/segments.json",
+		RoutedKey: "tenants/user1/captures/c_1/routed.txt", CleanKey: "tenants/user1/captures/c_1/clean.txt",
+		Language: "en", LanguageDetected: "tamil",
+	}
+	for _, tc := range []struct {
+		name     string
+		capture  model.CaptureIndex
+		language string
+		noAudio  bool
+		wantErr  error
+	}{
+		{"appended, asked for ml", appended, "ml", false, nil},
+		{"appended, no language: the note's applies", appended, "", false, nil},
+		{"failed at transcription, asked for auto", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: model.FormatTime(now)}, "auto", false, nil},
+		{"a language that is not a code", appended, "klingon", false, ErrInvalidLanguage},
+		{"still transcribing a minute ago", model.CaptureIndex{Status: model.StatusTranscribing, CreatedAt: model.FormatTime(now), LastProgressAt: model.FormatTime(now.Add(-time.Minute))}, "ml", false, ErrCaptureInFlight},
+		{"the audio has expired", appended, "ml", true, ErrCaptureAudioExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, objects := memory.NewStore(), memory.NewObjects()
+			worker := &stubInvoker{}
+			svc := NewCaptureService(store, objects).WithInvoker(worker).WithClock(func() time.Time { return now })
+			c := tc.capture
+			c.ID, c.UserID, c.NoteID, c.AudioKey = "c_1", "user1", "n1", audioKey
+			if !tc.noAudio {
+				if err := objects.Put(ctx, audioKey, []byte("opus"), "audio/webm"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, key := range []string{c.RawKey, c.CleanKey} {
+				if key != "" {
+					if err := objects.Put(ctx, key, []byte("old"), "text/plain"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := store.PutCapture(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := svc.RetranscribeCapture(ctx, "user1", "c_1", tc.language)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if len(worker.calls) != 0 {
+					t.Fatalf("a refused request handed the capture to the worker: %v", worker.calls)
+				}
+				return
+			}
+			if got.Status != StatusTranscribing || got.Error != "" {
+				t.Errorf("status = %s (%q), want transcribing", got.Status, got.Error)
+			}
+			if got.RawKey != "" || got.SegmentsKey != "" || got.RoutedKey != "" || got.CleanKey != "" {
+				t.Errorf("transcript keys were kept: %+v", got)
+			}
+			if got.AppendToken != "" || got.AppendedAt != 0 || got.AppendClaimedAt != 0 {
+				t.Errorf("the earlier append claim was kept; the worker could not replace the paragraph: %+v", got)
+			}
+			if got.RequestedLanguage != tc.language || got.Language != "" || got.LanguageDetected != "" {
+				t.Errorf("languages = requested %q sent %q detected %q, want %q and nothing else", got.RequestedLanguage, got.Language, got.LanguageDetected, tc.language)
+			}
+			if got.NoteID != "n1" {
+				t.Errorf("note_id = %q, want the destination kept", got.NoteID)
+			}
+			if got.LastProgressAt != model.FormatTime(now) {
+				t.Errorf("last_progress_at = %q, want the hand-off stamped", got.LastProgressAt)
+			}
+			if len(worker.calls) != 1 || !strings.Contains(worker.calls[0], "retranscribe") {
+				t.Errorf("worker calls = %v, want one retranscribe", worker.calls)
+			}
+			for _, key := range []string{tc.capture.RawKey, tc.capture.CleanKey} {
+				if key == "" {
+					continue
+				}
+				if present, _ := objects.Exists(ctx, key); present {
+					t.Errorf("the earlier transcript %s was left behind", key)
+				}
+			}
+			if present, _ := objects.Exists(ctx, audioKey); !present {
+				t.Error("the audio was deleted; there is nothing left to transcribe")
 			}
 		})
 	}

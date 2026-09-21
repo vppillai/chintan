@@ -477,8 +477,12 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 // language other than the one its destination note asks for. A note that
 // inherits the default, or asks for auto-detection, never asks for a second
 // transcription: the first was in the default, and auto is what the review
-// found unreliable for the languages this matters for.
+// found unreliable for the languages this matters for. A recording a person
+// asked to have transcribed in a particular language keeps that answer.
 func wantsNoteLanguage(c model.CaptureIndex, note model.NoteIndex) bool {
+	if c.RequestedLanguage != "" {
+		return false
+	}
 	return note.Language != "" && note.Language != model.LanguageAuto && c.Language != note.Language
 }
 
@@ -675,6 +679,10 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 // guess: guessing English for a Tamil note and appending the result is the
 // failure this setting exists to prevent.
 func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, capture *model.CaptureIndex) (string, error) {
+	if capture.RequestedLanguage != "" {
+		// A person chose, for this recording; nothing outranks that.
+		return capture.RequestedLanguage, nil
+	}
 	language := ""
 	if capture.NoteID != "" {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
@@ -1406,6 +1414,26 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 	}
 }
 
+// replaceCaptureParagraph puts text where captureID's paragraph stands in
+// body: cut along the marker boundary the delete and move paths use, then
+// inserted back in chronological position — the position it had, unless a
+// user edit had carried its marker to the end, in which case the words it
+// replaced were edited into the user's text and the new ones land as a new
+// paragraph. A checklist item that was ticked stays ticked: the words were
+// transcribed again, not the decision.
+func replaceCaptureParagraph(body, captureID, text string) string {
+	rest, old, _ := service.CutCaptureParagraph(body, captureID)
+	if strings.HasPrefix(old, "- [x] ") && strings.HasPrefix(text, "- [ ] ") {
+		text = "- [x] " + strings.TrimPrefix(text, "- [ ] ")
+	}
+	// ponytail: capture ids lead with their creation instant
+	// (service.BeginCapture), so id order is chronological order and no
+	// store read is needed; a note whose other recordings predate that id
+	// format gets the paragraph at the end, which capture_move.go's
+	// olderCapturesIn would place exactly.
+	return service.InsertCaptureParagraph(rest, captureID, text, func(id string) bool { return id > captureID })
+}
+
 // maxChecklistItemRunes bounds one appended item. A checklist item is a line,
 // and a line the width of a paragraph is still one item — splitting it into
 // several tasks is the cleaned view's job (NoteCleanTasks), not the append's,
@@ -1457,18 +1485,29 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 			return fmt.Errorf("pipeline: get existing note: %w", err)
 		}
 
-		if resuming && service.HasCaptureMarker(string(existingContent), captureID) {
+		var newContent string
+		switch {
+		case resuming && service.HasCaptureMarker(string(existingContent), captureID):
 			// The interrupted attempt got as far as the body. Nothing to write;
 			// the caller goes on to finish the bookkeeping it never reached.
 			obs.Log(ctx).Info("append already in the note body; finishing the interrupted attempt instead of repeating it",
 				slog.String("note_key", noteKey))
 			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
 			return nil
-		}
-
-		newContent := service.CaptureMarker(captureID) + "\n" + text
-		if len(existingContent) > 0 {
-			newContent = string(existingContent) + "\n\n" + newContent
+		case service.HasCaptureMarker(string(existingContent), captureID):
+			// A first attempt that finds its own marker is a recording whose
+			// text is already in the note and that has been transcribed again
+			// (service.RetranscribeCapture, or run's re-transcription after a
+			// retry from before the language was recorded). The paragraph it
+			// dictated before is replaced where it stands; appending would
+			// leave the wrong-script text beside the right one.
+			obs.Count(ctx, "AppendReplacedParagraph", map[string]string{"Stage": string(service.StatusAppending)})
+			newContent = replaceCaptureParagraph(string(existingContent), captureID, text)
+		default:
+			newContent = service.CaptureMarker(captureID) + "\n" + text
+			if len(existingContent) > 0 {
+				newContent = string(existingContent) + "\n\n" + newContent
+			}
 		}
 
 		err = p.cfg.Objects.PutIfMatch(ctx, noteKey, []byte(newContent), "text/markdown", etag)

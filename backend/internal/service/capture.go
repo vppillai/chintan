@@ -82,6 +82,11 @@ var (
 	ErrCaptureTooLarge = errors.New("capture exceeds the maximum upload size")
 	// ErrDownloadKindUnknown rejects a download kind outside the fixed set.
 	ErrDownloadKindUnknown = errors.New("unknown download kind")
+	// ErrCaptureAudioExpired refuses to transcribe a recording again once the
+	// retention rule has deleted its audio: the transcript is all that is
+	// left of it, and the provider would only answer with a fault the user
+	// cannot act on.
+	ErrCaptureAudioExpired = errors.New("the recording's audio has expired")
 )
 
 // NoteCreator creates the destination note for a capture that has none.
@@ -336,6 +341,68 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 		return nil, err
 	}
 	return &capture, nil
+}
+
+// RetranscribeCapture runs a finished recording's transcription again — in
+// language when given, else in its note's effective language — and hands it
+// to the worker, which replaces the paragraph the recording dictated where it
+// stands (pipeline.replaceCaptureParagraph). It exists because a recording
+// that came back in Tamil script, or with its Malayalam sentence dropped, had
+// no way back: the pipeline gates transcription on RawKey being empty and
+// RetryCapture refuses a finished capture, so changing the note's language did
+// nothing for it (review 2026-09-21, T7).
+//
+// A capture still in flight is refused on RetryCapture's rule; a capture
+// whose audio the retention rule has already deleted is refused too, since
+// the provider could only fail. The old transcript objects are deleted here
+// rather than left for the worker to overwrite, so a re-run that fails at the
+// provider leaves no object the row no longer names. Nothing in the note is
+// touched: the wrong text stays visible until the right one lands.
+func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captureID, language string) (*model.CaptureIndex, error) {
+	language = strings.ToLower(strings.TrimSpace(language))
+	if language != "" && !model.ValidLanguage(language) {
+		return nil, ErrInvalidLanguage
+	}
+	capture, err := s.store.GetCapture(ctx, userID, captureID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get capture: %w", err)
+	}
+	now := s.now()
+	if !model.IsTerminalStatus(capture.Status) && !CaptureStuck(capture, now) {
+		return &capture, ErrCaptureInFlight
+	}
+	present, err := s.objects.Exists(ctx, capture.AudioKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check the recording's audio: %w", err)
+	}
+	if !present {
+		return &capture, ErrCaptureAudioExpired
+	}
+
+	for _, key := range []string{capture.RawKey, capture.SegmentsKey, capture.RoutedKey, capture.CleanKey} {
+		if err := deleteObjectIfPresent(ctx, s.objects, key); err != nil {
+			return nil, fmt.Errorf("failed to delete an earlier transcript: %w", err)
+		}
+	}
+	capture.RequestedLanguage = language
+	capture.RawKey, capture.SegmentsKey, capture.RoutedKey, capture.CleanKey = "", "", "", ""
+	capture.Language, capture.LanguageDetected = "", ""
+	// The claim is what stops a second append; this one is meant to write
+	// the body again, so the earlier claim and completion are released and
+	// the worker takes a fresh claim, finds the marker, and replaces.
+	capture.AppendToken, capture.AppendClaimedAt, capture.AppendedAt = "", 0, 0
+	capture.Status = StatusTranscribing
+	capture.Error = ""
+	capture.LastProgressAt = model.FormatTime(now)
+	updated, err := s.store.PutCapture(ctx, capture)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reset capture: %w", err)
+	}
+
+	if err := s.invokeWorker(ctx, userID, captureID, "retranscribe"); err != nil {
+		return nil, err
+	}
+	return &updated, nil
 }
 
 // resumeStatusFor picks the stage a failed capture restarts from, so a retry

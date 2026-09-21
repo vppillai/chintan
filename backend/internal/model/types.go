@@ -483,6 +483,12 @@ type CaptureIndex struct {
 	// every delivery. Empty on captures transcribed before 2026-09-21, which
 	// therefore get one re-transcription when their note names a language.
 	Language string `json:"language,omitempty"`
+	// RequestedLanguage is the language a person asked this recording to be
+	// transcribed in (POST /v1/captures/{id}/retranscribe): LanguageAuto or a
+	// code, or "" when nobody did. It outranks the note's language and the
+	// default, and it stays on the row so the post-routing re-transcription
+	// never undoes an explicit choice.
+	RequestedLanguage string `json:"requested_language,omitempty"`
 	// LanguageDetected is the language the provider reported the speech to
 	// be, as it names it ("tamil"), alongside the transcript it produced.
 	// Kept for the cleanup prompt and for the operator; segments.json carries

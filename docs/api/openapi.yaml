@@ -810,6 +810,58 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
+  /v1/captures/{captureId}/retranscribe:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+    post:
+      tags: [captures]
+      summary: Transcribe a finished recording again, in another language
+      description: |
+        For a recording that came back in the wrong script or with sentences
+        missing. The audio is kept, so it can be transcribed once more: the
+        capture goes back to `transcribing` and the worker runs the pipeline
+        again — transcribe in `language` (omitted: the note's effective
+        language, its own `language` else the tenant's `default_language`),
+        strip spoken instructions with the destination pinned, clean — and
+        then **replaces** the paragraph the recording dictated where it
+        stands in the note, by its marker. A checklist item is replaced as
+        one line, and a ticked one stays ticked. The earlier text stays
+        visible until the new one lands. The destination note is kept; a
+        `needs_target` capture is routed again from the new transcript. The
+        language asked for is remembered on the capture, so a later change
+        of the note's language does not transcribe this recording again on
+        its own.
+
+        Priced as one more transcription and cleanup under the daily spend
+        cap. Poll the capture as the filing row does; it reaches `appended`
+        when the paragraph has been replaced.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaptureRetranscribe' }
+      responses:
+        '202':
+          description: Accepted; the capture is `transcribing` again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capture' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            The capture is still in flight and a worker may still be working
+            on it (the same rule as `/retry`), or the recording's audio has
+            already been deleted by the retention rule, so there is nothing
+            to transcribe. `detail` says which.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
   /v1/captures/{captureId}/download:
     parameters:
       - $ref: '#/components/parameters/CaptureId'
@@ -1553,6 +1605,16 @@ components:
         note_id:
           type: string
           description: The active note to move the recording into.
+
+    CaptureRetranscribe:
+      type: object
+      properties:
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})$'
+          description: |
+            `auto` or an ISO-639-1 code. Omitted, the note's effective
+            language is used. Remembered on the capture.
 
     MatchResponse:
       type: object

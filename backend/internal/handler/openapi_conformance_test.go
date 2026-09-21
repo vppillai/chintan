@@ -756,6 +756,34 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/captures/c_1/retry", "user1", nil).Code
 		},
 
+		"POST /v1/captures/{captureId}/retranscribe -> 202": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Wrong script", nil)
+			h.seedAppended(t, "user1", note, "c_again", model.Now(), "Tamil script where Malayalam was said.")
+			return h.do(t, http.MethodPost, "/v1/captures/c_again/retranscribe", "user1", map[string]any{"language": "ml"}).Code
+		},
+		"POST /v1/captures/{captureId}/retranscribe -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Wrong script", nil)
+			h.seedAppended(t, "user1", note, "c_again", model.Now(), "words")
+			return h.do(t, http.MethodPost, "/v1/captures/c_again/retranscribe", "user1", map[string]any{"language": "klingon"}).Code
+		},
+		"POST /v1/captures/{captureId}/retranscribe -> 401": send(http.MethodPost, "/v1/captures/c_1/retranscribe", "", nil),
+		"POST /v1/captures/{captureId}/retranscribe -> 404": send(http.MethodPost, "/v1/captures/missing/retranscribe", "user1", nil),
+		"POST /v1/captures/{captureId}/retranscribe -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			c := h.putCapture(t, model.CaptureIndex{
+				ID: "c_busy", UserID: "user1", Status: model.StatusTranscribing,
+				CreatedAt: model.Now(), LastProgressAt: model.Now(),
+			})
+			return h.do(t, http.MethodPost, "/v1/captures/"+c.ID+"/retranscribe", "user1", nil).Code
+		},
+		"POST /v1/captures/{captureId}/retranscribe -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/captures/c_1/retranscribe", "user1", nil).Code
+		},
+
 		"GET /v1/captures/{captureId}/download -> 200": func(t *testing.T) int {
 			h := newHarness(t)
 			c := h.putCapture(t, model.CaptureIndex{

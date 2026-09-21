@@ -552,6 +552,23 @@ export const recordingUrls: RecordingUrlsWire = {
   ]
 };
 
+/** POST /v1/captures/{captureId}/retranscribe → 202. The capture is back in transcribing with its note kept; poll it as the filing row does, and its paragraph in the note is replaced when it reaches appended. */
+export const captureRetranscribing: CaptureWire = {
+  "appended_at": null,
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "duration_ms": null,
+  "error": null,
+  "has_peaks": false,
+  "has_segments": false,
+  "id": "fixture-id",
+  "note_id": "fixture-note-id",
+  "status": "transcribing",
+  "suggested_note_id": null,
+  "suggested_title": null,
+  "targeted": false,
+  "version": 2
+};
+
 /** POST /v1/captures/{captureId}/move → 503 after a rollback. `type` is the retryable URI: nothing changed, send the same request again. */
 export const problemRetryable: ProblemWire = {
   "correlation_id": "00000000-0000-4000-8000-000000000000",
