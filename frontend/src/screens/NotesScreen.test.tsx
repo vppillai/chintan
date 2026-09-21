@@ -595,6 +595,20 @@ describe('doing something to several notes at once', () => {
     });
   });
 
+  it('names the one selected note in the delete dialog, as the row’s own dialog does (QA 2026-09-21, finding 14)', async () => {
+    const user = userEvent.setup();
+    setCanHover(true);
+    mount(library());
+
+    await startSelecting(user, 'Roof repair');
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Delete 1 note forever?');
+    expect(dialog).toHaveTextContent('“Roof repair” and its recordings and transcripts are destroyed.');
+    expect(within(dialog).getByRole('button', { name: 'Delete it forever' })).toBeDisabled();
+  });
+
   it('deletes every selected note forever: archives, then purges, behind a typed confirmation', async () => {
     const user = userEvent.setup();
     setCanHover(true);

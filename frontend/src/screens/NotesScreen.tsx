@@ -314,8 +314,11 @@ export function NotesScreen() {
 
   const selectableIds = visible.map((note) => note.id);
   const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
-  // One note selected reads as one note (round-3 T63): "Delete it forever", not "them".
+  // One note selected reads as one note (round-3 T63): "Delete it forever", not
+  // "them" — and, as the row's own dialog does, the sentence names it (QA
+  // 2026-09-21, finding 14).
   const one = selectedIds.size === 1;
+  const onlySelected = one ? visible.find((note) => selectedIds.has(note.id)) : undefined;
   // Known once something — the server or the device — has answered.
   const count = serverNotes !== undefined || fromCache ? notes.length : undefined;
 
@@ -835,7 +838,9 @@ export function NotesScreen() {
         open={confirming === 'delete' || confirming === 'purge'}
         title={`Delete ${countLabel(selectedIds.size)} forever?`}
         body={`${
-          one ? 'Its recordings and transcripts are' : 'Their recordings and transcripts are'
+          one
+            ? `${onlySelected ? `“${onlySelected.title}” and its` : 'Its'} recordings and transcripts are`
+            : 'Their recordings and transcripts are'
         } destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel={one ? 'Delete it forever' : 'Delete them forever'}
         requireText="delete"
