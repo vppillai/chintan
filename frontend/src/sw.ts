@@ -38,7 +38,7 @@
  * and gained nothing anyone could notice.
  */
 
-import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
+import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from 'workbox-precaching';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[];
@@ -57,13 +57,19 @@ export const SHELL_URL = new URL('index.html', self.registration.scope).href;
 
 /**
  * Workbox stores the shell as `index.html?__WB_REVISION__=<hash>`, so a plain
- * `caches.match(SHELL_URL)` misses it. Matching without the query string is
- * what makes an offline cold start at an unvisited URL — a car park, a lift, or
- * the manifest's own "Record a thought" shortcut straight to `/capture` —
- * render the app instead of a blank page reading "Offline".
+ * `caches.match(SHELL_URL)` misses it, and it keeps one precache across worker
+ * versions: while an update is installed and waiting, the old build's shell
+ * and the new one sit side by side under two revisions. `matchPrecache`
+ * resolves this worker's own key from its manifest, so the build that is
+ * active is the one served. Matching with `ignoreSearch` instead left that to
+ * insertion order, which happened to favour the old shell — fine for the
+ * offline fallback it was written as, not for the path every navigation takes.
+ * Either way this is what makes an offline cold start at an unvisited URL — a
+ * car park, a lift, or the manifest's own "Record a thought" shortcut straight
+ * to `/capture` — render the app instead of a blank page reading "Offline".
  */
 async function matchShell(): Promise<Response | undefined> {
-  return caches.match(SHELL_URL, { ignoreSearch: true });
+  return matchPrecache(SHELL_URL);
 }
 
 /** How long to wait for the network before falling back to cache. */
