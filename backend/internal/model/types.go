@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 )
 
@@ -149,6 +150,46 @@ const (
 	// DefaultLanguage is what a tenant transcribes in until they say otherwise.
 	DefaultLanguage = "en"
 )
+
+// languageNames maps the ISO-639-1 codes the settings screen offers to the
+// name Whisper reports a detected language under (its `language` field is a
+// lowercase English name, "english" or "malayalam", never a code). The list is
+// the frontend's curated one (features/settings/languages.ts), so the two
+// sides name the same languages; Whisper's own spelling is used where it
+// differs ("chinese" for zh). A code outside the list is still valid
+// (ValidLanguage checks the shape), it just has no name here.
+var languageNames = map[string]string{
+	"en": "english", "ml": "malayalam", "hi": "hindi", "ta": "tamil", "te": "telugu",
+	"kn": "kannada", "mr": "marathi", "bn": "bengali", "gu": "gujarati", "pa": "punjabi",
+	"ur": "urdu", "ar": "arabic", "es": "spanish", "fr": "french", "de": "german",
+	"pt": "portuguese", "it": "italian", "nl": "dutch", "ru": "russian", "ja": "japanese",
+	"ko": "korean", "zh": "chinese", "id": "indonesian", "tr": "turkish", "vi": "vietnamese",
+	"th": "thai", "sv": "swedish", "pl": "polish",
+}
+
+var languageCodes = func() map[string]string {
+	out := make(map[string]string, len(languageNames))
+	for code, name := range languageNames {
+		out[name] = code
+	}
+	return out
+}()
+
+// LanguageName is the English name for an ISO-639-1 code, capitalised, or ""
+// for a code the table does not know.
+func LanguageName(code string) string {
+	name, ok := languageNames[code]
+	if !ok {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// LanguageCode is the ISO-639-1 code for the language name Whisper reported,
+// or "" when the name is not one the table knows.
+func LanguageCode(whisperName string) string {
+	return languageCodes[strings.ToLower(strings.TrimSpace(whisperName))]
+}
 
 // ValidLanguage reports whether v is LanguageAuto or a lowercase two-letter
 // ISO-639-1 code. It checks the shape, not the list: Whisper's supported set

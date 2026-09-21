@@ -591,11 +591,22 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	// log-hygiene check, which reads an emitter's argument list for anything
 	// that names user content, sees only the summary being logged.
 	rawShape := obs.Redact(result.Text)
+	// Both languages are metadata, not content: the code this worker sent and
+	// the name Whisper answered with. Sixteen days of prod logs could not say
+	// whether Malayalam was being transcribed as Tamil until these two fields
+	// existed (review 2026-09-21, T10).
+	languageSent := language
+	if languageSent == "" {
+		languageSent = model.LanguageAuto
+	}
 	obs.Log(ctx).Info("transcribed capture",
 		slog.String("capture_id", capture.ID),
 		slog.Int64("duration_ms", result.DurationMS()),
 		slog.Int("segments", len(result.Segments)),
+		slog.String("language_sent", languageSent),
+		slog.String("language_detected", result.Language),
 		slog.Any("raw", rawShape))
+	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(language, result.Language)})
 
 	capture.RawKey = rawKey
 	if segmentsKey != "" {
@@ -648,6 +659,25 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 		return "", nil
 	}
 	return language, nil
+}
+
+// languageOutcome is the Outcome dimension of TranscribedLanguage: whether the
+// language Whisper detected agrees with the code it was told. Five fixed
+// values, because a dimension is a metric identity and is billed as one; the
+// language itself is in the log line, not in a dimension.
+func languageOutcome(sent, detected string) string {
+	switch code := model.LanguageCode(detected); {
+	case detected == "":
+		return "undetected"
+	case sent == "":
+		return "auto"
+	case code == "":
+		return "unknown"
+	case code == sent:
+		return "match"
+	default:
+		return "mismatch"
+	}
 }
 
 // defaultAudioSecondsEstimate is what a transcription is reserved against when
