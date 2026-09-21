@@ -39,17 +39,26 @@ const url = (router: Router) => `${path(router)}${router.state.location.search}`
 const shell = () => document.querySelector('.app');
 
 describe('the shell renders one landmark set', () => {
-  it('has a skip link, a banner, one main and one navigation', () => {
+  it('has a skip link, a banner, one main and one navigation', async () => {
     mount();
     expect(screen.getByRole('link', { name: /skip to content/i })).toHaveAttribute(
       'href',
       '#main',
     );
-    // The shell's own banner. A screen's `<header>` inside <main> is not one
-    // in the browser's accessibility tree, whatever jsdom thinks.
-    expect(screen.getByText('Chintan').closest('header')).toHaveClass('app__banner');
+    // The shell's own banner is there but empty on the library (round-3 T17):
+    // the wordmark sits in the library's own heading row instead. A screen's
+    // `<header>` inside <main> is not a banner in the browser's accessibility
+    // tree, whatever jsdom thinks.
+    expect(document.querySelector('.app__banner')).toBeEmptyDOMElement();
+    expect(screen.getByText('Chintan').closest('header')).toHaveClass('library-header');
     expect(screen.getAllByRole('main')).toHaveLength(1);
     expect(screen.getAllByRole('navigation')).toHaveLength(1);
+
+    // Everywhere else the banner carries the wordmark.
+    await userEvent.setup().click(screen.getByRole('link', { name: 'You' }));
+    await waitFor(() => {
+      expect(screen.getByText('Chintan').closest('header')).toHaveClass('app__banner');
+    });
   });
 
   it('exposes a polite live region for route announcements', () => {
@@ -102,7 +111,10 @@ describe('notes first', () => {
     const user = userEvent.setup();
     const { router } = mount();
     await user.click(screen.getByRole('link', { name: 'You' }));
-    expect(path(router)).toBe('/settings');
+    // The screen is a lazy chunk (round-3 T47), so the navigation settles a tick later.
+    await waitFor(() => {
+      expect(path(router)).toBe('/settings');
+    });
     expect(screen.getByRole('link', { name: 'You' })).toHaveAttribute('aria-current', 'page');
   });
 });
@@ -114,8 +126,11 @@ describe('the capture screen is full screen', () => {
 
     await user.click(screen.getByRole('button', { name: /record/i }));
 
-    expect(path(router)).toBe('/capture');
-    expect(shell()).toHaveAttribute('data-screen', 'capture');
+    // The capture screen is a lazy chunk (round-3 T47): the shell follows the URL a tick later.
+    await waitFor(() => {
+      expect(path(router)).toBe('/capture');
+      expect(shell()).toHaveAttribute('data-screen', 'capture');
+    });
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
   });
 });

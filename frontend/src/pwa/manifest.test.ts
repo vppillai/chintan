@@ -28,7 +28,9 @@ function urls(manifest: ReturnType<typeof chintanManifest>): string[] {
   return [
     manifest.start_url,
     manifest.scope,
+    manifest.id,
     ...manifest.icons.map((icon) => icon.src),
+    ...manifest.screenshots.map((shot) => shot.src),
     ...manifest.shortcuts.map((shortcut) => shortcut.url),
     ...manifest.shortcuts.flatMap((shortcut) => shortcut.icons.map((icon) => icon.src)),
   ];
@@ -81,6 +83,19 @@ describe('the manifest at a sub-path deploy', () => {
     // The colours are the design system's: the same ground for splash and
     // chrome, and not something an instance configures.
     expect(manifest.background_color).toBe(manifest.theme_color);
+  });
+
+  it('carries an id, a category and one screenshot per install sheet (round-3 T57)', () => {
+    const manifest = chintanManifest(BASE, IDENTITY);
+    // The id is the instance's own path, so two instances are two apps.
+    expect(manifest.id).toBe('/chintan/dev/');
+    expect(manifest.categories).toEqual(['productivity']);
+    expect(manifest.screenshots.map((shot) => shot.form_factor)).toEqual(['narrow', 'wide']);
+    for (const shot of manifest.screenshots) {
+      expect(shot.src).toMatch(/^\/chintan\/dev\/screenshots\/home-(narrow|wide)\.jpg$/);
+      expect(shot.sizes).toMatch(/^\d+x\d+$/);
+      expect(shot.label.length).toBeGreaterThan(0);
+    }
   });
 
   it('names icons the build actually ships', () => {

@@ -27,6 +27,8 @@ export interface DownloadButtonProps {
   /** Produced alongside the blob, so a markdown download can name itself after the current title. */
   filename: () => string;
   label: string;
+  /** What the button reads while `blob` runs; the default suits a fetch, not a job the server first has to build. */
+  busyLabel?: string;
   className?: string;
 }
 
@@ -53,7 +55,13 @@ export function saveBlob(file: Blob, filename: string): void {
   }
 }
 
-export function DownloadButton({ blob, filename, label, className }: DownloadButtonProps) {
+export function DownloadButton({
+  blob,
+  filename,
+  label,
+  busyLabel = 'Downloading…',
+  className,
+}: DownloadButtonProps) {
   const [state, setState] = useState<DownloadState>('idle');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -92,7 +100,7 @@ export function DownloadButton({ blob, filename, label, className }: DownloadBut
         onClick={onClick}
         disabled={state === 'downloading'}
       >
-        {state === 'downloading' ? 'Downloading…' : label}
+        {state === 'downloading' ? busyLabel : label}
       </button>
 
       {(state === 'done' || state === 'failed') && (

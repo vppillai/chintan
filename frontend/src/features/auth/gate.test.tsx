@@ -91,12 +91,14 @@ describe('a signed-out visitor gets a sign-in, not a shell of 401s', () => {
     expect(await screen.findByText(/still here and will be offered back/i)).toBeInTheDocument();
   });
 
-  it('says where signing in happens, and offers no second way in', async () => {
+  it('says where signing in happens, without a vendor’s name, and offers no second way in', async () => {
     // The only way in is the hosted UI, which is also where any stronger
     // credential is set up and used. The app itself offers no second button,
-    // so the sentence is what tells someone what to expect on the other side.
+    // so the sentence is what tells someone what to expect on the other side
+    // — and it names no identity provider (round-3 T56).
     mountSignedOut();
-    expect(await screen.findByText(/on the Cognito page/i)).toBeInTheDocument();
+    expect(await screen.findByText(/sign-in page opens in your browser/i)).toBeInTheDocument();
+    expect(screen.queryByText(/cognito/i)).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(1);
   });
 });

@@ -158,7 +158,7 @@ function Usage({ usage }: { usage: UsageWire }) {
                 ))}
                 {unattributed > 0 && (
                   <div className="usage__provider usage__provider--unattributed">
-                    <dt className="usage__provider-label">Before the split began</dt>
+                    <dt className="usage__provider-label">Earlier this month</dt>
                     <dd className="usage__provider-figures">
                       <span className="numeric">{formatDollars(unattributed)}</span>
                     </dd>
@@ -314,9 +314,11 @@ const DOT = 1.2;
  * anyone who cannot see it — the numbers themselves are already in the text
  * above, so the description says what the picture adds: which day was the
  * biggest, and how many requests the month took. For the sighted reader the
- * strip carries the same in print (QA 12): the tallest bar's value and day
- * above it, the first and last day of the month beneath it, and a caption
- * saying what the bars, the accent and the dots are.
+ * strip carries the first and last day of the month beneath it and a caption
+ * saying what the bars, the accent and the dots are (QA 12); the tallest
+ * bar's value used to be printed above it too, and went with the other
+ * operator-speak on this card (round-3 T20) — every bar still names its
+ * figure on hover.
  */
 function Sparkline({ usage }: { usage: UsageWire }) {
   const bars = dayBars(usage);
@@ -330,12 +332,6 @@ function Sparkline({ usage }: { usage: UsageWire }) {
 
   return (
     <figure className="usage__chart">
-      <p className="usage__chart-scale">
-        <span>
-          Tallest bar <span className="numeric">{formatDollars(peak.costMicros)}</span> on{' '}
-          {dayLabel(peak.date)}
-        </span>
-      </p>
       <svg
         className="usage__spark"
         viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`}

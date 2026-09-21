@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSession } from '@/api/ApiProvider.tsx';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { Icon } from '@/components/Icon.tsx';
+import { config } from '@/config/env.ts';
 
 import { identityFromIdToken, initialFor, signedInLabel } from './identity.ts';
 import { hasUnsentWork, performSignOut, readUnsentWork } from './signOut.ts';
@@ -84,7 +85,7 @@ export function AccountHeader() {
 
       <ConfirmDialog
         open={open}
-        title={risky ? 'Sign out and lose unsent work?' : 'Sign out?'}
+        title={risky ? 'Sign out and lose unsent work?' : `Sign out of ${config.appName} on this device?`}
         body={confirmBody(work)}
         confirmLabel={risky ? 'Sign out and discard' : 'Sign out'}
         destructive
@@ -111,7 +112,9 @@ export function AccountHeader() {
 /**
  * Names exactly what is about to be destroyed, in the order it matters, and
  * then what signing out does: here and at the identity provider, so the next
- * person to open the app is asked to sign in.
+ * person to open the app is asked to sign in. When nothing is at risk it is
+ * one sentence (round-3 T64): the common case was three, and the title
+ * already says where the sign-out reaches.
  */
 export function confirmBody(work: { captures: number; queued: number }): string {
   const losses: string[] = [];
@@ -132,9 +135,7 @@ export function confirmBody(work: { captures: number; queued: number }): string 
   const ends =
     'Signs you out here and ends the session with the identity provider, so the next person is asked to sign in.';
 
-  if (losses.length === 0) {
-    return `Your notes stay on the server. Nothing is waiting to sync from this device. ${ends}`;
-  }
+  if (losses.length === 0) return 'Your notes stay on the server.';
 
   return `This device is still holding ${losses.join(' and ')}. Signing out deletes ${
     losses.length > 1 ? 'them' : 'it'

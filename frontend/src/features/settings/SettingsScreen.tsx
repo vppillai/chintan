@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 
-import { useSaveSettings, useSettings } from '@/api/queries.ts';
+import { useSaveSettings, useSettings, useUsage } from '@/api/queries.ts';
 import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
@@ -12,16 +12,25 @@ import { REPOSITORY_URL } from '@/screens/AboutScreen.tsx';
 import { THEME_LABELS, THEME_PREFERENCES, type ThemePreference } from '@/theme/theme.ts';
 import { useTheme } from '@/theme/useTheme.ts';
 
+import { ExportCard } from './ExportCard.tsx';
 import { RowLink, Segmented, SettingsCard, SettingsRow } from './SettingsCard.tsx';
-import { UsageSection } from './UsageSection.tsx';
 import { VersionFootnote } from './VersionFootnote.tsx';
 import { AUTO_LANGUAGE, languageName } from './languages.ts';
+import { formatDollars } from './usage.ts';
 
 /** The two cleanup modes as segments, and what each one means, said under the row. */
 const CLEANUP_MODES: readonly { value: CleanupMode; label: string; hint: string }[] = [
   { value: 'faithful', label: 'Faithful', hint: 'Fix only what was clearly misheard' },
   { value: 'polished', label: 'Polished', hint: 'Tidy the wording as well' },
 ];
+
+/**
+ * The retention tiers the server stores. `settings_validate.go` rounds any
+ * other number down to one of these, so the free number field this used to
+ * be showed "45 days" while the audio went on day 30 (round-3 T5): the
+ * choice is now one of the five, and what is shown is what is stored.
+ */
+export const RETENTION_TIERS = [0, 7, 30, 90, 365] as const;
 
 /**
  * The theme segments. "Follow system" is the preference's full name (it is
@@ -42,56 +51,48 @@ const DEFAULTS: SettingsWire = {
   daily_spend_cap_micros: 0,
 };
 
-/**
- * How long the retention field waits after a keystroke before it is saved.
- * The other controls are one tap and save at once; a number being typed
- * would otherwise PUT "3" on the way to "30".
- */
-export const RETENTION_SAVE_DELAY_MS = 600;
-
 /** How long the "Saved" tick stays. */
 const SAVED_TICK_MS = 2_500;
 
 /**
  * You.
  *
- * The account first, then five cards: how a recording becomes text, how the
- * app looks, what this month has cost, passkeys, and where the app comes
- * from. Each card is a title, one line on what it is for, its controls as
- * rows, and a footnote for the sentences that qualify them — so the screen
- * is a list of shapes to scan rather than a column of prose with a control
- * every few hundred pixels, which is what it had grown into.
+ * The account first, then the cards: how a recording becomes text, how the
+ * app looks, passkeys, your data, and where the app comes from. Each card is
+ * a title, one line on what it is for, its controls as rows, and one sentence
+ * of footnote with the rest behind More — so the screen is a list of shapes
+ * to scan rather than a column of prose with a control every few hundred
+ * pixels, which is what it had grown into, twice (round-3 T20: the Usage
+ * card alone was a third of a three-screen page, and now sits behind one row
+ * that opens `/usage`).
  *
  * Every control saves itself the moment it is changed — a tap on Polished is
- * a PUT, a theme is applied and then saved, a retention number goes once the
- * typing pauses. There is no Save button and nothing is ever "unsaved": the
- * screen used to hold a draft behind a Save/Discard pair, and tapping another
- * tab with the draft dirty lost it silently (QA D9), while the theme —
- * applied on the device at once — read "Unsaved changes" and then, after a
- * reload, "All changes saved" for a value the server had never been sent
- * (QA D13). The status line, beside the title, now only ever says what is
- * happening: Loading…, Saving…, a brief Saved, or the failure with a way to
- * try again.
+ * a PUT, a theme is applied and then saved. There is no Save button and
+ * nothing is ever "unsaved": the screen used to hold a draft behind a
+ * Save/Discard pair, and tapping another tab with the draft dirty lost it
+ * silently (QA D9), while the theme — applied on the device at once — read
+ * "Unsaved changes" and then, after a reload, "All changes saved" for a value
+ * the server had never been sent (QA D13). The status line, beside the title,
+ * now only ever says what is happening: Loading…, Saving…, a brief Saved, or
+ * the failure with a way to try again.
  */
 export function SettingsScreen() {
   const { preference, resolved, setPreference } = useTheme();
   const { data: stored, isLoading, isError: loadFailed, refetch } = useSettings();
   const save = useSaveSettings();
+  const usage = useUsage();
 
   /*
-   * What the controls show: the stored record, plus whatever the user has
-   * changed since — a change is on screen before its PUT returns, and stays
-   * there if the PUT fails, with the failure said beside it.
+   * What the controls show: the stored record, or — while a PUT is in flight
+   * or has failed — the record that was sent, so a change is on screen before
+   * its PUT returns and stays there if the PUT fails, with the failure said
+   * beside it. Once the PUT succeeds the cache holds what the server *stored*
+   * (`useSaveSettings`), and that is what renders: the screen used to copy
+   * the stored record into a draft exactly once, so a value the server had
+   * coerced stayed on screen as typed (round-3 T5).
    */
-  const [draft, setDraft] = useState<SettingsWire>(DEFAULTS);
-  const loadedRef = useRef(false);
-  const latest = useRef(draft);
-  useEffect(() => {
-    if (!stored || loadedRef.current) return;
-    loadedRef.current = true;
-    latest.current = stored;
-    setDraft(stored);
-  }, [stored]);
+  const draft: SettingsWire =
+    (save.isPending || save.isError) && save.variables ? save.variables : (stored ?? DEFAULTS);
 
   const [savedTick, setSavedTick] = useState(false);
   const tickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -112,56 +113,15 @@ export function SettingsScreen() {
     [mutate, showSaved],
   );
 
-  /** A retention value typed but not yet sent, and the timer that will send it. */
-  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef<SettingsWire | null>(null);
-
-  const flush = useCallback(() => {
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = null;
-    const waiting = pending.current;
-    pending.current = null;
-    if (waiting) commit(waiting);
-  }, [commit]);
-
   /**
-   * Applies a change to the screen and saves it — at once, or after the
-   * retention field's pause. Nothing is saved before the stored record has
-   * arrived: a PUT replaces the whole record, and one built on the defaults
-   * would overwrite settings this device had not yet read.
+   * Applies a change and saves it at once. Nothing is saved before the stored
+   * record has arrived: a PUT replaces the whole record, and one built on the
+   * defaults would overwrite settings this device had not yet read.
    */
-  const change = useCallback(
-    (patch: Partial<SettingsWire>, { debounced = false }: { debounced?: boolean } = {}) => {
-      const next = { ...latest.current, ...patch };
-      latest.current = next;
-      setDraft(next);
-      if (!loadedRef.current) return;
-      if (debounce.current) clearTimeout(debounce.current);
-      if (!debounced) {
-        pending.current = null;
-        commit(next);
-        return;
-      }
-      pending.current = next;
-      debounce.current = setTimeout(flush, RETENTION_SAVE_DELAY_MS);
-    },
-    [commit, flush],
-  );
-
-  // A number half-typed when the screen goes away — another tab, the app
-  // backgrounded — is sent rather than dropped, the same way the note editor
-  // flushes its debounce.
-  useEffect(() => {
-    const onHidden = (): void => {
-      if (document.visibilityState === 'hidden') flush();
-    };
-    document.addEventListener('visibilitychange', onHidden);
-    return () => {
-      document.removeEventListener('visibilitychange', onHidden);
-      flush();
-      if (tickTimer.current) clearTimeout(tickTimer.current);
-    };
-  }, [flush]);
+  const change = (patch: Partial<SettingsWire>): void => {
+    if (!stored) return;
+    commit({ ...draft, ...patch });
+  };
 
   const themeLabelId = useId();
   const cleanupLabelId = useId();
@@ -170,6 +130,7 @@ export function SettingsScreen() {
 
   const language = draft.default_language ?? 'en';
   const cleanup = CLEANUP_MODES.find((mode) => mode.value === draft.cleanup_mode) ?? CLEANUP_MODES[0]!;
+  const retention = draft.retention_days;
 
   return (
     <div className="screen you">
@@ -191,7 +152,7 @@ export function SettingsScreen() {
                 type="button"
                 className="settings-status__action"
                 onClick={() => {
-                  commit(latest.current);
+                  commit(draft);
                 }}
               >
                 Try again
@@ -228,17 +189,26 @@ export function SettingsScreen() {
         title="Recording & transcription"
         lead="How a recording becomes text, and how long the audio is kept."
         foot={
+          <p>
+            {language === AUTO_LANGUAGE
+              ? 'Each recording is transcribed in whatever language it detects.'
+              : `Recordings are transcribed as ${languageName(language)} unless the note they are made into says otherwise.`}
+          </p>
+        }
+        more={
           <>
             <p>
               {language === AUTO_LANGUAGE
-                ? 'Each recording is transcribed in whatever language it detects. Naming a language is faster and more accurate; a recording that mixes two is detected as one of them.'
-                : `Recordings are transcribed as ${languageName(language)} unless the note they are made into says otherwise. A recording filed automatically always uses this, because it is transcribed before anyone knows which note it belongs to.`}{' '}
+                ? 'Naming a language is faster and more accurate; a recording that mixes two is detected as one of them.'
+                : 'A recording filed automatically always uses this, because it is transcribed before anyone knows which note it belongs to.'}{' '}
               Applies to every recording; a note can choose its own under Details.
             </p>
             <p>
-              {draft.retention_days === 0
-                ? 'Recordings are kept indefinitely. Only the source audio is affected — note text is never deleted by this.'
-                : `Source audio is deleted after ${String(draft.retention_days)} days. Note text and transcripts are kept.`}
+              {retention === 0
+                ? 'Recordings are kept indefinitely. Only the source audio is ever affected by this — note text is never deleted by it.'
+                : `Source audio is deleted after ${String(retention)} days. Note text and transcripts are kept.`}{' '}
+              Applies to recordings made from now on; earlier recordings keep the retention they
+              were uploaded with.
             </p>
           </>
         }
@@ -258,6 +228,16 @@ export function SettingsScreen() {
             }}
           />
         </SettingsRow>
+        {/*
+          Under the language row because the owner's live default was
+          Auto-detect, which re-scripted real Malayalam as Tamil and dropped
+          the Malayalam sentence from a mixed clip (round-3 T3). The app's
+          own copy had recommended it for exactly that case.
+        */}
+        <p className="you-card__note">
+          Mix Malayalam and English in one recording? Choose Malayalam. Auto-detect picks one
+          language per recording and drops or re-scripts the other.
+        </p>
 
         <SettingsRow label="Cleanup" hint={cleanup.hint} labelId={cleanupLabelId}>
           <Segmented
@@ -271,27 +251,22 @@ export function SettingsScreen() {
           />
         </SettingsRow>
 
-        <SettingsRow label="Keep recordings for" labelFor={`${retentionId}-input`}>
-          <span className="you-field">
-            <input
-              id={`${retentionId}-input`}
-              className="you-input numeric"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={3650}
-              value={draft.retention_days}
-              disabled={!stored}
-              onChange={(event) => {
-                change(
-                  { retention_days: clamp(Number(event.target.value), 0, 3650) },
-                  { debounced: true },
-                );
-              }}
-              onBlur={flush}
-            />
-            <span className="you-field__suffix">days</span>
-          </span>
+        <SettingsRow label="Keep recordings for" labelFor={`${retentionId}-select`}>
+          <select
+            id={`${retentionId}-select`}
+            className="settings-select"
+            value={String(retention)}
+            disabled={!stored}
+            onChange={(event) => {
+              change({ retention_days: Number(event.target.value) });
+            }}
+          >
+            {RETENTION_TIERS.map((days) => (
+              <option key={days} value={String(days)}>
+                {days === 0 ? 'Keep forever' : `${String(days)} days`}
+              </option>
+            ))}
+          </select>
         </SettingsRow>
       </SettingsCard>
 
@@ -319,24 +294,28 @@ export function SettingsScreen() {
         </SettingsRow>
       </SettingsCard>
 
-      {/* ---- Usage -------------------------------------------------------- */}
-      {/*
-        The read-only spend-cap sentence used to be here. Since v3 step 3 the
-        cap is one number for the whole instance, set in the deploy config and
-        echoed by the API, so the line said something about the deploy rather
-        than about the person. Their own usage does; the cap is mentioned once,
-        without its amount, on About (U13b).
-      */}
-      <UsageSection />
-
       {/* ---- Passkeys ------------------------------------------------------ */}
       <PasskeyCard />
 
+      {/* ---- Your data ----------------------------------------------------- */}
+      <ExportCard />
+
       {/* ---- About & support ----------------------------------------------- */}
+      {/*
+        Usage is one row here rather than its own card (round-3 T20): the
+        card was a third of the screen and buried Passkeys and About under
+        it. The row carries the month's providers figure, and the whole card
+        is a screen of its own at `/usage`.
+      */}
       <SettingsCard
         title="About & support"
-        lead="What this is, where the code lives, and which build this is."
+        lead="What this is, what it has cost, and which build this is."
       >
+        <RowLink
+          to={ROUTES.usage}
+          label="Usage this month"
+          value={usage.data ? formatDollars(usage.data.cost_micros) : undefined}
+        />
         <RowLink
           to={ROUTES.about}
           label={`About ${config.appName}`}
@@ -349,9 +328,4 @@ export function SettingsScreen() {
       </SettingsCard>
     </div>
   );
-}
-
-function clamp(value: number, low: number, high: number): number {
-  if (!Number.isFinite(value)) return low;
-  return Math.min(high, Math.max(low, Math.round(value)));
 }

@@ -4,7 +4,6 @@ import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
 import { usageRich as USAGE } from '@/api/__fixtures__/pending.ts';
-import { usage as USAGE_TODAY } from '@/api/__fixtures__/responses.ts';
 import type { SettingsWire, UsageWire } from '@/api/schema.ts';
 import { config } from '@/config/env.ts';
 import { TEST_TOKENS, TestProviders, testApiContext } from '@/test/providers.tsx';
@@ -136,24 +135,80 @@ describe('every control saves itself when it is changed', () => {
     expect(screen.queryByText(/unsaved/i)).toBeNull();
   });
 
-  it('saves the retention once the typing pauses, as one PUT', async () => {
-    const user = userEvent.setup({ delay: null });
+  it('offers the five retention tiers the server stores, and saves the chosen one at once', async () => {
+    /*
+     * Round-3 T5: the control was a free number 0–3650, but the server
+     * rounds down to 0/7/30/90/365, so "45 days" was promised while the audio
+     * went on day 30. The choice is one of the tiers now, and "forever" is a
+     * word rather than "0 days".
+     */
     const { puts } = mountSettings();
-    const input = await screen.findByRole('spinbutton', { name: /keep recordings for/i });
+    const select = (await screen.findByRole('combobox', {
+      name: /keep recordings for/i,
+    })) as HTMLSelectElement;
     await waitFor(() => {
-      expect(input).toBeEnabled();
+      expect(select).toBeEnabled();
     });
+    expect(Array.from(select.options, (option) => option.textContent)).toEqual([
+      'Keep forever',
+      '7 days',
+      '30 days',
+      '90 days',
+      '365 days',
+    ]);
+    expect(select.value).toBe('0');
 
-    await user.clear(input);
-    await user.type(input, '30');
-    expect(input).toHaveValue(30);
-    // Not yet: "3" on the way to "30" must not be stored.
-    expect(puts).toHaveLength(0);
+    await userEvent.selectOptions(select, '30');
 
     await waitFor(() => {
       expect(puts).toHaveLength(1);
     });
     expect(puts[0]?.retention_days).toBe(30);
+    expect(screen.getByText(/deleted after 30 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/applies to recordings made from now on/i)).toBeInTheDocument();
+  });
+
+  it('shows what the server stored, not what was sent, once the PUT answers', async () => {
+    /*
+     * The screen used to copy the stored record into its draft exactly once,
+     * so a value the server coerced stayed on screen as typed (round-3 T5).
+     * The stub here stores 30 whatever is sent, standing in for the tiers.
+     */
+    const puts: SettingsWire[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/usage')) return json(NO_USAGE);
+      if (url.pathname.endsWith('/v1/settings')) {
+        if ((init?.method ?? 'GET') === 'PUT') {
+          puts.push(JSON.parse(String(init?.body)) as SettingsWire);
+          return json({ ...STORED, retention_days: 30 });
+        }
+        return json(STORED);
+      }
+      return json({ items: [] });
+    });
+    render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter initialEntries={['/settings']}>
+          <SettingsScreen />
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    const select = (await screen.findByRole('combobox', {
+      name: /keep recordings for/i,
+    })) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select).toBeEnabled();
+    });
+
+    await userEvent.selectOptions(select, '90');
+
+    await waitFor(() => {
+      expect(puts[0]?.retention_days).toBe(90);
+    });
+    await waitFor(() => {
+      expect(select.value).toBe('30');
+    });
     expect(screen.getByText(/deleted after 30 days/i)).toBeInTheDocument();
   });
 
@@ -224,7 +279,7 @@ describe('the default transcription language', () => {
   it('sits above the retention field and says a note can choose its own under Details', async () => {
     mountSettings();
     const language = await screen.findByRole('combobox', { name: /transcription language/i });
-    const retention = screen.getByRole('spinbutton', { name: /keep recordings for/i });
+    const retention = screen.getByRole('combobox', { name: /keep recordings for/i });
 
     // The same card, the language row first.
     expect(language.closest('.you-card')).toBe(retention.closest('.you-card'));
@@ -234,6 +289,16 @@ describe('the default transcription language', () => {
     ).toBeInTheDocument();
     // Named in the speaker's own script as well as in English.
     expect(screen.getByRole('option', { name: 'മലയാളം · Malayalam' })).toBeInTheDocument();
+  });
+
+  it('says under the language row what to choose for a recording that mixes Malayalam and English', async () => {
+    // Round-3 T3: Auto-detect, the owner's live default, re-scripted real
+    // Malayalam as Tamil and dropped the Malayalam sentence from a mixed clip.
+    mountSettings({ settings: { ...STORED, default_language: 'auto' } });
+    const language = await screen.findByRole('combobox', { name: /transcription language/i });
+    const hint = screen.getByText(/mix malayalam and english in one recording\? choose malayalam\./i);
+    expect(hint).toHaveTextContent(/auto-detect picks one language per recording/i);
+    expect(hint.closest('.you-card')).toBe(language.closest('.you-card'));
   });
 
   it('reads a record from before the field existed as English, and saves nothing for it', async () => {
@@ -247,238 +312,6 @@ describe('the default transcription language', () => {
       expect(select.value).toBe('en');
     });
     expect(puts).toHaveLength(0);
-  });
-});
-
-/**
- * "Usage this month" replaces the read-only spend-cap sentence (backlog U13):
- * the cap is one number for the whole instance and said nothing about the
- * person; what their own recordings cost does.
- */
-describe('usage this month', () => {
-  it('shows the month’s providers figure in dollars, the split by stage, and the calls and minutes', async () => {
-    mountSettings({ usage: USAGE });
-
-    // 2721 microdollars, three decimals under a dollar.
-    expect(await screen.findByText('$0.003', { selector: '.usage__figure' })).toBeInTheDocument();
-    // The month as the card's eyebrow; the figure is the one large number.
-    expect(screen.getByText('January 2026')).toHaveClass('usage__month');
-    expect(screen.getByText('Providers')).toBeInTheDocument();
-    expect(screen.getByText('5 calls', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
-    expect(screen.getByText('0.5 min', { selector: '.usage__summary .numeric' })).toBeInTheDocument();
-
-    // The stages, in the order a recording meets them, then the two a person asks for.
-    const labels = Array.from(document.querySelectorAll('.usage__ops dt'), (term) => term.textContent);
-    expect(labels).toEqual(['Transcribe', 'Route', 'Clean up', 'Clean note', 'Ask']);
-    // Transcribe (311), route (420) and clean note (250) round to nothing; cleanup (640) and ask (1100) do not.
-    expect(screen.getAllByText('$0.000', { selector: '.usage__op-figures .numeric' })).toHaveLength(3);
-    expect(screen.getAllByText('$0.001', { selector: '.usage__op-figures .numeric' })).toHaveLength(2);
-  });
-
-  /**
-   * N11: the richer view. The split by provider under Providers, the facts
-   * row, and the user's share of AWS — each from a field the contract makes
-   * required and this screen treats as optional, so it can ship first.
-   */
-  it('splits the providers’ figure by provider, the biggest bill first', async () => {
-    mountSettings({ usage: USAGE });
-    await screen.findByText('Providers');
-
-    const labels = Array.from(document.querySelectorAll('.usage__providers dt'), (t) => t.textContent);
-    expect(labels).toEqual(['Language model (MiniMax)', 'Groq']);
-    const minimax = screen.getByText('Language model (MiniMax)').closest('.usage__provider');
-    expect(minimax).toHaveTextContent('$0.002');
-    expect(minimax).toHaveTextContent('4 calls');
-    // The rows add up to the figure, so there is nothing unattributed to show.
-    expect(screen.queryByText(/before the split began/i)).toBeNull();
-  });
-
-  it('shows what the provider rows do not account for, when the split began part-way through the month', async () => {
-    // The per-provider counters were added after the month's total had been
-    // accumulating; for that month the rows sum to less than the figure, and
-    // the difference is a line of its own rather than a puzzle. Derived from
-    // the data, so it disappears once every row carries a provider.
-    mountSettings({
-      usage: { ...USAGE, providers: { minimax: { calls: 2, cost_micros: 1200 } } },
-    });
-    await screen.findByText('Providers');
-
-    const rest = screen.getByText(/before the split began/i).closest('.usage__provider');
-    // 2,721 − 1,200 microdollars.
-    expect(rest).toHaveTextContent('$0.002');
-    expect(rest).toHaveClass('usage__provider--unattributed');
-  });
-
-  it('labels the day strip in print as well as for a screen reader: the scale, the ends, a caption', async () => {
-    mountSettings({ usage: USAGE });
-    const chart = (await screen.findByRole('img', { name: /spend by day/i })).closest('.usage__chart');
-
-    expect(chart?.querySelector('.usage__chart-scale')).toHaveTextContent(/Tallest bar \$0\.002 on (4 Jan|Jan 4)/);
-    const caption = chart?.querySelector('.usage__chart-caption');
-    expect(caption).toHaveTextContent(/^(1 Jan|Jan 1)/);
-    expect(caption).toHaveTextContent(/(31 Jan|Jan 31)$/);
-    expect(caption).toHaveTextContent(/spend by day, today in colour · dots mark API requests/i);
-  });
-
-  it('reserves no blank band for the status line while it has nothing to say (QA 11)', async () => {
-    mountSettings();
-    await screen.findByRole('combobox', { name: /transcription language/i });
-    await waitFor(() => {
-      expect(screen.queryByText(/loading your settings/i)).toBeNull();
-    });
-    // Empty, so `:empty` collapses it; the live region itself stays for the
-    // next Saved to be announced.
-    const status = screen.getByRole('status', { name: '' });
-    expect(status).toHaveClass('settings-status');
-    expect(status).toBeEmptyDOMElement();
-  });
-
-  it('lists the month’s API requests and what is stored, as one row of facts', async () => {
-    mountSettings({ usage: USAGE });
-    const facts = await screen.findByRole('group', { name: 'This month' });
-
-    expect(facts).toHaveTextContent(/API requests\s*312 requests/);
-    expect(facts).toHaveTextContent(/Recordings stored\s*41 recordings · 23.2 min · 9.1 MB/);
-    expect(facts).toHaveTextContent(/Notes\s*12 notes/);
-    // The month's storage-days, priced here as an estimate at a named rate;
-    // 18 MB·days is real but rounds below a tenth of a cent.
-    expect(facts).toHaveTextContent(
-      /Stored this month\s*0\.02 GB·days \(under \$0\.001 at S3 standard \$0\.023\/GB-month\)/,
-    );
-    expect(facts).not.toHaveTextContent(/approx/);
-  });
-
-  it('marks the stored figures approximate when the backend stopped counting at its cap', async () => {
-    mountSettings({ usage: { ...USAGE, storage: { ...USAGE.storage!, approximate: true } } });
-    const facts = await screen.findByRole('group', { name: 'This month' });
-    expect(facts).toHaveTextContent(/41 recordings · 23.2 min · 9.1 MB · approx\./);
-    expect(facts).toHaveTextContent(/12 notes · approx\./);
-  });
-
-  it('shows the user’s estimated share of AWS and totals with that, saying so', async () => {
-    mountSettings({ usage: USAGE });
-
-    const aws = (await screen.findByText('AWS')).closest('.usage__cell');
-    // The instance figure stays; the share sits beneath it.
-    expect(aws).toHaveTextContent('$2.35');
-    expect(aws).toHaveTextContent(/Your estimated share: \$0\.123 \(by provider spend\)/);
-
-    // 2,721 + 123,456 microdollars, not 2,721 + 2,345,678.
-    const total = screen.getByText('Total').closest('.usage__cell');
-    expect(total).toHaveTextContent('$0.126');
-    expect(total).toHaveTextContent(/providers \+ your AWS share/);
-  });
-
-  it('draws a dot per day for API requests, and says how many the month took', async () => {
-    mountSettings({ usage: USAGE });
-    const figure = await screen.findByRole('img', { name: /spend by day in January 2026/i });
-    expect(figure).toHaveAccessibleName(/21 requests to the API, shown as dots/i);
-    expect(figure.querySelectorAll('.usage__api-dot')).toHaveLength(2);
-  });
-
-  it('renders a response from a backend that predates providers, api, storage and share, with nothing invented', async () => {
-    // The generated fixture now carries every member; this is the shape an
-    // instance running the previous release answers, and the screen must keep
-    // rendering it while a frontend deploy is ahead of a backend deploy.
-    const { providers: _providers, api: _api, storage: _storage, aws, days, ...rest } = USAGE_TODAY;
-    const legacy: UsageWire = {
-      ...rest,
-      days: days.map(({ api_requests: _requests, ...day }) => day),
-      aws: aws
-        ? { month_micros: aws.month_micros, as_of: aws.as_of, budget_micros: aws.budget_micros }
-        : null,
-    };
-    mountSettings({ usage: legacy });
-
-    expect(await screen.findByText('$0.001', { selector: '.usage__figure' })).toBeInTheDocument();
-    expect(document.querySelector('.usage__providers')).toBeNull();
-    expect(screen.queryByRole('group', { name: 'This month' })).toBeNull();
-    expect(screen.queryByText(/estimated share/)).toBeNull();
-    // The Total falls back to providers plus the instance figure, and says so.
-    const total = screen.getByText('Total').closest('.usage__cell');
-    expect(total).toHaveTextContent('$2.35');
-    expect(total).toHaveTextContent(/providers \+ instance AWS/);
-    const figure = screen.getByRole('img', { name: /spend by day/i });
-    expect(figure).not.toHaveAccessibleName(/API/);
-    expect(figure.querySelectorAll('.usage__api-dot')).toHaveLength(0);
-  });
-
-  it('draws a bar per day with usage, described in words for whoever cannot see it', async () => {
-    mountSettings({ usage: USAGE });
-
-    const figure = await screen.findByRole('img', { name: /spend by day in January 2026/i });
-    expect(figure).toHaveAccessibleName(/2 days with recordings/i);
-    // The day is rendered in the runtime's locale ("4 Jan" or "Jan 4"), so only its parts are pinned.
-    expect(figure).toHaveAccessibleName(/the most on (4 Jan|Jan 4) at \$0\.002/i);
-    // Two rows, two bars — the empty days are not drawn as marks.
-    expect(figure.querySelectorAll('.usage__bar')).toHaveLength(2);
-  });
-
-  it('says plainly when nothing has been processed yet, instead of an empty chart', async () => {
-    mountSettings();
-    expect(await screen.findByText(/no recordings have been processed this month yet/i)).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: /spend by day/i })).toBeNull();
-  });
-
-  /**
-   * "AWS this month" (D6b): the instance's month to date from the stack's
-   * Budget, read once a day by the worker, so it carries how old it is.
-   */
-  it('shows the AWS figure with how old it is, and adds it to the providers in a Total', async () => {
-    vi.useFakeTimers({ now: new Date('2026-01-04T12:00:00Z'), toFake: ['Date'] });
-    try {
-      mountSettings({
-        usage: {
-          ...USAGE,
-          aws: { month_micros: 3_120_000, as_of: '2026-01-04T09:00:00Z', budget_micros: null },
-        },
-      });
-
-      const aws = await screen.findByText('AWS');
-      const row = aws.closest('.usage__cell');
-      expect(row).toHaveTextContent('$3.12');
-      expect(row).toHaveTextContent(/as of 3 hours ago/);
-      expect(row).not.toHaveTextContent(/budget/);
-
-      // 3,120,000 + 2,721 microdollars: no share on this reading, so the instance figure.
-      const total = screen.getByText('Total').closest('.usage__cell');
-      expect(total).toHaveTextContent('$3.12');
-      expect(total).toHaveTextContent(/instance AWS/);
-      expect(screen.queryByText(/not recorded yet/i)).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('says quietly how much of the budget this is, when the Budget has a limit', async () => {
-    mountSettings({
-      usage: {
-        ...USAGE,
-        aws: { month_micros: 3_120_000, as_of: new Date().toISOString(), budget_micros: 10_000_000 },
-      },
-    });
-
-    const row = (await screen.findByText('AWS')).closest('.usage__cell');
-    expect(row).toHaveTextContent(/of \$10\.00 budget/);
-    expect(row).toHaveTextContent(/as of a moment ago/);
-  });
-
-  it('says the AWS cost is not recorded yet, and leaves the Total out, when the API sends null', async () => {
-    mountSettings({ usage: { ...USAGE, aws: null } });
-
-    const row = (await screen.findByText('AWS')).closest('.usage__cell');
-    expect(row).toHaveTextContent(/not recorded yet/i);
-    expect(screen.queryByText('Total')).toBeNull();
-    // The providers' figure is still the one on top.
-    expect(screen.getByText('$0.003', { selector: '.usage__figure' })).toBeInTheDocument();
-  });
-
-  it('never names the instance’s daily cap, even when there is one (U13b)', async () => {
-    mountSettings({ settings: { ...STORED, daily_spend_cap_micros: 5_000_000 } });
-    await screen.findByText(/no recordings have been processed/i);
-    expect(screen.queryByText(/stops taking recordings/i)).toBeNull();
-    expect(screen.queryByText(/\bcap\b/i)).toBeNull();
-    expect(screen.queryByText('$5.00')).toBeNull();
   });
 });
 
@@ -514,9 +347,11 @@ describe('the account header', () => {
 
     await userEvent.click(signOut);
 
+    // Round-3 T64: two sentences for the common case, not four.
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent(/nothing is waiting to sync/i);
-    expect(dialog).toHaveTextContent(/ends the session with the identity provider/i);
+    expect(dialog).toHaveTextContent(new RegExp(`Sign out of ${config.appName} on this device\\?`));
+    expect(dialog).toHaveTextContent(/your notes stay on the server\./i);
+    expect(dialog).not.toHaveTextContent(/identity provider/i);
   });
 });
 
@@ -526,6 +361,27 @@ describe('the account header', () => {
  * row in the last one rather than a footnote under the whole screen.
  */
 describe('the cards', () => {
+  it('never names the instance’s daily cap, even when there is one (U13b)', async () => {
+    mountSettings({ settings: { ...STORED, daily_spend_cap_micros: 5_000_000 } });
+    await screen.findByRole('combobox', { name: /transcription language/i });
+    expect(screen.queryByText(/stops taking recordings/i)).toBeNull();
+    expect(screen.queryByText(/\bcap\b/i)).toBeNull();
+    expect(screen.queryByText('$5.00')).toBeNull();
+  });
+
+  it('reserves no blank band for the status line while it has nothing to say (QA 11)', async () => {
+    mountSettings();
+    await screen.findByRole('combobox', { name: /transcription language/i });
+    await waitFor(() => {
+      expect(screen.queryByText(/loading your settings/i)).toBeNull();
+    });
+    // Empty, so `:empty` collapses it; the live region itself stays for the
+    // next Saved to be announced.
+    const status = screen.getByRole('status', { name: '' });
+    expect(status).toHaveClass('settings-status');
+    expect(status).toBeEmptyDOMElement();
+  });
+
   it('are five labelled sections in the order a person needs them', async () => {
     mountSettings();
     await screen.findByRole('combobox', { name: /transcription language/i });
@@ -534,11 +390,40 @@ describe('the cards', () => {
     expect(titles).toEqual([
       'Recording & transcription',
       'Appearance',
-      'Usage this month',
       'Passkeys',
+      'Your data',
       'About & support',
     ]);
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  it('puts Usage behind one row in About & support, carrying the month’s figure, that opens /usage', async () => {
+    // Round-3 T20: the Usage card was a third of a three-screen You.
+    mountSettings({ usage: USAGE });
+    const row = await screen.findByRole('link', { name: /usage this month/i });
+    expect(row).toHaveAttribute('href', '/usage');
+    await waitFor(() => {
+      expect(row).toHaveTextContent('$0.003');
+    });
+    expect(row.closest('.you-card')).toBe(
+      screen.getByRole('heading', { name: 'About & support' }).closest('.you-card'),
+    );
+    expect(screen.queryByRole('heading', { name: 'Usage this month' })).toBeNull();
+  });
+
+  it('keeps one sentence of each footnote in view and the rest behind a native More', async () => {
+    mountSettings();
+    const card = (await screen.findByRole('heading', { name: 'Recording & transcription' })).closest(
+      '.you-card',
+    );
+    const foot = card?.querySelector('.you-card__foot');
+    expect(foot?.querySelector(':scope > p')).toHaveTextContent(/transcribed as English/);
+    const more = foot?.querySelector('details');
+    expect(more).not.toBeNull();
+    expect(more?.open).toBe(false);
+    expect(more?.querySelector('summary')).toHaveTextContent('More');
+    expect(more).toHaveTextContent(/a note can choose its own under Details/);
+    expect(more).toHaveTextContent(/kept indefinitely/);
   });
 
   it('puts the build in the About & support card, as selectable text, with the links beside it', async () => {

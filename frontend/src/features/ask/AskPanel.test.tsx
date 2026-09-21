@@ -120,10 +120,13 @@ function fakeTime() {
   return userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
 }
 
+/** The Ask glyph inside the field: one pressed button, not a Search | Ask segment (round-3 T17). */
+const askToggle = () => screen.getByRole('button', { name: 'Ask' });
+
 /** Switches the field to Ask and returns it. */
 async function switchToAsk(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   await screen.findByRole('button', { name: /roof repair/i });
-  await user.click(screen.getByRole('radio', { name: 'Ask' }));
+  await user.click(askToggle());
   return screen.getByRole('searchbox', { name: /ask your notes/i });
 }
 
@@ -157,30 +160,31 @@ describe('the field has two modes', () => {
 
     const before = await screen.findByRole('searchbox', { name: /search notes/i });
     expect(before).toHaveAttribute('placeholder', 'Search titles, tags, transcripts');
-    expect(screen.getByRole('radio', { name: 'Search' })).toBeChecked();
+    expect(askToggle()).toHaveAttribute('aria-pressed', 'false');
 
     const field = await switchToAsk(user);
     expect(field).toHaveAttribute('placeholder', 'Ask your notes…');
-    expect(screen.getByRole('radio', { name: 'Ask' })).toBeChecked();
+    expect(askToggle()).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
     expect(screen.queryByRole('group', { name: 'Filter notes' })).toBeNull();
-    expect(screen.getByRole('region', { name: 'Ask your notes' })).toBeInTheDocument();
+    // The panel is a lazy chunk (round-3 T47), so it lands a tick after the switch.
+    expect(await screen.findByRole('region', { name: 'Ask your notes' })).toBeInTheDocument();
     expect(location()).toBe('/?mode=ask');
 
     // And back, with the whole library where it was.
-    await user.click(screen.getByRole('radio', { name: 'Search' }));
+    await user.click(askToggle());
     expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: /search notes/i })).toBeInTheDocument();
     expect(location()).toBe('/');
   });
 
-  it('shortens the search placeholder on a phone, where the switch leaves it no room for the long one', async () => {
+  it('shortens the search placeholder on a phone, where the Ask glyph leaves it no room for the long one', async () => {
     setNarrowViewport(true);
     mount(server().fetchImpl);
     const field = await screen.findByRole('searchbox', { name: /search notes/i });
     expect(field).toHaveAttribute('placeholder', 'Search notes');
     // Asking has a short placeholder already, and keeps it.
-    await userEvent.setup().click(screen.getByRole('radio', { name: 'Ask' }));
+    await userEvent.setup().click(askToggle());
     expect(screen.getByRole('searchbox', { name: /ask your notes/i })).toHaveAttribute(
       'placeholder',
       'Ask your notes…',
@@ -191,11 +195,11 @@ describe('the field has two modes', () => {
     const user = userEvent.setup();
     mount(server().fetchImpl, '/?q=roof');
     await screen.findByRole('button', { name: /roof repair/i });
-    await user.click(screen.getByRole('radio', { name: 'Ask' }));
+    await user.click(askToggle());
     expect(location()).toBe('/?mode=ask');
 
     mount(server().fetchImpl, '/?mode=ask');
-    expect(screen.getAllByRole('radio', { name: 'Ask' }).at(-1)).toBeChecked();
+    expect(screen.getAllByRole('button', { name: 'Ask' }).at(-1)).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('says once what a question costs, and remembers being told', async () => {
@@ -410,13 +414,22 @@ describe('a question is sent on Enter and its answer polled for', () => {
 });
 
 describe('the thread', () => {
-  it('sends a follow-up with the earlier exchange as history', async () => {
+  it('takes the follow-up in the library’s own field, with the earlier exchange as history', async () => {
+    /*
+     * Round-3 T21: the panel had a second field beneath the thread, so two
+     * fields took one conversation. The header field is the follow-up once a
+     * thread is open, and says so.
+     */
     const user = fakeTime();
     const api = server();
     mount(api.fetchImpl);
     await askAndAnswer(user);
 
-    await user.type(screen.getByRole('textbox', { name: 'Ask a follow-up' }), 'and when?{Enter}');
+    expect(screen.queryByRole('textbox', { name: 'Ask a follow-up' })).toBeNull();
+    const field = screen.getByRole('searchbox', { name: 'Ask a follow-up' });
+    expect(field).toHaveAttribute('placeholder', 'Ask a follow-up…');
+
+    await user.type(field, 'and when?{Enter}');
     await waitFor(() => {
       expect(api.posts).toHaveLength(2);
     });
@@ -424,17 +437,59 @@ describe('the thread', () => {
       question: 'and when?',
       history: [{ question: 'what did I decide about the roof?', answer: askAnswered.answer }],
     });
-    // Both questions stay on screen; the follow-up field is held while it is unanswered.
+    // Both questions stay on screen, and a third typed while the second is
+    // unanswered is held rather than posted (the busy guard in `ask`).
     expect(screen.getByText('and when?')).toBeInTheDocument();
     expect(await screen.findByText('Reading your notes…')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Ask a follow-up' })).toBeDisabled();
+    await user.type(field, 'and the gutters?{Enter}');
+    expect(api.posts).toHaveLength(2);
+    expect(screen.queryByText('and the gutters?')).toBeNull();
+    // Held, not lost: the field keeps the words and says it is waiting.
+    expect(field).toHaveValue('and the gutters?');
+    expect(field).toHaveAttribute('aria-busy', 'true');
+
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
     await waitFor(() => {
-      expect(screen.getByRole('textbox', { name: 'Ask a follow-up' })).toBeEnabled();
+      expect(screen.getAllByText(/The tiler can start on the fourteenth/)).toHaveLength(2);
     });
-    expect(screen.getAllByText(/The tiler can start on the fourteenth/)).toHaveLength(2);
+    // Answered, so Enter now sends what was held.
+    expect(field).toHaveAttribute('aria-busy', 'false');
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(api.posts).toHaveLength(3);
+    });
+    expect(api.posts[2]?.question).toBe('and the gutters?');
+    expect(field).toHaveValue('');
+  });
+
+  it('shows three source chips and folds the rest behind "+n more"', async () => {
+    const user = fakeTime();
+    const many: AskWire = {
+      ...askAnswered,
+      sources: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ note_id: id, title: `Note ${id}` })),
+    };
+    mount(server({ final: many }).fetchImpl);
+    const field = await switchToAsk(user);
+    await user.type(field, 'what did I decide about the roof?{Enter}');
+    await screen.findByText('Reading your notes…');
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    const sources = await screen.findByRole('list', { name: 'Sources' });
+    await waitFor(() => {
+      expect(within(sources).getAllByRole('button').map((chip) => chip.textContent)).toEqual([
+        'Note a',
+        'Note b',
+        'Note c',
+        '+2 more',
+      ]);
+    });
+    await user.click(within(sources).getByRole('button', { name: '+2 more' }));
+    expect(within(sources).getAllByRole('button')).toHaveLength(5);
+    expect(within(sources).queryByRole('button', { name: /more/ })).toBeNull();
   });
 
   it('is saved as a note titled by the first question, with the exchanges and the sources', async () => {

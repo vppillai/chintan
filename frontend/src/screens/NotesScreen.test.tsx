@@ -88,16 +88,21 @@ async function startSelecting(
   await screen.findByRole('toolbar', { name: 'Bulk actions' });
 }
 
-describe('the heading is Notes, with the count beside it and the day above', () => {
-  it('is one h1 whose text starts with Notes, then the count, then today in words', async () => {
+describe('the heading is Notes with the count beside it; the wordmark and the day sit at its right', () => {
+  it('is one h1 whose text starts with Notes, then the count; the day is under the wordmark', async () => {
     mount(library());
     await screen.findByRole('button', { name: /roof repair/i });
 
     const heading = screen.getByRole('heading', { level: 1 });
     const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date());
     expect(heading).toHaveAccessibleName(/^Notes/);
-    expect(heading).toHaveTextContent(weekday);
     expect(within(heading).getByText(String(TEST_NOTES.length))).toHaveClass('numeric');
+    // The name and the day share the heading row's right (round-3 T17), out
+    // of the h1, so a screen reader hears "Notes, 2" and no more.
+    expect(heading).not.toHaveTextContent(weekday);
+    const brand = heading.parentElement?.querySelector('.library-brand');
+    expect(brand).toHaveTextContent(/^Chintan/);
+    expect(brand).toHaveTextContent(weekday);
     // And only the one h1 on the screen.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
@@ -133,6 +138,9 @@ describe('the library never claims an empty library it cannot see', () => {
     mount(library({ active: [], archived: [], tags: [] }));
     expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).toBeNull();
+    // And offers no way into nothing: no "Archive · 0" row, no "Checklists · 0" chip.
+    expect(screen.queryByRole('link', { name: /^Archive/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Checklists/ })).toBeNull();
   });
 });
 
@@ -362,13 +370,32 @@ describe('search narrows the list as you type, from what is already on the devic
 
 describe('the chips filter the list', () => {
   it('offers All, one chip per tag, and Archived with its count', async () => {
-    mount(library());
+    const fetchImpl = library();
+    mount(fetchImpl);
     expect(await screen.findByRole('button', { name: 'house' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'books' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
     expect(
       await screen.findByRole('button', { name: `Archived · ${String(ARCHIVED_NOTES.length)}` }),
     ).toBeInTheDocument();
+    // The chip names come from the notes on the device, not a fifth GET (round-3 T46).
+    const urls = vi.mocked(fetchImpl).mock.calls.map((call) => new URL(String(call[0])).pathname);
+    expect(urls.some((url) => url.endsWith('/v1/tags'))).toBe(false);
+  });
+
+  it('hides the Archived chip while nothing is archived, and offers the archive as a row at the end', async () => {
+    // Round-3 T17: "Archived · 0" was a filter with nothing behind it.
+    const user = userEvent.setup();
+    mount(library({ archived: [] }));
+    await screen.findByRole('button', { name: /roof repair/i });
+    expect(screen.queryByRole('button', { name: /^Archived/ })).toBeNull();
+
+    const row = screen.getByRole('link', { name: /^Archive/ });
+    expect(row).toHaveAttribute('href', '/?view=archived');
+    await user.click(row);
+    expect(await screen.findByText(/nothing is archived/i)).toBeInTheDocument();
+    // In the archive itself the chip is there, pressed, so All is one tap away.
+    expect(screen.getByRole('button', { name: /^Archived/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('narrows to a tag, and All clears it', async () => {
@@ -461,7 +488,11 @@ describe('doing something to several notes at once', () => {
     ]);
 
     await user.click(within(bar).getByRole('button', { name: 'Archive' }));
-    await user.click(await screen.findByRole('button', { name: 'Archive them' }));
+    // One note selected reads as one (round-3 T63).
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent(/^Archive 1 note\?/);
+    expect(dialog).toHaveTextContent(/It leaves your notes/);
+    await user.click(within(dialog).getByRole('button', { name: 'Archive it' }));
 
     await waitFor(() => {
       expect(archived).toEqual([TEST_NOTES[0]?.id]);
@@ -905,7 +936,7 @@ describe('pull to refresh', () => {
     return event;
   }
 
-  it('asks for the notes, tags and captures again when pulled down at the top', async () => {
+  it('asks for the notes and captures again when pulled down at the top', async () => {
     const fetchImpl = library();
     render(
       <TestProviders api={testApiContext(fetchImpl)}>
@@ -936,7 +967,9 @@ describe('pull to refresh', () => {
         .mock.calls.slice(before)
         .map((call) => new URL(String(call[0])).pathname);
       expect(urls.some((url) => url.endsWith('/v1/notes'))).toBe(true);
-      expect(urls.some((url) => url.endsWith('/v1/tags'))).toBe(true);
+      expect(urls.some((url) => url.endsWith('/v1/captures'))).toBe(true);
+      // The chips read the notes, so `/v1/tags` is no longer asked (round-3 T46).
+      expect(urls.some((url) => url.endsWith('/v1/tags'))).toBe(false);
     });
     await waitFor(() => {
       expect(screen.queryByText('Refreshing…')).toBeNull();

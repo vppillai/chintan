@@ -8,6 +8,7 @@ import { onlineManager } from '@tanstack/react-query';
 
 import { CAPTURE_POLL_FAST_MS, queryKeys } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
+import { settings } from '@/api/__fixtures__/responses.ts';
 import { routes } from '@/app/router.tsx';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
@@ -139,10 +140,10 @@ const FILED: CaptureWire = {
   has_segments: false,
 };
 
-function mount(fetchImpl: typeof fetch, path: string) {
-  // The provider's own `staleTime`, not the test default of zero: the defect
-  // lives in the thirty seconds during which a re-open is answered from cache.
-  const queryClient = new QueryClient({
+// The provider's own `staleTime`, not the test default of zero: the defect
+// lives in the thirty seconds during which a re-open is answered from cache.
+function providerLikeClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: {
       queries: {
         retry: false,
@@ -153,6 +154,9 @@ function mount(fetchImpl: typeof fetch, path: string) {
       mutations: { retry: false },
     },
   });
+}
+
+function mount(fetchImpl: typeof fetch, path: string, queryClient = providerLikeClient()) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
   render(
     <TestProviders api={testApiContext(fetchImpl)} queryClient={queryClient}>
@@ -161,6 +165,26 @@ function mount(fetchImpl: typeof fetch, path: string) {
   );
   return { router, queryClient };
 }
+
+describe('the settings come from the shell, not after the note', () => {
+  it('reads settings cached by the shell however long ago, rather than fetching them again (round-3 T48)', async () => {
+    /*
+     * The shell prefetches settings once per session; this screen reads them
+     * for one language label. With the client's thirty-second default the
+     * observer refetched on every open after the first half-minute — the
+     * waterfall T48 removed, back under another name.
+     */
+    const api = server([ROOF]);
+    const queryClient = providerLikeClient();
+    // As the shell left them: cached well past the client's default thirty seconds.
+    queryClient.setQueryData(queryKeys.settings(), settings, { updatedAt: Date.now() - 5 * 60_000 });
+    mount(api.fetchImpl, '/notes/roof-repair', queryClient);
+
+    await screen.findByRole('textbox', { name: 'Note body' });
+    const urls = api.fetchImpl.mock.calls.map((call) => new URL(String(call[0])).pathname);
+    expect(urls.filter((url) => url.endsWith('/v1/settings'))).toEqual([]);
+  });
+});
 
 describe('what was just saved is what the app shows next', () => {
   it('re-opens the note with the saved text, and the next save carries the new version', async () => {

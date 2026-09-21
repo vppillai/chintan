@@ -59,10 +59,18 @@ describe('About', () => {
     expect(stores).toHaveTextContent(/Notes\s*DynamoDB/);
     expect(stores).toHaveTextContent(/Recordings and transcripts\s*S3/);
 
-    expect(screen.getByText(/in your own aws account and nowhere else/i)).toHaveTextContent(
-      /clears it when you sign out/i,
+    // Written for a reader who may not be the operator (round-3 T28): whose
+    // account it is, what the operator can see, and every use of the model.
+    const data = screen.getByText(/stored in the aws account of whoever runs this instance/i);
+    expect(data).toHaveTextContent(/the operator can export or read everything/i);
+    expect(data).toHaveTextContent(/route it, clean it, optionally rewrite the whole note, and to answer Ask/i);
+    expect(data).toHaveTextContent(/neither provider is asked to retain anything/i);
+    expect(screen.getByText(/clears it when you sign out/i)).toBeInTheDocument();
+    // Retention is set at upload (round-3 T5), so the sentence says so.
+    expect(screen.getByText(/thirty days after you archive it/i)).toHaveTextContent(
+      /earlier recordings keep the retention they were uploaded with/i,
     );
-    expect(screen.getByText(/thirty days after you archive it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/nowhere else/i)).toBeNull();
   });
 
   it('mentions the daily spending cap once, plainly, and never its amount (U13b)', () => {
@@ -112,7 +120,8 @@ describe('getting there and back', () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/about');
     });
-    expect(screen.getByRole('heading', { name: config.appName, level: 1 })).toBeInTheDocument();
+    // A lazy chunk (round-3 T47): the heading lands a tick after the URL.
+    expect(await screen.findByRole('heading', { name: config.appName, level: 1 })).toBeInTheDocument();
     // The shell announces it as its own screen, not as a generic one.
     expect(screen.getByRole('main')).toHaveAttribute('aria-label', 'About');
 

@@ -1,0 +1,225 @@
+/*
+ * Home and You after the round-3 review (docs/reviews/2026-09-21/round-3.md,
+ * T17 and T20).
+ *
+ * Home lost the shell's banner row and its Search | Ask segment: the wordmark
+ * sits small at the heading row's right, Ask is a glyph inside the field, the
+ * passkey nudge is one row, and the archive is a row at the list's end when
+ * its chip has nothing to count. You put every card's footnote behind a
+ * native <details> and moved Usage behind one row. The rules here override
+ * the shell's where a shape changed, and live in their own sheet so the
+ * note-screen stream could land in the same week without touching the same
+ * file (`notes.css` is its).
+ *
+ * Tokens only — no literal colour or font size lives here.
+ */
+
+/* ==========================================================================
+   Home — the heading row carries the wordmark; the shell's banner is empty
+   ========================================================================== */
+
+/*
+ * On the library the banner holds only the offline pill, so it takes no
+ * height until there is one. The element itself stays: it is the shell
+ * grid's first row, and `main` must keep the `1fr` row beneath it.
+ */
+[data-screen='library'] .app__banner {
+  min-block-size: 0;
+  padding: 0;
+  border-block-end: 0;
+  box-shadow: none;
+}
+
+[data-screen='library'] .app__banner:not(:empty) {
+  padding: var(--space-2) var(--space-4);
+}
+
+/* "Notes · 50+" on the left; the wordmark, small, at the right with the day
+   beneath it — the three places the same name used to be said are one. */
+.library-header {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.library-heading {
+  inline-size: auto;
+}
+
+/* Shrinkable, so the caps date wraps onto two lines on a 320 px phone rather
+   than pushing the row 3 px past the gutter (the layout sweep's fence); the
+   heading beside it keeps its width. */
+.library-brand {
+  display: grid;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  justify-items: end;
+  gap: var(--space-1);
+  padding-block-start: var(--space-1);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  text-align: end;
+  color: var(--color-faint);
+}
+
+.library-brand__wordmark {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-sm);
+}
+
+/* The field spans the row; Ask is a glyph inside its trailing edge, pressed
+   while the field is a question rather than a filter. */
+.search-field {
+  position: relative;
+}
+
+.search-field .search-input {
+  padding-inline-end: calc(var(--layout-touch-target-min) + var(--space-2));
+}
+
+.ask-toggle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-lg);
+  color: var(--color-muted);
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.ask-toggle:hover {
+  color: var(--color-ink);
+}
+
+.ask-toggle[aria-pressed='true'] {
+  color: var(--color-accent-strong);
+}
+
+/* The way into the archive: a quiet row at the list's end, so the chip row
+   need not offer "Archived · 0" as a filter with nothing behind it. */
+.library-archive {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--layout-touch-target-min);
+  margin-block-start: var(--space-4);
+  padding-inline: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-decoration: none;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.library-archive:hover {
+  color: var(--color-ink);
+}
+
+.library-archive__glyph {
+  margin-inline-start: auto;
+  color: var(--color-faint);
+}
+
+/* The passkey nudge as one 44 px row: the sentence, then two text actions.
+   The shell's rules made it a card with a second line of prose. */
+.passkey-nudge {
+  flex-wrap: nowrap;
+  gap: var(--space-3);
+  min-block-size: var(--layout-touch-target-min);
+  padding: 0 var(--space-1);
+  background-color: transparent;
+  border: 0;
+  border-block-end: 1px solid var(--color-line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.passkey-nudge__title {
+  font-weight: var(--font-weight-regular);
+  color: var(--color-muted);
+}
+
+.passkey-nudge__actions {
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.passkey-nudge__dot {
+  color: var(--color-faint);
+}
+
+.passkey-nudge__action,
+.passkey-nudge__action--primary,
+.passkey-nudge__action--primary:active {
+  padding-inline: var(--space-2);
+  background-color: transparent;
+  border: 0;
+  color: var(--color-muted);
+}
+
+.passkey-nudge__action--primary,
+.passkey-nudge__action--primary:active {
+  /* Off the shell's filled-primary list too: its lift and shadow drew a faint pill around the underlined word in Nocturne. */
+  background-image: none;
+  box-shadow: none;
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+/* ==========================================================================
+   You — one sentence per footnote, the rest behind More; a figure on a row
+   ========================================================================== */
+
+.you-card__more {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* A 44 px target on a footnote line, handing the extra height back to the
+   line the way `.text-link` does, so the foot keeps its rhythm. */
+.you-card__more-summary {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--layout-touch-target-min);
+  margin-block: calc((1lh - var(--layout-touch-target-min)) / 2);
+  list-style: none;
+  cursor: pointer;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.you-card__more-summary::-webkit-details-marker {
+  display: none;
+}
+
+.you-card__more-body {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* The month's figure at the end of the Usage row, before the chevron. */
+.you-row__value {
+  flex: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* The one row that is a download: the row is the button, its result line
+   sits under it. The shell's `.download` is a flex row for inline buttons. */
+.you-card__body .download {
+  display: grid;
+  gap: 0;
+}
+
+.you-card__body .download__result {
+  padding: 0 var(--space-4) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}

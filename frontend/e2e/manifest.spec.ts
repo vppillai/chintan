@@ -22,17 +22,21 @@ test('every icon the manifest names actually exists', async ({ page, request }) 
   expect(manifestHref).toBeTruthy();
 
   const manifest = (await (await request.get(manifestHref as string)).json()) as {
+    id: string;
     start_url: string;
     scope: string;
     icons: { src: string }[];
+    screenshots: { src: string; sizes: string; type: string }[];
     shortcuts: { url: string; icons: { src: string }[] }[];
   };
 
   // Nothing left to resolve: every URL states its own full path.
   for (const url of [
+    manifest.id,
     manifest.start_url,
     manifest.scope,
     ...manifest.icons.map((icon) => icon.src),
+    ...manifest.screenshots.map((shot) => shot.src),
     ...manifest.shortcuts.map((shortcut) => shortcut.url),
   ]) {
     expect(url.startsWith('/'), `${url} is relative`).toBe(true);
@@ -41,6 +45,14 @@ test('every icon the manifest names actually exists', async ({ page, request }) 
   for (const icon of manifest.icons) {
     const response = await request.get(icon.src);
     expect(response.status(), `${icon.src} does not exist`).toBe(200);
+  }
+
+  // The install sheet's pictures (round-3 T57), served with the type they declare.
+  expect(manifest.screenshots).toHaveLength(2);
+  for (const shot of manifest.screenshots) {
+    const response = await request.get(shot.src);
+    expect(response.status(), `${shot.src} does not exist`).toBe(200);
+    expect(response.headers()['content-type']).toContain(shot.type);
   }
 });
 

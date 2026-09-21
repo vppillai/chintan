@@ -5,12 +5,12 @@
  * One method per operation, so a contract change is a compile error rather
  * than a runtime surprise, and so no component ever builds a URL by hand.
  *
- * Not every operation: `POST /v1/notes/match` and the two export endpoints are
- * served and have no screen. Their wrappers sat here for two releases with no
- * caller, and the request-contract recorder replayed them against the backend
- * on every run — proving the router accepted requests nobody sends. They come
- * back with the screen that needs them; the wire types stay in `schema.ts`
- * because the response-contract fixtures still pin them.
+ * Not every operation: `POST /v1/notes/match` is served and has no screen. Its
+ * wrapper sat here for two releases with no caller, and the request-contract
+ * recorder replayed it against the backend on every run — proving the router
+ * accepted a request nobody sends. It comes back with the screen that needs
+ * it, as the export wrappers did with "Download my notes" on You; the wire
+ * type stays in `schema.ts` because the response-contract fixtures pin it.
  */
 
 import { NO_RETRY } from './client.ts';
@@ -27,6 +27,7 @@ import type {
   CaptureWire,
   CleanQueuedWire,
   CleanRequestWire,
+  ExportJobWire,
   NoteCreateWire,
   NoteDetailWire,
   NoteListQuery,
@@ -329,6 +330,22 @@ export class ChintanApi {
       body,
       idempotencyKey,
     });
+  }
+
+  /* ---- Export --------------------------------------------------------- */
+
+  /**
+   * Starts a full export of the caller's notes, recordings and transcripts.
+   * 202 with the job in `pending`; `getExport` is polled until it is `ready`
+   * with a presigned URL. Back after two releases without a caller: the
+   * "Download my notes" row on You (`ExportCard`) is the screen that needs it.
+   */
+  startExport(idempotencyKey?: string): Promise<ExportJobWire> {
+    return this.client.request('/v1/export', { method: 'POST', idempotencyKey });
+  }
+
+  getExport(exportId: string): Promise<ExportJobWire> {
+    return this.client.request(`/v1/export/${encodeURIComponent(exportId)}`);
   }
 }
 
