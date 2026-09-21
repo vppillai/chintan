@@ -22,6 +22,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
+import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
@@ -85,10 +86,13 @@ function isStuck(capture: CaptureWire): boolean {
   return Date.now() - createdAt > STUCK_AFTER_MS;
 }
 
-function describe(capture: CaptureWire, stuck: boolean): string {
+function describe(capture: CaptureWire, stuck: boolean, noteTitle?: string): string {
   switch (capture.status) {
     case 'appended':
-      return 'Filed';
+      // Two receipts stacked were indistinguishable: the note is on the
+      // capture, and its title is on the device whenever the library has
+      // listed it. "Filed" alone only when it is not.
+      return noteTitle ? `Filed into “${noteTitle}”` : 'Filed';
     case 'needs_target':
       return 'Which note should this go in?';
     case 'no_content':
@@ -255,6 +259,16 @@ export function FilingRow() {
     return (data?.items ?? []).filter((capture) => !isTargeted(capture, remembered));
   }, [data]);
   const captures = untargeted.filter((capture) => !dismissed.has(capture.id));
+
+  // The receipts name their note by title. The device's copy of the library
+  // is the source — every list page the person has seen is in it — rather
+  // than a request of its own for a row that is a receipt.
+  const cached = useCachedNotes('active');
+  const titles = useMemo(
+    () => new Map((cached.data ?? []).map((note) => [note.id, note.title])),
+    [cached.data],
+  );
+
   if (captures.length === 0 && !local) return null;
 
   // Everything that still needs something is shown; the receipts are capped.
@@ -267,6 +281,7 @@ export function FilingRow() {
         <FilingItem
           key={capture.id}
           capture={capture}
+          noteTitle={capture.note_id ? titles.get(capture.note_id) : undefined}
           onOpen={() => {
             if (!capture.note_id) return;
             // The row says the note has just been written to, so the copy the
@@ -394,6 +409,8 @@ function retryMessage(error: unknown): string {
 
 interface FilingItemProps {
   capture: CaptureWire;
+  /** The title of `capture.note_id`, when the device has it. */
+  noteTitle?: string | undefined;
   onOpen: () => void;
   onRetry: () => void;
   retrying: boolean;
@@ -402,16 +419,57 @@ interface FilingItemProps {
   onDismiss: () => void;
 }
 
-function FilingItem({ capture, onOpen, onRetry, retrying, retryError, onDismiss }: FilingItemProps) {
+function FilingItem({
+  capture,
+  noteTitle,
+  onOpen,
+  onRetry,
+  retrying,
+  retryError,
+  onDismiss,
+}: FilingItemProps) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const stuck = isStuck(capture);
   // A stuck capture gets the same way out a failed one does: retrying is safe
   // (the backend resumes from whichever artifact already exists) and dismissing
   // stops the row sitting at the top of the library forever.
   const actionable = failed || stuck;
+  const retryable = failed || stuck;
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
   const stage = STAGES[stageIndex(capture.status)];
+  const duration =
+    typeof capture.duration_ms === 'number' && capture.duration_ms > 0
+      ? formatDurationShort(capture.duration_ms)
+      : null;
+
+  if (done && capture.note_id) {
+    /*
+     * A receipt is one control. The row itself opens the note — with a
+     * chevron, as every row that leads somewhere has — and the × dismisses
+     * it; the "Open the note" pill under a bare "Filed" was a second thing to
+     * find on a row whose whole point is the note. The hidden words keep the
+     * button's name saying what it does after what it is.
+     */
+    return (
+      <article className="filing-row filing-row--receipt" data-status={capture.status}>
+        <button type="button" className="filing-row__receipt" onClick={onOpen}>
+          <span className="filing-row__title">{describe(capture, stuck, noteTitle)}</span>
+          {duration && <span className="filing-row__duration numeric">{duration}</span>}
+          <Icon name="chevron-right" size={18} className="filing-row__receipt-icon" />
+          <span className="visually-hidden">Open the note</span>
+        </button>
+        <button
+          type="button"
+          className="filing-row__dismiss"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+        >
+          <Icon name="close" size={18} />
+        </button>
+      </article>
+    );
+  }
 
   /*
    * The stage strip is for a capture that is still moving. It used to render
@@ -425,29 +483,18 @@ function FilingItem({ capture, onOpen, onRetry, retrying, retryError, onDismiss 
     <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
       <div className="filing-row__head">
         <p className="filing-row__title" role="status" aria-live="polite">
-          {describe(capture, stuck)}
+          {describe(capture, stuck, noteTitle)}
           {running && stage && !stuck && (
             <span className="visually-hidden">{` — ${stage.label}`}</span>
           )}
         </p>
-        {typeof capture.duration_ms === 'number' && capture.duration_ms > 0 && (
-          <span className="filing-row__duration numeric">
-            {formatDurationShort(capture.duration_ms)}
-          </span>
-        )}
+        {duration && <span className="filing-row__duration numeric">{duration}</span>}
       </div>
 
       {running && <FilingStages capture={capture} />}
 
       {(done || actionable || capture.status === 'no_content') && (
         <div className="filing-row__actions">
-          {done && capture.note_id && (
-            <button type="button" className="filing-row__action" onClick={onOpen}>
-              <span>Open the note</span>
-              <Icon name="back" size={16} className="filing-row__open-icon" />
-            </button>
-          )}
-
           {/*
             A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
             capture is never a dead end with a toast. Also offered once a
@@ -456,7 +503,7 @@ function FilingItem({ capture, onOpen, onRetry, retrying, retryError, onDismiss 
             exists, so it is safe to call on a capture that never actually
             failed, only stalled.
           */}
-          {actionable && (
+          {retryable && (
             <button
               type="button"
               className="filing-row__action"

@@ -14,6 +14,7 @@ import {
   useNote,
 } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
+import { cacheNoteList } from '@/offline/notesCache.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { FILED_ROWS_MAX, FilingRow } from './FilingRow.tsx';
@@ -359,6 +360,39 @@ describe('a failed capture has a Retry that is actually wired', () => {
     ]);
     expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
   });
+
+  it('says which note it was filed into, and the whole receipt opens it', async () => {
+    /*
+     * Two receipts stacked read "Filed" and "Filed". The note is on the
+     * capture and its title is on the device whenever the library has listed
+     * it, so the receipt names it — and is itself the control, with a
+     * chevron, rather than carrying an "Open the note" pill under a bare word.
+     */
+    await cacheNoteList([
+      {
+        id: 'roof-repair',
+        title: 'Roof repair',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 3,
+        archived: false,
+      },
+    ]);
+    const user = userEvent.setup();
+    mount([
+      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
+    ]);
+
+    const receipt = await screen.findByRole('button', { name: /filed into “roof repair”/i });
+    expect(receipt).toHaveAccessibleName(/open the note/i);
+    expect(screen.queryByText('Filed')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+
+    // Opening is acting on the receipt: it leaves with the navigation.
+    await user.click(receipt);
+    await waitFor(() => {
+      expect(screen.queryByText(/^Filed/)).toBeNull();
+    });
+  });
 });
 
 describe('a capture that never left "uploaded" is not a permanent dead end', () => {
@@ -400,6 +434,7 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     await screen.findByText('Filing your recording');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
+
 });
 
 describe('a terminal capture is something the user can act on', () => {
@@ -679,11 +714,11 @@ describe('what the one poll keeps and what it drops', () => {
       }),
     ]);
 
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(await screen.findByText(/^Filed/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
 
     await waitFor(() => {
-      expect(screen.queryByText('Filed')).toBeNull();
+      expect(screen.queryByText(/^Filed/)).toBeNull();
     });
   });
 
@@ -705,7 +740,7 @@ describe('what the one poll keeps and what it drops', () => {
       }),
     ]);
 
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(await screen.findByText(/^Filed/)).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /open the note/i })).toHaveLength(1);
   });
 });
@@ -729,7 +764,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
 
     await user.click(await screen.findByRole('button', { name: /open the note/i }));
     await waitFor(() => {
-      expect(screen.queryByText('Filed')).toBeNull();
+      expect(screen.queryByText(/^Filed/)).toBeNull();
     });
 
     // Back to the library: a fresh mount, reading the device.
@@ -776,7 +811,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
       expect(fetchImpl.mock.calls.filter(([input]) => String(input).includes('/v1/captures')).length)
         .toBeGreaterThan(1);
     });
-    expect(screen.queryByText('Filed')).toBeNull();
+    expect(screen.queryByText(/^Filed/)).toBeNull();
     expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
   });
 
@@ -802,7 +837,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     const [first] = await screen.findAllByRole('button', { name: 'Dismiss' });
     await user.click(first as HTMLElement);
     await waitFor(() => {
-      expect(screen.queryByText('Filed')).toBeNull();
+      expect(screen.queryByText(/^Filed/)).toBeNull();
     });
     expect(screen.getByText('Timed out')).toBeInTheDocument();
   });
@@ -942,12 +977,12 @@ describe('a capture that has just been filed refreshes its note', () => {
     const { refetchCaptures, noteReads } = mountWithPolls([[filed], [filed]]);
 
     await screen.findByText('body: before');
-    await screen.findByText('Filed');
+    await screen.findByText(/^Filed/);
     await refetchCaptures();
 
     // Same answer twice; nothing changed, nothing to refresh.
     await waitFor(() => {
-      expect(screen.getByText('Filed')).toBeInTheDocument();
+      expect(screen.getByText(/^Filed/)).toBeInTheDocument();
     });
     expect(noteReads()).toBe(1);
   });
@@ -998,7 +1033,7 @@ describe('a recording made into a note is the note\'s to show, not the library\'
       capture({ id: 'srv-routed', status: 'appended', note_id: 'roof-repair', targeted: false }),
     ]);
 
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(await screen.findByText(/^Filed/)).toBeInTheDocument();
     expect(document.querySelectorAll('.filing-row')).toHaveLength(1);
     expect(screen.queryByText(/more filed/)).toBeNull();
   });

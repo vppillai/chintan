@@ -273,3 +273,45 @@
   font-size: var(--font-size-xs);
   color: var(--color-faint);
 }
+
+/* --------------------------------------------------------------------------
+   Filing row additions — the receipt; the rest of the row is in shell.css
+   -------------------------------------------------------------------------- */
+
+/* One control wide, with the × in its own column. */
+.filing-row--receipt {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding-block: var(--space-1);
+  padding-inline-end: var(--space-1);
+}
+
+.filing-row__receipt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding-block: var(--space-2);
+  text-align: start;
+  color: var(--color-ink);
+}
+
+.filing-row__receipt .filing-row__title {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.filing-row__receipt-icon {
+  flex: none;
+  color: var(--color-faint);
+}
+
+.filing-row__dismiss {
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+  color: var(--color-muted);
+}
