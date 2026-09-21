@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -28,6 +30,17 @@ import (
 )
 
 var lambdaAdapter *httpadapter.HandlerAdapterV2
+
+// warmProbeTenant is the partition the DynamoDB warm-up reads. Like the
+// readiness probe's, it is an id no Cognito subject can take — subjects are
+// UUIDs — so the read cannot touch a real tenant's data; the row does not
+// exist and GetSettings answers the defaults.
+const warmProbeTenant = "__warmup__"
+
+// warmTimeout bounds the warm-up. Lambda allows the init phase ten seconds;
+// a dependency that has not answered in five is one the first request will
+// have to wait for anyway.
+const warmTimeout = 5 * time.Second
 
 func init() {
 	// Structured logging is installed before anything can log, so no startup
@@ -119,6 +132,31 @@ func init() {
 	// and the counter that adds every authenticated request to the same
 	// month and day rows the worker's breaker writes provider spend to.
 	usageStore := usage.NewDynamo(dynamoClient, tableName)
+
+	// The first request on a fresh container paid about 270 ms inside the
+	// handler — the JWKS fetch and the DynamoDB connection both opened there,
+	// not in init — and Home fans out five GETs, so an idle launch paid it on
+	// every container it spawned (review 2026-09-21, T26). Both are opened
+	// here instead, concurrently, before the first invocation. A failure is
+	// logged, not fatal: the first request then pays what it always did.
+	warmCtx, cancelWarm := context.WithTimeout(ctx, warmTimeout)
+	defer cancelWarm()
+	var warm sync.WaitGroup
+	warm.Add(2)
+	go func() {
+		defer warm.Done()
+		if err := verifier.Warm(warmCtx); err != nil {
+			slog.Warn("token verifier warm-up failed; the first request fetches the key set", slog.String("error", err.Error()))
+		}
+	}()
+	go func() {
+		defer warm.Done()
+		// One GetItem: the role has item operations, not DescribeTable.
+		if _, err := store.GetSettings(warmCtx, warmProbeTenant); err != nil {
+			slog.Warn("store warm-up failed; the first request opens the connection", slog.String("error", err.Error()))
+		}
+	}()
+
 	router := handler.New(handler.Deps{
 		Notes:          notesService,
 		Settings:       settingsService,
@@ -138,6 +176,7 @@ func init() {
 		SpendCapMicros: spendCapMicros,
 	})
 	lambdaAdapter = httpadapter.NewV2(router)
+	warm.Wait()
 }
 
 func logLevel() slog.Level {

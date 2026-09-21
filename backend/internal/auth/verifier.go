@@ -71,6 +71,17 @@ func NewCognitoVerifier(issuer, clientID string, hc *http.Client) (*CognitoVerif
 	}, nil
 }
 
+// Warm fetches the issuer's key set before the first request needs it.
+//
+// The first Verify on a fresh Lambda container otherwise pays the JWKS round
+// trip inside the request — about a quarter of a second, and Home fans out
+// five GETs, so an idle launch pays it on every container it spawns (review
+// 2026-09-21, T26). cmd/api calls it from init, concurrently with the store's
+// warm-up. A failure is not fatal: the first Verify fetches as it always did.
+func (v *CognitoVerifier) Warm(ctx context.Context) error {
+	return v.keys.refresh(ctx, v.keys.generation())
+}
+
 // NewCognitoIssuer builds the issuer URL from a region and user pool id.
 func NewCognitoIssuer(region, userPoolID string) string {
 	region = strings.TrimSpace(region)
