@@ -188,15 +188,22 @@ function SheetPanel({
 }
 
 /**
- * "6 Aug · Ridge tiles on the south slope have slipped" — the row's own time
- * and the first 40 characters of the note's text, a checklist's as its open
- * items rather than raw `- [ ]` syntax. Exported for the test.
+ * "6 Aug · Ridge tiles on the south slope have slip… · house" — the row's own
+ * time, the first 40 characters of the note's text (a checklist's as its open
+ * items rather than raw `- [ ]` syntax), then the tags the line showed before
+ * T42, which still tell notes apart. Exported for the test.
  */
-export function optionMeta(note: Pick<NoteWire, 'updated_at' | 'snippet' | 'kind'>): string {
+export function optionMeta(
+  note: Pick<NoteWire, 'updated_at' | 'snippet' | 'kind' | 'tags'>,
+): string {
   const snippet = note.snippet ?? '';
   const text = note.kind === 'checklist' ? openItemsText(parseChecklist(snippet)) : snippet;
   const cut = text.trim().replace(/\s+/g, ' ');
-  return [formatRowTime(note.updated_at), cut.length > 40 ? `${cut.slice(0, 40).trimEnd()}…` : cut]
+  return [
+    formatRowTime(note.updated_at),
+    cut.length > 40 ? `${cut.slice(0, 40).trimEnd()}…` : cut,
+    ...(note.tags ?? []),
+  ]
     .filter(Boolean)
     .join(' · ');
 }
