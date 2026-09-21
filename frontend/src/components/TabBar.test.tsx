@@ -3,6 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
+import { queryKeys } from '@/api/queries.ts';
+import type { NoteDetailWire } from '@/api/schema.ts';
+import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
+
 import { PATHS } from './Icon.tsx';
 import { TabBar } from './TabBar.tsx';
 
@@ -11,14 +15,28 @@ function Where() {
   return <output>{pathname + search}</output>;
 }
 
-function mount(path: string) {
+/** With `note`, the open note is in the cache as the screen would have it, and answered the same. */
+function mount(path: string, note?: NoteDetailWire) {
+  const queryClient = testQueryClient();
+  if (note) queryClient.setQueryData(queryKeys.note(note.id), note);
+  const api = testApiContext(
+    note
+      ? async () =>
+          new Response(JSON.stringify(note), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+      : undefined,
+  );
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <TabBar />
-      <Routes>
-        <Route path="*" element={<Where />} />
-      </Routes>
-    </MemoryRouter>,
+    <TestProviders api={api} queryClient={queryClient}>
+      <MemoryRouter initialEntries={[path]}>
+        <TabBar />
+        <Routes>
+          <Route path="*" element={<Where />} />
+        </Routes>
+      </MemoryRouter>
+    </TestProviders>,
   );
 }
 
@@ -64,5 +82,21 @@ describe('the record button', () => {
     expect(screen.getByText('Into this note')).toBeInTheDocument();
     await userEvent.click(record);
     expect(screen.getByRole('status')).toHaveTextContent('/capture?note=roof-repair');
+  });
+
+  it('records into a new note from an archived one, which the server would refuse', async () => {
+    const fence: NoteDetailWire = {
+      ...TEST_NOTES[0]!,
+      id: 'old-fence',
+      title: 'Old fence',
+      archived: true,
+      body: '',
+      captures: [],
+    };
+    mount('/notes/old-fence', fence);
+    const record = screen.getByRole('button', { name: 'Record' });
+    expect(screen.queryByText('Into this note')).toBeNull();
+    await userEvent.click(record);
+    expect(screen.getByRole('status')).toHaveTextContent(/^\/capture$/);
   });
 });
