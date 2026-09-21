@@ -165,10 +165,23 @@ export function TargetChooser({
 /**
  * What tells two notes with the same title apart: when it was last touched
  * and how it begins, cut at forty characters so the row stays one line.
+ *
+ * Characters as a reader counts them, not code points. In Malayalam, Tamil or
+ * Hindi the fortieth code point is a vowel sign or a virama as often as a
+ * letter, and a cut there strands the sign — a dotted circle on screen, a
+ * broken syllable in the option's name — or takes it off its consonant. The
+ * cut is marked, because the name is read where the CSS ellipsis is not.
  */
-function optionMeta(note: NoteWire): string {
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const META_SNIPPET_GRAPHEMES = 40;
+
+export function optionMeta(note: NoteWire): string {
   const when = formatRowTime(note.updated_at);
-  const snippet = [...(note.snippet ?? '').trim()].slice(0, 40).join('');
+  const graphemes = Array.from(GRAPHEMES.segment((note.snippet ?? '').trim()), (s) => s.segment);
+  const snippet =
+    graphemes.length > META_SNIPPET_GRAPHEMES
+      ? `${graphemes.slice(0, META_SNIPPET_GRAPHEMES).join('')}…`
+      : graphemes.join('');
   return [when, snippet].filter(Boolean).join(' · ');
 }
 

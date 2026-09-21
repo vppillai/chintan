@@ -10,6 +10,7 @@ import { CaptureScreen, captureReturnPath } from './CaptureScreen.tsx';
 import { INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
+import { optionMeta } from './TargetChooser.tsx';
 
 /* ---------------------------------------------------------------------------
    A recorder that produces one chunk and nothing else. jsdom has no media
@@ -741,6 +742,24 @@ describe('the target chooser', () => {
     await user.click(screen.getByRole('button', { name: /into reading list/i }));
     await user.click(screen.getByRole('button', { name: 'New note' }));
     expect(useCaptureStore.getState().model.noteId).toBeNull();
+  });
+
+  it('cuts the meta snippet at a grapheme and marks the cut', () => {
+    // Thirty-nine letters and then കാ (ka with the aa sign): the fortieth
+    // code point is the vowel sign, and a code-point cut left a bare ക on
+    // screen and in the option's name.
+    const meta = (snippet: string) =>
+      optionMeta({
+        id: 'n',
+        title: 'T',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 1,
+        archived: false,
+        snippet,
+      });
+    expect(meta(`${'x'.repeat(39)}കാ and on`)).toMatch(/xകാ…$/);
+    expect(meta('short')).toMatch(/· short$/);
+    expect(meta('')).not.toContain('·');
   });
 });
 
