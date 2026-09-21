@@ -70,6 +70,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrInvalidTheme),
 		errors.Is(err, service.ErrInvalidLanguage),
 		errors.Is(err, service.ErrInvalidNoteCleanMode),
+		errors.Is(err, service.ErrChecklistCleanMode),
 		errors.Is(err, service.ErrInvalidNoteKind),
 		errors.Is(err, service.ErrAskQuestionRequired),
 		errors.Is(err, service.ErrAskQuestionTooLong),

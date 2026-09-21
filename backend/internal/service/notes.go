@@ -462,8 +462,10 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		note.Kind = *updates.Kind
 	}
 	if updates.CleanMode != nil {
-		if !model.ValidNoteCleanMode(*updates.CleanMode) {
-			return model.NoteIndex{}, ErrInvalidNoteCleanMode
+		// Checked against the kind as this request leaves it, so a note can
+		// become a checklist and take tasks in one PATCH.
+		if err := CheckCleanMode(note, *updates.CleanMode); err != nil {
+			return model.NoteIndex{}, err
 		}
 		note.CleanMode = *updates.CleanMode
 	}

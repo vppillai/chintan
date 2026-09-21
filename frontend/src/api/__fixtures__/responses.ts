@@ -248,6 +248,7 @@ export const noteDetailChecklist: NoteDetailWire = {
   "body": "- [x] passport\n- [ ] charger",
   "captures": [],
   "cleaned": null,
+  "cleaned_mode": "tasks",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
@@ -266,6 +267,7 @@ export const notesPageChecklists: Page<NoteWire> = {
       "aliases": [],
       "archived": false,
       "auto_clean": false,
+      "cleaned_mode": "tasks",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "checklist",
@@ -277,6 +279,31 @@ export const notesPageChecklists: Page<NoteWire> = {
       "version": 2
     }
   ]
+};
+
+/** GET /v1/notes/{noteId} → 200 for a checklist with its cleaned view. cleaned.mode is tasks and cleaned.body is task-list lines only; cleaned_mode reads tasks for every checklist. */
+export const noteDetailChecklistCleaned: NoteDetailWire = {
+  "aliases": [],
+  "archived": false,
+  "auto_clean": false,
+  "body": "- [x] passport\n- [ ] charger",
+  "captures": [],
+  "cleaned": {
+    "body": "- [x] passport\n- [ ] charger\n- [ ] charging cable",
+    "generated_at": "2026-01-01T00:00:00.000000000Z",
+    "mode": "tasks",
+    "stale": false
+  },
+  "cleaned_mode": "tasks",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "id": "fixture-id",
+  "kind": "checklist",
+  "purge_after": null,
+  "snippet": "- [x] passport\n- [ ] charger",
+  "tags": [],
+  "title": "Packing",
+  "updated_at": "2026-01-01T00:00:00.000000000Z",
+  "version": 3
 };
 
 /** POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error. */

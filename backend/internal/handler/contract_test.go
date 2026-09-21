@@ -237,6 +237,21 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("notesPageChecklists", "Page<NoteWire>",
 		"GET /v1/notes?kind=checklist → 200. Only the checklists; the filter is applied after the page, like tag, so a page can be short with cursor set.",
 		h.do(t, http.MethodGet, "/v1/notes?kind=checklist", contractUser, nil))
+	// The checklist's cleaned view: tasks mode, task-list lines and nothing
+	// else. Seeded like noteDetailCleaned, since the API never writes the view.
+	storedList, err := h.store.GetNote(context.Background(), contractUser, checklist.ID)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	storedList.CleanedBody = "- [x] passport\n- [ ] charger\n- [ ] charging cable"
+	storedList.CleanedMode = model.NoteCleanTasks
+	storedList.CleanedAt = contractTime
+	if _, err := h.store.PutNote(context.Background(), contractUser, storedList); err != nil {
+		t.Fatalf("seed the tasks view: %v", err)
+	}
+	add("noteDetailChecklistCleaned", "NoteDetailWire",
+		"GET /v1/notes/{noteId} → 200 for a checklist with its cleaned view. cleaned.mode is tasks and cleaned.body is task-list lines only; cleaned_mode reads tasks for every checklist.",
+		h.do(t, http.MethodGet, "/v1/notes/"+checklist.ID, contractUser, nil))
 	add("noteCleanQueued", "NoteCleanQueuedWire",
 		"POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error.",
 		h.do(t, http.MethodPost, "/v1/notes/"+cleanedNote.ID+"/clean", contractUser, map[string]any{"mode": "polished"}))

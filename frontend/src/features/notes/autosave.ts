@@ -12,6 +12,8 @@
  *    automatic clobber in either direction.
  */
 
+import type { CleanedMode } from '@/api/schema.ts';
+
 export type SaveState =
   | 'clean'
   /** Edited, not yet sent. */
@@ -56,7 +58,7 @@ export interface NoteDraft {
    * cleaned view to read it from.
    */
   auto_clean?: boolean;
-  cleaned_mode?: 'polished' | 'structured';
+  cleaned_mode?: CleanedMode;
 }
 
 export interface EditorModel {

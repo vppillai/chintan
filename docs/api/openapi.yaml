@@ -324,8 +324,15 @@ paths:
 
         The body is optional. `mode` is `polished` (coherent prose, light
         touch on wording) or `structured` (Markdown with short headings and
-        lists); absent, the note's own `cleaned_mode` is used, else
-        `structured`. A second request while one is queued is accepted: in the
+        lists) for a plain note, and `tasks` — the only mode for a checklist:
+        the items rewritten as granular, actionable tasks, one item holding
+        several actions split into one per action, done items kept verbatim
+        and in place, nothing invented or merged; the result is task-list
+        lines and nothing else (a model answering in prose is recorded as
+        `cleaned.error` "the cleanup model returned nothing usable"; at most
+        500 items). Absent, the note's own `cleaned_mode` is used, else
+        `structured` (`tasks` for a checklist). A mode that does not fit the
+        kind is 400 (see `NoteCleanRequest`). A second request while one is queued is accepted: in the
         same mode it joins the run in flight rather than starting another; in the
         other mode it supersedes it, and the superseded run stores nothing.
 
@@ -1171,11 +1178,13 @@ components:
             bounded by the daily spend cap.
         cleaned_mode:
           type: string
-          enum: [polished, structured]
+          enum: [polished, structured, tasks]
           description: |
             The mode an automatic or unspecified clean runs in. Absent means
             `structured`. Settable through `NoteUpdate`. Distinct from
             `cleaned.mode`, which is the mode the stored view was generated in.
+            A checklist always reads `tasks` — the only mode it cleans in
+            (see `NoteUpdate.cleaned_mode`).
 
     NoteCleaned:
       type: object
@@ -1195,8 +1204,11 @@ components:
             before any view existed (`error` says why).
         mode:
           type: string
-          enum: [polished, structured]
-          description: The mode `body` was generated in, or of the failed attempt when there is no body.
+          enum: [polished, structured, tasks]
+          description: |
+            The mode `body` was generated in, or of the failed attempt when
+            there is no body. In `tasks` mode `body` is a checklist body: one
+            `- [ ] ` / `- [x] ` item per line and nothing else.
         generated_at:
           type: string
           format: date-time
@@ -1221,15 +1233,20 @@ components:
       properties:
         mode:
           type: string
-          enum: [polished, structured]
-          description: Absent means the note's `cleaned_mode`, else `structured`.
+          enum: [polished, structured, tasks]
+          description: |
+            Absent means the note's `cleaned_mode`, else `structured` (`tasks`
+            for a checklist). The mode must fit the note's kind: for a
+            checklist anything but `tasks` is 400 `cleaned_mode must be tasks
+            for a checklist`; for a plain note `tasks` is 400 `cleaned_mode
+            must be polished or structured`.
 
     NoteCleanQueued:
       type: object
       required: [status, mode]
       properties:
         status: { type: string, enum: [queued] }
-        mode: { type: string, enum: [polished, structured] }
+        mode: { type: string, enum: [polished, structured, tasks] }
 
     NoteDetail:
       allOf:
@@ -1310,12 +1327,18 @@ components:
           description: See `Note.auto_clean`.
         cleaned_mode:
           type: string
-          enum: [polished, structured]
+          enum: [polished, structured, tasks]
           description: |
             See `Note.cleaned_mode`. Defaults to `structured`. This is the
             preference for future runs; it does not regenerate the view — use
             `POST /v1/notes/{noteId}/clean` for that. The view itself
             (`cleaned.body`) is read-only and cannot be sent here.
+
+            The mode must fit the note's kind as this request leaves it: a
+            checklist takes `tasks` and nothing else (400 `cleaned_mode must be
+            tasks for a checklist`), a plain note takes `polished` or
+            `structured` (400 `cleaned_mode must be polished or structured`).
+            `{kind: checklist, cleaned_mode: tasks}` in one request is fine.
 
     NotePage:
       type: object

@@ -136,7 +136,7 @@ export interface NoteWire {
 
 export type NoteKind = 'note' | 'checklist';
 
-export type NoteCleanMode = 'polished' | 'structured';
+export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
 
 /**
  * The whole-note cleaned view: one pass of the cleanup model over the entire

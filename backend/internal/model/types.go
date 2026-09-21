@@ -48,13 +48,21 @@ const (
 	// NoteCleanStructured rewrites the body as an organised Markdown document:
 	// short headings, lists for enumerations, filler and repetition removed.
 	NoteCleanStructured NoteCleanMode = "structured"
-	// DefaultNoteCleanMode is what a note cleans in until it says otherwise.
+	// NoteCleanTasks rewrites a checklist as granular, actionable tasks: an
+	// item holding several actions becomes one item per action, done items are
+	// kept verbatim and in place, order is otherwise kept, nothing is invented
+	// or merged. It is the only mode a checklist cleans in and means nothing
+	// for a plain note (service.CheckCleanMode).
+	NoteCleanTasks NoteCleanMode = "tasks"
+	// DefaultNoteCleanMode is what a plain note cleans in until it says
+	// otherwise.
 	DefaultNoteCleanMode = NoteCleanStructured
 )
 
-// ValidNoteCleanMode reports whether m names a whole-note cleanup mode.
+// ValidNoteCleanMode reports whether m names a whole-note cleanup mode. Which
+// modes a given note may use is service.CheckCleanMode's question.
 func ValidNoteCleanMode(m NoteCleanMode) bool {
-	return m == NoteCleanPolished || m == NoteCleanStructured
+	return m == NoteCleanPolished || m == NoteCleanStructured || m == NoteCleanTasks
 }
 
 // Bounds on the whole-note cleaned view. Both exist to keep the note row

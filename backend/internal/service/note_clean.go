@@ -36,8 +36,29 @@ import (
 // The LLM call itself never runs on the request path. The API and the request
 // half of the capture service only ever invoke the worker asynchronously.
 
-// ErrInvalidNoteCleanMode rejects a mode outside polished and structured.
+// ErrInvalidNoteCleanMode rejects a mode a plain note cannot clean in: anything
+// outside polished and structured, tasks included.
 var ErrInvalidNoteCleanMode = errors.New("cleaned_mode must be polished or structured")
+
+// ErrChecklistCleanMode rejects any mode but tasks for a checklist.
+var ErrChecklistCleanMode = errors.New("cleaned_mode must be tasks for a checklist")
+
+// CheckCleanMode reports whether mode may be stored for, or run over, n. A
+// checklist cleans in tasks and nothing else — the other modes would rewrite
+// its items as prose or a document — and tasks means nothing for a plain
+// note. Both PATCH cleaned_mode and POST …/clean answer these as 400.
+func CheckCleanMode(n model.NoteIndex, mode model.NoteCleanMode) error {
+	if n.Kind == model.NoteKindChecklist {
+		if mode != model.NoteCleanTasks {
+			return ErrChecklistCleanMode
+		}
+		return nil
+	}
+	if !model.ValidNoteCleanMode(mode) || mode == model.NoteCleanTasks {
+		return ErrInvalidNoteCleanMode
+	}
+	return nil
+}
 
 // MarkCleanedStale records that the body has changed since the cleaned view
 // was generated. A note with no view has nothing to be stale.
@@ -47,9 +68,17 @@ func MarkCleanedStale(n *model.NoteIndex) {
 	}
 }
 
-// EffectiveCleanMode is the mode an automatic or unspecified clean of n runs in.
+// EffectiveCleanMode is the mode an automatic or unspecified clean of n runs
+// in: tasks for a checklist, whatever preference the note held before it
+// became one; otherwise the note's own, else the default. A stored tasks
+// preference on a plain note — left behind when a checklist was switched back
+// — is ignored rather than run, and comes back into force if the note becomes
+// a checklist again.
 func EffectiveCleanMode(n model.NoteIndex) model.NoteCleanMode {
-	if model.ValidNoteCleanMode(n.CleanMode) {
+	if n.Kind == model.NoteKindChecklist {
+		return model.NoteCleanTasks
+	}
+	if CheckCleanMode(n, n.CleanMode) == nil {
 		return n.CleanMode
 	}
 	return model.DefaultNoteCleanMode
@@ -87,8 +116,8 @@ func (s *NotesService) RequestClean(ctx context.Context, userID, noteID string, 
 	if mode == "" {
 		mode = EffectiveCleanMode(note)
 	}
-	if !model.ValidNoteCleanMode(mode) {
-		return "", ErrInvalidNoteCleanMode
+	if err := CheckCleanMode(note, mode); err != nil {
+		return "", err
 	}
 	if s.worker == nil {
 		return "", ErrCaptureWorkerUnavailable

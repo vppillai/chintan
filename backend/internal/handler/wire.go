@@ -100,9 +100,15 @@ func cleanedOf(n model.NoteIndex) *NoteCleaned {
 	if n.CleanedBody == "" && n.CleanedError == "" {
 		return nil
 	}
+	// The mode the view WAS generated in, read from the row; a view written
+	// before the mode was recorded reads as the default.
+	mode := n.CleanedMode
+	if !model.ValidNoteCleanMode(mode) {
+		mode = model.DefaultNoteCleanMode
+	}
 	out := &NoteCleaned{
 		Body:        n.CleanedBody,
-		Mode:        string(service.EffectiveCleanMode(model.NoteIndex{CleanMode: n.CleanedMode})),
+		Mode:        string(mode),
 		GeneratedAt: n.CleanedAt,
 		Stale:       n.CleanedStale,
 	}
@@ -138,8 +144,10 @@ func noteOf(n model.NoteIndex) Note {
 		Language:  n.Language,
 		AutoClean: n.AutoClean,
 	}
-	if model.ValidNoteCleanMode(n.CleanMode) {
-		out.CleanedMode = string(n.CleanMode)
+	// A checklist always says tasks; a plain note says its stored preference,
+	// which for a stale tasks preference is the default it actually runs in.
+	if n.Kind == model.NoteKindChecklist || model.ValidNoteCleanMode(n.CleanMode) {
+		out.CleanedMode = string(service.EffectiveCleanMode(n))
 	}
 	if out.Aliases == nil {
 		out.Aliases = []string{}
