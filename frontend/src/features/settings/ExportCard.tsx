@@ -53,10 +53,17 @@ export async function exportBlob(
   return response.blob();
 }
 
-/** `chintan-notes-2026-09-21.json`: the app's name, so two instances' files tell apart. */
+/**
+ * `chintan-notes-2026-09-21.json`: the app's name, so two instances' files
+ * tell apart, and the day where the person is — the UTC day named a file
+ * exported late in the evening for tomorrow.
+ */
 export function exportFilename(now: Date = new Date()): string {
   const slug = config.appName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  return `${slug}-notes-${now.toISOString().slice(0, 10)}.json`;
+  const day = [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((part) => String(part).padStart(2, '0'))
+    .join('-');
+  return `${slug}-notes-${day}.json`;
 }
 
 /**
@@ -79,6 +86,8 @@ export function ExportCard() {
       <DownloadButton
         className="you-row you-row--action"
         label="Download my notes (JSON)"
+        // Most of the wait is the server building the file, before any download starts.
+        busyLabel="Preparing your file…"
         blob={() => exportBlob(api)}
         filename={() => exportFilename()}
       />

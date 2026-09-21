@@ -1,9 +1,10 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ChintanApi } from '@/api/endpoints.ts';
 import type { ExportJobWire } from '@/api/schema.ts';
-import { TestProviders } from '@/test/providers.tsx';
+import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { EXPORT_POLL_MS, ExportCard, exportBlob, exportFilename } from './ExportCard.tsx';
 
@@ -57,7 +58,8 @@ describe('exporting the notes', () => {
       /export failed/i,
     );
 
-    // A clock that jumps past the ceiling on the first poll.
+    // A clock that steps a minute per reading: the first check sees 61 s and
+    // polls once more, the second sees 122 s and gives up.
     let clock = 0;
     const stuck = apiWith(['running', 'running', 'running']);
     await expect(
@@ -71,8 +73,13 @@ describe('exporting the notes', () => {
     ).rejects.toThrow(/did not finish in time/i);
   });
 
-  it('names the file after the app and the day', () => {
-    expect(exportFilename(new Date('2026-09-21T10:00:00Z'))).toBe('chintan-notes-2026-09-21.json');
+  it('names the file after the app and the local day', () => {
+    // Local components, so the expectation holds in every zone the test runs in.
+    expect(exportFilename(new Date(2026, 8, 21, 10, 0))).toBe('chintan-notes-2026-09-21.json');
+    // Late evening is still today here, whatever day it is in UTC.
+    expect(exportFilename(new Date(2026, 8, 21, 23, 30))).toBe('chintan-notes-2026-09-21.json');
+    // And the month and day are always two digits.
+    expect(exportFilename(new Date(2026, 0, 5, 9, 0))).toBe('chintan-notes-2026-01-05.json');
   });
 
   it('is one row on You, through the same download button as every other save', () => {
@@ -84,5 +91,20 @@ describe('exporting the notes', () => {
     expect(screen.getByRole('region', { name: 'Your data' })).toBeInTheDocument();
     const row = screen.getByRole('button', { name: 'Download my notes (JSON)' });
     expect(row).toHaveClass('you-row');
+  });
+
+  it('says the file is being prepared while the job runs, not that it is downloading', async () => {
+    const user = userEvent.setup();
+    // A job that never answers: the row stays in its busy state for the assertion.
+    const api = {
+      startExport: () => new Promise<ExportJobWire>(() => undefined),
+    } as unknown as ChintanApi;
+    render(
+      <TestProviders api={{ ...testApiContext(), api }}>
+        <ExportCard />
+      </TestProviders>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Download my notes (JSON)' }));
+    expect(screen.getByRole('button', { name: 'Preparing your file…' })).toBeDisabled();
   });
 });
