@@ -140,6 +140,13 @@ if [ "$HAS_BOOTSTRAP" = "1" ]; then
     log ""
     info "tearing down $CHINTAN_BOOTSTRAP_STACK"
 
+    # setup.sh protects the bootstrap stack (protect_stack); the typed
+    # confirmation above is the deliberate step past that. Off first, before
+    # the buckets are emptied, so a denial destroys nothing.
+    info "disabling termination protection on $CHINTAN_BOOTSTRAP_STACK"
+    aws_cli cloudformation update-termination-protection \
+        --no-enable-termination-protection --stack-name "$CHINTAN_BOOTSTRAP_STACK" >/dev/null
+
     # Only the buckets this stack owns. assert_not_protected_bucket inside
     # empty_s3_bucket refuses the CloudTrail bucket even if something one day
     # imports it into a stack.
@@ -148,10 +155,6 @@ if [ "$HAS_BOOTSTRAP" = "1" ]; then
         empty_s3_bucket "$bucket"
     done < <(stack_resources_of_type "$CHINTAN_BOOTSTRAP_STACK" 'AWS::S3::Bucket')
 
-    # The owner may have protected the bootstrap stack by hand (round-3 T25);
-    # the typed confirmation above is the deliberate step past that.
-    aws_cli cloudformation update-termination-protection \
-        --no-enable-termination-protection --stack-name "$CHINTAN_BOOTSTRAP_STACK" >/dev/null
     aws_cli cloudformation delete-stack --stack-name "$CHINTAN_BOOTSTRAP_STACK"
     aws_cli cloudformation wait stack-delete-complete --stack-name "$CHINTAN_BOOTSTRAP_STACK"
     ok "$CHINTAN_BOOTSTRAP_STACK deleted"

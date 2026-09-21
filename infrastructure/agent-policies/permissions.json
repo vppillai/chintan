@@ -8,6 +8,7 @@
         "cloudformation:CreateStack",
         "cloudformation:UpdateStack",
         "cloudformation:DeleteStack",
+        "cloudformation:UpdateTerminationProtection",
         "cloudformation:Describe*",
         "cloudformation:GetTemplate",
         "cloudformation:List*",

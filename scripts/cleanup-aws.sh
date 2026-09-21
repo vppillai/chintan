@@ -146,6 +146,21 @@ confirm_destructive "DELETE ${STACK}" \
     "DynamoDB point-in-time recovery does not survive table deletion."
 
 # ---------------------------------------------------------------------------
+# Termination protection
+# ---------------------------------------------------------------------------
+#
+# protect_stack (scripts/lib/common.sh) turns this on for every stack the
+# scripts create; this script is the deliberate path past it, after the typed
+# confirmation above. It comes off FIRST, before a bucket is emptied or the
+# pool's deletion protection is dropped, so a principal without
+# cloudformation:UpdateTerminationProtection fails here with nothing destroyed
+# rather than after the irreversible steps.
+
+info "disabling termination protection on $STACK"
+aws_cli cloudformation update-termination-protection \
+    --no-enable-termination-protection --stack-name "$STACK" >/dev/null
+
+# ---------------------------------------------------------------------------
 # Empty buckets before the stack delete
 # ---------------------------------------------------------------------------
 #
@@ -183,10 +198,6 @@ done
 # ---------------------------------------------------------------------------
 
 info "deleting stack $STACK"
-# deploy.sh enables termination protection on every stack it creates; this
-# script is the deliberate path past it, after the typed confirmation above.
-aws_cli cloudformation update-termination-protection \
-    --no-enable-termination-protection --stack-name "$STACK" >/dev/null
 aws_cli cloudformation delete-stack --stack-name "$STACK"
 aws_cli cloudformation wait stack-delete-complete --stack-name "$STACK"
 ok "stack deleted"
