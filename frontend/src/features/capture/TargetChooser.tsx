@@ -61,11 +61,14 @@ export function TargetChooser({
   const listId = useId();
   const api = useApi();
   const rootRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLButtonElement>(null);
 
   /*
    * The sheet is an overlay over the controls (finding 10), so a tap beside
    * it or Escape closes it, as the ⋮ menu's does; before, the pill was the
-   * only way to put it away.
+   * only way to put it away. Escape also hands focus back to the pill: the
+   * option it was on is unmounted, and focus would otherwise fall to the
+   * body and the next Tab start from the top of the document.
    */
   useEffect(() => {
     if (!open) return;
@@ -73,7 +76,11 @@ export function TargetChooser({
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        pillRef.current?.focus();
+      }
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('keydown', onKeyDown, true);
@@ -114,6 +121,7 @@ export function TargetChooser({
   return (
     <div ref={rootRef} className="target-chooser">
       <button
+        ref={pillRef}
         type="button"
         className="target-chooser__pill"
         aria-expanded={open}

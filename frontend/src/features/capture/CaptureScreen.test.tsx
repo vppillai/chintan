@@ -757,10 +757,16 @@ describe('the target chooser', () => {
     await user.click(document.body);
     expect(sheet()).toBeNull();
 
-    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    const pill = screen.getByRole('button', { name: /into new note/i });
+    await user.click(pill);
     expect(sheet()).not.toBeNull();
+    // Tabbed into the list, as a keyboard user is when Escape unmounts the
+    // option under focus: focus comes back to the pill, not the body.
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'New note' })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(sheet()).toBeNull();
+    expect(pill).toHaveFocus();
     // The recording itself is untouched by any of it.
     expect(useCaptureStore.getState().model.state).toBe('recording');
   });
