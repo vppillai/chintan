@@ -65,6 +65,37 @@ export function rememberPending(pending: PendingAuth): void {
   }
 }
 
+function parsePending(raw: string | null, now: number): PendingAuth | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPendingAuth(parsed)) return null;
+    if (now - parsed.startedAt > PENDING_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a flow this device started is still waiting for its answer, without
+ * consuming it.
+ *
+ * This is what tells Cognito's answer apart from a link someone was sent:
+ * the hosted UI redirects here only in reply to a request from here, so an
+ * `error` on the query string with no flow behind it is not an outcome to
+ * report.
+ */
+export function hasPendingFlow(now: number = Date.now()): boolean {
+  const store = storage();
+  if (!store) return false;
+  try {
+    return parsePending(store.getItem(PENDING_AUTH_KEY), now) !== null;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Reads and removes in one step.
  *
@@ -83,16 +114,7 @@ export function takePending(now: number = Date.now()): PendingAuth | null {
   } catch {
     return null;
   }
-  if (!raw) return null;
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!isPendingAuth(parsed)) return null;
-    if (now - parsed.startedAt > PENDING_TTL_MS) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+  return parsePending(raw, now);
 }
 
 export function clearPending(): void {

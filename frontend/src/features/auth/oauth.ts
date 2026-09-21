@@ -93,7 +93,7 @@ export function logoutUrl(
 
 export type CallbackParams =
   | { kind: 'code'; code: string; state: string }
-  | { kind: 'error'; error: string; description: string | null }
+  | { kind: 'error'; error: string }
   | null;
 
 /**
@@ -101,15 +101,15 @@ export type CallbackParams =
  *
  * `error` is a real outcome, not an edge case: it is what a cancelled login or
  * a disabled account produces, and swallowing it leaves the user on a sign-in
- * button that appears to do nothing.
+ * button that appears to do nothing. `error_description` is not read at all:
+ * it is free text on a URL anyone can compose, and `describeAuthError` has a
+ * fixed sentence for every code.
  */
 export function readCallbackParams(search: string): CallbackParams {
   const params = new URLSearchParams(search);
 
   const error = params.get('error');
-  if (error) {
-    return { kind: 'error', error, description: params.get('error_description') };
-  }
+  if (error) return { kind: 'error', error };
 
   const code = params.get('code');
   const state = params.get('state');
