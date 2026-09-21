@@ -50,9 +50,13 @@ export function SignedOutScreen({ phase, error, signIn, configured }: AuthGateSt
                 : 'Sign in'}
           </button>
 
+          {/*
+            No vendor's name (round-3 T56): the person signing in has not
+            chosen an identity provider and should not have to recognise one.
+          */}
           <p className="signed-out__note">
-            Signing in happens on the Cognito page, where you can use a passkey once you have
-            set one up.
+            Sign in with your email. The sign-in page opens in your browser; once you add a
+            passkey there, it will offer it instead of a password.
           </p>
         </>
       ) : (
