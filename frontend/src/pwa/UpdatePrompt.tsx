@@ -26,6 +26,8 @@ export function UpdatePrompt() {
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    // The one container this effect subscribes to and unsubscribes from.
+    const container = navigator.serviceWorker;
 
     let reloading = false;
     const onControllerChange = (): void => {
@@ -35,29 +37,39 @@ export function UpdatePrompt() {
       reloading = true;
       window.location.reload();
     };
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    container.addEventListener('controllerchange', onControllerChange);
 
     let disposed = false;
-    void navigator.serviceWorker.ready.then((registration) => {
+    void container.ready.then((registration) => {
       if (disposed) return;
       if (registration.waiting) setWaiting(registration.waiting);
 
-      registration.addEventListener('updatefound', () => {
-        const installing = registration.installing;
-        if (!installing) return;
+      const watch = (installing: ServiceWorker): void => {
         installing.addEventListener('statechange', () => {
           // `installed` with an existing controller means an update is ready;
           // without one it is the first install, which needs no prompt.
-          if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+          if (installing.state === 'installed' && container.controller) {
             setWaiting(installing);
           }
         });
+      };
+
+      /*
+       * An update whose install began before this mounted — the browser's
+       * own check on navigation, or a reload during one — is
+       * `registration.installing` by now and its `updatefound` has already
+       * fired. Watching the event alone missed it, and the prompt waited for
+       * the next check to find a worker that was already waiting.
+       */
+      if (registration.installing) watch(registration.installing);
+      registration.addEventListener('updatefound', () => {
+        if (registration.installing) watch(registration.installing);
       });
     });
 
     return () => {
       disposed = true;
-      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+      container.removeEventListener('controllerchange', onControllerChange);
     };
   }, []);
 
