@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/vppillai/chintan/backend/internal/ask"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
@@ -231,9 +232,10 @@ func (s *SearchService) Search(ctx context.Context, userID, q string, opts repos
 	return page, nil
 }
 
-// searchTerms splits a query into lowercase terms, bounded in length.
+// searchTerms splits a query into lowercase terms, bounded in length, spelled
+// the way SearchText stored the body (ask.FoldScript).
 func searchTerms(q string) []string {
-	q = strings.ToLower(strings.TrimSpace(q))
+	q = strings.ToLower(strings.TrimSpace(ask.FoldScript(q)))
 	if runes := []rune(q); len(runes) > MaxSearchQueryRunes {
 		q = string(runes[:MaxSearchQueryRunes])
 	}

@@ -52,3 +52,20 @@ func TestSearchTextOfAnEmptyBodyIsEmpty(t *testing.T) {
 		t.Fatalf("SearchText = %q, want empty", got)
 	}
 }
+
+// A body that spells a chillu the old way and a query that spells it the new
+// way — or the other way round — meet on the folded form (review 2026-09-21,
+// T58). SearchText folds what it stores and searchTerms folds what it looks
+// for, so the two spellings match whichever side each is on.
+func TestSearchTextAndQueryFoldChilluSpellings(t *testing.T) {
+	old, atomic := "അവന്\u200d വന്നു", "അവൻ വന്നു"
+	if SearchText(old) != SearchText(atomic) {
+		t.Fatalf("SearchText differs by chillu spelling: %q vs %q", SearchText(old), SearchText(atomic))
+	}
+	for _, tc := range []struct{ body, query string }{{old, atomic}, {atomic, old}} {
+		note := model.NoteIndex{Title: "Trip", SearchText: SearchText(tc.body)}
+		if _, ok := matchNote(note, searchTerms(tc.query)); !ok {
+			t.Errorf("query %q did not match a body spelled %q", tc.query, tc.body)
+		}
+	}
+}
