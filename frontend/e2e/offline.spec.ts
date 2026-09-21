@@ -162,6 +162,33 @@ async function withServiceWorker(page: Page): Promise<void> {
     .toBe(true);
 }
 
+/**
+ * A deep link is answered from the precache, without asking the network first.
+ *
+ * Workbox's precache route served `/` cache-first, but `/capture` (the
+ * manifest's shortcut) and `/notes/{id}` ran `networkFirst` and awaited the
+ * host's answer — GitHub Pages' 404, 890 ms on Fast 3G — before falling back to
+ * the same shell. Chromium reports a worker's own fetches on the context with
+ * `request.serviceWorker()` set, which is how this sees whether the worker
+ * went to the network for the document at all.
+ */
+test('a deep link is served from the precached shell without a network round trip', async ({
+  page,
+  context,
+}) => {
+  await withServiceWorker(page);
+
+  const fetchedByWorker: string[] = [];
+  context.on('request', (request) => {
+    if (request.serviceWorker()) fetchedByWorker.push(new URL(request.url()).pathname);
+  });
+
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  expect(fetchedByWorker.filter((path) => path === '/notes/roof-repair')).toEqual([]);
+});
+
 test('a note read once can be read again offline, from a cold start', async ({
   page,
   context,
