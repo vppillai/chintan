@@ -2,13 +2,23 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
+
+// parkedInvoker accepts the hand-off and runs nothing, so a test can set the
+// row to the state a dead worker leaves before running the pipeline itself.
+type parkedInvoker struct{ directInvoker }
+
+func (parkedInvoker) InvokeCapture(context.Context, string, string, string) error { return nil }
 
 // seedAppendedInto writes captureID's paragraph into note1's body under its
 // marker and the matching appended row, with the audio still in the bucket.
@@ -114,5 +124,66 @@ func TestRetranscribingAChecklistItemKeepsItOneLineAndTicked(t *testing.T) {
 	}
 	if strings.Count(string(body), service.CaptureMarker("c_1")) != 1 {
 		t.Errorf("marker for c_1 appears more than once:\n%s", body)
+	}
+}
+
+// A worker that took the append claim for the second transcription and died
+// before writing. The earlier paragraph is still in the note under the
+// capture's marker, so the marker proves nothing about this attempt: a retry
+// inside the lease that took it as proof marked the capture appended with the
+// wrong-script paragraph untouched, and no error anywhere (review 2026-09-21,
+// T7 follow-up). It must fail the way any retry of an unwritten append does,
+// and the attempt after the lease must replace the paragraph.
+func TestRetryOfARetranscriptionThatDiedBeforeWritingDoesNotTakeTheOldParagraphAsDone(t *testing.T) {
+	h, note := retranscribeNote(t, "")
+	ctx := context.Background()
+	seedAppendedInto(t, h, note, "c_1", "First take, wrong script.")
+
+	svc := service.NewCaptureService(h.store, h.objects).WithInvoker(parkedInvoker{})
+	if _, err := svc.RetranscribeCapture(ctx, "user1", "c_1", "ta"); err != nil {
+		t.Fatalf("RetranscribeCapture: %v", err)
+	}
+	cleanKey, err := keys.CaptureClean("user1", "c_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The state the dead worker left: this attempt's claim, taken a moment
+	// ago, and nothing written under it.
+	claimedAgo := func(d time.Duration) {
+		c, err := h.store.GetCapture(ctx, "user1", "c_1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.AppendToken, c.AppendClaimedAt = appendToken("c_1", cleanKey), time.Now().Add(-d).Unix()
+		if _, err := h.store.PutCapture(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claimedAgo(0)
+
+	before, _ := h.objects.Get(ctx, note.S3MarkdownKey)
+	mid, err := h.pipeline.Run(ctx, "user1", "c_1")
+	if !errors.Is(err, errAppendClaimHeld) {
+		t.Fatalf("retry inside the lease: err = %v (status %s), want errAppendClaimHeld: the earlier paragraph was taken as this attempt's", err, mid.Status)
+	}
+	if body, _ := h.objects.Get(ctx, note.S3MarkdownKey); string(body) != string(before) {
+		t.Fatalf("the retry wrote inside the lease:\n%s", body)
+	}
+
+	// Past the lease the claim is taken over and the paragraph replaced, once.
+	claimedAgo(repository.AppendClaimLease + time.Minute)
+	final, err := h.pipeline.Run(ctx, "user1", "c_1")
+	if err != nil {
+		t.Fatalf("retry after the lease: %v", err)
+	}
+	if final.Status != model.StatusAppended {
+		t.Fatalf("status = %s (%s), want appended", final.Status, final.Error)
+	}
+	body, _ := h.objects.Get(ctx, note.S3MarkdownKey)
+	if want := service.CaptureMarker("c_1") + "\nThe words as they were said."; string(body) != want {
+		t.Fatalf("note body after the takeover:\n%s\nwant:\n%s", body, want)
+	}
+	if n := len(h.stt.Sources); n != 1 {
+		t.Errorf("stt calls = %d, want one: the takeover resumes from the cleaned text", n)
 	}
 }

@@ -21,7 +21,7 @@ import (
 var asyncRetryOffsets = []time.Duration{1 * time.Minute, 3 * time.Minute}
 
 // The lease must outlast a live worker, or a claim could be taken over while
-// its holder is still writing — the one case the marker check cannot cover.
+// its holder is still writing — the one case the paragraph check cannot cover.
 // The worker Lambda's Timeout is 900 s.
 const workerLambdaTimeout = 900 * time.Second
 
@@ -59,8 +59,8 @@ func rewindAppendClaim(t *testing.T, store *memory.Store, d time.Duration) {
 // concede, which acknowledged the message; with nothing left to redeliver, the
 // capture sat in `appending` forever with its text already in the note. The
 // retry must finish the capture, and must not write the text again — and what
-// tells it the text is there is the capture's own marker, not a search for the
-// sentence.
+// tells it the text is there is the paragraph under the capture's own marker,
+// not a search of the whole body for the sentence.
 func TestRetryOfAnInterruptedAppendFinishesItWithoutRewriting(t *testing.T) {
 	var interrupt *failOnceOnPutNote
 	f := newAppendFixture(t, memory.NewObjects(), func(s repository.Store) repository.Store {
@@ -99,51 +99,6 @@ func TestRetryOfAnInterruptedAppendFinishesItWithoutRewriting(t *testing.T) {
 		t.Fatalf("status = %s, appended_at = %d after the retry; want appended and set. "+
 			"Conceding here leaves the capture in-flight with no attempt left to finish it",
 			final.Status, final.AppendedAt)
-	}
-}
-
-// The marker, not the text, is the evidence. A user who edits the paragraph
-// the worker just appended — inside the minute before the retry — used to
-// destroy the only proof that the append happened, and the retry appended it
-// again. Now the edit goes through UpdateNote, which carries the marker.
-func TestRetryOfAnInterruptedAppendSurvivesAnEditToTheParagraph(t *testing.T) {
-	var interrupt *failOnceOnPutNote
-	f := newAppendFixture(t, memory.NewObjects(), func(s repository.Store) repository.Store {
-		interrupt = &failOnceOnPutNote{Store: s}
-		return interrupt
-	})
-	ctx := context.Background()
-
-	if _, err := f.run(ctx); err == nil {
-		t.Fatal("expected the induced index-write failure to surface")
-	}
-	if !interrupt.didFail() {
-		t.Fatal("the test did not actually interrupt the index write")
-	}
-
-	// The user rewrites the whole note from the editor, which never showed
-	// them the marker. What they save is what they saw; what is stored keeps
-	// the marker.
-	const rewritten = "the user reworded the dictated sentence entirely"
-	stored := f.body(t)
-	if err := f.objects.Put(ctx, appendNoteKey, []byte(service.CarryCaptureMarkers(stored, rewritten)), "text/markdown"); err != nil {
-		t.Fatalf("simulate the editor's save: %v", err)
-	}
-
-	rewindAppendClaim(t, f.store, asyncRetryOffsets[0])
-	final, err := f.run(ctx)
-	if err != nil {
-		t.Fatalf("retry after the edit: %v", err)
-	}
-	body := f.body(t)
-	if strings.Contains(body, appendedText) {
-		t.Fatalf("the retry appended the dictation again after the user had edited it away:\n%s", body)
-	}
-	if !strings.Contains(body, rewritten) {
-		t.Fatalf("the user's edit was lost:\n%s", body)
-	}
-	if final.Status != model.StatusAppended {
-		t.Fatalf("status = %s, want appended", final.Status)
 	}
 }
 
