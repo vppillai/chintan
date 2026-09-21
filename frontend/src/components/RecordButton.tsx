@@ -10,11 +10,13 @@ import { Icon } from './Icon.tsx';
  *
  * It is the only element in the app allowed to wear `--color-accent`.
  *
- * On a note it records into that note (`noteId`), and says so on a small
- * caption above the disc — the same button, so the thumb never has to choose
- * between two record controls. The note bar used to carry its own "Record
- * into this" 30 px above this mic, which recorded to a new note: two controls
- * with different glyphs recording to different places from one screen.
+ * On a note it records into that note (`noteId`) and is named for it — the
+ * same button, so the thumb never has to choose between two record controls.
+ * The note bar used to carry its own "Record into this" 30 px above this
+ * mic, which recorded to a new note: two controls with different glyphs
+ * recording to different places from one screen. The sighted caption is the
+ * tab bar's (`.tab-bar__into`), beside the disc rather than inside it, so
+ * the disc's own box stays the disc.
  */
 export function RecordButton({ noteId = null }: { noteId?: string | null }) {
   const navigate = useNavigate();
@@ -24,23 +26,12 @@ export function RecordButton({ noteId = null }: { noteId?: string | null }) {
     <button
       type="button"
       className="record-button"
-      data-into={into || undefined}
       onClick={() => {
         void navigate(into ? ROUTES.captureInto(noteId) : ROUTES.capture);
       }}
     >
       <Icon name="mic" size={30} className="record-button__icon" />
-      {/*
-        The whole name in one hidden span: accessible-name algorithms differ
-        on the space between two inline spans, and "RecordInto this note" is
-        what one of them says. The caption is the sighted reading of it.
-      */}
       <span className="visually-hidden">{into ? 'Record into this note' : 'Record'}</span>
-      {into && (
-        <span className="record-button__into" aria-hidden="true">
-          Into this note
-        </span>
-      )}
     </button>
   );
 }

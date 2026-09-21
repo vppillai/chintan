@@ -57,6 +57,12 @@ export function TabBar() {
       <TabLink tab={home} current={home.matches(pathname)} />
       <div className="tab-bar__record">
         <RecordButton noteId={noteId} />
+        {/* The sighted reading of the button's name; the name itself is the button's. */}
+        {noteId !== null && (
+          <span className="tab-bar__into" aria-hidden="true">
+            Into this note
+          </span>
+        )}
       </div>
       <TabLink tab={you} current={you.matches(pathname)} />
     </nav>

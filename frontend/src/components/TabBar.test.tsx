@@ -53,7 +53,7 @@ describe('the record button', () => {
   it('records into a new note from the library', async () => {
     mount('/');
     const record = screen.getByRole('button', { name: 'Record' });
-    expect(record).not.toHaveAttribute('data-into');
+    expect(screen.queryByText('Into this note')).toBeNull();
     await userEvent.click(record);
     expect(screen.getByRole('status')).toHaveTextContent('/capture');
   });
@@ -61,8 +61,7 @@ describe('the record button', () => {
   it('records into the open note, and wears its caption, while a note is on screen', async () => {
     mount('/notes/roof-repair?tab=recordings');
     const record = screen.getByRole('button', { name: /^record into this note$/i });
-    expect(record).toHaveAttribute('data-into');
-    expect(record).toHaveTextContent('Into this note');
+    expect(screen.getByText('Into this note')).toBeInTheDocument();
     await userEvent.click(record);
     expect(screen.getByRole('status')).toHaveTextContent('/capture?note=roof-repair');
   });

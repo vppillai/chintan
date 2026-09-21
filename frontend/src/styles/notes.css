@@ -17,15 +17,11 @@
   flex-basis: 100%;
 }
 
-/* "5 Sept · house · 3 rec · 0:17 · Malayalam": one line, always. What does
-   not fit ends in an ellipsis rather than a second row; the block padding
-   keeps the language button's focus ring inside the clip. */
+/* "5 Sept · house · 3 rec · 0:17 · Malayalam": one line by what it says, not
+   by clipping — the layout sweep treats a container that can scroll sideways
+   as a failure, and a row of many tags wraps like anything else. */
 .note-meta {
-  overflow: hidden;
   margin-block: var(--space-1) var(--space-2);
-  padding-block: var(--space-1);
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 /* The tab panel carries the screen's bottom breathing room now that no bar
@@ -46,13 +42,17 @@
 /*
  * The caption is a small pill riding the bar's top edge above the disc, so
  * the bar keeps its height and the mic stays the one record control on the
- * screen. Inside the button: part of the target, and of the name.
+ * screen. A sibling of the button in its cell, not a child: the disc's own
+ * box stays the disc (the layout sweep reads an overflowing child as a
+ * container that scrolls), and the cell is made wide enough to hold the
+ * pill on every screen so the bar's geometry does not change with the route.
  */
-.record-button[data-into] {
+.tab-bar__record {
   position: relative;
+  min-inline-size: 7.5rem;
 }
 
-.record-button__into {
+.tab-bar__into {
   position: absolute;
   inset-block-start: calc(-1 * var(--space-2) - 0.75rem);
   inset-inline-start: 50%;
@@ -62,10 +62,10 @@
   box-shadow: var(--shadow-sm);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  letter-spacing: var(--letter-spacing-wide);
   line-height: var(--line-height-normal);
   color: var(--color-ground);
   white-space: nowrap;
+  pointer-events: none;
   translate: -50% 0;
 }
 
