@@ -245,7 +245,9 @@ describe('the text carries its language (T60)', () => {
 
   const cases: [note: string, fallback: string | undefined, expected: string | undefined][] = [
     ['', 'ml', 'ml'],
-    ['', undefined, 'en'],
+    // The settings have not answered yet: no tag, rather than English over
+    // what may be Malayalam.
+    ['', undefined, undefined],
     ['ta', 'ml', 'ta'],
     ['auto', 'ml', undefined],
     ['', 'auto', undefined],

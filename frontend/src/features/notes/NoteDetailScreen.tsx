@@ -702,16 +702,16 @@ function NoteMeta({
 
 /**
  * The `lang` tag for the note's text: the note's language, else the default,
- * and none under Auto-detect — a tag that says "English" over Malayalam is
- * worse than no tag, and under `auto` nobody knows. Pure and exported for
- * the test.
+ * and none under Auto-detect or while the default is still being fetched — a
+ * tag that says "English" over Malayalam is worse than no tag, and under
+ * `auto` nobody knows. Pure and exported for the test.
  */
 export function contentLanguage(
   noteLanguage: string,
   defaultLanguage: string | undefined,
 ): string | undefined {
-  const effective = noteLanguage || defaultLanguage || 'en';
-  return effective === 'auto' ? undefined : effective;
+  const effective = noteLanguage || defaultLanguage;
+  return !effective || effective === 'auto' ? undefined : effective;
 }
 
 /**
