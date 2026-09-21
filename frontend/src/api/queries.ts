@@ -475,9 +475,21 @@ export function useTags() {
    Settings
    --------------------------------------------------------------------------- */
 
+/**
+ * Read once for the session, as the shell's prefetch intends (round-3 T48):
+ * with the client's thirty-second default the note screen fetched them again
+ * on every open after the first half-minute, and again on each tab focus.
+ * Never stale is safe because `useSaveSettings` writes what the server stored
+ * into this cache, so this device's own changes are always what is shown; a
+ * change made on another device is picked up on the next launch.
+ */
 export function useSettings() {
   const api = useApi();
-  return useQuery({ queryKey: queryKeys.settings(), queryFn: () => api.getSettings() });
+  return useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: () => api.getSettings(),
+    staleTime: Infinity,
+  });
 }
 
 export function useSaveSettings() {

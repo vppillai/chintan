@@ -74,11 +74,13 @@ export function AppShell() {
   /*
    * The settings, read once for the session (round-3 T48). The note screen
    * fetched them after the note — a second waterfall step for one language
-   * label — and You and the capture chooser read them too. Never stale here:
-   * `useSaveSettings` writes what the server stored into this same cache, so
-   * the device's own changes are always reflected and a refetch would only
-   * repeat them. Not on the capture screen, where the Record shortcut's one
-   * request must stay the recording's own.
+   * label — and You and the capture chooser read them too. Never stale, here
+   * and in `useSettings` (the observer decides its own staleness, so the
+   * prefetch's setting alone was not enough): `useSaveSettings` writes what
+   * the server stored into this same cache, so the device's own changes are
+   * always reflected and a refetch would only repeat them. Not on the capture
+   * screen, where the Record shortcut's one request must stay the recording's
+   * own.
    */
   useEffect(() => {
     if (auth.phase !== 'signed-in' || screen === 'capture') return;
