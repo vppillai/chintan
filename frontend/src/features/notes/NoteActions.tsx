@@ -234,6 +234,13 @@ export function NoteDrawer({
               }}
               onCommit={() => void editor.saveNow()}
             />
+            <VerbatimSwitch
+              checked={draft.verbatim ?? note.verbatim ?? false}
+              onChange={(verbatim) => {
+                editor.edit({ verbatim });
+                void editor.saveNow();
+              }}
+            />
             <ChecklistSwitch
               checked={(draft.kind ?? note.kind ?? 'note') === 'checklist'}
               onChange={(checklist) => {
@@ -309,9 +316,14 @@ export function NoteDrawer({
  * The inherit entry names what it inherits — "Default (Malayalam)" — read from
  * the You screen's setting, so the choice is between real languages rather
  * than between a language and a word. The helper line says what the setting
- * reaches: only a recording made *into* this note. A recording that is routed
- * here afterwards was transcribed before anyone knew where it was going, so
- * only the default could apply to it.
+ * reaches: every recording that lands in this note. One the router files
+ * here was transcribed in the default before anyone knew where it was going,
+ * and is transcribed again in this language when the two differ (review
+ * 2026-09-21, T2, backend).
+ *
+ * The second line is the owner's lived problem (T3): under Auto-detect
+ * Whisper picks one language per recording, and on real Malayalam it chose
+ * Tamil script and dropped the Malayalam sentence from a mixed clip.
  */
 function NoteLanguage({
   id,
@@ -337,8 +349,52 @@ function NoteLanguage({
         onChange={onChange}
       />
       <p className="language-field__hint">
-        For recordings made into this note — Record into this, or chosen as the target. A
-        recording filed automatically is transcribed in your default language.
+        For every recording that lands in this note — made into it, or filed here automatically.
+      </p>
+      <p className="language-field__hint">
+        Mix Malayalam and English in one recording? Choose Malayalam. Auto-detect picks one
+        language per recording and drops or re-scripts the other.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Skip the cleanup for this note. The wire has carried `verbatim` since the
+ * start, README and About promise it, and no control ever set it (review
+ * 2026-09-21, T11); the pipeline half — appending the raw transcript and
+ * calling no model — lands with the backend stream. Between the language
+ * and the checklist switch: it is about what a recording becomes, like both.
+ */
+function VerbatimSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const id = useId();
+  return (
+    <section className="language-field">
+      <h2 className="tag-editor__label">Word for word</h2>
+      <label className="cleaned__auto" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          className="cleaned__auto-box"
+          checked={checked}
+          onChange={(event) => {
+            onChange(event.target.checked);
+          }}
+        />
+        <span className="cleaned__auto-mark" aria-hidden="true">
+          <Icon name="check" size={16} />
+        </span>
+        <span>Keep recordings as spoken</span>
+      </label>
+      <p className="language-field__hint">
+        Skips the cleanup: a recording&rsquo;s transcript goes into this note exactly as it was
+        transcribed, fillers and all.
       </p>
     </section>
   );

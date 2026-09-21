@@ -138,11 +138,11 @@ describe('a note’s transcription language', () => {
     expect(patches[0]?.['language']).toBe('');
   });
 
-  it('says what the setting reaches', async () => {
+  it('says what the setting reaches, and warns about Auto-detect on mixed speech (T3)', async () => {
     mount();
     await openLanguage();
-    expect(screen.getByText(/recordings made into this note/i)).toBeInTheDocument();
-    expect(screen.getByText(/filed automatically is transcribed in your default/i)).toBeInTheDocument();
+    expect(screen.getByText(/every recording that lands in this note/i)).toBeInTheDocument();
+    expect(screen.getByText(/auto-detect picks one language per recording/i)).toBeInTheDocument();
   });
 });
 
@@ -165,8 +165,40 @@ describe('the language is where the user looks', () => {
     const labels = Array.from(panel!.querySelectorAll('.tag-editor__label')).map(
       (label) => label.textContent,
     );
-    expect(labels).toEqual(['Transcription language', 'Tags', 'Also called', 'Checklist']);
+    expect(labels).toEqual([
+      'Transcription language',
+      'Tags',
+      'Also called',
+      'Word for word',
+      'Checklist',
+    ]);
     expect(screen.queryByRole('button', { name: 'Tags' })).toBeNull();
+  });
+
+  it('offers the verbatim switch, which writes `verbatim` through the note’s PATCH once (T11)', async () => {
+    const { patches } = mount();
+    await screen.findByDisplayValue('Roof repair');
+    await openDetails();
+
+    const toggle = screen.getByRole('checkbox', { name: 'Keep recordings as spoken' });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    await waitFor(() => {
+      expect(patches).toHaveLength(1);
+    });
+    expect(patches[0]).toEqual(expect.objectContaining({ version: NOTE.version, verbatim: true }));
+
+    // A later change to another field does not carry it again: a backend
+    // that refuses unknown fields is sent only what moved.
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Transcription language' }),
+      'hi',
+    );
+    await waitFor(() => {
+      expect(patches).toHaveLength(2);
+    });
+    expect(patches[1]).not.toHaveProperty('verbatim');
   });
 
   it('names the effective language in the meta line when it is not plain English', async () => {
@@ -200,23 +232,6 @@ describe('the language is where the user looks', () => {
   });
 });
 
-describe('when the language is worth a word', () => {
-  const cases: [note: string, fallback: string | undefined, expected: string | null][] = [
-    ['', 'en', null],
-    ['', undefined, null],
-    ['en', 'en', null],
-    ['', 'ml', 'ml'],
-    ['ml', 'ml', 'ml'],
-    ['en', 'ml', 'en'],
-    ['ta', 'en', 'ta'],
-    ['auto', 'en', 'auto'],
-  ];
-  for (const [note, fallback, expected] of cases) {
-    it(`note ${JSON.stringify(note)} under default ${JSON.stringify(fallback)} → ${JSON.stringify(expected)}`, () => {
-      expect(effectiveLanguage(note, fallback)).toBe(expected);
-    });
-  }
-});
 describe('the text carries its language (T60)', () => {
   it('tags the body with the note’s language, and with the default when it inherits', async () => {
     mount({ ...NOTE, language: 'ta' });
@@ -242,3 +257,20 @@ describe('the text carries its language (T60)', () => {
   }
 });
 
+describe('when the language is worth a word', () => {
+  const cases: [note: string, fallback: string | undefined, expected: string | null][] = [
+    ['', 'en', null],
+    ['', undefined, null],
+    ['en', 'en', null],
+    ['', 'ml', 'ml'],
+    ['ml', 'ml', 'ml'],
+    ['en', 'ml', 'en'],
+    ['ta', 'en', 'ta'],
+    ['auto', 'en', 'auto'],
+  ];
+  for (const [note, fallback, expected] of cases) {
+    it(`note ${JSON.stringify(note)} under default ${JSON.stringify(fallback)} → ${JSON.stringify(expected)}`, () => {
+      expect(effectiveLanguage(note, fallback)).toBe(expected);
+    });
+  }
+});

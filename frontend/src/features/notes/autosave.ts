@@ -60,6 +60,15 @@ export interface NoteDraft {
   auto_clean?: boolean;
   cleaned_mode?: CleanedMode;
   /**
+   * Cleanup is skipped for this note: a recording's transcript is appended as
+   * spoken. Stored and promised by the wire since the start and never
+   * reachable from the UI (review 2026-09-21, T11); on the draft like
+   * `auto_clean`, a setting rather than text, sent only when the switch was
+   * flipped. Optional so a draft built before the field existed still
+   * typechecks; `draftFrom` always sets it.
+   */
+  verbatim?: boolean;
+  /**
    * Prose or checklist. Changed only by the Details panel's switch, together
    * with the converted body, and on the draft for the same reason as the
    * rest: the two ride one PATCH with one version. Optional so a draft built
@@ -201,6 +210,7 @@ export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
     (a.language ?? '') === (b.language ?? '') &&
     (a.kind ?? 'note') === (b.kind ?? 'note') &&
     Boolean(a.auto_clean) === Boolean(b.auto_clean) &&
+    Boolean(a.verbatim) === Boolean(b.verbatim) &&
     (a.cleaned_mode ?? '') === (b.cleaned_mode ?? '')
   );
 }
