@@ -22,6 +22,7 @@ import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
+import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
@@ -85,10 +86,42 @@ function isStuck(capture: CaptureWire): boolean {
   return Date.now() - createdAt > STUCK_AFTER_MS;
 }
 
-function describe(capture: CaptureWire, stuck: boolean): string {
+/**
+ * When the server will accept a Retry of a capture that is still moving.
+ *
+ * `RetryCapture` refuses an in-flight capture until no worker can still be
+ * on it: fifteen minutes since the row was last written (the worker's
+ * timeout), or the twenty-minute append lease while `appending`. The row
+ * offered Retry at ten minutes, so for five to ten minutes every tap came
+ * back "still in flight". The copy keeps `STUCK_AFTER_MS`; the button waits
+ * for this.
+ *
+ * The server measures from `last_progress_at`, which every stage hand-off
+ * re-stamps, and the API does not put that field on the wire yet — so until
+ * it does, the row measures from `created_at`: exact for a capture that never
+ * moved, early by however long it did move for one that reached transcribing
+ * before it stalled, and the tap inside that gap is answered by the 409's
+ * own sentence. Read when carried, so the gap closes the day it is sent.
+ */
+const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
+const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
+
+function retryAccepted(capture: CaptureWire): boolean {
+  if (isTerminalStatus(capture.status)) return false;
+  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
+  if (Number.isNaN(since)) return false;
+  const after =
+    capture.status === 'appending' ? RETRY_ACCEPTED_APPENDING_MS : RETRY_ACCEPTED_AFTER_MS;
+  return Date.now() - since > after;
+}
+
+function describe(capture: CaptureWire, stuck: boolean, noteTitle?: string): string {
   switch (capture.status) {
     case 'appended':
-      return 'Filed';
+      // Two receipts stacked were indistinguishable: the note is on the
+      // capture, and its title is on the device whenever the library has
+      // listed it. "Filed" alone only when it is not.
+      return noteTitle ? `Filed into “${noteTitle}”` : 'Filed';
     case 'needs_target':
       return 'Which note should this go in?';
     case 'no_content':
@@ -176,7 +209,14 @@ export function useLocalUpload(
   }, [landed, serverHasIt, reset]);
 
   if (noteId !== undefined && target !== noteId) return null;
-  if (options.homeOnly && target !== null) return null;
+  /*
+   * A failed upload is shown on Home whatever it was aimed at. The note's
+   * Recordings tab is where a moving one belongs, but nobody is on that tab
+   * after a spend cap or an expired link has bounced them, and ResumePrompt
+   * leaves the machine's own recording out — so a recording that exists on
+   * this device alone had no handle anywhere until a reload.
+   */
+  if (options.homeOnly && target !== null && !failed) return null;
   if (uploading || failed || (landed && !serverHasIt)) return model;
   return null;
 }
@@ -255,6 +295,16 @@ export function FilingRow() {
     return (data?.items ?? []).filter((capture) => !isTargeted(capture, remembered));
   }, [data]);
   const captures = untargeted.filter((capture) => !dismissed.has(capture.id));
+
+  // The receipts name their note by title. The device's copy of the library
+  // is the source — every list page the person has seen is in it — rather
+  // than a request of its own for a row that is a receipt.
+  const cached = useCachedNotes('active');
+  const titles = useMemo(
+    () => new Map((cached.data ?? []).map((note) => [note.id, note.title])),
+    [cached.data],
+  );
+
   if (captures.length === 0 && !local) return null;
 
   // Everything that still needs something is shown; the receipts are capped.
@@ -267,6 +317,7 @@ export function FilingRow() {
         <FilingItem
           key={capture.id}
           capture={capture}
+          noteTitle={capture.note_id ? titles.get(capture.note_id) : undefined}
           onOpen={() => {
             if (!capture.note_id) return;
             // The row says the note has just been written to, so the copy the
@@ -394,6 +445,8 @@ function retryMessage(error: unknown): string {
 
 interface FilingItemProps {
   capture: CaptureWire;
+  /** The title of `capture.note_id`, when the device has it. */
+  noteTitle?: string | undefined;
   onOpen: () => void;
   onRetry: () => void;
   retrying: boolean;
@@ -402,16 +455,77 @@ interface FilingItemProps {
   onDismiss: () => void;
 }
 
-function FilingItem({ capture, onOpen, onRetry, retrying, retryError, onDismiss }: FilingItemProps) {
+function FilingItem({
+  capture,
+  noteTitle,
+  onOpen,
+  onRetry,
+  retrying,
+  retryError,
+  onDismiss,
+}: FilingItemProps) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const stuck = isStuck(capture);
   // A stuck capture gets the same way out a failed one does: retrying is safe
   // (the backend resumes from whichever artifact already exists) and dismissing
-  // stops the row sitting at the top of the library forever.
+  // stops the row sitting at the top of the library forever. Retry itself
+  // waits until the server will take it — see `retryAccepted`.
   const actionable = failed || stuck;
+  const retryable = failed || retryAccepted(capture);
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
   const stage = STAGES[stageIndex(capture.status)];
+  const duration =
+    typeof capture.duration_ms === 'number' && capture.duration_ms > 0
+      ? formatDurationShort(capture.duration_ms)
+      : null;
+
+  if (done && capture.note_id) {
+    /*
+     * A receipt is one control. The row itself opens the note — with a
+     * chevron, as every row that leads somewhere has — and the × dismisses
+     * it; the "Open the note" pill under a bare "Filed" was a second thing to
+     * find on a row whose whole point is the note.
+     *
+     * The title stays where every row keeps it — first in the head, outside
+     * the button — so the `<p role="status">` a moving row rendered is the
+     * same node once the poll flips it to appended. A live region announces a
+     * change to its text, not the text it mounted with: when the receipt was
+     * its own subtree React swapped the node and the landing went unspoken.
+     * The button is the chevron, named by the title and its own hidden words,
+     * and its ::after stretches over the row (capture.css).
+     */
+    const titleId = `filing-title-${capture.id}`;
+    return (
+      <article className="filing-row filing-row--receipt" data-status={capture.status}>
+        <div className="filing-row__head">
+          <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
+            {describe(capture, stuck, noteTitle)}
+          </p>
+          {duration && <span className="filing-row__duration numeric">{duration}</span>}
+        </div>
+        <button
+          type="button"
+          className="filing-row__receipt"
+          aria-labelledby={`${titleId} ${titleId}-open`}
+          onClick={onOpen}
+        >
+          <Icon name="chevron-right" size={18} />
+          <span id={`${titleId}-open`} className="visually-hidden">
+            Open the note
+          </span>
+        </button>
+        <button
+          type="button"
+          className="filing-row__dismiss"
+          aria-label="Dismiss"
+          onClick={onDismiss}
+        >
+          <Icon name="close" size={18} />
+        </button>
+      </article>
+    );
+  }
 
   /*
    * The stage strip is for a capture that is still moving. It used to render
@@ -425,38 +539,27 @@ function FilingItem({ capture, onOpen, onRetry, retrying, retryError, onDismiss 
     <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
       <div className="filing-row__head">
         <p className="filing-row__title" role="status" aria-live="polite">
-          {describe(capture, stuck)}
+          {describe(capture, stuck, noteTitle)}
           {running && stage && !stuck && (
             <span className="visually-hidden">{` — ${stage.label}`}</span>
           )}
         </p>
-        {typeof capture.duration_ms === 'number' && capture.duration_ms > 0 && (
-          <span className="filing-row__duration numeric">
-            {formatDurationShort(capture.duration_ms)}
-          </span>
-        )}
+        {duration && <span className="filing-row__duration numeric">{duration}</span>}
       </div>
 
       {running && <FilingStages capture={capture} />}
 
       {(done || actionable || capture.status === 'no_content') && (
         <div className="filing-row__actions">
-          {done && capture.note_id && (
-            <button type="button" className="filing-row__action" onClick={onOpen}>
-              <span>Open the note</span>
-              <Icon name="back" size={16} className="filing-row__open-icon" />
-            </button>
-          )}
-
           {/*
             A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
             capture is never a dead end with a toast. Also offered once a
-            non-terminal capture has sat past STUCK_AFTER_MS with no status
-            change — RetryCapture resumes from whichever artifact already
-            exists, so it is safe to call on a capture that never actually
-            failed, only stalled.
+            non-terminal capture has sat long enough that the server will
+            start a fresh run — RetryCapture resumes from whichever artifact
+            already exists, so it is safe to call on a capture that never
+            actually failed, only stalled.
           */}
-          {actionable && (
+          {retryable && (
             <button
               type="button"
               className="filing-row__action"

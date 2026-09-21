@@ -10,6 +10,7 @@ import { CaptureScreen, captureReturnPath } from './CaptureScreen.tsx';
 import { INITIAL_CAPTURE } from './machine.ts';
 import type { RecorderDeps } from './recorder.ts';
 import { useCaptureStore } from './store.ts';
+import { optionMeta } from './TargetChooser.tsx';
 
 /* ---------------------------------------------------------------------------
    A recorder that produces one chunk and nothing else. jsdom has no media
@@ -634,6 +635,7 @@ describe('the capture route does not wait on the library', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     expect(requested.filter((path) => path.endsWith('/v1/notes'))).toEqual([]);
+    expect(requested.filter((path) => path.endsWith('/v1/settings'))).toEqual([]);
 
     releaseMic();
     await waitFor(() => {
@@ -642,6 +644,59 @@ describe('the capture route does not wait on the library', () => {
     await waitFor(() => {
       expect(requested.some((path) => path.endsWith('/v1/notes'))).toBe(true);
     });
+    await waitFor(() => {
+      expect(requested.some((path) => path.endsWith('/v1/settings'))).toBe(true);
+    });
+  });
+});
+
+describe('the screen says which language the recording will be transcribed in', () => {
+  /** Notes with a language of their own, and a default from You. */
+  function languageFetch(defaultLanguage: string): typeof fetch {
+    return async (input) => {
+      const url = new URL(String(input));
+      const body = url.pathname.endsWith('/v1/settings')
+        ? { cleanup_mode: 'faithful', retention_days: 30, theme: 'system', default_language: defaultLanguage }
+        : {
+            items: [
+              { ...TEST_NOTES[0], language: 'ml' },
+              { ...TEST_NOTES[1] },
+            ],
+          };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+  }
+
+  it('names the target note\'s language in its own script, and the default for a new note', async () => {
+    /*
+     * Whisper is told one language per recording, and until now nothing on
+     * this screen said which. The owner's default is auto-detect, which has
+     * re-scripted Malayalam as Tamil; a note tagged Malayalam is transcribed
+     * in Malayalam. The line under the pill says which of the two applies.
+     */
+    mount('/capture?note=roof-repair', testApiContext(languageFetch('auto')));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    expect(await screen.findByText('Transcribed as മലയാളം')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /into roof repair/i }));
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
+
+    // A note that inherits the default says the default.
+    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    await user.click(screen.getByRole('button', { name: /^Reading list/ }));
+    expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
+  });
+
+  it('says English under an English default rather than nothing', async () => {
+    mount('/capture', testApiContext(languageFetch('en')));
+    expect(await screen.findByText('Transcribed as English')).toBeInTheDocument();
   });
 });
 
@@ -672,7 +727,13 @@ describe('the target chooser', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /into new note/i }));
-    await user.click(await screen.findByRole('button', { name: 'Reading list' }));
+    const option = await screen.findByRole('button', { name: /^Reading list/ });
+    // The line that tells two same-titled notes apart: date, then the first
+    // forty characters of the snippet.
+    expect(option).toHaveTextContent(/Aug/);
+    expect(option).toHaveTextContent(/Seeing Like a State, then the Vitruvius/);
+    expect(option).not.toHaveTextContent(/translation/);
+    await user.click(option);
     expect(useCaptureStore.getState().model.noteId).toBe('reading-list');
     expect(screen.getByRole('button', { name: /into reading list/i })).toBeInTheDocument();
     // The recording itself is untouched by the choice.
@@ -681,6 +742,119 @@ describe('the target chooser', () => {
     await user.click(screen.getByRole('button', { name: /into reading list/i }));
     await user.click(screen.getByRole('button', { name: 'New note' }));
     expect(useCaptureStore.getState().model.noteId).toBeNull();
+  });
+
+  it('cuts the meta snippet at a grapheme and marks the cut', () => {
+    // Thirty-nine letters and then കാ (ka with the aa sign): the fortieth
+    // code point is the vowel sign, and a code-point cut left a bare ക on
+    // screen and in the option's name.
+    const meta = (snippet: string) =>
+      optionMeta({
+        id: 'n',
+        title: 'T',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 1,
+        archived: false,
+        snippet,
+      });
+    expect(meta(`${'x'.repeat(39)}കാ and on`)).toMatch(/xകാ…$/);
+    expect(meta('short')).toMatch(/· short$/);
+    expect(meta('')).not.toContain('·');
+  });
+});
+
+describe('live is signalled, not only spelt', () => {
+  it('shows a pulsing dot and an accent clock only while the microphone is open', async () => {
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    const state = document.querySelector('.capture__state');
+    expect(state).toHaveAttribute('data-live');
+    expect(state?.querySelector('.capture__state-dot')).not.toBeNull();
+    expect(document.querySelector('.capture__timer')).toHaveAttribute('data-live');
+    // The word is still the whole of the announcement.
+    expect(state).toHaveTextContent(/^Recording$/);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Pause' }));
+    expect(document.querySelector('.capture__state')).not.toHaveAttribute('data-live');
+    expect(document.querySelector('.capture__state-dot')).toBeNull();
+    expect(document.querySelector('.capture__timer')).not.toHaveAttribute('data-live');
+  });
+});
+
+describe('a failure is a card, not a dead screen', () => {
+  it('explains a refused microphone, names the way back, and asks again on Try again', async () => {
+    /*
+     * After a denied prompt the screen used to keep its clock at 00:00 over
+     * an empty level box, with the target pill still live and twenty-one
+     * notes to choose from, and the failure marked unrecoverable so nothing
+     * offered a second try. The browser that refused gives no way back to
+     * its prompt from inside the page, so the card says where the switch is.
+     */
+    let refuse = true;
+    useCaptureStore.getState().__configure({
+      recorder: fakeDeps({
+        requestMicrophone: async () => {
+          micRequests += 1;
+          if (refuse) throw Object.assign(new Error('denied'), { name: 'NotAllowedError' });
+          return new FakeStream() as unknown as MediaStream;
+        },
+      }),
+    });
+    mount('/capture?note=roof-repair');
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('failed');
+    });
+
+    const card = await screen.findByRole('alert');
+    expect(card).toHaveTextContent(/needs microphone access to record/i);
+    expect(card).toHaveTextContent(/site settings, then try again/i);
+    // No clock and no level box for a recording that never began, and the
+    // chooser cannot aim one.
+    expect(document.querySelector('.capture__timer')).toBeNull();
+    expect(document.querySelector('.capture__waveform')).toBeNull();
+    expect(screen.getByRole('button', { name: /^into/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+
+    refuse = false;
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    expect(micRequests).toBe(2);
+    // Into the same note the screen was opened for.
+    expect(useCaptureStore.getState().model.noteId).toBe('roof-repair');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('offers a second try for a missing microphone, and only Close where recording is impossible', async () => {
+    useCaptureStore.getState().__configure({
+      recorder: fakeDeps({
+        requestMicrophone: async () => {
+          throw Object.assign(new Error('none'), { name: 'NotFoundError' });
+        },
+      }),
+    });
+    const view = mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('failed');
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no microphone was found/i);
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    view.unmount();
+    act(() => {
+      useCaptureStore.setState({ model: INITIAL_CAPTURE });
+    });
+
+    useCaptureStore.getState().__configure({ recorder: fakeDeps({ isSupported: () => false }) });
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('failed');
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/cannot record audio/i);
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
   });
 });
 

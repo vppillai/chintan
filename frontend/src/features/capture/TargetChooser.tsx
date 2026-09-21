@@ -1,7 +1,11 @@
+import { useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 
-import { useNotes } from '@/api/queries.ts';
-import type { NoteWire } from '@/api/schema.ts';
+import { useApi } from '@/api/ApiProvider.tsx';
+import { queryKeys, useNotes } from '@/api/queries.ts';
+import type { NoteWire, SettingsWire } from '@/api/schema.ts';
+import { formatRowTime } from '@/features/notes/groups.ts';
+import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
 
 /**
@@ -19,6 +23,11 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
  * query, which the library screen has almost certainly just fetched; offline
  * it is the corpus cached on the device — recording works with no connection,
  * so the chooser has to as well.
+ *
+ * Under the pill, the language the recording will be transcribed in: the
+ * target note's, else the default from You. Whisper is told one language per
+ * recording and nothing on this screen said which, so a Malayalam dictation
+ * sent under an English default failed with no warning it could have.
  */
 
 /** Enough to find a note made this week without a search field. */
@@ -27,7 +36,10 @@ const RECENT_LIMIT = 20;
 export interface TargetChooserProps {
   noteId: string | null;
   onChoose: (noteId: string | null) => void;
-  /** After Send the target has left the device and cannot be changed here. */
+  /**
+   * After Send the target has left the device and cannot be changed here;
+   * after a failure there is nothing to aim.
+   */
   disabled?: boolean;
   /**
    * Whether to fetch the list yet. The capture screen holds it back until the
@@ -46,8 +58,17 @@ export function TargetChooser({
 }: TargetChooserProps) {
   const [open, setOpen] = useState(false);
   const listId = useId();
+  const api = useApi();
 
   const served = useNotes({ state: 'active' }, { enabled: fetchList });
+  // Held back with the list, for the same reason: nothing but the microphone
+  // request goes out until the stream is live. Same key as `useSettings`, so
+  // a You visit or a settings save has usually answered it already.
+  const settings = useQuery({
+    queryKey: queryKeys.settings(),
+    queryFn: () => api.getSettings(),
+    enabled: fetchList,
+  });
   const cached = useCachedNotes('active');
   // The note this screen was opened from may not be among the recent twenty,
   // and its own screen has just cached the full record — so its title is on
@@ -60,6 +81,7 @@ export function TargetChooser({
 
   const chosen = noteId ? (notes.find((note) => note.id === noteId) ?? opened.data) : undefined;
   const title = noteId === null ? 'New note' : (chosen?.title ?? 'This note');
+  const language = transcriptionLanguage(noteId, chosen, settings.data);
 
   const choose = (id: string | null): void => {
     onChoose(id);
@@ -117,7 +139,10 @@ export function TargetChooser({
                     choose(note.id);
                   }}
                 >
-                  {note.title}
+                  <span className="target-chooser__option-title">{note.title}</span>
+                  {/* Part of the name on purpose: two "Roof repair"s are as
+                      alike to a screen reader as to the eye. */}
+                  <span className="target-chooser__option-meta">{optionMeta(note)}</span>
                 </button>
               </li>
             ))}
@@ -131,6 +156,51 @@ export function TargetChooser({
           )}
         </div>
       )}
+
+      {language && <p className="target-chooser__language">{language}</p>}
     </div>
   );
+}
+
+/**
+ * What tells two notes with the same title apart: when it was last touched
+ * and how it begins, cut at forty characters so the row stays one line.
+ *
+ * Characters as a reader counts them, not code points. In Malayalam, Tamil or
+ * Hindi the fortieth code point is a vowel sign or a virama as often as a
+ * letter, and a cut there strands the sign — a dotted circle on screen, a
+ * broken syllable in the option's name — or takes it off its consonant. The
+ * cut is marked, because the name is read where the CSS ellipsis is not.
+ */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const META_SNIPPET_GRAPHEMES = 40;
+
+export function optionMeta(note: NoteWire): string {
+  const when = formatRowTime(note.updated_at);
+  const graphemes = Array.from(GRAPHEMES.segment((note.snippet ?? '').trim()), (s) => s.segment);
+  const snippet =
+    graphemes.length > META_SNIPPET_GRAPHEMES
+      ? `${graphemes.slice(0, META_SNIPPET_GRAPHEMES).join('')}…`
+      : graphemes.join('');
+  return [when, snippet].filter(Boolean).join(' · ');
+}
+
+/**
+ * The line under the pill, or `null` while the answer is not on the device
+ * yet: the settings have not arrived, or the target is a note whose record
+ * has not. The rule is the server's (`transcriptionLanguage` in the
+ * pipeline): the note's own language, else the tenant default, else English.
+ * Said in the language's own script, since the person it is for reads that.
+ */
+export function transcriptionLanguage(
+  noteId: string | null,
+  note: NoteWire | null | undefined,
+  settings: SettingsWire | undefined,
+): string | null {
+  if (!settings) return null;
+  if (noteId && !note) return null;
+  const code = note?.language || settings.default_language || 'en';
+  if (code === AUTO_LANGUAGE) return 'Language detected per recording';
+  const native = LANGUAGES.find((entry) => entry.code === code)?.native ?? languageName(code);
+  return `Transcribed as ${native}`;
 }

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,7 @@ import {
   useNote,
 } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
+import { cacheNoteList } from '@/offline/notesCache.ts';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { FILED_ROWS_MAX, FilingRow } from './FilingRow.tsx';
@@ -227,6 +228,38 @@ describe('the upload this device is still making has a row of its own', () => {
     });
   });
 
+  it('shows a failed upload that was aimed at a note, since only this device holds it', async () => {
+    /*
+     * A moving upload aimed at a note is that note's Recordings tab's to
+     * show, and Home left it out. A failed one was left out too — while
+     * ResumePrompt leaves the machine's own recording out — so after a spend
+     * cap or an expired link bounced the person to Home, the recording had
+     * no handle anywhere until a reload.
+     */
+    sending({
+      state: 'failed',
+      noteId: 'roof-repair',
+      failure: {
+        kind: 'spend-capped',
+        message: 'Daily spending cap reached. Resend tomorrow.',
+        recoverable: true,
+      },
+    });
+    mount([]);
+
+    expect(await screen.findByText(/spending cap reached/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  });
+
+  it('still leaves a moving upload aimed at a note to that note', async () => {
+    sending({ noteId: 'roof-repair' });
+    mount([]);
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
   it('shows nothing of its own for a recording that failed before any upload', async () => {
     // A refused microphone is the capture screen's to explain, not the library's.
     sending({
@@ -359,6 +392,39 @@ describe('a failed capture has a Retry that is actually wired', () => {
     ]);
     expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
   });
+
+  it('says which note it was filed into, and the whole receipt opens it', async () => {
+    /*
+     * Two receipts stacked read "Filed" and "Filed". The note is on the
+     * capture and its title is on the device whenever the library has listed
+     * it, so the receipt names it — and is itself the control, with a
+     * chevron, rather than carrying an "Open the note" pill under a bare word.
+     */
+    await cacheNoteList([
+      {
+        id: 'roof-repair',
+        title: 'Roof repair',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 3,
+        archived: false,
+      },
+    ]);
+    const user = userEvent.setup();
+    mount([
+      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
+    ]);
+
+    const receipt = await screen.findByRole('button', { name: /filed into “roof repair”/i });
+    expect(receipt).toHaveAccessibleName(/open the note/i);
+    expect(screen.queryByText('Filed')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+
+    // Opening is acting on the receipt: it leaves with the navigation.
+    await user.click(receipt);
+    await waitFor(() => {
+      expect(screen.queryByText(/^Filed/)).toBeNull();
+    });
+  });
 });
 
 describe('a capture that never left "uploaded" is not a permanent dead end', () => {
@@ -399,6 +465,52 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     mount([capture({ status: 'uploaded' })]);
     await screen.findByText('Filing your recording');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('offers Retry only once the server will accept it: fifteen minutes, twenty while appending', async () => {
+    /*
+     * The row said "still not done" and offered Retry at ten minutes; the
+     * server refuses a retry of an in-flight capture until no worker can
+     * still be on it — fifteen minutes since it last wrote the row, or the
+     * twenty-minute append lease — so every tap in between was answered
+     * "still in flight". The copy stays at ten; the button waits.
+     */
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    mount([
+      capture({ id: 'twelve', status: 'transcribing', created_at: ago(12) }),
+      capture({ id: 'sixteen', status: 'transcribing', created_at: ago(16) }),
+      capture({ id: 'appending-sixteen', status: 'appending', created_at: ago(16) }),
+      capture({ id: 'appending-twenty-one', status: 'appending', created_at: ago(21) }),
+      // The server measures from the row's last write, not its creation. No
+      // backend sends `last_progress_at` yet, so `sixteen` above is offered
+      // Retry whether or not it moved; when the field is carried, a capture
+      // that made progress twelve minutes ago is not, however old its row.
+      capture({
+        id: 'progressed',
+        status: 'transcribing',
+        created_at: ago(16),
+        last_progress_at: ago(12),
+      }),
+      capture({
+        id: 'stalled',
+        status: 'transcribing',
+        created_at: ago(30),
+        last_progress_at: ago(16),
+      }),
+    ]);
+
+    expect(await screen.findAllByText(/still not done/i)).toHaveLength(6);
+    const rows = document.querySelectorAll<HTMLElement>('.filing-row');
+    const retryIn = (row: HTMLElement | undefined) =>
+      row ? within(row).queryByRole('button', { name: 'Retry' }) !== null : null;
+    expect(retryIn(rows[0])).toBe(false);
+    expect(retryIn(rows[1])).toBe(true);
+    expect(retryIn(rows[2])).toBe(false);
+    expect(retryIn(rows[3])).toBe(true);
+    expect(retryIn(rows[4])).toBe(false);
+    expect(retryIn(rows[5])).toBe(true);
+    // Dismiss is still the way off the screen for every one of them.
+    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(6);
   });
 });
 
@@ -679,11 +791,11 @@ describe('what the one poll keeps and what it drops', () => {
       }),
     ]);
 
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(await screen.findByText(/^Filed/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Dismiss' }));
 
     await waitFor(() => {
-      expect(screen.queryByText('Filed')).toBeNull();
+      expect(screen.queryByText(/^Filed/)).toBeNull();
     });
   });
 
@@ -705,7 +817,7 @@ describe('what the one poll keeps and what it drops', () => {
       }),
     ]);
 
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(await screen.findByText(/^Filed/)).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /open the note/i })).toHaveLength(1);
   });
 });
@@ -729,7 +841,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
 
     await user.click(await screen.findByRole('button', { name: /open the note/i }));
     await waitFor(() => {
-      expect(screen.queryByText('Filed')).toBeNull();
+      expect(screen.queryByText(/^Filed/)).toBeNull();
     });
 
     // Back to the library: a fresh mount, reading the device.
@@ -776,7 +888,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
       expect(fetchImpl.mock.calls.filter(([input]) => String(input).includes('/v1/captures')).length)
         .toBeGreaterThan(1);
     });
-    expect(screen.queryByText('Filed')).toBeNull();
+    expect(screen.queryByText(/^Filed/)).toBeNull();
     expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
   });
 
@@ -802,7 +914,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     const [first] = await screen.findAllByRole('button', { name: 'Dismiss' });
     await user.click(first as HTMLElement);
     await waitFor(() => {
-      expect(screen.queryByText('Filed')).toBeNull();
+      expect(screen.queryByText(/^Filed/)).toBeNull();
     });
     expect(screen.getByText('Timed out')).toBeInTheDocument();
   });
@@ -938,16 +1050,36 @@ describe('a capture that has just been filed refreshes its note', () => {
     expect(noteReads()).toBe(2);
   });
 
+  it('keeps the live region when the row turns into a receipt, so the landing is announced', async () => {
+    /*
+     * A live region announces a change to its text, not the text it mounted
+     * with. When the receipt was its own subtree, React swapped the
+     * `role="status"` node for a fresh one at the flip, and the moment of
+     * filing — what a person waiting on Home is listening for — went unspoken.
+     */
+    const { refetchCaptures } = mountWithPolls([[filing], [filed]]);
+    const live = await screen.findByRole('status');
+    expect(live).toHaveTextContent('Filing your recording');
+
+    await refetchCaptures();
+
+    await waitFor(() => {
+      expect(live).toHaveTextContent(/^Filed/);
+    });
+    expect(screen.getByRole('status')).toBe(live);
+    expect(screen.getByRole('button', { name: /open the note/i })).toHaveAccessibleName(/^Filed/);
+  });
+
   it('does not refetch for a capture that was already appended last time', async () => {
     const { refetchCaptures, noteReads } = mountWithPolls([[filed], [filed]]);
 
     await screen.findByText('body: before');
-    await screen.findByText('Filed');
+    await screen.findByText(/^Filed/);
     await refetchCaptures();
 
     // Same answer twice; nothing changed, nothing to refresh.
     await waitFor(() => {
-      expect(screen.getByText('Filed')).toBeInTheDocument();
+      expect(screen.getByText(/^Filed/)).toBeInTheDocument();
     });
     expect(noteReads()).toBe(1);
   });
@@ -998,7 +1130,7 @@ describe('a recording made into a note is the note\'s to show, not the library\'
       capture({ id: 'srv-routed', status: 'appended', note_id: 'roof-repair', targeted: false }),
     ]);
 
-    expect(await screen.findByText('Filed')).toBeInTheDocument();
+    expect(await screen.findByText(/^Filed/)).toBeInTheDocument();
     expect(document.querySelectorAll('.filing-row')).toHaveLength(1);
     expect(screen.queryByText(/more filed/)).toBeNull();
   });

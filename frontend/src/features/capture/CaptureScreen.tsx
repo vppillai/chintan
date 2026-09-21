@@ -14,7 +14,9 @@ import {
   formatElapsed,
   hasBufferedAudio,
   isCaptureBusy,
+  isLive,
   MAX_DURATION_MS,
+  type CaptureFailure,
   type CaptureModel,
 } from './machine.ts';
 import { useCaptureStore } from './store.ts';
@@ -159,7 +161,19 @@ export function CaptureScreen() {
     <div className="capture">
       <h1 className="visually-hidden">Recording</h1>
 
-      <p className="capture__state" role="status" aria-live="polite">
+      {/*
+        Live is signalled, not just spelt: a pulsing accent dot before the
+        word, and the clock in accent, for as long as the microphone is open.
+        The eyebrow was muted grey in every state, so "Recording" and
+        "Paused" read the same at arm's length.
+      */}
+      <p
+        className="capture__state"
+        role="status"
+        aria-live="polite"
+        data-live={isLive(model) || undefined}
+      >
+        {isLive(model) && <span className="capture__state-dot" aria-hidden="true" />}
         {statusLabel(model)}
       </p>
 
@@ -172,49 +186,66 @@ export function CaptureScreen() {
         noteId={model.noteId}
         onChoose={setTarget}
         disabled={
-          model.state === 'idle' || model.state === 'uploading' || model.state === 'uploaded'
+          model.state === 'idle' ||
+          model.state === 'uploading' ||
+          model.state === 'uploaded' ||
+          model.state === 'failed'
         }
         // Nothing but the microphone request goes out until the stream is
         // live; the list is for the pill, and the pill can wait a second.
         fetchList={model.state !== 'idle' && model.state !== 'requesting'}
       />
 
-      <p
-        className="capture__timer numeric"
-        aria-label={`Elapsed ${formatElapsed(model.elapsedMs)}`}
-      >
-        {formatElapsed(model.elapsedMs)}
-      </p>
-
-      {model.state === 'review' ? (
+      {model.state === 'failed' && model.failure ? (
         /*
-          Listen back before it goes anywhere. The live canvas gives way to the
-          recording's own waveform, scrollable and seekable, with play/pause.
+          The failure takes the place of the clock and the level box. Left
+          in place they said `00:00` over an empty panel under a live "Into"
+          pill — a dead screen dressed as a working one, with no word on
+          what to do next.
         */
-        <ReviewPlayer
-          key={model.localId}
-          clip={clip}
-          envelope={reviewEnvelope}
-          durationMs={model.elapsedMs}
-        />
+        <FailureCard failure={model.failure} />
       ) : (
-        <div className="capture__waveform">
-          {/*
-            Keyed by the recording, so each one gets a fresh canvas. A canvas
-            keeps its last bitmap until something repaints it, and the
-            waveform's draw effect only re-runs when `active` flips — which is
-            when the stream is live, a microphone request later. Without the
-            key, whatever the element showed on this screen's first frame
-            stayed on it for that whole wait.
-          */}
-          <Waveform
-            key={model.localId}
-            read={read}
-            active={model.state === 'recording'}
-            reducedMotion={reducedMotion}
-            label={model.state === 'recording' ? 'Live audio level' : 'Audio level'}
-          />
-        </div>
+        <>
+          <p
+            className="capture__timer numeric"
+            aria-label={`Elapsed ${formatElapsed(model.elapsedMs)}`}
+            data-live={isLive(model) || undefined}
+          >
+            {formatElapsed(model.elapsedMs)}
+          </p>
+
+          {model.state === 'review' ? (
+            /*
+              Listen back before it goes anywhere. The live canvas gives way to
+              the recording's own waveform, scrollable and seekable, with
+              play/pause.
+            */
+            <ReviewPlayer
+              key={model.localId}
+              clip={clip}
+              envelope={reviewEnvelope}
+              durationMs={model.elapsedMs}
+            />
+          ) : (
+            <div className="capture__waveform">
+              {/*
+                Keyed by the recording, so each one gets a fresh canvas. A
+                canvas keeps its last bitmap until something repaints it, and
+                the waveform's draw effect only re-runs when `active` flips —
+                which is when the stream is live, a microphone request later.
+                Without the key, whatever the element showed on this screen's
+                first frame stayed on it for that whole wait.
+              */}
+              <Waveform
+                key={model.localId}
+                read={read}
+                active={model.state === 'recording'}
+                reducedMotion={reducedMotion}
+                label={model.state === 'recording' ? 'Live audio level' : 'Audio level'}
+              />
+            </div>
+          )}
+        </>
       )}
 
       {(model.state === 'requesting' ||
@@ -251,12 +282,6 @@ export function CaptureScreen() {
         </p>
       )}
 
-      {model.failure && (
-        <p className="capture__error" role="alert">
-          {model.failure.message}
-        </p>
-      )}
-
       <Controls
         model={model}
         onPause={pause}
@@ -271,6 +296,7 @@ export function CaptureScreen() {
           });
         }}
         onRerecord={() => void rerecord()}
+        onRestart={() => void start(model.noteId)}
         onSend={handOff}
         onLeave={() => {
           leave(captureReturnPath(model.noteId, false));
@@ -329,6 +355,8 @@ interface ControlsProps {
   onStop: () => void;
   onDiscard: () => void;
   onRerecord: () => void;
+  /** Ask for the microphone again, into the same target. */
+  onRestart: () => void;
   onSend: () => void;
   onLeave: () => void;
 }
@@ -348,6 +376,7 @@ function Controls({
   onStop,
   onDiscard,
   onRerecord,
+  onRestart,
   onSend,
   onLeave,
 }: ControlsProps) {
@@ -398,15 +427,25 @@ function Controls({
   }
 
   if (model.state === 'failed') {
-    const retry = canRetryUpload(model);
+    const resend = canRetryUpload(model);
+    /*
+     * A refused or missing microphone is not the end of the road either: the
+     * person allows it in the site settings, or plugs one in, and taps Try
+     * again, which asks for the microphone as opening the screen did. Before
+     * this the two device failures were marked unrecoverable and offered
+     * nothing but Close.
+     */
+    const reopen =
+      model.failure?.kind === 'permission-denied' || model.failure?.kind === 'no-microphone';
     return (
       <div className="capture__controls">
         <Control
-          icon={retry ? 'trash' : 'close'}
-          label={retry ? 'Discard' : 'Close'}
+          icon={resend ? 'trash' : 'close'}
+          label={resend ? 'Discard' : 'Close'}
           onClick={onDiscard}
         />
-        {retry && <Control icon="send" label="Try again" primary onClick={onSend} />}
+        {resend && <Control icon="send" label="Try again" primary onClick={onSend} />}
+        {reopen && <Control icon="mic" label="Try again" primary onClick={onRestart} />}
       </div>
     );
   }
@@ -414,6 +453,26 @@ function Controls({
   return (
     <div className="capture__controls">
       <Control icon="check" label="Done" onClick={onLeave} />
+    </div>
+  );
+}
+
+/**
+ * What went wrong, at reading size, with the one thing that fixes it. The
+ * machine's sentence is the app's own (never a browser's), so it is shown as
+ * is; the permission case adds the step nobody guesses, because the browser
+ * that refused offers no way back to the prompt from inside the page.
+ */
+function FailureCard({ failure }: { failure: CaptureFailure }) {
+  return (
+    <div className="capture__failure" role="alert">
+      <Icon name="alert" size={28} className="capture__failure-icon" />
+      <p className="capture__failure-message">{failure.message}</p>
+      {failure.kind === 'permission-denied' && (
+        <p className="capture__failure-hint">
+          Allow the microphone in your browser&rsquo;s site settings, then try again.
+        </p>
+      )}
     </div>
   );
 }
