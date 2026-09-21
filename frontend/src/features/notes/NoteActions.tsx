@@ -13,6 +13,7 @@ import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
 
+import { checklistToProse, proseToChecklist } from './checklist.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import { describePurge, purgeCountdown } from './purge.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -118,6 +119,20 @@ export function NoteActions({
               editor.edit({ aliases });
             }}
             onCommit={() => void editor.saveNow()}
+          />
+          <ChecklistSwitch
+            checked={(draft.kind ?? note.kind ?? 'note') === 'checklist'}
+            onChange={(checklist) => {
+              // The body is converted with the kind, in the one PATCH: a
+              // checklist whose body is still prose would show every
+              // paragraph as one open item and normalise it on the first
+              // write, which is the conversion done by surprise.
+              editor.edit({
+                kind: checklist ? 'checklist' : 'note',
+                body: checklist ? proseToChecklist(draft.body) : checklistToProse(draft.body),
+              });
+              void editor.saveNow();
+            }}
           />
         </div>
       )}
@@ -332,6 +347,51 @@ function NoteLanguage({
       <p className="language-field__hint">
         For recordings made into this note — Record into this, or chosen as the target. A
         recording filed automatically is transcribed in your default language.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * Prose or checklist. It changes what the rest of the screen is (Items and
+ * Split up for Text and Cleaned) and what a recording into the note becomes
+ * (an item, not a paragraph). Last in Details: the language stays first,
+ * where the owner's trial finally found it, and a note is converted once.
+ *
+ * The same drawn checkbox as the Cleaned tab's auto-refresh switch: the
+ * native control stretched invisibly over the whole 44 px label, so the tap
+ * lands on the control itself and the mark beside the words is what a finger
+ * sees.
+ */
+function ChecklistSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const id = useId();
+  return (
+    <section className="language-field">
+      <h2 className="tag-editor__label">Checklist</h2>
+      <label className="cleaned__auto" htmlFor={id}>
+        <input
+          id={id}
+          type="checkbox"
+          className="cleaned__auto-box"
+          checked={checked}
+          onChange={(event) => {
+            onChange(event.target.checked);
+          }}
+        />
+        <span className="cleaned__auto-mark" aria-hidden="true">
+          <Icon name="check" size={16} />
+        </span>
+        <span>This note is a checklist</span>
+      </label>
+      <p className="language-field__hint">
+        Each paragraph becomes an item to tick off, and a recording into this note adds one.
+        Turning it off makes every item a paragraph again.
       </p>
     </section>
   );
