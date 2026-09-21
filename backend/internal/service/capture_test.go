@@ -440,20 +440,29 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 		capture  model.CaptureIndex
 		language string
 		noAudio  bool
+		archived bool
 		wantErr  error
 	}{
-		{"appended, asked for ml", appended, "ml", false, nil},
-		{"appended, no language: the note's applies", appended, "", false, nil},
-		{"failed at transcription, asked for auto", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: model.FormatTime(now)}, "auto", false, nil},
-		{"a language that is not a code", appended, "klingon", false, ErrInvalidLanguage},
-		{"still transcribing a minute ago", model.CaptureIndex{Status: model.StatusTranscribing, CreatedAt: model.FormatTime(now), LastProgressAt: model.FormatTime(now.Add(-time.Minute))}, "ml", false, ErrCaptureInFlight},
-		{"the audio has expired", appended, "ml", true, ErrCaptureAudioExpired},
+		{"appended, asked for ml", appended, "ml", false, false, nil},
+		{"appended, no language: the note's applies", appended, "", false, false, nil},
+		{"failed at transcription, asked for auto", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: model.FormatTime(now)}, "auto", false, false, nil},
+		{"a language that is not a code", appended, "klingon", false, false, ErrInvalidLanguage},
+		{"still transcribing a minute ago", model.CaptureIndex{Status: model.StatusTranscribing, CreatedAt: model.FormatTime(now), LastProgressAt: model.FormatTime(now.Add(-time.Minute))}, "ml", false, false, ErrCaptureInFlight},
+		{"the audio has expired", appended, "ml", true, false, ErrCaptureAudioExpired},
+		{"the note is archived", appended, "ml", false, true, ErrNoteArchived},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store, objects := memory.NewStore(), memory.NewObjects()
 			worker := &stubInvoker{}
 			svc := NewCaptureService(store, objects).WithInvoker(worker).WithClock(func() time.Time { return now })
+			note := model.NoteIndex{ID: "n1", Title: "Destination", UpdatedAt: model.Now(), S3MarkdownKey: "tenants/user1/notes/n1/note.md"}
+			if tc.archived {
+				note.DeletedAt = model.FormatTime(now)
+			}
+			if _, err := store.PutNote(ctx, "user1", note); err != nil {
+				t.Fatal(err)
+			}
 			c := tc.capture
 			c.ID, c.UserID, c.NoteID, c.AudioKey = "c_1", "user1", "n1", audioKey
 			if !tc.noAudio {
@@ -479,6 +488,9 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 			if tc.wantErr != nil {
 				if len(worker.calls) != 0 {
 					t.Fatalf("a refused request handed the capture to the worker: %v", worker.calls)
+				}
+				if after, _ := store.GetCapture(ctx, "user1", "c_1"); after.Status != tc.capture.Status || after.RawKey != tc.capture.RawKey {
+					t.Fatalf("a refused request changed the row: %+v", after)
 				}
 				return
 			}
@@ -507,8 +519,8 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 				if key == "" {
 					continue
 				}
-				if present, _ := objects.Exists(ctx, key); present {
-					t.Errorf("the earlier transcript %s was left behind", key)
+				if present, _ := objects.Exists(ctx, key); !present {
+					t.Errorf("the earlier transcript %s was deleted; it stays downloadable until the worker writes over it", key)
 				}
 			}
 			if present, _ := objects.Exists(ctx, audioKey); !present {

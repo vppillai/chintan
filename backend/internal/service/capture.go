@@ -378,12 +378,21 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 	if !present {
 		return &capture, ErrCaptureAudioExpired
 	}
-
-	for _, key := range []string{capture.RawKey, capture.SegmentsKey, capture.RoutedKey, capture.CleanKey} {
-		if err := deleteObjectIfPresent(ctx, s.objects, key); err != nil {
-			return nil, fmt.Errorf("failed to delete an earlier transcript: %w", err)
+	// The same rule as MoveCapture: the worker would only fail the capture
+	// against an archived note, with its paragraph still in it.
+	if capture.NoteID != "" {
+		note, err := s.store.GetNote(ctx, userID, capture.NoteID)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("failed to get note: %w", err)
+		}
+		if err == nil && !NoteIsActive(note) {
+			return &capture, ErrNoteArchived
 		}
 	}
+
+	// The earlier transcript objects stay: every key is derived from the
+	// capture id, so the worker writes over them, and until it does the
+	// previous transcript is still there to download.
 	capture.RequestedLanguage = language
 	capture.RawKey, capture.SegmentsKey, capture.RoutedKey, capture.CleanKey = "", "", "", ""
 	capture.Language, capture.LanguageDetected = "", ""

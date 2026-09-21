@@ -48,12 +48,17 @@ in one invocation, and the transcribe deadline applies to each call:
 - **On request.** `POST /v1/captures/{id}/retranscribe {language?}` resets a
   finished capture to `transcribing` with `RequestedLanguage` set (it
   outranks the note's language and the default, and stays on the row so the
-  rule above never undoes a person's choice), deletes the earlier transcript
-  objects and clears the append claim; the worker transcribes, strips,
-  cleans and then **replaces** the capture's paragraph in the note where it
-  stands, by its marker (`replaceCaptureParagraph`: cut along the boundary
-  delete and move use, inserted back in id order; a checklist item as one
-  line, a tick kept).
+  rule above never undoes a person's choice), clears the transcript keys
+  (the objects stay until the worker writes over them, so the previous
+  transcript downloads meanwhile) and the append claim; the worker
+  transcribes, strips, cleans and then **replaces** the capture's paragraph
+  in the note where it stands, by its marker (`replaceCaptureParagraph`: cut
+  along the boundary delete and move use, inserted back in id order; a
+  checklist item as one line, a tick kept). Because the earlier paragraph
+  keeps the marker until then, a retry of the append inside its claim lease
+  asks whether *this attempt's text* is under the marker
+  (`paragraphInNote`), not whether the marker is there; a marker over the old
+  paragraph is an unwritten append, and is failed and retried like one.
 
 Worst case inside one invocation is therefore two transcriptions (10 min)
 plus routing (30 s), cleanup (2 min) and the append, which still fits the

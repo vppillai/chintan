@@ -854,9 +854,10 @@ paths:
         '409':
           description: |
             The capture is still in flight and a worker may still be working
-            on it (the same rule as `/retry`), or the recording's audio has
+            on it (the same rule as `/retry`), the recording's audio has
             already been deleted by the retention rule, so there is nothing
-            to transcribe. `detail` says which.
+            to transcribe, or its note is archived (restore it first, as for
+            a move). `detail` says which.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
