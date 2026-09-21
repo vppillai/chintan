@@ -362,3 +362,47 @@ func TestRecordCleanRequestMovesNeitherTheVersionNorTheCleanedView(t *testing.T)
 		t.Errorf("after the clear: stamp=%q version=%d, want empty and %d", got.CleanedRequestedAt, got.Version, current.Version)
 	}
 }
+
+// Adopting the cleaned view as the body — the Split up tab's "Use this list" —
+// leaves the view current: the two are the same text, and a stale banner
+// would only offer to regenerate what is already there. Trailing whitespace
+// does not count; the editor leaves a newline the view does not have.
+func TestAdoptingTheCleanedViewAsTheBodyKeepsItCurrent(t *testing.T) {
+	h := newEditHarness(t)
+	n := h.withCleanedView("u", h.note("u", "Roof", "the gutter leaks"), false, "")
+
+	// An edit first, so the view starts stale and the adoption has to clear it.
+	version := n.Version
+	body := "the gutter leaks badly"
+	edited, err := h.notes.UpdateNote(h.ctx, "u", n.ID, NoteUpdates{Body: &body, ExpectedVersion: &version})
+	if err != nil {
+		t.Fatalf("UpdateNote(edit): %v", err)
+	}
+	if !edited.CleanedStale {
+		t.Fatal("the edit did not mark the view stale")
+	}
+
+	version = edited.Version
+	body = edited.CleanedBody + "\n"
+	adopted, err := h.notes.UpdateNote(h.ctx, "u", n.ID, NoteUpdates{Body: &body, ExpectedVersion: &version})
+	if err != nil {
+		t.Fatalf("UpdateNote(adopt): %v", err)
+	}
+	if adopted.CleanedStale {
+		t.Error("adopting the cleaned view as the body left it stale")
+	}
+	if h.get("u", n.ID).CleanedStale {
+		t.Error("the stored row is stale after the adoption")
+	}
+
+	// And a different body is still a change.
+	version = adopted.Version
+	body = "something else"
+	changed, err := h.notes.UpdateNote(h.ctx, "u", n.ID, NoteUpdates{Body: &body, ExpectedVersion: &version})
+	if err != nil {
+		t.Fatalf("UpdateNote(change): %v", err)
+	}
+	if !changed.CleanedStale {
+		t.Error("a body that differs from the view was not marked stale")
+	}
+}
