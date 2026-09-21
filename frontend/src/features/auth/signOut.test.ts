@@ -167,6 +167,9 @@ describe('the refresh token is revoked, not just forgotten', () => {
     const body = new URLSearchParams(String(init?.body));
     expect(body.get('token')).toBe('refresh-1');
     expect(body.get('client_id')).toBe('client-abc');
+    // The redirect that follows ends this document; `keepalive` is what lets
+    // the request finish without it.
+    expect(init?.keepalive).toBe(true);
     expect(h.navigated[0]).toContain('https://cognito.test/logout');
   });
 

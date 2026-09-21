@@ -136,13 +136,10 @@ export async function performSignOut({
   // Unconfigured build (or a test): there is no hosted UI to end a session at,
   // and navigating to `/logout` on an empty origin would strand the user.
   if (config.cognitoDomain.length > 0 && config.clientId.length > 0) {
-    if (refreshToken) await revokeRefreshToken(refreshToken, fetchImpl);
+    if (refreshToken) revokeRefreshToken(refreshToken, fetchImpl);
     navigate(logoutUrl(redirectUri()));
   }
 }
-
-/** A captive portal or a hung connection must not hold the sign-out hostage. */
-const REVOKE_TIMEOUT_MS = 5_000;
 
 /**
  * `POST /oauth2/revoke`, RFC 7009 as Cognito serves it for a public client:
@@ -152,19 +149,22 @@ const REVOKE_TIMEOUT_MS = 5_000;
  * expires, an hour at most, and nothing shorter is available without a
  * server-side denylist.
  *
- * Best-effort on purpose. The device is already clean by the time this runs,
- * and a sign-out with no connection still has to finish: an offline failure,
- * a refusal or the timeout all fall through to `/logout`.
+ * Sent and not awaited, with `keepalive` so the request outlives the document
+ * that `navigate` ends on the next line. Awaiting the answer under a timeout
+ * held the gate on the signed-out screen — a live Sign in button — for as long
+ * as a captive portal cared to keep the request, and a tap there started a
+ * flow the late `/logout` redirect then abandoned half-way, leaving a stray
+ * pending entry. The device is already clean by the time this is sent, and a
+ * sign-out with no connection still has to finish: offline or refused, the
+ * token ages out at Cognito on its own.
  */
-async function revokeRefreshToken(refreshToken: string, fetchImpl: typeof fetch): Promise<void> {
-  try {
-    await fetchImpl(`${config.cognitoDomain}/oauth2/revoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: refreshToken, client_id: config.clientId }),
-      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
-    });
-  } catch {
-    /* Offline, refused or timed out: the token ages out at Cognito on its own. */
-  }
+function revokeRefreshToken(refreshToken: string, fetchImpl: typeof fetch): void {
+  void fetchImpl(`${config.cognitoDomain}/oauth2/revoke`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ token: refreshToken, client_id: config.clientId }),
+    keepalive: true,
+  }).catch(() => {
+    /* Nothing to do; see above. */
+  });
 }
