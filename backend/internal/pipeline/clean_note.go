@@ -170,7 +170,7 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
 
-	text, err := cleanup.NoteOutput(cleaned.Text)
+	text, err := cleanup.NoteOutput(mode, cleaned.Text)
 	if err != nil {
 		log.Warn("clean-note: the model returned nothing usable")
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")

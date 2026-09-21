@@ -214,6 +214,23 @@ func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body stri
 	if f.NoteResponse != "" {
 		return provider.Cleaned{Text: f.NoteResponse, Usage: usage}, nil
 	}
+	if mode == model.NoteCleanTasks {
+		// A valid task list from any body: item lines kept as they are, every
+		// other non-blank line made an open item. Splitting is the real
+		// model's judgement; a test that wants a split sets NoteResponse.
+		var items []string
+		for _, line := range strings.Split(body, "\n") {
+			line = strings.TrimSpace(line)
+			switch {
+			case line == "":
+			case strings.HasPrefix(line, "- [ ] "), strings.HasPrefix(line, "- [x] "):
+				items = append(items, line)
+			default:
+				items = append(items, "- [ ] "+line)
+			}
+		}
+		return provider.Cleaned{Text: strings.Join(items, "\n"), Usage: usage}, nil
+	}
 	if mode == model.NoteCleanPolished {
 		return provider.Cleaned{Text: strings.Join(strings.Fields(body), " "), Usage: usage}, nil
 	}

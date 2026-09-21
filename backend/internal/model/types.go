@@ -48,13 +48,21 @@ const (
 	// NoteCleanStructured rewrites the body as an organised Markdown document:
 	// short headings, lists for enumerations, filler and repetition removed.
 	NoteCleanStructured NoteCleanMode = "structured"
-	// DefaultNoteCleanMode is what a note cleans in until it says otherwise.
+	// NoteCleanTasks rewrites a checklist as granular, actionable tasks: an
+	// item holding several actions becomes one item per action, done items are
+	// kept verbatim and in place, order is otherwise kept, nothing is invented
+	// or merged. It is the only mode a checklist cleans in and means nothing
+	// for a plain note (service.CheckCleanMode).
+	NoteCleanTasks NoteCleanMode = "tasks"
+	// DefaultNoteCleanMode is what a plain note cleans in until it says
+	// otherwise.
 	DefaultNoteCleanMode = NoteCleanStructured
 )
 
-// ValidNoteCleanMode reports whether m names a whole-note cleanup mode.
+// ValidNoteCleanMode reports whether m names a whole-note cleanup mode. Which
+// modes a given note may use is service.CheckCleanMode's question.
 func ValidNoteCleanMode(m NoteCleanMode) bool {
-	return m == NoteCleanPolished || m == NoteCleanStructured
+	return m == NoteCleanPolished || m == NoteCleanStructured || m == NoteCleanTasks
 }
 
 // Bounds on the whole-note cleaned view. Both exist to keep the note row
@@ -171,6 +179,17 @@ type Settings struct {
 	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
 }
 
+// NoteKindChecklist is the one non-default NoteIndex.Kind. A checklist body is
+// GitHub task-list syntax, one item per line: "- [ ] text" open, "- [x] text"
+// done; blank lines are ignored by every reader. The worker appends each
+// recording as one open item, and the cleaned view runs in NoteCleanTasks.
+const NoteKindChecklist = "checklist"
+
+// ValidNoteKind reports whether k is a stored note kind.
+func ValidNoteKind(k string) bool {
+	return k == "" || k == NoteKindChecklist
+}
+
 // MaxSearchTextBytes caps NoteIndex.SearchText. DynamoDB's item limit is
 // 400 KB, the rest of a note row is well under 10 KB, and 32 KB of lowercased
 // text is roughly 5,000 words — more than any dictation session produces
@@ -213,6 +232,12 @@ type NoteIndex struct {
 	// reader needs. The store promotes it as its own attribute and reads it back
 	// only when a list asks for it (repository.ListOptions.IncludeSearchText).
 	SearchText string `json:"-"`
+	// Kind says what the body is: "" for a plain note, NoteKindChecklist for a
+	// checklist whose body is one task-list item per line (see
+	// docs/design/checklists.md). Promoted like Language, and absent on rows
+	// written before 2026-09-21, which are plain notes; the wire maps "" to
+	// "note" so a client never sees the storage default.
+	Kind string `json:"kind,omitempty"`
 	// AutoClean asks the worker to regenerate the cleaned view after every
 	// change to the body it makes or is told about: an append, a recording
 	// moved in or out, a recording deleted. Off by default because each run is

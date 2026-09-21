@@ -91,7 +91,11 @@ export function CleanedPanel({
 
       <div className="cleaned__controls">
         <div className="cleaned__modes" role="group" aria-label="Cleaned view mode">
-          {(Object.keys(CLEANED_MODE_LABELS) as CleanedMode[]).map((option) => (
+          {(Object.keys(CLEANED_MODE_LABELS) as CleanedMode[])
+            // tasks is a checklist's mode and the server refuses it for a
+            // plain note; the checklist screen has its own controls.
+            .filter((option) => option !== 'tasks')
+            .map((option) => (
             <button
               key={option}
               type="button"

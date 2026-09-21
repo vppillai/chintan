@@ -178,18 +178,18 @@ func TestNotePromptRefusesAnEmptyBodyAndAnUnknownMode(t *testing.T) {
 
 func TestNoteOutputRejectsNothingAndStripsAnEchoedFence(t *testing.T) {
 	for _, raw := range []string{"", "   \n", llm.FenceMarker, llm.FenceMarker + "\n\n" + llm.FenceMarker} {
-		if _, err := cleanup.NoteOutput(raw); err == nil {
+		if _, err := cleanup.NoteOutput(model.NoteCleanStructured, raw); err == nil {
 			t.Errorf("NoteOutput(%q) accepted nothing usable", raw)
 		}
 	}
-	got, err := cleanup.NoteOutput(llm.FenceMarker + "\n# Roof\n\n- call the roofer\n" + llm.FenceMarker)
+	got, err := cleanup.NoteOutput(model.NoteCleanStructured, llm.FenceMarker+"\n# Roof\n\n- call the roofer\n"+llm.FenceMarker)
 	if err != nil {
 		t.Fatalf("NoteOutput: %v", err)
 	}
 	if got != "# Roof\n\n- call the roofer" {
 		t.Errorf("NoteOutput = %q", got)
 	}
-	plain, err := cleanup.NoteOutput("  # Roof\n")
+	plain, err := cleanup.NoteOutput(model.NoteCleanStructured, "  # Roof\n")
 	if err != nil || plain != "# Roof" {
 		t.Errorf("NoteOutput(plain) = %q, %v", plain, err)
 	}

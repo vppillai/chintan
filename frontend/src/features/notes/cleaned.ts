@@ -15,12 +15,15 @@ export const CLEAN_POLL_TIMEOUT_MS = 60_000;
 export const CLEANED_MODE_LABELS: Record<CleanedMode, string> = {
   structured: 'Structured',
   polished: 'Polished',
+  // A checklist's only mode; the picker never offers it for a plain note.
+  tasks: 'Split up',
 };
 
 /** What each mode does, in a sentence — the empty state's and the switch's. */
 export const CLEANED_MODE_HINTS: Record<CleanedMode, string> = {
   structured: 'The whole note rewritten into headings and lists.',
   polished: 'The whole note as it is, with the prose tidied.',
+  tasks: 'Each item split into one task per action.',
 };
 
 /**

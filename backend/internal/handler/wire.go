@@ -48,7 +48,10 @@ type Note struct {
 	Version    int64    `json:"version"`
 	Archived   bool     `json:"archived"`
 	PurgeAfter *string  `json:"purge_after"`
-	Verbatim   bool     `json:"verbatim,omitempty"`
+	// Kind is "note" or "checklist", always present: the storage zero value is
+	// mapped to "note" here so the client branches on one spelling.
+	Kind     string `json:"kind"`
+	Verbatim bool   `json:"verbatim,omitempty"`
 	// Language is the transcription language for captures recorded into this
 	// note: "auto" or an ISO-639-1 code. Absent means the tenant's
 	// default_language applies.
@@ -97,9 +100,15 @@ func cleanedOf(n model.NoteIndex) *NoteCleaned {
 	if n.CleanedBody == "" && n.CleanedError == "" {
 		return nil
 	}
+	// The mode the view WAS generated in, read from the row; a view written
+	// before the mode was recorded reads as the default.
+	mode := n.CleanedMode
+	if !model.ValidNoteCleanMode(mode) {
+		mode = model.DefaultNoteCleanMode
+	}
 	out := &NoteCleaned{
 		Body:        n.CleanedBody,
-		Mode:        string(service.EffectiveCleanMode(model.NoteIndex{CleanMode: n.CleanedMode})),
+		Mode:        string(mode),
 		GeneratedAt: n.CleanedAt,
 		Stale:       n.CleanedStale,
 	}
@@ -130,12 +139,15 @@ func noteOf(n model.NoteIndex) Note {
 		UpdatedAt: n.UpdatedAt,
 		Version:   n.Version,
 		Archived:  !service.NoteIsActive(n),
+		Kind:      wireNoteKind(n.Kind),
 		Verbatim:  n.Verbatim,
 		Language:  n.Language,
 		AutoClean: n.AutoClean,
 	}
-	if model.ValidNoteCleanMode(n.CleanMode) {
-		out.CleanedMode = string(n.CleanMode)
+	// A checklist always says tasks; a plain note says its stored preference,
+	// which for a stale tasks preference is the default it actually runs in.
+	if n.Kind == model.NoteKindChecklist || model.ValidNoteCleanMode(n.CleanMode) {
+		out.CleanedMode = string(service.EffectiveCleanMode(n))
 	}
 	if out.Aliases == nil {
 		out.Aliases = []string{}
@@ -148,6 +160,29 @@ func noteOf(n model.NoteIndex) Note {
 		out.PurgeAfter = &v
 	}
 	return out
+}
+
+// The wire spelling of a plain note's kind. Storage keeps "" so legacy rows
+// need no backfill; the wire says "note" so the field is never absent.
+const wireNoteKindPlain = "note"
+
+func wireNoteKind(stored string) string {
+	if stored == "" {
+		return wireNoteKindPlain
+	}
+	return stored
+}
+
+// storedNoteKind is the inverse of wireNoteKind for a value a client sent.
+func storedNoteKind(wire string) (string, bool) {
+	switch wire {
+	case wireNoteKindPlain:
+		return "", true
+	case model.NoteKindChecklist:
+		return model.NoteKindChecklist, true
+	default:
+		return "", false
+	}
 }
 
 func notesOf(in []model.NoteIndex) []Note {

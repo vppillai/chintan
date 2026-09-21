@@ -1098,6 +1098,11 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, fmt.Errorf("pipeline: get clean text: %w", err)
 	}
 	cleanedText := string(cleanBytes)
+	if note.Kind == model.NoteKindChecklist {
+		// One recording is one item. The marker still goes on the line before
+		// it, so deleting or moving the recording cuts exactly this line.
+		cleanedText = checklistItem(cleanedText)
+	}
 
 	// The append is the one step that must happen exactly once. Append, index
 	// update and status flip are three writes with nothing tying them together:
@@ -1321,6 +1326,29 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 	if updated, err := p.cfg.Store.PutCapture(ctx, released); err == nil {
 		*capture = updated
 	}
+}
+
+// maxChecklistItemRunes bounds one appended item. A checklist item is a line,
+// and a line the width of a paragraph is still one item — splitting it into
+// several tasks is the cleaned view's job (NoteCleanTasks), not the append's,
+// because the split is a judgement and the append must be a plain record of
+// what was said. Two thousand runes is a few minutes of speech.
+const maxChecklistItemRunes = 2000
+
+// checklistItem renders a recording's cleaned text as one open task-list
+// item: whitespace runs and line breaks collapsed to single spaces, trimmed,
+// cut to maxChecklistItemRunes. Text with no words stays empty — an empty
+// paragraph, as a plain note would get — rather than becoming an item with
+// nothing in it.
+func checklistItem(text string) string {
+	collapsed := strings.Join(strings.Fields(text), " ")
+	if collapsed == "" {
+		return ""
+	}
+	if runes := []rune(collapsed); len(runes) > maxChecklistItemRunes {
+		collapsed = strings.TrimSpace(string(runes[:maxChecklistItemRunes]))
+	}
+	return "- [ ] " + collapsed
 }
 
 // appendToNote adds text to the end of a note body under a conditional write,

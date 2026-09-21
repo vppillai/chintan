@@ -127,9 +127,16 @@ export interface NoteWire {
    * `'structured'`. Distinct from `cleaned.mode`, the mode of the stored view.
    */
   cleaned_mode?: NoteCleanMode;
+  /**
+   * `'note'` or `'checklist'` (a body of `- [ ] item` lines). Optional here
+   * only so existing literals keep compiling; the backend always sends it.
+   */
+  kind?: NoteKind;
 }
 
-export type NoteCleanMode = 'polished' | 'structured';
+export type NoteKind = 'note' | 'checklist';
+
+export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
 
 /**
  * The whole-note cleaned view: one pass of the cleanup model over the entire

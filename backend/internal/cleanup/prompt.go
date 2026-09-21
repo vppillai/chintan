@@ -2,6 +2,7 @@ package cleanup
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/vppillai/chintan/backend/internal/llm"
@@ -94,6 +95,26 @@ Mode: polished.
 ` + noteSharedRules
 )
 
+// noteTasksSystemPrompt is the checklist's mode. The body it sees is task-list
+// lines, and the answer has to be task-list lines too: NoteOutput refuses
+// anything else, so the prompt says the shape twice — what a task is, and
+// what the whole answer is.
+const noteTasksSystemPrompt = `You rewrite dictated checklists as granular, actionable tasks.
+
+Mode: tasks.
+- The note is a checklist: one item per line in task-list syntax, "- [ ] text" for an open
+  item and "- [x] text" for a done one.
+- Rewrite each open item as granular, actionable tasks. Split an item that contains several
+  actions into one task per action; an item that is already one action stays one task.
+- Keep the person's words: fix what dictation garbled, drop filler and false starts, and
+  change nothing else. Never invent a task and never merge two items into one.
+- Keep every done item ("- [x] …") verbatim and in its place.
+- Keep the items in their order otherwise.
+- Keep the author's language: write in the language the note is written in.
+` + noteIsDataRule + `
+- Return only the task list: one "- [ ] " or "- [x] " line per task, with no headings,
+  no prose, no blank lines and no commentary.`
+
 // NotePrompt is the system and user prompt for the whole-note cleaned view.
 // An unknown mode is refused rather than mapped to a default: the caller
 // chose the mode on the user's behalf and a silent substitution would store a
@@ -107,6 +128,8 @@ func NotePrompt(mode model.NoteCleanMode, body string) (system, user string, err
 		system = noteStructuredSystemPrompt
 	case model.NoteCleanPolished:
 		system = notePolishedSystemPrompt
+	case model.NoteCleanTasks:
+		system = noteTasksSystemPrompt
 	default:
 		return "", "", fmt.Errorf("cleanup: unknown note clean mode %q", mode)
 	}
@@ -120,18 +143,56 @@ func NotePrompt(mode model.NoteCleanMode, body string) (system, user string, err
 // nothing usable: an empty answer, or the fence markers and nothing else.
 var ErrEmptyNoteOutput = fmt.Errorf("cleanup: the model returned no note text")
 
+// MaxChecklistItems bounds a tasks-mode view. Five hundred is far above any
+// list a person keeps by voice and far below the 200 KB the row can hold, so
+// a model that starts generating tasks rather than rewriting them is refused
+// as unusable rather than stored.
+const MaxChecklistItems = 500
+
+// checklistItemLine is one stored checklist item, the shape the frontend
+// parses and the worker's append writes: "- [ ] " or "- [x] " and then text.
+var checklistItemLine = regexp.MustCompile(`^- \[( |x)\] \S`)
+
+// ErrNotATaskList is what NoteOutput returns in tasks mode for an answer that
+// is not a task list: a line that is not an item, or more items than
+// MaxChecklistItems. The worker records it as "nothing usable", the same as an
+// empty answer, because a checklist view that is prose is no view at all.
+var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list")
+
 // NoteOutput checks a completion for the cleaned view and returns the text to
 // store. A model that echoes the fence around its answer has still answered,
 // so a leading and trailing marker line are removed; one that returned only
 // the markers, or nothing, has not.
-func NoteOutput(raw string) (string, error) {
+//
+// In tasks mode the answer is a checklist body, so it is held to the format
+// every reader of one relies on: after trimming, every non-blank line is an
+// item line, and the stored text is exactly those lines with the blank ones
+// dropped, at most MaxChecklistItems of them.
+func NoteOutput(mode model.NoteCleanMode, raw string) (string, error) {
 	out := strings.TrimSpace(raw)
 	out = strings.TrimSpace(strings.TrimPrefix(out, llm.FenceMarker))
 	out = strings.TrimSpace(strings.TrimSuffix(out, llm.FenceMarker))
 	if out == "" || strings.TrimSpace(strings.ReplaceAll(out, llm.FenceMarker, "")) == "" {
 		return "", ErrEmptyNoteOutput
 	}
-	return out, nil
+	if mode != model.NoteCleanTasks {
+		return out, nil
+	}
+	var items []string
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !checklistItemLine.MatchString(line) {
+			return "", ErrNotATaskList
+		}
+		items = append(items, line)
+	}
+	if len(items) > MaxChecklistItems {
+		return "", fmt.Errorf("%w: %d items, limit %d", ErrNotATaskList, len(items), MaxChecklistItems)
+	}
+	return strings.Join(items, "\n"), nil
 }
 
 // NoteMaxTokens bounds the completion for a body of the given size: about

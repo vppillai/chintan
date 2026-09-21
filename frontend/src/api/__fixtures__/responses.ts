@@ -98,6 +98,7 @@ export const notesPage: Page<NoteWire> = {
       "auto_clean": false,
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
+      "kind": "note",
       "purge_after": null,
       "tags": [
         "house"
@@ -116,6 +117,7 @@ export const notesPage: Page<NoteWire> = {
       "auto_clean": false,
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
+      "kind": "note",
       "purge_after": null,
       "snippet": "Quotes are in. The tiler can start on the fourteenth.",
       "tags": [
@@ -138,6 +140,7 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       "auto_clean": false,
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
+      "kind": "note",
       "purge_after": null,
       "tags": [
         "house"
@@ -156,6 +159,7 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       "auto_clean": false,
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
+      "kind": "note",
       "purge_after": null,
       "search_text": "quotes are in. the tiler can start on the fourteenth.",
       "snippet": "Quotes are in. The tiler can start on the fourteenth.",
@@ -199,6 +203,7 @@ export const noteDetail: NoteDetailWire = {
   "cleaned": null,
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
+  "kind": "note",
   "purge_after": null,
   "snippet": "Quotes are in. The tiler can start on the fourteenth.",
   "tags": [
@@ -226,12 +231,79 @@ export const noteDetailCleaned: NoteDetailWire = {
   "cleaned_mode": "structured",
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
+  "kind": "note",
   "purge_after": null,
   "snippet": "the gutter leaks. call the roofer on the fourteenth.",
   "tags": [],
   "title": "Roof repair",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
   "version": 4
+};
+
+/** GET /v1/notes/{noteId} → 200 for a checklist. kind is checklist and body is one task-list item per line (`- [ ] open`, `- [x] done`). */
+export const noteDetailChecklist: NoteDetailWire = {
+  "aliases": [],
+  "archived": false,
+  "auto_clean": false,
+  "body": "- [x] passport\n- [ ] charger",
+  "captures": [],
+  "cleaned": null,
+  "cleaned_mode": "tasks",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "id": "fixture-id",
+  "kind": "checklist",
+  "purge_after": null,
+  "snippet": "- [x] passport\n- [ ] charger",
+  "tags": [],
+  "title": "Packing",
+  "updated_at": "2026-01-01T00:00:00.000000000Z",
+  "version": 2
+};
+
+/** GET /v1/notes?kind=checklist → 200. Only the checklists; the filter is applied after the page, like tag, so a page can be short with cursor set. */
+export const notesPageChecklists: Page<NoteWire> = {
+  "items": [
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "cleaned_mode": "tasks",
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "checklist",
+      "purge_after": null,
+      "snippet": "- [x] passport\n- [ ] charger",
+      "tags": [],
+      "title": "Packing",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 2
+    }
+  ]
+};
+
+/** GET /v1/notes/{noteId} → 200 for a checklist with its cleaned view. cleaned.mode is tasks and cleaned.body is task-list lines only; cleaned_mode reads tasks for every checklist. */
+export const noteDetailChecklistCleaned: NoteDetailWire = {
+  "aliases": [],
+  "archived": false,
+  "auto_clean": false,
+  "body": "- [x] passport\n- [ ] charger",
+  "captures": [],
+  "cleaned": {
+    "body": "- [x] passport\n- [ ] charger\n- [ ] charging cable",
+    "generated_at": "2026-01-01T00:00:00.000000000Z",
+    "mode": "tasks",
+    "stale": false
+  },
+  "cleaned_mode": "tasks",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "id": "fixture-id",
+  "kind": "checklist",
+  "purge_after": null,
+  "snippet": "- [x] passport\n- [ ] charger",
+  "tags": [],
+  "title": "Packing",
+  "updated_at": "2026-01-01T00:00:00.000000000Z",
+  "version": 3
 };
 
 /** POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error. */
@@ -247,6 +319,7 @@ export const noteCreated: NoteWire = {
   "auto_clean": false,
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
+  "kind": "note",
   "purge_after": null,
   "tags": [],
   "title": "A new thought",

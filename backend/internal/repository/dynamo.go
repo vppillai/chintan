@@ -186,7 +186,7 @@ type dynamoItem struct {
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
 	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
 	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error, " +
-	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at"
+	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at, kind"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -373,6 +373,11 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 	if n.Language != "" {
 		item[languageAttr] = strAttr(n.Language)
 	}
+	if n.Kind != "" {
+		// Like language: written only when set, so a plain note's row carries no
+		// attribute and reads back as the zero value the model means by it.
+		item["kind"] = strAttr(n.Kind)
+	}
 	if n.SearchText != "" {
 		// Promoted only. The blob deliberately omits it (model.NoteIndex tags it
 		// json:"-"), so the field is stored once, not twice.
@@ -436,6 +441,9 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	}
 	if _, ok := m[languageAttr]; ok {
 		n.Language = readString(m, languageAttr)
+	}
+	if _, ok := m["kind"]; ok {
+		n.Kind = readString(m, "kind")
 	}
 	if _, ok := m[cleanedBodyAttr]; ok {
 		n.CleanedBody = readString(m, cleanedBodyAttr)
