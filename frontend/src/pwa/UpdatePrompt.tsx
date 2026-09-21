@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { config } from '@/config/env.ts';
+
 /**
  * The single update strategy.
  *
@@ -63,7 +65,7 @@ export function UpdatePrompt() {
 
   return (
     <div className="update-prompt" role="status" aria-live="polite">
-      <span>A new version of Chintan is ready.</span>
+      <span>A new version of {config.appName} is ready.</span>
       <button
         type="button"
         className="update-prompt__action"

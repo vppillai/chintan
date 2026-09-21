@@ -17,6 +17,8 @@
  *    truncates while the UI keeps counting.
  */
 
+import { config } from '@/config/env.ts';
+
 export type CaptureState =
   /** Nothing in progress. */
   | 'idle'
@@ -235,7 +237,10 @@ export function captureReducer(model: CaptureModel, event: CaptureEvent): Captur
       return fail(
         model,
         'permission-denied',
-        event.message ?? 'Chintan needs microphone access to record.',
+        // The instance's own name: this sentence is the one a person who
+        // refused the prompt reads, and a build called something else must
+        // not name Chintan in it.
+        event.message ?? `${config.appName} needs microphone access to record.`,
         false,
       );
 
