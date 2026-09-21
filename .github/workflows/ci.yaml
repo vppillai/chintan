@@ -28,7 +28,10 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request supersedes the run in flight. On main,
+  # two merges landing back to back are two releases, and cancelling the
+  # first leaves a commit on main that CI never finished checking.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend-test:
