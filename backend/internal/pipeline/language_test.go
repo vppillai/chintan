@@ -88,7 +88,7 @@ func TestTranscribedLanguageOutcomeComparesTheCodeSentWithTheNameDetected(t *tes
 		{"ml", "tamil", "mismatch"},
 		{"", "tamil", "auto"},
 		{"ml", "", "undetected"},
-		{"ml", "klingon", "unknown"},
+		{"ml", "klingon", "mismatch"},
 	}
 	for _, tc := range cases {
 		if got := languageOutcome(tc.sent, tc.detected); got != tc.want {

@@ -708,18 +708,19 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 }
 
 // languageOutcome is the Outcome dimension of TranscribedLanguage: whether the
-// language Whisper detected agrees with the code it was told. Five fixed
+// language Whisper detected agrees with the code it was told. Four fixed
 // values, because a dimension is a metric identity and is billed as one; the
-// language itself is in the log line, not in a dimension.
+// language itself is in the log line, not in a dimension. A detected name
+// outside the code table is a mismatch like any other — a four-second clip
+// sent as English and detected as Icelandic is exactly what the metric is
+// for, not an unknown.
 func languageOutcome(sent, detected string) string {
-	switch code := model.LanguageCode(detected); {
+	switch {
 	case detected == "":
 		return "undetected"
 	case sent == "":
 		return "auto"
-	case code == "":
-		return "unknown"
-	case code == sent:
+	case model.LanguageCode(detected) == sent:
 		return "match"
 	default:
 		return "mismatch"
