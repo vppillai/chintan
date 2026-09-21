@@ -86,6 +86,31 @@ function isStuck(capture: CaptureWire): boolean {
   return Date.now() - createdAt > STUCK_AFTER_MS;
 }
 
+/**
+ * When the server will accept a Retry of a capture that is still moving.
+ *
+ * `RetryCapture` refuses an in-flight capture until no worker can still be
+ * on it: fifteen minutes since the row was last written (the worker's
+ * timeout), or the twenty-minute append lease while `appending`. The row
+ * offered Retry at ten minutes, so for five to ten minutes every tap came
+ * back "still in flight". The copy keeps `STUCK_AFTER_MS`; the button waits
+ * for this. `last_progress_at` is read when a backend sends it, else
+ * `created_at`, as the server does.
+ */
+const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
+const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
+
+function retryAccepted(capture: CaptureWire): boolean {
+  if (isTerminalStatus(capture.status)) return false;
+  const since = Date.parse(
+    (capture as CaptureWire & { last_progress_at?: string }).last_progress_at ?? capture.created_at,
+  );
+  if (Number.isNaN(since)) return false;
+  const after =
+    capture.status === 'appending' ? RETRY_ACCEPTED_APPENDING_MS : RETRY_ACCEPTED_AFTER_MS;
+  return Date.now() - since > after;
+}
+
 function describe(capture: CaptureWire, stuck: boolean, noteTitle?: string): string {
   switch (capture.status) {
     case 'appended':
@@ -432,9 +457,10 @@ function FilingItem({
   const stuck = isStuck(capture);
   // A stuck capture gets the same way out a failed one does: retrying is safe
   // (the backend resumes from whichever artifact already exists) and dismissing
-  // stops the row sitting at the top of the library forever.
+  // stops the row sitting at the top of the library forever. Retry itself
+  // waits until the server will take it — see `retryAccepted`.
   const actionable = failed || stuck;
-  const retryable = failed || stuck;
+  const retryable = failed || retryAccepted(capture);
   const done = capture.status === 'appended';
   const needsTarget = capture.status === 'needs_target';
   const stage = STAGES[stageIndex(capture.status)];
@@ -498,10 +524,10 @@ function FilingItem({
           {/*
             A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
             capture is never a dead end with a toast. Also offered once a
-            non-terminal capture has sat past STUCK_AFTER_MS with no status
-            change — RetryCapture resumes from whichever artifact already
-            exists, so it is safe to call on a capture that never actually
-            failed, only stalled.
+            non-terminal capture has sat long enough that the server will
+            start a fresh run — RetryCapture resumes from whichever artifact
+            already exists, so it is safe to call on a capture that never
+            actually failed, only stalled.
           */}
           {retryable && (
             <button

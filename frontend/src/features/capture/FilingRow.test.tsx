@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -435,6 +435,33 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
+  it('offers Retry only once the server will accept it: fifteen minutes, twenty while appending', async () => {
+    /*
+     * The row said "still not done" and offered Retry at ten minutes; the
+     * server refuses a retry of an in-flight capture until no worker can
+     * still be on it — fifteen minutes since it last wrote the row, or the
+     * twenty-minute append lease — so every tap in between was answered
+     * "still in flight". The copy stays at ten; the button waits.
+     */
+    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+    mount([
+      capture({ id: 'twelve', status: 'transcribing', created_at: ago(12) }),
+      capture({ id: 'sixteen', status: 'transcribing', created_at: ago(16) }),
+      capture({ id: 'appending-sixteen', status: 'appending', created_at: ago(16) }),
+      capture({ id: 'appending-twenty-one', status: 'appending', created_at: ago(21) }),
+    ]);
+
+    expect(await screen.findAllByText(/still not done/i)).toHaveLength(4);
+    const rows = document.querySelectorAll<HTMLElement>('.filing-row');
+    const retryIn = (row: HTMLElement | undefined) =>
+      row ? within(row).queryByRole('button', { name: 'Retry' }) !== null : null;
+    expect(retryIn(rows[0])).toBe(false);
+    expect(retryIn(rows[1])).toBe(true);
+    expect(retryIn(rows[2])).toBe(false);
+    expect(retryIn(rows[3])).toBe(true);
+    // Dismiss is still the way off the screen for every one of them.
+    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(4);
+  });
 });
 
 describe('a terminal capture is something the user can act on', () => {
