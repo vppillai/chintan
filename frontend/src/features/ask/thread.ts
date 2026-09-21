@@ -116,13 +116,41 @@ export function newTurn(key: string, question: string, now: number = Date.now())
   };
 }
 
+/**
+ * A raw note id the model let into its prose, with the name the model may
+ * have put after it in brackets. Ids are `note_` and two runs of hex; eight
+ * or more hex characters keep a word like `note_taking` out of it.
+ */
+const NOTE_ID = /\b(note_[0-9a-f_]{8,})(?:\s*\(([^()]*)\))?/g;
+
+/**
+ * `answer` with every raw note id replaced by the cited note's title, or
+ * removed when `sources` does not name it. The prose should name notes by
+ * title — the chips are the citations — but "which note…" questions came
+ * back as `note_18d2…_ff6e… (Stale check mobile): "…"`, and the `_…_` run
+ * rendered as italics (QA 2026-09-21, finding 4). The prompt is the
+ * backend's half; this is the net in front of the Markdown renderer. A name
+ * the model already gave in brackets is not said twice.
+ */
+export function nameSources(answer: string, sources: readonly AskSourceWire[]): string {
+  const titles = new Map(sources.map((source) => [source.note_id, source.title]));
+  return answer.replace(NOTE_ID, (_match, id: string, bracketed: string | undefined) => {
+    const title = titles.get(id) ?? '';
+    if (bracketed === undefined) return title;
+    if (!title) return bracketed;
+    return bracketed.trim() === title ? title : `${title} (${bracketed})`;
+  });
+}
+
 /** The turn with the server's row folded in — pending, answered or failed. */
 export function applyRow(turn: AskTurn, row: AskWire): AskTurn {
   return {
     ...turn,
     askId: row.id,
     status: row.status,
-    answer: row.answer,
+    // Named here, once, so the thread on screen, the history sent back and
+    // Save as note all read the title rather than the id.
+    answer: row.answer === null ? null : nameSources(row.answer, row.sources),
     grounded: row.grounded,
     sources: row.sources,
     error: row.status === 'failed' ? (row.error ?? LOST_MESSAGE) : null,
