@@ -684,6 +684,26 @@ describe('the target chooser', () => {
   });
 });
 
+describe('live is signalled, not only spelt', () => {
+  it('shows a pulsing dot and an accent clock only while the microphone is open', async () => {
+    mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    const state = document.querySelector('.capture__state');
+    expect(state).toHaveAttribute('data-live');
+    expect(state?.querySelector('.capture__state-dot')).not.toBeNull();
+    expect(document.querySelector('.capture__timer')).toHaveAttribute('data-live');
+    // The word is still the whole of the announcement.
+    expect(state).toHaveTextContent(/^Recording$/);
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Pause' }));
+    expect(document.querySelector('.capture__state')).not.toHaveAttribute('data-live');
+    expect(document.querySelector('.capture__state-dot')).toBeNull();
+    expect(document.querySelector('.capture__timer')).not.toHaveAttribute('data-live');
+  });
+});
+
 describe('a failure is a card, not a dead screen', () => {
   it('explains a refused microphone, names the way back, and asks again on Try again', async () => {
     /*

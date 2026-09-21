@@ -14,6 +14,7 @@ import {
   formatElapsed,
   hasBufferedAudio,
   isCaptureBusy,
+  isLive,
   MAX_DURATION_MS,
   type CaptureFailure,
   type CaptureModel,
@@ -160,7 +161,19 @@ export function CaptureScreen() {
     <div className="capture">
       <h1 className="visually-hidden">Recording</h1>
 
-      <p className="capture__state" role="status" aria-live="polite">
+      {/*
+        Live is signalled, not just spelt: a pulsing accent dot before the
+        word, and the clock in accent, for as long as the microphone is open.
+        The eyebrow was muted grey in every state, so "Recording" and
+        "Paused" read the same at arm's length.
+      */}
+      <p
+        className="capture__state"
+        role="status"
+        aria-live="polite"
+        data-live={isLive(model) || undefined}
+      >
+        {isLive(model) && <span className="capture__state-dot" aria-hidden="true" />}
         {statusLabel(model)}
       </p>
 
@@ -196,6 +209,7 @@ export function CaptureScreen() {
           <p
             className="capture__timer numeric"
             aria-label={`Elapsed ${formatElapsed(model.elapsedMs)}`}
+            data-live={isLive(model) || undefined}
           >
             {formatElapsed(model.elapsedMs)}
           </p>

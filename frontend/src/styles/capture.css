@@ -153,11 +153,42 @@
 }
 
 .capture__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--letter-spacing-caps);
   text-transform: uppercase;
   color: var(--color-muted);
+}
+
+/*
+ * Live. The eyebrow takes the text-safe accent and a dot pulses before it on
+ * the shell indicator's beat; the clock goes accent too. `accent-strong` is
+ * the variant that clears AA as text in both themes (tokens.css); the dot is
+ * a fill and takes the accent itself.
+ */
+.capture__state[data-live] {
+  color: var(--color-accent-strong);
+}
+
+.capture__state-dot {
+  inline-size: var(--space-2);
+  block-size: var(--space-2);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  animation: recording-pulse 1.6s var(--motion-ease-standard) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture__state-dot {
+    animation: none;
+  }
+}
+
+.capture__timer[data-live] {
+  color: var(--color-accent-strong);
 }
 
 .capture__hint {
