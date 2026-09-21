@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { unzipSync } from 'fflate';
 import { MemoryRouter } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys, useNote } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
@@ -81,7 +81,9 @@ function json(body: unknown, status = 200): Response {
  */
 function apiStub(
   initial: NoteDetailWire = NOTE,
-  overrides: Partial<Record<'delete' | 'move' | 'manifest', (init?: RequestInit) => Response>> = {},
+  overrides: Partial<
+    Record<'delete' | 'move' | 'manifest' | 'segments', (init?: RequestInit) => Response>
+  > = {},
 ) {
   const note: NoteDetailWire = structuredClone(initial);
   const calls: { method: string; path: string; body?: unknown }[] = [];
@@ -100,6 +102,9 @@ function apiStub(
     if (url.pathname.endsWith('/download')) {
       if (url.searchParams.get('kind') === 'audio') {
         return json({ url: AUDIO_URL, expires_at: new Date(Date.now() + 900_000).toISOString() });
+      }
+      if (url.searchParams.get('kind') === 'segments' && overrides.segments) {
+        return overrides.segments(init);
       }
       return json({ type: 'about:blank', title: 'Not found', status: 404 }, 404);
     }
@@ -234,12 +239,19 @@ describe('the audio is fetched the same way twice', () => {
     try {
       const bucket = bucketStub();
       mount(apiStub().fetchImpl);
-      await user.click(await screen.findByRole('button', { name: 'Download audio' }));
+      // From the row's menu: the open row's own Download button is gone (T41).
+      await screen.findByRole('region', { name: 'Recording' });
+      expect(screen.queryByRole('button', { name: 'Download audio' })).toBeNull();
+      await user.click(screen.getByRole('button', { name: /more for recording from/i }));
+      await user.click(screen.getByRole('menuitem', { name: 'Download audio' }));
 
       expect(await screen.findByText('Downloaded')).toBeInTheDocument();
-      expect(bucket).toHaveBeenCalledWith(AUDIO_URL, expect.objectContaining({ cache: 'no-store' }));
-      // Named after the object's real extension, not the query string.
-      expect(saves.names).toEqual(['chintan-cap-1.webm']);
+      expect(bucket).toHaveBeenCalledWith(
+        'https://chintan-content.s3.test/cap-1/audio.webm?sig=1',
+        expect.objectContaining({ cache: 'no-store' }),
+      );
+      // Named by the server's manifest, like every download from this tab.
+      expect(saves.names).toEqual(['roof-repair-cap-1.webm']);
     } finally {
       saves.restore();
     }
@@ -264,6 +276,84 @@ describe('a row’s More menu', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).toBeNull();
     expect(screen.getByRole('button', { name: /more for recording from/i })).toHaveFocus();
+  });
+});
+
+describe('copying from a row’s menu', () => {
+  beforeEach(() => {
+    // jsdom implements no scrolling, and the transcript follows playback.
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  const SEGMENTS_DOC = {
+    version: 1,
+    language: 'English',
+    segments: [
+      { start_ms: 0, end_ms: 3_000, text: ' Ridge tiles have slipped.' },
+      { start_ms: 3_000, end_ms: 6_000, text: ' Ellis quoted nine hundred.' },
+    ],
+  };
+
+  /** The bucket answers the segments document for its URL and audio bytes for the rest. */
+  function artifactsStub(): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>(async (input) =>
+        String(input).includes('/segments')
+          ? new Response(JSON.stringify(SEGMENTS_DOC), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            })
+          : new Response('webm bytes', { status: 200, headers: { 'content-type': 'audio/webm' } }),
+      ),
+    );
+  }
+
+  function withSegments() {
+    return apiStub(
+      { ...NOTE, captures: [{ ...CAPTURE, has_segments: true }, OLDER] },
+      {
+        segments: () =>
+          json({
+            url: 'https://chintan-content.s3.test/cap-1/segments.json?sig=1',
+            expires_at: new Date(Date.now() + 900_000).toISOString(),
+          }),
+      },
+    );
+  }
+
+  it('copies this recording’s transcript from the open row and says so on the notice line', async () => {
+    // The item sits in one recording's menu. "Copy transcript" read as the
+    // note's transcript; a whole-note copy already exists under Share, so this
+    // one says which recording it copies.
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    artifactsStub();
+    mount(withSegments().fetchImpl);
+
+    await screen.findByRole('button', { name: /Ellis quoted nine hundred\./ });
+    await user.click(screen.getAllByRole('button', { name: /more for recording from/i })[0]!);
+    await user.click(screen.getByRole('menuitem', { name: 'Copy this transcript' }));
+
+    expect(writeText).toHaveBeenCalledWith('Ridge tiles have slipped.\nEllis quoted nine hundred.');
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
+    // The transcript panel has no copy control of its own any more.
+    expect(screen.queryByRole('button', { name: /copy/i })).toBeNull();
+  });
+
+  it('offers no copy on a closed row, whose text is not in hand', async () => {
+    const user = userEvent.setup();
+    artifactsStub();
+    mount(withSegments().fetchImpl);
+
+    await screen.findByRole('button', { name: /Ellis quoted nine hundred\./ });
+    await user.click(screen.getAllByRole('button', { name: /more for recording from/i })[1]!);
+    expect(
+      within(screen.getByRole('menu'))
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Move to…', 'Delete recording', 'Download audio', 'Select']);
   });
 });
 

@@ -75,8 +75,12 @@ function copyViaSelection(value: string): boolean {
   return copied;
 }
 
-/** Clipboard API first, selection copy second. Resolves to whether anything worked. */
-async function copyText(value: string): Promise<boolean> {
+/**
+ * Clipboard API first, selection copy second. Resolves to whether anything
+ * worked. Exported for a copy that is a menu item rather than a button — the
+ * recording row's — which reports its outcome on its own status line.
+ */
+export async function copyText(value: string): Promise<boolean> {
   // Absent entirely on an insecure origin, so this is not merely a rejected
   // promise — it is a missing API, and the fallback runs inside the gesture.
   if (!navigator.clipboard?.writeText) return copyViaSelection(value);

@@ -1,6 +1,4 @@
-import { useEffect, useId, useRef } from 'react';
-
-import { CopyButton } from '@/components/CopyButton.tsx';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { activeSegmentIndex, formatTime, type TranscriptSegment } from './artifacts.ts';
 
@@ -19,7 +17,33 @@ import { activeSegmentIndex, formatTime, type TranscriptSegment } from './artifa
  * place, which is worse than not offering it, because the user has no way to
  * tell it is wrong. The UI says which view is which rather than hiding the
  * distinction behind a single "transcript" tab.
+ *
+ * The panel is the transcript and its two-way switch, nothing else: an open
+ * recording used to stack five control clusters — play, the row's More, this
+ * switch, "Copy this transcript" and "Download audio" — and a tutorial
+ * sentence (review 2026-09-21, T41). Copy and download are items of the
+ * row's More menu now, and "Tap any line to jump there" is shown until the
+ * first line is tapped on this device, then not again.
  */
+
+/** Written once a line has been tapped; the hint has done its job. */
+export const TRANSCRIPT_HINT_KEY = 'chintan.transcript-hint-seen';
+
+function hintSeen(): boolean {
+  try {
+    return localStorage.getItem(TRANSCRIPT_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markHintSeen(): void {
+  try {
+    localStorage.setItem(TRANSCRIPT_HINT_KEY, '1');
+  } catch {
+    /* Storage denied: the hint is shown again next time, which is harmless. */
+  }
+}
 
 export type TranscriptView = 'raw' | 'cleaned';
 
@@ -57,6 +81,7 @@ export function TranscriptPanel({
   const effectiveView: TranscriptView = view === 'cleaned' && !hasCleaned ? 'raw' : view;
   const activeIndex = effectiveView === 'raw' ? activeSegmentIndex(segments, currentTime) : -1;
   const activeRef = useRef<HTMLLIElement>(null);
+  const [showHint, setShowHint] = useState(() => !hintSeen());
 
   // Follow playback, but only within the panel — `block: 'nearest'` so the page
   // itself does not jump under someone reading the note body.
@@ -71,6 +96,7 @@ export function TranscriptPanel({
           Transcript
         </h2>
 
+        {/* Inline, right of the eyebrow: one row of header, not two. */}
         {hasSegments && hasCleaned && (
           <div className="transcript__toggle" role="group" aria-label="Transcript view">
             <button
@@ -96,22 +122,6 @@ export function TranscriptPanel({
           </div>
         )}
 
-        {/*
-          Named for the view it copies, because "copy" on this screen could mean
-          three different things — the note, what was said, or the rewrite — and
-          a button that might mean any of them means none of them. "This",
-          because the button sits inside one recording's row and copies that
-          recording only; the whole note is copied from Share.
-        */}
-        <CopyButton
-          className="transcript__copy"
-          label={effectiveView === 'raw' ? 'Copy this transcript' : 'Copy this cleaned text'}
-          text={() =>
-            effectiveView === 'raw'
-              ? segments.map((segment) => segment.text).join('\n')
-              : cleanedText
-          }
-        />
       </div>
 
       {/*
@@ -120,9 +130,11 @@ export function TranscriptPanel({
         Skipped for raw view with no segments: "tap any line to jump there"
         directly above the empty state's "there is nothing to jump to" told
         the reader to do the one thing the same screen said was impossible.
-        That empty state already explains itself; nothing to add here.
+        That empty state already explains itself; nothing to add here. And
+        skipped once a line has been tapped: a tutorial sentence is for the
+        first time.
       */}
-      {(effectiveView === 'cleaned' || (hasSegments && segments.length > 0)) && (
+      {(effectiveView === 'cleaned' || (showHint && hasSegments && segments.length > 0)) && (
         <p className="transcript__note">
           {effectiveView === 'raw'
             ? 'What was said, as recorded. Tap any line to jump there.'
@@ -144,6 +156,8 @@ export function TranscriptPanel({
                     data-active={active || undefined}
                     aria-current={active ? 'true' : undefined}
                     onClick={() => {
+                      markHintSeen();
+                      setShowHint(false);
                       onSeek(segment.start);
                     }}
                   >

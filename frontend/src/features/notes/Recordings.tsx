@@ -14,9 +14,10 @@ import {
 } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
-import { DownloadButton, saveBlob } from '@/components/DownloadButton.tsx';
+import { copyText } from '@/components/CopyButton.tsx';
+import { saveBlob } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
-import { OverflowMenu } from '@/components/OverflowMenu.tsx';
+import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { SwipeRow } from '@/components/SwipeRow.tsx';
 import { FilingStages, LocalUploadItem, TargetPrompt } from '@/features/capture/FilingRow.tsx';
@@ -53,13 +54,17 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  * `<audio>` in the document, so it cannot be playing.
  *
  * Each row has a More control — Move to…, Delete recording, Download audio,
- * Select — and a long press (or Select) enters a selection mode in which the
- * same three actions apply to several rows at once from a bar at the foot of
- * the screen. On a phone the row also swipes aside for Delete and Move (N8),
- * which open the same dialog and sheet the menu does. Moving and deleting take
- * the paragraph the recording dictated with them (backlog D2, D3); downloading
- * several is one zip built on the device from the server's manifest of
- * presigned URLs (D4).
+ * and on an open row Copy this transcript / Copy this cleaned text, then
+ * Select — and a long press (or Select) enters a selection mode in which
+ * move, delete and download apply to several rows at once from a bar at the
+ * foot of the screen. On a phone the row also swipes aside for Delete and
+ * Move (N8), which open the same dialog and sheet the menu does. Moving and
+ * deleting take the paragraph the recording dictated with them (backlog D2,
+ * D3); downloading several is one zip built on the device from the server's
+ * manifest of presigned URLs (D4). Copy and a second Download used to be
+ * buttons inside the open row as well, which stacked five control clusters
+ * on one recording (review 2026-09-21, T41); the menu is the one place now,
+ * and the outcome is said on the notice line under the rows.
  */
 export function Recordings({
   note,
@@ -261,6 +266,26 @@ export function Recordings({
     }
   };
 
+  /*
+   * Copy is offered only while the row is open and its artifacts are loaded,
+   * so the text is in hand when the item is tapped: Safari refuses a
+   * clipboard write that is not inside the gesture, and a fetch first would
+   * put it outside.
+   */
+  const runCopy = (text: string): void => {
+    setNotice(null);
+    void copyText(text).then((copied) => {
+      setNotice(
+        copied
+          ? { text: 'Copied', tone: 'ok' }
+          : {
+              text: 'Could not copy — this browser would not allow it. Open the recording and select the text by hand.',
+              tone: 'error',
+            },
+      );
+    });
+  };
+
   const busy = deleteCaptures.isPending || moveCaptures.isPending || download.phase === 'working';
   const selectedList = [...selected];
 
@@ -314,6 +339,7 @@ export function Recordings({
                   setPending({ kind: 'delete', ids: [capture.id] });
                 }}
                 onDownload={() => void runDownload([capture.id])}
+                onCopy={runCopy}
               />
             ))}
           </ul>
@@ -530,6 +556,8 @@ interface RecordingRowProps {
   onMove: () => void;
   onDelete: () => void;
   onDownload: () => void;
+  /** Text from this row's menu for the clipboard; the outcome is the panel's to say. */
+  onCopy: (text: string) => void;
 }
 
 function RecordingRow({
@@ -548,6 +576,7 @@ function RecordingRow({
   onMove,
   onDelete,
   onDownload,
+  onCopy,
 }: RecordingRowProps) {
   const api = useApi();
   const bodyId = useId();
@@ -602,6 +631,7 @@ function RecordingRow({
 
   const segments = artifacts.data?.segments ?? [];
   const peaks = artifacts.data?.peaks ?? [];
+  const cleanedText = artifacts.data?.cleanedText ?? '';
   // A capture recorded before segments and peaks were stored has neither and
   // gets a plain player. There is no backfill, so this is a permanent branch,
   // not a migration window.
@@ -721,12 +751,39 @@ function RecordingRow({
             {summary}
           </button>
 
+          {/*
+            Named for what they copy, because "copy" on this screen could mean
+            three different things — the note, what was said, or the rewrite —
+            and an item that might mean any of them means none of them.
+            "This", because they copy this recording only; the whole note is
+            copied from Share. Offered only once the open row has the text.
+          */}
           <OverflowMenu
             label={`More for recording from ${when}`}
             items={[
               { label: 'Move to…', onSelect: onMove },
               { label: 'Delete recording', onSelect: onDelete, destructive: true },
               { label: 'Download audio', onSelect: onDownload },
+              ...(expanded && segments.length > 0
+                ? [
+                    {
+                      label: 'Copy this transcript',
+                      onSelect: () => {
+                        onCopy(segments.map((segment) => segment.text).join('\n'));
+                      },
+                    } satisfies OverflowMenuItem,
+                  ]
+                : []),
+              ...(expanded && cleanedText
+                ? [
+                    {
+                      label: 'Copy this cleaned text',
+                      onSelect: () => {
+                        onCopy(cleanedText);
+                      },
+                    } satisfies OverflowMenuItem,
+                  ]
+                : []),
               { label: 'Select', onSelect: onStartSelecting },
             ]}
           />
@@ -805,10 +862,11 @@ function RecordingRow({
                 it the element fetches the presigned URL in no-cors mode, S3
                 answers without `Access-Control-Allow-Origin` (no `Origin` was
                 sent), and Chromium keeps that response in the HTTP cache — so
-                the CORS `fetch()` behind "Download audio" was served the
-                cached no-cors response and failed its CORS check on every
-                attempt. With the attribute both requests are CORS requests to
-                a bucket whose rule already allows this origin.
+                the CORS `fetch()` behind the menu's "Download audio" was
+                served the cached no-cors response and failed its CORS check
+                on every attempt. With the attribute both requests are CORS
+                requests to a bucket whose rule already allows this origin;
+                `runDownload` also asks for `no-store`.
               */}
               <audio ref={audioRef} src={audioUrl} preload="metadata" crossOrigin="anonymous" />
 
@@ -839,46 +897,19 @@ function RecordingRow({
 
               <TranscriptPanel
                 segments={segments}
-                cleanedText={artifacts.data?.cleanedText ?? ''}
+                cleanedText={cleanedText}
                 view={view}
                 onViewChange={onViewChange}
                 currentTime={player.currentTime}
                 onSeek={player.seekAndPlay}
                 hasSegments={hasSegments}
               />
-
-              <div className="player__actions">
-                <DownloadButton
-                  label="Download audio"
-                  filename={() => `chintan-${capture.id}${audioExtension(audioUrl)}`}
-                  blob={async () => {
-                    // `no-store`: never the media element's cached response,
-                    // whatever mode it was fetched in — see the element above.
-                    const response = await fetch(audioUrl, { cache: 'no-store' });
-                    if (!response.ok) throw new Error(`audio fetch failed: ${response.status}`);
-                    return response.blob();
-                  }}
-                />
-              </div>
             </section>
           ) : null}
         </div>
       )}
     </li>
   );
-}
-
-/**
- * The real file extension off a presigned S3 URL's path, not its query
- * string — `audio.webm?X-Amz-...` should download as `.webm`, not as
- * whatever came after the `?`. Falls back to `.webm`, the format every
- * capture in this app is actually recorded in; a bare fallback with no
- * extension at all is the one outcome a save dialog can't recover from.
- */
-function audioExtension(url: string): string {
-  const path = url.split('?')[0] ?? '';
-  const match = /\.[a-z0-9]+$/i.exec(path);
-  return match ? match[0] : '.webm';
 }
 
 function PlainScrubber({

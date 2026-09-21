@@ -37,7 +37,8 @@ test('plays inline, never in a new tab', async ({ page, context }) => {
  * response to the download's CORS `fetch`, which failed its check every time.
  * The stub bucket behaves the same way (see `ARTIFACT_ORIGIN`), so this only
  * passes if both requests are made as CORS requests and the download does not
- * read from the element's cache.
+ * read from the element's cache. The download is an item of the row's More
+ * menu (T41), named by the server's manifest.
  */
 test('downloads the recording it has just loaded, from the cross-origin bucket', async ({
   page,
@@ -53,8 +54,9 @@ test('downloads the recording it has just loaded, from the cross-origin bucket',
   await waitForAudioReady(page);
 
   const download = page.waitForEvent('download');
-  await page.getByRole('button', { name: 'Download audio' }).click();
-  expect((await download).suggestedFilename()).toBe('chintan-cap-old.webm');
+  await page.getByRole('button', { name: /more for recording from/i }).click();
+  await page.getByRole('menuitem', { name: 'Download audio' }).click();
+  expect((await download).suggestedFilename()).toBe('roof-repair-20260806-0910.wav');
   await expect(page.getByText('Downloaded')).toBeVisible();
 });
 
@@ -235,12 +237,14 @@ test('copies the transcript separately, and names which one', async ({
   await page.goto(RECORDINGS);
 
   // Three different things could be meant by "copy" on this screen, so no
-  // control is allowed to be called just "Copy" — and the one inside a
-  // recording's row says it copies that recording, not the note.
+  // control is allowed to be called just "Copy" — and the items in a
+  // recording's More menu say they copy that recording, not the note (T41).
   await noteAction(page, 'Share');
   await expect(page.getByRole('button', { name: 'Copy note' })).toBeVisible();
-  await page.getByRole('button', { name: 'Copy this transcript' }).click();
-  await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
+  const more = page.getByRole('button', { name: /more for recording from/i });
+  await more.click();
+  await page.getByRole('menuitem', { name: 'Copy this transcript' }).click();
+  await expect(page.getByText('Copied')).toBeVisible();
 
   const raw = await page.evaluate(() => navigator.clipboard.readText());
   expect(raw).toContain('Get two quotes before the autumn rain.');
@@ -248,7 +252,8 @@ test('copies the transcript separately, and names which one', async ({
   expect(raw).not.toContain('Ellis quoted nine hundred.\n\n');
 
   await page.getByRole('button', { name: 'Cleaned' }).click();
-  await page.getByRole('button', { name: 'Copy this cleaned text' }).click();
+  await more.click();
+  await page.getByRole('menuitem', { name: 'Copy this cleaned text' }).click();
 
   const cleaned = await page.evaluate(() => navigator.clipboard.readText());
   expect(cleaned).toContain('Ellis quoted nine hundred');
