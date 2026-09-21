@@ -235,6 +235,11 @@
      ground and above 12:1 on the surfaces it sits on (Nocturne: above 10:1)
      — AAA throughout. */
   --color-accent-soft: rgb(194 65 12 / 12%);
+  /* Destructive text — a menu's "Delete recording". Here the accent doubles
+     as the consequential colour, a burnt orange; Nocturne's accent is the
+     live/record lime and read as highlighted, so that theme says it in ink
+     (QA 2026-09-21, finding 8). */
+  --color-destructive: var(--color-accent-strong);
 
   --color-overlay: rgb(26 25 23 / 38%);
   --color-selection: rgb(194 65 12 / 18%);
@@ -321,6 +326,7 @@
   --color-accent-strong: #b8f135;
   --color-on-accent: #0a0c0b;
   --color-accent-soft: rgb(184 241 53 / 14%);
+  --color-destructive: var(--color-ink);
 
   --color-overlay: rgb(10 12 11 / 62%);
   --color-selection: rgb(184 241 53 / 22%);
@@ -365,6 +371,7 @@
     --color-accent-strong: #b8f135;
     --color-on-accent: #0a0c0b;
     --color-accent-soft: rgb(184 241 53 / 14%);
+    --color-destructive: var(--color-ink);
 
     --color-overlay: rgb(10 12 11 / 62%);
     --color-selection: rgb(184 241 53 / 22%);

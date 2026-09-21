@@ -2957,8 +2957,12 @@
   background-color: var(--color-surface);
 }
 
+/* Dangerous, not highlighted: in Nocturne the accent is the record button's
+   lime (QA 2026-09-21, finding 8). The weight carries the warning where the
+   colour is ink. */
 .overflow-menu__item[data-destructive] {
-  color: var(--color-accent-strong);
+  color: var(--color-destructive);
+  font-weight: var(--font-weight-medium);
 }
 
 .overflow-menu__item[disabled] {
