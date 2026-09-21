@@ -22,7 +22,7 @@ const STEPS: readonly { icon: IconName; title: string; detail: string }[] = [
   { icon: 'append', title: 'Append', detail: 'The text lands in the note, the recording beneath it.' },
 ];
 
-/** Where each kind of data lives, in the account that owns it. */
+/** Where each kind of data lives, in the account that runs the instance. */
 const STORES: readonly { what: string; where: string }[] = [
   { what: 'Sign-in', where: 'Cognito' },
   { what: 'Notes', where: 'DynamoDB' },
@@ -38,8 +38,11 @@ const STORES: readonly { what: string; where: string }[] = [
  * where the data lives and for how long, with the spend-cap sentence; and the
  * licence, the code and the running build. Written for the person who was
  * handed the app and wants to know what happens to their voice before they
- * trust it with a thought; the links at the end are for the one who wants to
- * read the code or see what is coming.
+ * trust it with a thought — who may not be the one running it, so "Your
+ * data" says whose account it is in and what the operator can see (round-3
+ * T28; the wording is the owner's, section 4 item 9 of that review). The
+ * links at the end are for the one who wants to read the code or see what
+ * is coming.
  *
  * The prose keeps the notes' serif — this is still a page to read — and on a
  * wide screen each section's heading sits in a column to the left of its body,
@@ -129,16 +132,22 @@ export function AboutScreen() {
             ))}
           </dl>
           <p>
-            In your own AWS account and nowhere else: sign-in in Cognito, notes in DynamoDB,
-            recordings and transcripts in S3. Each recording is sent once to the transcription
-            provider and its text once to a language model for cleanup; neither is asked to keep
-            anything. This device keeps a copy of your notes so you can read and search them with
-            no connection, and clears it when you sign out.
+            Stored in the AWS account of whoever runs this instance (yours, if you deployed it);
+            the operator can export or read everything with the admin tools. Your speech goes to
+            the transcription provider once; the text goes to the language model to route it,
+            clean it, optionally rewrite the whole note, and to answer Ask questions over the
+            notes it selects. Neither provider is asked to retain anything.
           </p>
           <p>
-            Recordings are kept for as long as <em>Keep recordings for</em> on You says —
-            indefinitely unless you set a limit — and an archived note, with its recordings and
-            transcripts, is deleted thirty days after you archive it.
+            This device keeps a copy of your notes so you can read and search them with no
+            connection, and clears it when you sign out.
+          </p>
+          <p>
+            Recordings are kept for as long as <em>Keep recordings for</em> on You said when they
+            were made — indefinitely unless a limit was set. Changing it applies to recordings made
+            from then on; earlier recordings keep the retention they were uploaded with. An
+            archived note, with its recordings and transcripts, is deleted thirty days after you
+            archive it.
           </p>
           <p>
             A daily spending cap on the transcription and cleanup providers protects against
@@ -162,9 +171,8 @@ export function AboutScreen() {
             <a className="text-link" href={LICENSE_URL} target="_blank" rel="noreferrer">
               MIT licence
             </a>
-            . There are no analytics and no accounts of yours with anyone else: the app talks to
-            your own AWS account and, through it, to the transcription and language-model
-            providers described above.
+            . There are no analytics. The app talks only to the instance&rsquo;s AWS account and,
+            through it, to the transcription and language-model providers described above.
           </p>
           <ul className="about__links" role="list">
             <li>
