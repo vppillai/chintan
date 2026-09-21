@@ -612,6 +612,10 @@ describe('moving a recording to another note', () => {
     expect(within(sheet).queryByPlaceholderText(/new note/i)).toBeNull();
     expect(within(sheet).queryByRole('button', { name: /create/i })).toBeNull();
     expect(options.length).toBe(2);
+    // Each option says when it was touched and how its text begins (T42), so
+    // two notes with the same dictated title can be told apart.
+    expect(options[0]).toHaveTextContent(/Ridge tiles on the south slope have slip…/);
+    expect(options[0]).toHaveTextContent(/Aug/);
 
     // The search field narrows the list.
     await user.type(within(sheet).getByRole('searchbox', { name: 'Search notes' }), 'fence');

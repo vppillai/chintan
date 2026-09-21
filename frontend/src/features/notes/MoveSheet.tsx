@@ -4,6 +4,9 @@ import { useNotes } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { useModalFocus } from '@/components/useModalFocus.ts';
 
+import { openItemsText, parseChecklist } from './checklist.ts';
+import { formatRowTime } from './groups.ts';
+
 /**
  * "Move to…": which note should these recordings go into?
  *
@@ -22,6 +25,11 @@ import { useModalFocus } from '@/components/useModalFocus.ts';
  * The same modal discipline as `ConfirmDialog` — `useModalFocus` — so a
  * keyboard user is trapped inside it, Escape leaves, and focus returns to the
  * control that opened it.
+ *
+ * Each option carries a meta line under its title — when the note was last
+ * touched, and the start of its text — because a list of dictated titles
+ * has identical entries ("Voice note …", five of them) with nothing to tell
+ * them apart (review 2026-09-21, T42).
  */
 export function MoveSheet({
   open,
@@ -145,9 +153,7 @@ function SheetPanel({
                   }}
                 >
                   <span className="move-sheet__option-title">{note.title}</span>
-                  {(note.tags ?? []).length > 0 && (
-                    <span className="move-sheet__option-meta">{(note.tags ?? []).join(' · ')}</span>
-                  )}
+                  <span className="move-sheet__option-meta">{optionMeta(note)}</span>
                 </button>
               </li>
             ))}
@@ -179,4 +185,18 @@ function SheetPanel({
       </div>
     </div>
   );
+}
+
+/**
+ * "6 Aug · Ridge tiles on the south slope have slipped" — the row's own time
+ * and the first 40 characters of the note's text, a checklist's as its open
+ * items rather than raw `- [ ]` syntax. Exported for the test.
+ */
+export function optionMeta(note: Pick<NoteWire, 'updated_at' | 'snippet' | 'kind'>): string {
+  const snippet = note.snippet ?? '';
+  const text = note.kind === 'checklist' ? openItemsText(parseChecklist(snippet)) : snippet;
+  const cut = text.trim().replace(/\s+/g, ' ');
+  return [formatRowTime(note.updated_at), cut.length > 40 ? `${cut.slice(0, 40).trimEnd()}…` : cut]
+    .filter(Boolean)
+    .join(' · ');
 }
