@@ -89,12 +89,6 @@
   margin-inline: calc(-1 * var(--layout-gutter));
 }
 
-/* `display` is set above the UA's `[hidden]`, so stepping aside for the
-   recordings' selection bar has to be said here as well. */
-.note-drawer[hidden] {
-  display: none;
-}
-
 /* A raised sheet rising from the tab bar: a hairline and the sheet's shadow
    along its top, its top corners rounded. The disclosure used to have no
    edge of its own and read as the body cut off mid-line (T43). */
