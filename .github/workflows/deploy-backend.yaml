@@ -143,7 +143,7 @@ jobs:
       # variable set by scripts/setup.sh from the bootstrap stack's output; the
       # fallback keeps a repository whose bootstrap stack predates the build
       # role deploying until setup.sh --apply has run.
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.BUILD_ROLE_ARN || format('arn:aws:iam::{0}:role/chintan-github-actions', secrets.AWS_ACCOUNT_ID) }}
           aws-region: ${{ env.AWS_REGION }}
@@ -194,7 +194,7 @@ jobs:
         entry: ${{ fromJSON(needs.discover.outputs.staging) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
@@ -238,7 +238,7 @@ jobs:
         entry: ${{ fromJSON(needs.discover.outputs.prod) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: aws-actions/configure-aws-credentials@cbe3b392738ccf3f987d68400dafcf4b0624a56c # v6.2.4
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/chintan-github-actions
           aws-region: ${{ env.AWS_REGION }}
