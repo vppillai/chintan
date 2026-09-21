@@ -3,11 +3,11 @@ import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { NoteWire } from '@/api/schema.ts';
-import { TestProviders, testApiContext } from '@/test/providers.tsx';
+import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { resetDatabaseHandle } from './db.ts';
 import { cacheNoteDetail, cacheNoteList, cachedNote } from './notesCache.ts';
-import { PREFETCH_BODIES, useCachedNotes } from './useNotesCache.ts';
+import { cacheKeys, PREFETCH_BODIES, useCachedNotes } from './useNotesCache.ts';
 
 /**
  * The idle prefetch of note bodies.
@@ -53,10 +53,14 @@ function Reader() {
   return null;
 }
 
-function mount(fetchImpl: typeof fetch, Screen: () => null = Library) {
+function mount(
+  fetchImpl: typeof fetch,
+  Screen: () => null = Library,
+  queryClient = testQueryClient(),
+) {
   const api = testApiContext(fetchImpl);
   render(
-    <TestProviders api={api}>
+    <TestProviders api={api} queryClient={queryClient}>
       <Screen />
     </TestProviders>,
   );
@@ -129,6 +133,52 @@ describe('the first page\'s bodies reach the device on their own', () => {
     const asked = new Set(fetchedIds(fetchImpl));
     for (const skipped of rows.slice(0, 5)) expect(asked.has(skipped.id)).toBe(false);
     for (const wanted of rows.slice(5)) expect(asked.has(wanted.id)).toBe(true);
+  });
+
+  it('fetches the whole first page when most of it lands while the first body is in the air', async () => {
+    // Home fires four list GETs at mount — active, archived, the Checklists
+    // chip's `kind=checklist`, the search corpus — and each one's write
+    // re-triggers this hook. When the one-row checklist page landed first the
+    // prefetch began on that row alone, and every re-trigger that arrived
+    // during its GET found the pass running and was dropped, with nothing to
+    // start it again: five cold loads stored 20, 1, 1, 20 and 1 bodies.
+    await cacheNoteList([row('p7-00')]);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const detail = detailFetch();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      await gate;
+      return detail(input, init);
+    });
+    const queryClient = testQueryClient();
+
+    mount(fetchImpl, Library, queryClient);
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    // The first page lands, and its write invalidates the rows as `remember`
+    // does, while that one GET is still in the air.
+    const rest = Array.from({ length: PREFETCH_BODIES - 1 }, (_, index) =>
+      row(`p7-${String(index + 1).padStart(2, '0')}`, {
+        updated_at: `2026-07-${String(1 + index).padStart(2, '0')}T00:00:00.000Z`,
+      }),
+    );
+    await cacheNoteList(rest);
+    await queryClient.invalidateQueries({ queryKey: ['notes', 'offline'] });
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryData(cacheKeys.notes('active'))).toHaveLength(PREFETCH_BODIES);
+    });
+    // Let the re-render commit and the (immediate) idle callback run.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+
+    await vi.waitFor(() => {
+      expect(fetchedIds(fetchImpl)).toHaveLength(PREFETCH_BODIES);
+    });
+    expect(new Set(fetchedIds(fetchImpl)).size).toBe(PREFETCH_BODIES);
   });
 
   it('asks for nothing unless the screen opts in', async () => {
