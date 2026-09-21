@@ -296,6 +296,28 @@ if [ "$HAVE_AWS" = 1 ]; then
             esac
             if [ "$stack_region" = "$REGION" ] && stack_exists "$stack"; then
                 record "stack $stack" ok "deployed in $stack_region"
+                # Self sign-up is a pool setting the template closes
+                # (AdminCreateUserConfig). A pool deployed before that, or with
+                # the line removed, lets anyone with the public client id
+                # register and spend against the shared keys, so the flag is
+                # checked on the live pool rather than trusted from the file.
+                pool_id="$(stack_output "$stack" UserPoolId 2>/dev/null || echo "")"
+                if [ -n "$pool_id" ] && [ "$pool_id" != "None" ]; then
+                    rc=0
+                    admin_only="$(aws_probe cognito-idp describe-user-pool --user-pool-id "$pool_id" --query 'UserPool.AdminCreateUserConfig.AllowAdminCreateUserOnly' --output text)" || rc=$?
+                    case "$rc" in
+                        0)
+                            if [ "$admin_only" = "True" ]; then
+                                record "self sign-up $stack" ok "closed; only scripts/invite-user.sh creates accounts"
+                            else
+                                record "self sign-up $stack" missing "OPEN on $pool_id: anyone can register against this instance"
+                                suggest "redeploy infrastructure/template.yaml (AdminCreateUserConfig.AllowAdminCreateUserOnly: true)"
+                            fi
+                            ;;
+                        1) record "self sign-up $stack" missing "pool $pool_id, the stack's UserPoolId output, no longer exists" ;;
+                        *) record "self sign-up $stack" unknown "could not read pool $pool_id (denied or error)" ;;
+                    esac
+                fi
             else
                 record "stack $stack" missing "not deployed in $stack_region"
                 if [ "$stack" = "$prod_stack" ]; then

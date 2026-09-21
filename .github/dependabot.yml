@@ -2,6 +2,11 @@
 # (full commit SHAs in every workflow, so a moved tag can reach neither a job
 # that holds the deploy role nor a CI gate), the Go module graph, and the
 # frontend lockfile. Weekly, on one day, so the pull requests arrive together.
+#
+# The module groups are split by update type. One group with patterns: ["*"]
+# bundled majors with patches, so a single breaking bump (TypeScript 7 pulling
+# baseUrl, #63) held twenty-two harmless ones hostage and had to be merged by
+# hand. Majors now arrive in their own pull request and can fail alone.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -19,8 +24,12 @@ updates:
       interval: "weekly"
       day: "monday"
     groups:
-      go-modules:
+      go-modules-minor-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      go-modules-major:
+        patterns: ["*"]
+        update-types: ["major"]
 
   # Bun lockfiles are their own ecosystem (bun.lock, Bun >= 1.1.39), not npm.
   - package-ecosystem: "bun"
@@ -29,8 +38,12 @@ updates:
       interval: "weekly"
       day: "monday"
     groups:
-      frontend:
+      frontend-minor-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      frontend-major:
+        patterns: ["*"]
+        update-types: ["major"]
     # typescript-eslint cannot load TypeScript 7 (the native compiler has no
     # JS API; typescript-eslint/typescript-eslint#10940 tracks support for
     # >= 7.1), so a bump to 7 fails `bun run lint`. Lift this when that lands.

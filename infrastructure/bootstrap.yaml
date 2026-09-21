@@ -705,6 +705,9 @@ Resources:
                   - cloudformation:DescribeChangeSet
                   - cloudformation:ExecuteChangeSet
                   - cloudformation:DeleteChangeSet
+                  # deploy.sh turns termination protection on after a first
+                  # successful create, so a later DeleteStack fails closed.
+                  - cloudformation:UpdateTerminationProtection
                 Resource:
                   - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/chintan-*/*'
 
