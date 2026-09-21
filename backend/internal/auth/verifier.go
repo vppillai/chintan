@@ -15,6 +15,13 @@ import (
 //
 // Callers map it to 401 without inspecting the cause. The wrapped detail is for
 // logs only: telling a caller which specific claim failed is a probing oracle.
+//
+// That uniformity is a property of this Lambda, not of the deployed API. The
+// API Gateway JWT authorizer in front of it answers its own 401 with a
+// WWW-Authenticate header that names the failure — expired, wrong audience,
+// bad signature — so on the gateway path the oracle exists regardless of what
+// this package says. This check is the second line, for any ingress that is
+// not the gateway (review 2026-09-21, T68).
 var ErrUnauthenticated = errors.New("auth: unauthenticated")
 
 // Verifier turns a raw bearer token into an Identity.
