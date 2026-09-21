@@ -251,6 +251,23 @@
    Target chooser additions — the rest of the chooser is in shell.css
    -------------------------------------------------------------------------- */
 
+/*
+ * Two "Roof repair"s are told apart by the line under the title: when the
+ * note was last touched, and how it begins. Each line keeps to itself.
+ */
+.target-chooser__option-title,
+.target-chooser__option-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-chooser__option-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
 /* "Transcribed as മലയാളം", under the pill. Quiet: it is a fact, not a warning. */
 .target-chooser__language {
   font-size: var(--font-size-xs);

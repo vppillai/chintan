@@ -689,7 +689,7 @@ describe('the screen says which language the recording will be transcribed in', 
 
     // A note that inherits the default says the default.
     await user.click(screen.getByRole('button', { name: /into new note/i }));
-    await user.click(screen.getByRole('button', { name: 'Reading list' }));
+    await user.click(screen.getByRole('button', { name: /^Reading list/ }));
     expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
   });
 
@@ -726,7 +726,13 @@ describe('the target chooser', () => {
     });
 
     await user.click(screen.getByRole('button', { name: /into new note/i }));
-    await user.click(await screen.findByRole('button', { name: 'Reading list' }));
+    const option = await screen.findByRole('button', { name: /^Reading list/ });
+    // The line that tells two same-titled notes apart: date, then the first
+    // forty characters of the snippet.
+    expect(option).toHaveTextContent(/Aug/);
+    expect(option).toHaveTextContent(/Seeing Like a State, then the Vitruvius/);
+    expect(option).not.toHaveTextContent(/translation/);
+    await user.click(option);
     expect(useCaptureStore.getState().model.noteId).toBe('reading-list');
     expect(screen.getByRole('button', { name: /into reading list/i })).toBeInTheDocument();
     // The recording itself is untouched by the choice.

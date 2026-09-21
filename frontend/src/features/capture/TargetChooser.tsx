@@ -4,6 +4,7 @@ import { useId, useState } from 'react';
 import { useApi } from '@/api/ApiProvider.tsx';
 import { queryKeys, useNotes } from '@/api/queries.ts';
 import type { NoteWire, SettingsWire } from '@/api/schema.ts';
+import { formatRowTime } from '@/features/notes/groups.ts';
 import { AUTO_LANGUAGE, LANGUAGES, languageName } from '@/features/settings/languages.ts';
 import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
 
@@ -138,7 +139,10 @@ export function TargetChooser({
                     choose(note.id);
                   }}
                 >
-                  {note.title}
+                  <span className="target-chooser__option-title">{note.title}</span>
+                  {/* Part of the name on purpose: two "Roof repair"s are as
+                      alike to a screen reader as to the eye. */}
+                  <span className="target-chooser__option-meta">{optionMeta(note)}</span>
                 </button>
               </li>
             ))}
@@ -156,6 +160,16 @@ export function TargetChooser({
       {language && <p className="target-chooser__language">{language}</p>}
     </div>
   );
+}
+
+/**
+ * What tells two notes with the same title apart: when it was last touched
+ * and how it begins, cut at forty characters so the row stays one line.
+ */
+function optionMeta(note: NoteWire): string {
+  const when = formatRowTime(note.updated_at);
+  const snippet = [...(note.snippet ?? '').trim()].slice(0, 40).join('');
+  return [when, snippet].filter(Boolean).join(' · ');
 }
 
 /**
