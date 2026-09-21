@@ -1014,6 +1014,22 @@ Resources:
             ExpirationInDays: 365
             NoncurrentVersionExpiration:
               NoncurrentDays: 365
+          # An export (POST /v1/export) is a snapshot of the tenant's whole
+          # corpus under tenants/<id>/exports/<job>/, fetched once through a
+          # presigned URL that lives minutes. Nothing else deleted the
+          # snapshot, so every export grew the bucket for good. The service
+          # tags export.json and job.json chintan-artifact=export through the
+          # tagging put, and this rule removes them a day later; an untagged
+          # object, as everywhere in this bucket, is never expired.
+          - Id: ExpireExportSnapshots
+            Status: Enabled
+            Prefix: 'tenants/'
+            TagFilters:
+              - Key: chintan-artifact
+                Value: export
+            ExpirationInDays: 1
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
           # Versioning is on unconditionally, so every delete and every rewrite
           # of an artifact leaves a noncurrent version behind that is billed and
           # invisible to `aws s3 ls`. This rule is deliberately unconditional and
