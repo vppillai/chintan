@@ -274,3 +274,72 @@ func TestCaptureMarkerIDsAreInBodyOrder(t *testing.T) {
 		t.Fatalf("CaptureMarkerIDs(none) = %v", got)
 	}
 }
+
+// A save carries the whole draft with every Details change, so an unchanged
+// body must leave the stored body alone, and a body with one paragraph
+// touched must keep the other recordings' markers beside their paragraphs.
+// Only a paragraph that was rewritten or deleted loses its place — its marker
+// goes to the trailer (QA 2026-09-21, finding 1).
+func TestCarryCaptureMarkersKeepsAMarkerBesideItsUnchangedParagraph(t *testing.T) {
+	m1, m2, m3 := CaptureMarker("c_1"), CaptureMarker("c_2"), CaptureMarker("c_3")
+	appended := "intro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2\n\n" + m3 + "\nP3"
+	cases := map[string]struct {
+		stored, edited string
+		want           string
+	}{
+		"unchanged body": {
+			appended, "intro\n\nP1\n\nP2\n\nP3", appended,
+		},
+		"unchanged body that opens with a paragraph": {
+			m1 + "\nP1\n\n" + m2 + "\nP2", "P1\n\nP2", m1 + "\nP1\n\n" + m2 + "\nP2",
+		},
+		"unchanged body with a carried trailer stays as it was": {
+			"edited\n" + m1 + "\n\n" + m3 + "\nlater", "edited\n\nlater", "edited\n" + m1 + "\n\n" + m3 + "\nlater",
+		},
+		"typed intro edited, every paragraph kept": {
+			appended, "a longer intro\n\nP1\n\nP2\n\nP3",
+			"a longer intro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2\n\n" + m3 + "\nP3",
+		},
+		"one paragraph edited": {
+			appended, "intro\n\nP1\n\nP2 rewritten\n\nP3",
+			"intro\n\n" + m1 + "\nP1\n\nP2 rewritten\n\n" + m3 + "\nP3\n" + m2,
+		},
+		"paragraph deleted": {
+			appended, "intro\n\nP1\n\nP3",
+			"intro\n\n" + m1 + "\nP1\n\n" + m3 + "\nP3\n" + m2,
+		},
+		"paragraph typed into is no longer it": {
+			"intro\n\n" + m1 + "\nP1", "intro\n\nP1 and more", "intro\n\nP1 and more\n" + m1,
+		},
+		"paragraph moved to the top": {
+			appended, "P3\n\nintro\n\nP1\n\nP2",
+			m3 + "\nP3\n\nintro\n\n" + m1 + "\nP1\n\n" + m2 + "\nP2",
+		},
+		"multi-line paragraph": {
+			"intro\n\n" + m1 + "\nline one\nline two\n\n" + m2 + "\nP2", "intro edited\n\nline one\nline two\n\nP2",
+			"intro edited\n\n" + m1 + "\nline one\nline two\n\n" + m2 + "\nP2",
+		},
+		"two recordings said the same sentence, the second edited": {
+			m1 + "\nSame\n\n" + m2 + "\nSame", "Same\n\nSame changed", m1 + "\nSame\n\nSame changed\n" + m2,
+		},
+		"whole body rewritten": {
+			appended, "the user rewrote everything", "the user rewrote everything\n" + m1 + "\n" + m2 + "\n" + m3,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := CarryCaptureMarkers(tc.stored, tc.edited)
+			if got != tc.want {
+				t.Fatalf("CarryCaptureMarkers =\n%q\nwant\n%q", got, tc.want)
+			}
+			if stripped := StripCaptureMarkers(got); stripped != tc.edited {
+				t.Errorf("the user reads back %q, want what they saved %q", stripped, tc.edited)
+			}
+			for _, id := range CaptureMarkerIDs(tc.stored) {
+				if !HasCaptureMarker(got, id) {
+					t.Errorf("marker for %s was lost", id)
+				}
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -75,30 +76,109 @@ func StripCaptureMarkers(body string) string {
 }
 
 // CarryCaptureMarkers returns the body to store for a user edit: the edited
-// text, then every marker the stored body held, one per line at the end.
+// text with every marker the stored body held put back — beside its paragraph
+// where that paragraph is still there word for word, and as a trailer line at
+// the end where it is not.
 //
 // The edited text is stripped first so a marker the client echoes back, or
-// one a user types by hand, cannot be counted twice or forged. Markers move
-// from beside their paragraph to the end of the body, which is fine: the
-// guard asks whether the marker is anywhere in the body, not where.
+// one a user types by hand, cannot be counted twice or forged.
+//
+// An edited body that reads the same as the stored one is not an edit, and
+// the stored body comes back byte for byte. The client sends its whole draft
+// with any Details change (language, kind, word-for-word, auto-clean), and
+// treating that as an edit moved every marker to the end: each recording was
+// detached from its paragraph, so "transcribe again" appended a second copy
+// and "delete recording" left the words behind (QA 2026-09-21, finding 1).
+//
+// Otherwise each marker follows its paragraph: the stored paragraph's text
+// (the positional rule below) is looked for in the edited body as a paragraph
+// of its own — on its own lines, verbatim — and the marker is written ahead
+// of the first occurrence no other marker has claimed. A paragraph the user
+// rewrote or deleted has nowhere to go, so its marker is carried at the end;
+// the guard asks whether the marker is anywhere in the body, not where.
 func CarryCaptureMarkers(stored, edited string) string {
 	markers := captureMarkerFind.FindAllString(stored, -1)
 	edited = StripCaptureMarkers(edited)
 	if len(markers) == 0 {
 		return edited
 	}
+	if StripCaptureMarkers(stored) == edited {
+		return stored
+	}
+
+	type placed struct {
+		at     int
+		marker string
+	}
+	var inPlace []placed
+	var claimed [][2]int
+	var trailer []string
 	seen := make(map[string]bool, len(markers))
-	var b strings.Builder
-	b.WriteString(edited)
 	for _, m := range markers {
 		if seen[m] {
 			continue
 		}
 		seen[m] = true
+		id := strings.TrimSuffix(strings.TrimPrefix(m, captureMarkerPrefix), captureMarkerSuffix)
+		p, _ := findCaptureParagraph(stored, id)
+		at := paragraphIndex(edited, p.text, claimed)
+		if at < 0 {
+			trailer = append(trailer, m)
+			continue
+		}
+		inPlace = append(inPlace, placed{at: at, marker: m})
+		claimed = append(claimed, [2]int{at, at + len(p.text)})
+	}
+	sort.Slice(inPlace, func(i, j int) bool { return inPlace[i].at < inPlace[j].at })
+
+	var b strings.Builder
+	prev := 0
+	for _, p := range inPlace {
+		b.WriteString(edited[prev:p.at])
+		b.WriteString(p.marker)
+		b.WriteString("\n")
+		prev = p.at
+	}
+	b.WriteString(edited[prev:])
+	for _, m := range trailer {
 		b.WriteString("\n")
 		b.WriteString(m)
 	}
 	return b.String()
+}
+
+// paragraphIndex is where text stands in body as a paragraph of its own — at
+// the start of a line and running to the end of one — outside the claimed
+// spans, or -1. Two recordings can say the same sentence, so each claims one
+// occurrence, in body order.
+func paragraphIndex(body, text string, claimed [][2]int) int {
+	if text == "" {
+		return -1
+	}
+	for from := 0; ; {
+		i := strings.Index(body[from:], text)
+		if i < 0 {
+			return -1
+		}
+		at, end := from+i, from+i+len(text)
+		from = at + 1
+		if at > 0 && body[at-1] != '\n' {
+			continue
+		}
+		if end < len(body) && body[end] != '\n' && body[end] != '\r' {
+			continue
+		}
+		free := true
+		for _, c := range claimed {
+			if at < c[1] && end > c[0] {
+				free = false
+				break
+			}
+		}
+		if free {
+			return at
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -124,11 +204,13 @@ func CarryCaptureMarkers(stored, edited string) string {
 //     before it, so the run after the text is removed instead, which keeps the
 //     next marker at the start of the body.
 //
-// After a user edit the markers sit at the end of the body with no text of
-// their own (CarryCaptureMarkers moved them there), so a paragraph "boundary"
-// then encloses nothing: cutting removes the marker alone and the user's text
-// is untouched. That is the honest outcome — once the words have been edited
-// there is no longer a fact about which of them the recording contributed.
+// After a user edit a paragraph left as it was keeps its marker beside it and
+// is cut whole. A marker whose paragraph was rewritten or deleted sits at the
+// end of the body with no text of its own (CarryCaptureMarkers carried it
+// there), so its "boundary" encloses nothing: cutting removes the marker
+// alone and the user's text is untouched. That is the honest outcome — once
+// the words have been edited there is no longer a fact about which of them
+// the recording contributed.
 
 // captureParagraph is one capture's span in a body: the half-open range
 // [start, end) that CutCaptureParagraph removes, and the paragraph text

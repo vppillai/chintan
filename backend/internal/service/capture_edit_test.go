@@ -529,3 +529,23 @@ func (f failingPutIfMatch) PutIfMatch(ctx context.Context, key string, body []by
 	}
 	return f.Objects.PutIfMatch(ctx, key, body, contentType, etag)
 }
+
+// The editor sends the whole draft with a Details change, body included. That
+// save is not an edit: the marker stays beside its paragraph, and deleting the
+// recording afterwards still cuts the paragraph (QA 2026-09-21, finding 1).
+func TestDeleteCaptureAfterAnUnchangedBodySaveCutsTheParagraph(t *testing.T) {
+	h := newEditHarness(t)
+	note := h.note("u1", "Unchanged", "typed intro\n\n"+CaptureMarker("c_1")+"\nwhat was said")
+	h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+
+	sameBody, ml := "typed intro\n\nwhat was said", "ml"
+	if _, err := h.notes.UpdateNote(h.ctx, "u1", note.ID, NoteUpdates{Body: &sameBody, Language: &ml}); err != nil {
+		t.Fatalf("UpdateNote: %v", err)
+	}
+	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture: %v", err)
+	}
+	if got := h.body(note); got != "typed intro" {
+		t.Errorf("body = %q, want the paragraph cut: %q", got, "typed intro")
+	}
+}
