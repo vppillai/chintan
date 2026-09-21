@@ -48,6 +48,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.0 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )
