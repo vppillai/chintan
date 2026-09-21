@@ -71,9 +71,11 @@ export interface NoteRowProps {
  * (backlog N8). In the library that is Archive and Delete; in the archive,
  * Restore and Delete. The row carries these itself — its own mutations, its
  * own confirmation — so the screen that lists it need know nothing about
- * them. The two keep the disciplines the note's action bar sets: archiving is
+ * them. The two keep the disciplines the note's own menu sets: archiving is
  * reversible and happens on the tap; deleting is not, so it names what goes
- * and asks for the title to be typed. From the library, delete is the two
+ * and asks for "delete" to be typed — the word every delete in the app asks
+ * for, not the title, which dictated is 27 characters of digits on a phone
+ * keyboard (review 2026-09-21, T18). From the library, delete is the two
  * server operations the archive would otherwise require — archive, then
  * purge — because the server refuses to purge a note that is still active,
  * and rightly (see `useBulkDeleteNotes`).
@@ -294,8 +296,8 @@ export function NoteRow({
         title="Delete this note forever?"
         body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel="Delete forever"
-        requireText={note.title}
-        requireLabel={`Type the note's title to confirm: ${note.title}`}
+        requireText="delete"
+        requireLabel='Type "delete" to confirm'
         destructive
         onCancel={() => {
           setConfirmingDelete(false);

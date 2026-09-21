@@ -43,8 +43,13 @@ import type { NoteEditor } from './useNoteEditor.ts';
  *   Archive       reversible for as long as the purge window lasts, so it asks
  *                 once, plainly.
  *   Delete for    irreversible, and it takes the recordings and the transcripts
- *   ever          with it, so it names what goes and requires the note's title
- *                 to be typed before the control unlocks.
+ *   ever          with it, so it names what goes and requires "delete" to be
+ *                 typed before the control unlocks. The word, not the title:
+ *                 a dictated or fallback title ("Voice note 2026-09-21 06:59")
+ *                 is 27 characters of digits and punctuation on a phone
+ *                 keyboard, and the bulk and recording deletes already ask
+ *                 for the word (review 2026-09-21, T18). The title stays in
+ *                 the sentence, so the dialog still says which note goes.
  */
 export type NotePanelKind = 'details' | 'share';
 
@@ -137,8 +142,8 @@ export function NoteMenu({
         title="Delete this note forever?"
         body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel="Delete forever"
-        requireText={note.title}
-        requireLabel={`Type the note's title to confirm: ${note.title}`}
+        requireText="delete"
+        requireLabel='Type "delete" to confirm'
         destructive
         onCancel={() => {
           setConfirming(null);

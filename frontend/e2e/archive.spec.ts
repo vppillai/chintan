@@ -75,7 +75,7 @@ test('an archived note can be restored', async ({ page, api }) => {
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
 });
 
-test('delete forever is gated by typing the title, and cascades', async ({ page, api }) => {
+test('delete forever is gated by typing "delete", and cascades', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
   await noteAction(page, 'Delete forever');
@@ -86,13 +86,15 @@ test('delete forever is gated by typing the title, and cascades', async ({ page,
   // recoverable either, and a dialog that only names the note is not consent.
   await expect(dialog).toContainText(/recordings and transcripts/i);
 
+  // And which note: the title is in the sentence, not the thing to type.
+  await expect(dialog).toContainText('Old fence');
   const confirm = dialog.getByRole('button', { name: 'Delete forever' });
   await expect(confirm).toBeDisabled();
 
-  await dialog.getByRole('textbox').fill('Old fenc');
+  await dialog.getByRole('textbox').fill('delet');
   await expect(confirm).toBeDisabled();
 
-  await dialog.getByRole('textbox').fill('Old fence');
+  await dialog.getByRole('textbox').fill('delete');
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
