@@ -517,3 +517,51 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 		})
 	}
 }
+
+// A destination can be chosen for a capture nobody is working on: one parked
+// at needs_target, one that failed, or one a worker has not written for its
+// whole lifetime. One still being transcribed is refused, or a second
+// delivery would run beside the live one and bill the transcription twice
+// (review 2026-09-21, T32).
+func TestSetCaptureTargetRefusesAnInFlightCapture(t *testing.T) {
+	now := time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC)
+	at := func(ago time.Duration) string { return model.FormatTime(now.Add(-ago)) }
+	for _, tc := range []struct {
+		name    string
+		capture model.CaptureIndex
+		wantErr error
+	}{
+		{"needs_target", model.CaptureIndex{Status: model.StatusNeedsTarget, CreatedAt: at(time.Minute)}, nil},
+		{"failed before routing", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: at(time.Minute)}, nil},
+		{"routing, the worker wrote the row a minute ago", model.CaptureIndex{Status: model.StatusRouting, CreatedAt: at(time.Hour), LastProgressAt: at(time.Minute)}, ErrCaptureInFlight},
+		{"routing, nothing written for the worker's lifetime", model.CaptureIndex{Status: model.StatusRouting, CreatedAt: at(time.Hour), LastProgressAt: at(CaptureStuckAfter)}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := memory.NewStore()
+			worker := &stubInvoker{}
+			svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker).WithClock(func() time.Time { return now })
+			if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Chosen", UpdatedAt: model.Now(), S3MarkdownKey: "tenants/user1/notes/n1/note.md"}); err != nil {
+				t.Fatal(err)
+			}
+			c := tc.capture
+			c.ID, c.UserID, c.RawKey = "c_1", "user1", "tenants/user1/captures/c_1/raw.txt"
+			if _, err := store.PutCapture(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			got, err := svc.SetCaptureTarget(ctx, "user1", "c_1", "n1", "")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if len(worker.calls) != 0 {
+					t.Fatalf("a refused target handed the capture to the worker: %v", worker.calls)
+				}
+				return
+			}
+			if got.NoteID != "n1" || len(worker.calls) != 1 {
+				t.Fatalf("note_id = %q, worker calls = %v; want n1 and one hand-off", got.NoteID, worker.calls)
+			}
+		})
+	}
+}

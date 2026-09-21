@@ -420,6 +420,12 @@ func resumeStatusFor(c model.CaptureIndex) model.CaptureStatus {
 
 // SetCaptureTarget records a user-chosen destination and hands the capture back
 // to the worker. It writes the row and returns; it does not append.
+//
+// A capture still in flight is refused on RetryCapture's rule: until
+// 2026-09-21 only NoteID was checked, so a capture still transcribing could
+// be re-targeted and re-invoked beside the live delivery — the append stayed
+// exactly-once through the claim, but the transcription was billed twice
+// (review T32).
 func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID, noteID, newNoteTitle string) (*model.CaptureIndex, error) {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
@@ -427,6 +433,9 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 	}
 	if capture.NoteID != "" {
 		return nil, ErrCaptureAlreadyTargeted
+	}
+	if !model.IsTerminalStatus(capture.Status) && !CaptureStuck(capture, s.now()) {
+		return &capture, ErrCaptureInFlight
 	}
 
 	newNoteTitle = sanitizeNoteTitle(newNoteTitle)
