@@ -301,11 +301,12 @@ Resources:
         - openid
         - email
         - profile
-        # Lets the app call the user-facing Cognito APIs with its own access
-        # token — ListWebAuthnCredentials and DeleteWebAuthnCredential for
-        # the passkey list on You. Registration still happens on the managed
-        # login page (see B7 in docs/backlog.md).
-        - aws.cognito.signin.user.admin
+        # No aws.cognito.signin.user.admin. It was added in #30 for an in-app
+        # passkey list that never shipped, and with it every access token in
+        # localStorage could call DeleteUser, change the recovery email, strip
+        # passkeys or enrol a TOTP for an hour. Re-add it with the feature
+        # that calls those APIs — frontend first (oauth.ts SCOPES), so no
+        # client requests a scope the pool no longer grants.
       CallbackURLs:
         - !Sub
           - 'https://${PagesHost}/${RepoName}/${Path}/'
