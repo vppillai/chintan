@@ -843,7 +843,7 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     let ids = loadDismissed();
     expect(ids.size).toBe(0);
     ids = dismissCapture('a', ids);
-    ids = dismissCapture('b', ids);
+    dismissCapture('b', ids);
     expect(Array.from(loadDismissed())).toEqual(['a', 'b']);
   });
 

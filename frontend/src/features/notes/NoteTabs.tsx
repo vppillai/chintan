@@ -142,7 +142,7 @@ export function NoteTabList({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
     const index = tabs.findIndex((tab) => tab.id === value);
     if (index === -1) return;
-    let next: number | null = null;
+    let next: number;
     switch (event.key) {
       case 'ArrowRight':
         next = (index + 1) % tabs.length;

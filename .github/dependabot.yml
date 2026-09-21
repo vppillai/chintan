@@ -31,3 +31,9 @@ updates:
     groups:
       frontend:
         patterns: ["*"]
+    # typescript-eslint cannot load TypeScript 7 (the native compiler has no
+    # JS API; typescript-eslint/typescript-eslint#10940 tracks support for
+    # >= 7.1), so a bump to 7 fails `bun run lint`. Lift this when that lands.
+    ignore:
+      - dependency-name: "typescript"
+        versions: [">=7"]

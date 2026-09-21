@@ -76,7 +76,7 @@ export function takePending(now: number = Date.now()): PendingAuth | null {
   const store = storage();
   if (!store) return null;
 
-  let raw: string | null = null;
+  let raw: string | null;
   try {
     raw = store.getItem(PENDING_AUTH_KEY);
     store.removeItem(PENDING_AUTH_KEY);
