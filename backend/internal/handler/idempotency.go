@@ -110,12 +110,16 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			obs.Log(r.Context()).Info("idempotent replay",
 				slog.Int("status", record.Status),
 				slog.Int("bytes", len(record.Response)))
-			for k, v := range map[string]string{
-				"Content-Type":            "application/json",
-				HeaderIdempotencyReplayed: "true",
-			} {
-				w.Header().Set(k, v)
+			// The Content-Type is the one the handler wrote — a problem body
+			// is application/problem+json, not the JSON this used to assume.
+			// A record from before the type was stored replays as JSON, which
+			// is what every 2xx here is.
+			contentType := record.ContentType
+			if contentType == "" {
+				contentType = "application/json"
 			}
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set(HeaderIdempotencyReplayed, "true")
 			w.WriteHeader(record.Status)
 			_, _ = w.Write(record.Response)
 			return
@@ -145,11 +149,16 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 			buffered.status = http.StatusOK
 		}
 
-		// A 5xx is not recorded. It is not a result the caller should be pinned
-		// to for the record's whole lifetime, and a retry of a transient
-		// failure must be allowed to succeed.
-		if buffered.status < 500 {
-			err := rt.Store.CompleteIdempotent(r.Context(), tenantID, key, buffered.status, buffered.body.Bytes())
+		// Only a settled response is recorded: one the same request would get
+		// again tomorrow. A 5xx is not one, and neither is a 409 or a 429 —
+		// the cap resets at midnight, the append or the capture in flight
+		// finishes — yet the uploader keys every attempt on the recording's
+		// localId, so recording a 429 spend_capped answered the "Resend
+		// tomorrow" the UI promises with the recorded 429 for a day (review
+		// 2026-09-21, T13). The deferred abandon releases the claim instead.
+		if settled(buffered.status) {
+			err := rt.Store.CompleteIdempotent(r.Context(), tenantID, key, buffered.status,
+				buffered.header.Get("Content-Type"), buffered.body.Bytes())
 			switch {
 			case err == nil, errors.Is(err, repository.ErrNotFound):
 				// Recorded, or the claim is already gone: either way there is
@@ -169,4 +178,12 @@ func (rt *router) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		w.WriteHeader(buffered.status)
 		_, _ = w.Write(buffered.body.Bytes())
 	}
+}
+
+// settled reports whether a response is final for its request: replaying it is
+// answering the same request the same way, not pinning the caller to a moment
+// that has passed. 5xx, 409 and 429 are the responses a later attempt is
+// expected to get past.
+func settled(status int) bool {
+	return status < 500 && status != http.StatusConflict && status != http.StatusTooManyRequests
 }

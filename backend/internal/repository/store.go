@@ -116,6 +116,10 @@ type IdemRecord struct {
 	TenantID    string
 	Fingerprint string
 	Status      int
+	// ContentType is the response's Content-Type as the handler wrote it, so
+	// a replayed problem body goes out as application/problem+json and not
+	// as the JSON the middleware used to assume.
+	ContentType string
 	Response    []byte
 	Done        bool
 	ExpiresAt   int64
@@ -284,7 +288,10 @@ type Store interface {
 	// (nil, ErrIdempotencyInFlight) when another attempt holds it. Replaying a
 	// key with a different fingerprint returns ErrIdempotencyKeyReused.
 	BeginIdempotent(ctx context.Context, tenantID, key, fingerprint string) (*IdemRecord, error)
-	CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error
+	// CompleteIdempotent records the response a replay of key is owed. The
+	// caller decides which responses settle a request (see handler.idempotent);
+	// a transient one is abandoned instead.
+	CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, response []byte) error
 	// AbandonIdempotent releases a claimed key whose request did not produce a
 	// recordable response, so the caller's retry runs instead of being told the
 	// original is still in flight. A completed record is left alone.

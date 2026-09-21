@@ -719,7 +719,7 @@ func (s *Store) BeginIdempotent(ctx context.Context, tenantID, key, fingerprint 
 	return nil, nil
 }
 
-func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error {
+func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, response []byte) error {
 	if err := s.checkCtx(ctx); err != nil {
 		return err
 	}
@@ -731,6 +731,7 @@ func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, st
 	}
 	entry.record.Done = true
 	entry.record.Status = status
+	entry.record.ContentType = contentType
 	entry.record.Response = append([]byte(nil), response...)
 	entry.record.ExpiresAt = time.Now().Add(repository.IdemTTL).Unix()
 	s.idem[tenantID][key] = entry

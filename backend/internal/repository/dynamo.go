@@ -1740,10 +1740,11 @@ func idemFromItem(m map[string]types.AttributeValue) IdemRecord {
 	if v, ok := m["idem_response"].(*types.AttributeValueMemberB); ok {
 		rec.Response = v.Value
 	}
+	rec.ContentType = readString(m, "idem_content_type")
 	return rec
 }
 
-func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error {
+func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, response []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1765,6 +1766,10 @@ func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key stri
 	if len(response) > 0 {
 		update += ", idem_response = :response"
 		values[":response"] = &types.AttributeValueMemberB{Value: response}
+	}
+	if contentType != "" {
+		update += ", idem_content_type = :content_type"
+		values[":content_type"] = strAttr(contentType)
 	}
 
 	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{

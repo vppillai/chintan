@@ -723,7 +723,7 @@ func TestIdempotencyClaimReplayAndInFlight(t *testing.T) {
 		t.Fatalf("concurrent attempt err = %v, want ErrIdempotencyInFlight", err)
 	}
 
-	if err := store.CompleteIdempotent(ctx, "tenant-a", "key-1", 201, []byte(`{"id":"note_1"}`)); err != nil {
+	if err := store.CompleteIdempotent(ctx, "tenant-a", "key-1", 201, "application/json", []byte(`{"id":"note_1"}`)); err != nil {
 		t.Fatalf("CompleteIdempotent: %v", err)
 	}
 
@@ -734,8 +734,8 @@ func TestIdempotencyClaimReplayAndInFlight(t *testing.T) {
 	if replay == nil {
 		t.Fatal("replay returned no record; the original response is lost")
 	}
-	if replay.Status != 201 || string(replay.Response) != `{"id":"note_1"}` {
-		t.Fatalf("replay = %+v, want the original 201 response", replay)
+	if replay.Status != 201 || string(replay.Response) != `{"id":"note_1"}` || replay.ContentType != "application/json" {
+		t.Fatalf("replay = %+v, want the original 201 application/json response", replay)
 	}
 }
 
@@ -1082,7 +1082,7 @@ func TestEveryWriteIsAnItemDynamoDBWouldAccept(t *testing.T) {
 		if _, err := store.BeginIdempotent(ctx, "tenant-a", "key-1", "fp-1"); err != nil {
 			t.Fatalf("BeginIdempotent: %v", err)
 		}
-		if err := store.CompleteIdempotent(ctx, "tenant-a", "key-1", 201, []byte(`{"id":"n1"}`)); err != nil {
+		if err := store.CompleteIdempotent(ctx, "tenant-a", "key-1", 201, "application/json", []byte(`{"id":"n1"}`)); err != nil {
 			t.Fatalf("CompleteIdempotent: %v", err)
 		}
 	})
@@ -1094,7 +1094,7 @@ func TestEveryWriteIsAnItemDynamoDBWouldAccept(t *testing.T) {
 		if _, err := store.BeginIdempotent(ctx, "tenant-a", "key-2", "fp-2"); err != nil {
 			t.Fatalf("BeginIdempotent: %v", err)
 		}
-		if err := store.CompleteIdempotent(ctx, "tenant-a", "key-2", 204, nil); err != nil {
+		if err := store.CompleteIdempotent(ctx, "tenant-a", "key-2", 204, "", nil); err != nil {
 			t.Fatalf("CompleteIdempotent with no body: %v", err)
 		}
 		replay, err := store.BeginIdempotent(ctx, "tenant-a", "key-2", "fp-2")
