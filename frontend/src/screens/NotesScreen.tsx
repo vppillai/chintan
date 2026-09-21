@@ -394,16 +394,18 @@ export function NotesScreen() {
         pressed button rather than the Search | Ask segment that took a third
         of the row (round-3 T17); switching to Ask drops the filter so coming
         back to Search shows the whole library. With a thread open the field
-        is the follow-up (round-3 T21): one field for one conversation, and
-        `useAskThread.ask` holds a second question while the first is
-        unanswered.
+        is the follow-up (round-3 T21): one field for one conversation. A
+        second question typed while the first is unanswered stays in the
+        field until Enter can send it: `useAskThread.ask` drops it, so the
+        field must not be cleared on its account, and says it is waiting
+        (`aria-busy`) for the reader who cannot see the panel's status line.
       */}
       <form
         className="search-form"
         role="search"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!asking) return;
+          if (!asking || askThread.busy) return;
           askThread.ask(question);
           setQuestion('');
         }}
@@ -431,6 +433,7 @@ export function NotesScreen() {
             enterKeyHint={asking ? 'send' : 'search'}
             maxLength={asking ? 1000 : undefined}
             aria-controls={asking ? askPanelId : listId}
+            aria-busy={asking && askThread.busy}
             onChange={(event) => {
               if (asking) setQuestion(event.target.value);
               else setFilter({ q: event.target.value });

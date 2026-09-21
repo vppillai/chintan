@@ -444,6 +444,9 @@ describe('the thread', () => {
     await user.type(field, 'and the gutters?{Enter}');
     expect(api.posts).toHaveLength(2);
     expect(screen.queryByText('and the gutters?')).toBeNull();
+    // Held, not lost: the field keeps the words and says it is waiting.
+    expect(field).toHaveValue('and the gutters?');
+    expect(field).toHaveAttribute('aria-busy', 'true');
 
     act(() => {
       vi.advanceTimersByTime(1_000);
@@ -451,6 +454,14 @@ describe('the thread', () => {
     await waitFor(() => {
       expect(screen.getAllByText(/The tiler can start on the fourteenth/)).toHaveLength(2);
     });
+    // Answered, so Enter now sends what was held.
+    expect(field).toHaveAttribute('aria-busy', 'false');
+    await user.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(api.posts).toHaveLength(3);
+    });
+    expect(api.posts[2]?.question).toBe('and the gutters?');
+    expect(field).toHaveValue('');
   });
 
   it('shows three source chips and folds the rest behind "+n more"', async () => {
