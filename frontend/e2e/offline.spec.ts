@@ -162,6 +162,33 @@ async function withServiceWorker(page: Page): Promise<void> {
     .toBe(true);
 }
 
+/**
+ * A deep link is answered from the precache, without asking the network first.
+ *
+ * Workbox's precache route served `/` cache-first, but `/capture` (the
+ * manifest's shortcut) and `/notes/{id}` ran `networkFirst` and awaited the
+ * host's answer — GitHub Pages' 404, 890 ms on Fast 3G — before falling back to
+ * the same shell. Chromium reports a worker's own fetches on the context with
+ * `request.serviceWorker()` set, which is how this sees whether the worker
+ * went to the network for the document at all.
+ */
+test('a deep link is served from the precached shell without a network round trip', async ({
+  page,
+  context,
+}) => {
+  await withServiceWorker(page);
+
+  const fetchedByWorker: string[] = [];
+  context.on('request', (request) => {
+    if (request.serviceWorker()) fetchedByWorker.push(new URL(request.url()).pathname);
+  });
+
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+
+  expect(fetchedByWorker.filter((path) => path === '/notes/roof-repair')).toEqual([]);
+});
+
 test('a note read once can be read again offline, from a cold start', async ({
   page,
   context,
@@ -186,11 +213,56 @@ test('a note read once can be read again offline, from a cold start', async ({
   await context.setOffline(false);
 });
 
+/** Whether the device holds `noteId` in full — body and captures — not as a list row. */
+async function bodyOnDevice(page: Page, noteId: string): Promise<boolean> {
+  return page.evaluate(async (id) => {
+    const open = indexedDB.open('chintan');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    return new Promise<boolean>((resolve) => {
+      const request = db.transaction('notes').objectStore('notes').get(id);
+      request.onsuccess = () => resolve(Boolean((request.result as { detail?: boolean } | undefined)?.detail));
+      request.onerror = () => resolve(false);
+    });
+  }, noteId);
+}
+
+test('a note never opened on this device is still readable offline once the list has been seen', async ({
+  page,
+  context,
+  api,
+}) => {
+  // A list row carries no body, so an unopened note used to be a dead end
+  // offline. Seeing the library is now enough: the first page's bodies are
+  // fetched while the app is idle.
+  await withServiceWorker(page);
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: /reading list/i })).toBeVisible();
+  await expect.poll(() => bodyOnDevice(page, 'reading-list'), { timeout: 15_000 }).toBe(true);
+
+  api.offline = true;
+  await context.setOffline(true);
+  await page.goto('/notes/reading-list');
+
+  await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Reading list');
+  await expect(page.getByRole('heading', { name: 'Not on this device' })).toHaveCount(0);
+
+  await context.setOffline(false);
+});
+
 test('a note never opened on this device says so, rather than claiming it was purged', async ({
   page,
   context,
   api,
 }) => {
+  // The idle prefetch would fetch this body with the rest of the first page;
+  // refusing that one request leaves the device with the list row alone,
+  // which is the state a note beyond the first page is in.
+  await page.route('**/api/v1/notes/reading-list', (route) =>
+    route.request().method() === 'GET' ? route.fulfill({ status: 404, body: '' }) : route.fallback(),
+  );
   await withServiceWorker(page);
   await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();

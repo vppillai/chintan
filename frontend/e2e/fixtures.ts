@@ -875,13 +875,15 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
 
       // Cognito only ever returns to a registered callback URL, so the stub
       // returns to whatever the app asked for and the spec asserts on it.
+      // `state` is echoed on a refusal as on a code (RFC 6749 §4.1.2.1); it is
+      // what the app uses to tell Cognito's answer from a composed link.
       const back = new URL(params['redirect_uri'] ?? '/');
+      back.searchParams.set('state', params['state'] ?? '');
       if (state.auth.denyLogin) {
         back.searchParams.set('error', 'access_denied');
         back.searchParams.set('error_description', 'User cancelled the sign-in.');
       } else {
         back.searchParams.set('code', `e2e-code-${String(state.auth.authorize.length)}`);
-        back.searchParams.set('state', params['state'] ?? '');
       }
       await redirect(route, back.href);
       return;

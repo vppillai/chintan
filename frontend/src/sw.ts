@@ -5,16 +5,24 @@
  *
  * Built with `vite-plugin-pwa` in `injectManifest` mode rather than
  * `generateSW`. The generated recipes are fine for cache-first static sites and
- * fight both things this app actually needs: a network-first shell and an
- * update strategy that does *not* call `skipWaiting`. Owning ~130 lines is
- * cheaper than working around a generator for each of them.
+ * fight both things this app actually needs: a shell that falls back to the
+ * network only when it has to, and an update strategy that does *not* call
+ * `skipWaiting`. Owning ~150 lines is cheaper than working around a generator
+ * for each of them.
  *
  * Two rules:
  *
- * 1. **Network-first for navigations.** A cache-first shell pins every
- *    installed client to whatever configuration it last fetched; recreating
- *    the stack would then leave the app serving a config pointing at an API
- *    that no longer exists, with no path to self-heal.
+ * 1. **The precached shell answers every navigation.** Home, a deep link to a
+ *    note, the manifest's "Record a thought" shortcut straight to `/capture`:
+ *    each is the same `index.html`, already on the device. Workbox's precache
+ *    route served it for `/` cache-first, while every other path ran
+ *    `networkFirst` and waited for GitHub Pages to answer 404 — 890 ms on
+ *    Fast 3G — before falling back to the very same file. Updates do not
+ *    travel through this fetch: the browser re-checks `sw.js` on navigation,
+ *    a changed build installs a new precache, and `UpdatePrompt` offers it —
+ *    the path `/` has always updated by, and how a client whose stack was
+ *    recreated learns the new configuration. `networkFirst` remains for a
+ *    client with no precached shell (an evicted or failed precache).
  * 2. **One update strategy.** The new worker waits until the user accepts;
  *    `skipWaiting` runs only in response to that explicit message. Calling
  *    `skipWaiting()` and `clients.claim()` at install while also showing a
@@ -30,7 +38,7 @@
  * and gained nothing anyone could notice.
  */
 
-import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
+import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from 'workbox-precaching';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[];
@@ -49,13 +57,19 @@ export const SHELL_URL = new URL('index.html', self.registration.scope).href;
 
 /**
  * Workbox stores the shell as `index.html?__WB_REVISION__=<hash>`, so a plain
- * `caches.match(SHELL_URL)` misses it. Matching without the query string is
- * what makes an offline cold start at an unvisited URL — a car park, a lift, or
- * the manifest's own "Record a thought" shortcut straight to `/capture` —
- * render the app instead of a blank page reading "Offline".
+ * `caches.match(SHELL_URL)` misses it, and it keeps one precache across worker
+ * versions: while an update is installed and waiting, the old build's shell
+ * and the new one sit side by side under two revisions. `matchPrecache`
+ * resolves this worker's own key from its manifest, so the build that is
+ * active is the one served. Matching with `ignoreSearch` instead left that to
+ * insertion order, which happened to favour the old shell — fine for the
+ * offline fallback it was written as, not for the path every navigation takes.
+ * Either way this is what makes an offline cold start at an unvisited URL — a
+ * car park, a lift, or the manifest's own "Record a thought" shortcut straight
+ * to `/capture` — render the app instead of a blank page reading "Offline".
  */
 async function matchShell(): Promise<Response | undefined> {
-  return caches.match(SHELL_URL, { ignoreSearch: true });
+  return matchPrecache(SHELL_URL);
 }
 
 /** How long to wait for the network before falling back to cache. */
@@ -93,7 +107,8 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
 });
 
 /**
- * Network-first with a timeout, falling back to the cached shell.
+ * Network-first with a timeout, falling back to the cached shell. The path a
+ * navigation takes only when no precached shell is on the device.
  *
  * The timeout matters on mobile: a connection that hangs rather than failing
  * would otherwise leave the user on a blank screen indefinitely when a
@@ -149,6 +164,6 @@ self.addEventListener('fetch', (event: FetchEvent) => {
   if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request));
+    event.respondWith(matchShell().then((shell) => shell ?? networkFirst(request)));
   }
 });

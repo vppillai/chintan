@@ -50,6 +50,21 @@ describe('the authorize request', () => {
     expect(url.searchParams.get('redirect_uri')).toBe('https://app.test/repo/dev/');
   });
 
+  it('asks for no Cognito admin scope, which nothing in the app calls', () => {
+    // `aws.cognito.signin.user.admin` on the access token is the power to
+    // delete the account or strip its passkeys; requested for a passkey list
+    // that never shipped, it sat in localStorage for anything to read.
+    const url = new URL(
+      authorizeUrl({
+        state: 'st-1',
+        challenge: 'ch-1',
+        redirectUri: 'https://app.test/',
+        settings: SETTINGS,
+      }),
+    );
+    expect(url.searchParams.get('scope')?.split(' ')).toEqual(['openid', 'email', 'profile']);
+  });
+
   it('never puts the verifier in the URL', () => {
     const url = authorizeUrl({
       state: 'st-1',
@@ -89,11 +104,17 @@ describe('reading what came back on the query string', () => {
     });
   });
 
-  it('reads a refusal, which is a real outcome and not an edge case', () => {
-    expect(readCallbackParams('?error=access_denied&error_description=User+said+no')).toEqual({
+  it('reads a refusal, which is a real outcome and not an edge case — by its code alone', () => {
+    // The description is free text on a URL anyone can compose; it is not
+    // carried into the app, so it cannot be rendered by mistake later.
+    expect(
+      readCallbackParams('?error=access_denied&error_description=User+said+no&state=xyz'),
+    ).toEqual({ kind: 'error', error: 'access_denied', state: 'xyz' });
+    // A refusal composed without a state answers no flow, and says so.
+    expect(readCallbackParams('?error=access_denied')).toEqual({
       kind: 'error',
       error: 'access_denied',
-      description: 'User said no',
+      state: null,
     });
   });
 

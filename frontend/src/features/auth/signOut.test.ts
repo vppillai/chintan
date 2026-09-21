@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { IDBFactory } from 'fake-indexeddb';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Session } from '@/api/session.ts';
 import { createMemoryTokenStore, type TokenSet } from '@/api/tokens.ts';
@@ -17,6 +17,28 @@ import { THEME_STORAGE_KEY } from '@/theme/theme.ts';
 import { PASSKEY_NUDGE_KEY } from './passkeys.ts';
 import { hasUnsentWork, performSignOut, readUnsentWork } from './signOut.ts';
 
+/*
+ * A configured build. Under Vitest no `VITE_*` variables are set, so the
+ * Cognito half of the sign-out — the revoke and the `/logout` redirect — is
+ * skipped as it should be for a build with nowhere to send anyone. These
+ * tests are about that half.
+ */
+vi.mock('@/config/env.ts', () => ({
+  config: {
+    apiUrl: 'https://api.test',
+    userPoolId: 'us-west-2_test',
+    clientId: 'client-abc',
+    cognitoDomain: 'https://cognito.test',
+    instance: 'dev',
+    appName: 'Chintan',
+    appDescription: 'Speak a thought. It files itself.',
+  },
+  isConfigured: () => true,
+}));
+
+/** Cognito's `/oauth2/revoke` answers an empty 200. */
+const revokeOk = async (): Promise<Response> => new Response(null, { status: 200 });
+
 const TOKENS: TokenSet = {
   idToken: 'id-1',
   accessToken: 'access-1',
@@ -25,8 +47,8 @@ const TOKENS: TokenSet = {
   tokenType: 'Bearer',
 };
 
-function harness() {
-  const store = createMemoryTokenStore(TOKENS);
+function harness(tokens: TokenSet = TOKENS) {
+  const store = createMemoryTokenStore(tokens);
   const session = new Session(store, { refresh: () => Promise.reject(new Error('no')) });
   const queryClient = new QueryClient();
   const navigated: string[] = [];
@@ -37,6 +59,7 @@ function harness() {
     queryClient,
     navigated,
     navigate: (url: string) => navigated.push(url),
+    fetchImpl: vi.fn<typeof fetch>(revokeOk),
   };
 }
 
@@ -123,6 +146,65 @@ describe('what signing out has to leave behind', () => {
     expect(localStorage.getItem(TARGETED_KEY)).toBeNull();
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('nocturne');
     expect(localStorage.getItem(PASSKEY_NUDGE_KEY)).toBe('not-now');
+  });
+});
+
+describe('the refresh token is revoked, not just forgotten', () => {
+  it('posts the refresh token to Cognito’s revoke endpoint before leaving', async () => {
+    // `/logout` ends the hosted UI's cookie and nothing else. A refresh token
+    // copied off a lost or handed-over phone before the sign-out would go on
+    // minting access tokens for thirty days; this is the call that stops it.
+    const h = harness();
+
+    await performSignOut(h);
+
+    const [url, init] = h.fetchImpl.mock.calls[0] ?? [];
+    expect(String(url)).toBe('https://cognito.test/oauth2/revoke');
+    expect(init?.method).toBe('POST');
+    expect((init?.headers as Record<string, string>)['Content-Type']).toBe(
+      'application/x-www-form-urlencoded',
+    );
+    const body = new URLSearchParams(String(init?.body));
+    expect(body.get('token')).toBe('refresh-1');
+    expect(body.get('client_id')).toBe('client-abc');
+    // The redirect that follows ends this document; `keepalive` is what lets
+    // the request finish without it.
+    expect(init?.keepalive).toBe(true);
+    expect(h.navigated[0]).toContain('https://cognito.test/logout');
+  });
+
+  it('clears the device before the network is asked anything', async () => {
+    const h = harness();
+    let tokenAtRevoke: TokenSet | null = TOKENS;
+    h.fetchImpl.mockImplementation(async () => {
+      tokenAtRevoke = h.store.read();
+      return revokeOk();
+    });
+
+    await performSignOut(h);
+
+    expect(tokenAtRevoke).toBeNull();
+  });
+
+  it('still signs out when the revoke cannot be delivered', async () => {
+    // Offline, or Cognito unreachable: the local half is the one that must
+    // never wait on the network, and the token ages out on its own.
+    const h = harness();
+    h.fetchImpl.mockRejectedValue(new TypeError('Failed to fetch'));
+
+    await expect(performSignOut(h)).resolves.toBeUndefined();
+
+    expect(h.store.read()).toBeNull();
+    expect(h.navigated[0]).toContain('/logout');
+  });
+
+  it('has nothing to revoke when the set holds no refresh token', async () => {
+    const h = harness({ ...TOKENS, refreshToken: null });
+
+    await performSignOut(h);
+
+    expect(h.fetchImpl).not.toHaveBeenCalled();
+    expect(h.navigated[0]).toContain('/logout');
   });
 });
 

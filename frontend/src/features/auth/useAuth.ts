@@ -20,7 +20,7 @@ import {
   redirectUri,
 } from './oauth.ts';
 import { createState, createVerifier, challengeFor } from './pkce.ts';
-import { rememberPending, takePending } from './pending.ts';
+import { clearPending, hasPendingFlow, rememberPending, takePending } from './pending.ts';
 
 /** True while a token set is held. Re-renders when it is set or cleared. */
 export function useAuthenticated(): boolean {
@@ -77,8 +77,13 @@ export function useAuthGate(): AuthGateState {
   const [flow, setFlow] = useState<Flow>(() =>
     callback?.kind === 'code' ? 'exchanging' : 'idle',
   );
+  // A refusal counts only as the answer to the flow this device started —
+  // Cognito echoes the `state` it was given. The same parameters on a link
+  // someone was sent, or another tab's answer, are not an outcome to report.
   const [error, setError] = useState<string | null>(() =>
-    callback?.kind === 'error' ? describeAuthError(callback.error, callback.description) : null,
+    callback?.kind === 'error' && hasPendingFlow(callback.state)
+      ? describeAuthError(callback.error)
+      : null,
   );
 
   /*
@@ -130,7 +135,11 @@ export function useAuthGate(): AuthGateState {
   }, [callback, session]);
 
   useEffect(() => {
-    if (callback?.kind === 'error') cleanCallbackFromUrl();
+    if (callback?.kind !== 'error') return;
+    // The refusal ends the flow that asked; a fresh Sign in starts a new one.
+    // An answer to nothing this device asked leaves a genuine flow in flight.
+    if (hasPendingFlow(callback.state)) clearPending();
+    cleanCallbackFromUrl();
   }, [callback]);
 
   const signIn = useCallback(() => {
@@ -224,9 +233,23 @@ function cleanCallbackFromUrl(): void {
   );
 }
 
-/** Cognito's error codes, said in words. */
-export function describeAuthError(error: string, description: string | null): string {
-  if (error === 'access_denied') return 'That sign-in was cancelled.';
-  if (description && description.length > 0) return description;
-  return 'That sign-in could not be completed. Please try again.';
+/**
+ * Cognito's error codes, said in fixed words.
+ *
+ * The code chooses the sentence; `error_description` is never shown. It
+ * arrives on the query string of a URL anyone can compose, and rendering it
+ * would print a stranger's sentence inside the app's own sign-in screen, as
+ * an alert — "Your account is locked. Call …" — with nothing to tell it from
+ * the app's own voice.
+ */
+export function describeAuthError(error: string): string {
+  switch (error) {
+    case 'access_denied':
+      return 'That sign-in was cancelled.';
+    case 'server_error':
+    case 'temporarily_unavailable':
+      return 'The sign-in service is not available right now. Try again in a minute.';
+    default:
+      return 'That sign-in could not be completed. Please try again.';
+  }
 }

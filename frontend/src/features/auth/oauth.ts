@@ -22,12 +22,18 @@ import { tokenSetFromWire, type TokenSet } from '@/api/tokens.ts';
 import { CODE_CHALLENGE_METHOD } from './pkce.ts';
 
 /**
- * What the hosted UI is asked for. `openid` is what mints the id_token.
- * `aws.cognito.signin.user.admin` is what lets the access token call the
- * user-facing Cognito APIs — listing and removing the user's own passkeys —
- * from the app; without it those calls are refused with NotAuthorizedException.
+ * What the hosted UI is asked for. `openid` is what mints the id_token, which
+ * is the bearer the API takes; `email` and `profile` fill its claims.
+ *
+ * Not `aws.cognito.signin.user.admin`. It was added for an in-app passkey list
+ * that never shipped (`passkeys.ts` says why it cannot), and every access
+ * token carried it unused: with the token set in `localStorage`, any script
+ * that read it could call `DeleteUser`, change the recovery email or strip the
+ * person's passkeys for an hour. Asking for less than the client allows is
+ * always accepted, so this works against a pool that still grants the scope
+ * and against one that no longer does; re-add it with the feature that needs it.
  */
-const SCOPES = ['openid', 'email', 'profile', 'aws.cognito.signin.user.admin'] as const;
+const SCOPES = ['openid', 'email', 'profile'] as const;
 
 /**
  * Where Cognito sends the browser back to.
@@ -87,7 +93,7 @@ export function logoutUrl(
 
 export type CallbackParams =
   | { kind: 'code'; code: string; state: string }
-  | { kind: 'error'; error: string; description: string | null }
+  | { kind: 'error'; error: string; state: string | null }
   | null;
 
 /**
@@ -95,15 +101,17 @@ export type CallbackParams =
  *
  * `error` is a real outcome, not an edge case: it is what a cancelled login or
  * a disabled account produces, and swallowing it leaves the user on a sign-in
- * button that appears to do nothing.
+ * button that appears to do nothing. `error_description` is not read at all:
+ * it is free text on a URL anyone can compose, and `describeAuthError` has a
+ * fixed sentence for every code. `state` comes back on a refusal as it does
+ * with a code (RFC 6749 §4.1.2.1), and is what ties the answer to the flow
+ * that asked.
  */
 export function readCallbackParams(search: string): CallbackParams {
   const params = new URLSearchParams(search);
 
   const error = params.get('error');
-  if (error) {
-    return { kind: 'error', error, description: params.get('error_description') };
-  }
+  if (error) return { kind: 'error', error, state: params.get('state') };
 
   const code = params.get('code');
   const state = params.get('state');

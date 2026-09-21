@@ -10,6 +10,7 @@
  */
 
 import type { NoteWire, SearchHitWire } from '@/api/schema.ts';
+import { findMatches, foldMalayalam } from '@/features/notes/find.ts';
 
 export interface MergedHit {
   noteId: string;
@@ -22,10 +23,24 @@ export interface MergedHit {
 const CONTEXT = 48;
 
 /**
+ * Lower-cased, with Malayalam's two chillu spellings and stray joiners folded
+ * to one (`foldMalayalam`), so the spelling Whisper wrote meets the one the
+ * person typed. Not `foldText`: that walks every character to keep a map back
+ * to the original, which the ranking never needs and cannot afford on every
+ * keystroke over the whole corpus.
+ */
+function fold(text: string): string {
+  return foldMalayalam(text.toLowerCase());
+}
+
+/**
  * A window of `text` containing `term`, with ellipses where it was cut.
  *
- * Sliced by code point rather than by UTF-16 unit, so an excerpt can never
- * split a surrogate pair and render a replacement character.
+ * The hit is located with `findMatches`, whose folding changes lengths and
+ * reports the position in the original's own indices — so a chillu written
+ * one way is excerpted as written when searched the other way. Sliced by code
+ * point rather than by UTF-16 unit, so an excerpt can never split a surrogate
+ * pair and render a replacement character.
  */
 export function excerptAround(text: string, term: string, context: number = CONTEXT): string {
   if (!text) return '';
@@ -36,16 +51,16 @@ export function excerptAround(text: string, term: string, context: number = CONT
       : `${characters.slice(0, context * 2).join('')}…`;
   }
 
-  const index = text.toLowerCase().indexOf(term.toLowerCase());
-  if (index === -1) {
+  const [match] = findMatches(text, term, 1);
+  if (!match) {
     return characters.length <= context * 2
       ? text
       : `${characters.slice(0, context * 2).join('')}…`;
   }
 
-  // Convert the UTF-16 index to a code-point index before slicing.
-  const before = Array.from(text.slice(0, index)).length;
-  const termLength = Array.from(term).length;
+  // Convert the UTF-16 indices to code-point indices before slicing.
+  const before = Array.from(text.slice(0, match.start)).length;
+  const termLength = Array.from(text.slice(match.start, match.end)).length;
   const start = Math.max(0, before - context);
   const end = Math.min(characters.length, before + termLength + context);
 
@@ -86,13 +101,13 @@ function bodyText(note: NoteWire): string {
  * see first.
  */
 export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[] {
-  const term = query.trim().toLowerCase();
+  const term = fold(query.trim());
   if (!term) return [];
 
   const results: Scored[] = [];
 
   for (const note of notes) {
-    const title = note.title.toLowerCase();
+    const title = fold(note.title);
     const matchedIn: string[] = [];
     let score = 0;
 
@@ -104,20 +119,20 @@ export function rankLocal(notes: readonly NoteWire[], query: string): MergedHit[
       matchedIn.push('title');
     }
 
-    if ((note.aliases ?? []).some((alias) => alias.toLowerCase().includes(term))) {
+    if ((note.aliases ?? []).some((alias) => fold(alias).includes(term))) {
       score += 40;
       matchedIn.push('alias');
     }
 
-    if ((note.tags ?? []).some((tag) => tag.toLowerCase().includes(term))) {
+    if ((note.tags ?? []).some((tag) => fold(tag).includes(term))) {
       score += 30;
       matchedIn.push('tag');
     }
 
     const snippet = note.snippet ?? '';
-    const inSnippet = snippet.toLowerCase().includes(term);
+    const inSnippet = fold(snippet).includes(term);
     const body = bodyText(note);
-    const inBody = !inSnippet && body.toLowerCase().includes(term);
+    const inBody = !inSnippet && fold(body).includes(term);
     if (inSnippet || inBody) {
       score += 15;
       matchedIn.push('body');

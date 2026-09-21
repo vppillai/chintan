@@ -87,20 +87,25 @@ export async function cacheNoteDetail(note: NoteDetailWire): Promise<void> {
  * awaiting a read inside the write transaction closes it and the puts that
  * follow are silently lost — silently, because the caller deliberately swallows
  * cache failures. The symptom is an offline library that is always empty.
+ *
+ * Only this page's rows are read, by key. This ran `getAll('notes')` — every
+ * cached note deserialised, bodies and all — on every library mount and every
+ * `['notes']` invalidation, to compare twenty of them.
  */
 export async function cacheNoteList(notes: readonly NoteWire[]): Promise<void> {
   if (notes.length === 0) return;
   const db = await openChintanDB();
 
-  const existing = new Map((await db.getAll('notes')).map((entry) => [entry.id, entry]));
+  const reads = db.transaction('notes');
+  const existing = await Promise.all(notes.map((note) => reads.store.get(note.id)));
 
   const tx = db.transaction('notes', 'readwrite');
   const store = tx.objectStore('notes');
-  for (const note of notes) {
+  notes.forEach((note, index) => {
     const next = record(note, false);
-    if (!supersedes(next, existing.get(note.id))) continue;
+    if (!supersedes(next, existing[index])) return;
     void store.put(next);
-  }
+  });
   await tx.done;
 }
 
@@ -132,6 +137,27 @@ export async function cachedNotes(
     .filter((entry) => entry.archived === (state === 'archived'))
     .map((entry) => entry.note)
     .reverse();
+}
+
+/**
+ * The newest active notes — the library's first page — whose body is not on
+ * the device, up to `limit` rows examined. What the idle prefetch has left to
+ * fetch, so it never asks for a note the device already holds in full.
+ */
+export async function notesWithoutBody(limit: number): Promise<{ id: string; version: number }[]> {
+  const db = await openChintanDB();
+  const missing: { id: string; version: number }[] = [];
+  let examined = 0;
+  const byUpdatedAt = db.transaction('notes').store.index('byUpdatedAt');
+  for await (const cursor of byUpdatedAt.iterate(null, 'prev')) {
+    if (cursor.value.archived) continue;
+    if (!cursor.value.detail) {
+      missing.push({ id: cursor.value.id, version: cursor.value.note.version });
+    }
+    examined += 1;
+    if (examined >= limit) break;
+  }
+  return missing;
 }
 
 /**
