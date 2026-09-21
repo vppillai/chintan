@@ -485,16 +485,35 @@ function FilingItem({
      * A receipt is one control. The row itself opens the note — with a
      * chevron, as every row that leads somewhere has — and the × dismisses
      * it; the "Open the note" pill under a bare "Filed" was a second thing to
-     * find on a row whose whole point is the note. The hidden words keep the
-     * button's name saying what it does after what it is.
+     * find on a row whose whole point is the note.
+     *
+     * The title stays where every row keeps it — first in the head, outside
+     * the button — so the `<p role="status">` a moving row rendered is the
+     * same node once the poll flips it to appended. A live region announces a
+     * change to its text, not the text it mounted with: when the receipt was
+     * its own subtree React swapped the node and the landing went unspoken.
+     * The button is the chevron, named by the title and its own hidden words,
+     * and its ::after stretches over the row (capture.css).
      */
+    const titleId = `filing-title-${capture.id}`;
     return (
       <article className="filing-row filing-row--receipt" data-status={capture.status}>
-        <button type="button" className="filing-row__receipt" onClick={onOpen}>
-          <span className="filing-row__title">{describe(capture, stuck, noteTitle)}</span>
+        <div className="filing-row__head">
+          <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
+            {describe(capture, stuck, noteTitle)}
+          </p>
           {duration && <span className="filing-row__duration numeric">{duration}</span>}
-          <Icon name="chevron-right" size={18} className="filing-row__receipt-icon" />
-          <span className="visually-hidden">Open the note</span>
+        </div>
+        <button
+          type="button"
+          className="filing-row__receipt"
+          aria-labelledby={`${titleId} ${titleId}-open`}
+          onClick={onOpen}
+        >
+          <Icon name="chevron-right" size={18} />
+          <span id={`${titleId}-open`} className="visually-hidden">
+            Open the note
+          </span>
         </button>
         <button
           type="button"

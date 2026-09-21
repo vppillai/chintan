@@ -278,36 +278,38 @@
    Filing row additions — the receipt; the rest of the row is in shell.css
    -------------------------------------------------------------------------- */
 
-/* One control wide, with the × in its own column. */
+/* Title, chevron, ×: one control wide, with the × in its own column. */
 .filing-row--receipt {
-  grid-template-columns: minmax(0, 1fr) auto;
+  position: relative;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   padding-block: var(--space-1);
   padding-inline-end: var(--space-1);
 }
 
+/*
+ * The chevron is the button, and its ::after is what makes the whole card
+ * tappable. The title is outside it on purpose — first in the head, as on
+ * every row — so the live region a moving row rendered is the node the
+ * receipt updates (FilingRow.tsx). The × sits above the stretch.
+ */
 .filing-row__receipt {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-inline-size: 0;
-  min-block-size: var(--layout-touch-target-min);
-  padding-block: var(--space-2);
-  text-align: start;
-  color: var(--color-ink);
-}
-
-.filing-row__receipt .filing-row__title {
-  flex: 1;
-  min-inline-size: 0;
-}
-
-.filing-row__receipt-icon {
-  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
   color: var(--color-faint);
 }
 
+.filing-row__receipt::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
 .filing-row__dismiss {
+  position: relative;
+  z-index: 1;
   display: grid;
   place-items: center;
   inline-size: var(--layout-touch-target-min);

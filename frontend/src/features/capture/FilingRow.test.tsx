@@ -1050,6 +1050,26 @@ describe('a capture that has just been filed refreshes its note', () => {
     expect(noteReads()).toBe(2);
   });
 
+  it('keeps the live region when the row turns into a receipt, so the landing is announced', async () => {
+    /*
+     * A live region announces a change to its text, not the text it mounted
+     * with. When the receipt was its own subtree, React swapped the
+     * `role="status"` node for a fresh one at the flip, and the moment of
+     * filing — what a person waiting on Home is listening for — went unspoken.
+     */
+    const { refetchCaptures } = mountWithPolls([[filing], [filed]]);
+    const live = await screen.findByRole('status');
+    expect(live).toHaveTextContent('Filing your recording');
+
+    await refetchCaptures();
+
+    await waitFor(() => {
+      expect(live).toHaveTextContent(/^Filed/);
+    });
+    expect(screen.getByRole('status')).toBe(live);
+    expect(screen.getByRole('button', { name: /open the note/i })).toHaveAccessibleName(/^Filed/);
+  });
+
   it('does not refetch for a capture that was already appended last time', async () => {
     const { refetchCaptures, noteReads } = mountWithPolls([[filed], [filed]]);
 
