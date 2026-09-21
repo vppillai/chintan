@@ -138,6 +138,9 @@ describe('the library never claims an empty library it cannot see', () => {
     mount(library({ active: [], archived: [], tags: [] }));
     expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).toBeNull();
+    // And offers no way into nothing: no "Archive · 0" row, no "Checklists · 0" chip.
+    expect(screen.queryByRole('link', { name: /^Archive/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Checklists/ })).toBeNull();
   });
 });
 

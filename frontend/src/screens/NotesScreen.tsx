@@ -471,31 +471,38 @@ export function NotesScreen() {
               setFilter({ view: null, tag: null, kind: null });
             }}
           />
-          <Chip
-            label={
-              <>
-                Checklists
-                {checklistCount !== undefined && (
-                  <>
-                    {' · '}
-                    <span className="numeric">
-                      {checklistCount}
-                      {checklists.hasNextPage ? '+' : ''}
-                    </span>
-                  </>
-                )}
-              </>
-            }
-            name={
-              checklistCount === undefined
-                ? 'Checklists'
-                : `Checklists · ${String(checklistCount)}`
-            }
-            pressed={kind === 'checklist'}
-            onClick={() => {
-              setFilter({ kind: kind ? null : 'checklist' });
-            }}
-          />
+          {/*
+            On the same terms as Archived below: not while there is nothing
+            behind it. Checklists are learnt about where they are made, on a
+            note's Details; a chip reading "Checklists · 0" taught nothing.
+          */}
+          {(kind === 'checklist' || (checklistCount ?? 0) > 0) && (
+            <Chip
+              label={
+                <>
+                  Checklists
+                  {checklistCount !== undefined && (
+                    <>
+                      {' · '}
+                      <span className="numeric">
+                        {checklistCount}
+                        {checklists.hasNextPage ? '+' : ''}
+                      </span>
+                    </>
+                  )}
+                </>
+              }
+              name={
+                checklistCount === undefined
+                  ? 'Checklists'
+                  : `Checklists · ${String(checklistCount)}`
+              }
+              pressed={kind === 'checklist'}
+              onClick={() => {
+                setFilter({ kind: kind ? null : 'checklist' });
+              }}
+            />
+          )}
           {tagNames.map((name) => (
             <Chip
               key={name}
@@ -692,24 +699,32 @@ export function NotesScreen() {
         />
       )}
 
-      {/* The way into the archive from the active list, whatever its chip is doing. */}
-      {!asking && !searching && view === 'active' && (
-        <Link to={ROUTES.archive} className="library-archive">
-          <Icon name="archive" size={18} />
-          <span>
-            Archive
-            {archivedCount !== undefined && (
-              <>
-                {' · '}
-                <span className="numeric">
-                  {archivedCount}
-                  {archived.hasNextPage ? '+' : ''}
-                </span>
-              </>
-            )}
-          </span>
-          <Icon name="chevron-right" size={18} className="library-archive__glyph" />
-        </Link>
+      {/*
+        The way into the archive from the active list, whatever its chip is
+        doing — once there is a library to walk from or an archive to walk
+        into. A first-run screen showed "Tap Record to make your first note."
+        and then "Archive · 0", the nothing T17 took out of the chips.
+      */}
+      {!asking &&
+        !searching &&
+        view === 'active' &&
+        (notes.length > 0 || (archivedCount ?? 0) > 0) && (
+          <Link to={ROUTES.archive} className="library-archive">
+            <Icon name="archive" size={18} />
+            <span>
+              Archive
+              {archivedCount !== undefined && (
+                <>
+                  {' · '}
+                  <span className="numeric">
+                    {archivedCount}
+                    {archived.hasNextPage ? '+' : ''}
+                  </span>
+                </>
+              )}
+            </span>
+            <Icon name="chevron-right" size={18} className="library-archive__glyph" />
+          </Link>
       )}
 
       {!asking && selecting && (
