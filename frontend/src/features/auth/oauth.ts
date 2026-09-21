@@ -93,7 +93,7 @@ export function logoutUrl(
 
 export type CallbackParams =
   | { kind: 'code'; code: string; state: string }
-  | { kind: 'error'; error: string }
+  | { kind: 'error'; error: string; state: string | null }
   | null;
 
 /**
@@ -103,13 +103,15 @@ export type CallbackParams =
  * a disabled account produces, and swallowing it leaves the user on a sign-in
  * button that appears to do nothing. `error_description` is not read at all:
  * it is free text on a URL anyone can compose, and `describeAuthError` has a
- * fixed sentence for every code.
+ * fixed sentence for every code. `state` comes back on a refusal as it does
+ * with a code (RFC 6749 §4.1.2.1), and is what ties the answer to the flow
+ * that asked.
  */
 export function readCallbackParams(search: string): CallbackParams {
   const params = new URLSearchParams(search);
 
   const error = params.get('error');
-  if (error) return { kind: 'error', error };
+  if (error) return { kind: 'error', error, state: params.get('state') };
 
   const code = params.get('code');
   const state = params.get('state');

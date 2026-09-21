@@ -107,9 +107,14 @@ describe('reading what came back on the query string', () => {
   it('reads a refusal, which is a real outcome and not an edge case — by its code alone', () => {
     // The description is free text on a URL anyone can compose; it is not
     // carried into the app, so it cannot be rendered by mistake later.
-    expect(readCallbackParams('?error=access_denied&error_description=User+said+no')).toEqual({
+    expect(
+      readCallbackParams('?error=access_denied&error_description=User+said+no&state=xyz'),
+    ).toEqual({ kind: 'error', error: 'access_denied', state: 'xyz' });
+    // A refusal composed without a state answers no flow, and says so.
+    expect(readCallbackParams('?error=access_denied')).toEqual({
       kind: 'error',
       error: 'access_denied',
+      state: null,
     });
   });
 

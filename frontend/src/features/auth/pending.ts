@@ -78,19 +78,21 @@ function parsePending(raw: string | null, now: number): PendingAuth | null {
 }
 
 /**
- * Whether a flow this device started is still waiting for its answer, without
- * consuming it.
+ * Whether the flow this device started, and is still waiting on, is the one
+ * `state` names — without consuming it.
  *
  * This is what tells Cognito's answer apart from a link someone was sent:
- * the hosted UI redirects here only in reply to a request from here, so an
- * `error` on the query string with no flow behind it is not an outcome to
- * report.
+ * the hosted UI redirects here only in reply to a request from here, and
+ * echoes the `state` that request carried. An `error` on the query string
+ * with no flow behind it, or with a different state — the pending entry is in
+ * `localStorage`, so another tab's genuine sign-in is one this tab can see —
+ * is not an outcome to report, nor a flow to end.
  */
-export function hasPendingFlow(now: number = Date.now()): boolean {
+export function hasPendingFlow(state: string | null, now: number = Date.now()): boolean {
   const store = storage();
   if (!store) return false;
   try {
-    return parsePending(store.getItem(PENDING_AUTH_KEY), now) !== null;
+    return parsePending(store.getItem(PENDING_AUTH_KEY), now)?.state === state;
   } catch {
     return false;
   }

@@ -77,10 +77,13 @@ export function useAuthGate(): AuthGateState {
   const [flow, setFlow] = useState<Flow>(() =>
     callback?.kind === 'code' ? 'exchanging' : 'idle',
   );
-  // A refusal counts only as the answer to a flow this device started; the
-  // same parameters on a link someone was sent are not an outcome to report.
+  // A refusal counts only as the answer to the flow this device started —
+  // Cognito echoes the `state` it was given. The same parameters on a link
+  // someone was sent, or another tab's answer, are not an outcome to report.
   const [error, setError] = useState<string | null>(() =>
-    callback?.kind === 'error' && hasPendingFlow() ? describeAuthError(callback.error) : null,
+    callback?.kind === 'error' && hasPendingFlow(callback.state)
+      ? describeAuthError(callback.error)
+      : null,
   );
 
   /*
@@ -134,7 +137,8 @@ export function useAuthGate(): AuthGateState {
   useEffect(() => {
     if (callback?.kind !== 'error') return;
     // The refusal ends the flow that asked; a fresh Sign in starts a new one.
-    clearPending();
+    // An answer to nothing this device asked leaves a genuine flow in flight.
+    if (hasPendingFlow(callback.state)) clearPending();
     cleanCallbackFromUrl();
   }, [callback]);
 

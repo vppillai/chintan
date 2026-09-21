@@ -54,7 +54,7 @@ describe('what the sign-in screen says when Cognito answers with an error', () =
     // the alert it read, in the app's voice, as a reason to call a number.
     startedAFlow();
     landWith(
-      '?error=access_denied&error_description=Your+account+is+locked.+Call+555-0100+to+unlock+it.',
+      '?error=access_denied&error_description=Your+account+is+locked.+Call+555-0100+to+unlock+it.&state=st-1',
     );
 
     const alert = await screen.findByRole('alert');
@@ -74,10 +74,23 @@ describe('what the sign-in screen says when Cognito answers with an error', () =
 
   it('ends the flow it answers and takes the parameters off the address bar', async () => {
     startedAFlow();
-    landWith('?error=access_denied');
+    landWith('?error=access_denied&state=st-1');
 
     await screen.findByRole('alert');
     expect(localStorage.getItem(PENDING_AUTH_KEY)).toBeNull();
+    expect(window.location.search).toBe('');
+  });
+
+  it('leaves another flow’s answer alone: no alert, and that flow still pending', async () => {
+    // The pending entry is in `localStorage`, shared across tabs. A composed
+    // link opened while a genuine sign-in waits in another tab must neither
+    // report a refusal here nor end that tab's flow.
+    startedAFlow();
+    landWith('?error=access_denied&state=not-this-device');
+
+    await screen.findByRole('button', { name: 'Sign in' });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(localStorage.getItem(PENDING_AUTH_KEY)).not.toBeNull();
     expect(window.location.search).toBe('');
   });
 });
