@@ -1,10 +1,18 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router';
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { Link, useSearchParams } from 'react-router';
 
 import {
   SERVER_SEARCH_DEBOUNCE_MS,
-  queryKeys,
   useBulkArchiveNotes,
   useBulkDeleteNotes,
   useBulkPurgeNotes,
@@ -12,20 +20,19 @@ import {
   useNotes,
   useSearch,
   useSearchCorpus,
-  useTags,
 } from '@/api/queries.ts';
 import { ApiError } from '@/api/problem.ts';
 import type { NoteKind, NoteState, NoteWire } from '@/api/schema.ts';
-import { ARCHIVED_VIEW, ASK_MODE } from '@/app/routes.ts';
+import { ARCHIVED_VIEW, ASK_MODE, ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { Icon } from '@/components/Icon.tsx';
 import { LoadMore } from '@/components/LoadMore.tsx';
 import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
-import { AskModeToggle } from '@/features/ask/AskModeToggle.tsx';
-import { AskPanel } from '@/features/ask/AskPanel.tsx';
-import { useAskThread } from '@/features/ask/useAskThread.ts';
-import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
+import { config } from '@/config/env.ts';
+import { useAskThread } from '@/features/ask/useAskThread.ts';
+import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { describeToday, groupByDay } from '@/features/notes/groups.ts';
@@ -35,8 +42,17 @@ import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
-/** Below this the search field's share of its row no longer fits the long placeholder. */
+/** Below this the search field no longer fits the long placeholder beside its Ask glyph. */
 export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
+
+/*
+ * The Ask panel is a chunk of its own (round-3 T47): the thread, its markdown
+ * and the save-as-note flow are for the one mode most launches never enter.
+ * The hook that holds the thread stays here, because the field submits to it.
+ */
+const AskPanel = lazy(() =>
+  import('@/features/ask/AskPanel.tsx').then((m) => ({ default: m.AskPanel })),
+);
 
 /**
  * The library. Home.
@@ -53,7 +69,9 @@ export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
  * The field has a second mode, Ask (`mode=ask`, backlog D5): the same box
  * takes a question instead of a filter, Enter sends it, and the Ask panel
  * stands in for the list with the answer and the notes it came from. The
- * mode is in the URL like the filters; the question and the thread are not
+ * switch is a glyph inside the field's trailing edge; once a thread is open
+ * the same field takes the follow-up (round-3 T17, T21). The mode is in the
+ * URL like the filters; the question and the thread are not
  * (`features/ask/thread.ts`).
  *
  * Bulk select carries over from the two screens this replaces. In the active
@@ -81,9 +99,11 @@ export function NotesScreen() {
   const [question, setQuestion] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const askThread = useAskThread();
-  // The field shares its row with the Search | Ask switch, and on a phone
-  // what is left of it clips the long placeholder mid-word ("…tags, tran").
-  // A placeholder cannot be changed from CSS, so the width is read here.
+  /** A thread is open, so the field is its follow-up rather than a first question. */
+  const following = askThread.turns.length > 0;
+  // On a 320 px phone the field, less its Ask glyph, clips the long
+  // placeholder mid-word ("…tags, tran"). A placeholder cannot be changed
+  // from CSS, so the width is read here.
   const narrowField = useMediaQuery(NARROW_FIELD_QUERY);
 
   const inputId = useId();
@@ -94,15 +114,15 @@ export function NotesScreen() {
 
   /*
    * Pull down at the top to ask again. Everything the library shows is
-   * invalidated — the lists, the tag chips, the filing rows — because the
-   * gesture means "is this current?", not "reload one query". The promise
-   * settles when the refetches do, which is when the indicator lets go.
+   * invalidated — the lists (the tag chips are read from them), the filing
+   * rows — because the gesture means "is this current?", not "reload one
+   * query". The promise settles when the refetches do, which is when the
+   * indicator lets go.
    */
   const refresh = useCallback(
     () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ['notes'] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.tags() }),
         queryClient.invalidateQueries({ queryKey: ['captures'] }),
       ]),
     [queryClient],
@@ -147,7 +167,14 @@ export function NotesScreen() {
   const archived = useNotes({ state: 'archived' });
   // The checklists, for their chip's count, on the same terms as the archive.
   const checklists = useNotes({ state: 'active', kind: 'checklist' });
-  const tags = useTags();
+  /*
+   * The tag chips are the tags on the active notes the device holds
+   * (round-3 T46): every page the user has seen plus the search corpus,
+   * which carries tags in its light projection. A Home mount used to fan out
+   * five GETs and five preflights, one of them `GET /v1/tags` for the chip
+   * names alone; the tag editor on the note screen still asks the server.
+   */
+  const activeCache = useCachedNotes('active');
   /*
    * The search corpus — every active note with its searchable body — fetched
    * once and written to the device, so the instant search below can find a
@@ -273,13 +300,21 @@ export function NotesScreen() {
     (sum, page) => sum + page.items.length,
     0,
   );
-  const tagNames = (tags.data?.items ?? []).map((item) => item.name);
-  // A tag from the URL that the server no longer lists still gets its chip,
-  // or the filter would be applied with nothing on screen saying so.
-  if (tag && !tagNames.includes(tag)) tagNames.push(tag);
+  const tagNames = useMemo(() => {
+    // The server's unfiltered page joins the device's copy, so the chips are
+    // there on a first visit before the corpus has been written.
+    const unfiltered = view === 'active' && !tag && !kind ? (serverNotes ?? []) : [];
+    const names = new Set([...(activeCache.data ?? []), ...unfiltered].flatMap((note) => note.tags ?? []));
+    // A tag from the URL that nothing on the device carries still gets its
+    // chip, or the filter would be applied with nothing on screen saying so.
+    if (tag) names.add(tag);
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [activeCache.data, serverNotes, view, tag, kind]);
 
   const selectableIds = visible.map((note) => note.id);
   const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
+  // One note selected reads as one note (round-3 T63): "Delete it forever", not "them".
+  const one = selectedIds.size === 1;
   // Known once something — the server or the device — has answered.
   const count = serverNotes !== undefined || fromCache ? notes.length : undefined;
 
@@ -316,16 +351,17 @@ export function NotesScreen() {
       <PullToRefresh onRefresh={refresh} />
 
       {/*
-        The wordmark is in the banner above; the screen's own heading is
-        "Notes", in the notes' serif, with how many beside it, and the day as
-        a small-caps line above it. It was the other way round (backlog U5) —
-        the day large, "Notes · 12" as the eyebrow — until the owner asked why
-        the biggest text on Home was today's date. All of it is the one h1 —
-        a screen reader hears "Notes, 12, Friday 5 September", because the day
-        comes second in the markup and is only placed above by the stylesheet
-        — and the text still starts with "Notes", which is what the a11y sweep
-        and the route tests look for. The count is what has been loaded, with
-        "+" while there is more.
+        The heading is "Notes", in the notes' serif, with how many beside it;
+        the wordmark sits small at the row's right with the day beneath it.
+        The shell's banner used to say the name above, the h1 said "Notes"
+        and the tab said Home — the same place named three times in the top
+        45 percent of a phone (round-3 T17) — so on this screen the banner
+        holds nothing and the name is a small-caps line here. The day was the
+        big text once (backlog U5) and then the h1's eyebrow; it is the
+        wordmark's second line now, out of the heading, so a screen reader
+        hears "Notes, 12" and the a11y sweep and the route tests still find
+        a heading that starts with "Notes". The count is what has been
+        loaded, with "+" while there is more.
       */}
       <header className="screen__header library-header">
         <h1 className="library-heading">
@@ -342,32 +378,40 @@ export function NotesScreen() {
                 </span>
               </>
             )}
-          </span>{' '}
-          <span className="library-heading__eyebrow">{describeToday()}</span>
+          </span>
         </h1>
+        <p className="library-brand">
+          <span className="library-brand__wordmark">{config.appName}</span>
+          <span className="library-brand__date">{describeToday()}</span>
+        </p>
       </header>
 
       {/*
         One field, two modes. Searching filters on every keystroke through
         the URL's `q`; asking holds the question until Enter, because a
         question is a request that costs a model call, not a filter to
-        narrow. The segment beside the field is the switch, and switching to
-        Ask drops the filter so coming back to Search shows the whole library.
+        narrow. The glyph inside the field's trailing edge is the switch, a
+        pressed button rather than the Search | Ask segment that took a third
+        of the row (round-3 T17); switching to Ask drops the filter so coming
+        back to Search shows the whole library. With a thread open the field
+        is the follow-up (round-3 T21): one field for one conversation, and
+        `useAskThread.ask` holds a second question while the first is
+        unanswered.
       */}
-      <div className="search-row">
-        <form
-          className="search-form"
-          role="search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!asking) return;
-            askThread.ask(question);
-            setQuestion('');
-          }}
-        >
-          <label className="visually-hidden" htmlFor={inputId}>
-            {asking ? 'Ask your notes' : 'Search notes'}
-          </label>
+      <form
+        className="search-form"
+        role="search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!asking) return;
+          askThread.ask(question);
+          setQuestion('');
+        }}
+      >
+        <label className="visually-hidden" htmlFor={inputId}>
+          {asking ? (following ? 'Ask a follow-up' : 'Ask your notes') : 'Search notes'}
+        </label>
+        <div className="search-field">
           <input
             ref={inputRef}
             id={inputId}
@@ -375,7 +419,13 @@ export function NotesScreen() {
             type="search"
             value={asking ? question : query}
             placeholder={
-              asking ? 'Ask your notes…' : narrowField ? 'Search notes' : 'Search titles, tags, transcripts'
+              asking
+                ? following
+                  ? 'Ask a follow-up…'
+                  : 'Ask your notes…'
+                : narrowField
+                  ? 'Search notes'
+                  : 'Search titles, tags, transcripts'
             }
             autoComplete="off"
             enterKeyHint={asking ? 'send' : 'search'}
@@ -386,21 +436,28 @@ export function NotesScreen() {
               else setFilter({ q: event.target.value });
             }}
           />
-        </form>
-        {/*
-          Beside the form, not inside it: the switch is not a search field,
-          and a form with one text field submits on Enter by itself.
-        */}
-        <AskModeToggle
-          mode={asking ? 'ask' : 'search'}
-          onChange={(mode) => {
-            setFilter(mode === 'ask' ? { mode: ASK_MODE, q: null } : { mode: null });
-            inputRef.current?.focus();
-          }}
-        />
-      </div>
+          {/* `type="button"`: inside the form so it can sit inside the field, never its submit. */}
+          <button
+            type="button"
+            className="ask-toggle"
+            aria-pressed={asking}
+            aria-label="Ask"
+            title={asking ? 'Back to search' : 'Ask your notes'}
+            onClick={() => {
+              setFilter(asking ? { mode: null } : { mode: ASK_MODE, q: null });
+              inputRef.current?.focus();
+            }}
+          >
+            <Icon name="sparkle" size={20} />
+          </button>
+        </div>
+      </form>
 
-      {asking && <AskPanel id={askPanelId} thread={askThread} />}
+      {asking && (
+        <Suspense fallback={null}>
+          <AskPanel id={askPanelId} thread={askThread} />
+        </Suspense>
+      )}
 
       {!asking && (
         <div className="chips" role="group" aria-label="Filter notes">
@@ -446,27 +503,35 @@ export function NotesScreen() {
               }}
             />
           ))}
-          <Chip
-            label={
-              <>
-                Archived
-                {archivedCount !== undefined && (
-                  <>
-                    {' · '}
-                    <span className="numeric">
-                      {archivedCount}
-                      {archived.hasNextPage ? '+' : ''}
-                    </span>
-                  </>
-                )}
-              </>
-            }
-            name={archivedCount === undefined ? 'Archived' : `Archived · ${String(archivedCount)}`}
-            pressed={view === 'archived'}
-            onClick={() => {
-              setFilter({ view: view === 'archived' ? null : ARCHIVED_VIEW });
-            }}
-          />
+          {/*
+            Not while there is nothing behind it (round-3 T17): "Archived · 0"
+            offered a filter of nothing. The archive is still one tap away,
+            as a row at the list's end below; the chip returns with the
+            first archived note, and is always there in the archive itself.
+          */}
+          {(view === 'archived' || (archivedCount ?? 0) > 0) && (
+            <Chip
+              label={
+                <>
+                  Archived
+                  {archivedCount !== undefined && (
+                    <>
+                      {' · '}
+                      <span className="numeric">
+                        {archivedCount}
+                        {archived.hasNextPage ? '+' : ''}
+                      </span>
+                    </>
+                  )}
+                </>
+              }
+              name={archivedCount === undefined ? 'Archived' : `Archived · ${String(archivedCount)}`}
+              pressed={view === 'archived'}
+              onClick={() => {
+                setFilter({ view: view === 'archived' ? null : ARCHIVED_VIEW });
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -477,7 +542,8 @@ export function NotesScreen() {
       */}
       {!asking && !searching && view === 'active' && (
         <>
-          <PasskeyNudge />
+          {/* Only once there is a note (round-3 T56): the first screen is about the first recording. */}
+          {notes.length > 0 && <PasskeyNudge />}
           <ResumePrompt />
           <FilingRow />
         </>
@@ -623,6 +689,26 @@ export function NotesScreen() {
         />
       )}
 
+      {/* The way into the archive from the active list, whatever its chip is doing. */}
+      {!asking && !searching && view === 'active' && (
+        <Link to={ROUTES.archive} className="library-archive">
+          <Icon name="archive" size={18} />
+          <span>
+            Archive
+            {archivedCount !== undefined && (
+              <>
+                {' · '}
+                <span className="numeric">
+                  {archivedCount}
+                  {archived.hasNextPage ? '+' : ''}
+                </span>
+              </>
+            )}
+          </span>
+          <Icon name="chevron-right" size={18} className="library-archive__glyph" />
+        </Link>
+      )}
+
       {!asking && selecting && (
         <SelectionBar
           label="Bulk actions"
@@ -680,8 +766,12 @@ export function NotesScreen() {
       <ConfirmDialog
         open={confirming === 'archive'}
         title={`Archive ${countLabel(selectedIds.size)}?`}
-        body="They leave your notes and move to the archive, where you can restore them until they are deleted."
-        confirmLabel="Archive them"
+        body={
+          one
+            ? 'It leaves your notes and moves to the archive, where you can restore it until it is deleted.'
+            : 'They leave your notes and move to the archive, where you can restore them until they are deleted.'
+        }
+        confirmLabel={one ? 'Archive it' : 'Archive them'}
         destructive
         onCancel={() => {
           setConfirming(null);
@@ -695,8 +785,12 @@ export function NotesScreen() {
       <ConfirmDialog
         open={confirming === 'restore'}
         title={`Restore ${countLabel(selectedIds.size)}?`}
-        body="They leave the archive and return to your notes."
-        confirmLabel="Restore them"
+        body={
+          one
+            ? 'It leaves the archive and returns to your notes.'
+            : 'They leave the archive and return to your notes.'
+        }
+        confirmLabel={one ? 'Restore it' : 'Restore them'}
         onCancel={() => {
           setConfirming(null);
         }}
@@ -715,8 +809,10 @@ export function NotesScreen() {
       <ConfirmDialog
         open={confirming === 'delete' || confirming === 'purge'}
         title={`Delete ${countLabel(selectedIds.size)} forever?`}
-        body="Their recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on."
-        confirmLabel="Delete them forever"
+        body={`${
+          one ? 'Its recordings and transcripts are' : 'Their recordings and transcripts are'
+        } destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
+        confirmLabel={one ? 'Delete it forever' : 'Delete them forever'}
         requireText="delete"
         requireLabel='Type "delete" to confirm'
         destructive

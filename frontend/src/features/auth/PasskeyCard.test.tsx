@@ -4,7 +4,8 @@ import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { routes } from '@/app/router.tsx';
-import { TestProviders } from '@/test/providers.tsx';
+import { NotesScreen } from '@/screens/NotesScreen.tsx';
+import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { PasskeyCard } from './PasskeyCard.tsx';
 import { PasskeyNudge } from './PasskeyNudge.tsx';
@@ -167,6 +168,37 @@ describe('the library nudge', () => {
     withoutWebAuthn();
     mountNudge();
     expect(screen.queryByText(/sign in faster next time/i)).toBeNull();
+  });
+
+  it('is one row of text actions, and the library shows it only once there is a note (round-3 T17, T56)', async () => {
+    const libraryWith = (notes: unknown[]) =>
+      testApiContext(async (input) => {
+        const url = new URL(String(input));
+        const body = url.pathname.endsWith('/v1/notes') ? { items: notes } : { items: [] };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      });
+    const mountLibrary = (notes: unknown[]) =>
+      render(
+        <TestProviders api={libraryWith(notes)}>
+          <MemoryRouter initialEntries={['/']}>
+            <NotesScreen />
+          </MemoryRouter>
+        </TestProviders>,
+      );
+
+    const empty = mountLibrary([]);
+    expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
+    expect(screen.queryByRole('note', { name: /passkey suggestion/i })).toBeNull();
+    empty.unmount();
+
+    mountLibrary(TEST_NOTES);
+    const nudge = await screen.findByRole('note', { name: /passkey suggestion/i });
+    expect(nudge).toHaveTextContent(/^Sign in faster next time/);
+    expect(nudge.querySelector('.passkey-nudge__detail')).toBeNull();
+    expect(nudge.querySelectorAll('button')).toHaveLength(2);
   });
 });
 

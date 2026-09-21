@@ -76,11 +76,13 @@ describe('the Checklists chip', () => {
     await waitFor(() => {
       expect(chips.getByRole('button', { name: 'Checklists · 1' })).toBeInTheDocument();
     });
+    // The tag chips are the notes' own tags, sorted (round-3 T46), and there
+    // is no Archived chip while nothing is archived (round-3 T17).
     expect(chips.getAllByRole('button').map((chip) => chip.getAttribute('aria-label') ?? chip.textContent)).toEqual([
       'All',
       'Checklists · 1',
+      'books',
       'house',
-      'Archived · 0',
     ]);
 
     await user.click(chips.getByRole('button', { name: 'Checklists · 1' }));
