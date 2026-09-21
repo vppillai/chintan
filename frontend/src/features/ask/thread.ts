@@ -124,8 +124,9 @@ export function newTurn(key: string, question: string, now: number = Date.now())
 const NOTE_ID = /\b(note_[0-9a-f_]{8,})(?:\s*\(([^()]*)\))?/g;
 
 /**
- * `answer` with every raw note id replaced by the cited note's title, or
- * removed when `sources` does not name it. The prose should name notes by
+ * `answer` with every raw note id replaced by the cited note's title, or by
+ * "a note" when `sources` does not name it — a dropped id left the model's
+ * punctuation orphaned (`: "quote"`). The prose should name notes by
  * title — the chips are the citations — but "which note…" questions came
  * back as `note_18d2…_ff6e… (Stale check mobile): "…"`, and the `_…_` run
  * rendered as italics (QA 2026-09-21, finding 4). The prompt is the
@@ -135,8 +136,8 @@ const NOTE_ID = /\b(note_[0-9a-f_]{8,})(?:\s*\(([^()]*)\))?/g;
 export function nameSources(answer: string, sources: readonly AskSourceWire[]): string {
   const titles = new Map(sources.map((source) => [source.note_id, source.title]));
   return answer.replace(NOTE_ID, (_match, id: string, bracketed: string | undefined) => {
-    const title = titles.get(id) ?? '';
-    if (bracketed === undefined) return title;
+    const title = titles.get(id);
+    if (bracketed === undefined) return title || 'a note';
     if (!title) return bracketed;
     return bracketed.trim() === title ? title : `${title} (${bracketed})`;
   });

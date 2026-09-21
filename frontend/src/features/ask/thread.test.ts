@@ -303,11 +303,17 @@ describe('a raw note id in an answer', () => {
     );
     // A bracketed name that is not the title is kept beside it.
     expect(nameSources(`${ID} (the roof one)`, sources)).toBe('Stale check mobile (the roof one)');
-    // An id the sources do not name is dropped; a name the model gave it stands alone.
+    // An id the sources do not name reads "a note", so the model's punctuation
+    // is never left orphaned; a name the model gave it stands alone.
     expect(nameSources('note_0000000000000000_0000000000000000 (Roof) says so.', sources)).toBe(
       'Roof says so.',
     );
-    expect(nameSources('note_0000000000000000_0000000000000000 says so.', sources)).toBe(' says so.');
+    expect(nameSources('note_0000000000000000_0000000000000000 says so.', sources)).toBe(
+      'a note says so.',
+    );
+    expect(nameSources(`${ID}: "q"`, [])).toBe('a note: "q"');
+    // An empty title is no name either.
+    expect(nameSources(`${ID} says so.`, [{ ...sources[0]!, title: '' }])).toBe('a note says so.');
     // Nothing else is touched: a word, and the emphasis the renderer draws.
     expect(nameSources('A note_taking habit, _kept_.', sources)).toBe('A note_taking habit, _kept_.');
   });
