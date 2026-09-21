@@ -492,6 +492,31 @@ describe('the thread', () => {
     expect(within(sources).queryByRole('button', { name: /more/ })).toBeNull();
   });
 
+  it('shows a fourth chip outright rather than "+1 more" (QA 2026-09-21, finding 11)', async () => {
+    const user = fakeTime();
+    const four: AskWire = {
+      ...askAnswered,
+      sources: ['a', 'b', 'c', 'd'].map((id) => ({ note_id: id, title: `Note ${id}` })),
+    };
+    mount(server({ final: four }).fetchImpl);
+    const field = await switchToAsk(user);
+    await user.type(field, 'what did I decide about the roof?{Enter}');
+    await screen.findByText('Reading your notes…');
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    const sources = await screen.findByRole('list', { name: 'Sources' });
+    await waitFor(() => {
+      expect(within(sources).getAllByRole('button').map((chip) => chip.textContent)).toEqual([
+        'Note a',
+        'Note b',
+        'Note c',
+        'Note d',
+      ]);
+    });
+  });
+
   it('is saved as a note titled by the first question, with the exchanges and the sources', async () => {
     const user = fakeTime();
     const api = server();
