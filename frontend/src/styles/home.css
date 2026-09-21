@@ -171,6 +171,13 @@
   text-underline-offset: 0.18em;
 }
 
+/* The captions between the chips and the first day — "Saved on this device.
+   Recordings and transcripts need a connection.", "Loading…", "3 results" —
+   sat on the "TODAY" label with no gap (QA 2026-09-21, finding 15). */
+.library > .screen__count {
+  margin-block-end: var(--space-3);
+}
+
 /* ==========================================================================
    You — one sentence per footnote, the rest behind More; a figure on a row
    ========================================================================== */
