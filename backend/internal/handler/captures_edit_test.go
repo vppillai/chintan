@@ -35,6 +35,7 @@ func (h *harness) seedAppended(t *testing.T, userID string, note handler.Note, c
 	return h.putCapture(t, model.CaptureIndex{
 		ID: captureID, UserID: userID, NoteID: note.ID, Status: model.StatusAppended,
 		CreatedAt: createdAt, AppendedAt: 1, AudioKey: audioKey,
+		Language: "en", LanguageDetected: "English",
 	})
 }
 

@@ -352,6 +352,15 @@ export interface CaptureWire {
   suggested_title?: string | null;
   appended_at?: string | null;
   duration_ms?: number | null;
+  /**
+   * What the current transcript was asked for (`auto` or an ISO-639-1 code; a
+   * choice made at `/retranscribe` outranks the note's) and the name the
+   * provider gave the speech it heard. Both null until transcribed. Under a
+   * chosen language the provider echoes it back, so they differ only under
+   * `auto`.
+   */
+  language?: string | null;
+  language_detected?: string | null;
   has_segments?: boolean;
   has_peaks?: boolean;
   /** True when a person chose the note (`note_id` at create, or `/target`); false when the router decided. Optional only until every backend sends it. */
