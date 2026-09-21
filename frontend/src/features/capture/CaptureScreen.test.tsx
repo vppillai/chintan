@@ -634,6 +634,7 @@ describe('the capture route does not wait on the library', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     expect(requested.filter((path) => path.endsWith('/v1/notes'))).toEqual([]);
+    expect(requested.filter((path) => path.endsWith('/v1/settings'))).toEqual([]);
 
     releaseMic();
     await waitFor(() => {
@@ -642,6 +643,59 @@ describe('the capture route does not wait on the library', () => {
     await waitFor(() => {
       expect(requested.some((path) => path.endsWith('/v1/notes'))).toBe(true);
     });
+    await waitFor(() => {
+      expect(requested.some((path) => path.endsWith('/v1/settings'))).toBe(true);
+    });
+  });
+});
+
+describe('the screen says which language the recording will be transcribed in', () => {
+  /** Notes with a language of their own, and a default from You. */
+  function languageFetch(defaultLanguage: string): typeof fetch {
+    return async (input) => {
+      const url = new URL(String(input));
+      const body = url.pathname.endsWith('/v1/settings')
+        ? { cleanup_mode: 'faithful', retention_days: 30, theme: 'system', default_language: defaultLanguage }
+        : {
+            items: [
+              { ...TEST_NOTES[0], language: 'ml' },
+              { ...TEST_NOTES[1] },
+            ],
+          };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+  }
+
+  it('names the target note\'s language in its own script, and the default for a new note', async () => {
+    /*
+     * Whisper is told one language per recording, and until now nothing on
+     * this screen said which. The owner's default is auto-detect, which has
+     * re-scripted Malayalam as Tamil; a note tagged Malayalam is transcribed
+     * in Malayalam. The line under the pill says which of the two applies.
+     */
+    mount('/capture?note=roof-repair', testApiContext(languageFetch('auto')));
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('recording');
+    });
+    expect(await screen.findByText('Transcribed as മലയാളം')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /into roof repair/i }));
+    await user.click(screen.getByRole('button', { name: 'New note' }));
+    expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
+
+    // A note that inherits the default says the default.
+    await user.click(screen.getByRole('button', { name: /into new note/i }));
+    await user.click(screen.getByRole('button', { name: 'Reading list' }));
+    expect(await screen.findByText('Language detected per recording')).toBeInTheDocument();
+  });
+
+  it('says English under an English default rather than nothing', async () => {
+    mount('/capture', testApiContext(languageFetch('en')));
+    expect(await screen.findByText('Transcribed as English')).toBeInTheDocument();
   });
 });
 
@@ -724,6 +778,9 @@ describe('a failure is a card, not a dead screen', () => {
       }),
     });
     mount('/capture?note=roof-repair');
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('failed');
+    });
 
     const card = await screen.findByRole('alert');
     expect(card).toHaveTextContent(/needs microphone access to record/i);
@@ -755,6 +812,9 @@ describe('a failure is a card, not a dead screen', () => {
       }),
     });
     const view = mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('failed');
+    });
     expect(await screen.findByRole('alert')).toHaveTextContent(/no microphone was found/i);
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     view.unmount();
@@ -764,6 +824,9 @@ describe('a failure is a card, not a dead screen', () => {
 
     useCaptureStore.getState().__configure({ recorder: fakeDeps({ isSupported: () => false }) });
     mount();
+    await waitFor(() => {
+      expect(useCaptureStore.getState().model.state).toBe('failed');
+    });
     expect(await screen.findByRole('alert')).toHaveTextContent(/cannot record audio/i);
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();

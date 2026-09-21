@@ -246,3 +246,13 @@
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
+
+/* --------------------------------------------------------------------------
+   Target chooser additions — the rest of the chooser is in shell.css
+   -------------------------------------------------------------------------- */
+
+/* "Transcribed as മലയാളം", under the pill. Quiet: it is a fact, not a warning. */
+.target-chooser__language {
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
