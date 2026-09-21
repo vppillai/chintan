@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -28,6 +30,11 @@ import (
 )
 
 var lambdaAdapter *httpadapter.HandlerAdapterV2
+
+// warmTimeout bounds the warm-up. Lambda allows the init phase ten seconds;
+// a dependency that has not answered in five is one the first request will
+// have to wait for anyway.
+const warmTimeout = 5 * time.Second
 
 func init() {
 	// Structured logging is installed before anything can log, so no startup
@@ -119,6 +126,36 @@ func init() {
 	// and the counter that adds every authenticated request to the same
 	// month and day rows the worker's breaker writes provider spend to.
 	usageStore := usage.NewDynamo(dynamoClient, tableName)
+
+	// The first request on a fresh container paid about 270 ms inside the
+	// handler — the JWKS fetch and the DynamoDB connection both opened there,
+	// not in init — and Home fans out five GETs, so an idle launch paid it on
+	// every container it spawned (review 2026-09-21, T26). Both are opened
+	// here instead, concurrently, before the first invocation. The store half
+	// is the readiness probe itself: one GetItem on its sentinel partition and
+	// one S3 GetObject, which also opens the S3 client the first note open
+	// and every presign would otherwise pay for. A failure is logged, not
+	// fatal: the first request then pays what it always did.
+	readiness := service.NewReadinessService(store, objects)
+	warmCtx, cancelWarm := context.WithTimeout(ctx, warmTimeout)
+	defer cancelWarm()
+	var warm sync.WaitGroup
+	warm.Add(2)
+	go func() {
+		defer warm.Done()
+		if err := verifier.Warm(warmCtx); err != nil {
+			slog.Warn("token verifier warm-up failed; the first request fetches the key set", slog.String("error", err.Error()))
+		}
+	}()
+	go func() {
+		defer warm.Done()
+		for name, check := range readiness.Check(warmCtx).Checks {
+			if !check.OK {
+				slog.Warn("store warm-up failed; the first request opens the connection", slog.String("dependency", name))
+			}
+		}
+	}()
+
 	router := handler.New(handler.Deps{
 		Notes:          notesService,
 		Settings:       settingsService,
@@ -126,7 +163,7 @@ func init() {
 		Search:         service.NewSearchService(notesService),
 		Tags:           service.NewTagsService(notesService),
 		Export:         service.NewExportService(notesService, captureService, settingsService, objects),
-		Readiness:      service.NewReadinessService(store, objects),
+		Readiness:      readiness,
 		Spend:          spendGate,
 		Usage:          usageStore,
 		Requests:       usageStore,
@@ -138,6 +175,7 @@ func init() {
 		SpendCapMicros: spendCapMicros,
 	})
 	lambdaAdapter = httpadapter.NewV2(router)
+	warm.Wait()
 }
 
 func logLevel() slog.Level {

@@ -52,7 +52,10 @@ func Auth(v auth.Verifier) func(http.Handler) http.Handler {
 			id, err := v.Verify(r.Context(), raw)
 			if err != nil {
 				// The specific claim that failed goes to logs, never to the
-				// caller: a precise error is a probing oracle.
+				// caller: a precise error is a probing oracle. That holds for
+				// this Lambda only; the gateway's JWT authorizer in front of
+				// it names the failure in its own 401 (see
+				// auth.ErrUnauthenticated).
 				httperr.Unauthorized(w, r, "authentication required")
 				return
 			}

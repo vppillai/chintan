@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"sort"
 	"strings"
@@ -320,7 +321,9 @@ func (s *Store) PutNote(ctx context.Context, tenantID string, n model.NoteIndex)
 	if s.notes[tenantID] == nil {
 		s.notes[tenantID] = make(map[string]model.NoteIndex)
 	}
-	if existing, ok := s.notes[tenantID][n.ID]; ok && existing.Version != n.Version {
+	// The clean stamp is pinned beside the version, as DynamoStore.PutNote
+	// does: StampCleanRequest moves the stamp without moving the version.
+	if existing, ok := s.notes[tenantID][n.ID]; ok && (existing.Version != n.Version || existing.CleanedRequestedAt != n.CleanedRequestedAt) {
 		return model.NoteIndex{}, repository.ErrVersionConflict
 	}
 	next := copyNote(n)
@@ -717,7 +720,7 @@ func (s *Store) BeginIdempotent(ctx context.Context, tenantID, key, fingerprint 
 	return nil, nil
 }
 
-func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error {
+func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, response []byte) error {
 	if err := s.checkCtx(ctx); err != nil {
 		return err
 	}
@@ -729,6 +732,7 @@ func (s *Store) CompleteIdempotent(ctx context.Context, tenantID, key string, st
 	}
 	entry.record.Done = true
 	entry.record.Status = status
+	entry.record.ContentType = contentType
 	entry.record.Response = append([]byte(nil), response...)
 	entry.record.ExpiresAt = time.Now().Add(repository.IdemTTL).Unix()
 	s.idem[tenantID][key] = entry
@@ -849,6 +853,20 @@ func (o *Objects) Put(ctx context.Context, key string, body []byte, contentType 
 		body: stored, contentType: contentType, etag: etagOf(stored),
 		tags: o.objects[key].tags,
 	}
+	return nil
+}
+
+// PutTagged is Put with the object's tag set replaced, as S3 does on a PUT
+// that carries x-amz-tagging.
+func (o *Objects) PutTagged(ctx context.Context, key string, body []byte, contentType string, tags map[string]string) error {
+	if err := o.Put(ctx, key, body, contentType); err != nil {
+		return err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	obj := o.objects[key]
+	obj.tags = maps.Clone(tags)
+	o.objects[key] = obj
 	return nil
 }
 

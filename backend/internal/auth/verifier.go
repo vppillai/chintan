@@ -15,6 +15,13 @@ import (
 //
 // Callers map it to 401 without inspecting the cause. The wrapped detail is for
 // logs only: telling a caller which specific claim failed is a probing oracle.
+//
+// That uniformity is a property of this Lambda, not of the deployed API. The
+// API Gateway JWT authorizer in front of it answers its own 401 with a
+// WWW-Authenticate header that names the failure — expired, wrong audience,
+// bad signature — so on the gateway path the oracle exists regardless of what
+// this package says. This check is the second line, for any ingress that is
+// not the gateway (review 2026-09-21, T68).
 var ErrUnauthenticated = errors.New("auth: unauthenticated")
 
 // Verifier turns a raw bearer token into an Identity.
@@ -69,6 +76,17 @@ func NewCognitoVerifier(issuer, clientID string, hc *http.Client) (*CognitoVerif
 			jwt.WithLeeway(30*time.Second),
 		),
 	}, nil
+}
+
+// Warm fetches the issuer's key set before the first request needs it.
+//
+// The first Verify on a fresh Lambda container otherwise pays the JWKS round
+// trip inside the request — about a quarter of a second, and Home fans out
+// five GETs, so an idle launch pays it on every container it spawns (review
+// 2026-09-21, T26). cmd/api calls it from init, concurrently with the store's
+// warm-up. A failure is not fatal: the first Verify fetches as it always did.
+func (v *CognitoVerifier) Warm(ctx context.Context) error {
+	return v.keys.refresh(ctx, v.keys.generation())
 }
 
 // NewCognitoIssuer builds the issuer URL from a region and user pool id.

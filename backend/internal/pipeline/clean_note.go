@@ -280,17 +280,37 @@ func cleanRunSuperseded(n model.NoteIndex, mode model.NoteCleanMode, stamp strin
 // clean request on the row is no longer the one this run was invoked for — then
 // nothing is written and superseded is true. A write clears the stamp: the run
 // it announced has reached its verdict, and the next request must invoke again.
+//
+// The clear is a second, conditional write rather than part of the row write.
+// PutNote refuses a row write whose stamp differs from the stored one, because
+// that is how an editor save from a copy read before a Clean tap used to erase
+// the request (review 2026-09-21, T12); a write that carried the stamp cleared
+// would be refused for the same reason, and the store cannot tell a deliberate
+// clear from a stale copy. ClearCleanStamp names the stamp it read, so a newer
+// request that landed in between keeps its own.
 func (p *Pipeline) writeCleanNoteRow(ctx context.Context, tenantID, noteID string, mode model.NoteCleanMode, stamp string, change func(*model.NoteIndex)) (superseded bool, err error) {
+	var read string
 	err = p.updateNoteRow(ctx, tenantID, noteID, func(n *model.NoteIndex) bool {
 		if cleanRunSuperseded(*n, mode, stamp) {
 			superseded = true
 			return false
 		}
+		read = n.CleanedRequestedAt
 		change(n)
-		n.CleanedRequestedAt, n.CleanedRequestedMode = "", ""
 		return true
 	})
-	return superseded, err
+	if err != nil || superseded {
+		return superseded, err
+	}
+	if err := p.cfg.Store.ClearCleanStamp(ctx, tenantID, noteID, read); err != nil {
+		// The verdict is stored; only the stamp lingers, and it expires from
+		// the request path's point of view after CleanNoteTimeout. Failing the
+		// task here would have Lambda redeliver it and bill the model again.
+		obs.Log(ctx).Warn("clean-note: the view is stored but its stamp could not be cleared; the next request in this mode waits for the timeout",
+			slog.String("note_id", noteID),
+			slog.String("error", err.Error()))
+	}
+	return false, nil
 }
 
 // updateNoteRow applies change to the current row under its version, re-reading

@@ -971,7 +971,9 @@ components:
       in: header
       description: |
         Replaying a key returns the original response. A double-tap on a flaky
-        mobile link must not create two notes.
+        mobile link must not create two notes. Only a settled response is
+        recorded: a 409, a 429 or a 5xx is not, so the retry runs the request
+        again. A replay carries the recorded response's own Content-Type.
       schema: { type: string, minLength: 8, maxLength: 128 }
 
   responses:

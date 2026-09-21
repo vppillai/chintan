@@ -76,3 +76,73 @@ func TestARetryAfterA5xxWithTheSameIdempotencyKeySucceeds(t *testing.T) {
 		t.Fatalf("the note was created %d times, want 1", count)
 	}
 }
+
+// A 429 is not settled. The uploader keys every attempt on the recording's
+// localId, so recording a spend-capped 429 answered the "Resend tomorrow" the
+// UI promises with the recorded 429, Idempotency-Replayed: true, for a day
+// (review 2026-09-21, T13).
+func TestATransient429IsNotPinnedToTheIdempotencyKey(t *testing.T) {
+	h := newHarness(t)
+	body := map[string]any{"content_type": "audio/webm", "duration_ms": 1000, "size_bytes": 1000}
+
+	h.spend.capped = true
+	first := h.do(t, http.MethodPost, "/v1/captures", "user1", body, [2]string{"Idempotency-Key", "local-id-recording-1"})
+	if first.Code != http.StatusTooManyRequests {
+		t.Fatalf("capped: status = %d, want 429: %s", first.Code, first.Body.String())
+	}
+
+	// Midnight UTC: the cap has reset. The user taps Resend.
+	h.spend.capped = false
+	second := h.do(t, http.MethodPost, "/v1/captures", "user1", body, [2]string{"Idempotency-Key", "local-id-recording-1"})
+	if second.Code != http.StatusCreated {
+		t.Fatalf("after the cap reset: status = %d (replayed=%q), want 201: %s", second.Code, second.Header().Get("Idempotency-Replayed"), second.Body.String())
+	}
+	if second.Header().Get("Idempotency-Replayed") == "true" {
+		t.Error("the resend was served as a replay, but a 429 is nothing to replay")
+	}
+}
+
+// A 409 is the same: the state it names — archived, in flight, appending —
+// is exactly what a later attempt expects to have moved on.
+func TestATransient409IsNotPinnedToTheIdempotencyKey(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "user1", "Roof", map[string]any{"body": "the gutter leaks"})
+	if w := h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil); w.Code != http.StatusNoContent {
+		t.Fatalf("archive: status = %d", w.Code)
+	}
+
+	first := h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil, [2]string{"Idempotency-Key", testKey})
+	if first.Code != http.StatusConflict {
+		t.Fatalf("clean an archived note: status = %d, want 409: %s", first.Code, first.Body.String())
+	}
+	if w := h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/restore", "user1", nil); w.Code != http.StatusOK {
+		t.Fatalf("restore: status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	second := h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil, [2]string{"Idempotency-Key", testKey})
+	if second.Code != http.StatusAccepted || second.Header().Get("Idempotency-Replayed") == "true" {
+		t.Fatalf("clean after the restore: status = %d replayed = %q, want 202 and no replay: %s",
+			second.Code, second.Header().Get("Idempotency-Replayed"), second.Body.String())
+	}
+}
+
+// A settled 4xx replays as what it was. The middleware used to force
+// Content-Type: application/json onto every replay, so a recorded problem body
+// went out under the wrong type.
+func TestAReplayedProblemKeepsItsContentType(t *testing.T) {
+	h := newHarness(t)
+	body := map[string]any{"title": ""}
+
+	first := h.do(t, http.MethodPost, "/v1/notes", "user1", body, [2]string{"Idempotency-Key", testKey})
+	if first.Code != http.StatusBadRequest {
+		t.Fatalf("first: status = %d, want 400: %s", first.Code, first.Body.String())
+	}
+	second := h.do(t, http.MethodPost, "/v1/notes", "user1", body, [2]string{"Idempotency-Key", testKey})
+	if second.Code != http.StatusBadRequest || second.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay: status = %d replayed = %q, want the recorded 400", second.Code, second.Header().Get("Idempotency-Replayed"))
+	}
+	problemOf(t, second)
+	if second.Body.String() != first.Body.String() {
+		t.Fatalf("replay body differs:\n first=%s\nsecond=%s", first.Body.String(), second.Body.String())
+	}
+}

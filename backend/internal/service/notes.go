@@ -518,12 +518,43 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	// Save to store. A version conflict here means somebody else wrote the note
 	// between the read and this write; the caller reconciles rather than one of
 	// the two edits vanishing.
-	stored, err := s.store.PutNote(ctx, userID, note)
-	if err != nil {
-		return model.NoteIndex{}, err
-	}
+	return s.putCarryingStamp(ctx, userID, note)
+}
 
-	return stored, nil
+// putCarryingStamp is PutNote for a write that did not touch the clean stamp.
+//
+// PutNote pins the stamp beside the version because a Clean tap
+// (StampCleanRequest) moves the stamp without moving the version, and a
+// whole-row write from a copy read before the tap would otherwise erase it. The
+// pin cannot tell that stale copy from this caller, whose copy is only stale
+// about the stamp: CleanedPanel fires saveNow() and regenerate() in one tick,
+// so the tap routinely lands inside the save's read-modify-write window, and
+// answered as a 409 the client would show a conflict prompt between two
+// identical texts (the version did not move, so its rebase cannot absorb it).
+// One re-read tells the two apart. The same version with a different stamp is
+// the tap alone: the write goes again carrying it, and the worker finds its
+// request intact. A moved version is somebody else's whole-row write, which is
+// the conflict PutNote reported. On a conflict the row returned is the one now
+// stored, so the handler can name the version the client has to reconcile
+// against rather than 0.
+func (s *NotesService) putCarryingStamp(ctx context.Context, userID string, note model.NoteIndex) (model.NoteIndex, error) {
+	stored, err := s.store.PutNote(ctx, userID, note)
+	if !errors.Is(err, repository.ErrVersionConflict) {
+		return stored, err
+	}
+	fresh, readErr := s.store.GetNote(ctx, userID, note.ID)
+	if readErr != nil {
+		return note, err
+	}
+	if fresh.Version != note.Version {
+		return fresh, err
+	}
+	note.CleanedRequestedAt, note.CleanedRequestedMode = fresh.CleanedRequestedAt, fresh.CleanedRequestedMode
+	stored, err = s.store.PutNote(ctx, userID, note)
+	if errors.Is(err, repository.ErrVersionConflict) {
+		return fresh, err
+	}
+	return stored, err
 }
 
 // DeleteNote archives a note (soft delete)
@@ -603,13 +634,7 @@ func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (
 	note.PurgeAfter = model.FormatTime(purgeAt)
 	note.PurgeAfterEpoch = purgeAt.Unix()
 
-	// Save updated note
-	stored, err := s.store.PutNote(ctx, userID, note)
-	if err != nil {
-		return model.NoteIndex{}, err
-	}
-
-	return stored, nil
+	return s.putCarryingStamp(ctx, userID, note)
 }
 
 // RestoreNote restores an archived note to active status
@@ -629,13 +654,7 @@ func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (
 	note.PurgeAfter = ""
 	note.PurgeAfterEpoch = 0
 
-	// Save updated note
-	stored, err := s.store.PutNote(ctx, userID, note)
-	if err != nil {
-		return model.NoteIndex{}, err
-	}
-
-	return stored, nil
+	return s.putCarryingStamp(ctx, userID, note)
 }
 
 // ListArchivedNotes returns one page of archived notes that have not passed

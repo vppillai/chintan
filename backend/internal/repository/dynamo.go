@@ -898,6 +898,17 @@ func (s *DynamoStore) NotesExist(ctx context.Context, tenantID string, noteIDs [
 
 // PutNote writes conditionally on the version the caller read. An unconditional
 // PutItem loses a voice append that lands while the editor is open.
+//
+// The clean stamp is pinned too. StampCleanRequest deliberately leaves the
+// version alone, so a whole-row write from a copy read before the tap lands
+// under an unchanged version and, because noteItemAttrs writes every promoted
+// attribute from that copy, puts the stamp back to what the caller saw —
+// erasing the request; the worker then reads an unstamped row, judges itself
+// superseded and writes nothing, and the Cleaned tab polls for a view that
+// never arrives (review 2026-09-21, T12). Requiring the stored stamp to equal
+// the one the caller read turns that into ErrVersionConflict, which every
+// caller already answers by re-reading. attribute_not_exists admits a row
+// written before the stamp was promoted.
 func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.NoteIndex) (model.NoteIndex, error) {
 	if err := ctx.Err(); err != nil {
 		return model.NoteIndex{}, err
@@ -919,10 +930,14 @@ func (s *DynamoStore) PutNote(ctx context.Context, tenantID string, note model.N
 	}
 
 	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName:                 aws.String(s.tableName),
-		Item:                      item,
-		ConditionExpression:       aws.String(versionCondition(expected)),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":expected": numAttr(expected)},
+		TableName: aws.String(s.tableName),
+		Item:      item,
+		ConditionExpression: aws.String("(" + versionCondition(expected) + ") AND " +
+			"(attribute_not_exists(cleaned_requested_at) OR cleaned_requested_at = :stamp)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":expected": numAttr(expected),
+			":stamp":    strAttr(note.CleanedRequestedAt),
+		},
 	})
 	if err != nil {
 		if isConditionalCheckFailed(err) {
@@ -1725,10 +1740,11 @@ func idemFromItem(m map[string]types.AttributeValue) IdemRecord {
 	if v, ok := m["idem_response"].(*types.AttributeValueMemberB); ok {
 		rec.Response = v.Value
 	}
+	rec.ContentType = readString(m, "idem_content_type")
 	return rec
 }
 
-func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error {
+func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, response []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1750,6 +1766,10 @@ func (s *DynamoStore) CompleteIdempotent(ctx context.Context, tenantID, key stri
 	if len(response) > 0 {
 		update += ", idem_response = :response"
 		values[":response"] = &types.AttributeValueMemberB{Value: response}
+	}
+	if contentType != "" {
+		update += ", idem_content_type = :content_type"
+		values[":content_type"] = strAttr(contentType)
 	}
 
 	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{

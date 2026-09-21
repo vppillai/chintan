@@ -116,6 +116,10 @@ type IdemRecord struct {
 	TenantID    string
 	Fingerprint string
 	Status      int
+	// ContentType is the response's Content-Type as the handler wrote it, so
+	// a replayed problem body goes out as application/problem+json and not
+	// as the JSON the middleware used to assume.
+	ContentType string
 	Response    []byte
 	Done        bool
 	ExpiresAt   int64
@@ -202,9 +206,13 @@ type Store interface {
 	// distinct notes rather than one GetItem each, on a list the client polls
 	// every second and a half (review 2026-09-05, S17).
 	NotesExist(ctx context.Context, tenantID string, noteIDs []string) (map[string]bool, error)
-	// PutNote writes n conditionally on n.Version matching the stored version,
-	// and returns the note with its new version. A losing write returns
-	// ErrVersionConflict rather than silently discarding the other writer.
+	// PutNote writes n conditionally on n.Version matching the stored version
+	// AND n.CleanedRequestedAt matching the stored clean stamp, and returns the
+	// note with its new version. A losing write returns ErrVersionConflict
+	// rather than silently discarding the other writer. The stamp is pinned
+	// because StampCleanRequest sets it without moving the version, so the
+	// version alone cannot tell a whole-row write that it is about to put the
+	// stamp back from a copy read before the tap.
 	PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error)
 	// StampNoteAppend records on the note row, conditionally on expectedVersion,
 	// that captureID's paragraph is about to be written into the body: it bumps
@@ -280,7 +288,10 @@ type Store interface {
 	// (nil, ErrIdempotencyInFlight) when another attempt holds it. Replaying a
 	// key with a different fingerprint returns ErrIdempotencyKeyReused.
 	BeginIdempotent(ctx context.Context, tenantID, key, fingerprint string) (*IdemRecord, error)
-	CompleteIdempotent(ctx context.Context, tenantID, key string, status int, response []byte) error
+	// CompleteIdempotent records the response a replay of key is owed. The
+	// caller decides which responses settle a request (see handler.idempotent);
+	// a transient one is abandoned instead.
+	CompleteIdempotent(ctx context.Context, tenantID, key string, status int, contentType string, response []byte) error
 	// AbandonIdempotent releases a claimed key whose request did not produce a
 	// recordable response, so the caller's retry runs instead of being told the
 	// original is still in flight. A completed record is left alone.
@@ -301,6 +312,11 @@ type Store interface {
 // Objects stores blob content addressed by S3-style keys.
 type Objects interface {
 	Put(ctx context.Context, key string, body []byte, contentType string) error
+	// PutTagged is Put with object tags bound at write time, for an object a
+	// lifecycle rule must be allowed to expire — the export snapshots — since
+	// the bucket's rules key on tags. As on S3, tags is the object's whole
+	// tag set, not a merge.
+	PutTagged(ctx context.Context, key string, body []byte, contentType string, tags map[string]string) error
 	Get(ctx context.Context, key string) ([]byte, error)
 	Delete(ctx context.Context, key string) error
 	PresignPut(ctx context.Context, key string, contentType string, ttl time.Duration) (url string, err error)

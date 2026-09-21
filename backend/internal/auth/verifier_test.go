@@ -137,6 +137,27 @@ func (f *jwksFixture) mint(t *testing.T, o tokenOpts) string {
 	return signed
 }
 
+// Warm buys the first request the key set; without it that request paid the
+// JWKS round trip inside the handler.
+func TestWarmFetchesTheKeySetSoTheFirstVerifyDoesNot(t *testing.T) {
+	f := newJWKSFixture(t)
+	v := f.verifier(t)
+
+	if err := v.Warm(context.Background()); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	if n := f.hits.Load(); n != 1 {
+		t.Fatalf("Warm fetched the key set %d times, want 1", n)
+	}
+	raw := f.mint(t, tokenOpts{tokenUse: "id", aud: testClientID})
+	if _, err := v.Verify(context.Background(), raw); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if n := f.hits.Load(); n != 1 {
+		t.Fatalf("the first Verify fetched again (%d fetches in all); the warm-up bought nothing", n)
+	}
+}
+
 func TestVerifyAcceptsValidIDToken(t *testing.T) {
 	f := newJWKSFixture(t)
 	v := f.verifier(t)
