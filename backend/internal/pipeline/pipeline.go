@@ -40,6 +40,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/vppillai/chintan/backend/internal/breaker"
 	"github.com/vppillai/chintan/backend/internal/keys"
@@ -423,6 +424,33 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		return *capture, p.markFailed(ctx, capture, service.ErrNoteArchived.Error())
 	}
 
+	if capture.CleanKey == "" && wantsNoteLanguage(*capture, note) {
+		// The destination was not known when the recording was transcribed
+		// (it was routed, or a person chose it afterwards), so the transcript
+		// is in the tenant's default and the note's "Transcription language"
+		// was never applied — a Malayalam dictation aimed by voice at an ml
+		// note went to Whisper as auto and came back in Tamil script (review
+		// 2026-09-21, T2). Transcribing once more in the note's language is
+		// the promise that field makes; it costs one more STT call only in
+		// the mismatch case. The routed text goes too, so the instruction
+		// strip below runs over the new transcript with the destination
+		// pinned. Language is written with RawKey, so a retry that finds the
+		// second transcript does not make a third.
+		obs.Log(ctx).Info("destination note asks for another language; transcribing again",
+			slog.String("capture_id", capture.ID),
+			slog.String("note_id", note.ID),
+			slog.String("language_sent", capture.Language),
+			slog.String("language_wanted", note.Language))
+		obs.Count(ctx, "CaptureRetranscribedForNote", nil)
+		capture.RawKey, capture.SegmentsKey, capture.RoutedKey = "", "", ""
+		if err := p.transcribe(ctx, tenantID, capture); err != nil {
+			return *capture, err
+		}
+		if service.CaptureIsTerminal(capture.Status) {
+			return *capture, nil
+		}
+	}
+
 	if capture.RoutedKey == "" && capture.CleanKey == "" {
 		// Recorded into a note, so routing — and with it the removal of the
 		// words addressed to the app — was skipped.
@@ -435,7 +463,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	if capture.CleanKey == "" {
-		if err := p.clean(ctx, tenantID, capture); err != nil {
+		if err := p.clean(ctx, tenantID, capture, note.Verbatim); err != nil {
 			return *capture, err
 		}
 		if service.CaptureIsTerminal(capture.Status) {
@@ -444,6 +472,19 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	}
 
 	return p.append(ctx, tenantID, capture, note)
+}
+
+// wantsNoteLanguage reports whether the transcript at RawKey was made in a
+// language other than the one its destination note asks for. A note that
+// inherits the default, or asks for auto-detection, never asks for a second
+// transcription: the first was in the default, and auto is what the review
+// found unreliable for the languages this matters for. A recording a person
+// asked to have transcribed in a particular language keeps that answer.
+func wantsNoteLanguage(c model.CaptureIndex, note model.NoteIndex) bool {
+	if c.RequestedLanguage != "" {
+		return false
+	}
+	return note.Language != "" && note.Language != model.LanguageAuto && c.Language != note.Language
 }
 
 // stripInstructions removes a spoken app instruction from a capture that was
@@ -535,6 +576,11 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	if err != nil {
 		return err
 	}
+	// "auto" is the setting's word for it; the provider's is an absent field.
+	sent := language
+	if sent == model.LanguageAuto {
+		sent = ""
+	}
 
 	var result provider.Transcription
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
@@ -552,7 +598,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		out, err := p.cfg.STT.Transcribe(stageCtx, provider.Audio{
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
-			Language:    language,
+			Language:    sent,
 		})
 		if err != nil {
 			return breaker.Result{}, err
@@ -591,13 +637,22 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	// log-hygiene check, which reads an emitter's argument list for anything
 	// that names user content, sees only the summary being logged.
 	rawShape := obs.Redact(result.Text)
+	// Both languages are metadata, not content: the code this worker sent and
+	// the name Whisper answered with. Sixteen days of prod logs could not say
+	// whether Malayalam was being transcribed as Tamil until these two fields
+	// existed (review 2026-09-21, T10).
 	obs.Log(ctx).Info("transcribed capture",
 		slog.String("capture_id", capture.ID),
 		slog.Int64("duration_ms", result.DurationMS()),
 		slog.Int("segments", len(result.Segments)),
+		slog.String("language_sent", language),
+		slog.String("language_detected", result.Language),
 		slog.Any("raw", rawShape))
+	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
 
 	capture.RawKey = rawKey
+	capture.Language = language
+	capture.LanguageDetected = result.Language
 	if segmentsKey != "" {
 		capture.SegmentsKey = segmentsKey
 	}
@@ -609,21 +664,26 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	return p.persist(ctx, capture)
 }
 
-// transcriptionLanguage decides what the speech provider is told the recording
-// is in: the target note's language when the capture was started with one,
-// else the tenant's default, with "auto" becoming "" (send no language).
+// transcriptionLanguage decides what the recording is transcribed in: the
+// destination note's language when the capture has a note, else the tenant's
+// default. It returns model.LanguageAuto or a code — the setting's own words,
+// which is what the capture records; the caller turns "auto" into the absent
+// field the provider reads it as.
 //
-// The note wins only when it is already known. Routing runs AFTER
-// transcription — the router reads the transcript to pick the note — so a
-// capture without note_id cannot be transcribed in the language of a note
-// nobody has chosen yet, and gets the tenant's default. That is the honest
-// limit of a per-note setting on this pipeline, and it is why the setting
-// also exists per tenant.
+// Routing runs AFTER transcription — the router reads the transcript to pick
+// the note — so a capture without note_id is transcribed in the default
+// first. run() compares that with the note the router lands on and, when the
+// note asks for another language, comes back here with the note set and
+// transcribes once more (review 2026-09-21, T2).
 //
 // A note or settings read that fails is a retryable fault, not a reason to
 // guess: guessing English for a Tamil note and appending the result is the
 // failure this setting exists to prevent.
 func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, capture *model.CaptureIndex) (string, error) {
+	if capture.RequestedLanguage != "" {
+		// A person chose, for this recording; nothing outranks that.
+		return capture.RequestedLanguage, nil
+	}
 	language := ""
 	if capture.NoteID != "" {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
@@ -644,10 +704,27 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 	if language == "" {
 		language = model.DefaultLanguage
 	}
-	if language == model.LanguageAuto {
-		return "", nil
-	}
 	return language, nil
+}
+
+// languageOutcome is the Outcome dimension of TranscribedLanguage: whether the
+// language Whisper detected agrees with the code it was told. Four fixed
+// values, because a dimension is a metric identity and is billed as one; the
+// language itself is in the log line, not in a dimension. A detected name
+// outside the code table is a mismatch like any other — a four-second clip
+// sent as English and detected as Icelandic is exactly what the metric is
+// for, not an unknown.
+func languageOutcome(sent, detected string) string {
+	switch {
+	case detected == "":
+		return "undetected"
+	case sent == "":
+		return "auto"
+	case model.LanguageCode(detected) == sent:
+		return "match"
+	default:
+		return "mismatch"
+	}
 }
 
 // defaultAudioSecondsEstimate is what a transcription is reserved against when
@@ -786,7 +863,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 
 	title := service.SanitizeTitle(decision.Title)
 	if title == "" {
-		title = fallbackNoteTitle(p.now())
+		title = service.SanitizeTitle(fallbackNoteTitle(decision.Content, p.now()))
 	}
 	if p.cfg.Notes == nil {
 		capture.SuggestedTitle = title
@@ -797,6 +874,17 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	note, err := p.cfg.Notes.CreateNote(ctx, tenantID, title, nil)
 	if err != nil {
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
+	}
+	if capture.Language != "" && capture.Language != model.LanguageAuto {
+		// The note starts in the language its first recording was
+		// transcribed in, so a later change of the tenant's default does not
+		// silently change what "Record into this" sends for it. Auto is not
+		// written: the note then follows the default, as a note a person
+		// creates does.
+		note.Language = capture.Language
+		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err != nil {
+			return fmt.Errorf("pipeline: set language on the new note: %w", err)
+		}
 	}
 	capture.NoteID = note.ID
 	capture.TargetSource = model.TargetSourceRouter
@@ -1020,7 +1108,14 @@ func routeRetryReason(err error) (string, bool) {
 // Stage 3 — clean
 // ---------------------------------------------------------------------------
 
-func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.CaptureIndex) error {
+// clean rewrites the transcript in the capture's mode, or — for a verbatim
+// note — records the transcript itself as the cleaned text. README, the
+// OpenAPI document and the About screen promised that a verbatim note
+// bypasses cleanup, and until 2026-09-21 nothing in the pipeline read the
+// switch: the verifier seeded a verbatim note and counted one paid cleanup
+// call (review T11). Pointing CleanKey at the source key, rather than copying
+// the text, keeps every reader of CleanKey working and costs no write.
+func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.CaptureIndex, verbatim bool) error {
 	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
 		return err
 	}
@@ -1042,6 +1137,13 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		capture.Error = ""
 		return p.persist(ctx, capture)
 	}
+	if verbatim {
+		obs.Count(ctx, "CaptureCleanupBypassed", map[string]string{"Stage": string(service.StatusCleaning)})
+		capture.CleanKey = sourceKey
+		capture.Status = model.StatusCleaned
+		capture.Error = ""
+		return p.persist(ctx, capture)
+	}
 
 	var cleaned provider.Cleaned
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
@@ -1059,7 +1161,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	}, func(ctx context.Context) (breaker.Result, error) {
 		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanupTimeout)
 		defer cancel()
-		out, err := p.cfg.LLM.Cleanup(stageCtx, capture.Mode, source)
+		out, err := p.cfg.LLM.Cleanup(stageCtx, capture.Mode, source, cleanupLanguage(*capture))
 		if err != nil {
 			return breaker.Result{}, err
 		}
@@ -1082,6 +1184,17 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return p.persist(ctx, capture)
+}
+
+// cleanupLanguage is the ISO-639-1 code the cleanup prompt names the
+// transcript as being in: the code the transcription was asked for when it
+// was one, else the code for the language Whisper detected under auto, else
+// "" — nothing known, nothing claimed.
+func cleanupLanguage(c model.CaptureIndex) string {
+	if c.Language != "" && c.Language != model.LanguageAuto {
+		return c.Language
+	}
+	return model.LanguageCode(c.LanguageDetected)
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,25 +1224,23 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	//
 	// Two things guard it, and they do different jobs. The claim is a
 	// mutex: one attempt at a time writes to the note, and a holder that dies
-	// releases it when AppendClaimLease runs out. The marker is the idempotency
-	// guard: appendToNote writes "<!-- chintan:capture:<id> -->" into the body
-	// in the same conditional PUT as the paragraph, so any later attempt can
-	// ask the body the exact question "did this capture's text land?" rather
-	// than trusting the lease arithmetic. The token is derived from the capture
+	// releases it when AppendClaimLease runs out. The paragraph under the
+	// marker is the idempotency guard: appendToNote writes
+	// "<!-- chintan:capture:<id> -->" into the body in the same conditional
+	// PUT as the paragraph, so any later attempt can ask the body the exact
+	// question "is this attempt's text under this capture's marker?" rather
+	// than trusting the lease arithmetic. The marker alone is not that
+	// answer: a recording transcribed again (service.RetranscribeCapture)
+	// keeps its earlier paragraph, marker and all, until the new one replaces
+	// it, and an attempt that took the marker as proof marked the capture
+	// appended with the wrong-script paragraph untouched and no error anywhere
+	// (review 2026-09-21, T7 follow-up). The token is derived from the capture
 	// and its cleaned artefact, so every attempt at the same work computes the
-	// same value and can recognise its own earlier claim.
+	// same value and can recognise its own earlier claim; a takeover of that
+	// claim once the lease has run out needs no resume path of its own,
+	// because appendToNote replaces the paragraph where it stands and for the
+	// same words that is the same body.
 	token := appendToken(capture.ID, capture.CleanKey)
-
-	// Read before claiming, because claiming overwrites it with our own token.
-	//
-	// A recorded token equal to the one we just computed cannot belong to
-	// another writer: it is derived from this capture and this cleaned artefact,
-	// so it is this same work, interrupted. Once the claim's lease expires that
-	// interrupted attempt becomes takeable — legitimately, since the worker
-	// holding it really is gone — and the takeover is where a claim-only guard
-	// writes the paragraph a second time. Knowing the takeover is our own is
-	// what lets appendToNote look for the marker and skip the write.
-	resumingOwnAttempt := capture.AppendToken == token && capture.AppendedAt == 0
 
 	claimed, current, err := p.cfg.Store.ClaimCaptureAppend(ctx, tenantID, capture.ID, token)
 	if err != nil {
@@ -1145,15 +1256,16 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 
 		// Our own token, unfinished, inside the lease. Either the earlier
 		// attempt is still running, or it died after taking the claim; from
-		// here the two look the same, and the marker is what tells them apart.
+		// here the two look the same, and the paragraph under the marker is
+		// what tells them apart.
 		//
-		// If the marker is in the note body the dangerous part is over,
-		// whoever did it: finishing the bookkeeping is idempotent (the index
-		// refresh re-derives from the body, the completion is a versioned write
-		// on the same token), so do it now rather than wait for the lease. This
-		// is the case a Lambda retry a minute later actually meets — the
-		// paragraph was written and the worker died before marking the capture
-		// appended.
+		// If this attempt's text is in the note body the dangerous part is
+		// over, whoever did it: finishing the bookkeeping is idempotent (the
+		// index refresh re-derives from the body, the completion is a
+		// versioned write on the same token), so do it now rather than wait
+		// for the lease. This is the case a Lambda retry a minute later
+		// actually meets — the paragraph was written and the worker died
+		// before marking the capture appended.
 		//
 		// Otherwise fail the invocation. Conceding here would leave the capture
 		// in `appending` with nothing left to finish it; appending would race a
@@ -1163,10 +1275,10 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		// window of one object read and one write — dead-letters and raises
 		// the alarm, and the user's retry after the lease takes the claim over
 		// and does the append once.
-		if written, err := p.markerInNote(ctx, note.S3MarkdownKey, capture.ID); err != nil {
+		if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText); err != nil {
 			return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
 		} else if written {
-			obs.Log(ctx).Info("append claim is held but the capture's marker is already in the note; finishing the interrupted attempt",
+			obs.Log(ctx).Info("append claim is held but the capture's paragraph is already in the note; finishing the interrupted attempt",
 				slog.String("note_id", note.ID))
 			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
 			return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
@@ -1196,7 +1308,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, fmt.Errorf("pipeline: stamp note for append: %w", err)
 	}
 
-	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, resumingOwnAttempt); err != nil {
+	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText); err != nil {
 		// Hand the claim back so a transient object-store failure does not park
 		// the capture until the claim lease expires.
 		p.releaseAppendClaim(ctx, capture)
@@ -1289,10 +1401,11 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 	return appended, nil
 }
 
-// markerInNote reports whether the note body carries captureID's append
-// marker — the exact statement that this capture's paragraph has been written.
-// It is the same test appendToNote applies when resuming.
-func (p *Pipeline) markerInNote(ctx context.Context, noteKey, captureID string) (bool, error) {
+// paragraphInNote reports whether the note body carries text as the paragraph
+// under captureID's marker — the exact statement that this attempt's words
+// have been written. A checklist item the person ticked meanwhile still
+// counts: the words are there, the tick is theirs.
+func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text string) (bool, error) {
 	existing, err := p.cfg.Objects.Get(ctx, noteKey)
 	if errors.Is(err, repository.ErrNotFound) {
 		return false, nil
@@ -1300,7 +1413,8 @@ func (p *Pipeline) markerInNote(ctx context.Context, noteKey, captureID string) 
 	if err != nil {
 		return false, err
 	}
-	return service.HasCaptureMarker(string(existing), captureID), nil
+	_, old, found := service.CutCaptureParagraph(string(existing), captureID)
+	return found && old == keepTick(old, text), nil
 }
 
 // appendToken is deterministic so a retry of the same work recognises its own
@@ -1326,6 +1440,33 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 	if updated, err := p.cfg.Store.PutCapture(ctx, released); err == nil {
 		*capture = updated
 	}
+}
+
+// replaceCaptureParagraph puts text where captureID's paragraph stands in
+// body: cut along the marker boundary the delete and move paths use, then
+// inserted back in chronological position — the position it had, unless a
+// user edit had carried its marker to the end, in which case the words it
+// replaced were edited into the user's text and the new ones land as a new
+// paragraph. A checklist item that was ticked stays ticked: the words were
+// transcribed again, not the decision.
+func replaceCaptureParagraph(body, captureID, text string) string {
+	rest, old, _ := service.CutCaptureParagraph(body, captureID)
+	text = keepTick(old, text)
+	// ponytail: capture ids lead with their creation instant
+	// (service.BeginCapture), so id order is chronological order and no
+	// store read is needed; a note whose other recordings predate that id
+	// format gets the paragraph at the end, which capture_move.go's
+	// olderCapturesIn would place exactly.
+	return service.InsertCaptureParagraph(rest, captureID, text, func(id string) bool { return id > captureID })
+}
+
+// keepTick returns text carrying old's tick: a checklist item the person
+// ticked stays ticked when its words are written again.
+func keepTick(old, text string) string {
+	if strings.HasPrefix(old, "- [x] ") && strings.HasPrefix(text, "- [ ] ") {
+		return "- [x] " + strings.TrimPrefix(text, "- [ ] ")
+	}
+	return text
 }
 
 // maxChecklistItemRunes bounds one appended item. A checklist item is a line,
@@ -1364,11 +1505,11 @@ func checklistItem(text string) string {
 // out of everything the user sees (service.StripCaptureMarkers) and puts it
 // back on every save (service.CarryCaptureMarkers), so it survives edits.
 //
-// resuming says this call is a retry of an attempt that already held the claim
-// for this exact capture and cleaned artefact. Only then is the marker a
-// reason to do nothing — a first attempt that finds one has found a bug, not a
-// shortcut, and appends so the dictation is not lost.
-func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, resuming bool) error {
+// A marker already in the body is never a reason to do nothing: the paragraph
+// under it is replaced where it stands, which for the same words is the same
+// body. That one rule covers a recording transcribed again and this capture's
+// own attempt that wrote the body, died, and was taken over after the lease.
+func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string) error {
 	var lastErr error
 	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
 		existingContent, etag, err := p.cfg.Objects.GetWithETag(ctx, noteKey)
@@ -1379,18 +1520,22 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 			return fmt.Errorf("pipeline: get existing note: %w", err)
 		}
 
-		if resuming && service.HasCaptureMarker(string(existingContent), captureID) {
-			// The interrupted attempt got as far as the body. Nothing to write;
-			// the caller goes on to finish the bookkeeping it never reached.
-			obs.Log(ctx).Info("append already in the note body; finishing the interrupted attempt instead of repeating it",
-				slog.String("note_key", noteKey))
-			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
-			return nil
-		}
-
-		newContent := service.CaptureMarker(captureID) + "\n" + text
-		if len(existingContent) > 0 {
-			newContent = string(existingContent) + "\n\n" + newContent
+		var newContent string
+		switch {
+		case service.HasCaptureMarker(string(existingContent), captureID):
+			// A recording whose text is already in the note: transcribed
+			// again (service.RetranscribeCapture, or run's re-transcription
+			// after a retry from before the language was recorded), or this
+			// attempt's own earlier try that died after writing. The
+			// paragraph is replaced where it stands; appending would leave
+			// the wrong-script text beside the right one.
+			obs.Count(ctx, "AppendReplacedParagraph", map[string]string{"Stage": string(service.StatusAppending)})
+			newContent = replaceCaptureParagraph(string(existingContent), captureID, text)
+		default:
+			newContent = service.CaptureMarker(captureID) + "\n" + text
+			if len(existingContent) > 0 {
+				newContent = string(existingContent) + "\n\n" + newContent
+			}
 		}
 
 		err = p.cfg.Objects.PutIfMatch(ctx, noteKey, []byte(newContent), "text/markdown", etag)
@@ -1793,8 +1938,36 @@ func estimateCandidateTokens(candidates []routing.Candidate) float64 {
 	return float64(total)/4 + 1
 }
 
-func fallbackNoteTitle(now time.Time) string {
-	return "Voice note " + now.UTC().Format("2006-01-02 15:04")
+// fallbackNoteTitle names a note the router could not title: the first words
+// of what was said, so the row reads as the thought it holds. Until
+// 2026-09-21 it was "Voice note <UTC date and time>", which sat beside the
+// row's own local time and disagreed with it by the timezone offset (review
+// T40). Six words or forty characters, whichever comes first, trailing
+// punctuation dropped; only an empty transcript falls back to "Voice note
+// <date>", with no clock, because the row's own time already carries one.
+func fallbackNoteTitle(content string, now time.Time) string {
+	const maxWords, maxRunes = 6, 40
+	title := ""
+	for i, word := range strings.Fields(content) {
+		if i == maxWords {
+			break
+		}
+		next := word
+		if title != "" {
+			next = title + " " + word
+		}
+		if i > 0 && utf8.RuneCountInString(next) > maxRunes {
+			break
+		}
+		title = next
+	}
+	if runes := []rune(title); len(runes) > maxRunes {
+		title = string(runes[:maxRunes])
+	}
+	if title = strings.TrimRight(strings.TrimSpace(title), ".,;:!?"); title == "" {
+		return "Voice note " + now.UTC().Format("2006-01-02")
+	}
+	return title
 }
 
 // noteTouchedAt parses a note's update time, tolerating the RFC3339 and

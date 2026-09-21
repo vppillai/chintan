@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/vppillai/chintan/backend/internal/ask"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
@@ -231,9 +232,10 @@ func (s *SearchService) Search(ctx context.Context, userID, q string, opts repos
 	return page, nil
 }
 
-// searchTerms splits a query into lowercase terms, bounded in length.
+// searchTerms splits a query into lowercase terms, bounded in length, spelled
+// the way SearchText stored the body (ask.FoldScript).
 func searchTerms(q string) []string {
-	q = strings.ToLower(strings.TrimSpace(q))
+	q = strings.ToLower(strings.TrimSpace(ask.FoldScript(q)))
 	if runes := []rune(q); len(runes) > MaxSearchQueryRunes {
 		q = string(runes[:MaxSearchQueryRunes])
 	}
@@ -252,11 +254,18 @@ func searchTerms(q string) []string {
 // matchNote requires every term to appear somewhere in the note. An AND across
 // terms is what a person typing two words means; an OR returns the corpus.
 func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
-	title := strings.ToLower(note.Title)
-	snippet := strings.ToLower(note.Snippet)
-	// Already lowercased when it was stored. A note written before the field
-	// existed has none, and falls back to the snippet alone until the
-	// chintanctl backfill or its next body write fills it in.
+	// Folded the way searchTerms folds the query, or a title stored in the
+	// old chillu spelling would not match its own spelling typed the same
+	// way (review 2026-09-21, T58). The snippet keeps its case for the
+	// excerpt; folding only re-spells chillus, so it is still the user's
+	// words as they read them.
+	title := strings.ToLower(ask.FoldScript(note.Title))
+	snippetText := ask.FoldScript(note.Snippet)
+	snippet := strings.ToLower(snippetText)
+	// Already lowercased and folded when it was stored. A note written before
+	// the field existed has none, and falls back to the snippet alone until
+	// the chintanctl backfill or its next body write fills it in; one written
+	// before the fold keeps the old spelling until the same.
 	body := note.SearchText
 
 	fields := map[string]bool{}
@@ -270,7 +279,7 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 			found = true
 		}
 		for _, alias := range note.Aliases {
-			if strings.Contains(strings.ToLower(alias), term) {
+			if strings.Contains(strings.ToLower(ask.FoldScript(alias)), term) {
 				fields[MatchAlias] = true
 				score += 4
 				found = true
@@ -278,7 +287,7 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 			}
 		}
 		for _, tag := range note.Tags {
-			if strings.Contains(strings.ToLower(tag), term) {
+			if strings.Contains(strings.ToLower(ask.FoldScript(tag)), term) {
 				fields[MatchTag] = true
 				score += 4
 				found = true
@@ -312,7 +321,7 @@ func matchNote(note model.NoteIndex, terms []string) (SearchHit, bool) {
 		// The snippet keeps the body's original case, so it is preferred for
 		// the excerpt; a hit that only the search text holds is shown from
 		// that, lowercased, which is still the user's own words in context.
-		hit.Excerpt = excerpt(note.Snippet, terms[0])
+		hit.Excerpt = excerpt(snippetText, terms[0])
 		if hit.Excerpt == "" {
 			for _, term := range terms {
 				if hit.Excerpt = excerpt(body, term); hit.Excerpt != "" {

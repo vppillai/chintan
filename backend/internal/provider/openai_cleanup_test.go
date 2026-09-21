@@ -39,7 +39,7 @@ func TestOpenAICleanupRequestShape(t *testing.T) {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
 
-	got, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "raw transcript here")
+	got, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "raw transcript here", "")
 	if err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestOpenAICleanupHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
-	_, err = llm.Cleanup(context.Background(), model.CleanupPolished, "hello")
+	_, err = llm.Cleanup(context.Background(), model.CleanupPolished, "hello", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -99,7 +99,7 @@ func TestOpenAICleanupRejectsEmptyRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
-	_, err = llm.Cleanup(context.Background(), model.CleanupFaithful, "   ")
+	_, err = llm.Cleanup(context.Background(), model.CleanupFaithful, "   ", "")
 	if err == nil {
 		t.Fatal("expected error for empty raw")
 	}

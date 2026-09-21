@@ -810,6 +810,59 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
+  /v1/captures/{captureId}/retranscribe:
+    parameters:
+      - $ref: '#/components/parameters/CaptureId'
+    post:
+      tags: [captures]
+      summary: Transcribe a finished recording again, in another language
+      description: |
+        For a recording that came back in the wrong script or with sentences
+        missing. The audio is kept, so it can be transcribed once more: the
+        capture goes back to `transcribing` and the worker runs the pipeline
+        again — transcribe in `language` (omitted: the note's effective
+        language, its own `language` else the tenant's `default_language`),
+        strip spoken instructions with the destination pinned, clean — and
+        then **replaces** the paragraph the recording dictated where it
+        stands in the note, by its marker. A checklist item is replaced as
+        one line, and a ticked one stays ticked. The earlier text stays
+        visible until the new one lands. The destination note is kept; a
+        `needs_target` capture is routed again from the new transcript. The
+        language asked for is remembered on the capture, so a later change
+        of the note's language does not transcribe this recording again on
+        its own.
+
+        Priced as one more transcription and cleanup under the daily spend
+        cap. Poll the capture as the filing row does; it reaches `appended`
+        when the paragraph has been replaced.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaptureRetranscribe' }
+      responses:
+        '202':
+          description: Accepted; the capture is `transcribing` again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capture' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            The capture is still in flight and a worker may still be working
+            on it (the same rule as `/retry`), the recording's audio has
+            already been deleted by the retention rule, so there is nothing
+            to transcribe, or its note is archived (restore it first, as for
+            a move). `detail` says which.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
   /v1/captures/{captureId}/download:
     parameters:
       - $ref: '#/components/parameters/CaptureId'
@@ -1078,14 +1131,19 @@ components:
           pattern: '^(auto|[a-z]{2})$'
           description: |
             The transcription language for a capture whose destination note
-            sets none — or is not yet known: a capture recorded without a
-            `note_id` is transcribed before it is routed, so only this value
-            can apply to it. `auto` sends no language and lets Whisper detect
-            one per recording (there is no mixed-language mode; a
-            code-switching recording is detected as one language). Any other
-            value is an ISO-639-1 code passed to the provider as-is;
-            supplying one improves accuracy and latency. A record written
-            before this field existed reads as `en`.
+            sets none, and the first language every routed capture is
+            transcribed in: a capture recorded without a `note_id` is
+            transcribed before it is routed, and transcribed once more in
+            the destination note's `language` when that differs from what
+            was sent. A note the router creates starts with this value when
+            it is a code. `auto` sends no language and lets Whisper detect
+            one per recording. There is no mixed-language mode, and
+            auto-detection is not one: it picks a single language per
+            recording and drops or re-scripts the speech in any other, so for
+            a recording that mixes two languages choose the code of the one
+            that matters most. Any other value is an ISO-639-1 code passed to
+            the provider as-is; supplying one improves accuracy and latency.
+            A record written before this field existed reads as `en`.
         daily_spend_cap_micros:
           type: integer
           minimum: 0
@@ -1150,12 +1208,15 @@ components:
           type: string
           pattern: '^(auto|[a-z]{2})$'
           description: |
-            The transcription language for captures recorded into this note
-            (`POST /v1/captures` with this `note_id`). `auto` or an ISO-639-1
-            code. Absent when the note inherits the tenant's
-            `default_language`. Settable through `NoteUpdate`. It cannot
-            apply to a capture that is routed to this note after the fact,
-            because routing reads the transcript.
+            The transcription language for this note's captures: `auto` or
+            an ISO-639-1 code. Absent when the note inherits the tenant's
+            `default_language`. Settable through `NoteUpdate`. A capture
+            recorded into the note (`POST /v1/captures` with this `note_id`)
+            is transcribed in it from the start; one the router files here
+            afterwards was transcribed in the default first, and is
+            transcribed again in this language when the two differ. A note
+            the router creates starts with the language its first recording
+            was transcribed in, unless that was `auto`.
         search_text:
           type: string
           maxLength: 32768
@@ -1545,6 +1606,16 @@ components:
         note_id:
           type: string
           description: The active note to move the recording into.
+
+    CaptureRetranscribe:
+      type: object
+      properties:
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})$'
+          description: |
+            `auto` or an ISO-639-1 code. Omitted, the note's effective
+            language is used. Remembered on the capture.
 
     MatchResponse:
       type: object

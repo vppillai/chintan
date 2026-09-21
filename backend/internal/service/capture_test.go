@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -414,6 +415,164 @@ func TestRetryCaptureRefusesAnInFlightCaptureUntilNoWorkerCanBeAlive(t *testing.
 			}
 			if len(worker.calls) != 1 {
 				t.Fatalf("worker calls after the second tap = %v, want still one", worker.calls)
+			}
+		})
+	}
+}
+
+// A recording that came back in the wrong script has a way back: its
+// transcription is run again, in the language asked for, and the worker
+// replaces its paragraph. The request path resets the row and hands it over;
+// it refuses a capture a worker may still be on, and one whose audio the
+// retention rule has already deleted (review 2026-09-21, T7).
+func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testing.T) {
+	now := time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC)
+	audioKey := "tenants/user1/captures/c_1/audio.webm"
+	appended := model.CaptureIndex{
+		Status: model.StatusAppended, CreatedAt: model.FormatTime(now.Add(-time.Hour)), AppendedAt: now.Add(-time.Hour).Unix(),
+		AppendToken: "tok", AppendClaimedAt: now.Add(-time.Hour).Unix(),
+		RawKey: "tenants/user1/captures/c_1/raw.txt", SegmentsKey: "tenants/user1/captures/c_1/segments.json",
+		RoutedKey: "tenants/user1/captures/c_1/routed.txt", CleanKey: "tenants/user1/captures/c_1/clean.txt",
+		Language: "en", LanguageDetected: "tamil",
+	}
+	for _, tc := range []struct {
+		name     string
+		capture  model.CaptureIndex
+		language string
+		noAudio  bool
+		archived bool
+		wantErr  error
+	}{
+		{"appended, asked for ml", appended, "ml", false, false, nil},
+		{"appended, no language: the note's applies", appended, "", false, false, nil},
+		{"failed at transcription, asked for auto", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: model.FormatTime(now)}, "auto", false, false, nil},
+		{"a language that is not a code", appended, "klingon", false, false, ErrInvalidLanguage},
+		{"still transcribing a minute ago", model.CaptureIndex{Status: model.StatusTranscribing, CreatedAt: model.FormatTime(now), LastProgressAt: model.FormatTime(now.Add(-time.Minute))}, "ml", false, false, ErrCaptureInFlight},
+		{"the audio has expired", appended, "ml", true, false, ErrCaptureAudioExpired},
+		{"the note is archived", appended, "ml", false, true, ErrNoteArchived},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store, objects := memory.NewStore(), memory.NewObjects()
+			worker := &stubInvoker{}
+			svc := NewCaptureService(store, objects).WithInvoker(worker).WithClock(func() time.Time { return now })
+			note := model.NoteIndex{ID: "n1", Title: "Destination", UpdatedAt: model.Now(), S3MarkdownKey: "tenants/user1/notes/n1/note.md"}
+			if tc.archived {
+				note.DeletedAt = model.FormatTime(now)
+			}
+			if _, err := store.PutNote(ctx, "user1", note); err != nil {
+				t.Fatal(err)
+			}
+			c := tc.capture
+			c.ID, c.UserID, c.NoteID, c.AudioKey = "c_1", "user1", "n1", audioKey
+			if !tc.noAudio {
+				if err := objects.Put(ctx, audioKey, []byte("opus"), "audio/webm"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, key := range []string{c.RawKey, c.CleanKey} {
+				if key != "" {
+					if err := objects.Put(ctx, key, []byte("old"), "text/plain"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err := store.PutCapture(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := svc.RetranscribeCapture(ctx, "user1", "c_1", tc.language)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if len(worker.calls) != 0 {
+					t.Fatalf("a refused request handed the capture to the worker: %v", worker.calls)
+				}
+				if after, _ := store.GetCapture(ctx, "user1", "c_1"); after.Status != tc.capture.Status || after.RawKey != tc.capture.RawKey {
+					t.Fatalf("a refused request changed the row: %+v", after)
+				}
+				return
+			}
+			if got.Status != StatusTranscribing || got.Error != "" {
+				t.Errorf("status = %s (%q), want transcribing", got.Status, got.Error)
+			}
+			if got.RawKey != "" || got.SegmentsKey != "" || got.RoutedKey != "" || got.CleanKey != "" {
+				t.Errorf("transcript keys were kept: %+v", got)
+			}
+			if got.AppendToken != "" || got.AppendedAt != 0 || got.AppendClaimedAt != 0 {
+				t.Errorf("the earlier append claim was kept; the worker could not replace the paragraph: %+v", got)
+			}
+			if got.RequestedLanguage != tc.language || got.Language != "" || got.LanguageDetected != "" {
+				t.Errorf("languages = requested %q sent %q detected %q, want %q and nothing else", got.RequestedLanguage, got.Language, got.LanguageDetected, tc.language)
+			}
+			if got.NoteID != "n1" {
+				t.Errorf("note_id = %q, want the destination kept", got.NoteID)
+			}
+			if got.LastProgressAt != model.FormatTime(now) {
+				t.Errorf("last_progress_at = %q, want the hand-off stamped", got.LastProgressAt)
+			}
+			if len(worker.calls) != 1 || !strings.Contains(worker.calls[0], "retranscribe") {
+				t.Errorf("worker calls = %v, want one retranscribe", worker.calls)
+			}
+			for _, key := range []string{tc.capture.RawKey, tc.capture.CleanKey} {
+				if key == "" {
+					continue
+				}
+				if present, _ := objects.Exists(ctx, key); !present {
+					t.Errorf("the earlier transcript %s was deleted; it stays downloadable until the worker writes over it", key)
+				}
+			}
+			if present, _ := objects.Exists(ctx, audioKey); !present {
+				t.Error("the audio was deleted; there is nothing left to transcribe")
+			}
+		})
+	}
+}
+
+// A destination can be chosen for a capture nobody is working on: one parked
+// at needs_target, one that failed, or one a worker has not written for its
+// whole lifetime. One still being transcribed is refused, or a second
+// delivery would run beside the live one and bill the transcription twice
+// (review 2026-09-21, T32).
+func TestSetCaptureTargetRefusesAnInFlightCapture(t *testing.T) {
+	now := time.Date(2026, 9, 21, 20, 0, 0, 0, time.UTC)
+	at := func(ago time.Duration) string { return model.FormatTime(now.Add(-ago)) }
+	for _, tc := range []struct {
+		name    string
+		capture model.CaptureIndex
+		wantErr error
+	}{
+		{"needs_target", model.CaptureIndex{Status: model.StatusNeedsTarget, CreatedAt: at(time.Minute)}, nil},
+		{"failed before routing", model.CaptureIndex{Status: model.StatusFailed, Error: "x", CreatedAt: at(time.Minute)}, nil},
+		{"routing, the worker wrote the row a minute ago", model.CaptureIndex{Status: model.StatusRouting, CreatedAt: at(time.Hour), LastProgressAt: at(time.Minute)}, ErrCaptureInFlight},
+		{"routing, nothing written for the worker's lifetime", model.CaptureIndex{Status: model.StatusRouting, CreatedAt: at(time.Hour), LastProgressAt: at(CaptureStuckAfter)}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := memory.NewStore()
+			worker := &stubInvoker{}
+			svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker).WithClock(func() time.Time { return now })
+			if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Chosen", UpdatedAt: model.Now(), S3MarkdownKey: "tenants/user1/notes/n1/note.md"}); err != nil {
+				t.Fatal(err)
+			}
+			c := tc.capture
+			c.ID, c.UserID, c.RawKey = "c_1", "user1", "tenants/user1/captures/c_1/raw.txt"
+			if _, err := store.PutCapture(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+			got, err := svc.SetCaptureTarget(ctx, "user1", "c_1", "n1", "")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if len(worker.calls) != 0 {
+					t.Fatalf("a refused target handed the capture to the worker: %v", worker.calls)
+				}
+				return
+			}
+			if got.NoteID != "n1" || len(worker.calls) != 1 {
+				t.Fatalf("note_id = %q, worker calls = %v; want n1 and one hand-off", got.NoteID, worker.calls)
 			}
 		})
 	}

@@ -29,6 +29,47 @@ context (the same shape as `routeOnce`):
 
 The HTTP client timeouts stay as the outer bound.
 
+## A second transcription, and what it costs the budget
+
+Since 2026-09-21 (round 3, T2 and T7) a capture can be transcribed twice
+in one invocation, and the transcribe deadline applies to each call:
+
+- **After routing.** A recording made from Home is transcribed in the tenant
+  default before the router reads the transcript to pick the note. When the
+  note it lands on (by the router, or by a person for a `needs_target`
+  capture) has a `language` that is a code other than the one sent, `run`
+  clears `RawKey`, `SegmentsKey` and `RoutedKey` and calls `transcribe`
+  again with the note set, then runs the instruction strip with the
+  destination pinned and continues to cleanup. `CaptureIndex.Language` is
+  written with `RawKey`, so a retry that finds the second transcript does
+  not make a third; a note that inherits the default or asks for `auto`
+  never asks for a second call. A note the router creates starts in the
+  language its recording was transcribed in, unless that was `auto`.
+- **On request.** `POST /v1/captures/{id}/retranscribe {language?}` resets a
+  finished capture to `transcribing` with `RequestedLanguage` set (it
+  outranks the note's language and the default, and stays on the row so the
+  rule above never undoes a person's choice), clears the transcript keys
+  (the objects stay until the worker writes over them, so the previous
+  transcript downloads meanwhile) and the append claim; the worker
+  transcribes, strips, cleans and then **replaces** the capture's paragraph
+  in the note where it stands, by its marker (`replaceCaptureParagraph`: cut
+  along the boundary delete and move use, inserted back in id order; a
+  checklist item as one line, a tick kept). Because the earlier paragraph
+  keeps the marker until then, a retry of the append inside its claim lease
+  asks whether *this attempt's text* is under the marker
+  (`paragraphInNote`), not whether the marker is there; a marker over the old
+  paragraph is an unwritten append, and is failed and retried like one.
+
+Worst case inside one invocation is therefore two transcriptions (10 min)
+plus routing (30 s), cleanup (2 min) and the append, which still fits the
+900 s Lambda with headroom; in practice a twenty-minute recording returns
+from Whisper turbo in under a minute. The second call is priced through the
+breaker like the first (`op: transcribe`), about four cents per audio hour,
+and only in the mismatch case. Both calls log `language_sent` and
+`language_detected` and count `TranscribedLanguage{Outcome}` (T10);
+`CaptureRetranscribedForNote` counts the post-routing case and
+`AppendReplacedParagraph` the in-place replace.
+
 ## What a deadline means
 
 A deadline exceeded is an infrastructure fault, not a verdict on the capture.

@@ -58,8 +58,8 @@ func NewOpenAICleanup(apiKey, baseURL, model string, httpClient *http.Client) (*
 // call without keeping a second copy of the name.
 func (c *OpenAICleanup) Model() string { return c.model }
 
-func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (Cleaned, error) {
-	userPrompt, err := cleanup.UserPrompt(raw)
+func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw, language string) (Cleaned, error) {
+	userPrompt, err := cleanup.UserPrompt(raw, language)
 	if err != nil {
 		return Cleaned{}, err
 	}

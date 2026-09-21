@@ -418,3 +418,47 @@ func TestRetrievableLeavesOutNotesSavedFromAnAskThread(t *testing.T) {
 		t.Fatalf("Retrievable = %v, want roof and plain in that order", got)
 	}
 }
+
+// The five chillus spelled as consonant + virama + ZWJ and spelled as their
+// atomic letters are one word to a reader and were two to every matcher
+// (review 2026-09-21, T58). Folding puts both spellings on the atomic side,
+// so a question in either finds a note in either.
+func TestFoldScriptJoinsTheTwoChilluSpellings(t *testing.T) {
+	for _, tc := range []struct{ old, atomic string }{
+		{"അവന്\u200d", "അവൻ"},
+		{"കാര്\u200d", "കാർ"},
+		{"കാല്\u200d", "കാൽ"},
+		{"അവള്\u200d", "അവൾ"},
+		{"കാണ്\u200d", "കാൺ"},
+	} {
+		if got := FoldScript(tc.old); got != tc.atomic {
+			t.Errorf("FoldScript(%q) = %q, want %q", tc.old, got, tc.atomic)
+		}
+		if got := FoldScript(tc.atomic); got != tc.atomic {
+			t.Errorf("FoldScript(%q) changed an atomic chillu to %q", tc.atomic, got)
+		}
+	}
+	if got := FoldScript("ക\u200cഷ"); got != "കഷ" {
+		t.Errorf("a stray non-joiner survived: %q", got)
+	}
+	if got := FoldScript("plain ascii"); got != "plain ascii" {
+		t.Errorf("text with no joiner was changed: %q", got)
+	}
+	old, atomic := Tokenize("അവന്\u200d വന്നു"), Tokenize("അവൻ വന്നു")
+	if len(old) != 2 || len(atomic) != 2 || old[0] != atomic[0] || old[1] != atomic[1] {
+		t.Errorf("Tokenize differs by chillu spelling: %q vs %q", old, atomic)
+	}
+	// The title and the names fold too, or a title stored the old way would
+	// score nothing for its own spelling asked the old way.
+	for _, tc := range []struct{ stored, question string }{{"അവന്\u200d", "അവൻ"}, {"അവൻ", "അവന്\u200d"}, {"അവന്\u200d", "അവന്\u200d"}} {
+		for _, n := range []model.NoteIndex{
+			{ID: "title", Title: tc.stored},
+			{ID: "alias", Title: "x", Aliases: []string{tc.stored}},
+			{ID: "snippet", Title: "x", Snippet: tc.stored},
+		} {
+			if got := score(n, Tokenize(tc.question)); got <= 0 {
+				t.Errorf("score(%s %q, question %q) = %v, want > 0", n.ID, tc.stored, tc.question, got)
+			}
+		}
+	}
+}

@@ -352,6 +352,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"GET /v1/notes/{noteId}/recordings/urls → 200. One presigned GET per recording that still has its audio, oldest first, "+
 			"with the filename to save it under: <note-title-slug>-<yyyymmdd-hhmm>.<ext>.",
 		edits.do(t, http.MethodGet, "/v1/notes/"+right.ID+"/recordings/urls", contractUser, nil))
+	add("captureRetranscribing", "CaptureWire",
+		"POST /v1/captures/{captureId}/retranscribe → 202. The capture is back in transcribing with its note kept; poll it as the filing row does, "+
+			"and its paragraph in the note is replaced when it reaches appended.",
+		edits.do(t, http.MethodPost, "/v1/captures/c_take_2/retranscribe", contractUser, map[string]any{"language": "ml"}))
 	add("problemRetryable", "ProblemWire",
 		"POST /v1/captures/{captureId}/move → 503 after a rollback. `type` is the retryable URI: nothing changed, send the same request again.",
 		func() *httptest.ResponseRecorder {

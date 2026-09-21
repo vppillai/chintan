@@ -49,6 +49,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture is still being processed; wait for it to finish or fail", nil)
 	case errors.Is(err, service.ErrCaptureUnfiled):
 		httperr.Conflict(w, r, "the capture has no note yet; choose one with /target instead of moving it", nil)
+	case errors.Is(err, service.ErrCaptureAudioExpired):
+		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
 
 	// ---- client mistakes -------------------------------------------------
 	case errors.Is(err, service.ErrNoteNotArchived):

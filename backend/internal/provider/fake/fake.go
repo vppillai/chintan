@@ -244,7 +244,7 @@ func (f *LLM) NoteCalls() []NoteCall {
 	return append([]NoteCall(nil), f.noteCalls...)
 }
 
-func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw string) (provider.Cleaned, error) {
+func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw, _ string) (provider.Cleaned, error) {
 	f.mu.Lock()
 	f.calls++
 	call := f.calls - 1

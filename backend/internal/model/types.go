@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 )
 
@@ -135,8 +136,13 @@ func RetentionTierFor(days int) int {
 // code; supplying it "will improve accuracy and latency" (console.groq.com/docs
 // /speech-to-text), and omitting it leaves the model to guess, which on a
 // short clip is how English dictation comes back transliterated into another
-// script. There is no mixed-language mode: auto-detection is the only option
-// for code-switching, and it decides per request, not per segment.
+// script. There is no mixed-language mode, and auto-detection is not one: it
+// decides per request, not per segment, so on code-switched speech it keeps
+// the language it picked and drops or re-scripts the rest — real Malayalam
+// came back in Tamil script, and the Malayalam sentence of an
+// English–Malayalam clip was dropped (review 2026-09-21, T3). For mixed speech
+// the better choice is the code of the language that matters most: forcing
+// `ml` kept both languages and transcribed pure English verbatim.
 const (
 	// LanguageAuto asks the provider to detect the language: the code sends no
 	// `language` field.
@@ -144,6 +150,46 @@ const (
 	// DefaultLanguage is what a tenant transcribes in until they say otherwise.
 	DefaultLanguage = "en"
 )
+
+// languageNames maps the ISO-639-1 codes the settings screen offers to the
+// name Whisper reports a detected language under (its `language` field is a
+// lowercase English name, "english" or "malayalam", never a code). The list is
+// the frontend's curated one (features/settings/languages.ts), so the two
+// sides name the same languages; Whisper's own spelling is used where it
+// differs ("chinese" for zh). A code outside the list is still valid
+// (ValidLanguage checks the shape), it just has no name here.
+var languageNames = map[string]string{
+	"en": "english", "ml": "malayalam", "hi": "hindi", "ta": "tamil", "te": "telugu",
+	"kn": "kannada", "mr": "marathi", "bn": "bengali", "gu": "gujarati", "pa": "punjabi",
+	"ur": "urdu", "ar": "arabic", "es": "spanish", "fr": "french", "de": "german",
+	"pt": "portuguese", "it": "italian", "nl": "dutch", "ru": "russian", "ja": "japanese",
+	"ko": "korean", "zh": "chinese", "id": "indonesian", "tr": "turkish", "vi": "vietnamese",
+	"th": "thai", "sv": "swedish", "pl": "polish",
+}
+
+var languageCodes = func() map[string]string {
+	out := make(map[string]string, len(languageNames))
+	for code, name := range languageNames {
+		out[name] = code
+	}
+	return out
+}()
+
+// LanguageName is the English name for an ISO-639-1 code, capitalised, or ""
+// for a code the table does not know.
+func LanguageName(code string) string {
+	name, ok := languageNames[code]
+	if !ok {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// LanguageCode is the ISO-639-1 code for the language name Whisper reported,
+// or "" when the name is not one the table knows.
+func LanguageCode(whisperName string) string {
+	return languageCodes[strings.ToLower(strings.TrimSpace(whisperName))]
+}
 
 // ValidLanguage reports whether v is LanguageAuto or a lowercase two-letter
 // ISO-639-1 code. It checks the shape, not the list: Whisper's supported set
@@ -171,9 +217,11 @@ type Settings struct {
 	// ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
 	// DefaultLanguage is the transcription language for a capture whose
-	// destination note sets none, or is not yet known when transcription runs
-	// (a capture without note_id is transcribed before it is routed). Empty on
-	// records written before 2026-09; readers substitute DefaultLanguage.
+	// destination note sets none, and the first language every routed
+	// capture is transcribed in (routing reads the transcript, so it runs
+	// after transcription; the worker transcribes again in the destination's
+	// language when that differs). Empty on records written before 2026-09;
+	// readers substitute DefaultLanguage.
 	DefaultLanguage string `json:"default_language,omitempty"`
 	// There is no per-tenant spend cap. Records written before 2026-09 may
 	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
@@ -213,11 +261,12 @@ type NoteIndex struct {
 	// must not be reworded — a spec, a quote, a prompt — is otherwise silently
 	// rewritten by polished mode.
 	Verbatim bool `json:"verbatim,omitempty"`
-	// Language is the transcription language for captures recorded INTO this
-	// note (LanguageAuto or an ISO-639-1 code). Empty means the tenant's
-	// Settings.DefaultLanguage. It only applies when the capture was started
-	// with this note as its target: a capture that is routed afterwards was
-	// transcribed before the destination was known.
+	// Language is the transcription language for this note's captures
+	// (LanguageAuto or an ISO-639-1 code). Empty means the tenant's
+	// Settings.DefaultLanguage. A capture recorded into the note is
+	// transcribed in it from the start; one the router files here afterwards
+	// was transcribed in the default first, and the worker transcribes it
+	// once more in this language when the two differ (pipeline.run).
 	Language string `json:"language,omitempty"`
 	// SearchText is the note body prepared for GET /v1/search: lowercased,
 	// append markers stripped, capped at MaxSearchTextBytes. It lives on the
@@ -426,6 +475,26 @@ type CaptureIndex struct {
 	DurationMS  int64  `json:"duration_ms,omitempty"`
 	SegmentsKey string `json:"segments_key,omitempty"`
 	PeaksKey    string `json:"peaks_key,omitempty"`
+	// Language is the language the transcript at RawKey was asked for:
+	// LanguageAuto or the ISO-639-1 code sent to the provider, written in
+	// the same persist as RawKey. It is what tells a retry that the
+	// transcript already is in the destination note's language, so the
+	// post-routing re-transcription (pipeline.run) happens once and not on
+	// every delivery. Empty on captures transcribed before 2026-09-21, which
+	// therefore get one re-transcription when their note names a language.
+	Language string `json:"language,omitempty"`
+	// RequestedLanguage is the language a person asked this recording to be
+	// transcribed in (POST /v1/captures/{id}/retranscribe): LanguageAuto or a
+	// code, or "" when nobody did. It outranks the note's language and the
+	// default, and it stays on the row so the post-routing re-transcription
+	// never undoes an explicit choice.
+	RequestedLanguage string `json:"requested_language,omitempty"`
+	// LanguageDetected is the language the provider reported the speech to
+	// be, as it names it ("tamil"), alongside the transcript it produced.
+	// Kept for the cleanup prompt and for the operator; segments.json carries
+	// the same value for the client.
+	LanguageDetected string `json:"language_detected,omitempty"`
+
 	// AudioBytes is the uploaded object's size as S3 reported it in the
 	// notification that started the pipeline — the only measurement of the
 	// recording this system ever gets (the request-time size_bytes is the

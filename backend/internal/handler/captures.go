@@ -29,6 +29,11 @@ type captureMoveRequest struct {
 	NoteID string `json:"note_id"`
 }
 
+// captureRetranscribeRequest is the OpenAPI CaptureRetranscribe schema.
+type captureRetranscribeRequest struct {
+	Language string `json:"language"`
+}
+
 // downloadResponse is the presigned GET a client plays or reads from.
 type downloadResponse struct {
 	URL       string `json:"url"`
@@ -99,16 +104,8 @@ func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
 	// The budget is checked before the URL is issued. Without this a capped
 	// tenant uploads a recording, watches the capture sit at spend_capped, and
 	// is told nothing about why.
-	if rt.Spend != nil {
-		capped, err := rt.Spend.Capped(r.Context())
-		if err != nil {
-			fail(w, r, err)
-			return
-		}
-		if capped {
-			fail(w, r, service.ErrSpendCapped)
-			return
-		}
+	if rt.refusedByCap(w, r) {
+		return
 	}
 
 	created, err := rt.Captures.BeginCapture(r.Context(), userID, service.CaptureRequest{
@@ -192,19 +189,59 @@ func (rt *router) retryCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rt.Spend != nil {
-		capped, err := rt.Spend.Capped(r.Context())
-		if err != nil {
-			fail(w, r, err)
-			return
-		}
-		if capped {
-			fail(w, r, service.ErrSpendCapped)
-			return
-		}
+	if rt.refusedByCap(w, r) {
+		return
 	}
 
 	capture, err := rt.Captures.RetryCapture(r.Context(), userID, r.PathValue("captureId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, captureOf(*capture))
+}
+
+// refusedByCap answers 429 spend_capped, and reports true, when the day's
+// provider budget is spent, so no request that will cost a provider call is
+// accepted only to stall at spend_capped in the worker.
+func (rt *router) refusedByCap(w http.ResponseWriter, r *http.Request) bool {
+	if rt.Spend == nil {
+		return false
+	}
+	capped, err := rt.Spend.Capped(r.Context())
+	if err != nil {
+		fail(w, r, err)
+		return true
+	}
+	if capped {
+		fail(w, r, service.ErrSpendCapped)
+		return true
+	}
+	return false
+}
+
+// retranscribeCapture runs a finished recording's transcription again, in the
+// language asked for or the note's, and returns 202. The worker replaces the
+// paragraph the recording dictated where it stands, so the wrong-script text
+// is not deleted before the right one exists. The body is optional: without
+// one the note's effective language is used.
+func (rt *router) retranscribeCapture(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	var req captureRetranscribeRequest
+	if r.ContentLength != 0 {
+		if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+			return
+		}
+	}
+	if rt.refusedByCap(w, r) {
+		return
+	}
+
+	capture, err := rt.Captures.RetranscribeCapture(r.Context(), userID, r.PathValue("captureId"), req.Language)
 	if err != nil {
 		fail(w, r, err)
 		return
