@@ -249,7 +249,7 @@ func TestRouteCapsCompletionTokensAndCleanupDoesNot(t *testing.T) {
 		t.Errorf("routing thinking = %v, want disabled", reqs.last(t)["thinking"])
 	}
 
-	if _, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "some words"); err != nil {
+	if _, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "some words", ""); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 	if _, present := reqs.last(t)["max_tokens"]; present {

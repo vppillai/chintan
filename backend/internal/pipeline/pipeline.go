@@ -1145,7 +1145,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	}, func(ctx context.Context) (breaker.Result, error) {
 		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanupTimeout)
 		defer cancel()
-		out, err := p.cfg.LLM.Cleanup(stageCtx, capture.Mode, source)
+		out, err := p.cfg.LLM.Cleanup(stageCtx, capture.Mode, source, cleanupLanguage(*capture))
 		if err != nil {
 			return breaker.Result{}, err
 		}
@@ -1168,6 +1168,17 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return p.persist(ctx, capture)
+}
+
+// cleanupLanguage is the ISO-639-1 code the cleanup prompt names the
+// transcript as being in: the code the transcription was asked for when it
+// was one, else the code for the language Whisper detected under auto, else
+// "" — nothing known, nothing claimed.
+func cleanupLanguage(c model.CaptureIndex) string {
+	if c.Language != "" && c.Language != model.LanguageAuto {
+		return c.Language
+	}
+	return model.LanguageCode(c.LanguageDetected)
 }
 
 // ---------------------------------------------------------------------------
