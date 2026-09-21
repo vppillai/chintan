@@ -177,6 +177,7 @@ aws_cli cloudformation deploy \
     "Instance=$INSTANCE" "Environment=$ENVIRONMENT"
 
 wait_for_stack "$STACK"
+protect_stack "$STACK"
 ok "$STACK deployed"
 
 ENDPOINT="$(stack_output "$STACK" ApiEndpoint)"

@@ -373,6 +373,26 @@ wait_for_stack() {
     aws_cli cloudformation wait "$op" --stack-name "$stack"
 }
 
+# protect_stack turns on termination protection, the one switch that makes a
+# later delete-stack fail instead of asking. The GitHub role holds
+# cloudformation:DeleteStack on chintan-*, and Retain covers only the pool, the
+# table and the bucket. Every path that creates a stack — deploy.sh in CI,
+# bootstrap.sh and setup.sh from a laptop — calls this after a successful
+# deploy; the call is idempotent, so re-asserting it on an update is harmless
+# and also catches a stack created before the scripts protected anything. Not
+# fatal: a role without cloudformation:UpdateTerminationProtection still
+# deploys, and the warning names the command to run by hand. cleanup-aws.sh
+# and teardown.sh are the deliberate path past it.
+protect_stack() {
+    local stack="$1"
+    if aws_cli cloudformation update-termination-protection \
+        --enable-termination-protection --stack-name "$stack" >/dev/null; then
+        ok "termination protection enabled on $stack"
+    else
+        warn "could not enable termination protection on $stack; run: aws cloudformation update-termination-protection --enable-termination-protection --stack-name $stack"
+    fi
+}
+
 # list_chintan_stacks lists stack NAMES only. Enumerating stacks by prefix is
 # safe; enumerating *resources* by prefix is not, which is why nothing else in
 # this library does it. Every resource acted on below is discovered through

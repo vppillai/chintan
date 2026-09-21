@@ -140,6 +140,7 @@ aws_cli cloudformation deploy \
     --tags Application=Chintan Project=chintan Instance=shared Environment=shared
 
 wait_for_stack "$CHINTAN_BOOTSTRAP_STACK"
+protect_stack "$CHINTAN_BOOTSTRAP_STACK"
 ok "$CHINTAN_BOOTSTRAP_STACK deployed"
 
 ROLE_ARN="$(stack_output "$CHINTAN_BOOTSTRAP_STACK" GitHubActionsRoleArn)"
