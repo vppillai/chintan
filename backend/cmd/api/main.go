@@ -31,12 +31,6 @@ import (
 
 var lambdaAdapter *httpadapter.HandlerAdapterV2
 
-// warmProbeTenant is the partition the DynamoDB warm-up reads. Like the
-// readiness probe's, it is an id no Cognito subject can take — subjects are
-// UUIDs — so the read cannot touch a real tenant's data; the row does not
-// exist and GetSettings answers the defaults.
-const warmProbeTenant = "__warmup__"
-
 // warmTimeout bounds the warm-up. Lambda allows the init phase ten seconds;
 // a dependency that has not answered in five is one the first request will
 // have to wait for anyway.
@@ -137,8 +131,12 @@ func init() {
 	// handler — the JWKS fetch and the DynamoDB connection both opened there,
 	// not in init — and Home fans out five GETs, so an idle launch paid it on
 	// every container it spawned (review 2026-09-21, T26). Both are opened
-	// here instead, concurrently, before the first invocation. A failure is
-	// logged, not fatal: the first request then pays what it always did.
+	// here instead, concurrently, before the first invocation. The store half
+	// is the readiness probe itself: one GetItem on its sentinel partition and
+	// one S3 GetObject, which also opens the S3 client the first note open
+	// and every presign would otherwise pay for. A failure is logged, not
+	// fatal: the first request then pays what it always did.
+	readiness := service.NewReadinessService(store, objects)
 	warmCtx, cancelWarm := context.WithTimeout(ctx, warmTimeout)
 	defer cancelWarm()
 	var warm sync.WaitGroup
@@ -151,9 +149,10 @@ func init() {
 	}()
 	go func() {
 		defer warm.Done()
-		// One GetItem: the role has item operations, not DescribeTable.
-		if _, err := store.GetSettings(warmCtx, warmProbeTenant); err != nil {
-			slog.Warn("store warm-up failed; the first request opens the connection", slog.String("error", err.Error()))
+		for name, check := range readiness.Check(warmCtx).Checks {
+			if !check.OK {
+				slog.Warn("store warm-up failed; the first request opens the connection", slog.String("dependency", name))
+			}
 		}
 	}()
 
@@ -164,7 +163,7 @@ func init() {
 		Search:         service.NewSearchService(notesService),
 		Tags:           service.NewTagsService(notesService),
 		Export:         service.NewExportService(notesService, captureService, settingsService, objects),
-		Readiness:      service.NewReadinessService(store, objects),
+		Readiness:      readiness,
 		Spend:          spendGate,
 		Usage:          usageStore,
 		Requests:       usageStore,
