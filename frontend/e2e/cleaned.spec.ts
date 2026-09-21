@@ -1,4 +1,4 @@
-import { CLEAN_WORKER_MS, expect, test } from './fixtures.ts';
+import { CLEAN_WORKER_MS, expect, noteAction, test } from './fixtures.ts';
 
 /**
  * The Cleaned tab: the worker's rewrite of the whole note, read-only, with
@@ -38,7 +38,7 @@ test('starts empty, generates on demand, and renders the Markdown it gets back',
   await expect(view.getByRole('textbox')).toHaveCount(0);
 
   // Share offers the view alongside the note.
-  await page.getByRole('button', { name: 'Share' }).click();
+  await noteAction(page, 'Share');
   await expect(page.getByRole('button', { name: 'Copy cleaned view' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Download cleaned view' })).toBeVisible();
 });

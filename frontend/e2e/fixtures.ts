@@ -1040,3 +1040,12 @@ export const test = base.extend<{ api: ApiState }>({
 });
 
 export { expect } from '@playwright/test';
+
+/**
+ * The note's actions — Details, Share, Archive, Restore, Delete forever — are
+ * items of the ⋮ menu in the note screen's header (review 2026-09-21, T6).
+ */
+export async function noteAction(page: Page, item: string): Promise<void> {
+  await page.getByRole('button', { name: 'Note actions' }).click();
+  await page.getByRole('menuitem', { name: item }).click();
+}

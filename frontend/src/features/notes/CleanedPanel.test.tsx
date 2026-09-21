@@ -255,7 +255,8 @@ describe('the Cleaned tab', () => {
     server({ ...NOTE, cleaned: VIEW });
     await screen.findByText(/generated 3 minutes ago/i);
 
-    await user.click(screen.getByRole('button', { name: 'Share' }));
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Share' }));
     expect(screen.getByRole('button', { name: 'Copy note' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy cleaned view' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Download cleaned view' })).toBeInTheDocument();
@@ -265,7 +266,8 @@ describe('the Cleaned tab', () => {
     const user = userEvent.setup();
     server();
     await screen.findByText('No cleaned view yet');
-    await user.click(screen.getByRole('button', { name: 'Share' }));
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Share' }));
     expect(screen.getByRole('button', { name: 'Copy note' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Copy cleaned view' })).toBeNull();
   });

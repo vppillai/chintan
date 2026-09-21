@@ -34,7 +34,7 @@ import {
   useScrollToActiveMatch,
   type FindTarget,
 } from './FindBar.tsx';
-import { NoteActions, noteLanguageFieldId, type NotePanelKind } from './NoteActions.tsx';
+import { NoteDrawer, NoteMenu, noteLanguageFieldId, type NotePanelKind } from './NoteActions.tsx';
 import {
   NoteTabList,
   noteTabId,
@@ -46,23 +46,29 @@ import {
 import { Recordings } from './Recordings.tsx';
 import { SAVE_LABELS } from './autosave.ts';
 import { FIND_CLOSED, findMatches, findReducer, type FindState, type FindAction } from './find.ts';
-import { describeMoment, describeRecordings } from './groups.ts';
+import { describeRecordings, formatRowTime } from './groups.ts';
 import { ChecklistEditor } from './ChecklistEditor.tsx';
 import { describeProgress, parseChecklist, progressOf } from './checklist.ts';
+import { describePurge, purgeCountdown } from './purge.ts';
 import { useNoteEditor, type NoteEditor } from './useNoteEditor.ts';
-import { countWords, describeWords } from './words.ts';
 
 /**
  * A note.
  *
- * Top to bottom: the way back, the title, one line of metadata, then a strip
- * of segments — Text · Cleaned · Recordings (N) — and the one panel it
- * selects, with the action bar at the foot. The strip sticks under the banner
- * while the panel scrolls, so the recordings are one tap away from anywhere
- * in a long note rather than a screen or five below its last paragraph, which
- * is where they sat when body and recordings were one page. The text is the
- * document; the cleaned view is the worker's rewrite of the whole of it; the
- * recordings are its sources.
+ * Top to bottom: the way back with Find and the note's ⋮ menu, the title, one
+ * line of metadata, then a strip of segments — Text · Cleaned · Recordings (N)
+ * — and the one panel it selects. The strip sticks under the banner while the
+ * panel scrolls, so the recordings are one tap away from anywhere in a long
+ * note rather than a screen or five below its last paragraph, which is where
+ * they sat when body and recordings were one page. The text is the document;
+ * the cleaned view is the worker's rewrite of the whole of it; the recordings
+ * are its sources.
+ *
+ * Nothing else stands between the strip and the tab bar: the action bar that
+ * did (Details · Share · Archive · Record into this) took a third of a phone
+ * with the header and the meta, and its Record sat 30 px above the tab bar's
+ * mic. The mic records into this note while it is open, and the three actions
+ * are in the header's menu (review 2026-09-21, T6).
  */
 export function NoteDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -86,8 +92,8 @@ export function NoteDetailScreen() {
   const [selectingRecordings, setSelectingRecordings] = useState(false);
 
   /*
-   * Which of the action bar's disclosures is open. Held here rather than in
-   * the bar because the meta line opens one of them: "· Malayalam" up by the
+   * Which of the menu's disclosures is open. Held here rather than in the
+   * menu because the meta line opens one of them: "· Malayalam" up by the
    * title is a fact about the note, and tapping a fact should go to where it
    * is set.
    */
@@ -233,6 +239,7 @@ export function NoteDetailScreen() {
         >
           <Icon name="search" size={20} />
         </button>
+        <NoteMenu note={note} onOpenPanel={setPanel} />
       </header>
 
       {offlineCopy && (
@@ -269,6 +276,12 @@ export function NoteDetailScreen() {
         onOpenDetails={openDetails}
       />
 
+      {note.archived && (
+        <p className="note-actions__state" role="status">
+          This note is archived. {describePurge(purgeCountdown(note.purge_after))}.
+        </p>
+      )}
+
       <SaveIndicator editor={editor} />
 
       {/*
@@ -293,12 +306,12 @@ export function NoteDetailScreen() {
 
       {/*
         While recordings are being selected their own bar takes the foot of
-        the screen, so the note's action bar steps aside rather than stacking
-        under it. Hidden, not unmounted: an open Details or Share panel is
-        still there when the selection ends. The bar is outside the panels, so
-        it is there on every tab.
+        the screen, so an open Details or Share drawer steps aside rather than
+        stacking under it. Hidden, not unmounted: it is still there when the
+        selection ends. The drawer is outside the panels, so it is there on
+        every tab.
       */}
-      <NoteActions
+      <NoteDrawer
         note={note}
         editor={editor}
         hidden={selectingRecordings}
@@ -585,19 +598,22 @@ function useTimedOut(active: boolean, ms: number): boolean {
 }
 
 /**
- * "Updated today 14:02 · house · 3 recordings · 4:12 · 412 words · Malayalam".
+ * "5 Sept · house · 3 rec · 0:17 · Malayalam" — one line, always.
  *
- * The tags and the word count are the draft's, not the server's, so adding a
- * tag in the bar or typing a sentence shows up here at once rather than after
- * the save lands. For a checklist the count is of items — "3 of 7 done" —
- * because how much of a list is left is what someone looks up here.
+ * The tags are the draft's, not the server's, so adding a tag in Details
+ * shows up here at once rather than after the save lands. For a checklist the
+ * line also says "3 of 7 done", because how much of a list is left is what
+ * someone looks up here. It used to begin "Updated today 14:02" and end with
+ * the word count, and wrapped to two lines on a phone (40 px, review
+ * 2026-09-21 T6); the time is the row's own short form and the count is gone
+ * — a body's length is visible in the body.
  *
  * The language is the last fact, and only when it is worth a word: the
  * note's own choice when it differs from the default, or the default itself
  * when that is not English. An English note under an English default says
  * nothing — the common case should not carry a label. It is a button because
- * the control that sets it is in the Details panel at the foot, and the
- * owner's trial found it there by accident or not at all.
+ * the control that sets it is in the Details drawer, and the owner's trial
+ * found it there by accident or not at all.
  */
 function NoteMeta({
   note,
@@ -616,15 +632,11 @@ function NoteMeta({
   onOpenDetails: () => void;
 }) {
   const { data: settings } = useSettings();
-  const updated = describeMoment(note.updated_at);
   const parts = [
-    // "Updated today 14:02", but "Updated 6 Aug 09:14" — a month keeps its case.
-    updated ? `Updated ${updated.replace(/^(Today|Yesterday)/, (day) => day.toLowerCase())}` : null,
+    formatRowTime(note.updated_at),
     ...tags,
-    describeRecordings(note),
-    checklist
-      ? describeProgress(progressOf(parseChecklist(body)))
-      : describeWords(countWords(body)),
+    describeRecordings(note, { short: true }),
+    checklist ? describeProgress(progressOf(parseChecklist(body))) : null,
   ].filter((part): part is string => Boolean(part));
 
   const effective = effectiveLanguage(language, settings?.default_language);

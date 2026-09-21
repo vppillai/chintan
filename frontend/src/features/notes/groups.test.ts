@@ -115,6 +115,18 @@ describe('describeRecordings', () => {
   it('leaves the duration off when none is known', () => {
     expect(describeRecordings({ ...note('a', at(0)), captures: [{}] })).toBe('1 recording');
   });
+
+  it('has a short form for the note’s one-line meta', () => {
+    expect(
+      describeRecordings(
+        { ...note('a', at(0)), captures: [{ duration_ms: 12_000 }, { duration_ms: 5_000 }] },
+        { short: true },
+      ),
+    ).toBe('2 rec · 0:17');
+    expect(describeRecordings({ ...note('a', at(0)), captures: [{}] }, { short: true })).toBe(
+      '1 rec',
+    );
+  });
 });
 
 describe('describeMoment', () => {

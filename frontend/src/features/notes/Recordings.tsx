@@ -274,7 +274,7 @@ export function Recordings({
 
         {ordered.length === 0 && !localUpload ? (
           <p className="recordings__empty">
-            Nothing recorded into this note yet. “Record into this” below adds one.
+            Nothing recorded into this note yet. The microphone below records into it.
           </p>
         ) : (
           <ul className="recordings__list" role="list">

@@ -73,9 +73,15 @@ function mount(note: NoteDetailWire = NOTE) {
   return { patches };
 }
 
+/** Details is an item of the header's ⋮ menu, and opens a drawer at the foot. */
+async function openDetails(): Promise<void> {
+  await userEvent.click(screen.getByRole('button', { name: 'Note actions' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Details' }));
+}
+
 async function openLanguage(): Promise<HTMLSelectElement> {
   await screen.findByDisplayValue('Roof repair');
-  await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+  await openDetails();
   return (await screen.findByRole('combobox', {
     name: 'Transcription language',
   })) as HTMLSelectElement;
@@ -150,7 +156,7 @@ describe('the language is where the user looks', () => {
   it('is the first field of Details, before the tags and the other names', async () => {
     mount();
     await screen.findByDisplayValue('Roof repair');
-    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+    await openDetails();
 
     const panel = screen.getByRole('combobox', { name: 'Transcription language' }).closest(
       '.note-panel',
@@ -190,7 +196,7 @@ describe('the language is where the user looks', () => {
 
     const select = screen.getByRole('combobox', { name: 'Transcription language' });
     expect(select).toHaveFocus();
-    expect(screen.getByRole('button', { name: 'Details' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
   });
 });
 

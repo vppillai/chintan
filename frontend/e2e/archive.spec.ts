@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { expect, noteAction, test } from './fixtures.ts';
 
 /**
  * Removing a note: archive, see the archive, restore, delete forever.
@@ -20,7 +20,7 @@ test('a note can be archived from its own screen', async ({ page, api }) => {
   await page.goto('/notes/roof-repair');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
-  await page.getByRole('button', { name: 'Archive' }).click();
+  await noteAction(page, 'Archive');
 
   // Archiving is reversible, so it asks once and plainly rather than demanding
   // the title be typed — that discipline is reserved for the irreversible one.
@@ -78,7 +78,7 @@ test('an archived note can be restored', async ({ page, api }) => {
 test('delete forever is gated by typing the title, and cascades', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
-  await page.getByRole('button', { name: 'Delete forever' }).click();
+  await noteAction(page, 'Delete forever');
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
@@ -168,7 +168,7 @@ test('the archive can be emptied: select all, delete forever, type the word', as
 test('escape closes the delete dialog without deleting anything', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
-  await page.getByRole('button', { name: 'Delete forever' }).click();
+  await noteAction(page, 'Delete forever');
   await expect(page.getByRole('dialog')).toBeVisible();
 
   await page.keyboard.press('Escape');

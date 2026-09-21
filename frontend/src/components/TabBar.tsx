@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router';
+import { Link, matchPath, useLocation } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
 
@@ -43,16 +43,20 @@ const TABS: readonly Tab[] = [
  *
  * Tabs are links, not buttons: each is a navigation to a real URL, which is
  * what makes Back work without any state of its own.
+ *
+ * While a note is open the mic records into it: the URL is the one fact the
+ * bar needs, and reading it here keeps the note screen out of the shell.
  */
 export function TabBar() {
   const { pathname } = useLocation();
   const [home, you] = TABS as [Tab, Tab];
+  const noteId = matchPath(ROUTES.notePattern, pathname)?.params.id ?? null;
 
   return (
     <nav className="tab-bar" aria-label="Main">
       <TabLink tab={home} current={home.matches(pathname)} />
       <div className="tab-bar__record">
-        <RecordButton />
+        <RecordButton noteId={noteId} />
       </div>
       <TabLink tab={you} current={you.matches(pathname)} />
     </nav>

@@ -134,8 +134,6 @@ test('several recordings download as one archive, with progress', async ({
   const barBox = await page.locator('.selection-bar').boundingBox();
   const tabBox = await page.locator('.tab-bar').boundingBox();
   expect(barBox!.y + barBox!.height).toBeLessThanOrEqual(tabBox!.y + 1);
-  // And the note's own action bar has stepped aside.
-  await expect(page.getByRole('toolbar', { name: 'Note actions' })).toBeHidden();
 
   const download = page.waitForEvent('download');
   await bar.getByRole('button', { name: 'Download' }).click();

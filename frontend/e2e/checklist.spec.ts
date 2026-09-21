@@ -2,7 +2,7 @@ import process from 'node:process';
 
 import type { Locator, Page } from '@playwright/test';
 
-import { CLEAN_WORKER_MS, expect, test, type ApiState } from './fixtures.ts';
+import { CLEAN_WORKER_MS, expect, noteAction, test, type ApiState } from './fixtures.ts';
 
 /** The text of every field in a list of items, in order — the add row's empty one last. */
 function values(list: Locator): Promise<string[]> {
@@ -116,7 +116,7 @@ test('Details turns a note into a checklist and back, sending kind with the conv
 }) => {
   api.notes['roof-repair']!.body = 'Ridge tiles on the south slope have slipped.\n\nGet two quotes.';
   await page.goto('/notes/roof-repair');
-  await page.getByRole('button', { name: 'Details' }).click();
+  await noteAction(page, 'Details');
   const toggle = page.getByRole('checkbox', { name: 'This note is a checklist' });
   await expect(toggle).not.toBeChecked();
 
@@ -134,7 +134,7 @@ test('Details turns a note into a checklist and back, sending kind with the conv
 
   // And back: every item a paragraph, the switch's state reloaded from the note.
   await page.reload();
-  await page.getByRole('button', { name: 'Details' }).click();
+  await noteAction(page, 'Details');
   await expect(page.getByRole('checkbox', { name: 'This note is a checklist' })).toBeChecked();
   await page.getByRole('checkbox', { name: 'This note is a checklist' }).uncheck();
   await expect(page.getByRole('tab', { name: 'Text' })).toBeVisible();

@@ -1,14 +1,23 @@
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
 import { PATHS } from './Icon.tsx';
 import { TabBar } from './TabBar.tsx';
 
+function Where() {
+  const { pathname, search } = useLocation();
+  return <output>{pathname + search}</output>;
+}
+
 function mount(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <TabBar />
+      <Routes>
+        <Route path="*" element={<Where />} />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -32,5 +41,29 @@ describe('the tab bar', () => {
     mount('/notes/roof-repair');
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'You' })).not.toHaveAttribute('aria-current');
+  });
+});
+
+/**
+ * The mic is contextual: on a note it records into that note, and says so.
+ * The note's own "Record into this" sat 30 px above a mic that recorded into
+ * a new note (review 2026-09-21, T6); one control now, one destination.
+ */
+describe('the record button', () => {
+  it('records into a new note from the library', async () => {
+    mount('/');
+    const record = screen.getByRole('button', { name: 'Record' });
+    expect(record).not.toHaveAttribute('data-into');
+    await userEvent.click(record);
+    expect(screen.getByRole('status')).toHaveTextContent('/capture');
+  });
+
+  it('records into the open note, and wears its caption, while a note is on screen', async () => {
+    mount('/notes/roof-repair?tab=recordings');
+    const record = screen.getByRole('button', { name: /^record into this note$/i });
+    expect(record).toHaveAttribute('data-into');
+    expect(record).toHaveTextContent('Into this note');
+    await userEvent.click(record);
+    expect(screen.getByRole('status')).toHaveTextContent('/capture?note=roof-repair');
   });
 });

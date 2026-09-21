@@ -1,0 +1,143 @@
+/*
+ * The note screen's own rules: the header's ⋮ menu, the one-line meta, the
+ * record button's caption while a note is open, and the Details/Share drawer
+ * at the foot. Split from shell.css the way capture.css was (#62), so the
+ * Home stream's edits there do not collide; the strip, the tab panels and
+ * the recordings stay in shell.css, whose `.note-bar*` rules this file
+ * supersedes.
+ */
+
+/* --------------------------------------------------------------------------
+   Header — Find, then the note's actions
+   -------------------------------------------------------------------------- */
+
+/* The failure line from an archive, restore or delete: a header flex child
+   that wraps to its own row beneath the controls. */
+.note-menu__error {
+  flex-basis: 100%;
+}
+
+/* "5 Sept · house · 3 rec · 0:17 · Malayalam": one line, always. What does
+   not fit ends in an ellipsis rather than a second row; the block padding
+   keeps the language button's focus ring inside the clip. */
+.note-meta {
+  overflow: hidden;
+  margin-block: var(--space-1) var(--space-2);
+  padding-block: var(--space-1);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The tab panel carries the screen's bottom breathing room now that no bar
+   stands between it and the tab bar; the recordings' selection bar, which
+   must rest on the tab bar, hands it back. */
+.note-tabpanel {
+  padding-block-end: var(--space-6);
+}
+
+.note-tabpanel > .selection-bar {
+  margin-block-end: calc(-1 * var(--space-6));
+}
+
+/* --------------------------------------------------------------------------
+   Record button — "Into this note" while a note is open
+   -------------------------------------------------------------------------- */
+
+/*
+ * The caption is a small pill riding the bar's top edge above the disc, so
+ * the bar keeps its height and the mic stays the one record control on the
+ * screen. Inside the button: part of the target, and of the name.
+ */
+.record-button[data-into] {
+  position: relative;
+}
+
+.record-button__into {
+  position: absolute;
+  inset-block-start: calc(-1 * var(--space-2) - 0.75rem);
+  inset-inline-start: 50%;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-ink);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-wide);
+  line-height: var(--line-height-normal);
+  color: var(--color-ground);
+  white-space: nowrap;
+  translate: -50% 0;
+}
+
+/* --------------------------------------------------------------------------
+   Drawer — Details or Share, at the foot of the scroll region
+   -------------------------------------------------------------------------- */
+
+/*
+ * Sticky to the foot of the scrolling region, not fixed to the viewport: the
+ * tab bar owns the viewport's bottom row and a fixed drawer would sit on it.
+ * Inside `.app__main` a sticky element is clipped by that region, so it can
+ * cover nothing outside the note. Pulled out to the gutters so the sheet
+ * runs the width of the screen and the body scrolling beneath shows at
+ * neither side.
+ */
+.note-screen > .note-drawer {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--z-content);
+  margin-block-start: auto;
+  margin-inline: calc(-1 * var(--layout-gutter));
+}
+
+/* `display` is set above the UA's `[hidden]`, so stepping aside for the
+   recordings' selection bar has to be said here as well. */
+.note-drawer[hidden] {
+  display: none;
+}
+
+/* A raised sheet rising from the tab bar: a hairline and the sheet's shadow
+   along its top, its top corners rounded. The disclosure used to have no
+   edge of its own and read as the body cut off mid-line (T43). */
+.note-panel {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--layout-gutter) var(--space-4);
+  background-color: var(--color-raised);
+  border-block-start: 1px solid var(--color-line);
+  border-start-start-radius: var(--radius-lg);
+  border-start-end-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+}
+
+/* "DETAILS" as an eyebrow, the close control flush with the gutter line. */
+.note-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.note-panel__heading {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.note-panel__close {
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  margin-inline-end: calc(-1 * var(--space-2));
+  border-radius: var(--radius-full);
+  color: var(--color-muted);
+}
+
+.note-panel__close:hover,
+.note-panel__close:active {
+  color: var(--color-ink);
+  background-color: var(--color-surface);
+}

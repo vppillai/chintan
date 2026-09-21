@@ -221,7 +221,7 @@ test('Send returns to the note, where the recording files in front of the user',
   const region = page.getByRole('region', { name: 'Recordings' });
   const rows = region.getByRole('listitem');
   await expect(rows.first()).toContainText(/uploading… \d+%/i);
-  // "Record into this" is still there to keep adding.
+  // The mic still records into this note, to keep adding.
   await expect(page.getByRole('button', { name: /record into this/i })).toBeVisible();
 
   releaseCreate();

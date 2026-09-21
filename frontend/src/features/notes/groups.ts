@@ -149,7 +149,8 @@ export function formatDurationShort(ms: number): string {
 }
 
 /**
- * "3 recordings · 4:12", when the payload carries the captures.
+ * "3 recordings · 4:12", when the payload carries the captures; "3 rec · 4:12"
+ * in the `short` form the note's one-line meta uses.
  *
  * The list endpoint does not: `Note` on the wire has no capture count or
  * duration (`docs/api/openapi.yaml`), only `NoteDetail` has `captures`. So on
@@ -160,11 +161,13 @@ export function formatDurationShort(ms: number): string {
  */
 export function describeRecordings(
   note: NoteWire & { captures?: readonly Pick<CaptureWire, 'duration_ms'>[] },
+  { short = false }: { short?: boolean } = {},
 ): string | null {
   const captures = note.captures;
   if (!captures || captures.length === 0) return null;
   const count = captures.length;
   const total = captures.reduce((sum, capture) => sum + (capture.duration_ms ?? 0), 0);
-  const label = `${String(count)} ${count === 1 ? 'recording' : 'recordings'}`;
+  const unit = short ? 'rec' : count === 1 ? 'recording' : 'recordings';
+  const label = `${String(count)} ${unit}`;
   return total > 0 ? `${label} · ${formatDurationShort(total)}` : label;
 }

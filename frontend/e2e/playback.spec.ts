@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 
-import { ARTIFACT_ORIGIN, expect, test } from './fixtures.ts';
+import { ARTIFACT_ORIGIN, expect, noteAction, test } from './fixtures.ts';
 
 /**
  * Inline playback with tap-to-seek, and the raw/cleaned distinction.
@@ -207,9 +207,9 @@ test('copies the note as its title and body', async ({ page, context, browserNam
   await page.goto('/notes/roof-repair');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
-  // Copy and download live behind Share in the action bar, a clear distance
-  // from Archive, so a stray thumb cannot reach both.
-  await page.getByRole('button', { name: 'Share' }).click();
+  // Copy and download live behind Share in the header's menu, a clear
+  // distance from Archive, so a stray thumb cannot reach both.
+  await noteAction(page, 'Share');
   await page.getByRole('button', { name: 'Copy note' }).click();
 
   // A copy with no confirmation cannot be told from one that failed: the
@@ -237,7 +237,7 @@ test('copies the transcript separately, and names which one', async ({
   // Three different things could be meant by "copy" on this screen, so no
   // control is allowed to be called just "Copy" — and the one inside a
   // recording's row says it copies that recording, not the note.
-  await page.getByRole('button', { name: 'Share' }).click();
+  await noteAction(page, 'Share');
   await expect(page.getByRole('button', { name: 'Copy note' })).toBeVisible();
   await page.getByRole('button', { name: 'Copy this transcript' }).click();
   await expect(page.getByRole('button', { name: 'Copied' })).toBeVisible();
