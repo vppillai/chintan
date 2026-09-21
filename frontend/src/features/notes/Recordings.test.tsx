@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { unzipSync } from 'fflate';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { queryKeys, useNote } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
@@ -12,7 +12,7 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
 import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { Recordings, filedLabel, justLanded, retranscribeLabel } from './Recordings.tsx';
+import { Recordings, filedLabel, heardAs, justLanded, retranscribeLabel } from './Recordings.tsx';
 import { describeMoment } from './groups.ts';
 
 /**
@@ -290,48 +290,47 @@ describe('a row’s More menu', () => {
   });
 });
 
+const SEGMENTS_DOC = {
+  version: 1,
+  language: 'English',
+  segments: [
+    { start_ms: 0, end_ms: 3_000, text: ' Ridge tiles have slipped.' },
+    { start_ms: 3_000, end_ms: 6_000, text: ' Ellis quoted nine hundred.' },
+  ],
+};
+
+/** The bucket answers the segments document for its URL and audio bytes for the rest. */
+function artifactsStub(language = 'English'): void {
+  // jsdom implements no scrolling, and the transcript follows playback.
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn<typeof fetch>(async (input) =>
+      String(input).includes('/segments')
+        ? new Response(JSON.stringify({ ...SEGMENTS_DOC, language }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          })
+        : new Response('webm bytes', { status: 200, headers: { 'content-type': 'audio/webm' } }),
+    ),
+  );
+}
+
+/** The roof note with a transcript behind its newest recording, and a presigned URL for it. */
+function withSegments(note: Partial<NoteDetailWire> = {}, captures = [{ ...CAPTURE, has_segments: true }, OLDER]) {
+  return apiStub(
+    { ...NOTE, ...note, captures },
+    {
+      segments: () =>
+        json({
+          url: 'https://chintan-content.s3.test/cap-1/segments.json?sig=1',
+          expires_at: new Date(Date.now() + 900_000).toISOString(),
+        }),
+    },
+  );
+}
+
 describe('copying from a row’s menu', () => {
-  beforeEach(() => {
-    // jsdom implements no scrolling, and the transcript follows playback.
-    Element.prototype.scrollIntoView = vi.fn();
-  });
-
-  const SEGMENTS_DOC = {
-    version: 1,
-    language: 'English',
-    segments: [
-      { start_ms: 0, end_ms: 3_000, text: ' Ridge tiles have slipped.' },
-      { start_ms: 3_000, end_ms: 6_000, text: ' Ellis quoted nine hundred.' },
-    ],
-  };
-
-  /** The bucket answers the segments document for its URL and audio bytes for the rest. */
-  function artifactsStub(): void {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn<typeof fetch>(async (input) =>
-        String(input).includes('/segments')
-          ? new Response(JSON.stringify(SEGMENTS_DOC), {
-              status: 200,
-              headers: { 'content-type': 'application/json' },
-            })
-          : new Response('webm bytes', { status: 200, headers: { 'content-type': 'audio/webm' } }),
-      ),
-    );
-  }
-
-  function withSegments() {
-    return apiStub(
-      { ...NOTE, captures: [{ ...CAPTURE, has_segments: true }, OLDER] },
-      {
-        segments: () =>
-          json({
-            url: 'https://chintan-content.s3.test/cap-1/segments.json?sig=1',
-            expires_at: new Date(Date.now() + 900_000).toISOString(),
-          }),
-      },
-    );
-  }
 
   it('copies this recording’s transcript from the open row and says so on the notice line', async () => {
     // The item sits in one recording's menu. "Copy transcript" read as the
@@ -365,6 +364,50 @@ describe('copying from a row’s menu', () => {
         .getAllByRole('menuitem')
         .map((item) => item.textContent),
     ).toEqual(['Move to…', 'Delete recording', 'Download audio', 'Transcribe again in English', 'Select']);
+  });
+});
+
+/**
+ * What Whisper heard (T8): the worker has always stored the detected language
+ * in `segments.json` and the app never read it, so a Malayalam recording that
+ * came back in Tamil script looked like any other. On the open row a chip says
+ * "Heard as Tamil" when that is not the language the note asked for, and is
+ * the way to transcribe it again.
+ */
+describe('the language Whisper heard', () => {
+  it('is a chip, and the fix, when it is not the note’s language', async () => {
+    const user = userEvent.setup();
+    artifactsStub('Tamil');
+    const api = withSegments({ language: 'ml' }, [{ ...CAPTURE, has_segments: true }]);
+    mount(api.fetchImpl);
+
+    const chip = await screen.findByRole('button', {
+      name: 'Heard as Tamil — transcribe again in Malayalam',
+    });
+    await user.click(chip);
+    await waitFor(() => {
+      expect(api.calls).toContainEqual(
+        expect.objectContaining({ method: 'POST', path: '/v1/captures/cap-1/retranscribe' }),
+      );
+    });
+  });
+
+  it('says nothing when Whisper heard what was asked for', async () => {
+    artifactsStub('English');
+    mount(withSegments({}, [{ ...CAPTURE, has_segments: true }]).fetchImpl);
+    await screen.findByRole('button', { name: /Ellis quoted nine hundred\./ });
+    expect(screen.queryByText(/heard as/i)).toBeNull();
+  });
+
+  it('is decided by name against the effective language, and always said under auto-detect', () => {
+    expect(heardAs('Tamil', 'ml')).toBe('Tamil');
+    expect(heardAs('malayalam', 'ml')).toBeNull();
+    expect(heardAs('English', 'en')).toBeNull();
+    expect(heardAs('English', 'auto')).toBe('English');
+    expect(heardAs(null, 'ml')).toBeNull();
+    // A code the curated list lacks still compares by its Intl name.
+    expect(heardAs('Icelandic', 'is')).toBeNull();
+    expect(heardAs('Icelandic', 'en')).toBe('Icelandic');
   });
 });
 

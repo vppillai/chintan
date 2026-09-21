@@ -9,6 +9,7 @@ import {
   loadCaptureArtifacts,
   parsePeaks,
   parseSegments,
+  parseSegmentsDocument,
   type TranscriptSegment,
 } from './artifacts.ts';
 
@@ -81,6 +82,16 @@ describe('parseSegments', () => {
     ]);
     expect(parsed[0]?.text).toBe('Create a note about the roof.');
     expect(parsed.map((segment) => segment.id)).toEqual([0, 1, 2]);
+    // And what Whisper decided the recording was in, which the app now shows
+    // when it is not what was asked for (T8).
+    expect(parseSegmentsDocument(document).language).toBe('English');
+  });
+
+  it('has no language for a bare array, a blank, or a document from before it was stored', () => {
+    expect(parseSegmentsDocument(SEGMENTS).language).toBeNull();
+    expect(parseSegmentsDocument({ segments: SEGMENTS }).language).toBeNull();
+    expect(parseSegmentsDocument({ segments: SEGMENTS, language: '  ' }).language).toBeNull();
+    expect(parseSegmentsDocument({ segments: SEGMENTS, language: 42 }).language).toBeNull();
   });
 
   it('still reads the legacy seconds shape', () => {
@@ -180,6 +191,27 @@ describe('loadCaptureArtifacts fetches the cleaned transcript', () => {
       hasSegments: false,
     });
     expect(artifacts.cleanedText).toBe('');
+    expect(artifacts.detectedLanguage).toBeNull();
+  });
+
+  it('carries the detected language out of the segments document', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) =>
+        input.endsWith('/segments')
+          ? new Response(
+              JSON.stringify({ language: 'Tamil', segments: [{ start_ms: 0, end_ms: 1000, text: 'x' }] }),
+              { headers: { 'content-type': 'application/json' } },
+            )
+          : new Response('{}', { headers: { 'content-type': 'application/json' } }),
+      ),
+    );
+    const artifacts = await loadCaptureArtifacts(api({ audio: '', segments: '' }), 'cap-3', {
+      hasPeaks: false,
+      hasSegments: true,
+    });
+    expect(artifacts.detectedLanguage).toBe('Tamil');
+    expect(artifacts.segments).toHaveLength(1);
   });
 });
 

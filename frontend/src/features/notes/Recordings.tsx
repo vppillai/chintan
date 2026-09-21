@@ -361,6 +361,7 @@ export function Recordings({
                 }}
                 onDownload={() => void runDownload([capture.id])}
                 onCopy={runCopy}
+                effectiveLanguage={effectiveLanguage}
                 retranscribeLabel={retranscribeLabel(effectiveLanguage)}
                 onRetranscribe={() => {
                   setNotice(null);
@@ -498,6 +499,24 @@ interface Notice {
   target?: NoteWire;
 }
 
+/**
+ * "Tamil" — the language Whisper heard, when it is worth a chip: under
+ * Auto-detect always, because what it picked is the one thing the reader
+ * cannot otherwise know; under a chosen language only when the two differ,
+ * which is the transcript that came back in the wrong script. The worker
+ * stores Whisper's English name, so the comparison is by name; a code the
+ * curated list lacks still compares by `Intl` name through `languageName`.
+ */
+export function heardAs(detected: string | null, effective: string): string | null {
+  if (!detected) return null;
+  const name = detected.charAt(0).toUpperCase() + detected.slice(1);
+  if (effective === AUTO_LANGUAGE) return name;
+  const same = [languageName(effective), effective].some(
+    (candidate) => candidate.toLowerCase() === detected.toLowerCase(),
+  );
+  return same ? null : name;
+}
+
 /** "Transcribe again in Malayalam", or the honest form for Auto-detect. */
 export function retranscribeLabel(language: string): string {
   return language === AUTO_LANGUAGE
@@ -628,6 +647,8 @@ interface RecordingRowProps {
   onDownload: () => void;
   /** Text from this row's menu for the clipboard; the outcome is the panel's to say. */
   onCopy: (text: string) => void;
+  /** The code a recording into this note is transcribed in, for the "Heard as" chip. */
+  effectiveLanguage: string;
   /** "Transcribe again in Malayalam": the menu item, worded for the note's language. */
   retranscribeLabel: string;
   onRetranscribe: () => void;
@@ -650,7 +671,8 @@ function RecordingRow({
   onDelete,
   onDownload,
   onCopy,
-  retranscribeLabel,
+  effectiveLanguage,
+  retranscribeLabel: retranscribeText,
   onRetranscribe,
 }: RecordingRowProps) {
   const api = useApi();
@@ -707,6 +729,7 @@ function RecordingRow({
   const segments = artifacts.data?.segments ?? [];
   const peaks = artifacts.data?.peaks ?? [];
   const cleanedText = artifacts.data?.cleanedText ?? '';
+  const heard = heardAs(artifacts.data?.detectedLanguage ?? null, effectiveLanguage);
   // A capture recorded before segments and peaks were stored has neither and
   // gets a plain player. There is no backfill, so this is a permanent branch,
   // not a migration window.
@@ -863,7 +886,7 @@ function RecordingRow({
               // and the row is already following that run.
               ...(running
                 ? []
-                : [{ label: retranscribeLabel, onSelect: onRetranscribe } satisfies OverflowMenuItem]),
+                : [{ label: retranscribeText, onSelect: onRetranscribe } satisfies OverflowMenuItem]),
               { label: 'Select', onSelect: onStartSelecting },
             ]}
           />
@@ -888,6 +911,21 @@ function RecordingRow({
               {capture.error}
             </p>
           )}
+
+          {/*
+            What Whisper heard, when it is not what was asked for: the one
+            diagnostic the owner's wrong-script transcripts lacked (T8). Under
+            a chosen language the chip is the way to put it right; under
+            Auto-detect it is a fact, and the fix is a language in Details.
+          */}
+          {heard &&
+            (effectiveLanguage === AUTO_LANGUAGE ? (
+              <p className="recording__heard">Heard as {heard}</p>
+            ) : (
+              <button type="button" className="recording__heard" onClick={onRetranscribe}>
+                Heard as {heard} — {retranscribeText.replace(/^Transcribe/, 'transcribe')}
+              </button>
+            ))}
 
           {/*
             The same controls the library's filing row offers, because a
