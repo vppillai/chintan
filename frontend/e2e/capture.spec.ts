@@ -284,7 +284,11 @@ test('Send while recording stops the recorder, then uploads', async ({ page, api
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
   expect(api.captures[0]?.note_id).toBe('roof-repair');
   api.captures[0]!.status = 'appended';
-  await expect(page.getByText('Filed').first()).toBeVisible({ timeout: 10_000 });
+  // A filed row says nothing about being filed (T19): the strip goes.
+  await expect(page.getByRole('list', { name: 'Filing progress' })).toHaveCount(0, {
+    timeout: 10_000,
+  });
+  await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
 });
 
 /**
