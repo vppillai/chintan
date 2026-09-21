@@ -99,6 +99,7 @@ export function NotesScreen() {
    */
   const [question, setQuestion] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const chipsRef = useRef<HTMLDivElement>(null);
   const askThread = useAskThread();
   /** A thread is open, so the field is its follow-up rather than a first question. */
   const following = askThread.turns.length > 0;
@@ -312,6 +313,28 @@ export function NotesScreen() {
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [activeCache.data, serverNotes, view, tag, kind]);
 
+  /*
+   * The pressed chip is where the reader is, so the row is scrolled to show
+   * it: the Archived chip sits at the row's far end and was off a phone's
+   * screen whether you arrived by the Archive row or `?view=archived` (QA
+   * 2026-09-21, finding 6). Keyed on what lays the row out, not on the chip
+   * becoming pressed: on a cold `?view=archived` the tag chips land later
+   * from IndexedDB and the counts from the network, and they pushed a chip
+   * that had scrolled itself in straight back off the screen. The row's own
+   * scrollLeft, not scrollIntoView: Chromium moves the sequential focus
+   * navigation starting point to the element it scrolls to, so the first Tab
+   * landed after the pressed chip instead of on the skip link. In jsdom every
+   * box is empty and nothing moves, which is the right thing there.
+   */
+  useEffect(() => {
+    const row = chipsRef.current;
+    const chip = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!row || !chip) return;
+    const gutter = Number.parseFloat(getComputedStyle(row).paddingInlineEnd) || 0;
+    const by = chipScrollBy(row.getBoundingClientRect(), chip.getBoundingClientRect(), gutter);
+    if (by !== 0) row.scrollLeft += by;
+  }, [asking, view, tag, kind, tagNames, checklistCount, archivedCount]);
+
   const selectableIds = visible.map((note) => note.id);
   const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
   // One note selected reads as one note (round-3 T63): "Delete it forever", not
@@ -471,7 +494,7 @@ export function NotesScreen() {
       )}
 
       {!asking && (
-        <div className="chips" role="group" aria-label="Filter notes">
+        <div ref={chipsRef} className="chips" role="group" aria-label="Filter notes">
           <Chip
             label="All"
             pressed={view === 'active' && !tag && !kind}
@@ -872,28 +895,8 @@ function Chip({
   pressed: boolean;
   onClick: () => void;
 }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  /*
-   * The pressed chip is where the reader is, so the row is scrolled to show
-   * it: the Archived chip sits at the row's far end and was off a phone's
-   * screen whether you arrived by the Archive row or `?view=archived` (QA
-   * 2026-09-21, finding 6). The row's own scrollLeft, not scrollIntoView:
-   * Chromium moves the sequential focus navigation starting point to the
-   * element it scrolls to, so the first Tab landed after the pressed chip
-   * instead of on the skip link. In jsdom every box is empty and nothing
-   * moves, which is the right thing there.
-   */
-  useEffect(() => {
-    const chip = ref.current;
-    const row = chip?.parentElement;
-    if (!pressed || !chip || !row) return;
-    const gutter = Number.parseFloat(getComputedStyle(row).paddingInlineEnd) || 0;
-    const by = chipScrollBy(row.getBoundingClientRect(), chip.getBoundingClientRect(), gutter);
-    if (by !== 0) row.scrollLeft += by;
-  }, [pressed]);
   return (
     <button
-      ref={ref}
       type="button"
       className="chip"
       aria-pressed={pressed}
