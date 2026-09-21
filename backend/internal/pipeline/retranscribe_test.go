@@ -55,6 +55,7 @@ func retranscribeNote(t *testing.T, kind string) (*harness, model.NoteIndex) {
 	note, err := h.store.PutNote(context.Background(), "user1", model.NoteIndex{
 		ID: "note1", Title: "Destination", Kind: kind, Language: "ml", UpdatedAt: model.Now(),
 		S3MarkdownKey: "tenants/user1/notes/note1/note.md",
+		S3MetaKey:     "tenants/user1/notes/note1/meta.json",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -185,5 +186,35 @@ func TestRetryOfARetranscriptionThatDiedBeforeWritingDoesNotTakeTheOldParagraphA
 	}
 	if n := len(h.stt.Sources); n != 1 {
 		t.Errorf("stt calls = %d, want one: the takeover resumes from the cleaned text", n)
+	}
+}
+
+// The editor PATCHes the whole draft when the note's language changes, body
+// included. A body that reads the same is not an edit, so the recording's
+// marker stays where it is and "transcribe again" replaces the paragraph in
+// place instead of appending a second copy (QA 2026-09-21, finding 1).
+func TestRetranscribingAfterAnUnchangedBodySaveReplacesInPlace(t *testing.T) {
+	h, note := retranscribeNote(t, "")
+	ctx := context.Background()
+	seedAppendedInto(t, h, note, "c_1", "First take.")
+	seedAppendedInto(t, h, note, "c_2", "Second take, wrong script.")
+	seedAppendedInto(t, h, note, "c_3", "Third take.")
+
+	sameBody, ml := "First take.\n\nSecond take, wrong script.\n\nThird take.", "ml"
+	notes := service.NewNotesService(h.store, h.objects)
+	if _, err := notes.UpdateNote(ctx, "user1", note.ID, service.NoteUpdates{Body: &sameBody, Language: &ml}); err != nil {
+		t.Fatalf("UpdateNote: %v", err)
+	}
+
+	svc := service.NewCaptureService(h.store, h.objects).WithInvoker(directInvoker{h.pipeline})
+	if _, err := svc.RetranscribeCapture(ctx, "user1", "c_2", ""); err != nil {
+		t.Fatalf("RetranscribeCapture: %v", err)
+	}
+	body, _ := h.objects.Get(ctx, note.S3MarkdownKey)
+	want := service.CaptureMarker("c_1") + "\nFirst take.\n\n" +
+		service.CaptureMarker("c_2") + "\nThe words as they were said.\n\n" +
+		service.CaptureMarker("c_3") + "\nThird take."
+	if string(body) != want {
+		t.Fatalf("note body after a same-body save and retranscription:\n%s\nwant:\n%s", body, want)
 	}
 }

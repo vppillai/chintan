@@ -831,7 +831,8 @@ paths:
         one line, and a ticked one stays ticked. The earlier text stays
         visible until the new one lands. The destination note is kept; a
         `needs_target` capture is routed again from the new transcript. The
-        language asked for is remembered on the capture, so a later change
+        language asked for is remembered on the capture — it is what
+        `language` reads once the new transcript lands — so a later change
         of the note's language does not transcribe this recording again on
         its own.
 
@@ -1537,6 +1538,23 @@ components:
             untouched for longer than the worker's 900 s timeout has no live
             worker.
         duration_ms: { type: integer, nullable: true }
+        language:
+          type: string
+          nullable: true
+          description: >
+            What the current transcript was asked for: `auto` or an ISO-639-1
+            code — the one a person chose at `/retranscribe` when they did,
+            else the note's effective language when the recording was
+            transcribed. Null until it has been.
+        language_detected:
+          type: string
+          nullable: true
+          description: >
+            The language the transcription provider reported the speech to be
+            in, spelled as the provider spells it and passed through unchanged
+            (Groq: `English`, `Malayalam`). Under a chosen
+            `language` the provider echoes that language back, so the two
+            differ only under `auto`. Null until transcribed.
         has_segments: { type: boolean }
         has_peaks: { type: boolean }
         version: { type: integer }

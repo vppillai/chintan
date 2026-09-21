@@ -490,7 +490,8 @@ type CaptureIndex struct {
 	// never undoes an explicit choice.
 	RequestedLanguage string `json:"requested_language,omitempty"`
 	// LanguageDetected is the language the provider reported the speech to
-	// be, as it names it ("tamil"), alongside the transcript it produced.
+	// be, spelled as the provider spells it (Groq: `English`, `Malayalam`),
+	// alongside the transcript it produced.
 	// Kept for the cleanup prompt and for the operator; segments.json carries
 	// the same value for the client.
 	LanguageDetected string `json:"language_detected,omitempty"`

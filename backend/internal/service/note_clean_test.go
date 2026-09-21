@@ -406,3 +406,24 @@ func TestAdoptingTheCleanedViewAsTheBodyKeepsItCurrent(t *testing.T) {
 		t.Error("a body that differs from the view was not marked stale")
 	}
 }
+
+// The client sends its whole draft with a Details change. A body that reads
+// the same as the stored one is not an edit: the cleaned view stays current,
+// where marking it stale had the Split up tab offer a pointless Regenerate
+// after a language change (review 2026-09-21 r4).
+func TestADetailsSaveWithTheSameBodyDoesNotMarkTheViewStale(t *testing.T) {
+	h := newEditHarness(t)
+	n := h.withCleanedView("u", h.note("u", "Roof", "the gutter leaks"), false, "")
+
+	body, ml := "the gutter leaks", "ml"
+	saved, err := h.notes.UpdateNote(h.ctx, "u", n.ID, NoteUpdates{Body: &body, Language: &ml})
+	if err != nil {
+		t.Fatalf("UpdateNote: %v", err)
+	}
+	if saved.Language != "ml" {
+		t.Errorf("language = %q, want the Details change applied", saved.Language)
+	}
+	if saved.CleanedStale || h.get("u", n.ID).CleanedStale {
+		t.Error("a save with the same body marked the cleaned view stale")
+	}
+}

@@ -164,6 +164,9 @@ func (p *Pipeline) Ask(ctx context.Context, tenantID, askID string) error {
 	// whatever the model claimed.
 	sources := ask.Sources(answer.Sources, packed)
 	grounded := answer.Grounded && len(sources) > 0
+	// The chips are the citations; an id the model wrote into the prose
+	// anyway becomes the note's title, as the prompt asked.
+	text := ask.NameNotesInProse(answer.Text, packed)
 
 	packedBytes := 0
 	for _, n := range packed {
@@ -179,7 +182,7 @@ func (p *Pipeline) Ask(ctx context.Context, tenantID, askID string) error {
 		slog.Int64("latency_ms", p.now().Sub(started).Milliseconds()),
 		slog.Bool("grounded", grounded),
 		slog.Int("sources", len(sources)))
-	return p.recordAskAnswer(ctx, &row, answer.Text, grounded, sources, "ok")
+	return p.recordAskAnswer(ctx, &row, text, grounded, sources, "ok")
 }
 
 // askModel asks the model, with one retry on a stall or a 5xx.

@@ -260,9 +260,20 @@ type Capture struct {
 	// stamped. The filing row gates Retry on it, as RetryCapture itself does.
 	LastProgressAt *string `json:"last_progress_at"`
 	DurationMS     *int64  `json:"duration_ms"`
-	HasSegments    bool    `json:"has_segments"`
-	HasPeaks       bool    `json:"has_peaks"`
-	Version        int64   `json:"version"`
+	// Language is what the current transcript was asked for — LanguageAuto
+	// or the ISO-639-1 code sent to the provider, a person's own choice at
+	// /retranscribe outranking the note's — and LanguageDetected is the name
+	// the provider gave the speech it heard. Both are null until the
+	// recording has been transcribed. The row's "Heard as" chip is the
+	// comparison of the two; until these were on the wire it had to download
+	// segments.json for the second and had nothing for the first, so the
+	// contract's "remembered on the capture" was unobservable (QA 2026-09-21,
+	// finding 2).
+	Language         *string `json:"language"`
+	LanguageDetected *string `json:"language_detected"`
+	HasSegments      bool    `json:"has_segments"`
+	HasPeaks         bool    `json:"has_peaks"`
+	Version          int64   `json:"version"`
 	// Targeted is true when a person chose the destination — the client
 	// named note_id at POST /v1/captures, or a person picked the note for a
 	// needs_target capture — and false when the router decided or nothing
@@ -324,6 +335,14 @@ func captureOf(c model.CaptureIndex) Capture {
 	if c.LastProgressAt != "" {
 		v := c.LastProgressAt
 		out.LastProgressAt = &v
+	}
+	if c.Language != "" {
+		v := c.Language
+		out.Language = &v
+	}
+	if c.LanguageDetected != "" {
+		v := c.LanguageDetected
+		out.LanguageDetected = &v
 	}
 	return out
 }

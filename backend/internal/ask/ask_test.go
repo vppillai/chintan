@@ -462,3 +462,32 @@ func TestFoldScriptJoinsTheTwoChilluSpellings(t *testing.T) {
 		}
 	}
 }
+
+// An id the model wrote into the answer becomes the note's title, and an id
+// of nothing that was packed disappears; prose without one is left alone.
+func TestNameNotesInProseSwapsIdsForTitles(t *testing.T) {
+	packed := []Packed{
+		{NoteID: "note_18d238868aef1800_ff6ee72b91682a42", Title: "Stale check mobile"},
+		{NoteID: "note_18d2000000000000_0000000000000001", Title: "Roof\nrepair"},
+	}
+	for _, tc := range []struct{ name, in, want string }{
+		{"no id", "The roofer comes on the 14th.", "The roofer comes on the 14th."},
+		{"id with its title in brackets, as QA saw it", `note_18d238868aef1800_ff6ee72b91682a42 (Stale check mobile): "Ask the roofer"`,
+			`Stale check mobile: "Ask the roofer"`},
+		{"the bracketed title in another case", "note_18d238868aef1800_ff6ee72b91682a42 (stale check MOBILE) says", "Stale check mobile says"},
+		{"a bracketed remark that is not the title stays", "note_18d238868aef1800_ff6ee72b91682a42 (updated Monday) says", "Stale check mobile (updated Monday) says"},
+		{"two ids, one on each line", "- note_18d238868aef1800_ff6ee72b91682a42 says no\n- `note_18d2000000000000_0000000000000001` says yes",
+			"- Stale check mobile says no\n- `Roof repair` says yes"},
+		{"an italicised id", "see _note_18d238868aef1800_ff6ee72b91682a42_ for that", "see _Stale check mobile_ for that"},
+		{"an id of nothing packed is a note", "see note_18d2ffffffffffff_ffffffffffffffff for that", "see a note for that"},
+		{"an id of nothing packed keeps the name the model gave it", "see note_18d2ffffffffffff_ffffffffffffffff (Gutters) for that", "see Gutters for that"},
+		{"footnote is not a note id", "a footnote_1 here", "a footnote_1 here"},
+		{"a bare note_ prefix is not an id", "the note_id field", "the note_id field"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := NameNotesInProse(tc.in, packed); got != tc.want {
+				t.Errorf("NameNotesInProse(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
