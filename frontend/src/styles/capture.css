@@ -335,3 +335,119 @@
 .filing--banner .filing-row {
   padding-block: var(--space-2);
 }
+
+/* --------------------------------------------------------------------------
+   Push-to-talk — the tab-bar mic held, and the card above the bar
+   (owner feedback 2026-09-24)
+   -------------------------------------------------------------------------- */
+
+/*
+ * The disc's own rules are shell.css's; these are the hold's. `touch-action:
+ * none` so a finger resting on the mic is the mic's — a page that pans under
+ * a held button cancels the pointer mid-sentence — and no callout or
+ * selection from the long press. Later in the cascade than `:active`, at the
+ * same specificity, so the held disc swells rather than shrinking.
+ */
+.record-button {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.record-button[data-holding] {
+  transform: scale(1.1);
+  box-shadow:
+    0 0 0 var(--space-2) var(--color-accent-soft),
+    var(--shadow-lg),
+    var(--shadow-highlight);
+}
+
+/* Slid away: the disc lets go of its light, so the eye reads "not sending". */
+.record-button[data-away] {
+  transform: scale(1);
+  opacity: 0.6;
+  box-shadow: var(--shadow-sm), var(--shadow-highlight);
+}
+
+/*
+ * Over the current screen and above the bar, never in the shell's flow —
+ * a row there would shove the content up under the thumb for the length of
+ * the hold. Fixed against the viewport with the bar's height as its floor.
+ * No pointer events: the hold is the button's, and the card must not steal
+ * the pointer when the thumb drifts up into it.
+ */
+.hold-overlay {
+  position: fixed;
+  inset-inline: var(--layout-gutter);
+  inset-block-end: calc(var(--layout-bottom-bar-height) + var(--safe-bottom) + var(--space-3));
+  z-index: var(--z-toast);
+  display: grid;
+  gap: var(--space-2);
+  max-inline-size: var(--layout-card-max);
+  margin-inline: auto;
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+  pointer-events: none;
+  animation: hold-overlay-in var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+@keyframes hold-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.hold-overlay[data-away] {
+  border-color: var(--color-line-strong);
+}
+
+.hold-overlay--hint {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  border-color: var(--color-line-strong);
+}
+
+/* The live canvas, in the same explicit box the capture screen gives it. */
+.hold-overlay__level {
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  block-size: 3rem;
+  overflow: hidden;
+}
+
+.hold-overlay__timer {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-tight);
+  color: var(--color-accent-strong);
+}
+
+.hold-overlay[data-away] .hold-overlay__timer {
+  color: var(--color-muted);
+}
+
+.hold-overlay__hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/*
+ * The shell's "Recording — tap to return" row is for a microphone left open
+ * on another screen. A hold is not that: the card above says so, and the
+ * `/talk` screen is its own indicator. Without this the row appeared above
+ * the bar for the length of every hold and shoved the screen up under the
+ * thumb.
+ */
+.app:has(.hold-overlay, .talk) .recording-indicator {
+  display: none;
+}
