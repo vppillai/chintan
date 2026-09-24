@@ -2296,8 +2296,8 @@
   cursor: default;
 }
 
-/* The toggle: a real checkbox stretched invisibly over its 44 px label, with
-   a drawn mark where the box would be. */
+/* The toggle: the checklist's own box (`.checklist__box` under `.checklist__mark`,
+   in checklist.css) beside its words, on a 44 px label. */
 .cleaned__auto {
   position: relative;
   display: inline-flex;
@@ -2311,53 +2311,8 @@
   cursor: pointer;
 }
 
-.cleaned__auto-box {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  inline-size: 100%;
-  block-size: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.cleaned__auto-mark {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-sm);
-  background-color: var(--color-raised);
-  color: var(--color-ground);
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.cleaned__auto-mark svg {
-  opacity: 0;
-}
-
-.cleaned__auto-box:checked + .cleaned__auto-mark {
-  background-color: var(--color-ink);
-  border-color: var(--color-ink);
-}
-
-.cleaned__auto-box:checked + .cleaned__auto-mark svg {
-  opacity: 1;
-}
-
-.cleaned__auto-box:checked ~ span:last-child {
+.cleaned__auto .checklist__box:checked ~ span:last-child {
   color: var(--color-ink);
-}
-
-/* The hidden control's focus ring is drawn on the mark it stands behind. */
-.cleaned__auto-box:focus-visible + .cleaned__auto-mark {
-  outline: var(--layout-focus-ring-width) solid var(--color-ink);
-  outline-offset: var(--layout-focus-ring-offset);
 }
 
 /* "Generated 3 minutes ago · Structured", with Regenerate on the same line. */

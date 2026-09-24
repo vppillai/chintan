@@ -20,6 +20,7 @@ import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.t
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
 
+import { CheckMark } from './ChecklistEditor.tsx';
 import { checklistToProse, proseToChecklist } from './checklist.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -414,15 +415,13 @@ function VerbatimSwitch({
         <input
           id={id}
           type="checkbox"
-          className="cleaned__auto-box"
+          className="checklist__box"
           checked={checked}
           onChange={(event) => {
             onChange(event.target.checked);
           }}
         />
-        <span className="cleaned__auto-mark" aria-hidden="true">
-          <Icon name="check" size={16} />
-        </span>
+        <CheckMark />
         <span>Keep recordings as spoken</span>
       </label>
       <p className="language-field__hint">
@@ -459,15 +458,13 @@ function ChecklistSwitch({
         <input
           id={id}
           type="checkbox"
-          className="cleaned__auto-box"
+          className="checklist__box"
           checked={checked}
           onChange={(event) => {
             onChange(event.target.checked);
           }}
         />
-        <span className="cleaned__auto-mark" aria-hidden="true">
-          <Icon name="check" size={16} />
-        </span>
+        <CheckMark />
         <span>This note is a checklist</span>
       </label>
       <p className="language-field__hint">
