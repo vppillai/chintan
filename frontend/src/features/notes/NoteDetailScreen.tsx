@@ -317,13 +317,6 @@ export function NoteDetailScreen() {
       <SaveIndicator editor={editor} />
 
       {/*
-        A recording still on its way into this note, on every tab: Send
-        returns here rather than to the Recordings tab, so the progress has to
-        be visible from the text (owner feedback 2026-09-24).
-      */}
-      <FilingBanner note={note} localUpload={localUpload} />
-
-      {/*
         Keyed by the note: the tab strip's memory and the panels' own state
         belong to one note, and "Open <title>" after a move walks from one
         note to another without remounting this screen. The find bar's state
@@ -432,6 +425,14 @@ function NoteViews({
 
   return (
     <>
+      {/*
+        A recording still on its way into this note, above the strip: Send
+        returns here rather than to the Recordings tab, so the progress has to
+        be visible from the text (owner feedback 2026-09-24). Not on the
+        Recordings tab, where the row itself wears the same strip and the
+        same Retry — two of them a hundred pixels apart said nothing twice.
+      */}
+      {tab !== 'recordings' && <FilingBanner note={note} localUpload={localUpload} />}
       <div className="note-strip">
         <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
         {find.open && (
