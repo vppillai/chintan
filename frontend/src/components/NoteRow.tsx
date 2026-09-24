@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -120,6 +120,17 @@ export function NoteRow({
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  // Select from the ⋮ re-renders this row as a label, unmounting the trigger
+  // the menu would hand focus back to, so focus would drop to the body and a
+  // keyboard user would Tab from the top to reach the checkbox they just made.
+  // The checkbox takes it instead — only for the row that asked.
+  const checkboxRef = useRef<HTMLInputElement>(null);
+  const focusCheckbox = useRef(false);
+  useEffect(() => {
+    if (!selectable || !focusCheckbox.current) return;
+    focusCheckbox.current = false;
+    checkboxRef.current?.focus();
+  }, [selectable]);
   const busy = archive.isPending || restore.isPending || purge.isPending;
   const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
 
@@ -204,6 +215,7 @@ export function NoteRow({
         */}
         <span className="note-row__check">
           <input
+            ref={checkboxRef}
             type="checkbox"
             className="note-row__checkbox"
             checked={selected}
@@ -250,7 +262,15 @@ export function NoteRow({
         ]),
     { label: 'Delete', destructive: true, disabled: busy, onSelect: remove },
     ...(onToggleSelect
-      ? [{ label: 'Select', onSelect: () => onToggleSelect(note.id, { range: false }) }]
+      ? [
+          {
+            label: 'Select',
+            onSelect: () => {
+              focusCheckbox.current = true;
+              onToggleSelect(note.id, { range: false });
+            },
+          },
+        ]
       : []),
   ];
 

@@ -134,6 +134,25 @@ describe('NoteRow swipe actions', () => {
     ]);
   });
 
+  it('Select from the ⋮ hands focus to the checkbox that replaces the row', async () => {
+    // The menu's trigger unmounts with the row it sat on, so the checkbox is
+    // what a keyboard user should land on, not the body.
+    const user = userEvent.setup();
+    const api = testApiContext(vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 })));
+    const tree = (selectable: boolean) => (
+      <TestProviders api={api}>
+        <MemoryRouter>
+          <NoteRow note={ACTIVE} selectable={selectable} onToggleSelect={() => {}} />
+        </MemoryRouter>
+      </TestProviders>
+    );
+    const { rerender } = render(tree(false));
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    rerender(tree(true));
+    expect(screen.getByRole('checkbox')).toHaveFocus();
+  });
+
   it('has no tray while bulk-select is on, nor for a pointer that can hover', () => {
     const { unmount } = mount(ACTIVE, { selectable: true });
     expect(screen.queryByRole('group', { hidden: true })).toBeNull();
