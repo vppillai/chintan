@@ -9,7 +9,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 
-import { Icon } from '@/components/Icon.tsx';
+import { ICON_STROKE_WIDTH, Icon, PATHS } from '@/components/Icon.tsx';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 
 import {
@@ -50,6 +50,26 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
   const [adding, setAdding] = useState('');
 
   /*
+   * The row just ticked stays where it is for one beat, so the tick draws
+   * under the finger before the row moves down to Done (or back up from
+   * it): a row that moved at once was mounted afresh in the other list
+   * already ticked, and a transition does not play on mount. The body is
+   * written at once — only the grouping waits — and any other write
+   * regroups at once, because a line inserted or removed above the held
+   * row would move its index onto another item.
+   */
+  const [held, setHeld] = useState<number | null>(null);
+  useEffect(() => {
+    if (held === null) return;
+    const timer = setTimeout(() => {
+      setHeld(null);
+    }, motionBaseMs());
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [held]);
+
+  /*
    * Where the caret goes after a write that moved it: the index of the item
    * to focus, or `ADD_ROW` for the add row. Set with the edit and consumed by
    * the effect after the render that drew the new rows — the new item's input
@@ -70,14 +90,15 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
     field.setSelectionRange(field.value.length, field.value.length);
   });
 
-  const write = (next: string, focus?: number): void => {
+  const write = (next: string, focus?: number, hold: number | null = null): void => {
     editor.edit({ body: next });
     if (focus !== undefined) focusAfterWrite.current = focus;
+    setHeld(hold);
   };
   const save = (): void => void editor.saveNow();
 
   const toggle = (index: number, item: ChecklistItem): void => {
-    write(toggleItem(body, index));
+    write(toggleItem(body, index), undefined, index);
     setAnnouncement(item.done ? 'Reopened' : 'Marked done');
     save();
   };
@@ -94,8 +115,10 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
     setAdding('');
   };
 
-  const open = items.map((item, index) => ({ item, index })).filter(({ item }) => !item.done);
-  const done = items.map((item, index) => ({ item, index })).filter(({ item }) => item.done);
+  // The held row is grouped by what it was, not by what it now is.
+  const entries = items.map((item, index) => ({ item, index }));
+  const open = entries.filter(({ item, index }) => (index === held ? item.done : !item.done));
+  const done = entries.filter(({ item, index }) => (index === held ? !item.done : item.done));
 
   const onItemKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number): void => {
     if (event.key === 'Enter') {
@@ -118,18 +141,14 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
     <div className="checklist-editor">
       <ul className="checklist" role="list" aria-label="Items">
         {open.map(({ item, index }, position) => (
-          <li key={index} className="checklist__row">
-            <label className="checklist__check">
-              <input
-                type="checkbox"
-                className="checklist__box"
-                checked={false}
-                onChange={() => {
-                  toggle(index, item);
-                }}
-              />
-              <span className="visually-hidden">{item.text || `Item ${String(position + 1)}`}</span>
-            </label>
+          <li key={index} className={rowClass(item)}>
+            <Check
+              checked={item.done}
+              name={item.text || `Item ${String(position + 1)}`}
+              onChange={() => {
+                toggle(index, item);
+              }}
+            />
             <ItemField
               ref={(element) => {
                 if (element) inputs.current.set(index, element);
@@ -181,29 +200,21 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
           </h2>
           <ul className="checklist" role="list">
             {done.map(({ item, index }) => (
-              <li key={index} className="checklist__row checklist__row--done">
-                <label className="checklist__check">
-                  <input
-                    type="checkbox"
-                    className="checklist__box"
-                    checked
-                    onChange={() => {
-                      toggle(index, item);
-                    }}
-                  />
-                  <span className="visually-hidden">{item.text || 'Item'}</span>
-                </label>
+              <li key={index} className={rowClass(item)}>
+                <Check
+                  checked={item.done}
+                  name={item.text || 'Item'}
+                  onChange={() => {
+                    toggle(index, item);
+                  }}
+                />
                 <span className="checklist__text">{item.text}</span>
-                <button
-                  type="button"
-                  className="checklist__delete"
-                  aria-label={`Delete ${item.text || 'item'}`}
+                <DeleteItem
+                  text={item.text}
                   onClick={() => {
                     remove(index);
                   }}
-                >
-                  <Icon name="close" size={16} />
-                </button>
+                />
               </li>
             ))}
           </ul>
@@ -224,6 +235,108 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
 
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
+
+function rowClass(item: ChecklistItem): string {
+  return item.done ? 'checklist__row checklist__row--done' : 'checklist__row';
+}
+
+/**
+ * `--motion-duration-base` in milliseconds, read from the sheet so the hold
+ * lasts exactly as long as the tick takes to draw — one millisecond under
+ * reduced motion, where the tokens collapse. The token's own value when the
+ * sheet cannot be read (tests).
+ */
+function motionBaseMs(): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--motion-duration-base');
+  const ms = Number.parseFloat(raw);
+  return Number.isFinite(ms) ? ms : 220;
+}
+
+/**
+ * The box: a real checkbox, kept for what only it gives — the role, the
+ * name, the keyboard, the state — and stretched invisibly over its 44 px
+ * label, so the tap lands on the control itself; beside it the box a finger
+ * sees, drawn here in the icon set's own pen (`ICON_STROKE_WIDTH`, not
+ * scaling, round caps) so it reads as the same hand as every glyph. The tick
+ * is `PATHS.check` with a `pathLength` of 1, which lets the stylesheet hide
+ * it with one dash and draw it as a stroke when the box is ticked. No
+ * browser's native box appears anywhere in the app.
+ */
+function Check({
+  checked,
+  name,
+  disabled = false,
+  onChange,
+}: {
+  checked: boolean;
+  name: string;
+  disabled?: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <label className="checklist__check">
+      <input
+        type="checkbox"
+        className="checklist__box"
+        checked={checked}
+        disabled={disabled}
+        onChange={onChange}
+      />
+      <CheckMark />
+      <span className="visually-hidden">{name}</span>
+    </label>
+  );
+}
+
+/**
+ * The box a finger sees, on its own: the `.checklist__box` input before it
+ * in the same label is what the stylesheet reads the state from, so any
+ * label built that way — the Items rows, the Split up rows, the switches in
+ * the Cleaned tab and Details — shows the one drawn box.
+ */
+export function CheckMark() {
+  return (
+    <span className="checklist__mark" aria-hidden="true">
+      <svg
+        width={22}
+        height={22}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={ICON_STROKE_WIDTH}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        focusable="false"
+      >
+        <rect x={1} y={1} width={22} height={22} rx={5.5} vectorEffect="non-scaling-stroke" />
+        <path d={PATHS.check} pathLength={1} vectorEffect="non-scaling-stroke" />
+      </svg>
+    </span>
+  );
+}
+
+/** The × on a done row: gone for good, not reopened. */
+function DeleteItem({
+  text,
+  disabled = false,
+  onClick,
+}: {
+  text: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="checklist__delete"
+      aria-label={`Delete ${text || 'item'}`}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <Icon name="close" size={16} />
+    </button>
+  );
+}
 
 /**
  * An item's words: a textarea that wraps and grows with them. A recording
@@ -258,29 +371,53 @@ function ItemField({
 }
 
 /**
- * A `tasks` cleaned view, or a checklist a reader cannot edit: the same rows
- * with their boxes disabled, for the Split up tab's preview.
+ * The Split up tab's list: the same rows, ticking and deleting through the
+ * caller, which decides what body they change — `CleanedPanel` makes the
+ * first act adopt the split list as the note's body. Items stay in body
+ * order and a done one fills in where it stands rather than moving down,
+ * because this list is a reading of a proposal, not the editor; a done item
+ * still has its × as it does under Done. `disabled` holds every row while a
+ * regeneration is on its way, as the buttons are held: a tick then would
+ * adopt a proposal about to be replaced. A row is keyed by its words as
+ * well as its place, so a delete above it remounts it (no transition) rather
+ * than sliding the tick of the row that stood there.
  */
-export function ChecklistPreview({ body, label }: { body: string; label: string }) {
+export function ChecklistPreview({
+  body,
+  label,
+  disabled = false,
+  onToggle,
+  onDelete,
+}: {
+  body: string;
+  label: string;
+  disabled?: boolean;
+  onToggle: (index: number) => void;
+  onDelete: (index: number) => void;
+}) {
   const items = parseChecklist(body);
   return (
     <ul className="checklist checklist--preview" role="list" aria-label={label}>
       {items.map((item, index) => (
-        <li
-          key={index}
-          className={item.done ? 'checklist__row checklist__row--done' : 'checklist__row'}
-        >
-          <span className="checklist__check">
-            <input
-              type="checkbox"
-              className="checklist__box"
-              checked={item.done}
-              disabled
-              readOnly
-              aria-label={item.text || `Item ${String(index + 1)}`}
-            />
-          </span>
+        <li key={`${String(index)}:${item.text}`} className={rowClass(item)}>
+          <Check
+            checked={item.done}
+            name={item.text || `Item ${String(index + 1)}`}
+            disabled={disabled}
+            onChange={() => {
+              onToggle(index);
+            }}
+          />
           <span className="checklist__text">{item.text}</span>
+          {item.done && (
+            <DeleteItem
+              text={item.text}
+              disabled={disabled}
+              onClick={() => {
+                onDelete(index);
+              }}
+            />
+          )}
         </li>
       ))}
     </ul>

@@ -144,7 +144,7 @@ test('Details turns a note into a checklist and back, sending kind with the conv
   await expect.poll(() => api.notes['roof-repair']?.kind).toBe('note');
 });
 
-test('Split up has no mode picker, previews the split list read-only, and Use this list adopts it', async ({
+test('Split up has no mode picker, and its list is live: the first tick adopts the split list, later ones edit it', async ({
   page,
   api,
 }) => {
@@ -159,21 +159,47 @@ test('Split up has no mode picker, previews the split list read-only, and Use th
   const preview = page.getByRole('list', { name: 'Split up items' });
   await expect(preview).toBeVisible({ timeout: 10_000 });
   await expect(preview.getByRole('checkbox')).toHaveCount(4);
-  for (const box of await preview.getByRole('checkbox').all()) await expect(box).toBeDisabled();
+  for (const box of await preview.getByRole('checkbox').all()) await expect(box).toBeEnabled();
   await expect(preview.getByRole('textbox')).toHaveCount(0);
   await expect(page.getByText(/generated just now · split up/i)).toBeVisible();
+  const caption = page.getByText('Ticking here replaces your list with the split version.');
+  await expect(caption).toBeVisible();
   // The request named no mode; the server applied `tasks` itself.
   const clean = api.requests.find((r) => r.method === 'POST' && r.url === '/v1/notes/shopping/clean');
   expect(clean).toBeTruthy();
 
-  await page.getByRole('button', { name: 'Use this list' }).click();
-  await expect.poll(() => api.notes['shopping']?.body).toBe(
-    '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] butter',
-  );
+  // No native box anywhere: the control is a real checkbox hidden under its
+  // 44 px label, and the box beside it is drawn.
+  const butter = preview.getByRole('checkbox', { name: 'butter' });
+  await expect(butter).toHaveCSS('opacity', '0');
+  const target = await butter.locator('..').boundingBox();
+  expect(target?.height).toBeGreaterThanOrEqual(44);
+  expect(target?.width).toBeGreaterThanOrEqual(44);
+
+  // The first tick adopts the split list and ticks butter, in one PATCH.
+  await butter.click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] butter');
+  expect(api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping')).toHaveLength(1);
+  await expect(butter).toBeChecked();
+  await expect(caption).toHaveCount(0);
+  await expect(page.getByText(/your list · split up just now/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
+
+  // The next act edits the body it made, not another replacement: the ×
+  // under a done item deletes it, and butter stays done.
+  await preview.getByRole('button', { name: 'Delete Eggs' }).click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread\n- [x] butter');
+
+  // Away and back, the tab shows the body, still ticked; Regenerate stays and
+  // Use this list does not: the body already is this list.
   await page.getByRole('tab', { name: 'Items' }).click();
-  await expect
-    .poll(() => values(page.getByRole('list', { name: 'Items' })))
-    .toEqual(['Milk', 'Bread', 'butter', '']);
+  await expect.poll(() => values(page.getByRole('list', { name: 'Items' }))).toEqual(['Milk', 'Bread', '']);
+  await page.getByRole('tab', { name: 'Split up' }).click();
+  await expect(page.getByRole('list', { name: 'Split up items' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
+  await expect(page.getByText('Ticking here replaces your list with the split version.')).toHaveCount(0);
+  await expect(page.getByText('The note changed since this was generated.')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
 });
 
 /*

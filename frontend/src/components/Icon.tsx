@@ -123,7 +123,10 @@ export const PATHS: Record<IconName, string> = {
   send: 'M12 19.5V5M7.5 9.5 12 5l4.5 4.5',
   // Two boxes with a line beside each, the first ticked: a checklist note.
   // Worn by the library row before the title, so it is drawn to read at 16 px.
-  checklist: 'M4 5h5v5H4zM5.5 7.5l1 1 2-2.5M12 7.5h8M4 14h5v5H4zM12 16.5h8',
+  // The boxes have the rounded corners of the drawn box in the Items tab, so
+  // the glyph and the control read as one thing.
+  checklist:
+    'M5.25 5h2.5A1.25 1.25 0 0 1 9 6.25v2.5A1.25 1.25 0 0 1 7.75 10h-2.5A1.25 1.25 0 0 1 4 8.75v-2.5A1.25 1.25 0 0 1 5.25 5zM5.5 7.5l1 1 2-2.5M12 7.5h8M5.25 14h2.5A1.25 1.25 0 0 1 9 15.25v2.5A1.25 1.25 0 0 1 7.75 19h-2.5A1.25 1.25 0 0 1 4 17.75v-2.5A1.25 1.25 0 0 1 5.25 14zM12 16.5h8',
   // A ring with a mark in it: something went wrong here. The dot is a
   // zero-length stroke, as in `more`, so it keeps the set's weight.
   alert: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16.5v.01',
