@@ -337,6 +337,14 @@ type NoteIndex struct {
 	// above, and never on the wire.
 	AppendingCapture string `json:"appending_capture,omitempty"`
 	AppendingAt      string `json:"appending_at,omitempty"`
+	// PinnedAt and PinRank put the note in the Pinned group at the top of Home.
+	// PinnedAt is when a person pinned it (empty means not pinned); PinRank is
+	// its place among the pinned notes, PinRankStep apart, so a drag rewrites
+	// the ranks of the moved notes alone. Both are promoted attributes, written
+	// only when set, so a row from before 2026-09-24 needs no backfill and
+	// reads as unpinned. Archiving clears both: the archive is never pinned.
+	PinnedAt string `json:"pinned_at,omitempty"`
+	PinRank  int64  `json:"pin_rank,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.
@@ -347,6 +355,16 @@ type NoteIndex struct {
 	// it read; the store rejects it if the stored version has moved on.
 	Version int64 `json:"version"`
 }
+
+// Pinned reports whether the note is in the Pinned group.
+func (n NoteIndex) Pinned() bool { return n.PinnedAt != "" }
+
+// Pin bounds. Fifty pins is a shelf, not a second list; the step leaves room
+// between two ranks so a future insert-between needs no renumbering.
+const (
+	MaxPinnedNotes = 50
+	PinRankStep    = 1000
+)
 
 // CaptureStatus is where a capture sits in the pipeline. It is a string type, so
 // promoting a constant from another package into this one changes no stored

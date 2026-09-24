@@ -68,6 +68,11 @@ type Note struct {
 	// CleanedMode is the mode an automatic or unspecified clean runs in:
 	// polished or structured. Absent means structured, the default.
 	CleanedMode string `json:"cleaned_mode,omitempty"`
+	// Pinned says the note is in Home's Pinned group, and PinRank its place
+	// there (ascending; null when not pinned). Always present, so a row can
+	// render its pin glyph from one field.
+	Pinned  bool   `json:"pinned"`
+	PinRank *int64 `json:"pin_rank"`
 }
 
 // NoteCleaned is the OpenAPI NoteCleaned schema: the whole-note cleaned view.
@@ -143,6 +148,11 @@ func noteOf(n model.NoteIndex) Note {
 		Verbatim:  n.Verbatim,
 		Language:  n.Language,
 		AutoClean: n.AutoClean,
+		Pinned:    n.Pinned(),
+	}
+	if n.Pinned() {
+		rank := n.PinRank
+		out.PinRank = &rank
 	}
 	// A checklist always says tasks; a plain note says its stored preference,
 	// which for a stale tasks preference is the default it actually runs in.

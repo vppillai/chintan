@@ -596,6 +596,16 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
 		},
 
+		"POST /v1/notes/pins -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Pinned", nil)
+			h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+				map[string]any{"version": note.Version, "pinned": true})
+			return h.do(t, http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{note.ID}}).Code
+		},
+		"POST /v1/notes/pins -> 400": send(http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{"not-pinned"}}),
+		"POST /v1/notes/pins -> 401": send(http.MethodPost, "/v1/notes/pins", "", map[string]any{"ids": []string{"x"}}),
+
 		"POST /v1/notes/match -> 200": func(t *testing.T) int {
 			h := newHarness(t)
 			h.createNote(t, "user1", "Matchable", nil)

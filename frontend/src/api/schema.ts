@@ -141,6 +141,14 @@ export interface NoteWire {
    * `'structured'`. Distinct from `cleaned.mode`, the mode of the stored view.
    */
   cleaned_mode?: NoteCleanMode;
+  /**
+   * The note is in Home's Pinned group, and its place there (ascending; null
+   * when not pinned). The active list serves the pinned notes first in
+   * `pin_rank` order, then the rest by `updated_at`. Optional here only so
+   * existing literals keep compiling; the backend always sends both.
+   */
+  pinned?: boolean;
+  pin_rank?: number | null;
 }
 
 /**

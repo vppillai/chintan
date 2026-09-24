@@ -186,7 +186,7 @@ type dynamoItem struct {
 const noteListProjection = "sk, note_id, title, aliases, tags, snippet, created_at, updated_at, " +
 	"s3_markdown_key, s3_meta_key, deleted_at, purge_after, purge_after_epoch, verbatim, #lang, version, " +
 	"auto_clean, clean_mode, cleaned_mode, cleaned_at, cleaned_stale, cleaned_error, " +
-	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at, kind"
+	"cleaned_requested_at, cleaned_requested_mode, appending_capture, appending_at, kind, pinned_at, pin_rank"
 
 // languageAttr is the promoted attribute for NoteIndex.Language. `language` is
 // a DynamoDB reserved word, so the projection names it through an expression
@@ -378,6 +378,12 @@ func noteItemAttrs(tenantID string, n model.NoteIndex) (map[string]types.Attribu
 		// attribute and reads back as the zero value the model means by it.
 		item["kind"] = strAttr(n.Kind)
 	}
+	if n.PinnedAt != "" {
+		// Written together and only when pinned, like kind: an unpinned row
+		// carries neither attribute and reads as the zero value.
+		item["pinned_at"] = strAttr(n.PinnedAt)
+		item["pin_rank"] = numAttr(n.PinRank)
+	}
 	if n.SearchText != "" {
 		// Promoted only. The blob deliberately omits it (model.NoteIndex tags it
 		// json:"-"), so the field is stored once, not twice.
@@ -444,6 +450,10 @@ func noteFromItem(m map[string]types.AttributeValue) (model.NoteIndex, error) {
 	}
 	if _, ok := m["kind"]; ok {
 		n.Kind = readString(m, "kind")
+	}
+	if _, ok := m["pinned_at"]; ok {
+		n.PinnedAt = readString(m, "pinned_at")
+		n.PinRank = readInt(m, "pin_rank")
 	}
 	if _, ok := m[cleanedBodyAttr]; ok {
 		n.CleanedBody = readString(m, cleanedBodyAttr)
@@ -532,7 +542,7 @@ func (s *DynamoStore) listNotes(ctx context.Context, tenantID, shelf string, kee
 		// have been on an index walk; nothing below it is skipped or repeated.
 		start = len(kept)
 		for i, n := range kept {
-			if noteOrderKey(n) < after.key() {
+			if NoteOrderKey(n) < after.key() {
 				start = i
 				break
 			}
@@ -744,16 +754,30 @@ func (s *DynamoStore) drainNotes(ctx context.Context, tenantID string, opts List
 	return notes, true, nil
 }
 
-// noteOrderKey is the position of a note in the list: most recently touched
-// first, id breaking a tie so the order is total and a cursor unambiguous.
-// Larger sorts earlier.
-func noteOrderKey(n model.NoteIndex) string {
-	return noteTouchedSortKey(n.UpdatedAt) + "\x00" + n.ID
+// maxPinRank bounds the rank NoteOrderKey can write in twelve digits. Fifty
+// pins a step of a thousand apart never come near it; a rank past it is
+// clamped, which only ties it with the last pinned note.
+const maxPinRank = 999_999_999_999
+
+// NoteOrderKey is the position of a note in the list: the pinned tier first,
+// in pin_rank order with the more recently pinned note ahead on a tie, then
+// the rest most recently touched first; the id breaks every remaining tie so
+// the order is total and a cursor unambiguous. Larger sorts earlier, so the
+// pinned tier leads with '1' and its rank is written inverted. It is exported
+// because the in-memory store must order the way this one does — every
+// service and handler test runs against that store, and a double that put
+// the pinned notes elsewhere would pass tests production fails.
+func NoteOrderKey(n model.NoteIndex) string {
+	if n.PinnedAt == "" {
+		return "0" + noteTouchedSortKey(n.UpdatedAt) + "\x00" + n.ID
+	}
+	rank := min(max(n.PinRank, 0), maxPinRank)
+	return "1" + fmt.Sprintf("%012d", maxPinRank-rank) + "\x00" + noteTouchedSortKey(n.PinnedAt) + "\x00" + n.ID
 }
 
 func sortNotesMostRecentlyTouchedFirst(notes []model.NoteIndex) {
 	sort.SliceStable(notes, func(i, j int) bool {
-		return noteOrderKey(notes[i]) > noteOrderKey(notes[j])
+		return NoteOrderKey(notes[i]) > NoteOrderKey(notes[j])
 	})
 }
 

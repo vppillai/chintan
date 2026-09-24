@@ -162,10 +162,8 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 		if !keep(n) || !opts.Keeps(n) {
 			continue
 		}
-		// Fixed-width instant, then id to break a tie deterministically. The
-		// width matters for the same reason it does in the real store:
-		// RFC3339Nano trims trailing zeros and stops sorting chronologically.
-		entries = append(entries, entry{sortKey: noteTouchedSortKey(n) + "\x00" + id, id: id})
+		// The DynamoDB store's own key: the pinned tier, then touch order.
+		entries = append(entries, entry{sortKey: repository.NoteOrderKey(n), id: id})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].sortKey > entries[j].sortKey })
 
@@ -192,15 +190,6 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 		}
 		return n
 	})
-}
-
-// noteTouchedSortKey renders a note's update time the way the DynamoDB store
-// orders on, so the double orders notes the way production does.
-func noteTouchedSortKey(n model.NoteIndex) string {
-	if t, err := model.ParseTime(n.UpdatedAt); err == nil {
-		return model.FormatTime(t)
-	}
-	return n.UpdatedAt
 }
 
 func (s *Store) ListNotes(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {

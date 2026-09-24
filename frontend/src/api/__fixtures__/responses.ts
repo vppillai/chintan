@@ -93,22 +93,6 @@ export const settingsStored: SettingsWire = {
 export const notesPage: Page<NoteWire> = {
   "items": [
     {
-      "aliases": [],
-      "archived": false,
-      "auto_clean": false,
-      "created_at": "2026-01-01T00:00:00.000000000Z",
-      "id": "fixture-id",
-      "kind": "note",
-      "purge_after": null,
-      "tags": [
-        "house"
-      ],
-      "title": "Reading list",
-      "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "verbatim": true,
-      "version": 2
-    },
-    {
       "aliases": [
         "kitchen",
         "reno"
@@ -118,6 +102,8 @@ export const notesPage: Page<NoteWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
+      "pin_rank": 0,
+      "pinned": true,
       "purge_after": null,
       "snippet": "Quotes are in. The tiler can start on the fourteenth.",
       "tags": [
@@ -126,6 +112,24 @@ export const notesPage: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 3
+    },
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 1000,
+      "pinned": true,
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
       "version": 2
     }
   ]
@@ -135,22 +139,6 @@ export const notesPage: Page<NoteWire> = {
 export const notesPageWithSearchText: Page<NoteWire> = {
   "items": [
     {
-      "aliases": [],
-      "archived": false,
-      "auto_clean": false,
-      "created_at": "2026-01-01T00:00:00.000000000Z",
-      "id": "fixture-id",
-      "kind": "note",
-      "purge_after": null,
-      "tags": [
-        "house"
-      ],
-      "title": "Reading list",
-      "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "verbatim": true,
-      "version": 2
-    },
-    {
       "aliases": [
         "kitchen",
         "reno"
@@ -160,6 +148,8 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
+      "pin_rank": 0,
+      "pinned": true,
       "purge_after": null,
       "search_text": "quotes are in. the tiler can start on the fourteenth.",
       "snippet": "Quotes are in. The tiler can start on the fourteenth.",
@@ -169,6 +159,24 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 3
+    },
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 1000,
+      "pinned": true,
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
       "version": 2
     }
   ]
@@ -207,6 +215,8 @@ export const noteDetail: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
+  "pin_rank": 0,
+  "pinned": true,
   "purge_after": null,
   "snippet": "Quotes are in. The tiler can start on the fourteenth.",
   "tags": [
@@ -215,7 +225,53 @@ export const noteDetail: NoteDetailWire = {
   ],
   "title": "Kitchen rebuild",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 2
+  "version": 3
+};
+
+/** POST /v1/notes/pins → 200. The listed notes in the order sent, pin_rank rewritten as position × 1000; one request per drag. No cursor. */
+export const notePinsReordered: Page<NoteWire> = {
+  "items": [
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 0,
+      "pinned": true,
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
+      "version": 3
+    },
+    {
+      "aliases": [
+        "kitchen",
+        "reno"
+      ],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 1000,
+      "pinned": true,
+      "purge_after": null,
+      "snippet": "Quotes are in. The tiler can start on the fourteenth.",
+      "tags": [
+        "house",
+        "money"
+      ],
+      "title": "Kitchen rebuild",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 4
+    }
+  ]
 };
 
 /** GET /v1/notes/{noteId} → 200 for a note with a whole-note cleaned view (auto_clean on, structured). stale is true because the body changed after generated_at; the view is read-only and regenerated by POST /clean. */
@@ -235,6 +291,8 @@ export const noteDetailCleaned: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "snippet": "the gutter leaks. call the roofer on the fourteenth.",
   "tags": [],
@@ -255,6 +313,8 @@ export const noteDetailChecklist: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "snippet": "- [x] passport\n- [ ] charger",
   "tags": [],
@@ -274,6 +334,8 @@ export const notesPageChecklists: Page<NoteWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "checklist",
+      "pin_rank": null,
+      "pinned": false,
       "purge_after": null,
       "snippet": "- [x] passport\n- [ ] charger",
       "tags": [],
@@ -301,6 +363,8 @@ export const noteDetailChecklistCleaned: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "snippet": "- [x] passport\n- [ ] charger",
   "tags": [],
@@ -323,6 +387,8 @@ export const noteCreated: NoteWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "tags": [],
   "title": "A new thought",

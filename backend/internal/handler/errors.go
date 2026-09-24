@@ -51,6 +51,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture has no note yet; choose one with /target instead of moving it", nil)
 	case errors.Is(err, service.ErrCaptureAudioExpired):
 		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
+	case errors.Is(err, service.ErrPinLimit):
+		httperr.Conflict(w, r, err.Error(), nil)
 
 	// ---- client mistakes -------------------------------------------------
 	case errors.Is(err, service.ErrNoteNotArchived):
@@ -74,6 +76,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrInvalidNoteCleanMode),
 		errors.Is(err, service.ErrChecklistCleanMode),
 		errors.Is(err, service.ErrInvalidNoteKind),
+		errors.Is(err, service.ErrPinReorderInvalid),
+		errors.Is(err, service.ErrPinBatchSize),
 		errors.Is(err, service.ErrAskQuestionRequired),
 		errors.Is(err, service.ErrAskQuestionTooLong),
 		errors.Is(err, service.ErrAskHistoryTooLong),

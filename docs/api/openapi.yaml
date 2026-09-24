@@ -129,6 +129,11 @@ paths:
     get:
       tags: [notes]
       summary: List notes
+      description: |
+        Most recently touched first, with one tier above: the pinned notes
+        lead, in `pin_rank` order (a tie broken by the more recently pinned
+        first), then the rest by `updated_at`. The cursor pages across the
+        two tiers unchanged. The archive is never pinned.
       parameters:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -413,6 +418,33 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
+
+  /v1/notes/pins:
+    post:
+      tags: [notes]
+      summary: Reorder the pinned notes
+      description: |
+        Writes the Pinned group's order in one request: each listed note's
+        `pin_rank` becomes its position in `ids` × 1000, and the notes come
+        back in that order. Every id must be one of the caller's pinned,
+        active notes, named once; anything else refuses the whole request
+        (400 `every id must be one of your pinned notes`). One request per
+        drag. Pinning and unpinning is `NoteUpdate.pinned`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotePinsRequest' }
+      responses:
+        '200':
+          description: The listed notes, in the order sent, with their new ranks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /v1/notes/match:
     post:
@@ -1172,7 +1204,7 @@ components:
 
     Note:
       type: object
-      required: [id, title, updated_at, version, archived, kind]
+      required: [id, title, updated_at, version, archived, kind, pinned]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 200 }
@@ -1252,6 +1284,21 @@ components:
             `cleaned.mode`, which is the mode the stored view was generated in.
             A checklist always reads `tasks` — the only mode it cleans in
             (see `NoteUpdate.cleaned_mode`).
+        pinned:
+          type: boolean
+          description: |
+            The note is in Home's Pinned group. Set through `NoteUpdate.pinned`;
+            archiving clears it, and a restored note comes back unpinned.
+            Always present.
+        pin_rank:
+          type: integer
+          nullable: true
+          description: |
+            The note's place in the Pinned group, ascending; null when not
+            pinned. `GET /v1/notes?state=active` lists the pinned notes first
+            in this order (a tie broken by the more recently pinned first),
+            then the rest by `updated_at`, and the cursor pages across the
+            two tiers unchanged. Rewritten by `POST /v1/notes/pins`.
 
     NoteCleaned:
       type: object
@@ -1406,6 +1453,25 @@ components:
             tasks for a checklist`), a plain note takes `polished` or
             `structured` (400 `cleaned_mode must be polished or structured`).
             `{kind: checklist, cleaned_mode: tasks}` in one request is fine.
+        pinned:
+          type: boolean
+          description: |
+            `true` puts the note in Home's Pinned group, last among the pinned
+            notes (`pin_rank` = 1000 × the number already pinned); `false`
+            takes it out. At most fifty notes are pinned (409 `you can pin up
+            to fifty notes`). The order within the group is
+            `POST /v1/notes/pins`.
+
+    NotePinsRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { type: string }
+          description: The caller's pinned notes, in the order they should hold.
 
     NotePage:
       type: object
