@@ -1,0 +1,122 @@
+/*
+ * Home after the owner's 2026-09-24 feedback: pinned notes in a group of
+ * their own at the top, reordered by drag, and the row's actions behind a ⋮
+ * at its right instead of a checkbox that slid in on hover. Tokens only.
+ */
+
+/* ==========================================================================
+   The row's ⋮ — hover- and focus-revealed for a mouse, always there, quiet,
+   under a finger. Sits in the row's padding at the top right; the row's
+   trailing padding makes room so the time column never runs under it.
+   ========================================================================== */
+
+.note-row-wrap--menu > .note-row {
+  padding-inline-end: calc(var(--space-4) + var(--layout-touch-target-min));
+}
+
+.note-row__menu {
+  position: absolute;
+  inset-block-start: var(--space-2);
+  inset-inline-end: var(--space-2);
+}
+
+/* Low emphasis where it is always visible: the row's meta colour, not its
+   control colour, so a screen of rows is not a column of dots. */
+.note-row__menu .overflow__trigger {
+  color: var(--color-faint);
+}
+
+.note-row__menu .overflow__trigger:hover,
+.note-row__menu .overflow__trigger:active,
+.note-row__menu .overflow__trigger[aria-expanded='true'] {
+  color: var(--color-ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .note-row__menu {
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity var(--motion-duration-fast) var(--motion-ease-standard),
+      visibility 0s linear var(--motion-duration-fast);
+  }
+
+  .note-row-wrap:hover .note-row__menu,
+  .note-row-wrap:focus-within .note-row__menu,
+  .note-row__menu:has([aria-expanded='true']) {
+    visibility: visible;
+    opacity: 1;
+    transition-delay: 0s;
+  }
+}
+
+/* The pinned row's glyph, before the title like the checklist's. */
+.note-row__pin {
+  color: var(--color-faint);
+}
+
+/* ==========================================================================
+   Pinned — the group above the days, and the drag that orders it
+   ========================================================================== */
+
+.pin-list {
+  /* The drag reads the pointer against the rows; nothing here is text to select. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.pin-list[data-dragging] {
+  cursor: grabbing;
+}
+
+.pin-row {
+  position: relative;
+}
+
+/* With a grip at the left edge the row's text starts after it. */
+.pin-row[data-grip] .note-row {
+  padding-inline-start: calc(var(--space-4) + var(--layout-touch-target-min));
+}
+
+.pin-grip {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-lg);
+  color: var(--color-faint);
+  cursor: grab;
+  /* The grip is the handle for every pointer; a finger on it drags, never scrolls. */
+  touch-action: none;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.pin-grip:hover,
+.pin-grip:focus-visible {
+  color: var(--color-ink);
+}
+
+.pin-list[data-dragging] .pin-grip {
+  cursor: grabbing;
+}
+
+/* The lifted row: a step up, the way a card lifts under the pointer, and
+   above its neighbours while it moves between them. */
+.pin-row[data-dragging] {
+  z-index: var(--z-content);
+}
+
+.pin-row[data-dragging] .note-row {
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-md);
+  transform: scale(1.01);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-row[data-dragging] .note-row {
+    transform: none;
+  }
+}

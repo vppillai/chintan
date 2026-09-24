@@ -75,16 +75,16 @@ afterEach(() => {
 });
 
 /**
- * The desktop way into selection: a pointer that can hover gets a checkbox at
- * the row's left edge, and clicking it starts the mode with that row selected.
+ * One way into selection without a hold: Select in the row's ⋮ menu, which
+ * a mouse reveals by resting on the row (the hover checkbox is gone, C).
  */
 async function startSelecting(
   user: ReturnType<typeof userEvent.setup>,
   title: string,
 ): Promise<void> {
-  const row = await screen.findByRole('button', { name: new RegExp(title, 'i') });
-  await user.hover(row);
-  await user.click(screen.getByRole('checkbox', { name: new RegExp(`^Select ${title}`, 'i') }));
+  await screen.findByRole('button', { name: new RegExp(title, 'i') });
+  await user.click(screen.getByRole('button', { name: 'More', description: new RegExp(`^${title}`) }));
+  await user.click(screen.getByRole('menuitem', { name: 'Select' }));
   await screen.findByRole('toolbar', { name: 'Bulk actions' });
 }
 
@@ -548,9 +548,23 @@ describe('doing something to several notes at once', () => {
       within(bar).getByText((_content, el) => el?.textContent === '1 selected'),
     ).toBeInTheDocument();
     expect(vibrate).toHaveBeenCalledWith(10);
-    // Without hover there is no checkbox before the press, and the press did
-    // not also open the note.
+    // There is no checkbox before the press, and the press did not also open the note.
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+  });
+
+  it('starts selecting on a held mouse button too — no hover checkbox any more', async () => {
+    setCanHover(true);
+    mount(library());
+    const row = await screen.findByRole('button', { name: /reading list/i });
+    expect(screen.queryByRole('checkbox')).toBeNull();
+
+    fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 12, clientY: 12 });
+    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
+    fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
+    fireEvent.click(row);
+
+    await screen.findByRole('toolbar', { name: 'Bulk actions' });
+    expect(screen.getByRole('checkbox', { checked: true })).toBeInTheDocument();
   });
 
   it('Shift-click on a checkbox selects the range since the last one', async () => {
@@ -783,8 +797,9 @@ describe('doing something to several notes at once', () => {
 
   it('leaves the plain list untouched when not selecting', async () => {
     // The default path — a real <button> that navigates — must still be what
-    // renders until a row is selected; and with no hover there is no checkbox
-    // at all.
+    // renders until a row is selected, and there is no checkbox at all until
+    // then, on any pointer.
+    setCanHover(true);
     mount(library());
     await screen.findByText(TEST_NOTES[0]?.title ?? '');
     expect(screen.queryByRole('checkbox')).toBeNull();

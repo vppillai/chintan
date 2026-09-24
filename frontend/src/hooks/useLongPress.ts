@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
  * Press and hold to select, the gesture every phone list already teaches.
  *
  * Pointer events rather than touch events, so one implementation serves a
- * finger and a stylus and never fires for a mouse — a desktop user has hover,
- * and a half-second click that suddenly selects would be a trap. The press is
- * cancelled the moment the pointer travels more than `LONG_PRESS_TOLERANCE_PX`,
- * which is what keeps a scroll that happens to start on a row from selecting
- * it, and on release, leave or cancel.
+ * finger, a stylus and — since the hover checkbox went (2026-09-24, C) — a
+ * mouse: press-and-hold is the one way into selection on every pointer, so
+ * nobody has to learn two. Only the primary button: a right-click is the
+ * context menu's, and arming on it would suppress that menu below. The press
+ * is cancelled the moment the pointer travels more than
+ * `LONG_PRESS_TOLERANCE_PX`, which is what keeps a scroll that happens to
+ * start on a row from selecting it, and on release, leave or cancel.
  *
  * A long press that fires is followed by the browser's own `click` when the
  * finger lifts; the row would open the note it had just selected. `consumeClick`
@@ -30,8 +32,6 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
 
 export const LONG_PRESS_MS = 500;
 export const LONG_PRESS_TOLERANCE_PX = 10;
-
-const PRESSING_POINTERS = new Set(['touch', 'pen']);
 
 export interface LongPressHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -69,7 +69,7 @@ export function useLongPress(onLongPress: (() => void) | null, ms: number = LONG
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
-      if (!callback.current || !PRESSING_POINTERS.has(event.pointerType)) return;
+      if (!callback.current || event.button !== 0) return;
       clear();
       fired.current = false;
       origin.current = { x: event.clientX, y: event.clientY };

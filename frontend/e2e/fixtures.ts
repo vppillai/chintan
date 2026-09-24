@@ -79,6 +79,9 @@ interface NoteRecord {
   cleaned_mode?: CleanMode;
   /** Prose or a task list; absent is prose, as the server maps its stored `""`. */
   kind?: 'note' | 'checklist';
+  /** Kept at the top of Home; `pin_rank` is its place there (2026-09-24, B). */
+  pinned?: boolean;
+  pin_rank?: number | null;
 }
 
 type CleanMode = 'polished' | 'structured' | 'tasks';
@@ -634,9 +637,44 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           .filter((note) => (wanted === 'archived' ? note.archived : !note.archived))
           .filter((note) => !tag || (note.tags ?? []).includes(tag))
           .filter((note) => !kind || (note.kind ?? 'note') === kind)
-          .map((note) => ({ ...note, kind: note.kind ?? 'note' }))
+          // Pinned first by rank, then the rest most recently touched first —
+          // the server's order (2026-09-24 contract, B).
+          .sort(
+            (a, b) =>
+              Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) ||
+              (a.pin_rank ?? 0) - (b.pin_rank ?? 0) ||
+              b.updated_at.localeCompare(a.updated_at),
+          )
+          .map((note) => ({
+            ...note,
+            kind: note.kind ?? 'note',
+            pinned: note.pinned ?? false,
+            pin_rank: note.pinned ? (note.pin_rank ?? 0) : null,
+          }))
           .map((note) => (corpus ? { ...note, search_text: note.body.toLowerCase() } : note)),
       });
+      return;
+    }
+
+    /*
+     * The pinned order after a drag: `index × 1000` over the listed notes,
+     * which must all be pinned. Matched before the single-note route below,
+     * which would otherwise read "pins" as a note id.
+     */
+    if (path === '/v1/notes/pins' && method === 'POST') {
+      const body = request.postDataJSON() as { ids: string[] };
+      const notes = body.ids.map((id) => state.notes[id]);
+      if (notes.some((note) => !note?.pinned)) {
+        await problem(route, 400, {
+          title: 'That request was not valid',
+          detail: 'every id must be one of your pinned notes',
+        });
+        return;
+      }
+      notes.forEach((note, index) => {
+        if (note) note.pin_rank = index * 1000;
+      });
+      await json(route, { items: notes });
       return;
     }
 
@@ -768,6 +806,12 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           note.cleaned_mode = body['cleaned_mode'];
         }
         if (body['kind'] === 'note' || body['kind'] === 'checklist') note.kind = body['kind'];
+        if (typeof body['pinned'] === 'boolean') {
+          // A new pin lands last among the pinned; unpinning clears the rank.
+          const pinnedCount = Object.values(state.notes).filter((n) => n.pinned).length;
+          note.pinned = body['pinned'];
+          note.pin_rank = body['pinned'] ? 1000 * pinnedCount : null;
+        }
         if (Array.isArray(body['tags'])) note.tags = body['tags'] as string[];
         if (typeof body['language'] === 'string') {
           // The empty string means "inherit again", which the wire spells as absence.

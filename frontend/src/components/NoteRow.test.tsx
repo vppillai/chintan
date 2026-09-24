@@ -10,9 +10,11 @@ import { setCanHover } from '@/test/setup.ts';
 import { NoteRow } from './NoteRow.tsx';
 
 /**
- * The swipe tray behind a note row: the right two actions for the view the
- * row is in, the archive on the tap, the delete behind the same typed gate
- * the note's own action bar uses. The gesture itself is SwipeRow's test.
+ * The swipe tray behind a note row: the right actions for the view the row
+ * is in, pin and archive on the tap, the delete behind the same typed gate
+ * the note's own action bar uses. The gesture itself is SwipeRow's test. And
+ * the ⋮ at the row's right, which offers the same actions plus Select to a
+ * pointer that cannot swipe (2026-09-24, C).
  */
 
 const ACTIVE: NoteWire = TEST_NOTES[0] as NoteWire;
@@ -24,9 +26,12 @@ const ARCHIVED: NoteWire = {
 
 function mount(note: NoteWire, { selectable = false } = {}) {
   const calls: string[] = [];
+  const bodies: unknown[] = [];
+  const onToggleSelect = vi.fn();
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     calls.push(`${init?.method ?? 'GET'} ${url.pathname}`);
+    if (init?.body) bodies.push(JSON.parse(String(init.body)));
     if (init?.method === 'DELETE') return new Response(null, { status: 204 });
     return new Response(JSON.stringify({ ...note, archived: false }), {
       status: 200,
@@ -36,11 +41,11 @@ function mount(note: NoteWire, { selectable = false } = {}) {
   const { unmount } = render(
     <TestProviders api={testApiContext(fetchImpl)}>
       <MemoryRouter>
-        <NoteRow note={note} selectable={selectable} onToggleSelect={() => {}} />
+        <NoteRow note={note} selectable={selectable} onToggleSelect={onToggleSelect} />
       </MemoryRouter>
     </TestProviders>,
   );
-  return { calls, unmount };
+  return { calls, bodies, onToggleSelect, unmount };
 }
 
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
@@ -57,7 +62,7 @@ function swipeOpen(): HTMLElement {
 }
 
 describe('NoteRow swipe actions', () => {
-  it('offers Archive and Delete in the library', () => {
+  it('offers Pin, Archive and Delete in the library', () => {
     mount(ACTIVE);
     const tray = screen.getByRole('group', { hidden: true });
     expect(tray).toHaveAttribute('aria-label', 'Actions for Roof repair');
@@ -65,7 +70,24 @@ describe('NoteRow swipe actions', () => {
       within(tray)
         .getAllByRole('button', { hidden: true })
         .map((button) => button.textContent),
-    ).toEqual(['Archive', 'Delete']);
+    ).toEqual(['Pin', 'Archive', 'Delete']);
+  });
+
+  it('pins on the tap, and a pinned row offers Unpin and wears the glyph', async () => {
+    const { calls, bodies, unmount } = mount(ACTIVE);
+    fireEvent.click(within(swipeOpen()).getByRole('button', { name: 'Pin' }));
+    await waitFor(() => {
+      expect(calls).toContain('PATCH /v1/notes/roof-repair');
+    });
+    expect(bodies).toEqual([{ version: ACTIVE.version, pinned: true }]);
+    expect(screen.getByRole('button', { name: /^roof repair/i })).not.toHaveAttribute('data-pinned');
+    unmount();
+
+    mount({ ...ACTIVE, pinned: true, pin_rank: 0 });
+    expect(screen.getByRole('button', { name: /^roof repair/i })).toHaveAttribute('data-pinned');
+    expect(document.querySelector('.note-row__pin')).not.toBeNull();
+    const tray = screen.getByRole('group', { hidden: true });
+    expect(within(tray).getByRole('button', { name: 'Unpin', hidden: true })).toBeInTheDocument();
   });
 
   it('offers Restore and Delete in the archive', () => {
@@ -76,6 +98,40 @@ describe('NoteRow swipe actions', () => {
         .getAllByRole('button', { hidden: true })
         .map((button) => button.textContent),
     ).toEqual(['Restore', 'Delete']);
+  });
+
+  it('offers the same actions and Select behind the ⋮, for a pointer that cannot swipe', async () => {
+    const user = userEvent.setup();
+    const { calls, onToggleSelect, unmount } = mount(ACTIVE);
+    expect(screen.queryByRole('checkbox')).toBeNull();
+
+    const more = screen.getByRole('button', { name: 'More' });
+    // Named "More" so the title answers to the row alone; the title describes it.
+    expect(more).toHaveAccessibleDescription(/^Roof repair/);
+    await user.click(more);
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Pin',
+      'Archive',
+      'Delete',
+      'Select',
+    ]);
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    expect(onToggleSelect).toHaveBeenCalledWith('roof-repair', { range: false });
+
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Archive' }));
+    await waitFor(() => {
+      expect(calls).toContain('DELETE /v1/notes/roof-repair');
+    });
+    unmount();
+
+    mount(ARCHIVED);
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Restore',
+      'Delete',
+      'Select',
+    ]);
   });
 
   it('has no tray while bulk-select is on, nor for a pointer that can hover', () => {

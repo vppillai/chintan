@@ -1,8 +1,13 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { useArchiveNote, useDeleteNoteForever, useRestoreNote } from '@/api/queries.ts';
+import {
+  useArchiveNote,
+  useDeleteNoteForever,
+  usePinNote,
+  useRestoreNote,
+} from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import {
@@ -15,10 +20,10 @@ import {
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useLongPress } from '@/hooks/useLongPress.ts';
-import { HOVER_QUERY, useMediaQuery } from '@/hooks/useMediaQuery.ts';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
 import { Icon } from './Icon.tsx';
+import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu.tsx';
 import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
 
 export interface SelectOptions {
@@ -37,6 +42,12 @@ export interface NoteRowProps {
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (noteId: string, options: SelectOptions) => void;
+  /**
+   * Whether pressing and holding the row starts selection. Off for a pinned
+   * row under a finger, where the same hold lifts the row to reorder it
+   * (`PinnedGroup`); Select is still in the row's ⋮ menu there.
+   */
+  holdToSelect?: boolean;
   /**
    * A search hit: the excerpt around the match stands in for the snippet, and
    * the matched term is marked in it. Absent on the plain library.
@@ -60,18 +71,24 @@ export interface NoteRowProps {
  * meta line — counted from the snippet, which is the body's first 500 runes,
  * so the total is a floor ("3 of 7+ done") when the snippet was cut.
  *
- * Two ways into selection, one per kind of pointer (backlog U2). A finger
- * presses and holds the row; a mouse gets a checkbox that slides in at the
- * row's left edge on hover (and on focus, for the keyboard), and Shift-click
- * on it selects the range since the last one. The "Select" button that sat in
- * the header is gone: it was a desktop idiom on a phone screen, and on the
- * desktop it was a second step before the first click.
+ * Two ways into selection, the same on every pointer (backlog U2; owner,
+ * 2026-09-24: "hover to get a checkbox is not clean UX"). Press and hold the
+ * row — a finger or a mouse, `useLongPress` takes both — or pick Select from
+ * the row's ⋮ menu. The menu sits at the row's right: revealed on hover and
+ * on focus for a pointer that can hover, always there at low emphasis under
+ * a finger, where nothing can hover. It holds Pin (or Unpin), Archive (or
+ * Restore), Delete and Select, so every action the swipe tray offers is a
+ * click away on the desktop too. The checkbox that slid in at the row's left
+ * edge on hover is gone; the "Select" button that sat in the header before it
+ * went for the same reason.
  *
  * And a third gesture, for a finger only: swipe the row aside for its actions
- * (backlog N8). In the library that is Archive and Delete; in the archive,
- * Restore and Delete. The row carries these itself — its own mutations, its
- * own confirmation — so the screen that lists it need know nothing about
- * them. The two keep the disciplines the note's own menu sets: archiving is
+ * (backlog N8). In the library that is Pin, Archive and Delete; in the
+ * archive, Restore and Delete. The row carries these itself — its own
+ * mutations, its own confirmation — so the screen that lists it need know
+ * nothing about them. Pinning keeps the note at the top of Home in a group of
+ * its own (2026-09-24, B); the glyph before the title says so. Archive and
+ * delete keep the disciplines the note's own menu sets: archiving is
  * reversible and happens on the tap; deleting is not, so it names what goes
  * and asks for "delete" to be typed — the word every delete in the app asks
  * for, not the title, which dictated is 27 characters of digits on a phone
@@ -85,13 +102,14 @@ export function NoteRow({
   selectable = false,
   selected = false,
   onToggleSelect,
+  holdToSelect = true,
   excerpt,
   highlight,
 }: NoteRowProps) {
   const navigate = useNavigate();
-  const canHover = useMediaQuery(HOVER_QUERY);
+  const titleId = useId();
   const longPress = useLongPress(
-    onToggleSelect && !selectable
+    onToggleSelect && holdToSelect && !selectable
       ? () => {
           onToggleSelect(note.id, { range: false });
         }
@@ -100,9 +118,10 @@ export function NoteRow({
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const purge = useDeleteNoteForever();
+  const pin = usePinNote();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const busy = archive.isPending || restore.isPending || purge.isPending;
-  const failure = archive.error ?? restore.error ?? purge.error;
+  const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
 
   const tags = note.tags ?? [];
   const time = formatRowTime(note.updated_at);
@@ -121,7 +140,9 @@ export function NoteRow({
   const body = (
     <>
       <span className="note-row__head">
-        <span className="note-row__title">
+        <span id={titleId} className="note-row__title">
+          {/* Decorative: the row sits under the "Pinned" heading, which says it. */}
+          {note.pinned && <Icon name="pin" size={16} className="note-row__kind note-row__pin" />}
           {checklist && <Icon name="checklist" size={16} className="note-row__kind" />}
           {note.title}
         </span>
@@ -164,6 +185,7 @@ export function NoteRow({
       <label
         className="note-row note-row--selectable"
         data-selected={selected || undefined}
+        data-pinned={note.pinned || undefined}
         onClick={(event) => {
           /*
            * The finger lifting after the long press that started this mode
@@ -199,45 +221,38 @@ export function NoteRow({
     );
   }
 
+  const togglePin = (): void => {
+    pin.mutate({ note, pinned: !note.pinned });
+  };
+  const pinLabel = note.pinned ? 'Unpin' : 'Pin';
+  const remove = (): void => {
+    setConfirmingDelete(true);
+  };
+
+  // The tray and the menu offer the same actions, in the same words: the
+  // tray's nearest button is its last, so Delete sits at the edge of both.
   const actions: SwipeAction[] = note.archived
     ? [
-        {
-          id: 'restore',
-          label: 'Restore',
-          icon: 'restore',
-          onSelect: () => {
-            restore.mutate(note.id);
-          },
-        },
-        {
-          id: 'delete',
-          label: 'Delete',
-          icon: 'trash',
-          destructive: true,
-          onSelect: () => {
-            setConfirmingDelete(true);
-          },
-        },
+        { id: 'restore', label: 'Restore', icon: 'restore', onSelect: () => restore.mutate(note.id) },
+        { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: remove },
       ]
     : [
-        {
-          id: 'archive',
-          label: 'Archive',
-          icon: 'archive',
-          onSelect: () => {
-            archive.mutate(note.id);
-          },
-        },
-        {
-          id: 'delete',
-          label: 'Delete',
-          icon: 'trash',
-          destructive: true,
-          onSelect: () => {
-            setConfirmingDelete(true);
-          },
-        },
+        { id: 'pin', label: pinLabel, icon: 'pin', onSelect: togglePin },
+        { id: 'archive', label: 'Archive', icon: 'archive', onSelect: () => archive.mutate(note.id) },
+        { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: remove },
       ];
+  const menu: OverflowMenuItem[] = [
+    ...(note.archived
+      ? [{ label: 'Restore', disabled: busy, onSelect: () => restore.mutate(note.id) }]
+      : [
+          { label: pinLabel, disabled: busy, onSelect: togglePin },
+          { label: 'Archive', disabled: busy, onSelect: () => archive.mutate(note.id) },
+        ]),
+    { label: 'Delete', destructive: true, disabled: busy, onSelect: remove },
+    ...(onToggleSelect
+      ? [{ label: 'Select', onSelect: () => onToggleSelect(note.id, { range: false }) }]
+      : []),
+  ];
 
   return (
     <>
@@ -247,10 +262,11 @@ export function NoteRow({
         label={`Actions for ${note.title}`}
         className="note-swipe"
       >
-        <div className="note-row-wrap">
+        <div className="note-row-wrap note-row-wrap--menu">
           <button
             type="button"
             className="note-row"
+            data-pinned={note.pinned || undefined}
             onClick={() => {
               // The click that follows a long press is the finger lifting, not a tap.
               if (longPress.consumeClick()) return;
@@ -262,26 +278,14 @@ export function NoteRow({
           </button>
 
           {/*
-            After the row in the DOM so Tab reaches it from the row it selects, and
-            the row's focus is what reveals it (`:focus-within` on the wrap). Drawn
-            only for a pointer that can hover; a finger has the long press.
+            After the row in the DOM so Tab reaches it from the row it acts on,
+            and the row's focus is what reveals it (`:focus-within` on the wrap)
+            where hover does the same for a mouse. Named "More" and described
+            by the title, so the title answers to the row alone.
           */}
-          {canHover && onToggleSelect && (
-            <span className="note-row__hover-check">
-              <input
-                type="checkbox"
-                className="note-row__checkbox"
-                checked={false}
-                aria-label={`Select ${note.title}`}
-                onClick={(event) => {
-                  onToggleSelect(note.id, { range: event.shiftKey });
-                }}
-                onChange={() => {
-                  /* Handled on click, above, where Shift is known. */
-                }}
-              />
-            </span>
-          )}
+          <span className="note-row__menu">
+            <OverflowMenu label="More" describedBy={titleId} items={menu} />
+          </span>
         </div>
       </SwipeRow>
 
