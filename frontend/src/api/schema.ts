@@ -234,6 +234,13 @@ export interface NoteUpdateWire {
    * itself (`cleaned.body`) is read-only and cannot be sent.
    */
   cleaned_mode?: NoteCleanMode;
+  /** Pin to or unpin from the top of Home. The server assigns the rank. */
+  pinned?: boolean;
+}
+
+/** `POST /v1/notes/pins`: the pinned notes in the order they should stand. */
+export interface NotePinsWire {
+  ids: string[];
 }
 
 export type NoteState = 'active' | 'archived';

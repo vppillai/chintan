@@ -15,9 +15,9 @@ import { Icon, type IconName } from './Icon.tsx';
  * matters, because clipping the content would cut off the focus ring of the
  * button inside it. The gesture itself is `useSwipeActions`.
  *
- * Not for a pointer that can hover and point precisely: the desktop already
- * has the hover checkbox and the overflow menu, and a mouse drag on a row
- * would fight text selection and the scrollbar. Off, too, while bulk-select is
+ * Not for a pointer that can hover and point precisely: the desktop has the
+ * row's ⋮ menu, which offers everything the tray does, and a mouse drag on a
+ * row would fight text selection and the scrollbar. Off, too, while bulk-select is
  * on — the row is a checkbox then, and one gesture per row is enough.
  *
  * The tray's buttons are real buttons, so a screen reader that lands on them
@@ -39,7 +39,7 @@ export interface SwipeAction {
 /** Each tray button's width when the tray cannot be measured (jsdom). */
 export const SWIPE_ACTION_FALLBACK_PX = 72;
 
-/** A mouse or trackpad: the swipe is not offered, the hover controls are. */
+/** A mouse or trackpad: the swipe is not offered; the row's ⋮ shows on hover instead. */
 export const FINE_POINTER_QUERY = '(hover: hover) and (pointer: fine)';
 
 export function SwipeRow({

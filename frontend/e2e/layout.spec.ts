@@ -684,8 +684,12 @@ test('the selection bars sit above the tab bar on a phone', async ({ page, api }
 
   // The library, with a selection under way.
   await page.goto('/');
-  await page.getByRole('button', { name: /roof repair/i }).hover();
-  await page.getByRole('checkbox', { name: /^Select roof repair/i }).click();
+  // A phone: the row's ⋮ is always there, and Select is one of its items.
+  await page
+    .locator('.note-row-wrap', { has: page.getByRole('button', { name: /roof repair/i }) })
+    .getByRole('button', { name: 'More' })
+    .click();
+  await page.getByRole('menuitem', { name: 'Select' }).click();
   await page.getByRole('button', { name: 'Select all' }).click();
   await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
   await shoot(page, 'library-selecting__412x915__ink');

@@ -212,19 +212,7 @@ export function recordSavedNote(queryClient: QueryClient, saved: NoteDetailWire)
       ? { ...current, ...saved, ...(current.captures ? { captures: current.captures } : {}) }
       : saved,
   );
-  queryClient.setQueriesData<InfiniteData<Page<NoteWire>>>(
-    { queryKey: ['notes'], predicate: (query) => isNoteListKey(query.queryKey) },
-    (data) =>
-      data
-        ? {
-            ...data,
-            pages: data.pages.map((page) => ({
-              ...page,
-              items: page.items.map((item) => (item.id === saved.id ? rowOf(item, saved) : item)),
-            })),
-          }
-        : data,
-  );
+  patchNoteLists(queryClient, (item) => (item.id === saved.id ? rowOf(item, saved) : item));
   remember(() => cacheNoteDetail(saved), queryClient);
   void queryClient.invalidateQueries({ queryKey: ['notes'] });
   // A tag added or removed changes the chips as well as the row.
@@ -234,6 +222,111 @@ export function recordSavedNote(queryClient: QueryClient, saved: NoteDetailWire)
 /** `['notes', { …NoteListQuery }]` — the server lists, not the device's `['notes', 'offline', …]`. */
 function isNoteListKey(key: QueryKey): boolean {
   return key[0] === 'notes' && typeof key[1] === 'object' && key[1] !== null;
+}
+
+type NoteLists = [QueryKey, InfiniteData<Page<NoteWire>> | undefined][];
+
+/** Rewrites every row of every cached server list through `update`. */
+function patchNoteLists(queryClient: QueryClient, update: (row: NoteWire) => NoteWire): void {
+  queryClient.setQueriesData<InfiniteData<Page<NoteWire>>>(
+    { queryKey: ['notes'], predicate: (query) => isNoteListKey(query.queryKey) },
+    (data) =>
+      data
+        ? { ...data, pages: data.pages.map((page) => ({ ...page, items: page.items.map(update) })) }
+        : data,
+  );
+}
+
+/**
+ * The lists as they stand, taken before an optimistic write so a refused
+ * request can put them back. In-flight fetches are cancelled first, or one
+ * landing between the write and the rollback would be overwritten by it.
+ */
+async function snapshotNoteLists(queryClient: QueryClient): Promise<NoteLists> {
+  await queryClient.cancelQueries({ queryKey: ['notes'] });
+  return queryClient.getQueriesData<InfiniteData<Page<NoteWire>>>({
+    queryKey: ['notes'],
+    predicate: (query) => isNoteListKey(query.queryKey),
+  });
+}
+
+function restoreNoteLists(queryClient: QueryClient, lists: NoteLists | undefined): void {
+  for (const [key, data] of lists ?? []) queryClient.setQueryData(key, data);
+}
+
+/* ---------------------------------------------------------------------------
+   Pinned notes (2026-09-24 contract, B)
+
+   Both writes are shown before the server answers — a pin is a one-tap
+   promise about where a note sits, and waiting a round trip to move it reads
+   as the tap not landing — and put back if the server refuses. The server
+   owns the rank: a pin lands last among the pinned, a drag sends the whole
+   order, and the lists are refetched afterwards either way so what is shown
+   is what was stored.
+   --------------------------------------------------------------------------- */
+
+/**
+ * `PATCH /v1/notes/{id} {pinned}`. The row's version rides along because the
+ * endpoint requires one; the server may relax that for a pin-only PATCH.
+ */
+export function usePinNote() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ note, pinned }: { note: Pick<NoteWire, 'id' | 'version'>; pinned: boolean }) =>
+      api.updateNote(note.id, { version: note.version, pinned }),
+    onMutate: async ({ note, pinned }) => {
+      const lists = await snapshotNoteLists(queryClient);
+      // A new pin lands after every pin already there, as the server ranks it.
+      const last = Math.max(
+        -1000,
+        ...lists.flatMap(([, data]) =>
+          (data?.pages ?? []).flatMap((page) => page.items.map((row) => row.pin_rank ?? -1000)),
+        ),
+      );
+      const rank = pinned ? last + 1000 : null;
+      patchNoteLists(queryClient, (row) =>
+        row.id === note.id ? { ...row, pinned, pin_rank: rank } : row,
+      );
+      const detail = queryClient.getQueryData<NoteDetailWire>(queryKeys.note(note.id));
+      if (detail) {
+        queryClient.setQueryData(queryKeys.note(note.id), { ...detail, pinned, pin_rank: rank });
+      }
+      return { lists, detail };
+    },
+    onError: (_error, { note }, context) => {
+      restoreNoteLists(queryClient, context?.lists);
+      if (context?.detail) queryClient.setQueryData(queryKeys.note(note.id), context.detail);
+    },
+    onSettled: (_result, _error, { note }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(note.id) });
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
+}
+
+/** `POST /v1/notes/pins {ids}`: one request per drag, the whole pinned order. */
+export function useReorderPins() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: string[]) => api.reorderPins({ ids }),
+    onMutate: async (ids) => {
+      const lists = await snapshotNoteLists(queryClient);
+      const rank = new Map(ids.map((id, index) => [id, index * 1000]));
+      patchNoteLists(queryClient, (row) => {
+        const next = rank.get(row.id);
+        return next === undefined ? row : { ...row, pinned: true, pin_rank: next };
+      });
+      return { lists };
+    },
+    onError: (_error, _ids, context) => {
+      restoreNoteLists(queryClient, context?.lists);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['notes'] });
+    },
+  });
 }
 
 /** A list row rewritten from the saved note. The body itself never sits in a list. */

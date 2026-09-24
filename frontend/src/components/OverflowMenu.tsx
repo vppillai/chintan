@@ -26,11 +26,18 @@ export interface OverflowMenuItem {
 
 export function OverflowMenu({
   label,
+  describedBy,
   items,
   triggerRef: ownerRef,
 }: {
   /** The trigger's accessible name, naming the row: "More for recording from Today 14:02". */
   label: string;
+  /**
+   * The id of what says which row this is, when the name does not: a note
+   * row's ⋮ is "More", described by the title beside it, so that the title
+   * belongs to the row's own name alone and nothing else answers to it.
+   */
+  describedBy?: string;
   items: readonly OverflowMenuItem[];
   /**
    * The owner's handle on the trigger, when what an item opens should hand
@@ -87,6 +94,7 @@ export function OverflowMenu({
         type="button"
         className="overflow__trigger"
         aria-label={label}
+        aria-describedby={describedBy}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}

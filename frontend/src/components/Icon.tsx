@@ -47,7 +47,9 @@ export type IconName =
   | 'pause'
   | 'send'
   | 'checklist'
-  | 'alert';
+  | 'alert'
+  | 'pin'
+  | 'grip';
 
 export const PATHS: Record<IconName, string> = {
   // A house: roof, two walls, a door. The Home tab is the way back to the
@@ -125,6 +127,12 @@ export const PATHS: Record<IconName, string> = {
   // A ring with a mark in it: something went wrong here. The dot is a
   // zero-length stroke, as in `more`, so it keeps the set's weight.
   alert: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 8v5M12 16.5v.01',
+  // A drawing pin seen side-on: head, shoulder, needle. Worn by a pinned row
+  // before its title at 16 px, and by the swipe tray's Pin action.
+  pin: 'M9 3h6l-1 6 3 3H7l3-3zM12 12v8',
+  // Two columns of three dots: the handle a pinned row is dragged by. Dots
+  // are zero-length strokes, as in `more`, so the weight matches.
+  grip: 'M9.5 6.5v.01M14.5 6.5v.01M9.5 12v.01M14.5 12v.01M9.5 17.5v.01M14.5 17.5v.01',
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {

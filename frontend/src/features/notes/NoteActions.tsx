@@ -2,7 +2,13 @@ import { useId, useState, type RefObject } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
-import { useArchiveNote, useDeleteNoteForever, useRestoreNote, useSettings } from '@/api/queries.ts';
+import {
+  useArchiveNote,
+  useDeleteNoteForever,
+  usePinNote,
+  useRestoreNote,
+  useSettings,
+} from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
@@ -19,9 +25,12 @@ import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
- * The note's actions: Details · Share · Archive (or Restore · Delete forever),
- * behind the ⋮ in the header, and the two disclosures they open in a drawer
- * at the foot of the screen.
+ * The note's actions: Details · Share · Pin (or Unpin) · Archive (or Restore
+ * · Delete forever), behind the ⋮ in the header, and the two disclosures they
+ * open in a drawer at the foot of the screen. Pin is here as well as on the
+ * row (2026-09-24, B) because the note is where the person decides it is
+ * worth keeping at the top; an archived note offers no pin, since archiving
+ * clears it.
  *
  * They were a sticky bar at the foot with a fourth, primary "Record into
  * this". On a phone that bar wrapped to two rows (96 px) and sat 30 px above
@@ -81,14 +90,26 @@ export function NoteMenu({
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const purge = useDeleteNoteForever();
+  const pin = usePinNote();
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
 
   const busy = archive.isPending || restore.isPending || purge.isPending;
-  const failure = archive.error ?? restore.error ?? purge.error;
+  const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
 
   const items: OverflowMenuItem[] = [
     { label: 'Details', onSelect: () => onOpenPanel('details') },
     { label: 'Share', onSelect: () => onOpenPanel('share') },
+    ...(note.archived
+      ? []
+      : [
+          {
+            label: note.pinned ? 'Unpin' : 'Pin',
+            disabled: busy,
+            onSelect: () => {
+              pin.mutate({ note, pinned: !note.pinned });
+            },
+          },
+        ]),
     ...(note.archived
       ? [
           {
