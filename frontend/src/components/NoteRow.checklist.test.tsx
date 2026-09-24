@@ -42,7 +42,9 @@ describe('NoteRow for a checklist', () => {
   });
 
   it('a plain note is untouched', () => {
-    const row = mount({ ...noteRowChecklist, kind: 'note', snippet: 'Just a sentence.' });
+    // Unpinned as well: the generated checklist fixture is pinned, and the
+    // pin glyph shares the checklist glyph's slot (`.note-row__kind`).
+    const row = mount({ ...noteRowChecklist, kind: 'note', pinned: false, snippet: 'Just a sentence.' });
     expect(row.querySelector('.note-row__kind')).toBeNull();
     expect(within(row).getByText('Just a sentence.')).toBeInTheDocument();
     expect(within(row).queryByText(/done$/)).toBeNull();
