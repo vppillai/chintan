@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
@@ -27,12 +27,16 @@ const THREE: NoteWire[] = ['One', 'Two', 'Three'].map((title, index) => ({
 /**
  * A stateful stub of the notes API: the list sorts as the server does, a
  * PATCH pins or unpins, and `POST /v1/notes/pins` re-ranks — or refuses,
- * when told to.
+ * when told to. After a refusal every list GET waits for `release()`, so
+ * what the screen shows in the meantime is the rollback's doing, not a
+ * refetch's.
  */
 function server(notes: NoteWire[], { refuseReorder = false } = {}) {
   const state = new Map(notes.map((note) => [note.id, { ...note }]));
   const posts: string[][] = [];
   const patches: { id: string; body: Record<string, unknown> }[] = [];
+  let held: Promise<void> | null = null;
+  let release = (): void => {};
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     const method = init?.method ?? 'GET';
@@ -46,6 +50,9 @@ function server(notes: NoteWire[], { refuseReorder = false } = {}) {
       posts.push(ids);
       // The contract's refusal, a 400: a 5xx would be retried by the client first.
       if (refuseReorder) {
+        held = new Promise((resolve) => {
+          release = resolve;
+        });
         return json({ title: 'That request was not valid', status: 400, detail: 'every id must be one of your pinned notes' }, 400);
       }
       ids.forEach((id, index) => {
@@ -67,6 +74,7 @@ function server(notes: NoteWire[], { refuseReorder = false } = {}) {
       return json(note);
     }
     if (url.pathname.endsWith('/v1/notes')) {
+      if (held) await held;
       const items = [...state.values()]
         .filter((note) => note.archived === (url.searchParams.get('state') === 'archived'))
         .sort(
@@ -79,7 +87,7 @@ function server(notes: NoteWire[], { refuseReorder = false } = {}) {
     }
     return json({ items: [] });
   });
-  return { fetchImpl, posts, patches, state };
+  return { fetchImpl, posts, patches, state, release: () => release() };
 }
 
 function mount(fetchImpl: typeof fetch) {
@@ -200,9 +208,12 @@ describe('pinned notes on Home', () => {
     await waitFor(() => {
       expect(api.posts).toHaveLength(1);
     });
+    // The list GET the refusal triggers is still held, so only the rollback
+    // (`restoreNoteLists`) can have put the rows back.
     await waitFor(() => {
       expect(pinnedTitles()).toEqual(['One', 'Two']);
     });
+    api.release();
   });
 
   it('the arrow keys on a grip move the row one step', async () => {
@@ -249,5 +260,60 @@ describe('pinned notes on Home', () => {
     await waitFor(() => {
       expect(api.posts).toEqual([['two', 'one']]);
     });
+  });
+
+  it('on a touchscreen laptop, holding a pinned row selects it and does not also lift it', async () => {
+    // A fine pointer is present, so the row arms its own hold (`holdToSelect`)
+    // and the list must not arm a second one for the same finger.
+    setCanHover(true);
+    const api = server(THREE);
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /^Three/ });
+    const list = screen.getByRole('region', { name: 'Pinned' }).querySelector('.pin-list')!;
+    const touch = { pointerType: 'touch', button: 0, pointerId: 2 };
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.pointerDown(row('One'), { ...touch, clientX: 10, clientY: 0 });
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await screen.findByRole('toolbar');
+    expect(list).not.toHaveAttribute('data-dragging');
+    expect(pinnedTitles()).toEqual(['One', 'Two']);
+    fireEvent.pointerMove(list, { ...touch, clientX: 10, clientY: 40 });
+    expect(pinnedTitles()).toEqual(['One', 'Two']);
+    fireEvent.pointerUp(list, { ...touch, clientX: 10, clientY: 40 });
+    expect(api.posts).toEqual([]);
+  });
+
+  it('on a phone, a slow press on the row’s ⋮ opens the menu rather than lifting the row', async () => {
+    const user = userEvent.setup();
+    const api = server(THREE);
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /^Three/ });
+    const list = screen.getByRole('region', { name: 'Pinned' }).querySelector('.pin-list')!;
+    const touch = { pointerType: 'touch', button: 0, pointerId: 2 };
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.pointerDown(moreFor('One'), { ...touch, clientX: 300, clientY: 0 });
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(list).not.toHaveAttribute('data-dragging');
+    fireEvent.pointerUp(moreFor('One'), { ...touch, clientX: 300, clientY: 0 });
+
+    // The click the finger's lift fires is the menu's, not one the list swallows.
+    await user.click(moreFor('One'));
+    expect(screen.getByRole('menuitem', { name: 'Unpin' })).toBeInTheDocument();
+    expect(pinnedTitles()).toEqual(['One', 'Two']);
   });
 });

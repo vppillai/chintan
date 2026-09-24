@@ -20,11 +20,15 @@ import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
  * The Pinned group at the top of Home (2026-09-24 contract, B): the notes the
  * person keeps there, in the order they put them, above the day groups.
  *
- * Reordering is a drag, and one request. On a desktop each row wears a grip
- * at its left edge and a mouse drags it; under a finger there is no grip —
- * the row's width is the phone's — and the press-and-hold that selects a row
- * everywhere else lifts a pinned row instead, to be dragged (Select is still
- * in the row's ⋮ menu). The dragged row takes the slot whose midpoint the
+ * Reordering is a drag, and one request. Where the pointer is fine each row
+ * wears a grip at its left edge and a mouse — or a finger on a touchscreen
+ * laptop — drags it; on a phone there is no grip — the row's width is the
+ * phone's — and the press-and-hold that selects a row everywhere else lifts a
+ * pinned row instead, to be dragged (Select is still in the row's ⋮ menu).
+ * The two holds never arm together: the row's selects exactly where
+ * `holdToSelect` is on, and the list's lifts exactly where it is off, so a
+ * finger on a hybrid device is not selected and lifted at once (review
+ * 2026-09-24). The dragged row takes the slot whose midpoint the
  * pointer crosses, so the list re-sorts under the pointer as it moves; the
  * order is held here as a draft until the pointer lifts, then sent as one
  * `POST /v1/notes/pins`. The lists are patched optimistically by the
@@ -156,8 +160,13 @@ export function PinnedGroup({
       start(event.pointerId, id);
       return;
     }
-    // A mouse on the row itself is the row's: a hold there selects.
-    if (event.pointerType === 'mouse') return;
+    // The hold lifts the row itself, never its ⋮ or its swipe tray: a slow
+    // press on the menu button must still open the menu when it lifts.
+    if (!target.closest('.note-row')) return;
+    // A mouse on the row is the row's: a hold there selects. So is a finger
+    // wherever the pointer is fine (a touchscreen laptop): the row arms its
+    // own hold there (`holdToSelect`), and the grip is the handle for both.
+    if (event.pointerType === 'mouse' || finePointer) return;
     cancelHold();
     hold.current = {
       pointerId: event.pointerId,
