@@ -27,6 +27,8 @@ import type {
   CaptureWire,
   CleanQueuedWire,
   CleanRequestWire,
+  DeviceCreateWire,
+  DeviceWire,
   ExportJobWire,
   NoteCreateWire,
   NoteDetailWire,
@@ -356,6 +358,29 @@ export class ChintanApi {
 
   getExport(exportId: string): Promise<ExportJobWire> {
     return this.client.request(`/v1/export/${encodeURIComponent(exportId)}`);
+  }
+
+  /* ---- Devices -------------------------------------------------------- */
+
+  /**
+   * Mints a device key. The 201 is the only response that ever carries the
+   * key itself; the list below never does. An idempotency key matters more
+   * here than elsewhere: a retried create would mint a second key the person
+   * never sees.
+   */
+  createDevice(body: DeviceCreateWire, idempotencyKey?: string): Promise<DeviceWire> {
+    return this.client.request('/v1/devices', { method: 'POST', body, idempotencyKey });
+  }
+
+  listDevices(): Promise<{ items: DeviceWire[] }> {
+    return this.client.request('/v1/devices');
+  }
+
+  /** Revokes the key at once; anything still sending with it gets 401. */
+  deleteDevice(deviceId: string): Promise<void> {
+    return this.client.request(`/v1/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
+    });
   }
 }
 
