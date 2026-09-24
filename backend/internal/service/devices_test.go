@@ -90,7 +90,14 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if err != nil || len(live) != model.MaxDevicesPerTenant {
 		t.Fatalf("ListDevices = %d, %v", len(live), err)
 	}
-	if err := svc.RevokeDevice(ctx, "u1", live[1].ID); err != nil {
+	// Revoke one of the extras, never the device whose key the rest of the
+	// test presents: with one clock every row shares a CreatedAt, so the
+	// listing's order among them is by id, which is random.
+	victim := live[0]
+	if victim.ID == device.ID {
+		victim = live[1]
+	}
+	if err := svc.RevokeDevice(ctx, "u1", victim.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := svc.CreateDevice(ctx, "u1", "Room again"); err != nil {
@@ -109,7 +116,12 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if err != nil || got.ID != device.ID || got.TenantID != "u1" || got.RequestsDay != 1 || got.LastUsedAt == "" {
 		t.Fatalf("Authenticate = %+v, %v", got, err)
 	}
-	for _, bad := range []string{key[:len(key)-1] + "0", "ck_dev_000000000000_" + strings.Repeat("a", 48), "not a key", ""} {
+	// Flip the last character so the "wrong secret" can never equal the key.
+	wrongSecret := key[:len(key)-1] + "0"
+	if strings.HasSuffix(key, "0") {
+		wrongSecret = key[:len(key)-1] + "1"
+	}
+	for _, bad := range []string{wrongSecret, "ck_dev_000000000000_" + strings.Repeat("a", 48), "not a key", ""} {
 		if _, err := svc.Authenticate(ctx, bad); !errors.Is(err, ErrDeviceKeyUnknown) {
 			t.Errorf("Authenticate(%q) = %v, want unknown", bad, err)
 		}
