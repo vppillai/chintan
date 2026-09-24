@@ -50,6 +50,25 @@ export function groupLabel(iso: string, now: number = Date.now()): string {
 }
 
 /**
+ * The pinned notes, in their own order, apart from the rest. Pinned sort by
+ * `pin_rank` (the server's, or the optimistic one), newest first among equals
+ * — two rows the same rank is a reorder still in flight, not a state the
+ * server stores. Home lists them above the day groups; the archive never has
+ * any, since archiving clears the pin.
+ */
+export function splitPinned(notes: readonly NoteWire[]): { pinned: NoteWire[]; rest: NoteWire[] } {
+  const pinned: NoteWire[] = [];
+  const rest: NoteWire[] = [];
+  for (const note of notes) (note.pinned ? pinned : rest).push(note);
+  pinned.sort(
+    (a, b) =>
+      (a.pin_rank ?? Number.MAX_SAFE_INTEGER) - (b.pin_rank ?? Number.MAX_SAFE_INTEGER) ||
+      b.updated_at.localeCompare(a.updated_at),
+  );
+  return { pinned, rest };
+}
+
+/**
  * Newest first, grouped by `groupLabel`. Order within a group is preserved
  * from the sort, so the server's newest-first paging and the device cache
  * agree on what the top of "Today" is.
