@@ -382,7 +382,7 @@ describe('the cards', () => {
     expect(status).toBeEmptyDOMElement();
   });
 
-  it('are five labelled sections in the order a person needs them', async () => {
+  it('are six labelled sections in the order a person needs them', async () => {
     mountSettings();
     await screen.findByRole('combobox', { name: /transcription language/i });
 
@@ -391,6 +391,7 @@ describe('the cards', () => {
       'Recording & transcription',
       'Appearance',
       'Passkeys',
+      'Devices & shortcuts',
       'Your data',
       'About & support',
     ]);

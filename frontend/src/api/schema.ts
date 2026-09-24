@@ -627,6 +627,30 @@ export interface UsageWire extends UsageTotalsWire {
 }
 
 /* ---------------------------------------------------------------------------
+   Devices — keys that let another device or app drop captures into the inbox
+   --------------------------------------------------------------------------- */
+
+/**
+ * One device key. `key` is on the 201 of `POST /v1/devices` and nowhere else:
+ * the server keeps a hash, so the app shows it once and can never show it
+ * again. `GET /v1/devices` lists the rest. The fields beyond `id` and `name`
+ * are optional here only until the backend that sends them lands, so the
+ * generated fixtures keep compiling either side of that merge.
+ */
+export interface DeviceWire {
+  id: string;
+  name: string;
+  created_at?: string;
+  last_used_at?: string | null;
+  key?: string;
+}
+
+/** Body of `POST /v1/devices`. The name is at most 60 characters. */
+export interface DeviceCreateWire {
+  name: string;
+}
+
+/* ---------------------------------------------------------------------------
    Export and auth
    --------------------------------------------------------------------------- */
 

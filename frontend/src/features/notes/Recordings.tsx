@@ -7,6 +7,7 @@ import { ApiError } from '@/api/problem.ts';
 import {
   queryKeys,
   useDeleteCaptures,
+  useDevices,
   useMoveCaptures,
   useRetryCapture,
   useSettings,
@@ -81,6 +82,11 @@ import { archiveName, zipRecordings } from './zipRecordings.ts';
  * and answers 202 with the capture back at `transcribing`; the row follows
  * it as it does a new recording. The request names no language, so the
  * server's reading of the note's setting is the one that counts.
+ *
+ * A row a device sent through the inbox says so — "From Watch", named from
+ * the devices list on You — and one that arrived as text has no player:
+ * the row is its transcript, and Download and Transcribe again are not
+ * offered for audio that never existed.
  */
 export function Recordings({
   note,
@@ -150,6 +156,10 @@ export function Recordings({
   // wording — the note's own choice, else the You screen's default.
   const { data: settings } = useSettings();
   const effectiveLanguage = note.language || settings?.default_language || 'en';
+  // The devices list names the row a watch or a shortcut sent; asked for only
+  // when some row came in that way, so a note recorded here costs nothing.
+  const { data: devices } = useDevices(ordered.some(isFromDevice));
+  const deviceNames = new Map((devices?.items ?? []).map((device) => [device.id, device.name]));
 
   const present = new Set(ordered.map((capture) => capture.id));
   const selected = new Set([...selectedIds].filter((id) => present.has(id)));
@@ -365,6 +375,7 @@ export function Recordings({
                 onDownload={() => void runDownload([capture.id])}
                 onCopy={runCopy}
                 lang={lang}
+                from={sourceLabel(capture, deviceNames)}
                 effectiveLanguage={effectiveLanguage}
                 retranscribeLabel={retranscribeLabel(effectiveLanguage)}
                 onRetranscribe={() => {
@@ -494,6 +505,26 @@ export function justLanded(
     (capture) =>
       capture.status === 'appended' && was.has(capture.id) && was.get(capture.id) !== 'appended',
   );
+}
+
+/** A capture that arrived through the inbox under a device key rather than from this app. */
+export function isFromDevice(capture: Pick<CaptureWire, 'source'>): boolean {
+  return (capture.source ?? 'app').startsWith('device:');
+}
+
+/**
+ * "From Watch" for a row a device sent, named from the devices list; "From a
+ * device" when the list no longer has it (removed since) or has not answered.
+ * Nothing for a recording made here — every other row on the tab is one, and
+ * saying so would be the "Filed" repeated down the list all over again.
+ */
+export function sourceLabel(
+  capture: Pick<CaptureWire, 'source'>,
+  names: ReadonlyMap<string, string>,
+): string | null {
+  if (!isFromDevice(capture)) return null;
+  const id = (capture.source ?? '').slice('device:'.length);
+  return `From ${names.get(id) ?? 'a device'}`;
 }
 
 interface Notice {
@@ -652,6 +683,8 @@ interface RecordingRowProps {
   /** Text from this row's menu for the clipboard; the outcome is the panel's to say. */
   onCopy: (text: string) => void;
   lang: string | undefined;
+  /** "From Watch" when a device sent this row; null for a recording made here. */
+  from: string | null;
   /** The code a recording into this note is transcribed in, for the "Heard as" chip. */
   effectiveLanguage: string;
   /** "Transcribe again in Malayalam": the menu item, worded for the note's language. */
@@ -677,6 +710,7 @@ function RecordingRow({
   onDownload,
   onCopy,
   lang,
+  from,
   effectiveLanguage,
   retranscribeLabel: retranscribeText,
   onRetranscribe,
@@ -758,6 +792,9 @@ function RecordingRow({
 
   const when = describeMoment(capture.created_at);
   const playing = expanded && player.playing;
+  // Text sent through the inbox: there never was audio, so the row is its
+  // transcript and nothing on it plays, downloads or transcribes again.
+  const textOnly = capture.has_audio === false;
   // Nothing to play: the artifacts answered and there is no audio behind them.
   const noAudio = expanded && artifacts.isSuccess && !audioUrl;
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
@@ -766,6 +803,11 @@ function RecordingRow({
   const summary = (
     <>
       <span className="recording__when">{when}</span>{' '}
+      {from && (
+        <>
+          <span className="recording__filed">{from}</span>{' '}
+        </>
+      )}
       {filed && (
         <>
           <span className="recording__filed" data-running={running || undefined}>
@@ -829,18 +871,25 @@ function RecordingRow({
             { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: onDelete },
           ]}
         >
-          <button
-            type="button"
-            className="recording__play"
-            aria-label={`${playing ? 'Pause' : 'Play'} recording from ${when}`}
-            disabled={noAudio || unreachable}
-            onClick={() => {
-              if (expanded) player.toggle();
-              else onRequestPlay();
-            }}
-          >
-            <Icon name={playing ? 'stop' : 'play'} size={18} />
-          </button>
+          {textOnly ? (
+            // The disc keeps the rows aligned; the glyph says this one is words.
+            <span className="recording__play" aria-hidden="true">
+              <Icon name="transcribe" size={18} />
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="recording__play"
+              aria-label={`${playing ? 'Pause' : 'Play'} recording from ${when}`}
+              disabled={noAudio || unreachable}
+              onClick={() => {
+                if (expanded) player.toggle();
+                else onRequestPlay();
+              }}
+            >
+              <Icon name={playing ? 'stop' : 'play'} size={18} />
+            </button>
+          )}
 
           {/*
             The row itself is the disclosure. `aria-expanded` on a real button
@@ -874,7 +923,7 @@ function RecordingRow({
             items={[
               { label: 'Move to…', onSelect: onMove },
               { label: 'Delete recording', onSelect: onDelete, destructive: true },
-              { label: 'Download audio', onSelect: onDownload },
+              ...(textOnly ? [] : [{ label: 'Download audio', onSelect: onDownload } satisfies OverflowMenuItem]),
               ...(expanded && segments.length > 0
                 ? [
                     {
@@ -896,8 +945,9 @@ function RecordingRow({
                   ]
                 : []),
               // Only a settled recording: the server refuses one in flight,
-              // and the row is already following that run.
-              ...(running
+              // and the row is already following that run. Never words sent
+              // as words: there is no audio to run again.
+              ...(running || textOnly
                 ? []
                 : [{ label: retranscribeText, onSelect: onRetranscribe } satisfies OverflowMenuItem]),
               { label: 'Select', onSelect: onStartSelecting },
@@ -976,6 +1026,23 @@ function RecordingRow({
             <p className="screen__count" role="status">
               Loading the recording…
             </p>
+          ) : textOnly ? (
+            /*
+             * Words that arrived as words: the transcript alone, no player
+             * above it. Timestamps exist only when the pipeline wrote them,
+             * and without them the cleaned text is the view — the raw view
+             * would say "nothing to jump to" about a recording that never was.
+             */
+            <TranscriptPanel
+              segments={segments}
+              cleanedText={cleanedText}
+              view={hasSegments ? view : 'cleaned'}
+              onViewChange={onViewChange}
+              currentTime={0}
+              onSeek={() => undefined}
+              hasSegments={hasSegments}
+              lang={lang}
+            />
           ) : noAudio ? (
             <p className="screen__count">
               The audio for this recording is no longer stored. The note&rsquo;s text is

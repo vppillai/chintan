@@ -26,6 +26,7 @@ import type {
   AskWire,
   CaptureListQuery,
   CaptureWire,
+  DeviceCreateWire,
   NoteCreateWire,
   NoteDetailWire,
   NoteListQuery,
@@ -45,6 +46,7 @@ export const queryKeys = {
   settings: () => ['settings'] as const,
   usage: (month: string | undefined) => ['usage', month ?? 'current'] as const,
   ask: (askId: string) => ['ask', askId] as const,
+  devices: () => ['devices'] as const,
 };
 
 /* ---------------------------------------------------------------------------
@@ -976,6 +978,48 @@ export function useSetCaptureTarget() {
       queryClient.setQueryData(queryKeys.capture(capture.id), capture);
       void queryClient.invalidateQueries({ queryKey: ['captures'] });
       invalidateNoteLists(queryClient);
+    },
+  });
+}
+
+/* ---------------------------------------------------------------------------
+   Devices
+   --------------------------------------------------------------------------- */
+
+/**
+ * `GET /v1/devices`: the keys that may drop captures into the inbox, never
+ * the keys themselves. Read by the You card and by a note's recordings, which
+ * name the device a row came from; the latter asks only when a row needs it
+ * (`enabled`), so a note recorded entirely in the app costs no request.
+ */
+export function useDevices(enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: queryKeys.devices(),
+    queryFn: () => api.listDevices(),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useCreateDevice() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DeviceCreateWire) => api.createDevice(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.devices() });
+    },
+  });
+}
+
+export function useDeleteDevice() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (deviceId: string) => api.deleteDevice(deviceId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.devices() });
     },
   });
 }
