@@ -296,7 +296,20 @@ type Capture struct {
 	// showing such a capture once more in the filing rows is the harmless
 	// side to be wrong on.
 	Targeted bool `json:"targeted"`
+	// Source says what made the recording: "app" for the app itself, or
+	// "device:<id>" for a device key's request to the inbox, so the row can
+	// say "From ⟨device⟩" (GET /v1/devices names the id). Always present;
+	// storage keeps "" for the app, mapped here.
+	Source string `json:"source"`
+	// HasAudio is false for a capture that arrived as text through the inbox:
+	// there is no recording to play, download or transcribe again, and the
+	// row shows the transcript alone.
+	HasAudio bool `json:"has_audio"`
 }
+
+// wireCaptureSourceApp is the wire spelling of a capture the app made, which
+// storage keeps as "".
+const wireCaptureSourceApp = "app"
 
 func captureOf(c model.CaptureIndex) Capture {
 	out := Capture{
@@ -317,6 +330,11 @@ func captureOf(c model.CaptureIndex) Capture {
 		HasPeaks:    c.PeaksKey != "",
 		Version:     c.Version,
 		Targeted:    c.TargetSource.Targeted(),
+		Source:      c.Source,
+		HasAudio:    c.AudioKey != "",
+	}
+	if out.Source == "" {
+		out.Source = wireCaptureSourceApp
 	}
 	if c.NoteID != "" {
 		v := c.NoteID

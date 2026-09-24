@@ -373,6 +373,15 @@ export interface CaptureWire {
   has_peaks?: boolean;
   /** True when a person chose the note (`note_id` at create, or `/target`); false when the router decided. Optional only until every backend sends it. */
   targeted?: boolean;
+  /**
+   * What made the recording: `'app'`, or `'device:<id>'` for a device key's
+   * request to the inbox (`GET /v1/devices` names the id), so a row can say
+   * "From ⟨device⟩". `has_audio` is false for a capture that arrived as text:
+   * no player, no download, no "Transcribe again". Optional here only so
+   * existing literals keep compiling; the backend always sends both.
+   */
+  source?: string;
+  has_audio?: boolean;
   version: number;
 }
 

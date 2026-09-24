@@ -514,6 +514,12 @@ type CaptureIndex struct {
 	// the same value for the client.
 	LanguageDetected string `json:"language_detected,omitempty"`
 
+	// Source says what made the recording: "" for the app itself, or
+	// DeviceSource(id) for a request a device key made to the inbox
+	// (docs/design/inbox.md), so the recordings row can say which device it
+	// came from. In the record blob only; the wire maps "" to "app".
+	Source string `json:"source,omitempty"`
+
 	// AudioBytes is the uploaded object's size as S3 reported it in the
 	// notification that started the pipeline — the only measurement of the
 	// recording this system ever gets (the request-time size_bytes is the
@@ -560,6 +566,9 @@ type Device struct {
 
 // Revoked reports whether the key has been revoked.
 func (d Device) Revoked() bool { return d.RevokedAt != "" }
+
+// DeviceSource is CaptureIndex.Source for a capture a device made.
+func DeviceSource(deviceID string) string { return "device:" + deviceID }
 
 // Device bounds. Ten devices is a household of gadgets, not a fleet; two
 // hundred requests a day is one every seven minutes around the clock, which

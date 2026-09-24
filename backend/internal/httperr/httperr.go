@@ -84,9 +84,10 @@ const TypeURI = "https://github.com/vppillai/chintan/blob/main/docs/api/openapi.
 
 // TypeSpendCapped identifies the daily provider spend cap.
 //
-// It is the one 429 this API produces, and a client must not retry it; the
-// gateway's throttling 429 is the other one a client meets, and backing off
-// does fix that. RFC 9457 makes `type` the machine-readable discriminator
+// It is the one 429 the app meets from this API, and a client must not retry
+// it; the gateway's throttling 429 is the other one a client meets, and
+// backing off does fix that. (The inbox's per-device daily limit is a plain
+// 429 with a fixed sentence; only devices see it.) RFC 9457 makes `type` the machine-readable discriminator
 // precisely so a client does not have to read the title, and a client that
 // reads the title is one rewording away from retrying a request that can never
 // succeed.

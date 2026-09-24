@@ -1,5 +1,7 @@
 package handler
 
+import "github.com/vppillai/chintan/backend/internal/service"
+
 // routes is the whole HTTP surface, in one readable table.
 //
 // Every pattern is a Go 1.22 method-and-wildcard pattern, so the router matches
@@ -79,6 +81,14 @@ func (rt *router) routes() {
 	// is no confirmation step here: the typed confirmation is the client's.
 	rt.handle("DELETE "+p+"/captures/{captureId}", rt.deleteCapture)
 	rt.handle("POST "+p+"/captures/{captureId}/move", rt.moveCapture, idempotent())
+
+	// The inbox: the same capture, begun by a device key instead of a
+	// session. Two-step (a row and presigned PUTs), one-shot audio (the
+	// recording is the body), and text (no transcription). The gateway
+	// admits these without its JWT authorizer; device() is the check.
+	rt.handle("POST "+p+"/inbox/captures", rt.inboxCapture, device(), idempotent())
+	rt.handle("POST "+p+"/inbox/audio", rt.inboxAudio, device(), idempotent(), body(service.MaxInboxAudioBytes))
+	rt.handle("POST "+p+"/inbox/text", rt.inboxText, device(), idempotent(), body(MaxInboxTextRequestBytes))
 
 	// Export.
 	rt.handle("POST "+p+"/export", rt.startExport, idempotent())

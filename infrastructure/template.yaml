@@ -1794,10 +1794,11 @@ Resources:
       PayloadFormatVersion: '2.0'
 
   # Liveness. Declared NONE explicitly: it is the gateway default for a route
-  # that omits the property, but the two health routes (and CORS preflight) are
-  # the entire unauthenticated surface, and that is worth stating rather than
-  # inheriting. Sign-in itself happens on the Cognito managed-login page, not
-  # on this API.
+  # that omits the property, but the two health routes, the three inbox
+  # routes (which the Lambda authenticates itself, by device key) and CORS
+  # preflight are the entire surface without the JWT authorizer, and that is
+  # worth stating rather than inheriting. Sign-in itself happens on the
+  # Cognito managed-login page, not on this API.
   HealthRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -1819,6 +1820,38 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'GET /v1/health/ready'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # The inbox: an external recorder, watch or app posts audio or text here
+  # with a device key (Authorization: Bearer ck_…), not a Cognito token, so
+  # the JWT authorizer must not stand in front of these three. The Lambda
+  # validates the key (handler/inbox.go) — hashed at rest, revocable, two
+  # hundred requests a day — and no note content is ever returned on them.
+  # docs/design/inbox.md has the threat model; openapi_conformance_test.go
+  # asserts these three are exactly the operations the document puts under
+  # the deviceKey scheme.
+  InboxCapturesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /v1/inbox/captures'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  InboxAudioRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /v1/inbox/audio'
+      AuthorizationType: NONE
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  InboxTextRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /v1/inbox/text'
       AuthorizationType: NONE
       Target: !Sub 'integrations/${LambdaIntegration}'
 

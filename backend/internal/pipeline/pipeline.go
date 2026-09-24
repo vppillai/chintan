@@ -481,7 +481,9 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 // found unreliable for the languages this matters for. A recording a person
 // asked to have transcribed in a particular language keeps that answer.
 func wantsNoteLanguage(c model.CaptureIndex, note model.NoteIndex) bool {
-	if c.RequestedLanguage != "" {
+	if c.RequestedLanguage != "" || c.AudioKey == "" {
+		// A person chose, or the capture arrived as text (POST
+		// /v1/inbox/text) and there is nothing to transcribe again.
 		return false
 	}
 	return note.Language != "" && note.Language != model.LanguageAuto && c.Language != note.Language

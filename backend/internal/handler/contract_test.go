@@ -319,6 +319,14 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		Error:    "the speech provider returned 503",
 		AudioKey: "tenants/user1/captures/c_failed/audio.webm",
 	})
+	// A capture that arrived as text through the inbox: no audio key, so no
+	// player, and a source naming the device rather than the app.
+	fromDevice := h.putCapture(t, model.CaptureIndex{
+		ID: "c_from_device", UserID: contractUser, NoteID: note.ID,
+		Status: model.StatusAppended, CreatedAt: model.Now(), AppendedAt: time.Now().Unix(),
+		RawKey: "tenants/user1/captures/c_from_device/raw.txt",
+		Source: model.DeviceSource("dev_fixture"), TargetSource: model.TargetSourceClient,
+	})
 
 	add("capturesPage", "Page<CaptureWire>",
 		"GET /v1/captures → 200. Includes the unrouted needs_target capture the progress card has to show.",
@@ -332,6 +340,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID, contractUser, nil))
 	add("captureDownload", "PresignedDownloadWire", "GET /v1/captures/{captureId}/download?kind=audio → 200",
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID+"/download?kind=audio", contractUser, nil))
+	add("captureFromDevice", "CaptureWire",
+		"GET /v1/captures/{captureId} → 200 for a capture a device dropped into the inbox as text: "+
+			"`source` names the device (GET /v1/devices has its name) and `has_audio` is false, so the row shows the transcript and no player.",
+		h.do(t, http.MethodGet, "/v1/captures/"+fromDevice.ID, contractUser, nil))
 
 	// The tag-aware presigner is wired in only here. The default harness signs
 	// through the in-memory object store, which cannot bind tags and honestly

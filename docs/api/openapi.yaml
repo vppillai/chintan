@@ -10,13 +10,17 @@ info:
     Three rules hold across every endpoint and are not repeated per-operation:
 
     1. **Authentication.** Every route except the two health probes
-       (`/v1/health`, `/v1/health/ready`) requires a verified Cognito bearer
-       token. Those two, and only those two, declare `security: []` below and
-       are the two the API Gateway route table admits without an authorizer.
-       Sign-in happens against Cognito's managed login, never against this
-       API. The service verifies signature, issuer, audience, expiry, and
-       `token_use` itself; it does not rely on the API Gateway authorizer
-       alone. There is no header-based identity path.
+       (`/v1/health`, `/v1/health/ready`) and the three inbox routes
+       (`/v1/inbox/*`) requires a verified Cognito bearer token. The health
+       probes declare `security: []`; the inbox routes declare the
+       `deviceKey` scheme — a key issued by `POST /v1/devices`, presented
+       as `Authorization: Bearer ck_…` and checked by the service itself.
+       Those five, and only those five, are what the API Gateway route
+       table admits without its JWT authorizer. Sign-in happens against
+       Cognito's managed login, never against this API. The service
+       verifies signature, issuer, audience, expiry, and `token_use`
+       itself; it does not rely on the API Gateway authorizer alone. There
+       is no header-based identity path.
     2. **Errors.** Every non-2xx response is `application/problem+json`
        (RFC 9457). Infrastructure error text is logged, never serialised.
     3. **Pagination.** Every collection is cursor-paginated. There is no
@@ -51,6 +55,7 @@ tags:
   - name: usage
   - name: ask
   - name: devices
+  - name: inbox
   - name: export
 
 security:
@@ -994,6 +999,110 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/inbox/captures:
+    post:
+      tags: [inbox]
+      summary: Begin a capture from a device (two-step)
+      description: |
+        `POST /v1/captures` for a device: the capture row and the presigned
+        PUTs, for a client that can make two requests (an iOS Shortcut
+        can). The capture carries `source: device:<id>` and flows through
+        the pipeline exactly as a recording made in the app. `language`
+        chooses the transcription language for this recording alone.
+      security:
+        - deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboxCaptureCreate' }
+      responses:
+        '201':
+          description: Capture created; PUT the audio to `upload.url` with `upload.headers`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaptureCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
+  /v1/inbox/audio:
+    post:
+      tags: [inbox]
+      summary: Drop a recording into the inbox (one-shot)
+      description: |
+        The body is the recording; `Content-Type` is its audio type. The API
+        writes the object to the capture's audio key itself, with the same
+        retention tags a client's PUT carries, and the bucket's notification
+        runs the pipeline as for any upload. For a client that can only POST
+        a file. At most 5 MiB (413 above it; the gateway caps a request at
+        6 MB). Optional headers: `X-Chintan-Note-Id` (file into this note),
+        `X-Chintan-Language` (`auto` or a code, for this recording),
+        `X-Chintan-Duration-Ms`.
+      security:
+        - deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: X-Chintan-Note-Id
+          in: header
+          schema: { type: string }
+        - name: X-Chintan-Language
+          in: header
+          schema: { type: string, pattern: '^(auto|[a-z]{2})$' }
+        - name: X-Chintan-Duration-Ms
+          in: header
+          schema: { type: integer, minimum: 0 }
+      requestBody:
+        required: true
+        description: |
+          The recording. `Content-Type` is its audio type, one of `audio/webm`,
+          `audio/ogg`, `audio/mp4`, `audio/m4a`, `audio/mpeg`, `audio/wav`,
+          `audio/x-wav` (400 for anything else).
+        content:
+          audio/*:
+            schema: { type: string, format: binary }
+      responses:
+        '202':
+          description: The recording is stored and the pipeline is running; the capture is `uploaded`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboxAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
+  /v1/inbox/text:
+    post:
+      tags: [inbox]
+      summary: Drop text into the inbox
+      description: |
+        A capture that needs no transcription: the text is written where the
+        transcript would be, the capture starts at `transcribed` with
+        `has_audio: false` and no duration, and the worker routes, cleans
+        and appends it as it would a transcript. 1 to 20,000 characters.
+      security:
+        - deviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InboxText' }
+      responses:
+        '202':
+          description: The text is stored and the pipeline is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InboxAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
   /v1/export:
     post:
       tags: [export]
@@ -1038,6 +1147,16 @@ components:
       description: |
         A Cognito ID or access token. Verified in-process: signature against the
         pool's JWKS, plus issuer, audience, expiry, and `token_use`.
+    deviceKey:
+      type: http
+      scheme: bearer
+      bearerFormat: ck_<id>_<secret>
+      description: |
+        A device key from `POST /v1/devices`, for the `/v1/inbox/*` routes
+        only. Stored as a SHA-256 hash and compared in constant time; a
+        revoked or unknown key is 401 `unknown device key`, and a key past
+        two hundred requests in a UTC day is 429 `this device has reached
+        today's limit` — fixed sentences, whichever the reason.
 
   parameters:
     Cursor:
@@ -1633,9 +1752,23 @@ components:
 
     Capture:
       type: object
-      required: [id, status, created_at, version, targeted]
+      required: [id, status, created_at, version, targeted, source, has_audio]
       properties:
         id: { type: string }
+        source:
+          type: string
+          description: >
+            What made the recording: `app` for the app itself, or
+            `device:<id>` for a device key's request to the inbox, so a row
+            can say "From ⟨device⟩" (`GET /v1/devices` names the id). Always
+            present; captures from before the field existed read `app`.
+        has_audio:
+          type: boolean
+          description: >
+            False for a capture that arrived as text (`POST /v1/inbox/text`):
+            there is no recording to play, download or transcribe again, and
+            the row shows the transcript alone. True does not promise the
+            audio still exists — retention may have expired it.
         note_id: { type: string, nullable: true }
         status: { $ref: '#/components/schemas/CaptureStatus' }
         error:
@@ -1756,6 +1889,40 @@ components:
             url: { type: string, format: uri }
             expires_at: { type: string, format: date-time }
             max_bytes: { type: integer }
+
+    InboxCaptureCreate:
+      type: object
+      required: [content_type]
+      properties:
+        content_type:
+          type: string
+          enum: [audio/webm, audio/ogg, audio/mp4, audio/m4a, audio/mpeg, audio/wav, audio/x-wav]
+        note_id:
+          type: string
+          nullable: true
+          description: File into this note. Omit to let routing decide.
+        duration_ms: { type: integer, minimum: 0 }
+        size_bytes: { type: integer, minimum: 1 }
+        language:
+          type: string
+          pattern: '^(auto|[a-z]{2})$'
+          description: The transcription language for this recording; omit for the note's or the default.
+
+    InboxText:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 20000 }
+        note_id:
+          type: string
+          nullable: true
+          description: File into this note. Omit to let routing decide.
+
+    InboxAccepted:
+      type: object
+      required: [capture]
+      properties:
+        capture: { $ref: '#/components/schemas/Capture' }
 
     CaptureTarget:
       type: object
