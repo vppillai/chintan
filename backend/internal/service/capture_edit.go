@@ -46,12 +46,19 @@ const maxIndexRefreshAttempts = 3
 //
 // A second call for the same id is ErrNotFound, which is the 404 the API
 // promises. Confirmation is the client's concern; the API has none.
+//
+// A capture still moving is refused on RetryCapture's rule: while a worker
+// can still be writing its row (CaptureStuck says not yet), deleting under
+// it would leave the append to re-create what was just cut. Once stuck it
+// may go — before, a recording whose upload never completed sat in
+// `uploaded` for good, its "still not done" card undeletable (QA
+// 2026-09-24).
 func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID string) error {
 	capture, err := s.store.GetCapture(ctx, userID, captureID)
 	if err != nil {
 		return fmt.Errorf("failed to get capture: %w", err)
 	}
-	if CaptureIsPending(capture.Status) {
+	if CaptureIsPending(capture.Status) && !CaptureStuck(capture, s.now()) {
 		return ErrCaptureInFlight
 	}
 

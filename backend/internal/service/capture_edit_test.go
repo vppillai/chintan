@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -213,6 +214,8 @@ func TestDeleteCaptureRefusesOneStillInFlight(t *testing.T) {
 	h := newEditHarness(t)
 	note := h.note("u1", "Busy", "")
 	c := h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+	// A minute after the row was written: a worker may still be on it.
+	h.captures.WithClock(func() time.Time { return time.Date(2026, 1, 1, 10, 1, 0, 0, time.UTC) })
 	for _, status := range []model.CaptureStatus{model.StatusUploaded, model.StatusTranscribing, model.StatusAppending} {
 		c.Status = status
 		updated, err := h.store.PutCapture(h.ctx, c)
@@ -226,6 +229,32 @@ func TestDeleteCaptureRefusesOneStillInFlight(t *testing.T) {
 	}
 	if !h.objectExists(c.AudioKey) {
 		t.Error("a refused delete removed the audio")
+	}
+}
+
+// A capture nobody can still be working on may be deleted even though its
+// status says it is moving: an upload that never completed stays `uploaded`
+// for ever, and until this the only answer to its card was 409.
+func TestDeleteCaptureRemovesOneStuckInFlight(t *testing.T) {
+	h := newEditHarness(t)
+	note := h.note("u1", "Busy", "untouched body")
+	c := h.appended("u1", note.ID, "c_1", "2026-01-01T10:00:00.000000000Z")
+	c.Status = model.StatusUploaded
+	if _, err := h.store.PutCapture(h.ctx, c); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	h.captures.WithClock(func() time.Time { return time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC).Add(CaptureStuckAfter) })
+	if err := h.captures.DeleteCapture(h.ctx, "u1", "c_1"); err != nil {
+		t.Fatalf("DeleteCapture of a stuck upload: %v", err)
+	}
+	if _, err := h.store.GetCapture(h.ctx, "u1", "c_1"); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("the row is still there: %v", err)
+	}
+	if h.objectExists(c.AudioKey) {
+		t.Error("the audio object survived the delete")
+	}
+	if got := h.body(note); got != "untouched body" {
+		t.Errorf("a capture that never appended changed the body: %q", got)
 	}
 }
 
