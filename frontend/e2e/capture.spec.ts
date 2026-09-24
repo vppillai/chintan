@@ -170,8 +170,8 @@ test('records into the note it was opened from, and the target can be changed be
   await page.getByRole('button', { name: 'Stop' }).click();
   await page.getByRole('button', { name: 'Send' }).click();
 
-  // Send goes to the note it was aimed at — the one chosen last — on its recordings.
-  await expect(page).toHaveURL(/\/notes\/reading-list\?tab=recordings$/);
+  // Send goes to the note it was aimed at — the one chosen last — on the tab it was left on.
+  await expect(page).toHaveURL(/\/notes\/reading-list$/);
 
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
   const create = api.requests.find(
@@ -182,13 +182,14 @@ test('records into the note it was opened from, and the target can be changed be
 });
 
 /**
- * Record into a note, Send, and be back on that note: the upload is the first
- * of its recordings, wearing the filing row's progress, and becomes an
- * ordinary recording — with the text updated — when the pipeline lands it.
- * Sending used to drop the user on the library, a screen away from the note
- * they had just added to.
+ * Record into a note, Send, and be back on that note where you left it: the
+ * filing banner under the meta line shows the upload, then the pipeline's
+ * stages, and goes when the recording lands with the text updated under it.
+ * Sending used to force the Recordings tab (owner feedback 2026-09-24: the
+ * person reading the text was taken to a list of players to watch a strip);
+ * before that it dropped the user on the library.
  */
-test('Send returns to the note, where the recording files in front of the user', async ({
+test('Send returns to the note, where the filing banner follows the recording in', async ({
   page,
   api,
 }) => {
@@ -198,7 +199,7 @@ test('Send returns to the note, where the recording files in front of the user',
   await page.waitForTimeout(1_100);
   await page.getByRole('button', { name: 'Stop' }).click();
 
-  // Hold the create so the local upload row is observable on the note.
+  // Hold the create so the local upload is observable in the banner.
   let releaseCreate: () => void = () => {};
   const held = new Promise<void>((resolve) => {
     releaseCreate = resolve;
@@ -214,13 +215,13 @@ test('Send returns to the note, where the recording files in front of the user',
 
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page).toHaveURL(/\/notes\/roof-repair\?tab=recordings$/);
-  await expect(page.getByRole('tab', { name: /^Recordings/ })).toHaveAttribute('aria-selected', 'true');
-  // Counted on the tab, first in the list, with the upload's own bar.
+  // Back on the note, on Text — no `?tab=` forced — with the banner up.
+  await expect(page).toHaveURL(/\/notes\/roof-repair$/);
+  await expect(page.getByRole('tab', { name: 'Text' })).toHaveAttribute('aria-selected', 'true');
+  const banner = page.getByRole('region', { name: 'Filing a recording' });
+  await expect(banner).toContainText(/uploading… \d+%/i);
+  // Counted on the Recordings tab as well: the row is there too.
   await expect(page.getByRole('tab', { name: 'Recordings (2)' })).toBeVisible();
-  const region = page.getByRole('region', { name: 'Recordings' });
-  const rows = region.getByRole('listitem');
-  await expect(rows.first()).toContainText(/uploading… \d+%/i);
   // The mic still records into this note, to keep adding.
   await expect(page.getByRole('button', { name: /record into this/i })).toBeVisible();
 
@@ -228,30 +229,28 @@ test('Send returns to the note, where the recording files in front of the user',
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
   expect(api.captures[0]?.note_id).toBe('roof-repair');
 
-  // The server's row takes over and follows the pipeline, in the same place.
+  // The server's row takes over in the banner and follows the pipeline.
   api.captures[0]!.status = 'transcribing';
-  await expect(rows.first()).toContainText('Filing…', { timeout: 10_000 });
-  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Recordings (2)' })).toBeVisible();
-  // And Back does not walk into a fresh recording: the capture entry was replaced.
+  await expect(banner).toContainText('Filing your recording', { timeout: 10_000 });
+  await expect(banner.getByRole('list', { name: 'Filing progress' })).toBeVisible();
+  await expect(banner).toContainText('Transcribing');
 
-  // It lands: the worker wrote the paragraph, and the row is a recording now.
+  // It lands: the worker wrote the paragraph, the banner goes, the text shows it.
   api.captures[0]!.status = 'appended';
   api.captures[0]!.duration_ms = 1_100;
   api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
   api.notes['roof-repair']!.version += 1;
-  // A filed row says nothing about being filed (T19): the strip goes, and
-  // the row is an ordinary recording with its length.
-  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0, {
-    timeout: 10_000,
-  });
-  await expect(rows.first()).toContainText('0:01');
-  await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
-
-  await page.getByRole('tab', { name: 'Text' }).click();
+  await expect(banner).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
     /The gutter is leaking again\.$/,
   );
+
+  // And the Recordings tab has it as an ordinary recording with its length.
+  await page.getByRole('tab', { name: /^Recordings/ }).click();
+  const rows = page.getByRole('region', { name: 'Recordings' }).getByRole('listitem');
+  await expect(rows.first()).toContainText('0:01');
+  await expect(rows.first().getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
 
   await page.goBack();
   await expect(page).not.toHaveURL(/\/capture/);
@@ -276,7 +275,7 @@ test('Send while recording stops the recorder, then uploads', async ({ page, api
   await page.getByRole('button', { name: 'Send' }).click();
 
   // Gone at once, to where a Send from review goes.
-  await expect(page).toHaveURL(/\/notes\/roof-repair\?tab=recordings$/);
+  await expect(page).toHaveURL(/\/notes\/roof-repair$/);
   const body = (await create).postDataJSON() as { duration_ms: number; size_bytes: number };
   expect(body.duration_ms).toBeGreaterThan(900);
   expect(body.size_bytes).toBeGreaterThan(0);
@@ -284,10 +283,13 @@ test('Send while recording stops the recorder, then uploads', async ({ page, api
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
   expect(api.captures[0]?.note_id).toBe('roof-repair');
   api.captures[0]!.status = 'appended';
-  // A filed row says nothing about being filed (T19): the strip goes.
-  await expect(page.getByRole('list', { name: 'Filing progress' })).toHaveCount(0, {
+  // Landed: the banner goes, and the row on the Recordings tab says nothing
+  // about being filed (T19).
+  await expect(page.getByRole('region', { name: 'Filing a recording' })).toHaveCount(0, {
     timeout: 10_000,
   });
+  await page.getByRole('tab', { name: /^Recordings/ }).click();
+  await expect(page.getByRole('list', { name: 'Filing progress' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /more for recording from/i })).toHaveCount(2);
 });
 

@@ -317,3 +317,21 @@
   border-radius: var(--radius-full);
   color: var(--color-muted);
 }
+
+/* --------------------------------------------------------------------------
+   Filing banner — the note screen's copy of the row, for a recording still
+   on its way into the open note (owner feedback 2026-09-24)
+   -------------------------------------------------------------------------- */
+
+/*
+ * The library's row, between the meta line and the tab strip, and tighter:
+ * a note's head is already the title, a line of facts and the strip, and the
+ * banner is a guest there for the minute a recording takes to file.
+ */
+.filing--banner {
+  margin-block: var(--space-2) var(--space-3);
+}
+
+.filing--banner .filing-row {
+  padding-block: var(--space-2);
+}

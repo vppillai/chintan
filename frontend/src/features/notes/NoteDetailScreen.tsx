@@ -19,6 +19,7 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 import { languageName } from '@/features/settings/languages.ts';
@@ -314,6 +315,13 @@ export function NoteDetailScreen() {
       )}
 
       <SaveIndicator editor={editor} />
+
+      {/*
+        A recording still on its way into this note, on every tab: Send
+        returns here rather than to the Recordings tab, so the progress has to
+        be visible from the text (owner feedback 2026-09-24).
+      */}
+      <FilingBanner note={note} localUpload={localUpload} />
 
       {/*
         Keyed by the note: the tab strip's memory and the panels' own state
