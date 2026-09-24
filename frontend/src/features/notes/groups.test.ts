@@ -10,6 +10,7 @@ import {
   formatRowTime,
   groupByDay,
   groupLabel,
+  splitPinned,
 } from './groups.ts';
 
 /** A Thursday afternoon, local time, so weekday and month boundaries are fixed. */
@@ -25,6 +26,28 @@ function at(daysAgo: number, hour = 9): string {
 function note(id: string, updatedAt: string): NoteWire {
   return { id, title: id, updated_at: updatedAt, version: 1, archived: false };
 }
+
+describe('splitPinned', () => {
+  it('takes the pinned notes out, in rank order, and leaves the rest as they came', () => {
+    const notes: NoteWire[] = [
+      { ...note('a', at(0)), pinned: true, pin_rank: 2000 },
+      note('b', at(1)),
+      { ...note('c', at(3)), pinned: true, pin_rank: 0 },
+      { ...note('d', at(2)), pinned: false, pin_rank: null },
+      // Two rows the same rank — a reorder still in flight — fall back to newest first.
+      { ...note('e', at(5)), pinned: true, pin_rank: 1000 },
+      { ...note('f', at(4)), pinned: true, pin_rank: 1000 },
+    ];
+    const { pinned, rest } = splitPinned(notes);
+    expect(pinned.map((n) => n.id)).toEqual(['c', 'f', 'e', 'a']);
+    expect(rest.map((n) => n.id)).toEqual(['b', 'd']);
+  });
+
+  it('is a no-op for rows from a backend that does not send the field yet', () => {
+    const notes = [note('a', at(0)), note('b', at(1))];
+    expect(splitPinned(notes)).toEqual({ pinned: [], rest: notes });
+  });
+});
 
 describe('groupLabel', () => {
   it('names today and yesterday', () => {
