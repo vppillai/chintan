@@ -112,6 +112,29 @@ func TestPinnedNotesLeadTheListAndPageAcrossTheTier(t *testing.T) {
 	}
 }
 
+// A new pin lands last even once an unpin has left a gap in the ranks: pins
+// at 0/1000/2000, the middle one unpinned, and the next pin must sit below
+// the one at 2000 rather than tie it (a tie is broken by the newer pin,
+// which would put it above).
+func TestANewPinLandsLastAfterAnUnpin(t *testing.T) {
+	h := newHarness(t)
+	a := h.createNote(t, "user1", "A", nil)
+	b := h.createNote(t, "user1", "B", nil)
+	c := h.createNote(t, "user1", "C", nil)
+	d := h.createNote(t, "user1", "D", nil)
+	for _, n := range []handler.Note{a, b, c} {
+		pin(t, h, "user1", n, true)
+	}
+	pin(t, h, "user1", b, false)
+	last := pin(t, h, "user1", d, true)
+	if last.PinRank == nil || *last.PinRank != 3*model.PinRankStep {
+		t.Fatalf("rank after a gap = %v, want %d", last.PinRank, 3*model.PinRankStep)
+	}
+	if got, _ := listIDs(t, h, "user1", 50); fmt.Sprint(got) != fmt.Sprint([]string{a.ID, c.ID, d.ID, b.ID}) {
+		t.Fatalf("order = %v, want [a c d b]", got)
+	}
+}
+
 func TestPinningStopsAtFifty(t *testing.T) {
 	h := newHarness(t)
 	var notes []handler.Note

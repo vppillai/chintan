@@ -488,10 +488,10 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	if updates.Pinned != nil {
 		switch {
 		case *updates.Pinned && !note.Pinned():
-			// A new pin lands last: its rank is one step past the current
-			// count, which is also the count the limit is checked against.
+			// A new pin lands last: its rank is one step past the highest in
+			// use, from the same drain that counts the pins for the limit.
 			// One drain of the partition, on a pin alone.
-			pinned, err := s.countPinned(ctx, userID)
+			pinned, nextRank, err := s.countPinned(ctx, userID)
 			if err != nil {
 				return model.NoteIndex{}, err
 			}
@@ -499,7 +499,7 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 				return model.NoteIndex{}, ErrPinLimit
 			}
 			note.PinnedAt = model.FormatTime(s.now())
-			note.PinRank = int64(pinned) * model.PinRankStep
+			note.PinRank = nextRank
 		case !*updates.Pinned:
 			note.PinnedAt, note.PinRank = "", 0
 		}
@@ -573,19 +573,24 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	return s.putCarryingStamp(ctx, userID, note)
 }
 
-// countPinned is how many of the tenant's active notes are pinned.
-func (s *NotesService) countPinned(ctx context.Context, userID string) (int, error) {
+// countPinned is how many of the tenant's active notes are pinned, and the
+// rank a new pin takes to land last: one step past the highest in use, which
+// is count × PinRankStep while the ranks are compact and more once an unpin
+// has left a gap. Count × step would then equal an existing rank, and the
+// order's tie-break (the more recently pinned first) would put the new pin
+// above that note instead of below it. Zero when nothing is pinned.
+func (s *NotesService) countPinned(ctx context.Context, userID string) (count int, nextRank int64, err error) {
 	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{})
 	if err != nil {
-		return 0, fmt.Errorf("failed to list notes: %w", err)
+		return 0, 0, fmt.Errorf("failed to list notes: %w", err)
 	}
-	pinned := 0
 	for _, n := range notes {
 		if n.Pinned() {
-			pinned++
+			count++
+			nextRank = max(nextRank, n.PinRank+model.PinRankStep)
 		}
 	}
-	return pinned, nil
+	return count, nextRank, nil
 }
 
 // ReorderPins writes the listed notes' pin_rank as their position in ids,
