@@ -200,6 +200,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		AppendedAt: time.Now().Unix(), DurationMS: 18_400,
 		SegmentsKey: "tenants/user1/captures/c_note_1/segments.json",
 		PeaksKey:    "tenants/user1/captures/c_note_1/peaks.json",
+		AudioKey:    "tenants/user1/captures/c_note_1/audio.webm",
 	})
 
 	add("notesPage", "Page<NoteWire>", "GET /v1/notes → 200. The envelope is {items, cursor}; the cursor is in the body, never in a header.",
@@ -290,6 +291,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	h.putCapture(t, model.CaptureIndex{
 		ID: "c_needs_target", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedTitle: "Kitchen rebuild", RouteConfidence: 0.41,
+		AudioKey: "tenants/user1/captures/c_needs_target/audio.webm",
 	})
 	// The other half of a routing suggestion: an existing note the router named
 	// but was not confident enough to write to unasked. Exactly one of the two
@@ -312,6 +314,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	suggested := h.putCapture(t, model.CaptureIndex{
 		ID: "c_needs_target_note", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedNoteID: suggestedNote.ID, RouteConfidence: 0.62,
+		AudioKey: "tenants/user1/captures/c_needs_target_note/audio.webm",
 	})
 	failed := h.putCapture(t, model.CaptureIndex{
 		ID: "c_failed", UserID: contractUser, NoteID: note.ID,
