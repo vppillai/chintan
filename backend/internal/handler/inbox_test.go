@@ -228,10 +228,10 @@ func TestInboxAudioWritesTheObjectTheWayAClientPutWould(t *testing.T) {
 	}
 	w = h.do(t, http.MethodPost, "/v1/inbox/audio", "", make([]byte, service.MaxInboxAudioBytes+1), key, [2]string{"Content-Type", "audio/webm"})
 	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("5 MiB + 1: status = %d, want 413", w.Code)
+		t.Errorf("one byte over the cap: status = %d, want 413", w.Code)
 	}
 	if w := h.do(t, http.MethodPost, "/v1/inbox/audio", "", make([]byte, service.MaxInboxAudioBytes), key, [2]string{"Content-Type", "audio/wav"}); w.Code != http.StatusAccepted {
-		t.Errorf("exactly 5 MiB: status = %d, want 202", w.Code)
+		t.Errorf("exactly the cap: status = %d, want 202", w.Code)
 	}
 }
 

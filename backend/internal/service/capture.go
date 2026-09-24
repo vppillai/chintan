@@ -128,11 +128,16 @@ type CaptureRequest struct {
 	Source string
 }
 
-// Inbox bounds. Five MiB sits under the 6 MB API Gateway and Lambda cap on
-// a request with room for the envelope; twenty thousand runes of text is
+// Inbox bounds. The one-shot body is 4 MiB because the gateway hands a
+// binary body to the Lambda base64-encoded and the Lambda's synchronous
+// request payload is capped at 6 MB: 4 MiB is about 5.6 MB on that wire,
+// with room for the event envelope, where 5 MiB (about 7 MB) never reached
+// the handler and the device got a gateway error instead of the 413. A
+// longer recording goes through the two-step /v1/inbox/captures route,
+// whose PUT is bounded by MaxCaptureBytes. Twenty thousand runes of text is
 // several pages, far past anything a device dictates in one go.
 const (
-	MaxInboxAudioBytes = 5 << 20
+	MaxInboxAudioBytes = 4 << 20
 	MaxInboxTextRunes  = 20_000
 )
 

@@ -126,7 +126,7 @@ curl -sS "$API/v1/devices" -H "Authorization: Bearer $ID_TOKEN" \
 # → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"key":"ck_dev_…_…"}
 ```
 
-`GET /v1/devices` lists your devices (never the keys); `DELETE /v1/devices/{id}` revokes one, immediately. Ten devices, two hundred requests per device per day, 5 MiB per recording.
+`GET /v1/devices` lists your devices (never the keys); `DELETE /v1/devices/{id}` revokes one, immediately. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
 
 **curl.** Three ways in, each `Authorization: Bearer ck_…`:
 

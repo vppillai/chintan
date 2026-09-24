@@ -73,8 +73,10 @@ those plus the probes.
 - `POST /v1/inbox/captures` is `POST /v1/captures` for a device: the row and
   the presigned PUTs, for a client that can make two requests. The 201 is the
   same `CaptureCreated`.
-- `POST /v1/inbox/audio` takes the recording as the body (≤ 5 MiB; the
-  gateway caps a request at 6 MB) with `Content-Type` naming one of
+- `POST /v1/inbox/audio` takes the recording as the body (≤ 4 MiB: the
+  gateway hands a binary body to the function base64-encoded under its 6 MB
+  request cap, so 5 MiB never arrived; a longer recording takes the two-step
+  route) with `Content-Type` naming one of
   `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/m4a`, `audio/mpeg`,
   `audio/wav`, `audio/x-wav`, and `X-Chintan-Note-Id`, `X-Chintan-Language`,
   `X-Chintan-Duration-Ms` as optional headers. The API writes the object to
@@ -107,7 +109,7 @@ row can say "From ⟨device⟩" once the frontend reads `GET /v1/devices`.
   returns note content, a body or a title — a capture row, and on the
   two-step route a presigned PUT to a key the caller already had to be
   issued.
-- Per-key daily cap, body caps (5 MiB audio, 20,000 characters of text), a
+- Per-key daily cap, body caps (4 MiB audio, 20,000 characters of text), a
   content-type allowlist, and the instance's spend cap above all of it bound
   what abuse costs.
 - No key material in logs or responses beyond the 201 that issues it; the
