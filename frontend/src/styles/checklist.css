@@ -1,5 +1,5 @@
 /* --------------------------------------------------------------------------
-   Checklist notes — the Items tab, the Split up preview, the row's progress
+   Checklist notes — the Items tab, the Split up list, the row's progress
    -------------------------------------------------------------------------- */
 
 /* The same card the body textarea is: a recess in the page, holding rows. */
@@ -33,8 +33,12 @@
   border-block-end: 0;
 }
 
-/* The 24 px box inside its 44 px target, as the library's select box is. */
+/* The box: a real checkbox stretched invisibly over its 44 px label, so the
+   label is the target and the tap lands on the control itself; the mark
+   beside the words is the 22 px box a finger sees, drawn by the component in
+   the icon set's pen. No browser draws its own box anywhere in the app. */
 .checklist__check {
+  position: relative;
   display: grid;
   flex: none;
   place-items: center;
@@ -44,15 +48,68 @@
 }
 
 .checklist__box {
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  inline-size: 100%;
+  block-size: 100%;
   margin: 0;
-  accent-color: var(--color-ink);
+  opacity: 0;
   cursor: pointer;
 }
 
-.checklist__box[disabled] {
-  cursor: default;
+/* Quiet until it matters: the open box in the secondary ink, the hover on a
+   fine pointer lifting it to ink, as the row's other controls do. */
+.checklist__mark {
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+@media (hover: hover) {
+  .checklist__check:hover .checklist__mark {
+    color: var(--color-ink);
+  }
+}
+
+.checklist__mark rect {
+  fill: transparent;
+  transition:
+    fill var(--motion-duration-fast) var(--motion-ease-standard),
+    stroke var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The tick waits unseen. Its path is one unit long (`pathLength`), drawn as
+   one dash of one unit in a gap of two; at rest the dash sits 1.1 units
+   before the path starts — a tenth clear of it, so its round cap does not
+   show as a dot at the tick's first point — and ticking slides it onto the
+   path from that end, which draws the stroke. A transition, not an
+   animation, so it plays on a tick and not every time the list is drawn;
+   unticking runs it back. The motion tokens make it one frame under reduced
+   motion. */
+.checklist__mark path {
+  stroke: var(--color-ground);
+  stroke-dasharray: 1 2;
+  stroke-dashoffset: 1.1;
+  transition: stroke-dashoffset var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+/* Done: the box fills with ink and the tick draws itself in ground. */
+.checklist__box:checked + .checklist__mark rect {
+  fill: var(--color-ink);
+  stroke: var(--color-ink);
+}
+
+.checklist__box:checked + .checklist__mark path {
+  stroke-dashoffset: 0;
+}
+
+/* The hidden control's focus ring is drawn on the mark it stands behind. */
+.checklist__box:focus-visible + .checklist__mark {
+  outline: var(--layout-focus-ring-width) solid var(--color-ink);
+  outline-offset: var(--layout-focus-ring-offset);
 }
 
 /* The item's words, in the note's serif, as tall as the row. A textarea for an
@@ -101,11 +158,15 @@ textarea.checklist__text {
   cursor: default;
 }
 
-/* Done: greyed and struck through. The box stays live to reopen it. */
+/* Done: the words fade to the tertiary ink under a strike softer than they
+   are — the line's colour, not the text's — so the item reads as finished,
+   not crossed out in anger. The box stays live to reopen it. */
 .checklist__row--done .checklist__text {
   color: var(--color-faint);
   text-decoration: line-through;
   text-decoration-thickness: 1px;
+  text-decoration-color: var(--color-line-strong);
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .checklist__delete {
@@ -132,8 +193,8 @@ textarea.checklist__text {
   gap: var(--space-1);
 }
 
-/* The Split up tab's preview lives in the cleaned view's own card; the
-   stale state greys it the same way. */
+/* The Split up tab's list lives in the cleaned view's own card; a proposal
+   older than the note is greyed the same way the prose view is. */
 .checklist--preview .checklist__text {
   cursor: default;
 }

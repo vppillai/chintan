@@ -9,7 +9,7 @@ import {
   type TextareaHTMLAttributes,
 } from 'react';
 
-import { Icon } from '@/components/Icon.tsx';
+import { ICON_STROKE_WIDTH, Icon, PATHS } from '@/components/Icon.tsx';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 
 import {
@@ -119,17 +119,13 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
       <ul className="checklist" role="list" aria-label="Items">
         {open.map(({ item, index }, position) => (
           <li key={index} className="checklist__row">
-            <label className="checklist__check">
-              <input
-                type="checkbox"
-                className="checklist__box"
-                checked={false}
-                onChange={() => {
-                  toggle(index, item);
-                }}
-              />
-              <span className="visually-hidden">{item.text || `Item ${String(position + 1)}`}</span>
-            </label>
+            <Check
+              checked={false}
+              name={item.text || `Item ${String(position + 1)}`}
+              onChange={() => {
+                toggle(index, item);
+              }}
+            />
             <ItemField
               ref={(element) => {
                 if (element) inputs.current.set(index, element);
@@ -182,28 +178,20 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
           <ul className="checklist" role="list">
             {done.map(({ item, index }) => (
               <li key={index} className="checklist__row checklist__row--done">
-                <label className="checklist__check">
-                  <input
-                    type="checkbox"
-                    className="checklist__box"
-                    checked
-                    onChange={() => {
-                      toggle(index, item);
-                    }}
-                  />
-                  <span className="visually-hidden">{item.text || 'Item'}</span>
-                </label>
+                <Check
+                  checked
+                  name={item.text || 'Item'}
+                  onChange={() => {
+                    toggle(index, item);
+                  }}
+                />
                 <span className="checklist__text">{item.text}</span>
-                <button
-                  type="button"
-                  className="checklist__delete"
-                  aria-label={`Delete ${item.text || 'item'}`}
+                <DeleteItem
+                  text={item.text}
                   onClick={() => {
                     remove(index);
                   }}
-                >
-                  <Icon name="close" size={16} />
-                </button>
+                />
               </li>
             ))}
           </ul>
@@ -224,6 +212,63 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
 
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
+
+/**
+ * The box: a real checkbox, kept for what only it gives — the role, the
+ * name, the keyboard, the state — and stretched invisibly over its 44 px
+ * label, so the tap lands on the control itself; beside it the box a finger
+ * sees, drawn here in the icon set's own pen (`ICON_STROKE_WIDTH`, not
+ * scaling, round caps) so it reads as the same hand as every glyph. The tick
+ * is `PATHS.check` with a `pathLength` of 1, which lets the stylesheet hide
+ * it with one dash and draw it as a stroke when the box is ticked. No
+ * browser's native box appears anywhere in the app.
+ */
+function Check({
+  checked,
+  name,
+  onChange,
+}: {
+  checked: boolean;
+  name: string;
+  onChange: () => void;
+}) {
+  return (
+    <label className="checklist__check">
+      <input type="checkbox" className="checklist__box" checked={checked} onChange={onChange} />
+      <span className="checklist__mark" aria-hidden="true">
+        <svg
+          width={22}
+          height={22}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={ICON_STROKE_WIDTH}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          focusable="false"
+        >
+          <rect x={1} y={1} width={22} height={22} rx={5.5} vectorEffect="non-scaling-stroke" />
+          <path d={PATHS.check} pathLength={1} vectorEffect="non-scaling-stroke" />
+        </svg>
+      </span>
+      <span className="visually-hidden">{name}</span>
+    </label>
+  );
+}
+
+/** The × on a done row: gone for good, not reopened. */
+function DeleteItem({ text, onClick }: { text: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="checklist__delete"
+      aria-label={`Delete ${text || 'item'}`}
+      onClick={onClick}
+    >
+      <Icon name="close" size={16} />
+    </button>
+  );
+}
 
 /**
  * An item's words: a textarea that wraps and grows with them. A recording
@@ -284,29 +329,21 @@ export function ChecklistPreview({
           key={index}
           className={item.done ? 'checklist__row checklist__row--done' : 'checklist__row'}
         >
-          <label className="checklist__check">
-            <input
-              type="checkbox"
-              className="checklist__box"
-              checked={item.done}
-              onChange={() => {
-                onToggle(index);
-              }}
-            />
-            <span className="visually-hidden">{item.text || `Item ${String(index + 1)}`}</span>
-          </label>
+          <Check
+            checked={item.done}
+            name={item.text || `Item ${String(index + 1)}`}
+            onChange={() => {
+              onToggle(index);
+            }}
+          />
           <span className="checklist__text">{item.text}</span>
           {item.done && (
-            <button
-              type="button"
-              className="checklist__delete"
-              aria-label={`Delete ${item.text || 'item'}`}
+            <DeleteItem
+              text={item.text}
               onClick={() => {
                 onDelete(index);
               }}
-            >
-              <Icon name="close" size={16} />
-            </button>
+            />
           )}
         </li>
       ))}

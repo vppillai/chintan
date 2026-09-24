@@ -168,7 +168,13 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
   const clean = api.requests.find((r) => r.method === 'POST' && r.url === '/v1/notes/shopping/clean');
   expect(clean).toBeTruthy();
 
+  // No native box anywhere: the control is a real checkbox hidden under its
+  // 44 px label, and the box beside it is drawn.
   const butter = preview.getByRole('checkbox', { name: 'butter' });
+  await expect(butter).toHaveCSS('opacity', '0');
+  const target = await butter.locator('..').boundingBox();
+  expect(target?.height).toBeGreaterThanOrEqual(44);
+  expect(target?.width).toBeGreaterThanOrEqual(44);
 
   // The first tick adopts the split list and ticks butter, in one PATCH.
   await butter.click();

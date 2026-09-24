@@ -59,7 +59,11 @@ describe('ChecklistEditor', () => {
       'Bread',
       '', // the add row
     ]);
-    expect(open.getByRole('checkbox', { name: 'Milk' })).not.toBeChecked();
+    const milk = open.getByRole('checkbox', { name: 'Milk' });
+    expect(milk).not.toBeChecked();
+    // A real control, drawn: the input is visually hidden under its label and
+    // the box beside it is the component's own SVG, so no native box shows.
+    expect(milk.closest('label')?.querySelector('.checklist__mark svg rect')).not.toBeNull();
     expect(open.getByRole('textbox', { name: 'Add an item' })).toBeInTheDocument();
 
     const done = within(doneSection());
