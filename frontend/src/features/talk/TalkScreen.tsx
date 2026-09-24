@@ -56,7 +56,10 @@ export function TalkScreen() {
    * with focus, so the screen works the moment it opens. A field, the pill's
    * open list or any other control keeps its own Space; Escape mid-hold
    * cancels as sliding away does. The keydown's default is stopped so no
-   * click follows the release and the page does not scroll under it.
+   * click follows the release and the page does not scroll under it. The
+   * window losing focus cancels too, as `pointercancel` does for a finger:
+   * Alt-Tab, the lock screen or a notification takes the keyup with it, and
+   * without this the microphone stayed open until the cap.
    */
   const { press, release, cancel } = hold;
   useEffect(() => {
@@ -81,9 +84,11 @@ export function TalkScreen() {
     };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', cancel);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', cancel);
     };
   }, [press, release, cancel, holding]);
 
@@ -92,7 +97,7 @@ export function TalkScreen() {
     model.state === 'failed' && model.failure && !uploadRow ? model.failure.message : null;
 
   return (
-    <div className="talk">
+    <div className="talk" data-phase={hold.phase}>
       <h1 className="visually-hidden">Hold to talk</h1>
 
       <TargetChooser noteId={target} onChoose={setTarget} disabled={holding} />
@@ -137,7 +142,9 @@ export function TalkScreen() {
           ? 'Sent · filing'
           : hold.phase === 'hint'
             ? 'Too short — hold to talk'
-            : ''}
+            : hold.phase === 'busy'
+              ? 'Still sending the last one…'
+              : ''}
       </p>
 
       {failure && (

@@ -443,11 +443,13 @@
 
 /*
  * The shell's "Recording — tap to return" row is for a microphone left open
- * on another screen. A hold is not that: the card above says so, and the
- * `/talk` screen is its own indicator. Without this the row appeared above
- * the bar for the length of every hold and shoved the screen up under the
- * thumb.
+ * on another screen. A hold is not that: the card above says so, and on
+ * `/talk` the button is, from the press through the "Sent" beat that covers
+ * the stop. Without this the row appeared above the bar for the length of
+ * every hold and shoved the screen up under the thumb. Only for the hold
+ * itself, not the screen: a recording that belongs elsewhere must still be
+ * stated on `/talk`, or a press there would stand down with no word why.
  */
-.app:has(.hold-overlay, .talk) .recording-indicator {
+.app:has(.hold-overlay, .talk[data-phase='holding'], .talk[data-phase='sent']) .recording-indicator {
   display: none;
 }

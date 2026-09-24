@@ -107,10 +107,11 @@
   color: var(--color-ink);
 }
 
+/* Destructive, not the accent: on this screen the accent is the held button's alone. */
 .talk__failure {
   max-inline-size: 26rem;
   font-size: var(--font-size-sm);
-  color: var(--color-accent-strong);
+  color: var(--color-destructive);
 }
 
 .talk__hint {

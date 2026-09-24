@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
-import { HOLD_DELAY_MS, MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
+import { HOLD_DELAY_MS, HOLD_NOTICE_MS, MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { RecordButton } from './RecordButton.tsx';
@@ -54,12 +54,14 @@ class FakeRecorder {
 }
 
 let recorder = new FakeRecorder();
+let stream = new FakeStream();
 let micRequests = 0;
 
 const fakeDeps: RecorderDeps = {
   requestMicrophone: async () => {
     micRequests += 1;
-    return new FakeStream() as unknown as MediaStream;
+    stream = new FakeStream();
+    return stream as unknown as MediaStream;
   },
   chooseEncoder: () => ({ mimeType: 'audio/webm;codecs=opus', contentType: 'audio/webm' }),
   isSupported: () => true,
@@ -102,10 +104,10 @@ function Where() {
   return <output>{pathname + search}</output>;
 }
 
-function mount(noteId: string | null = null) {
+function mount(noteId: string | null = null, path = '/') {
   return render(
     <TestProviders api={testApiContext(acceptingFetch)}>
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={[path]}>
         <RecordButton noteId={noteId} />
         <Routes>
           <Route path="*" element={<Where />} />
@@ -121,6 +123,8 @@ const state = () => useCaptureStore.getState().model.state;
 /** Where the router is: the probe's `<output>`, which is also a status, so it is read by tag. */
 const where = () => document.querySelector('output')?.textContent;
 const overlay = () => document.querySelector('.hold-overlay');
+/** The one live region the overlay speaks from; the probe's `<output>` is a status too. */
+const status = () => document.querySelector('p[role="status"]');
 
 beforeEach(() => {
   micRequests = 0;
@@ -194,14 +198,23 @@ describe('the record button, held', () => {
   it('discards a hold too short to be a message, with a hint, and one that slid away, silently', async () => {
     mount();
     const mic = screen.getByRole('button', { name: 'Record' });
+    // The live region is there before anything is said in it, and stays the
+    // same node: a screen reader announces what a region changes to, not
+    // what a freshly mounted one contains.
+    const region = status();
+    expect(region).toHaveTextContent('');
 
     // Too short: the microphone opened, but there is no message in 100 ms.
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 100);
     expect(state()).toBe('recording');
+    expect(status()).toBe(region);
+    expect(region).toHaveTextContent('Release to send · slide away to cancel');
     fireEvent.pointerUp(mic, down);
     fireEvent.click(mic);
     expect(overlay()).toHaveTextContent('Hold to talk');
+    expect(status()).toBe(region);
+    expect(region).toHaveTextContent('Hold to talk');
     await waitFor(() => {
       expect(state()).toBe('idle');
     });
@@ -228,7 +241,38 @@ describe('the record button, held', () => {
     expect(screen.queryByText('Hold to talk')).toBeNull();
   });
 
-  it('stands down while a recording is already in flight, leaving the tap to the capture screen', async () => {
+  it('sends what was said before a call ended the track, rather than discarding it', async () => {
+    mount();
+    const mic = screen.getByRole('button', { name: 'Record' });
+    fireEvent.pointerDown(mic, down);
+    await wait(HOLD_DELAY_MS + 50);
+    expect(state()).toBe('recording');
+    await wait(MIN_TALK_MS + 100);
+    act(() => {
+      recorder.emitChunk(10);
+    });
+
+    // The track ends under the finger — a phone call, the headset coming out.
+    // The machine settles the take on its own; the hold must treat that as
+    // the message, not as a microphone that never came up.
+    act(() => {
+      stream.track.dispatchEvent(new Event('ended'));
+    });
+    await waitFor(() => {
+      expect(state()).toBe('review');
+    });
+    expect(overlay()).toHaveTextContent('Release to send');
+
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    await waitFor(() => {
+      expect(state()).toBe('uploaded');
+    });
+    expect(creates).toBe(1);
+    expect(where()).toBe('/');
+  });
+
+  it('says the last one is still sending when held mid-upload, and leaves the tap to the capture screen', async () => {
     act(() => {
       useCaptureStore.setState({
         model: { ...INITIAL_CAPTURE, state: 'uploading', localId: 'busy', uploadProgress: 0.4 },
@@ -236,10 +280,35 @@ describe('the record button, held', () => {
     });
     mount();
     const mic = screen.getByRole('button', { name: 'Record' });
+
+    // Held: a word rather than a dead button, and the release is not a tap.
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 50);
     expect(micRequests).toBe(0);
     expect(state()).toBe('uploading');
+    expect(overlay()).toHaveTextContent('Still sending the last one…');
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    expect(where()).toBe('/');
+    // The notice outlives the release that would otherwise have cleared its timer.
+    await wait(HOLD_NOTICE_MS + 50);
+    expect(overlay()).toBeNull();
+
+    // Tapped: the capture screen, where the upload is shown with its bar.
+    fireEvent.pointerDown(mic, down);
+    await wait(50);
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    expect(where()).toBe('/capture');
+  });
+
+  it('only taps on /talk, where the screen\'s own button is the hold', async () => {
+    mount(null, '/talk');
+    const mic = screen.getByRole('button', { name: 'Record' });
+    fireEvent.pointerDown(mic, down);
+    await wait(HOLD_DELAY_MS + 100);
+    expect(micRequests).toBe(0);
+    expect(state()).toBe('idle');
     fireEvent.pointerUp(mic, down);
     fireEvent.click(mic);
     expect(where()).toBe('/capture');

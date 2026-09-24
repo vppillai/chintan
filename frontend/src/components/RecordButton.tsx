@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
 import { HoldOverlay } from '@/features/capture/HoldOverlay.tsx';
@@ -25,9 +25,14 @@ import { Icon } from './Icon.tsx';
  * recording to different places from one screen. The sighted caption is the
  * tab bar's (`.tab-bar__into`), beside the disc rather than inside it, so
  * the disc's own box stays the disc.
+ *
+ * On `/talk` it only taps: that screen's disc is the hold, into the note its
+ * pill names, and a second hold surface in the same viewport recording
+ * somewhere else would be two answers to one question.
  */
 export function RecordButton({ noteId = null }: { noteId?: string | null }) {
   const navigate = useNavigate();
+  const onTalk = useLocation().pathname === ROUTES.talk;
   const into = noteId !== null;
   const hold = useHoldToTalk({ noteId, holdDelayMs: HOLD_DELAY_MS });
   const holding = hold.phase === 'holding';
@@ -39,7 +44,7 @@ export function RecordButton({ noteId = null }: { noteId?: string | null }) {
         className="record-button"
         data-holding={holding || undefined}
         data-away={hold.away || undefined}
-        {...hold.handlers}
+        {...(onTalk ? {} : hold.handlers)}
         onClick={() => {
           // The click that ends a hold is the release, not a tap.
           if (hold.consumeClick()) return;

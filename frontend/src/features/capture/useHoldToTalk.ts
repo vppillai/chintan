@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 
 import { useApi } from '@/api/ApiProvider.tsx';
 
-import { hasBufferedAudio, isCaptureBusy } from './machine.ts';
+import { hasBufferedAudio, isCaptureBusy, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
 
 /**
@@ -33,7 +33,7 @@ import { useCaptureStore } from './store.ts';
 export const HOLD_DELAY_MS = 350;
 /** Fewer milliseconds of audio than this is a slip, not a message. */
 export const MIN_TALK_MS = 600;
-/** How far the pointer may travel from where it pressed before release means cancel. */
+/** How far off the button the pointer may be before release means cancel. */
 export const SLIDE_AWAY_PX = 80;
 /** How long the "Hold to talk" hint and the "Sent" confirmation stay up. */
 export const HOLD_NOTICE_MS = 1_500;
@@ -50,7 +50,24 @@ export type HoldPhase =
   /** Released too soon: "Hold to talk", briefly. */
   | 'hint'
   /** Released with a recording: "Sent", briefly. */
-  | 'sent';
+  | 'sent'
+  /** Pressed while the last recording is still leaving: "Still sending…", briefly. */
+  | 'busy';
+
+/**
+ * Whether a release sends. The microphone live, or a recording that settled
+ * on its own with audio in it — a phone call ended the track, the headset
+ * came out, the cap stopped it — while the finger was still down. That
+ * audio is the message; the machine's rule is that an interruption yields a
+ * partial recording, never a discard, and the gesture keeps to it.
+ */
+export function holdSendable(model: CaptureModel): boolean {
+  return (
+    model.state === 'recording' ||
+    model.state === 'paused' ||
+    ((model.state === 'stopping' || model.state === 'review') && model.bytes > 0)
+  );
+}
 
 export interface HoldHandlers {
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -114,7 +131,7 @@ export function useHoldToTalk({
 
   /** Shows a notice for a moment, then rests. */
   const notice = useCallback(
-    (kind: 'hint' | 'sent') => {
+    (kind: 'hint' | 'sent' | 'busy') => {
       setPhase(kind);
       clearTimer();
       timer.current = setTimeout(() => {
@@ -129,10 +146,19 @@ export function useHoldToTalk({
     const store = useCaptureStore.getState();
     const { model } = store;
     /*
-     * A recording already in flight, or a take waiting to be sent, is the
-     * capture screen's to show — and that is where the tap that follows this
-     * press goes, so the hold simply stands down.
+     * The last recording still leaving the device gets a word, and the hold
+     * is not a tap: on a slow connection a long clip takes seconds, and a
+     * button that does nothing for those seconds reads as broken. A
+     * microphone live on another screen is already stated by the shell's
+     * indicator, and a take waiting on the capture screen is that screen's
+     * to show — that is where the tap that follows this press goes, so for
+     * those the hold simply stands down.
      */
+    if (model.state === 'uploading' || model.state === 'stopping') {
+      held.current = true;
+      notice('busy');
+      return;
+    }
     if (isCaptureBusy(model) || hasBufferedAudio(model)) {
       setPhase('idle');
       return;
@@ -143,7 +169,7 @@ export function useHoldToTalk({
     setAway(false);
     setPhase('holding');
     void store.start(target.current);
-  }, [setAway, setPhase]);
+  }, [notice, setAway, setPhase]);
 
   const press = useCallback(() => {
     if (phaseRef.current === 'armed' || phaseRef.current === 'holding') return;
@@ -160,19 +186,21 @@ export function useHoldToTalk({
     }, holdDelayMs);
   }, [begin, clearTimer, holdDelayMs, setPhase]);
 
+  // The timer is the hold delay's only while armed; after that it is a
+  // notice's, which outlives the press that raised it.
   const cancel = useCallback(() => {
-    clearTimer();
     origin.current = null;
+    if (phaseRef.current === 'armed') clearTimer();
     if (phaseRef.current === 'holding') void useCaptureStore.getState().discard();
     if (phaseRef.current === 'armed' || phaseRef.current === 'holding') setPhase('idle');
     setAway(false);
   }, [clearTimer, setAway, setPhase]);
 
   const release = useCallback(() => {
-    clearTimer();
     origin.current = null;
     if (phaseRef.current === 'armed') {
       // A tap. The click that follows is the button's own.
+      clearTimer();
       setPhase('idle');
       return;
     }
@@ -192,10 +220,10 @@ export function useHoldToTalk({
       setPhase('idle');
       return;
     }
-    const live = model.state === 'recording' || model.state === 'paused';
+    // A settled recording's clock has stopped; a running one's is read now.
     const elapsed =
-      model.accumulatedMs + (model.startedAt === null ? 0 : Date.now() - model.startedAt);
-    if (wasAway || !live || elapsed < MIN_TALK_MS) {
+      model.startedAt === null ? model.elapsedMs : model.accumulatedMs + Date.now() - model.startedAt;
+    if (wasAway || !holdSendable(model) || elapsed < MIN_TALK_MS) {
       void store.discard();
       if (wasAway) setPhase('idle');
       else notice('hint');
@@ -237,7 +265,16 @@ export function useHoldToTalk({
         cancel();
         return;
       }
-      if (phaseRef.current === 'holding') setAway(travelled > SLIDE_AWAY_PX);
+      if (phaseRef.current !== 'holding') return;
+      /*
+       * Away is measured from the button's edge, not the press point: on
+       * the `/talk` disc a thumb can drift a hand's width and still be well
+       * inside it, and a message must not be lost to that.
+       */
+      const box = event.currentTarget.getBoundingClientRect();
+      const dx = Math.max(box.left - event.clientX, 0, event.clientX - box.right);
+      const dy = Math.max(box.top - event.clientY, 0, event.clientY - box.bottom);
+      setAway(Math.hypot(dx, dy) > SLIDE_AWAY_PX);
     },
     [cancel, setAway],
   );

@@ -28,7 +28,7 @@ test('is one giant button, and the manifest offers it as a shortcut', async ({ p
   // At least two fifths of the viewport's height, and round.
   expect(box.height).toBeGreaterThanOrEqual(viewport.height * 0.4);
   expect(Math.abs(box.width - box.height)).toBeLessThan(2);
-  // Nothing on the page wears the accent until it is held: the disc is ink on the raised ground.
+  // The target pill sits above it.
   await expect(page.getByRole('button', { name: /^into /i })).toBeVisible();
 
   const manifestHref = (await page.locator('link[rel="manifest"]').getAttribute('href'))!;
@@ -86,7 +86,11 @@ test('slides away to cancel', async ({ page, api }) => {
   await page.mouse.down();
   await expect(page.getByRole('button', { name: 'Release to send' })).toBeVisible();
   await page.waitForTimeout(1_200);
-  await page.mouse.move(x, y + 200, { steps: 8 });
+  // Away is measured from the disc's edge, not the press point: halfway to
+  // the edge is still a send, and clear of it by more than the margin is not.
+  await page.mouse.move(x + box.width / 4, y, { steps: 4 });
+  await expect(page.getByRole('button', { name: 'Release to send' })).toBeVisible();
+  await page.mouse.move(box.x + box.width + 120, y, { steps: 8 });
   await expect(page.getByRole('button', { name: 'Release to cancel' })).toBeVisible();
   await page.mouse.up();
 

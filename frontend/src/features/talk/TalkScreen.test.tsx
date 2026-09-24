@@ -100,6 +100,7 @@ function mount(path = '/talk') {
 
 const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
 const state = () => useCaptureStore.getState().model.state;
+const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 
 beforeEach(() => {
   creates.length = 0;
@@ -156,6 +157,69 @@ describe('the talk screen', () => {
     fireEvent.keyDown(document.body, { key: ' ', repeat: true });
     fireEvent.keyUp(document.body, { key: ' ' });
     expect(screen.getByRole('status')).toHaveTextContent('Too short — hold to talk');
+    await waitFor(() => {
+      expect(state()).toBe('idle');
+    });
+    expect(creates).toHaveLength(0);
+  });
+
+  it('cancels a Space-bar hold when the window loses focus, as a finger gets pointercancel', async () => {
+    mount();
+    fireEvent.keyDown(document.body, { key: ' ' });
+    await wait(50);
+    expect(state()).toBe('recording');
+    // Alt-Tab, the lock screen, a notification: the keyup never arrives.
+    fireEvent.blur(window);
+    await waitFor(() => {
+      expect(state()).toBe('idle');
+    });
+    expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();
+    expect(creates).toHaveLength(0);
+    // And the next press is a new hold, not blocked by the one that never released.
+    fireEvent.keyDown(document.body, { key: ' ' });
+    await wait(50);
+    expect(state()).toBe('recording');
+  });
+
+  it('says the last one is still sending rather than going dead under a second press', async () => {
+    act(() => {
+      useCaptureStore.setState({
+        model: { ...INITIAL_CAPTURE, state: 'uploading', localId: 'busy', uploadProgress: 0.4 },
+      });
+    });
+    mount();
+    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
+    expect(state()).toBe('uploading');
+    expect(document.querySelector('.talk__status')).toHaveTextContent('Still sending the last one…');
+    fireEvent.pointerUp(button, touch);
+    fireEvent.click(button);
+    expect(document.querySelector('.talk__status')).toHaveTextContent('Still sending the last one…');
+  });
+
+  it('measures sliding away from the disc, not from where the thumb landed on it', async () => {
+    mount();
+    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    // jsdom lays nothing out; give the disc the box it has on a phone.
+    button.getBoundingClientRect = () =>
+      ({ x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 400, width: 400, height: 400 }) as DOMRect;
+    fireEvent.pointerDown(button, { ...touch, clientX: 200, clientY: 200 });
+    await wait(50);
+    expect(state()).toBe('recording');
+
+    // A hand's width of drift, still on the disc: not a cancel.
+    fireEvent.pointerMove(button, { ...touch, clientX: 200, clientY: 350 });
+    expect(button).not.toHaveAttribute('data-away');
+    expect(button).toHaveTextContent('Release to send');
+    // Off it by more than the margin.
+    fireEvent.pointerMove(button, { ...touch, clientX: 200, clientY: 500 });
+    expect(button).toHaveAttribute('data-away');
+    expect(button).toHaveTextContent('Release to cancel');
+    // And back on.
+    fireEvent.pointerMove(button, { ...touch, clientX: 390, clientY: 390 });
+    expect(button).not.toHaveAttribute('data-away');
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     await waitFor(() => {
       expect(state()).toBe('idle');
     });
