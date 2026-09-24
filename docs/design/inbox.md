@@ -116,3 +116,13 @@ row can say "From ⟨device⟩" once the frontend reads `GET /v1/devices`.
   what abuse costs.
 - No key material in logs or responses beyond the 201 that issues it; the
   device id is what identifies a device everywhere else.
+
+### `source` on a note's page
+
+`Capture.source` lives in the row's blob and, since 2026-09-24, as a top-level
+attribute too. gsi1's INCLUDE projection does not carry it, and CloudFormation
+cannot change a live index's projection, so `ListCapturesByNote` overlays the
+page's sources with one `BatchGetItem` (`hydrateCaptureSources`) rather than
+saying "app" for every row the way it did on the day the inbox shipped. When
+gsi1 is next rebuilt by hand, add `source` to `NonKeyAttributes` and delete the
+overlay.

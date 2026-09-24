@@ -648,7 +648,7 @@ func (s *DynamoStore) hydrateNotes(ctx context.Context, tenantID string, notes [
 			"sk": strAttr(noteSK(n.ID)),
 		})
 	}
-	items, err := s.batchGet(ctx, keys, projection)
+	items, err := s.batchGet(ctx, keys, projection, nil)
 	if err != nil {
 		return fmt.Errorf("dynamo hydrate notes: %w", err)
 	}
@@ -670,7 +670,7 @@ func (s *DynamoStore) hydrateNotes(ctx context.Context, tenantID string, notes [
 // batchGet reads the named keys with projection, in batches of batchGetKeys,
 // re-asking for whatever DynamoDB left unprocessed. Keys that name no item
 // are simply absent from the result.
-func (s *DynamoStore) batchGet(ctx context.Context, keys []map[string]types.AttributeValue, projection string) ([]map[string]types.AttributeValue, error) {
+func (s *DynamoStore) batchGet(ctx context.Context, keys []map[string]types.AttributeValue, projection string, names map[string]string) ([]map[string]types.AttributeValue, error) {
 	var out []map[string]types.AttributeValue
 	for len(keys) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -678,7 +678,7 @@ func (s *DynamoStore) batchGet(ctx context.Context, keys []map[string]types.Attr
 		}
 		n := min(batchGetKeys, len(keys))
 		request := map[string]types.KeysAndAttributes{
-			s.tableName: {Keys: keys[:n], ProjectionExpression: aws.String(projection)},
+			s.tableName: {Keys: keys[:n], ProjectionExpression: aws.String(projection), ExpressionAttributeNames: names},
 		}
 		keys = keys[n:]
 		for len(request) > 0 {
@@ -923,7 +923,7 @@ func (s *DynamoStore) NotesExist(ctx context.Context, tenantID string, noteIDs [
 	if len(keys) == 0 {
 		return out, nil
 	}
-	items, err := s.batchGet(ctx, keys, "sk")
+	items, err := s.batchGet(ctx, keys, "sk", nil)
 	if err != nil {
 		return nil, fmt.Errorf("dynamo notes exist: %w", err)
 	}
@@ -1178,13 +1178,17 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		"duration_ms":       numAttr(c.DurationMS),
 		"mode":              strAttr(string(c.Mode)),
 		"error":             strAttr(c.Error),
-		"audio_key":         strAttr(c.AudioKey),
-		"raw_key":           strAttr(c.RawKey),
-		"routed_key":        strAttr(c.RoutedKey),
-		"clean_key":         strAttr(c.CleanKey),
-		"segments_key":      strAttr(c.SegmentsKey),
-		"peaks_key":         strAttr(c.PeaksKey),
-		"data":              strAttr(string(blob)),
+		// Top-level for the same reason as the keys: the by-note page reads it
+		// back with one BatchGetItem (hydrateCaptureSources) instead of
+		// decoding every row's blob.
+		"source":       strAttr(c.Source),
+		"audio_key":    strAttr(c.AudioKey),
+		"raw_key":      strAttr(c.RawKey),
+		"routed_key":   strAttr(c.RoutedKey),
+		"clean_key":    strAttr(c.CleanKey),
+		"segments_key": strAttr(c.SegmentsKey),
+		"peaks_key":    strAttr(c.PeaksKey),
+		"data":         strAttr(string(blob)),
 	}
 	// Indexed even when NoteID is empty. A capture awaiting disambiguation has
 	// no destination note, and leaving it out of the index entirely is what made
@@ -1224,6 +1228,9 @@ func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, err
 	// never blanks a field the blob already supplied.
 	if _, ok := m["mode"]; ok {
 		c.Mode = model.CleanupMode(readString(m, "mode"))
+	}
+	if _, ok := m["source"]; ok {
+		c.Source = readString(m, "source")
 	}
 	if _, ok := m["error"]; ok {
 		c.Error = readString(m, "error")
@@ -1360,12 +1367,54 @@ func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID s
 		c.UserID = tenantID
 		captures = append(captures, c)
 	}
+	if err := s.hydrateCaptureSources(ctx, tenantID, captures); err != nil {
+		return Page[model.CaptureIndex]{}, err
+	}
 
 	cursor, err := encodeCursor(out.LastEvaluatedKey, cursorDescending)
 	if err != nil {
 		return Page[model.CaptureIndex]{}, err
 	}
 	return Page[model.CaptureIndex]{Items: captures, Cursor: cursor}, nil
+}
+
+// hydrateCaptureSources overlays each capture's source, which gsi1 does not
+// project, so a note's page can say which device sent a recording (the
+// capture read on its own always could). One BatchGetItem per page, keyed
+// off the projected ids; a row from before the attribute was promoted has
+// nothing to say and keeps what its blob said.
+//
+// ponytail: a second read per by-note page. CloudFormation cannot change a
+// live index's projection, so `source` joins gsi1's NonKeyAttributes when the
+// index is next rebuilt by hand; this function goes then.
+func (s *DynamoStore) hydrateCaptureSources(ctx context.Context, tenantID string, captures []model.CaptureIndex) error {
+	if len(captures) == 0 {
+		return nil
+	}
+	byID := make(map[string]int, len(captures))
+	keys := make([]map[string]types.AttributeValue, 0, len(captures))
+	for i, c := range captures {
+		byID[c.ID] = i
+		keys = append(keys, map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(captureSK(c.ID)),
+		})
+	}
+	// SOURCE is a DynamoDB reserved word, hence the placeholder.
+	items, err := s.batchGet(ctx, keys, "sk, #source", map[string]string{"#source": "source"})
+	if err != nil {
+		return fmt.Errorf("dynamo hydrate capture sources: %w", err)
+	}
+	for _, item := range items {
+		i, ok := byID[trimPrefix(readString(item, "sk"), "CAPTURE#")]
+		if !ok {
+			continue
+		}
+		if _, has := item["source"]; has {
+			captures[i].Source = readString(item, "source")
+		}
+	}
+	return nil
 }
 
 func trimPrefix(s, prefix string) string {

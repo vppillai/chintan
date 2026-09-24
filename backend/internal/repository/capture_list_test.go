@@ -220,3 +220,36 @@ func captureCreatedAt(cs []model.CaptureIndex) []string {
 	}
 	return out
 }
+
+// gsi1 projects a fixed list of attributes and `source` was not among them, so
+// a note's page said "app" for a device's recording while the capture read on
+// its own said "device:…" (QA 2026-09-24, H5). The fake takes its projection
+// from the template, so this runs against the real index shape.
+func TestListCapturesByNoteKeepsTheSource(t *testing.T) {
+	eachStore(t, func(t *testing.T) {
+		store, ctx := newStore(), t.Context()
+		device := model.DeviceSource("dev_0123456789ab")
+		for _, c := range []model.CaptureIndex{
+			{ID: "c_dev", UserID: owner, NoteID: "note_1", Status: model.StatusAppended, CreatedAt: model.Now(), Source: device, RawKey: "raw"},
+			{ID: "c_app", UserID: owner, NoteID: "note_1", Status: model.StatusAppended, CreatedAt: model.Now()},
+		} {
+			if _, err := store.PutCapture(ctx, c); err != nil {
+				t.Fatalf("seed %s: %v", c.ID, err)
+			}
+		}
+		page, err := store.ListCapturesByNote(ctx, owner, "note_1", repository.ListOptions{})
+		if err != nil {
+			t.Fatalf("ListCapturesByNote: %v", err)
+		}
+		got := map[string]string{}
+		for _, c := range page.Items {
+			got[c.ID] = c.Source
+		}
+		if got["c_dev"] != device {
+			t.Errorf("c_dev source on the note's page = %q, want %q", got["c_dev"], device)
+		}
+		if got["c_app"] != "" {
+			t.Errorf("c_app source = %q, want empty (the wire spells that \"app\")", got["c_app"])
+		}
+	})
+}
