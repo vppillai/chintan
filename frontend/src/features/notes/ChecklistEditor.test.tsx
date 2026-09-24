@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 
-import { ChecklistEditor } from './ChecklistEditor.tsx';
+import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
 import { initialEditor, type NoteDraft } from './autosave.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
@@ -199,5 +199,15 @@ describe('ChecklistEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveValue('Ridge tiles have slipped.');
     await user.click(screen.getByRole('checkbox', { name: 'Call Ellis' }));
     expect(body()).toBe('- [ ] Ridge tiles have slipped.\n- [x] Call Ellis');
+  });
+});
+
+describe('parseMotionMs', () => {
+  it('reads the token in milliseconds or seconds, as the built sheet minifies it', () => {
+    expect(parseMotionMs('220ms')).toBe(220);
+    expect(parseMotionMs('.22s')).toBe(220);
+    expect(parseMotionMs(' 0.5s ')).toBe(500);
+    expect(parseMotionMs('1ms')).toBe(1);
+    expect(parseMotionMs('')).toBe(220);
   });
 });

@@ -247,9 +247,22 @@ function rowClass(item: ChecklistItem): string {
  * sheet cannot be read (tests).
  */
 function motionBaseMs(): number {
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--motion-duration-base');
-  const ms = Number.parseFloat(raw);
-  return Number.isFinite(ms) ? ms : 220;
+  return parseMotionMs(getComputedStyle(document.documentElement).getPropertyValue('--motion-duration-base'));
+}
+
+/**
+ * A CSS time in milliseconds. The source sheet says `220ms`, but the built
+ * one is minified to `.22s`, and reading that as 0.22 ms made the hold
+ * invisible on the deployed app while every test, run against the source
+ * token, passed. Honours both units; the token's own value for anything else.
+ */
+export function parseMotionMs(raw: string): number {
+  const value = raw.trim();
+  const n = Number.parseFloat(value);
+  if (!Number.isFinite(n)) return 220;
+  if (value.endsWith('ms')) return n;
+  if (value.endsWith('s')) return n * 1000;
+  return n;
 }
 
 /**
