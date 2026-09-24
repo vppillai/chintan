@@ -77,7 +77,7 @@ describe('ChecklistEditor', () => {
     expect(done.queryByRole('textbox')).toBeNull();
   });
 
-  it('ticks an item in place, saves at once, says so, and moves it down to Done', async () => {
+  it('ticks an item in place, saves at once, says so, and after a beat moves it down to Done', async () => {
     const user = userEvent.setup();
     const { log, body } = mount(LIST);
 
@@ -85,13 +85,24 @@ describe('ChecklistEditor', () => {
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(1);
     expect(screen.getByRole('status')).toHaveTextContent('Marked done');
+    // The row stays where the finger is, ticked and struck, for as long as
+    // the tick takes to draw — a row that moved at once would mount in Done
+    // already ticked, and nothing would be seen to happen.
+    const milk = within(items()).getByRole('checkbox', { name: 'Milk' });
+    expect(milk).toBeChecked();
+    expect(milk.closest('li')).toHaveClass('checklist__row--done');
+    expect(screen.getByRole('heading', { name: /Done \(1\)/ })).toBeInTheDocument();
+    expect(await within(doneSection()).findByRole('checkbox', { name: 'Milk' })).toBeChecked();
     expect(screen.getByRole('heading', { name: /Done \(2\)/ })).toBeInTheDocument();
-    expect(within(doneSection()).getByRole('checkbox', { name: 'Milk' })).toBeChecked();
+    expect(within(items()).queryByRole('checkbox', { name: 'Milk' })).toBeNull();
 
     await user.click(within(doneSection()).getByRole('checkbox', { name: 'Eggs' }));
     expect(body()).toBe('- [x] Milk\n- [ ] Eggs\n- [ ] Bread');
     expect(screen.getByRole('status')).toHaveTextContent('Reopened');
-    expect(within(items()).getByRole('checkbox', { name: 'Eggs' })).not.toBeChecked();
+    // Reopened the same way: unticked under Done for the beat, then back up.
+    expect(within(doneSection()).getByRole('checkbox', { name: 'Eggs' })).not.toBeChecked();
+    expect(await within(items()).findByRole('checkbox', { name: 'Eggs' })).not.toBeChecked();
+    expect(within(doneSection()).queryByRole('checkbox', { name: 'Eggs' })).toBeNull();
   });
 
   it('Enter starts a new item under this one and puts the caret in it', async () => {

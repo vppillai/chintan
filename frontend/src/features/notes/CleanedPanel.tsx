@@ -5,9 +5,8 @@ import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import { queryKeys } from '@/api/queries.ts';
 import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
-import { Icon } from '@/components/Icon.tsx';
 
-import { ChecklistPreview } from './ChecklistEditor.tsx';
+import { CheckMark, ChecklistPreview } from './ChecklistEditor.tsx';
 import { removeItem, toggleItem } from './checklist.ts';
 import {
   CLEAN_POLL_MS,
@@ -108,11 +107,15 @@ export function CleanedPanel({
     checklist && cleaned !== null && adoptedSplits.get(note.id) === cleaned.generated_at;
   // The split list as it stands: the proposal, or the body once it became it.
   const splitBody = adopted ? draft.body : (cleaned?.body ?? '');
+  // Said once, when the body is replaced: the caption's leaving is the only
+  // other sign, and a screen reader never hears a line vanish.
+  const [announcement, setAnnouncement] = useState('');
   // The split list as the body, ticked or cut as asked: the same edit-and-save
   // a tick in the Items tab is, so it rides the autosave and its conflict
   // prompt like any other change to the items.
   const adopt = (body: string): void => {
     if (cleaned) adoptedSplits.set(note.id, cleaned.generated_at);
+    if (!adopted) setAnnouncement('Your list is now the split version.');
     editor.edit({ body });
     void editor.saveNow();
   };
@@ -160,25 +163,23 @@ export function CleanedPanel({
         )}
 
         {/*
-          A real checkbox, drawn: the native control is stretched invisibly
-          over the whole label, so the label is the 44 px target and the tap
-          lands on the control itself; the mark beside the words is the box a
-          finger sees, in the set's own stroke like every drawn glyph here.
+          The checklist's own drawn box: the native control is stretched
+          invisibly over the whole label, so the label is the 44 px target and
+          the tap lands on the control itself; the mark beside the words is
+          the box a finger sees.
         */}
         <label className="cleaned__auto" htmlFor={autoId}>
           <input
             id={autoId}
             type="checkbox"
-            className="cleaned__auto-box"
+            className="checklist__box"
             checked={autoClean}
             onChange={(event) => {
               editor.edit({ auto_clean: event.target.checked });
               void editor.saveNow();
             }}
           />
-          <span className="cleaned__auto-mark" aria-hidden="true">
-            <Icon name="check" size={16} />
-          </span>
+          <CheckMark />
           <span>Keep it updated after each recording</span>
         </label>
       </div>
@@ -186,11 +187,16 @@ export function CleanedPanel({
       {cleaned ? (
         <>
           <div className="cleaned__header">
+            {/* Once adopted the rows below are the body, not a generated view. */}
             <p className="cleaned__meta">
-              Generated {describeAgo(cleaned.generated_at)} · {CLEANED_MODE_LABELS[cleaned.mode]}
+              {adopted
+                ? `Your list · split up ${describeAgo(cleaned.generated_at)}`
+                : `Generated ${describeAgo(cleaned.generated_at)} · ${CLEANED_MODE_LABELS[cleaned.mode]}`}
             </p>
             <div className="checklist-preview__actions">
-              {checklist && (
+              {/* Gone once adopted: the body already is this list, and
+                  pressing it again would throw away the ticks made since. */}
+              {checklist && !adopted && (
                 <button
                   type="button"
                   className="cleaned__action cleaned__action--primary"
@@ -246,6 +252,7 @@ export function CleanedPanel({
               <ChecklistPreview
                 body={splitBody}
                 label="Split up items"
+                disabled={pending}
                 onToggle={(index) => {
                   adopt(toggleItem(splitBody, index));
                 }}
@@ -281,6 +288,12 @@ export function CleanedPanel({
             {pending ? 'Generating…' : 'Generate'}
           </button>
         </div>
+      )}
+
+      {checklist && (
+        <p className="visually-hidden" role="status" aria-live="polite">
+          {announcement}
+        </p>
       )}
     </section>
   );

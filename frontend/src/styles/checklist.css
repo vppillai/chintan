@@ -69,7 +69,8 @@
 }
 
 @media (hover: hover) {
-  .checklist__check:hover .checklist__mark {
+  .checklist__check:hover .checklist__mark,
+  .cleaned__auto:hover .checklist__mark {
     color: var(--color-ink);
   }
 }
@@ -110,6 +111,16 @@
 .checklist__box:focus-visible + .checklist__mark {
   outline: var(--layout-focus-ring-width) solid var(--color-ink);
   outline-offset: var(--layout-focus-ring-offset);
+}
+
+/* Held while a regeneration is on its way, as the buttons are: the box
+   drops to the tertiary ink and the pointer stops offering. */
+.checklist__box:disabled {
+  cursor: default;
+}
+
+.checklist__box:disabled + .checklist__mark {
+  color: var(--color-faint);
 }
 
 /* The item's words, in the note's serif, as tall as the row. A textarea for an
@@ -186,6 +197,12 @@ textarea.checklist__text {
 .checklist__delete:focus-visible {
   color: var(--color-ink);
   background-color: var(--color-surface);
+}
+
+.checklist__delete:disabled {
+  color: var(--color-faint);
+  background-color: transparent;
+  cursor: default;
 }
 
 .checklist__done {

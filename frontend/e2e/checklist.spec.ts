@@ -182,20 +182,23 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
   expect(api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping')).toHaveLength(1);
   await expect(butter).toBeChecked();
   await expect(caption).toHaveCount(0);
+  await expect(page.getByText(/your list · split up just now/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
 
   // The next act edits the body it made, not another replacement: the ×
   // under a done item deletes it, and butter stays done.
   await preview.getByRole('button', { name: 'Delete Eggs' }).click();
   await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread\n- [x] butter');
 
-  // Away and back, the tab shows the body, still ticked; Use this list stays.
+  // Away and back, the tab shows the body, still ticked; Regenerate stays and
+  // Use this list does not: the body already is this list.
   await page.getByRole('tab', { name: 'Items' }).click();
   await expect.poll(() => values(page.getByRole('list', { name: 'Items' }))).toEqual(['Milk', 'Bread', '']);
   await page.getByRole('tab', { name: 'Split up' }).click();
   await expect(page.getByRole('list', { name: 'Split up items' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
   await expect(page.getByText('Ticking here replaces your list with the split version.')).toHaveCount(0);
   await expect(page.getByText('The note changed since this was generated.')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Use this list' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
 });
 

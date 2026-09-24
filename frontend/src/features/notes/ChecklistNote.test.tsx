@@ -219,6 +219,12 @@ describe('a checklist note', () => {
     expect(api.patches[0]).not.toHaveProperty('cleaned_mode');
     expect(preview().getByRole('checkbox', { name: 'Butter' })).toBeChecked();
     expect(panel().queryByText(caption)).toBeNull();
+    // The rows are the body now, and the header, the live region and the
+    // missing button all say so: pressing Use this list again would have put
+    // the un-ticked proposal back over the tick just made.
+    expect(panel().getByText(/^Your list · split up /)).toBeInTheDocument();
+    expect(panel().getByRole('status')).toHaveTextContent('Your list is now the split version.');
+    expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
 
     // The next act edits the body it made — Eggs reopened, Butter kept done —
     // rather than replacing it with the proposal again.
@@ -238,14 +244,30 @@ describe('a checklist note', () => {
     expect(api.patches[2]).toEqual(expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread' }));
 
     // Away and back — the panel is remounted — the tab still shows the body,
-    // not the proposal, and Use this list and Regenerate are still there.
+    // not the proposal; Regenerate is still there and Use this list is not.
     await user.click(screen.getByRole('tab', { name: 'Items' }));
     expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Bread');
     expect(screen.queryByRole('checkbox', { name: 'Butter' })).toBeNull();
     await user.click(screen.getByRole('tab', { name: 'Split up' }));
     expect(preview().getAllByRole('checkbox')).toHaveLength(3);
     expect(panel().queryByText(caption)).toBeNull();
-    expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
+    expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
     expect(panel().getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
+
+    // Regenerate holds the rows with the buttons while the worker is at it —
+    // a tick now would adopt a proposal about to be replaced — and what
+    // arrives is a new proposal: the caption and Use this list are back.
+    await user.click(panel().getByRole('button', { name: 'Regenerate' }));
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
+    await waitFor(
+      () => {
+        expect(preview().getAllByRole('checkbox')).toHaveLength(4);
+      },
+      { timeout: CLEAN_POLL_MS * 3 },
+    );
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
+    expect(panel().getByText(caption)).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeEnabled();
+    expect(api.patches).toHaveLength(3);
   });
 });
