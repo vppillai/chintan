@@ -56,3 +56,48 @@ Numbered as in the report, so its "section 4, item N" references resolve here; t
 13. **CloudTrail cost.** The trail's ~600 small objects a day cost more than DynamoDB and API Gateway together, on a $0.20 bill. Recommendation: leave it; the security value exceeds nine cents. (T61)
 14. **Read-only agent policy.** Same as D.
 15. **Review three restructures on your phone**: the note screen (T6), Home (T17) and You (T20). Each is reversible in one PR; say which, if any, you want back.
+
+# Update — 2026-09-24
+
+Your five points from the 24th (plus the desktop-selection remark) were implemented and deployed the same day. What each became:
+
+- **Recording into a note returns to that note.** Send (or Stop → Send) goes back to the note on the tab you were on, and a slim filing banner under the header shows the stages until the text lands; the Recordings tab still lists the row.
+- **Push-to-talk.** Hold the tab-bar mic for a third of a second: it records in place with a small overlay ("Release to send · slide away to cancel"); release sends. There is also a full-screen **Hold to talk** page (`/talk`, and a home-screen shortcut of the same name) for one-handed quick captures, one after another. A real Android home-screen *widget* is not something a web app can provide; see Decisions.
+- **Injecting recordings from other devices.** You → **Devices & shortcuts** creates a device key (shown once). Any device or app that can send one HTTPS request with one header can post audio (`POST /v1/inbox/audio`, one shot, ≤4 MiB) or text (`POST /v1/inbox/text`), and it files like a normal recording; the card carries copyable curl, iOS Shortcut and Android HTTP-Shortcuts recipes. Keys are hashed at rest, revocable, and capped at 200 requests a day each. Verified live with a real upload through a device key.
+- **Pin and reorder.** Pin from a row's tray, ⋮ menu or the note's header menu; pinned notes sit in a Pinned group at the top of Home and can be dragged into any order (grip handle on desktop, long-press-and-drag on the phone). The "newest at the bottom" report could not be reproduced: the list is served and shown newest-touched first, and every write bumps a note's timestamp; a new recording's *text* does land at the end of its note by design. If you still see it, a screenshot of Home with the note's name will pin it down.
+- **Desktop selection.** The hover checkbox is gone; press-and-hold with the mouse enters selection like a finger does, and every row has a ⋮ menu (Pin · Archive · Delete · Select).
+- **Checklists.** Ticking in Split up now works (the first tick replaces your list with the split version and says so); the boxes and ticks are drawn in the app's own stroke, with an animated tick and faint struck-through done items.
+
+## Decisions (new)
+
+5. **A real home-screen widget or a hardware button** (for the ring/watch use) needs a thin native wrapper (Android TWA with a widget, or an iOS Shortcut bound to the Action button posting to the inbox). The inbox is ready for either. Say if you want the Android wrapper built.
+6. **Pinning from a stale list** can answer 409 because a pin PATCH carries the note's version. Recommendation: let a pin-only PATCH skip the version check (small backend change) — approve and it ships.
+
+## Status at the end of the afternoon (24 Sept)
+
+Everything above is merged and live: frontend 8da7821 (#88 pins and reorder, #85 return-to-note and hold-to-talk, #84 checklists, #83 Devices & shortcuts), backend v0.5.29 / ea7ab37 (#87 inbox and pins; #89 fixes two one-in-sixteen flakes in the device-key test that had failed #84's CI). Prod logs: 0 WARN/ERROR since the deploy window.
+
+**Live QA on prod, test tenant** (`orb:~/r3/live/qa0924-*`, 60 screenshots):
+
+| Flow | Result |
+|---|---|
+| A Home on a phone: long-press select, swipe tray, ⋮ Pin, Pinned group, reload, drag-reorder | PASS 18/18 |
+| B Home on a desktop: no hover checkbox, mouse hold, Shift/Escape, ⋮ by mouse and Tab/Enter, grip drag and arrows | PASS 17/17 |
+| C Ordering: a note recorded into rises to the top, live on an open Home (6.5 s) and after a reload | PASS |
+| D Return-to-note: Send → the note's Text tab, banner between header and tabs, cleared 4.8 s after Send, paragraph appended | PASS |
+| E Hold-to-talk: tab-bar mic and `/talk`; appended 3.7 s / 2.1 s after release; a short hold shows the hint | PASS 12/12 |
+| F Regressions: no console errors on any screen, no "Filed" receipts with zero notes | PASS |
+| G Checklists: live Split up (one PATCH, caption, then the body), drawn boxes, grey + strike | 8/9 — the ticked item did not hold before moving |
+| H Devices: create, key shown once, list, three recipes, inbox text → appended, no player, Remove → 204 and the key answers 401 | 10/11 — the row did not say "From ⟨device⟩" |
+
+Both misses are fixed the same afternoon:
+
+- **G4 (#91).** `--motion-duration-base` is `220ms` in the source sheet and `.22s` in the built one; the hold parsed it with `parseFloat`, so production held for 0.22 ms and every test held for 220. The parser now honours the unit.
+- **H5 (#90).** `GET /v1/captures/{id}` said `device:…` while the same capture inside `GET /v1/notes/{id}` said `app`: the by-note page reads gsi1, whose projection does not carry `source`. The row now carries `source` at the top level and the page overlays it with one `BatchGetItem`, the way the notes list already fetches its large fields. See Decisions 7.
+- **Found while cleaning up (#92).** Two test-tenant captures whose upload never landed (the HOME-4 rows) have shown "Still not done" since 04:22Z and `DELETE` answered 409 for ever: delete refused every pending status, while retry, move and re-transcribe already allow a capture nobody can still be working on (15 minutes). Delete now uses the same rule.
+
+**Also seen, no action:** Chromium logs `ERR_ABORTED` for every successful presigned S3 PUT and the device `DELETE` 204 (the requests complete; unconsumed empty bodies). The orb VM froze for about an hour mid-QA because the Mac's swap filled (12 of 13 GB); nothing on the VM was touched and it recovered on its own, but it will happen again until some apps are closed.
+
+## Decisions (new, continued)
+
+7. **`source` in gsi1's projection.** CloudFormation cannot change a live index's projection, so #90 pays one extra read per by-note page instead. The clean end state is `source` in `NonKeyAttributes`, which means deleting and re-creating gsi1 by hand (two stack updates; the note screens and device-key lookups are degraded while it backfills, minutes on this table). Recommendation: do it in a quiet hour when you next touch the template, then delete `hydrateCaptureSources`. Not urgent.
