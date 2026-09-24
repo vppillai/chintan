@@ -177,41 +177,75 @@ describe('a checklist note', () => {
     );
   });
 
-  it('Split up has no mode to pick, previews the split list read-only, and can make it the body', async () => {
+  it('Split up has no mode to pick, and its list is live: the first tick adopts the split list, the next edits it', async () => {
     const user = userEvent.setup();
     const api = server(SHOPPING);
     await screen.findByRole('textbox', { name: 'Item 1' });
     await user.click(screen.getByRole('tab', { name: 'Split up' }));
 
-    const panel = within(screen.getByRole('region', { name: 'Split up' }));
-    expect(panel.queryByRole('group', { name: 'Cleaned view mode' })).toBeNull();
-    expect(panel.getByText('Not split up yet')).toBeInTheDocument();
-    expect(panel.getByText(/one task per action/i)).toBeInTheDocument();
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    expect(panel().queryByRole('group', { name: 'Cleaned view mode' })).toBeNull();
+    expect(panel().getByText('Not split up yet')).toBeInTheDocument();
+    expect(panel().getByText(/one task per action/i)).toBeInTheDocument();
     // The auto-refresh switch stays.
-    expect(panel.getByRole('checkbox', { name: /keep it updated/i })).toBeInTheDocument();
+    expect(panel().getByRole('checkbox', { name: /keep it updated/i })).toBeInTheDocument();
 
-    await user.click(panel.getByRole('button', { name: 'Generate' }));
+    await user.click(panel().getByRole('button', { name: 'Generate' }));
     // No mode named: the server applies `tasks` itself.
     expect(api.cleans).toEqual([null]);
 
-    const preview = await waitFor(
-      () => panel.getByRole('list', { name: 'Split up items' }),
-      { timeout: CLEAN_POLL_MS * 3 },
-    );
-    const boxes = within(preview).getAllByRole('checkbox');
+    const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
+    await waitFor(() => panel().getByRole('list', { name: 'Split up items' }), {
+      timeout: CLEAN_POLL_MS * 3,
+    });
+    const boxes = preview().getAllByRole('checkbox');
     expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true, false, false]);
-    for (const box of boxes) expect(box).toBeDisabled();
-    expect(within(preview).queryByRole('textbox')).toBeNull();
-    expect(panel.getByText(/^Generated .* · Split up$/)).toBeInTheDocument();
+    for (const box of boxes) expect(box).toBeEnabled();
+    expect(preview().queryByRole('textbox')).toBeNull();
+    expect(panel().getByText(/^Generated .* · Split up$/)).toBeInTheDocument();
+    const caption = 'Ticking here replaces your list with the split version.';
+    expect(panel().getByText(caption)).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
 
-    await user.click(panel.getByRole('button', { name: 'Use this list' }));
+    // The first tick: the body becomes the split list with Butter done, in
+    // one save; the caption has done its job.
+    await user.click(preview().getByRole('checkbox', { name: 'Butter' }));
     await waitFor(() => {
       expect(api.patches).toHaveLength(1);
     });
-    expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
+    expect(api.patches[0]).toEqual(
+      expect.objectContaining({ body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter' }),
+    );
     expect(api.patches[0]).not.toHaveProperty('cleaned_mode');
+    expect(preview().getByRole('checkbox', { name: 'Butter' })).toBeChecked();
+    expect(panel().queryByText(caption)).toBeNull();
 
+    // The next act edits the body it made — Eggs reopened, Butter kept done —
+    // rather than replacing it with the proposal again.
+    await user.click(preview().getByRole('checkbox', { name: 'Eggs' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    expect(api.patches[1]).toEqual(
+      expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread\n- [x] Butter' }),
+    );
+
+    // A done item's × deletes it, as under Done.
+    await user.click(preview().getByRole('button', { name: 'Delete Butter' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(3);
+    });
+    expect(api.patches[2]).toEqual(expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread' }));
+
+    // Away and back — the panel is remounted — the tab still shows the body,
+    // not the proposal, and Use this list and Regenerate are still there.
     await user.click(screen.getByRole('tab', { name: 'Items' }));
-    expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Butter');
+    expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Bread');
+    expect(screen.queryByRole('checkbox', { name: 'Butter' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Split up' }));
+    expect(preview().getAllByRole('checkbox')).toHaveLength(3);
+    expect(panel().queryByText(caption)).toBeNull();
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
   });
 });

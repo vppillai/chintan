@@ -8,6 +8,7 @@ import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
 
 import { ChecklistPreview } from './ChecklistEditor.tsx';
+import { removeItem, toggleItem } from './checklist.ts';
 import {
   CLEAN_POLL_MS,
   CLEAN_POLL_TIMEOUT_MS,
@@ -45,11 +46,27 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * told so.
  *
  * For a checklist the tab is Split up: the one mode is `tasks` — the list
- * rewritten as one task per action — so there is no mode to pick, the result
- * is shown as the same rows with their boxes disabled, and Use this list
- * makes it the body. The server applies the mode itself, so the request
+ * rewritten as one task per action — so there is no mode to pick, and the
+ * result is shown as the same rows, live: the first tick or delete makes the
+ * split list the body and acts on it in the same save, as Use this list
+ * makes it the body outright, and from then on the tab shows the body itself
+ * (`adoptedSplits`). The server applies the mode itself, so the request
  * names none.
  */
+
+/**
+ * Which split list each note has taken as its body, by the view's
+ * `generated_at`. Before that the tab shows the proposal and a tick there
+ * replaces the body with it; after it the tab shows the body — the split
+ * list with the ticks made since — and a tick is an ordinary edit. Module
+ * state rather than the panel's because the panel unmounts with every tab
+ * switch, and the person who ticked Milk here, looked at Items and came back
+ * must find Milk ticked, not the un-ticked proposal ready to overwrite the
+ * body again. A reload starts over; the stale notice then says the proposal
+ * is older than the note.
+ */
+const adoptedSplits = new Map<string, string>();
+
 export function CleanedPanel({
   note,
   editor,
@@ -86,6 +103,19 @@ export function CleanedPanel({
   // A checklist has one mode and no switch.
   const mode: CleanedMode = checklist ? 'tasks' : plainMode(draft.cleaned_mode ?? cleaned?.mode);
   const autoClean = draft.auto_clean ?? false;
+
+  const adopted =
+    checklist && cleaned !== null && adoptedSplits.get(note.id) === cleaned.generated_at;
+  // The split list as it stands: the proposal, or the body once it became it.
+  const splitBody = adopted ? draft.body : (cleaned?.body ?? '');
+  // The split list as the body, ticked or cut as asked: the same edit-and-save
+  // a tick in the Items tab is, so it rides the autosave and its conflict
+  // prompt like any other change to the items.
+  const adopt = (body: string): void => {
+    if (cleaned) adoptedSplits.set(note.id, cleaned.generated_at);
+    editor.edit({ body });
+    void editor.saveNow();
+  };
 
   const chooseMode = (next: CleanedMode): void => {
     // Recorded on the note, so an automatic regeneration uses it too, and
@@ -160,19 +190,13 @@ export function CleanedPanel({
               Generated {describeAgo(cleaned.generated_at)} · {CLEANED_MODE_LABELS[cleaned.mode]}
             </p>
             <div className="checklist-preview__actions">
-              {/*
-                The split list as the body: the same edit-and-save a tick is,
-                so it rides the autosave and its conflict prompt like any
-                other change to the items.
-              */}
               {checklist && (
                 <button
                   type="button"
                   className="cleaned__action cleaned__action--primary"
                   disabled={pending}
                   onClick={() => {
-                    editor.edit({ body: cleaned.body });
-                    void editor.saveNow();
+                    adopt(cleaned.body);
                   }}
                 >
                   Use this list
@@ -189,7 +213,15 @@ export function CleanedPanel({
             </div>
           </div>
 
-          {cleaned.stale && !pending && (
+          {checklist && !adopted && (
+            <p className="cleaned__meta">
+              Ticking here replaces your list with the split version.
+            </p>
+          )}
+
+          {/* Once adopted the body is the split version, and "changed since"
+              would only say so. */}
+          {cleaned.stale && !pending && !adopted && (
             <div className="cleaned__stale" role="status">
               <p>The note changed since this was generated.</p>
               <button
@@ -209,9 +241,18 @@ export function CleanedPanel({
               ref={bodyRef}
               className="cleaned__body"
               lang={lang}
-              data-stale={cleaned.stale || undefined}
+              data-stale={(cleaned.stale && !adopted) || undefined}
             >
-              <ChecklistPreview body={cleaned.body} label="Split up items" />
+              <ChecklistPreview
+                body={splitBody}
+                label="Split up items"
+                onToggle={(index) => {
+                  adopt(toggleItem(splitBody, index));
+                }}
+                onDelete={(index) => {
+                  adopt(removeItem(splitBody, index));
+                }}
+              />
             </div>
           ) : (
             <div

@@ -258,10 +258,24 @@ function ItemField({
 }
 
 /**
- * A `tasks` cleaned view, or a checklist a reader cannot edit: the same rows
- * with their boxes disabled, for the Split up tab's preview.
+ * The Split up tab's list: the same rows, ticking and deleting through the
+ * caller, which decides what body they change — `CleanedPanel` makes the
+ * first act adopt the split list as the note's body. Items stay in body
+ * order and a done one fills in where it stands rather than moving down,
+ * because this list is a reading of a proposal, not the editor; a done item
+ * still has its × as it does under Done.
  */
-export function ChecklistPreview({ body, label }: { body: string; label: string }) {
+export function ChecklistPreview({
+  body,
+  label,
+  onToggle,
+  onDelete,
+}: {
+  body: string;
+  label: string;
+  onToggle: (index: number) => void;
+  onDelete: (index: number) => void;
+}) {
   const items = parseChecklist(body);
   return (
     <ul className="checklist checklist--preview" role="list" aria-label={label}>
@@ -270,17 +284,30 @@ export function ChecklistPreview({ body, label }: { body: string; label: string 
           key={index}
           className={item.done ? 'checklist__row checklist__row--done' : 'checklist__row'}
         >
-          <span className="checklist__check">
+          <label className="checklist__check">
             <input
               type="checkbox"
               className="checklist__box"
               checked={item.done}
-              disabled
-              readOnly
-              aria-label={item.text || `Item ${String(index + 1)}`}
+              onChange={() => {
+                onToggle(index);
+              }}
             />
-          </span>
+            <span className="visually-hidden">{item.text || `Item ${String(index + 1)}`}</span>
+          </label>
           <span className="checklist__text">{item.text}</span>
+          {item.done && (
+            <button
+              type="button"
+              className="checklist__delete"
+              aria-label={`Delete ${item.text || 'item'}`}
+              onClick={() => {
+                onDelete(index);
+              }}
+            >
+              <Icon name="close" size={16} />
+            </button>
+          )}
         </li>
       ))}
     </ul>
