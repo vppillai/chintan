@@ -31,6 +31,9 @@ const AboutScreen = lazy(() =>
 const CaptureScreen = lazy(() =>
   import('@/features/capture/CaptureScreen.tsx').then((m) => ({ default: m.CaptureScreen })),
 );
+const TalkScreen = lazy(() =>
+  import('@/features/talk/TalkScreen.tsx').then((m) => ({ default: m.TalkScreen })),
+);
 
 /**
  * Three tabs plus the note and capture screens. Nothing is a hidden DOM toggle.
@@ -62,6 +65,7 @@ export const routes: RouteObject[] = [
       { path: ROUTES.usage.slice(1), Component: UsageScreen, ErrorBoundary: RouteError },
       { path: ROUTES.about.slice(1), Component: AboutScreen, ErrorBoundary: RouteError },
       { path: ROUTES.capture.slice(1), Component: CaptureScreen, ErrorBoundary: RouteError },
+      { path: ROUTES.talk.slice(1), Component: TalkScreen, ErrorBoundary: RouteError },
       ...Object.keys(LEGACY_ROUTES).map((path) => ({
         path: path.slice(1),
         Component: Redirect,

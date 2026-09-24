@@ -21,6 +21,8 @@ export const ROUTES = {
   /** What this month has cost. Reached from one row on You. */
   usage: '/usage',
   capture: '/capture',
+  /** Push-to-talk: one giant hold button, ready again the moment a recording is sent. */
+  talk: '/talk',
   /** Record straight into a note the user is already reading. */
   captureInto: (noteId: string) => `/capture?note=${encodeURIComponent(noteId)}`,
 } as const;

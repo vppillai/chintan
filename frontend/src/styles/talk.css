@@ -1,0 +1,138 @@
+/*
+ * The /talk screen: one giant hold button, the target pill above it, the
+ * level and the clock between them (owner feedback 2026-09-24). The button
+ * is the screen, so it takes the smaller of the width and a good part of the
+ * height, and nothing on the page wears the accent until it is held.
+ */
+
+.talk {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: var(--layout-content-max);
+  min-block-size: 100%;
+  margin-inline: auto;
+  padding: var(--space-6) var(--layout-gutter);
+  text-align: center;
+}
+
+/* The live canvas in an explicit box, as on the capture screen; empty when idle. */
+.talk__level {
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  inline-size: 100%;
+  max-inline-size: 22rem;
+  block-size: 3rem;
+  overflow: hidden;
+}
+
+.talk__timer {
+  min-block-size: calc(var(--font-size-2xl) * var(--line-height-tight));
+  font-size: var(--font-size-2xl);
+  line-height: var(--line-height-tight);
+  color: var(--color-muted);
+}
+
+.talk__timer[data-live] {
+  color: var(--color-accent-strong);
+}
+
+/*
+ * A disc wide as the column on a phone and never more than 26rem, capped by
+ * the height so it clears the pill and the hint on a landscape car mount:
+ * at least two fifths of a phone's height, half a laptop's. Ink on the raised
+ * ground until held, as the capture screen's discs are; held, it is the one
+ * accent on the page.
+ */
+.talk__button {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-3);
+  inline-size: min(100%, 26rem, 55svh);
+  aspect-ratio: 1;
+  padding: var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  background-color: var(--color-raised);
+  background-image: var(--gradient-tonal);
+  box-shadow: var(--shadow-md), var(--shadow-highlight);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    transform var(--motion-duration-fast) var(--motion-ease-spring),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.talk__button[data-holding] {
+  transform: scale(1.04);
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
+  background-image: none;
+  box-shadow:
+    0 0 0 var(--space-3) var(--color-accent-soft),
+    var(--shadow-lg);
+  color: var(--color-on-accent);
+}
+
+/* Slid away: the disc goes quiet so the eye reads "release does nothing". */
+.talk__button[data-away] {
+  transform: scale(1);
+  border-color: var(--color-line-strong);
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-xs);
+  color: var(--color-muted);
+}
+
+.talk__label {
+  max-inline-size: 100%;
+  line-height: var(--line-height-snug);
+}
+
+/* "Sent · filing" and the too-short hint, with their line kept when empty. */
+.talk__status {
+  min-block-size: calc(var(--font-size-md) * var(--line-height-snug));
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--line-height-snug);
+  color: var(--color-ink);
+}
+
+.talk__failure {
+  max-inline-size: 26rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-accent-strong);
+}
+
+.talk__hint {
+  max-inline-size: 24rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+/* The keyboard is worth a word only where there is one. */
+.talk__keys {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .talk__keys {
+    display: inline;
+  }
+}
+
+/* The upload's row, when it is still leaving or failed: the library's card, at reading width. */
+.talk > .filing-row {
+  inline-size: 100%;
+  max-inline-size: 26rem;
+  text-align: start;
+}
