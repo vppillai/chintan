@@ -44,7 +44,12 @@ const (
 	maxDeviceKeyLen = 128
 )
 
-var deviceKeyCharset = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+var (
+	// deviceIDPattern is the id newDeviceKey mints; the OpenAPI DeviceId
+	// parameter carries the same pattern.
+	deviceIDPattern  = regexp.MustCompile(`^dev_[0-9a-f]{12}$`)
+	deviceKeyCharset = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+)
 
 // newDeviceKey mints an id and its key.
 func newDeviceKey() (id, key string, err error) {
@@ -75,7 +80,7 @@ func parseDeviceKey(raw string) (id string, ok bool) {
 		return "", false
 	}
 	id, secret := rest[:cut], rest[cut+1:]
-	if !strings.HasPrefix(id, deviceIDPrefix) || !deviceKeyCharset.MatchString(id) || !deviceKeyCharset.MatchString(secret) {
+	if !deviceIDPattern.MatchString(id) || !deviceKeyCharset.MatchString(secret) {
 		return "", false
 	}
 	return id, true

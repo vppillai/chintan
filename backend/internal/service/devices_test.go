@@ -25,7 +25,7 @@ func TestDeviceKeyShapeAndHashing(t *testing.T) {
 		t.Fatalf("parseDeviceKey(%q) = %q, %v", key, gotID, ok)
 	}
 	for _, bad := range []string{"", "ck_", "ck_dev_abc", "ck_dev_abc_", "ck_abc_secret", "dev_abc_secret", "ck_dev_ab c_secret",
-		"ck_dev_abc_" + strings.Repeat("f", 200)} {
+		"ck_dev_abc_" + strings.Repeat("f", 200), "ck_dev_abc_" + strings.Repeat("f", 48), "ck_dev_ABCDEF012345_" + strings.Repeat("f", 48)} {
 		if _, ok := parseDeviceKey(bad); ok {
 			t.Errorf("parseDeviceKey(%q) accepted a malformed key", bad)
 		}

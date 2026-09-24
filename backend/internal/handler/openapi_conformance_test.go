@@ -734,6 +734,18 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{}, h.deviceKey(t)).Code
 		},
 		"POST /v1/inbox/captures -> 401": send(http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm"}),
+		"POST /v1/inbox/captures -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm", "note_id": "missing"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm", "note_id": archivedNote(t, h)}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm", "language": strings.Repeat("x", handler.MaxSmallRequestBytes)}, h.deviceKey(t)).Code
+		},
 		"POST /v1/inbox/captures -> 429": func(t *testing.T) int {
 			h := newHarness(t)
 			h.spend.capped = true
@@ -748,6 +760,16 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("not audio"), h.deviceKey(t), [2]string{"Content-Type", "text/plain"}).Code
 		},
 		"POST /v1/inbox/audio -> 401": send(http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes")),
+		"POST /v1/inbox/audio -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t),
+				[2]string{"Content-Type", "audio/webm"}, [2]string{handler.HeaderInboxNoteID, "missing"}).Code
+		},
+		"POST /v1/inbox/audio -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t),
+				[2]string{"Content-Type", "audio/webm"}, [2]string{handler.HeaderInboxNoteID, archivedNote(t, h)}).Code
+		},
 		"POST /v1/inbox/audio -> 413": func(t *testing.T) int {
 			h := newHarness(t)
 			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", make([]byte, service.MaxInboxAudioBytes+1), h.deviceKey(t), [2]string{"Content-Type", "audio/webm"}).Code
@@ -782,6 +804,11 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/captures -> 201": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm"}),
 		"POST /v1/captures -> 400": send(http.MethodPost, "/v1/captures", "user1", map[string]any{}),
 		"POST /v1/captures -> 401": send(http.MethodPost, "/v1/captures", "", map[string]any{"content_type": "audio/webm"}),
+		"POST /v1/captures -> 404": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm", "note_id": "missing"}),
+		"POST /v1/captures -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm", "note_id": archivedNote(t, h)}).Code
+		},
 		"POST /v1/captures -> 429": func(t *testing.T) int {
 			h := newHarness(t)
 			h.spend.capped = true

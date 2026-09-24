@@ -63,7 +63,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrCaptureTargetRequired):
 		httperr.BadRequest(w, r, "supply either note_id or new_note_title")
 	case errors.Is(err, service.ErrUnsupportedContentType):
-		httperr.BadRequest(w, r, "content_type must be one of audio/webm, audio/mp4, audio/ogg, audio/mpeg, audio/wav")
+		httperr.BadRequest(w, r, "content_type must be one of audio/webm, audio/ogg, audio/mp4, audio/m4a, audio/mpeg, audio/wav, audio/x-wav")
 	case errors.Is(err, service.ErrDownloadKindUnknown):
 		httperr.BadRequest(w, r, "kind must be one of audio, raw, clean, segments, peaks")
 	case errors.Is(err, service.ErrInvalidCursor):

@@ -747,6 +747,8 @@ paths:
               schema: { $ref: '#/components/schemas/CaptureCreated' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
   /v1/captures/{captureId}:
@@ -1026,6 +1028,9 @@ paths:
               schema: { $ref: '#/components/schemas/CaptureCreated' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
   /v1/inbox/audio:
@@ -1072,6 +1077,8 @@ paths:
               schema: { $ref: '#/components/schemas/InboxAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
@@ -1183,7 +1190,7 @@ components:
       name: deviceId
       in: path
       required: true
-      schema: { type: string }
+      schema: { type: string, pattern: '^dev_[0-9a-f]{12}$' }
     AskId:
       name: askId
       in: path
@@ -1391,7 +1398,7 @@ components:
 
     Note:
       type: object
-      required: [id, title, updated_at, version, archived, kind, pinned]
+      required: [id, title, updated_at, version, archived, kind, pinned, pin_rank]
       properties:
         id: { type: string }
         title: { type: string, maxLength: 200 }
@@ -1859,8 +1866,8 @@ components:
         duration_ms: { type: integer, minimum: 0 }
         size_bytes:
           type: integer
-          minimum: 1
-          description: Used to bound the presigned upload's content-length range.
+          minimum: 0
+          description: Used to bound the presigned upload's content-length range; 0 or absent means the API's own cap.
 
     CaptureCreated:
       type: object
@@ -1903,7 +1910,7 @@ components:
           nullable: true
           description: File into this note. Omit to let routing decide.
         duration_ms: { type: integer, minimum: 0 }
-        size_bytes: { type: integer, minimum: 1 }
+        size_bytes: { type: integer, minimum: 0 }
         language:
           type: string
           pattern: '^(auto|[a-z]{2})$'
