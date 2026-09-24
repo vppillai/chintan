@@ -30,9 +30,15 @@ export function RecordingIndicator() {
   if (location.pathname === ROUTES.capture) return null;
   if (!isCaptureBusy(model)) return null;
   // On the library an upload is already shown as the filing row at the top,
-  // with its percentage; a second line saying the same thing is noise. Every
-  // other screen still says so, because nothing else on them does.
-  if (model.state === 'uploading' && location.pathname === ROUTES.home) return null;
+  // with its percentage, and `/talk` draws the same row under its button; a
+  // second line saying the same thing is noise. Every other screen still
+  // says so, because nothing else on them does.
+  if (
+    model.state === 'uploading' &&
+    (location.pathname === ROUTES.home || location.pathname === ROUTES.talk)
+  ) {
+    return null;
+  }
 
   return (
     <button

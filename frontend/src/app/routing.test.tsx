@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter, type RouteObject } from 'react-router';
 import { describe, expect, it } from 'vitest';
 
+import { screenForPath } from '@/components/AppShell.tsx';
 import { TestProviders } from '@/test/providers.tsx';
 
 import { routes } from './router.tsx';
@@ -37,6 +38,17 @@ const path = (router: Router) => router.state.location.pathname;
 const url = (router: Router) => `${path(router)}${router.state.location.search}`;
 
 const shell = () => document.querySelector('.app');
+
+describe('screenForPath', () => {
+  it('names every screen the shell lays out, /talk included, and only the rest "other"', () => {
+    expect(screenForPath('/')).toBe('library');
+    expect(screenForPath('/capture')).toBe('capture');
+    expect(screenForPath('/talk')).toBe('talk');
+    expect(screenForPath('/talk/')).toBe('talk');
+    expect(screenForPath('/notes/roof-repair')).toBe('note');
+    expect(screenForPath('/elsewhere')).toBe('other');
+  });
+});
 
 describe('the shell renders one landmark set', () => {
   it('has a skip link, a banner, one main and one navigation', async () => {

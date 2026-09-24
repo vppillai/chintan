@@ -134,6 +134,13 @@ export function chintanManifest(base: string, identity: AppIdentity) {
         url: at('capture'),
         icons: [{ src: at('icon-192.png'), sizes: '192x192' }],
       },
+      {
+        name: 'Hold to talk',
+        short_name: 'Talk',
+        description: 'Hold, speak, release to send',
+        url: at('talk'),
+        icons: [{ src: at('icon-192.png'), sizes: '192x192' }],
+      },
     ],
   };
 }

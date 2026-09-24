@@ -19,6 +19,7 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
+import { FilingBanner } from '@/features/capture/FilingBanner.tsx';
 import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 import { languageName } from '@/features/settings/languages.ts';
@@ -424,6 +425,14 @@ function NoteViews({
 
   return (
     <>
+      {/*
+        A recording still on its way into this note, above the strip: Send
+        returns here rather than to the Recordings tab, so the progress has to
+        be visible from the text (owner feedback 2026-09-24). Not on the
+        Recordings tab, where the row itself wears the same strip and the
+        same Retry — two of them a hundred pixels apart said nothing twice.
+      */}
+      {tab !== 'recordings' && <FilingBanner note={note} localUpload={localUpload} />}
       <div className="note-strip">
         <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
         {find.open && (

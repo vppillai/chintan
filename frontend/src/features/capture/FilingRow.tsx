@@ -439,11 +439,11 @@ export function LocalUploadItem({ model }: { model: CaptureModel }) {
  * already been filed", "an identical request is still in flight" — and is
  * written for a person; anything else is the client's own sentence.
  */
-function retryMessage(error: unknown): string {
+export function retryMessage(error: unknown): string {
   return error instanceof ApiError ? error.userMessage : 'The retry did not go through. Try again.';
 }
 
-interface FilingItemProps {
+export interface FilingItemProps {
   capture: CaptureWire;
   /** The title of `capture.note_id`, when the device has it. */
   noteTitle?: string | undefined;
@@ -455,7 +455,12 @@ interface FilingItemProps {
   onDismiss: () => void;
 }
 
-function FilingItem({
+/**
+ * One capture's row. The library's filing row lists these; the note screen's
+ * `FilingBanner` draws one for the recording on its way into the open note,
+ * so a failure is met with the same Retry and Dismiss wherever it is read.
+ */
+export function FilingItem({
   capture,
   noteTitle,
   onOpen,

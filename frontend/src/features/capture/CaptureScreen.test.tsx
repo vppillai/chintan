@@ -489,7 +489,7 @@ describe('review before send', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('Note roof-repair?tab=recordings')).toBeInTheDocument();
+    expect(await screen.findByText('Note roof-repair')).toBeInTheDocument();
     await waitFor(() => {
       expect(useCaptureStore.getState().model.state).toBe('uploaded');
     });
@@ -572,8 +572,8 @@ describe('Send from the recording screen', () => {
     /*
      * One tap where there were two. The recorder is stopped first — the
      * upload cannot read a buffer still being written — and the screen leaves
-     * as Send from review does, to the note's recordings, where the filing
-     * row shows the upload.
+     * as Send from review does, to the note, where the filing banner shows the
+     * upload.
      */
     useCaptureStore.getState().__configure({
       upload: {
@@ -591,7 +591,7 @@ describe('Send from the recording screen', () => {
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(await screen.findByText('Note roof-repair?tab=recordings')).toBeInTheDocument();
+    expect(await screen.findByText('Note roof-repair')).toBeInTheDocument();
     expect(recorder.state).toBe('inactive');
     await waitFor(() => {
       expect(useCaptureStore.getState().model.state).toBe('uploaded');
@@ -900,10 +900,10 @@ describe('a failure is a card, not a dead screen', () => {
 });
 
 describe('where the capture screen goes when it is done', () => {
-  it('returns to the target note — its recordings once sent — and otherwise to the library', () => {
-    expect(captureReturnPath('roof-repair', true)).toBe('/notes/roof-repair?tab=recordings');
-    expect(captureReturnPath('roof-repair', false)).toBe('/notes/roof-repair');
-    expect(captureReturnPath(null, true)).toBe('/');
-    expect(captureReturnPath(null, false)).toBe('/');
+  it('returns to the target note on the tab it was left on, and otherwise to the library', () => {
+    // No `?tab=`: the note opens where the person was, and the filing banner
+    // shows the upload from any tab (owner feedback 2026-09-24).
+    expect(captureReturnPath('roof-repair')).toBe('/notes/roof-repair');
+    expect(captureReturnPath(null)).toBe('/');
   });
 });

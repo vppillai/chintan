@@ -15,6 +15,9 @@ function Where() {
   return <output>{pathname + search}</output>;
 }
 
+/** Where the router is: the probe's `<output>`, read by tag because the hold overlay's live region is a status too. */
+const where = () => document.querySelector('output');
+
 /** With `note`, the open note is in the cache as the screen would have it, and answered the same. */
 function mount(path: string, note?: NoteDetailWire) {
   const queryClient = testQueryClient();
@@ -73,7 +76,7 @@ describe('the record button', () => {
     const record = screen.getByRole('button', { name: 'Record' });
     expect(screen.queryByText('Into this note')).toBeNull();
     await userEvent.click(record);
-    expect(screen.getByRole('status')).toHaveTextContent('/capture');
+    expect(where()).toHaveTextContent('/capture');
   });
 
   it('records into the open note, and wears its caption, while a note is on screen', async () => {
@@ -81,7 +84,7 @@ describe('the record button', () => {
     const record = screen.getByRole('button', { name: /^record into this note$/i });
     expect(screen.getByText('Into this note')).toBeInTheDocument();
     await userEvent.click(record);
-    expect(screen.getByRole('status')).toHaveTextContent('/capture?note=roof-repair');
+    expect(where()).toHaveTextContent('/capture?note=roof-repair');
   });
 
   it('records into a new note from an archived one, which the server would refuse', async () => {
@@ -97,6 +100,6 @@ describe('the record button', () => {
     const record = screen.getByRole('button', { name: 'Record' });
     expect(screen.queryByText('Into this note')).toBeNull();
     await userEvent.click(record);
-    expect(screen.getByRole('status')).toHaveTextContent(/^\/capture$/);
+    expect(where()).toHaveTextContent(/^\/capture$/);
   });
 });

@@ -118,7 +118,7 @@ export function CaptureScreen() {
    */
   useEffect(() => {
     if (model.state !== 'uploaded') return;
-    const to = captureReturnPath(model.noteId, true);
+    const to = captureReturnPath(model.noteId);
     const timer = setTimeout(() => {
       leave(to);
     }, 600);
@@ -144,7 +144,7 @@ export function CaptureScreen() {
    */
   const handOff = useCallback(() => {
     const { state, noteId } = useCaptureStore.getState().model;
-    const to = captureReturnPath(noteId, true);
+    const to = captureReturnPath(noteId);
     void (state === 'recording' || state === 'paused' ? stopAndSend(api) : send(api));
     leave(to);
   }, [send, stopAndSend, api, leave]);
@@ -290,7 +290,7 @@ export function CaptureScreen() {
         onDiscard={() => {
           // Read before the discard resets it: a take abandoned from inside a
           // note goes back to that note.
-          const to = captureReturnPath(model.noteId, false);
+          const to = captureReturnPath(model.noteId);
           void discard().then(() => {
             leave(to);
           });
@@ -299,7 +299,7 @@ export function CaptureScreen() {
         onRestart={() => void start(model.noteId)}
         onSend={handOff}
         onLeave={() => {
-          leave(captureReturnPath(model.noteId, false));
+          leave(captureReturnPath(model.noteId));
         }}
       />
     </div>
@@ -310,15 +310,16 @@ export function CaptureScreen() {
  * Where the capture screen goes when it is done.
  *
  * A recording aimed at a note — "Record into this", `?note=`, or the chooser —
- * goes back to that note, and a *sent* one to its Recordings tab, where the
- * upload shows as the first row and turns into the recording once it lands.
- * Sending used to drop the user on the library whatever the target, a screen
- * away from the note they had just added to. A recording with no target is
- * the library's to file, so the library is where it goes.
+ * goes back to that note, on whichever tab the person left it. A sent one
+ * used to be forced onto the Recordings tab so the upload could be watched
+ * there, which took someone reading the text to a list of players to look at
+ * a progress strip; the note's filing banner (`FilingBanner`) now shows that
+ * progress on every tab, and the Recordings tab still lists the row. A
+ * recording with no target is the library's to file, so the library is where
+ * it goes.
  */
-export function captureReturnPath(noteId: string | null, sent: boolean): string {
-  if (!noteId) return ROUTES.home;
-  return sent ? ROUTES.noteRecordings(noteId) : ROUTES.note(noteId);
+export function captureReturnPath(noteId: string | null): string {
+  return noteId ? ROUTES.note(noteId) : ROUTES.home;
 }
 
 function statusLabel(model: CaptureModel): string {
