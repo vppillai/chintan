@@ -50,10 +50,12 @@ records `source: device:<id>` and log lines name the id.
 
 Each key has a per-UTC-day counter on its row (`requests_day`,
 `requests_day_date`); the 201st request in a day is 429 `this device has
-reached today's limit`, counted all the same. The counter and `last_used_at`
-are written under the row's version, so a revoke that lands between the
-check's read and its write is not overwritten: the write loses, the row is
-read again and the revoke is seen. Two hundred requests is one every seven
+reached today's limit`, refused before anything is written, so a key
+hammered past the limit costs one read per request and no write. The counter
+and `last_used_at` are written under the row's version, so a revoke that
+lands between the check's read and its write is not overwritten: the write
+loses, the row is read again and the revoke is seen; a revoke that loses to
+the counter write is retried the same way. Two hundred requests is one every seven
 minutes around the clock, which bounds what a leaked key costs in provider
 spend before its owner notices; the instance's daily spend cap still applies
 above it, and every inbox capture runs through the breaker like any other.

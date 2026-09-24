@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -124,8 +125,13 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if got, err := svc.Authenticate(ctx, key); err != nil || got.RequestsDay != model.DeviceDailyRequestLimit {
 		t.Fatalf("200th request: %+v, %v", got, err)
 	}
+	atLimit, _ := store.GetDevice(ctx, "u1", device.ID)
 	if _, err := svc.Authenticate(ctx, key); !errors.Is(err, ErrDeviceDailyLimit) {
 		t.Fatalf("201st request: %v, want the daily limit", err)
+	}
+	// Refused without a write: the row is as the 200th request left it.
+	if after, _ := store.GetDevice(ctx, "u1", device.ID); after.Version != atLimit.Version || after.RequestsDay != model.DeviceDailyRequestLimit {
+		t.Fatalf("the refused request wrote the row: version %d → %d, requests_day %d", atLimit.Version, after.Version, after.RequestsDay)
 	}
 	at = at.Add(2 * time.Minute) // past midnight UTC
 	if got, err := svc.Authenticate(ctx, key); err != nil || got.RequestsDay != 1 || got.RequestsDayDate != "2026-09-25" {
@@ -144,5 +150,51 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	}
 	if err := svc.RevokeDevice(ctx, "u2", device.ID); err == nil {
 		t.Fatal("another tenant revoked the device")
+	}
+}
+
+// racingRevokeStore is a store in which, between RevokeDevice's read and
+// its write, the inbox counts a request against the same row — once.
+type racingRevokeStore struct {
+	repository.Store
+	raced bool
+}
+
+func (s *racingRevokeStore) GetDevice(ctx context.Context, tenantID, deviceID string) (model.Device, error) {
+	d, err := s.Store.GetDevice(ctx, tenantID, deviceID)
+	if err != nil || s.raced {
+		return d, err
+	}
+	s.raced = true
+	counted := d
+	counted.RequestsDay++
+	if _, err := s.PutDevice(ctx, tenantID, counted); err != nil {
+		return model.Device{}, err
+	}
+	return d, nil
+}
+
+// A revoke that loses to a counter write is retried rather than failed: the
+// key stops working, and the counter write it raced with is kept.
+func TestRevokeDeviceOutlivesACounterWriteItRacedWith(t *testing.T) {
+	ctx := context.Background()
+	mem := memory.NewStore()
+	device, key, err := NewDeviceService(mem).CreateDevice(ctx, "u1", "Watch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	racing := &racingRevokeStore{Store: mem}
+	if err := NewDeviceService(racing).RevokeDevice(ctx, "u1", device.ID); err != nil {
+		t.Fatalf("RevokeDevice against a counter write: %v", err)
+	}
+	stored, err := mem.GetDevice(ctx, "u1", device.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !racing.raced || !stored.Revoked() || stored.RequestsDay != 1 {
+		t.Fatalf("stored = %+v (raced %v); want revoked with the counter write kept", stored, racing.raced)
+	}
+	if _, err := NewDeviceService(mem).Authenticate(ctx, key); !errors.Is(err, ErrDeviceKeyUnknown) {
+		t.Fatalf("revoked key: %v", err)
 	}
 }

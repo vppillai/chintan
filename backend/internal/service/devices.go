@@ -162,31 +162,43 @@ func (s *DeviceService) ListDevices(ctx context.Context, userID string) ([]model
 	return live, nil
 }
 
+// deviceWriteAttempts bounds the retries of a device row write that loses
+// to a concurrent write of the same row: the counter against another
+// request on the same key, the revoke against the counter.
+const deviceWriteAttempts = 5
+
 // RevokeDevice makes the key unknown to the inbox from now on. Revoking a
 // revoked device changes nothing; a device that is not there is ErrNotFound.
+//
+// The write is retried when it loses to Authenticate's counter write: the
+// moment a revoke has to land is exactly when the key is being used.
 func (s *DeviceService) RevokeDevice(ctx context.Context, userID, deviceID string) error {
-	d, err := s.store.GetDevice(ctx, userID, deviceID)
-	if err != nil {
-		return err
-	}
-	if d.Revoked() {
+	for attempt := 0; attempt < deviceWriteAttempts; attempt++ {
+		d, err := s.store.GetDevice(ctx, userID, deviceID)
+		if err != nil {
+			return err
+		}
+		if d.Revoked() {
+			return nil
+		}
+		d.RevokedAt = model.FormatTime(s.now())
+		_, err = s.store.PutDevice(ctx, userID, d)
+		if errors.Is(err, repository.ErrVersionConflict) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("failed to revoke device: %w", err)
+		}
 		return nil
 	}
-	d.RevokedAt = model.FormatTime(s.now())
-	if _, err := s.store.PutDevice(ctx, userID, d); err != nil {
-		return fmt.Errorf("failed to revoke device: %w", err)
-	}
-	return nil
+	return fmt.Errorf("device revoke lost %d races in a row", deviceWriteAttempts)
 }
-
-// authenticateAttempts bounds the counter write's retries against a
-// concurrent request on the same key.
-const authenticateAttempts = 3
 
 // Authenticate resolves a presented key to its device and counts the
 // request against the key's day. Every failure to use the key — malformed,
-// unknown, revoked, wrong secret — is ErrDeviceKeyUnknown; a key past its
-// daily limit is ErrDeviceDailyLimit, counted all the same.
+// unknown, revoked, wrong secret — is ErrDeviceKeyUnknown; a key at its
+// daily limit is ErrDeviceDailyLimit, refused before anything is written,
+// so a key hammered past the limit costs one read per request and no write.
 //
 // The counter and last_used_at are written under the row's version, so a
 // revoke landing between the read and the write is not overwritten: the
@@ -198,7 +210,7 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string) (model.
 	if !ok {
 		return model.Device{}, ErrDeviceKeyUnknown
 	}
-	for attempt := 0; attempt < authenticateAttempts; attempt++ {
+	for attempt := 0; attempt < deviceWriteAttempts; attempt++ {
 		d, err := s.store.LookupDeviceKey(ctx, id)
 		if errors.Is(err, repository.ErrNotFound) {
 			return model.Device{}, ErrDeviceKeyUnknown
@@ -215,6 +227,9 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string) (model.
 		if d.RequestsDayDate != day {
 			d.RequestsDayDate, d.RequestsDay = day, 0
 		}
+		if d.RequestsDay >= model.DeviceDailyRequestLimit {
+			return d, ErrDeviceDailyLimit
+		}
 		d.RequestsDay++
 		d.LastUsedAt = model.FormatTime(now)
 		stored, err := s.store.PutDevice(ctx, d.TenantID, d)
@@ -224,10 +239,7 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string) (model.
 		if err != nil {
 			return model.Device{}, fmt.Errorf("failed to count the device's request: %w", err)
 		}
-		if stored.RequestsDay > model.DeviceDailyRequestLimit {
-			return stored, ErrDeviceDailyLimit
-		}
 		return stored, nil
 	}
-	return model.Device{}, fmt.Errorf("device usage write lost %d races in a row", authenticateAttempts)
+	return model.Device{}, fmt.Errorf("device usage write lost %d races in a row", deviceWriteAttempts)
 }
