@@ -12,7 +12,14 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
 import { TEST_NOTES, TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { Recordings, filedLabel, heardAs, justLanded, retranscribeLabel } from './Recordings.tsx';
+import {
+  Recordings,
+  filedLabel,
+  heardAs,
+  justLanded,
+  retranscribeLabel,
+  sourceLabel,
+} from './Recordings.tsx';
 import { describeMoment } from './groups.ts';
 
 /**
@@ -939,5 +946,95 @@ describe('a recording still being made into this note', () => {
     expect(justLanded([moving], [{ ...moving, status: 'appended' }])?.id).toBe(CAPTURE.id);
     expect(justLanded([], [CAPTURE])).toBeUndefined();
     expect(justLanded([CAPTURE], [CAPTURE])).toBeUndefined();
+  });
+});
+
+/*
+ * Rows that came in through the inbox (2026-09-24 contract): a watch or a
+ * shortcut sent them under a device key, and some of them were words rather
+ * than audio.
+ */
+describe('a capture that a device sent', () => {
+  const DEVICES = { items: [{ id: 'dev_1', name: 'Watch', created_at: '2026-08-01T00:00:00Z' }] };
+
+  /** The stub server plus the devices list, and no audio for a text capture. */
+  function withDevices(api: ReturnType<typeof apiStub>, textId?: string): typeof fetch {
+    return async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/v1/devices')) return json(DEVICES);
+      if (textId && url.pathname.includes(`/captures/${textId}/download`)) {
+        if (url.searchParams.get('kind') === 'clean') {
+          return json({ url: 'https://bucket.test/clean.txt', expires_at: '2099-01-01T00:00:00Z' });
+        }
+        return json({ type: 'about:blank', title: 'Not found', status: 404 }, 404);
+      }
+      return api.fetchImpl(input, init);
+    };
+  }
+
+  it('says which device, from the devices list, and "a device" when the list does not know it', async () => {
+    bucketStub();
+    const api = apiStub({
+      ...NOTE,
+      captures: [
+        { ...CAPTURE, id: 'cap-w', created_at: '2026-08-06T10:00:00.000Z', source: 'device:dev_1' },
+        { ...CAPTURE, id: 'cap-g', created_at: '2026-08-06T09:30:00.000Z', source: 'device:dev_gone' },
+        CAPTURE,
+      ],
+    });
+    mount(withDevices(api));
+
+    const rows = await recordingRows();
+    await waitFor(() => {
+      expect(rows[0]).toHaveTextContent('From Watch');
+    });
+    expect(rows[1]).toHaveTextContent('From a device');
+    // A recording made here says nothing about where it came from.
+    expect(rows[2]).not.toHaveTextContent('From');
+  });
+
+  it('is decided by the source prefix alone', () => {
+    const names = new Map([['dev_1', 'Watch']]);
+    expect(sourceLabel({ source: 'device:dev_1' }, names)).toBe('From Watch');
+    expect(sourceLabel({ source: 'device:dev_2' }, names)).toBe('From a device');
+    expect(sourceLabel({ source: 'app' }, names)).toBeNull();
+    expect(sourceLabel({}, names)).toBeNull();
+  });
+
+  it('renders words sent as words with the transcript and no player', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('Buy milk on the way home.', { status: 200 })),
+    );
+    const text: CaptureWire = {
+      ...CAPTURE,
+      id: 'cap-t',
+      created_at: '2026-08-06T10:00:00.000Z',
+      source: 'device:dev_1',
+      has_audio: false,
+      has_peaks: false,
+      has_segments: false,
+      duration_ms: 0,
+    };
+    const api = apiStub({ ...NOTE, captures: [text, CAPTURE] });
+    mount(withDevices(api, 'cap-t'));
+
+    const rows = await recordingRows();
+    const row = rows[0]!;
+    // The newest finished row opens on arrival, and this one is words.
+    expect(await within(row).findByText('Buy milk on the way home.')).toBeInTheDocument();
+    expect(within(row).queryByRole('region', { name: 'Recording' })).toBeNull();
+    expect(within(row).queryByRole('button', { name: /play recording/i })).toBeNull();
+    expect(row).not.toHaveTextContent(/no longer stored/i);
+    expect(row).toHaveTextContent('From Watch');
+
+    // Nothing to download or transcribe again; the words themselves copy.
+    await user.click(within(row).getByRole('button', { name: /more for recording from/i }));
+    expect(
+      within(screen.getByRole('menu'))
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual(['Move to…', 'Delete recording', 'Copy this cleaned text', 'Select']);
   });
 });
