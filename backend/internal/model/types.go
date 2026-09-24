@@ -337,6 +337,14 @@ type NoteIndex struct {
 	// above, and never on the wire.
 	AppendingCapture string `json:"appending_capture,omitempty"`
 	AppendingAt      string `json:"appending_at,omitempty"`
+	// PinnedAt and PinRank put the note in the Pinned group at the top of Home.
+	// PinnedAt is when a person pinned it (empty means not pinned); PinRank is
+	// its place among the pinned notes, PinRankStep apart, so a drag rewrites
+	// the ranks of the moved notes alone. Both are promoted attributes, written
+	// only when set, so a row from before 2026-09-24 needs no backfill and
+	// reads as unpinned. Archiving clears both: the archive is never pinned.
+	PinnedAt string `json:"pinned_at,omitempty"`
+	PinRank  int64  `json:"pin_rank,omitempty"`
 	// PurgeAfterEpoch is the same instant as PurgeAfter as a Unix second count.
 	// The archived list filters on it, and the weekly expiry sweep
 	// (internal/purge) deletes the note's objects and row once it has passed.
@@ -347,6 +355,16 @@ type NoteIndex struct {
 	// it read; the store rejects it if the stored version has moved on.
 	Version int64 `json:"version"`
 }
+
+// Pinned reports whether the note is in the Pinned group.
+func (n NoteIndex) Pinned() bool { return n.PinnedAt != "" }
+
+// Pin bounds. Fifty pins is a shelf, not a second list; the step leaves room
+// between two ranks so a future insert-between needs no renumbering.
+const (
+	MaxPinnedNotes = 50
+	PinRankStep    = 1000
+)
 
 // CaptureStatus is where a capture sits in the pipeline. It is a string type, so
 // promoting a constant from another package into this one changes no stored
@@ -496,6 +514,12 @@ type CaptureIndex struct {
 	// the same value for the client.
 	LanguageDetected string `json:"language_detected,omitempty"`
 
+	// Source says what made the recording: "" for the app itself, or
+	// DeviceSource(id) for a request a device key made to the inbox
+	// (docs/design/inbox.md), so the recordings row can say which device it
+	// came from. In the record blob only; the wire maps "" to "app".
+	Source string `json:"source,omitempty"`
+
 	// AudioBytes is the uploaded object's size as S3 reported it in the
 	// notification that started the pipeline — the only measurement of the
 	// recording this system ever gets (the request-time size_bytes is the
@@ -503,6 +527,60 @@ type CaptureIndex struct {
 	// the worker has not yet seen; GET /v1/usage sums it as storage.
 	AudioBytes int64 `json:"audio_bytes,omitempty"`
 }
+
+// ---------------------------------------------------------------------------
+// Devices (the inbox for external recorders; docs/design/inbox.md)
+// ---------------------------------------------------------------------------
+
+// Device is one key a person issued to a recorder, watch or app so it can
+// drop audio or text into their notes over the inbox routes. The key itself
+// is shown once at creation and never stored: KeyHash is its SHA-256, and the
+// inbox compares hashes in constant time. It is stored under the tenant's
+// partition (sk DEVICE#<id>) with sparse GSI1 keys on the key id, so the
+// inbox can find the tenant from the key alone.
+type Device struct {
+	ID       string `json:"id"`
+	TenantID string `json:"tenant_id"`
+	// Name is what the person called it (≤ MaxDeviceNameRunes runes); it is
+	// what a recording's "From ⟨device⟩" says.
+	Name    string `json:"name"`
+	KeyHash string `json:"key_hash"`
+	// CreatedAt and LastUsedAt are for the device list. LastUsedAt is
+	// written with the request counter and is empty until the first use.
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	// RequestsDay counts the key's inbox requests on RequestsDayDate (a UTC
+	// calendar day); the day rolling over resets it. DeviceDailyRequestLimit
+	// bounds it.
+	RequestsDay     int64  `json:"requests_day,omitempty"`
+	RequestsDayDate string `json:"requests_day_date,omitempty"`
+	// RevokedAt is set by DELETE /v1/devices/{id}. A revoked row keeps its
+	// hash but loses its GSI1 keys, so the key is unknown to the inbox from
+	// then on; the row itself expires RevokedDeviceRetention later.
+	RevokedAt string `json:"revoked_at,omitempty"`
+	// Version is the optimistic-concurrency counter, as on a note. The
+	// inbox's counter write is conditional on it, so a revoke that lands
+	// between the inbox's read and its write is not overwritten by the write.
+	Version int64 `json:"version"`
+}
+
+// Revoked reports whether the key has been revoked.
+func (d Device) Revoked() bool { return d.RevokedAt != "" }
+
+// DeviceSource is CaptureIndex.Source for a capture a device made.
+func DeviceSource(deviceID string) string { return "device:" + deviceID }
+
+// Device bounds. Ten devices is a household of gadgets, not a fleet; two
+// hundred requests a day is one every seven minutes around the clock, which
+// bounds what a leaked key can cost before its owner notices.
+const (
+	MaxDevicesPerTenant     = 10
+	MaxDeviceNameRunes      = 60
+	DeviceDailyRequestLimit = 200
+	// RevokedDeviceRetention is how long a revoked row stays for the record
+	// before DynamoDB TTL drops it.
+	RevokedDeviceRetention = 30 * 24 * time.Hour
+)
 
 // ---------------------------------------------------------------------------
 // Ask (backlog D5)

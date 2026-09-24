@@ -68,6 +68,11 @@ type Note struct {
 	// CleanedMode is the mode an automatic or unspecified clean runs in:
 	// polished or structured. Absent means structured, the default.
 	CleanedMode string `json:"cleaned_mode,omitempty"`
+	// Pinned says the note is in Home's Pinned group, and PinRank its place
+	// there (ascending; null when not pinned). Always present, so a row can
+	// render its pin glyph from one field.
+	Pinned  bool   `json:"pinned"`
+	PinRank *int64 `json:"pin_rank"`
 }
 
 // NoteCleaned is the OpenAPI NoteCleaned schema: the whole-note cleaned view.
@@ -143,6 +148,11 @@ func noteOf(n model.NoteIndex) Note {
 		Verbatim:  n.Verbatim,
 		Language:  n.Language,
 		AutoClean: n.AutoClean,
+		Pinned:    n.Pinned(),
+	}
+	if n.Pinned() {
+		rank := n.PinRank
+		out.PinRank = &rank
 	}
 	// A checklist always says tasks; a plain note says its stored preference,
 	// which for a stale tasks preference is the default it actually runs in.
@@ -286,7 +296,20 @@ type Capture struct {
 	// showing such a capture once more in the filing rows is the harmless
 	// side to be wrong on.
 	Targeted bool `json:"targeted"`
+	// Source says what made the recording: "app" for the app itself, or
+	// "device:<id>" for a device key's request to the inbox, so the row can
+	// say "From ⟨device⟩" (GET /v1/devices names the id). Always present;
+	// storage keeps "" for the app, mapped here.
+	Source string `json:"source"`
+	// HasAudio is false for a capture that arrived as text through the inbox:
+	// there is no recording to play, download or transcribe again, and the
+	// row shows the transcript alone.
+	HasAudio bool `json:"has_audio"`
 }
+
+// wireCaptureSourceApp is the wire spelling of a capture the app made, which
+// storage keeps as "".
+const wireCaptureSourceApp = "app"
 
 func captureOf(c model.CaptureIndex) Capture {
 	out := Capture{
@@ -307,6 +330,11 @@ func captureOf(c model.CaptureIndex) Capture {
 		HasPeaks:    c.PeaksKey != "",
 		Version:     c.Version,
 		Targeted:    c.TargetSource.Targeted(),
+		Source:      c.Source,
+		HasAudio:    c.AudioKey != "",
+	}
+	if out.Source == "" {
+		out.Source = wireCaptureSourceApp
 	}
 	if c.NoteID != "" {
 		v := c.NoteID

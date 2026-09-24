@@ -51,6 +51,7 @@ type Store struct {
 	unindexed map[string]map[string]bool
 	idem      map[string]map[string]idemEntry
 	asks      map[string]map[string]model.Ask
+	devices   map[string]map[string]model.Device
 }
 
 var _ repository.Store = (*Store)(nil)
@@ -64,6 +65,7 @@ func NewStore() *Store {
 		unindexed: make(map[string]map[string]bool),
 		idem:      make(map[string]map[string]idemEntry),
 		asks:      make(map[string]map[string]model.Ask),
+		devices:   make(map[string]map[string]model.Device),
 	}
 }
 
@@ -162,10 +164,8 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 		if !keep(n) || !opts.Keeps(n) {
 			continue
 		}
-		// Fixed-width instant, then id to break a tie deterministically. The
-		// width matters for the same reason it does in the real store:
-		// RFC3339Nano trims trailing zeros and stops sorting chronologically.
-		entries = append(entries, entry{sortKey: noteTouchedSortKey(n) + "\x00" + id, id: id})
+		// The DynamoDB store's own key: the pinned tier, then touch order.
+		entries = append(entries, entry{sortKey: repository.NoteOrderKey(n), id: id})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].sortKey > entries[j].sortKey })
 
@@ -192,15 +192,6 @@ func (s *Store) listNotes(ctx context.Context, tenantID string, opts repository.
 		}
 		return n
 	})
-}
-
-// noteTouchedSortKey renders a note's update time the way the DynamoDB store
-// orders on, so the double orders notes the way production does.
-func noteTouchedSortKey(n model.NoteIndex) string {
-	if t, err := model.ParseTime(n.UpdatedAt); err == nil {
-		return model.FormatTime(t)
-	}
-	return n.UpdatedAt
 }
 
 func (s *Store) ListNotes(ctx context.Context, tenantID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
@@ -753,6 +744,77 @@ func (s *Store) AbandonIdempotent(ctx context.Context, tenantID, key string) err
 	}
 	delete(s.idem[tenantID], key)
 	return nil
+}
+
+func (s *Store) PutDevice(ctx context.Context, tenantID string, d model.Device) (model.Device, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.Device{}, err
+	}
+	if d.ID == "" {
+		return model.Device{}, fmt.Errorf("repository: device without an id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.devices[tenantID] == nil {
+		s.devices[tenantID] = make(map[string]model.Device)
+	}
+	existing, exists := s.devices[tenantID][d.ID]
+	if (exists && existing.Version != d.Version) || (!exists && d.Version != 0) {
+		return model.Device{}, repository.ErrVersionConflict
+	}
+	next := d
+	next.TenantID = tenantID
+	next.Version = d.Version + 1
+	s.devices[tenantID][d.ID] = next
+	return next, nil
+}
+
+func (s *Store) GetDevice(ctx context.Context, tenantID, deviceID string) (model.Device, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.Device{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	d, ok := s.devices[tenantID][deviceID]
+	if !ok {
+		return model.Device{}, repository.ErrNotFound
+	}
+	return d, nil
+}
+
+func (s *Store) ListDevices(ctx context.Context, tenantID string) ([]model.Device, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return nil, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]model.Device, 0, len(s.devices[tenantID]))
+	for _, d := range s.devices[tenantID] {
+		out = append(out, d)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt < out[j].CreatedAt
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// LookupDeviceKey walks every tenant, as the sparse index does: a revoked row
+// has no index entry and is not found.
+func (s *Store) LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error) {
+	if err := s.checkCtx(ctx); err != nil {
+		return model.Device{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, devices := range s.devices {
+		if d, ok := devices[keyID]; ok && !d.Revoked() {
+			return d, nil
+		}
+	}
+	return model.Device{}, repository.ErrNotFound
 }
 
 func (s *Store) PutAsk(ctx context.Context, tenantID string, a model.Ask) error {

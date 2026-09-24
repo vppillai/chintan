@@ -14,6 +14,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 // docs/api/openapi.yaml is normative: a frontend has been written against it.
@@ -41,8 +42,10 @@ type operation struct {
 	Method   string
 	Path     string
 	Statuses []int
-	// Public records `security: []` on the operation, which overrides the
-	// document's global cognitoBearer requirement.
+	// Public records that the operation is not behind the gateway's JWT
+	// authorizer: `security: []` (the health probes) or the `deviceKey`
+	// scheme (the inbox), either of which overrides the document's global
+	// cognitoBearer requirement.
 	Public bool
 }
 
@@ -120,7 +123,7 @@ func parseOpenAPI(t *testing.T, path string) []operation {
 			inResponses = false
 			continue
 		}
-		if line == "      security: []" && current != nil {
+		if (line == "      security: []" || strings.TrimSpace(line) == "- deviceKey: []") && current != nil {
 			current.Public = true
 			continue
 		}
@@ -346,7 +349,7 @@ func parseGatewayRoutes(t *testing.T, path string) []gatewayRoute {
 
 // TestPublicRoutesMatchTheGatewayRouteTable asserts that the set of routes the
 // gateway lets through without a JWT is exactly the set the document declares
-// with `security: []`.
+// with `security: []` or under the `deviceKey` scheme.
 //
 // These two drifted once already: /v1/health/ready was documented public, coded
 // public, and authenticated at the gateway, so it answered API Gateway's
@@ -396,6 +399,7 @@ func concretePath(p string) string {
 		"{captureId}", "sample-capture",
 		"{exportId}", "sample-export",
 		"{askId}", "sample-ask",
+		"{deviceId}", "sample-device",
 	)
 	return r.Replace(p)
 }
@@ -596,6 +600,16 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
 		},
 
+		"POST /v1/notes/pins -> 200": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Pinned", nil)
+			h.do(t, http.MethodPatch, "/v1/notes/"+note.ID, "user1",
+				map[string]any{"version": note.Version, "pinned": true})
+			return h.do(t, http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{note.ID}}).Code
+		},
+		"POST /v1/notes/pins -> 400": send(http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{"not-pinned"}}),
+		"POST /v1/notes/pins -> 401": send(http.MethodPost, "/v1/notes/pins", "", map[string]any{"ids": []string{"x"}}),
+
 		"POST /v1/notes/match -> 200": func(t *testing.T) int {
 			h := newHarness(t)
 			h.createNote(t, "user1", "Matchable", nil)
@@ -688,12 +702,113 @@ func statusScenarios() map[string]scenario {
 		"GET /v1/ask/{askId} -> 401": get("/v1/ask/ask_1", ""),
 		"GET /v1/ask/{askId} -> 404": get("/v1/ask/ask_never", "user1"),
 
+		// ---- devices
+		"GET /v1/devices -> 200":  get("/v1/devices", "user1"),
+		"GET /v1/devices -> 401":  get("/v1/devices", ""),
+		"POST /v1/devices -> 201": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Watch"}),
+		"POST /v1/devices -> 400": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": " "}),
+		"POST /v1/devices -> 401": send(http.MethodPost, "/v1/devices", "", map[string]any{"name": "Watch"}),
+		"POST /v1/devices -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			for i := 0; i < model.MaxDevicesPerTenant; i++ {
+				h.do(t, http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Watch"})
+			}
+			return h.do(t, http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "One too many"}).Code
+		},
+		"DELETE /v1/devices/{deviceId} -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			created := h.createDevice(t, "user1", "Watch")
+			return h.do(t, http.MethodDelete, "/v1/devices/"+created.ID, "user1", nil).Code
+		},
+		"DELETE /v1/devices/{deviceId} -> 401": send(http.MethodDelete, "/v1/devices/dev_x", "", nil),
+		"DELETE /v1/devices/{deviceId} -> 404": send(http.MethodDelete, "/v1/devices/dev_missing", "user1", nil),
+
+		// ---- the inbox. No user on the request: the device key is the
+		// identity, and the harness passes it as the header a device would.
+		"POST /v1/inbox/captures -> 201": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 401": send(http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm"}),
+		"POST /v1/inbox/captures -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm", "note_id": "missing"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm", "note_id": archivedNote(t, h)}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm", "language": strings.Repeat("x", handler.MaxSmallRequestBytes)}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/captures -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/inbox/captures", "", map[string]any{"content_type": "audio/webm"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/audio -> 202": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t), [2]string{"Content-Type", "audio/mpeg"}).Code
+		},
+		"POST /v1/inbox/audio -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("not audio"), h.deviceKey(t), [2]string{"Content-Type", "text/plain"}).Code
+		},
+		"POST /v1/inbox/audio -> 401": send(http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes")),
+		"POST /v1/inbox/audio -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t),
+				[2]string{"Content-Type", "audio/webm"}, [2]string{handler.HeaderInboxNoteID, "missing"}).Code
+		},
+		"POST /v1/inbox/audio -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t),
+				[2]string{"Content-Type", "audio/webm"}, [2]string{handler.HeaderInboxNoteID, archivedNote(t, h)}).Code
+		},
+		"POST /v1/inbox/audio -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", make([]byte, service.MaxInboxAudioBytes+1), h.deviceKey(t), [2]string{"Content-Type", "audio/webm"}).Code
+		},
+		"POST /v1/inbox/audio -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t), [2]string{"Content-Type", "audio/webm"}).Code
+		},
+		"POST /v1/inbox/text -> 202": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/text -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "  "}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/text -> 401": send(http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk"}),
+		"POST /v1/inbox/text -> 413": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": strings.Repeat("x", handler.MaxInboxTextRequestBytes)}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/text -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk"}, h.deviceKey(t)).Code
+		},
+
 		// ---- captures
 		"GET /v1/captures -> 200":  get("/v1/captures", "user1"),
 		"GET /v1/captures -> 401":  get("/v1/captures", ""),
 		"POST /v1/captures -> 201": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm"}),
 		"POST /v1/captures -> 400": send(http.MethodPost, "/v1/captures", "user1", map[string]any{}),
 		"POST /v1/captures -> 401": send(http.MethodPost, "/v1/captures", "", map[string]any{"content_type": "audio/webm"}),
+		"POST /v1/captures -> 404": send(http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm", "note_id": "missing"}),
+		"POST /v1/captures -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/captures", "user1", map[string]any{"content_type": "audio/webm", "note_id": archivedNote(t, h)}).Code
+		},
 		"POST /v1/captures -> 429": func(t *testing.T) int {
 			h := newHarness(t)
 			h.spend.capped = true

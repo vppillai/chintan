@@ -6,7 +6,7 @@ Chintan is a personal, mobile-friendly PWA for voice brain dumps: you speak unst
 
 It runs on serverless AWS — Cognito, API Gateway, an API Lambda and a multi-task worker Lambda (captures, retries, the weekly expiry sweep, the daily AWS-cost reading, whole-note clean, Ask), DynamoDB and S3 — and every instance is its own isolated stack. GitHub Pages hosts one independently built frontend bundle per instance, compiled against that instance's stack outputs (API URL, user pool, client id, Cognito domain) by `scripts/ci-build-site.sh` from `deploy-frontend.yaml`. Speech-to-text is **Groq**, and cleanup and routing use an OpenAI-compatible endpoint, **MiniMax** by default, with the API keys in SSM Parameter Store.
 
-- [Deploy your own](#deploy-your-own) · [Configure](#configure) · [Operate](#operate) · [Security](#security) · [Develop](#develop)
+- [Deploy your own](#deploy-your-own) · [Configure](#configure) · [Connect a device](#connect-a-device) · [Operate](#operate) · [Security](#security) · [Develop](#develop)
 - Current backlog and QA ledger (open and completed items, with decisions): [`docs/backlog.md`](docs/backlog.md). The API: [`docs/api/openapi.yaml`](docs/api/openapi.yaml).
 
 ---
@@ -110,6 +110,41 @@ Per-user preferences — theme, cleanup mode, audio retention and the default tr
 ### Per-note behaviour
 
 Each note carries its own transcription `language` (absent, it inherits the user's default) and a `verbatim` switch that bypasses cleanup for it. Each note can also keep a **cleaned view** of its whole body (`structured` or `polished`, the note's `cleaned_mode`), regenerated on request or, with `auto_clean`, after every recording appended, moved or deleted; it is read-only and derived from the body, and costs one cleanup call per run under the daily spend cap.
+
+---
+
+## Connect a device
+
+Any device or app that can make one HTTPS request with one header can drop a recording or a line of text into your notes — a watch, a ring's phone app, a desk recorder, an iOS Shortcut — and it is filed exactly as a recording made in the app: transcribed, routed, cleaned, appended. It authenticates with a **device key**, not your sign-in, so it can add to your notes and never read them, and you can revoke it on its own. `docs/design/inbox.md` has the design and the threat model.
+
+**Issue a key.** `POST /v1/devices {"name": "Kitchen watch"}` with your session token; the key `ck_…` is in that response and nowhere else (only its hash is stored), so copy it then. Until the app has a Devices screen, take the token from the signed-in app: DevTools → Application → Local Storage → the `chintan.tokens.v2` entry → `id_token`.
+
+```bash
+API=https://<api-id>.execute-api.us-west-2.amazonaws.com   # the stack's ApiEndpoint output
+curl -sS "$API/v1/devices" -H "Authorization: Bearer $ID_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name":"Kitchen watch"}'
+# → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"key":"ck_dev_…_…"}
+```
+
+`GET /v1/devices` lists your devices (never the keys); `DELETE /v1/devices/{id}` revokes one, immediately. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
+
+**curl.** Three ways in, each `Authorization: Bearer ck_…`:
+
+```bash
+KEY=ck_dev_…
+# One-shot: the recording is the body. Optional headers: X-Chintan-Note-Id, X-Chintan-Language (auto or a code), X-Chintan-Duration-Ms.
+curl -sS "$API/v1/inbox/audio" -H "Authorization: Bearer $KEY" -H 'Content-Type: audio/mp4' --data-binary @memo.m4a
+# Text: no transcription; routed, cleaned and appended as a transcript would be.
+curl -sS "$API/v1/inbox/text" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"text":"call the roofer about the gutter"}'
+# Two-step, for a client that can PUT: the same 201 as POST /v1/captures, then PUT the file to upload.url with upload.headers.
+curl -sS "$API/v1/inbox/captures" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"content_type":"audio/mp4"}'
+```
+
+Accepted audio types: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/m4a`, `audio/mpeg`, `audio/wav`, `audio/x-wav`. Both one-shot routes answer 202 with the capture; watch it land in the app's Recordings tab, where a recording from a device says which one.
+
+**iOS Shortcut.** *Record Audio* (Quality: Normal, Start: Immediately, Finish: On Tap) → *Get Contents of URL*: URL `$API/v1/inbox/audio`, Method **POST**, Headers `Authorization` = `Bearer ck_…` and `Content-Type` = `audio/mp4`, Request Body **File**, File = *Recorded Audio*. Add it to the Home Screen, the Action Button or a watch complication; *Dictate Text* → *Get Contents of URL* with Request Body **JSON** (`text` = *Dictated Text*) to `$API/v1/inbox/text` is the text version and works on an Apple Watch. To file into one note, add a `X-Chintan-Note-Id` header with the note's id from the app's address bar.
+
+**Android.** The *HTTP Shortcuts* app (Play Store, open source): a shortcut with Method POST, URL `$API/v1/inbox/audio`, a header `Authorization` = `Bearer ck_…`, Request Body Type **File** — it then appears in the share sheet of any recorder, or records itself with the built-in "record audio" body option; a second shortcut with Request Body Type **Custom text** (`{"text": "{{prompt}}"}`, Content-Type `application/json`) to `/v1/inbox/text` asks for a line and sends it. Tasker's *HTTP Request* action does the same. Any watch or ring whose companion app can POST a file or a string with one header works the same way; there is no per-vendor integration.
 
 ---
 

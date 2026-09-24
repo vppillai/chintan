@@ -1,5 +1,7 @@
 package handler
 
+import "github.com/vppillai/chintan/backend/internal/service"
+
 // routes is the whole HTTP surface, in one readable table.
 //
 // Every pattern is a Go 1.22 method-and-wildcard pattern, so the router matches
@@ -31,6 +33,8 @@ func (rt *router) routes() {
 	// Before "/notes/{noteId}" in the table for readability only: ServeMux
 	// prefers the more specific literal pattern regardless of order.
 	rt.handle("POST "+p+"/notes/purge", rt.purgeNotes, idempotent(), body(MaxNoteRequestBytes))
+	// The Pinned group's order, one request per drag.
+	rt.handle("POST "+p+"/notes/pins", rt.reorderPins, idempotent())
 	rt.handle("GET "+p+"/notes/{noteId}", rt.getNote)
 	rt.handle("PATCH "+p+"/notes/{noteId}", rt.updateNote, idempotent(), body(MaxNoteRequestBytes))
 	rt.handle("DELETE "+p+"/notes/{noteId}", rt.archiveNote)
@@ -55,6 +59,12 @@ func (rt *router) routes() {
 	rt.handle("POST "+p+"/ask", rt.beginAsk, idempotent(), body(MaxAskRequestBytes))
 	rt.handle("GET "+p+"/ask/{askId}", rt.getAsk)
 
+	// Devices: the keys external recorders post to the inbox with. The key is
+	// in the 201 and nowhere else.
+	rt.handle("GET "+p+"/devices", rt.listDevices)
+	rt.handle("POST "+p+"/devices", rt.createDevice)
+	rt.handle("DELETE "+p+"/devices/{deviceId}", rt.revokeDevice)
+
 	// Captures. POST /v1/captures is synchronous and fast: it writes the row and
 	// returns presigned PUTs. Nothing slow happens on a request path bounded by
 	// the gateway's fixed 30-second integration ceiling.
@@ -71,6 +81,14 @@ func (rt *router) routes() {
 	// is no confirmation step here: the typed confirmation is the client's.
 	rt.handle("DELETE "+p+"/captures/{captureId}", rt.deleteCapture)
 	rt.handle("POST "+p+"/captures/{captureId}/move", rt.moveCapture, idempotent())
+
+	// The inbox: the same capture, begun by a device key instead of a
+	// session. Two-step (a row and presigned PUTs), one-shot audio (the
+	// recording is the body), and text (no transcription). The gateway
+	// admits these without its JWT authorizer; device() is the check.
+	rt.handle("POST "+p+"/inbox/captures", rt.inboxCapture, device(), idempotent())
+	rt.handle("POST "+p+"/inbox/audio", rt.inboxAudio, device(), idempotent(), body(service.MaxInboxAudioBytes))
+	rt.handle("POST "+p+"/inbox/text", rt.inboxText, device(), idempotent(), body(MaxInboxTextRequestBytes))
 
 	// Export.
 	rt.handle("POST "+p+"/export", rt.startExport, idempotent())

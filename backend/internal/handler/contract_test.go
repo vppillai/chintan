@@ -186,8 +186,13 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	// appear in a fixture this way. It is in the list shape whether or not
 	// schema.ts declares it, which is exactly the kind of one-sided field this
 	// test exists to surface.
+	// Pinned the same way, and in this order: the two notes lead the list in
+	// pin_rank order — tagged first at 0, plain at 1000 — above the touch
+	// order the rest of the page keeps.
+	h.do(t, http.MethodPatch, "/v1/notes/"+tagged.ID, contractUser,
+		map[string]any{"version": tagged.Version, "pinned": true})
 	h.do(t, http.MethodPatch, "/v1/notes/"+plain.ID, contractUser,
-		map[string]any{"version": plain.Version, "verbatim": true})
+		map[string]any{"version": plain.Version, "verbatim": true, "pinned": true})
 
 	h.putCapture(t, model.CaptureIndex{
 		ID: "c_note_1", UserID: contractUser, NoteID: tagged.ID,
@@ -195,6 +200,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		AppendedAt: time.Now().Unix(), DurationMS: 18_400,
 		SegmentsKey: "tenants/user1/captures/c_note_1/segments.json",
 		PeaksKey:    "tenants/user1/captures/c_note_1/peaks.json",
+		AudioKey:    "tenants/user1/captures/c_note_1/audio.webm",
 	})
 
 	add("notesPage", "Page<NoteWire>", "GET /v1/notes → 200. The envelope is {items, cursor}; the cursor is in the body, never in a header.",
@@ -204,6 +210,9 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		h.do(t, http.MethodGet, "/v1/notes?include=search_text", contractUser, nil))
 	add("noteDetail", "NoteDetailWire", "GET /v1/notes/{noteId} → 200, with body and captures. cleaned is null until the note has been cleaned once.",
 		h.do(t, http.MethodGet, "/v1/notes/"+tagged.ID, contractUser, nil))
+	add("notePinsReordered", "Page<NoteWire>",
+		"POST /v1/notes/pins → 200. The listed notes in the order sent, pin_rank rewritten as position × 1000; one request per drag. No cursor.",
+		h.do(t, http.MethodPost, "/v1/notes/pins", contractUser, map[string]any{"ids": []string{plain.ID, tagged.ID}}))
 
 	// The whole-note cleaned view, as the worker leaves it. Written straight to
 	// the store because the API never writes the view — that is the contract.
@@ -282,6 +291,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	h.putCapture(t, model.CaptureIndex{
 		ID: "c_needs_target", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedTitle: "Kitchen rebuild", RouteConfidence: 0.41,
+		AudioKey: "tenants/user1/captures/c_needs_target/audio.webm",
 	})
 	// The other half of a routing suggestion: an existing note the router named
 	// but was not confident enough to write to unasked. Exactly one of the two
@@ -304,12 +314,21 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	suggested := h.putCapture(t, model.CaptureIndex{
 		ID: "c_needs_target_note", UserID: contractUser, Status: model.StatusNeedsTarget,
 		CreatedAt: model.Now(), SuggestedNoteID: suggestedNote.ID, RouteConfidence: 0.62,
+		AudioKey: "tenants/user1/captures/c_needs_target_note/audio.webm",
 	})
 	failed := h.putCapture(t, model.CaptureIndex{
 		ID: "c_failed", UserID: contractUser, NoteID: note.ID,
 		Status: model.StatusFailed, CreatedAt: model.Now(),
 		Error:    "the speech provider returned 503",
 		AudioKey: "tenants/user1/captures/c_failed/audio.webm",
+	})
+	// A capture that arrived as text through the inbox: no audio key, so no
+	// player, and a source naming the device rather than the app.
+	fromDevice := h.putCapture(t, model.CaptureIndex{
+		ID: "c_from_device", UserID: contractUser, NoteID: note.ID,
+		Status: model.StatusAppended, CreatedAt: model.Now(), AppendedAt: time.Now().Unix(),
+		RawKey: "tenants/user1/captures/c_from_device/raw.txt",
+		Source: model.DeviceSource("dev_fixture"), TargetSource: model.TargetSourceClient,
 	})
 
 	add("capturesPage", "Page<CaptureWire>",
@@ -324,6 +343,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID, contractUser, nil))
 	add("captureDownload", "PresignedDownloadWire", "GET /v1/captures/{captureId}/download?kind=audio → 200",
 		h.do(t, http.MethodGet, "/v1/captures/"+failed.ID+"/download?kind=audio", contractUser, nil))
+	add("captureFromDevice", "CaptureWire",
+		"GET /v1/captures/{captureId} → 200 for a capture a device dropped into the inbox as text: "+
+			"`source` names the device (GET /v1/devices has its name) and `has_audio` is false, so the row shows the transcript and no player.",
+		h.do(t, http.MethodGet, "/v1/captures/"+fromDevice.ID, contractUser, nil))
 
 	// The tag-aware presigner is wired in only here. The default harness signs
 	// through the in-memory object store, which cannot bind tags and honestly

@@ -311,6 +311,24 @@ type Store interface {
 	// original is still in flight. A completed record is left alone.
 	AbandonIdempotent(ctx context.Context, tenantID, key string) error
 
+	// PutDevice writes a device row (sk DEVICE#<id>) conditionally on
+	// d.Version matching the stored version — 0 means the row must not exist
+	// — and returns the row with its new version; a lost race returns
+	// ErrVersionConflict. A row that is not revoked carries the sparse GSI1
+	// keys the inbox looks the key up by; a revoked row carries none and a
+	// TTL model.RevokedDeviceRetention after RevokedAt.
+	PutDevice(ctx context.Context, tenantID string, d model.Device) (model.Device, error)
+	// GetDevice reads one device row, revoked or not, or ErrNotFound.
+	GetDevice(ctx context.Context, tenantID, deviceID string) (model.Device, error)
+	// ListDevices returns every device row of the tenant, revoked rows
+	// included, oldest first. There are at most ten live and a few revoked,
+	// so there is no page.
+	ListDevices(ctx context.Context, tenantID string) ([]model.Device, error)
+	// LookupDeviceKey finds the device a key id belongs to, in whatever
+	// tenant, through the sparse GSI1 keys — the inbox's one read that does
+	// not start from a tenant. A revoked or unknown id is ErrNotFound.
+	LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error)
+
 	// PutAsk writes a question row (sk ASK#<id>) whole, replacing what is
 	// there, with the TTL a.ExpiresAt names. There is no version: the API
 	// writes the row once, pending, and only the worker writes it again, so

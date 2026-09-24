@@ -53,6 +53,9 @@ type Deps struct {
 	Storage *service.StorageService
 	// Ask answers POST /v1/ask and GET /v1/ask/{askId}. Nil answers 503.
 	Ask *service.AskService
+	// Devices issues and revokes device keys (/v1/devices) and authenticates
+	// the inbox routes with them.
+	Devices *service.DeviceService
 
 	// Store backs idempotent replay. It is the raw store rather than a service
 	// because idempotency is a property of the request, not of any one domain.
@@ -108,6 +111,7 @@ type routeOption func(*routeConfig)
 
 type routeConfig struct {
 	public     bool
+	device     bool
 	idempotent bool
 	bodyLimit  int64
 }
@@ -116,6 +120,11 @@ type routeConfig struct {
 // two: liveness and readiness. Sign-in itself happens against Cognito, never
 // against this API.
 func public() routeOption { return func(c *routeConfig) { c.public = true } }
+
+// device marks a route as authenticated by a device key rather than a Cognito
+// token: the three inbox routes. The gateway admits them without its JWT
+// authorizer, and deviceAuthenticated is the whole check.
+func device() routeOption { return func(c *routeConfig) { c.device = true } }
 
 // idempotent honours Idempotency-Key on this route.
 func idempotent() routeOption { return func(c *routeConfig) { c.idempotent = true } }
@@ -140,7 +149,13 @@ func (rt *router) handle(pattern string, h http.HandlerFunc, opts ...routeOption
 		wrapped = rt.idempotent(wrapped)
 	}
 	var final http.Handler = wrapped
-	if !cfg.public {
+	switch {
+	case cfg.public:
+	case cfg.device:
+		// Counted against the device's tenant, inside the key check for the
+		// reason the Cognito path gives.
+		final = rt.deviceAuthenticated(rt.counted(final))
+	default:
 		// Counted inside the authentication, so the identity is on the
 		// context and a 401 from the middleware never reaches the counter.
 		final = rt.authenticated(rt.counted(final))

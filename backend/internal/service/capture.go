@@ -119,7 +119,27 @@ type CaptureRequest struct {
 	// DurationMS is what the recorder measured. The worker overwrites it with the
 	// provider's figure once the audio is transcribed.
 	DurationMS int64
+	// Language is a language the requester chose for this recording alone
+	// (model.LanguageAuto or a code), which outranks the note's and the
+	// default as a /retranscribe choice does; "" chooses nothing.
+	Language string
+	// Source is CaptureIndex.Source: "" for the app, model.DeviceSource(id)
+	// for a device's inbox request.
+	Source string
 }
+
+// Inbox bounds. The one-shot body is 4 MiB because the gateway hands a
+// binary body to the Lambda base64-encoded and the Lambda's synchronous
+// request payload is capped at 6 MB: 4 MiB is about 5.6 MB on that wire,
+// with room for the event envelope, where 5 MiB (about 7 MB) never reached
+// the handler and the device got a gateway error instead of the 413. A
+// longer recording goes through the two-step /v1/inbox/captures route,
+// whose PUT is bounded by MaxCaptureBytes. Twenty thousand runes of text is
+// several pages, far past anything a device dictates in one go.
+const (
+	MaxInboxAudioBytes = 4 << 20
+	MaxInboxTextRunes  = 20_000
+)
 
 // CaptureCreated is the response to beginning a capture: the row, and the two
 // presigned PUTs the client needs.
@@ -192,36 +212,45 @@ func (s *CaptureService) WithInvoker(w Invoker) *CaptureService {
 	return s
 }
 
-// BeginCapture validates, writes the capture row, and returns the presigned
-// PUTs. It performs no provider call and no object read: this is the whole of
-// what POST /v1/captures does.
-func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req CaptureRequest) (CaptureCreated, error) {
-	contentType, ext, err := normalizeAudioContentType(req.ContentType)
-	if err != nil {
-		return CaptureCreated{}, err
+// newCaptureRow is the row every way into a capture starts from: the
+// destination checked, the tenant's settings read, an id minted. Nothing is
+// written; the caller adds what its way in knows and stores it. The
+// canonical content type comes back for the audio object, or "" when req
+// names none (a text capture).
+func (s *CaptureService) newCaptureRow(ctx context.Context, userID string, req CaptureRequest) (capture model.CaptureIndex, contentType string, settings model.Settings, err error) {
+	ext := ""
+	if req.ContentType != "" {
+		contentType, ext, err = normalizeAudioContentType(req.ContentType)
+		if err != nil {
+			return model.CaptureIndex{}, "", model.Settings{}, err
+		}
 	}
 	if req.SizeBytes > MaxCaptureBytes {
-		return CaptureCreated{}, ErrCaptureTooLarge
+		return model.CaptureIndex{}, "", model.Settings{}, ErrCaptureTooLarge
+	}
+	language := strings.ToLower(strings.TrimSpace(req.Language))
+	if language != "" && !model.ValidLanguage(language) {
+		return model.CaptureIndex{}, "", model.Settings{}, ErrInvalidLanguage
 	}
 
 	if req.NoteID != "" {
 		note, err := s.store.GetNote(ctx, userID, req.NoteID)
 		if err != nil {
-			return CaptureCreated{}, fmt.Errorf("failed to get note: %w", err)
+			return model.CaptureIndex{}, "", model.Settings{}, fmt.Errorf("failed to get note: %w", err)
 		}
 		if !NoteIsActive(note) {
-			return CaptureCreated{}, ErrNoteArchived
+			return model.CaptureIndex{}, "", model.Settings{}, ErrNoteArchived
 		}
 	}
 
-	settings, err := s.store.GetSettings(ctx, userID)
+	settings, err = s.store.GetSettings(ctx, userID)
 	if err != nil {
-		return CaptureCreated{}, fmt.Errorf("failed to get settings: %w", err)
+		return model.CaptureIndex{}, "", model.Settings{}, fmt.Errorf("failed to get settings: %w", err)
 	}
 
 	captureIDBytes := make([]byte, 8)
 	if _, err := rand.Read(captureIDBytes); err != nil {
-		return CaptureCreated{}, fmt.Errorf("failed to generate capture ID: %w", err)
+		return model.CaptureIndex{}, "", model.Settings{}, fmt.Errorf("failed to generate capture ID: %w", err)
 	}
 	// The id leads with a fixed-width creation instant, so capture ids sort
 	// chronologically. The tenant-wide capture list reads the base table, whose
@@ -232,31 +261,48 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 	captureID := fmt.Sprintf("c_%016x_%s",
 		uint64(time.Now().UTC().UnixNano()), hex.EncodeToString(captureIDBytes))
 
-	audioKey, err := keys.CaptureAudio(userID, captureID, ext)
-	if err != nil {
-		return CaptureCreated{}, fmt.Errorf("failed to generate audio key: %w", err)
+	capture = model.CaptureIndex{
+		ID:                captureID,
+		UserID:            userID,
+		NoteID:            req.NoteID,
+		Status:            model.StatusUploaded,
+		Mode:              settings.CleanupMode,
+		DurationMS:        req.DurationMS,
+		CreatedAt:         model.Now(),
+		RequestedLanguage: language,
+		Source:            req.Source,
 	}
-	peaksKey, err := keys.CapturePeaks(userID, captureID)
-	if err != nil {
-		return CaptureCreated{}, fmt.Errorf("failed to generate peaks key: %w", err)
-	}
-
-	capture := model.CaptureIndex{
-		ID:         captureID,
-		UserID:     userID,
-		NoteID:     req.NoteID,
-		Status:     model.StatusUploaded,
-		Mode:       settings.CleanupMode,
-		AudioKey:   audioKey,
-		PeaksKey:   peaksKey,
-		DurationMS: req.DurationMS,
-		CreatedAt:  model.Now(),
+	if ext != "" {
+		capture.AudioKey, err = keys.CaptureAudio(userID, captureID, ext)
+		if err != nil {
+			return model.CaptureIndex{}, "", model.Settings{}, fmt.Errorf("failed to generate audio key: %w", err)
+		}
 	}
 	if req.NoteID != "" {
 		// The client named the note — "Record into this" — so a person chose
 		// the destination and the Home screen need not offer to file it.
 		capture.TargetSource = model.TargetSourceClient
 	}
+	return capture, contentType, settings, nil
+}
+
+// BeginCapture validates, writes the capture row, and returns the presigned
+// PUTs. It performs no provider call and no object read: this is the whole of
+// what POST /v1/captures does.
+func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req CaptureRequest) (CaptureCreated, error) {
+	if req.ContentType == "" {
+		return CaptureCreated{}, fmt.Errorf("%w: %q", ErrUnsupportedContentType, "")
+	}
+	capture, contentType, settings, err := s.newCaptureRow(ctx, userID, req)
+	if err != nil {
+		return CaptureCreated{}, err
+	}
+	audioKey := capture.AudioKey
+	peaksKey, err := keys.CapturePeaks(userID, capture.ID)
+	if err != nil {
+		return CaptureCreated{}, fmt.Errorf("failed to generate peaks key: %w", err)
+	}
+	capture.PeaksKey = peaksKey
 
 	stored, err := s.store.PutCapture(ctx, capture)
 	if err != nil {
@@ -289,13 +335,90 @@ func (s *CaptureService) BeginCapture(ctx context.Context, userID string, req Ca
 		return CaptureCreated{}, fmt.Errorf("failed to generate peaks upload URL: %w", err)
 	}
 
-	obs.Log(ctx).Info("capture created",
-		slog.String("capture_id", stored.ID),
-		slog.String("note_id", stored.NoteID),
-		slog.String("content_type", contentType))
-	obs.Count(ctx, "CapturesCreated", map[string]string{"Stage": "created"})
-
+	logCaptureCreated(ctx, stored, contentType)
 	return CaptureCreated{Capture: stored, Audio: audioUpload, Peaks: peaksUpload}, nil
+}
+
+// logCaptureCreated is the one log line and counter for a new capture, from
+// whichever way in. The source names a device by id, never by key.
+func logCaptureCreated(ctx context.Context, c model.CaptureIndex, contentType string) {
+	obs.Log(ctx).Info("capture created",
+		slog.String("capture_id", c.ID),
+		slog.String("note_id", c.NoteID),
+		slog.String("content_type", contentType),
+		slog.String("source", c.Source))
+	obs.Count(ctx, "CapturesCreated", map[string]string{"Stage": "created"})
+}
+
+// IngestAudio is POST /v1/inbox/audio: the recording arrives in the request
+// and the API writes the object itself, to the same key and with the same
+// retention tags a client's presigned PUT would, so the bucket's notification
+// starts the pipeline exactly as for a recording made in the app. The row is
+// written before the object, as the client flow orders them, so the worker
+// the notification wakes finds its capture. There is no peaks key: nothing
+// computed an envelope, and the row must not claim one (has_peaks).
+func (s *CaptureService) IngestAudio(ctx context.Context, userID string, req CaptureRequest, body []byte) (model.CaptureIndex, error) {
+	if req.ContentType == "" {
+		return model.CaptureIndex{}, fmt.Errorf("%w: %q", ErrUnsupportedContentType, "")
+	}
+	if int64(len(body)) > MaxInboxAudioBytes {
+		return model.CaptureIndex{}, ErrCaptureTooLarge
+	}
+	req.SizeBytes = int64(len(body))
+	capture, contentType, settings, err := s.newCaptureRow(ctx, userID, req)
+	if err != nil {
+		return model.CaptureIndex{}, err
+	}
+	stored, err := s.store.PutCapture(ctx, capture)
+	if err != nil {
+		return model.CaptureIndex{}, fmt.Errorf("failed to store capture: %w", err)
+	}
+	if err := s.objects.PutTagged(ctx, stored.AudioKey, body, contentType, upload.CaptureAudioTags(settings.RetentionDays)); err != nil {
+		// Best effort: a row with nothing behind it would otherwise sit at
+		// uploaded until the stuck-capture sweep fails it.
+		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		return model.CaptureIndex{}, fmt.Errorf("failed to store audio: %w", err)
+	}
+	logCaptureCreated(ctx, stored, contentType)
+	return stored, nil
+}
+
+// IngestText is POST /v1/inbox/text: a capture that arrives already
+// transcribed. The text is written where the transcript would be (RawKey),
+// the row starts at transcribed with no audio and no duration, and the
+// worker is invoked directly since no object lands to wake it. From there
+// the pipeline is the ordinary one — route, clean, append — because it gates
+// transcription on RawKey being empty.
+func (s *CaptureService) IngestText(ctx context.Context, userID string, req CaptureRequest, text string) (model.CaptureIndex, error) {
+	req.ContentType, req.SizeBytes, req.DurationMS = "", 0, 0
+	capture, _, _, err := s.newCaptureRow(ctx, userID, req)
+	if err != nil {
+		return model.CaptureIndex{}, err
+	}
+	rawKey, err := keys.CaptureRaw(userID, capture.ID)
+	if err != nil {
+		return model.CaptureIndex{}, fmt.Errorf("failed to generate raw key: %w", err)
+	}
+	capture.RawKey = rawKey
+	capture.Status = model.StatusTranscribed
+	capture.LastProgressAt = model.FormatTime(s.now())
+	// The row first, as IngestAudio orders them: nothing reads it until the
+	// worker is invoked below, whereas an object written first would be an
+	// orphan no lifecycle rule or capture delete ever reaches if the row
+	// write failed.
+	stored, err := s.store.PutCapture(ctx, capture)
+	if err != nil {
+		return model.CaptureIndex{}, fmt.Errorf("failed to store capture: %w", err)
+	}
+	if err := s.objects.Put(ctx, rawKey, []byte(text), "text/plain"); err != nil {
+		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		return model.CaptureIndex{}, fmt.Errorf("failed to store text: %w", err)
+	}
+	logCaptureCreated(ctx, stored, "text/plain")
+	if err := s.invokeWorker(ctx, userID, stored.ID, "inbox-text"); err != nil {
+		return model.CaptureIndex{}, err
+	}
+	return stored, nil
 }
 
 // RetryCapture hands a capture back to the worker so it resumes from its last
@@ -370,6 +493,12 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 	now := s.now()
 	if !model.IsTerminalStatus(capture.Status) && !CaptureStuck(capture, now) {
 		return &capture, ErrCaptureInFlight
+	}
+	if capture.AudioKey == "" {
+		// Arrived as text (POST /v1/inbox/text): there was never a recording
+		// to transcribe, which to the user is the same answer as one that
+		// has expired.
+		return &capture, ErrCaptureAudioExpired
 	}
 	present, err := s.objects.Exists(ctx, capture.AudioKey)
 	if err != nil {

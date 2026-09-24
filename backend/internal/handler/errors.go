@@ -51,6 +51,9 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture has no note yet; choose one with /target instead of moving it", nil)
 	case errors.Is(err, service.ErrCaptureAudioExpired):
 		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
+	case errors.Is(err, service.ErrPinLimit),
+		errors.Is(err, service.ErrDeviceLimit):
+		httperr.Conflict(w, r, err.Error(), nil)
 
 	// ---- client mistakes -------------------------------------------------
 	case errors.Is(err, service.ErrNoteNotArchived):
@@ -60,7 +63,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrCaptureTargetRequired):
 		httperr.BadRequest(w, r, "supply either note_id or new_note_title")
 	case errors.Is(err, service.ErrUnsupportedContentType):
-		httperr.BadRequest(w, r, "content_type must be one of audio/webm, audio/mp4, audio/ogg, audio/wav")
+		httperr.BadRequest(w, r, "content_type must be one of audio/webm, audio/ogg, audio/mp4, audio/m4a, audio/mpeg, audio/wav, audio/x-wav")
 	case errors.Is(err, service.ErrDownloadKindUnknown):
 		httperr.BadRequest(w, r, "kind must be one of audio, raw, clean, segments, peaks")
 	case errors.Is(err, service.ErrInvalidCursor):
@@ -74,11 +77,23 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrInvalidNoteCleanMode),
 		errors.Is(err, service.ErrChecklistCleanMode),
 		errors.Is(err, service.ErrInvalidNoteKind),
+		errors.Is(err, service.ErrPinReorderInvalid),
+		errors.Is(err, service.ErrPinBatchSize),
+		errors.Is(err, service.ErrDeviceNameRequired),
+		errors.Is(err, service.ErrDeviceNameTooLong),
 		errors.Is(err, service.ErrAskQuestionRequired),
 		errors.Is(err, service.ErrAskQuestionTooLong),
 		errors.Is(err, service.ErrAskHistoryTooLong),
 		errors.Is(err, service.ErrAskHistoryTurnBad):
 		httperr.BadRequest(w, r, err.Error())
+
+	// ---- the inbox's two refusals ---------------------------------------
+	// Fixed sentences: a device holding a key learns that it does not work or
+	// that it has worked enough today, and nothing about why.
+	case errors.Is(err, service.ErrDeviceKeyUnknown):
+		httperr.Unauthorized(w, r, err.Error())
+	case errors.Is(err, service.ErrDeviceDailyLimit):
+		httperr.Write(w, r, httperr.New(http.StatusTooManyRequests, err.Error()))
 
 	// ---- limits ----------------------------------------------------------
 	case errors.Is(err, service.ErrCaptureTooLarge):

@@ -93,22 +93,6 @@ export const settingsStored: SettingsWire = {
 export const notesPage: Page<NoteWire> = {
   "items": [
     {
-      "aliases": [],
-      "archived": false,
-      "auto_clean": false,
-      "created_at": "2026-01-01T00:00:00.000000000Z",
-      "id": "fixture-id",
-      "kind": "note",
-      "purge_after": null,
-      "tags": [
-        "house"
-      ],
-      "title": "Reading list",
-      "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "verbatim": true,
-      "version": 2
-    },
-    {
       "aliases": [
         "kitchen",
         "reno"
@@ -118,6 +102,8 @@ export const notesPage: Page<NoteWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
+      "pin_rank": 0,
+      "pinned": true,
       "purge_after": null,
       "snippet": "Quotes are in. The tiler can start on the fourteenth.",
       "tags": [
@@ -126,6 +112,24 @@ export const notesPage: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 3
+    },
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 1000,
+      "pinned": true,
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
       "version": 2
     }
   ]
@@ -135,22 +139,6 @@ export const notesPage: Page<NoteWire> = {
 export const notesPageWithSearchText: Page<NoteWire> = {
   "items": [
     {
-      "aliases": [],
-      "archived": false,
-      "auto_clean": false,
-      "created_at": "2026-01-01T00:00:00.000000000Z",
-      "id": "fixture-id",
-      "kind": "note",
-      "purge_after": null,
-      "tags": [
-        "house"
-      ],
-      "title": "Reading list",
-      "updated_at": "2026-01-01T00:00:00.000000000Z",
-      "verbatim": true,
-      "version": 2
-    },
-    {
       "aliases": [
         "kitchen",
         "reno"
@@ -160,6 +148,8 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "note",
+      "pin_rank": 0,
+      "pinned": true,
       "purge_after": null,
       "search_text": "quotes are in. the tiler can start on the fourteenth.",
       "snippet": "Quotes are in. The tiler can start on the fourteenth.",
@@ -169,6 +159,24 @@ export const notesPageWithSearchText: Page<NoteWire> = {
       ],
       "title": "Kitchen rebuild",
       "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 3
+    },
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 1000,
+      "pinned": true,
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
       "version": 2
     }
   ]
@@ -189,6 +197,7 @@ export const noteDetail: NoteDetailWire = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "duration_ms": 18400,
       "error": null,
+      "has_audio": true,
       "has_peaks": true,
       "has_segments": true,
       "id": "fixture-id",
@@ -196,6 +205,7 @@ export const noteDetail: NoteDetailWire = {
       "language_detected": null,
       "last_progress_at": null,
       "note_id": "fixture-note-id",
+      "source": "app",
       "status": "appended",
       "suggested_note_id": null,
       "suggested_title": null,
@@ -207,6 +217,8 @@ export const noteDetail: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
+  "pin_rank": 0,
+  "pinned": true,
   "purge_after": null,
   "snippet": "Quotes are in. The tiler can start on the fourteenth.",
   "tags": [
@@ -215,7 +227,53 @@ export const noteDetail: NoteDetailWire = {
   ],
   "title": "Kitchen rebuild",
   "updated_at": "2026-01-01T00:00:00.000000000Z",
-  "version": 2
+  "version": 3
+};
+
+/** POST /v1/notes/pins → 200. The listed notes in the order sent, pin_rank rewritten as position × 1000; one request per drag. No cursor. */
+export const notePinsReordered: Page<NoteWire> = {
+  "items": [
+    {
+      "aliases": [],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 0,
+      "pinned": true,
+      "purge_after": null,
+      "tags": [
+        "house"
+      ],
+      "title": "Reading list",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "verbatim": true,
+      "version": 3
+    },
+    {
+      "aliases": [
+        "kitchen",
+        "reno"
+      ],
+      "archived": false,
+      "auto_clean": false,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "kind": "note",
+      "pin_rank": 1000,
+      "pinned": true,
+      "purge_after": null,
+      "snippet": "Quotes are in. The tiler can start on the fourteenth.",
+      "tags": [
+        "house",
+        "money"
+      ],
+      "title": "Kitchen rebuild",
+      "updated_at": "2026-01-01T00:00:00.000000000Z",
+      "version": 4
+    }
+  ]
 };
 
 /** GET /v1/notes/{noteId} → 200 for a note with a whole-note cleaned view (auto_clean on, structured). stale is true because the body changed after generated_at; the view is read-only and regenerated by POST /clean. */
@@ -235,6 +293,8 @@ export const noteDetailCleaned: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "snippet": "the gutter leaks. call the roofer on the fourteenth.",
   "tags": [],
@@ -255,6 +315,8 @@ export const noteDetailChecklist: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "snippet": "- [x] passport\n- [ ] charger",
   "tags": [],
@@ -274,6 +336,8 @@ export const notesPageChecklists: Page<NoteWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "kind": "checklist",
+      "pin_rank": null,
+      "pinned": false,
       "purge_after": null,
       "snippet": "- [x] passport\n- [ ] charger",
       "tags": [],
@@ -301,6 +365,8 @@ export const noteDetailChecklistCleaned: NoteDetailWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "checklist",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "snippet": "- [x] passport\n- [ ] charger",
   "tags": [],
@@ -323,6 +389,8 @@ export const noteCreated: NoteWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "kind": "note",
+  "pin_rank": null,
+  "pinned": false,
   "purge_after": null,
   "tags": [],
   "title": "A new thought",
@@ -376,10 +444,11 @@ export const matchResponse: MatchResponseWire = {
 export const capturesPage: Page<CaptureWire> = {
   "items": [
     {
-      "appended_at": null,
+      "appended_at": "2026-01-01T00:00:00.000000000Z",
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "duration_ms": null,
-      "error": "the speech provider returned 503",
+      "error": null,
+      "has_audio": false,
       "has_peaks": false,
       "has_segments": false,
       "id": "fixture-id",
@@ -387,6 +456,27 @@ export const capturesPage: Page<CaptureWire> = {
       "language_detected": null,
       "last_progress_at": null,
       "note_id": "fixture-note-id",
+      "source": "device:dev_fixture",
+      "status": "appended",
+      "suggested_note_id": null,
+      "suggested_title": null,
+      "targeted": true,
+      "version": 1
+    },
+    {
+      "appended_at": null,
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "duration_ms": null,
+      "error": "the speech provider returned 503",
+      "has_audio": true,
+      "has_peaks": false,
+      "has_segments": false,
+      "id": "fixture-id",
+      "language": null,
+      "language_detected": null,
+      "last_progress_at": null,
+      "note_id": "fixture-note-id",
+      "source": "app",
       "status": "failed",
       "suggested_note_id": null,
       "suggested_title": null,
@@ -398,6 +488,7 @@ export const capturesPage: Page<CaptureWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "duration_ms": null,
       "error": null,
+      "has_audio": true,
       "has_peaks": false,
       "has_segments": false,
       "id": "fixture-id",
@@ -405,6 +496,7 @@ export const capturesPage: Page<CaptureWire> = {
       "language_detected": null,
       "last_progress_at": null,
       "note_id": null,
+      "source": "app",
       "status": "needs_target",
       "suggested_note_id": "contract-suggested-note",
       "suggested_title": null,
@@ -416,6 +508,7 @@ export const capturesPage: Page<CaptureWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "duration_ms": null,
       "error": null,
+      "has_audio": true,
       "has_peaks": false,
       "has_segments": false,
       "id": "fixture-id",
@@ -423,6 +516,7 @@ export const capturesPage: Page<CaptureWire> = {
       "language_detected": null,
       "last_progress_at": null,
       "note_id": null,
+      "source": "app",
       "status": "needs_target",
       "suggested_note_id": null,
       "suggested_title": "Kitchen rebuild",
@@ -434,6 +528,7 @@ export const capturesPage: Page<CaptureWire> = {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "duration_ms": 9100,
       "error": null,
+      "has_audio": true,
       "has_peaks": true,
       "has_segments": true,
       "id": "fixture-id",
@@ -441,6 +536,7 @@ export const capturesPage: Page<CaptureWire> = {
       "language_detected": null,
       "last_progress_at": null,
       "note_id": "fixture-note-id",
+      "source": "app",
       "status": "appended",
       "suggested_note_id": null,
       "suggested_title": null,
@@ -456,6 +552,7 @@ export const captureSuggestedNote: CaptureWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "duration_ms": null,
   "error": null,
+  "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
@@ -463,6 +560,7 @@ export const captureSuggestedNote: CaptureWire = {
   "language_detected": null,
   "last_progress_at": null,
   "note_id": null,
+  "source": "app",
   "status": "needs_target",
   "suggested_note_id": "contract-suggested-note",
   "suggested_title": null,
@@ -476,6 +574,7 @@ export const captureFailed: CaptureWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "duration_ms": null,
   "error": "the speech provider returned 503",
+  "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
@@ -483,6 +582,7 @@ export const captureFailed: CaptureWire = {
   "language_detected": null,
   "last_progress_at": null,
   "note_id": "fixture-note-id",
+  "source": "app",
   "status": "failed",
   "suggested_note_id": null,
   "suggested_title": null,
@@ -496,6 +596,28 @@ export const captureDownload: PresignedDownloadWire = {
   "url": "https://example.invalid/presigned"
 };
 
+/** GET /v1/captures/{captureId} → 200 for a capture a device dropped into the inbox as text: `source` names the device (GET /v1/devices has its name) and `has_audio` is false, so the row shows the transcript and no player. */
+export const captureFromDevice: CaptureWire = {
+  "appended_at": "2026-01-01T00:00:00.000000000Z",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "duration_ms": null,
+  "error": null,
+  "has_audio": false,
+  "has_peaks": false,
+  "has_segments": false,
+  "id": "fixture-id",
+  "language": null,
+  "language_detected": null,
+  "last_progress_at": null,
+  "note_id": "fixture-note-id",
+  "source": "device:dev_fixture",
+  "status": "appended",
+  "suggested_note_id": null,
+  "suggested_title": null,
+  "targeted": true,
+  "version": 1
+};
+
 /** POST /v1/captures → 201. upload.headers reaches the client verbatim; x-amz-tagging is inside the signature, so dropping it makes the PUT 403. */
 export const captureCreated: CaptureCreatedWire = {
   "capture": {
@@ -503,6 +625,7 @@ export const captureCreated: CaptureCreatedWire = {
     "created_at": "2026-01-01T00:00:00.000000000Z",
     "duration_ms": 12000,
     "error": null,
+    "has_audio": true,
     "has_peaks": true,
     "has_segments": false,
     "id": "fixture-id",
@@ -510,6 +633,7 @@ export const captureCreated: CaptureCreatedWire = {
     "language_detected": null,
     "last_progress_at": null,
     "note_id": null,
+    "source": "app",
     "status": "uploaded",
     "suggested_note_id": null,
     "suggested_title": null,
@@ -541,6 +665,7 @@ export const captureMoved: CaptureWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "duration_ms": null,
   "error": null,
+  "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
@@ -548,6 +673,7 @@ export const captureMoved: CaptureWire = {
   "language_detected": "English",
   "last_progress_at": null,
   "note_id": "fixture-note-id",
+  "source": "app",
   "status": "appended",
   "suggested_note_id": null,
   "suggested_title": null,
@@ -585,6 +711,7 @@ export const captureRetranscribing: CaptureWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "duration_ms": null,
   "error": null,
+  "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
   "id": "fixture-id",
@@ -592,6 +719,7 @@ export const captureRetranscribing: CaptureWire = {
   "language_detected": null,
   "last_progress_at": "2026-01-01T00:00:00.000000000Z",
   "note_id": "fixture-note-id",
+  "source": "app",
   "status": "transcribing",
   "suggested_note_id": null,
   "suggested_title": null,

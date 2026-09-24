@@ -46,6 +46,15 @@ type noteUpdateRequest struct {
 	// Kind switches the note between "note" and "checklist". The client sends
 	// the converted body in the same request; the server converts nothing.
 	Kind *string `json:"kind"`
+	// Pinned puts the note in Home's Pinned group (last among them) or takes
+	// it out. Reordering the group is POST /v1/notes/pins.
+	Pinned *bool `json:"pinned"`
+}
+
+// notePinsRequest is the OpenAPI NotePinsRequest schema: the caller's pinned
+// notes in the order they should hold.
+type notePinsRequest struct {
+	IDs []string `json:"ids"`
 }
 
 // noteCleanRequest is the OpenAPI NoteCleanRequest schema. The body is
@@ -237,6 +246,7 @@ func (rt *router) updateNote(w http.ResponseWriter, r *http.Request) {
 		Verbatim:        req.Verbatim,
 		Language:        req.Language,
 		AutoClean:       req.AutoClean,
+		Pinned:          req.Pinned,
 		ExpectedVersion: req.Version,
 	}
 	if req.CleanedMode != nil {
@@ -330,6 +340,26 @@ func (rt *router) cleanNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, NoteCleanQueued{Status: "queued", Mode: string(mode)})
+}
+
+// reorderPins writes the Pinned group's order in one request: pin_rank
+// becomes each note's position in ids. 200 with the notes in that order.
+func (rt *router) reorderPins(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	var req notePinsRequest
+	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
+		return
+	}
+	items, err := rt.Notes.ReorderPins(r.Context(), userID, req.IDs)
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page(notesOf(items), ""))
 }
 
 func (rt *router) archiveNote(w http.ResponseWriter, r *http.Request) {

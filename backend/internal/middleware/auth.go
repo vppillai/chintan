@@ -43,7 +43,7 @@ func Auth(v auth.Verifier) func(http.Handler) http.Handler {
 				return
 			}
 
-			raw, ok := bearerToken(r.Header.Get("Authorization"))
+			raw, ok := BearerToken(r.Header.Get("Authorization"))
 			if !ok || v == nil {
 				httperr.Unauthorized(w, r, "authentication required")
 				return
@@ -65,7 +65,10 @@ func Auth(v auth.Verifier) func(http.Handler) http.Handler {
 	}
 }
 
-func bearerToken(header string) (string, bool) {
+// BearerToken reads the credential out of an Authorization header, case-
+// insensitively on the scheme. It is shared with the inbox's device-key check,
+// which is the one other reader of that header.
+func BearerToken(header string) (string, bool) {
 	const prefix = "bearer "
 	if len(header) <= len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
 		return "", false

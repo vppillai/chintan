@@ -119,10 +119,15 @@ func (rt *router) beginCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The upload headers reach the client verbatim. x-amz-tagging is inside the
-	// signature, so dropping or rewriting it turns every upload into a 403 —
-	// and signing it is the only thing that stops an uploader omitting the
-	// retention tag and escaping the lifecycle rule.
+	writeCaptureCreated(w, created)
+}
+
+// writeCaptureCreated is the 201 of POST /v1/captures and of the inbox's
+// two-step route. The upload headers reach the client verbatim. x-amz-tagging
+// is inside the signature, so dropping or rewriting it turns every upload
+// into a 403 — and signing it is the only thing that stops an uploader
+// omitting the retention tag and escaping the lifecycle rule.
+func writeCaptureCreated(w http.ResponseWriter, created service.CaptureCreated) {
 	out := CaptureCreated{
 		Capture: captureOf(created.Capture),
 		Upload:  uploadOf(created.Audio),

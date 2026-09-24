@@ -121,22 +121,24 @@ func decodeCursor(cursor string, scope cursorScope) (map[string]types.AttributeV
 	return out, nil
 }
 
-// noteCursor is the position a notes page ended at: the touch instant and id of
-// the last note served, in the order listNotes builds. It is not a DynamoDB
-// key, because the walk it resumes is over a slice this store sorted, not over
-// the table — see listNotes.
+// noteCursor is the position a notes page ended at: the NoteOrderKey of the
+// last note served, in the order listNotes builds. It is not a DynamoDB key,
+// because the walk it resumes is over a slice this store sorted, not over the
+// table — see listNotes.
 type noteCursor struct {
-	at, id string
+	pos string
 }
 
-// key is the note's position in the list order, comparable to noteOrderKey.
-func (c noteCursor) key() string { return c.at + "\x00" + c.id }
+// key is the note's position in the list order, comparable to NoteOrderKey.
+func (c noteCursor) key() string { return c.pos }
 
 // Note cursor fields. "pk" and "shelf" scope the cursor to the partition and
 // the list that issued it, so tenant A's cursor is refused by tenant B's list
 // and an archive cursor by the active list; "dir" is carried so the generic
-// decoder refuses one rather than misreading it as a key.
+// decoder refuses one rather than misreading it as a key. "id" is carried for
+// a reader; the position alone decides where the next page starts.
 const (
+	noteCursorPos   = "pos"
 	noteCursorAt    = "at"
 	noteCursorID    = "id"
 	noteCursorShelf = "shelf"
@@ -146,7 +148,7 @@ func encodeNoteCursor(tenantID, shelf string, last model.NoteIndex) (string, err
 	raw, err := json.Marshal(map[string]string{
 		"pk":                userPK(tenantID),
 		noteCursorShelf:     shelf,
-		noteCursorAt:        noteTouchedSortKey(last.UpdatedAt),
+		noteCursorPos:       NoteOrderKey(last),
 		noteCursorID:        last.ID,
 		cursorDirectionAttr: cursorDescending,
 	})
@@ -178,9 +180,14 @@ func decodeNoteCursor(cursor, tenantID, shelf string) (*noteCursor, error) {
 	if flat[noteCursorShelf] != shelf {
 		return nil, fmt.Errorf("cursor: does not belong to this query")
 	}
-	at, id := flat[noteCursorAt], flat[noteCursorID]
-	if id == "" || len(flat) != 5 {
+	pos, id := flat[noteCursorPos], flat[noteCursorID]
+	if pos == "" && flat[noteCursorAt] != "" {
+		// Minted before the pinned tier existed (2026-09-24): a touch instant
+		// and an id, which is the unpinned tier's key.
+		pos = "0" + flat[noteCursorAt] + "\x00" + id
+	}
+	if id == "" || pos == "" || len(flat) != 5 {
 		return nil, fmt.Errorf("cursor: unexpected shape; start again from the first page")
 	}
-	return &noteCursor{at: at, id: id}, nil
+	return &noteCursor{pos: pos}, nil
 }

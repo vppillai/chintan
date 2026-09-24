@@ -137,12 +137,28 @@ type NoteUpdates struct {
 	// Kind is "" for a plain note or model.NoteKindChecklist. The body is not
 	// converted here: the client rewrites it to the new kind's format in the
 	// same PATCH, and a body it did not send is left as it is.
-	Kind            *string
+	Kind *string
+	// Pinned puts the note in the Pinned group at the top of Home, or takes
+	// it out. A new pin lands last among the pinned notes; the order within
+	// the group is ReorderPins's.
+	Pinned          *bool
 	ExpectedVersion *int64
 }
 
 // ErrInvalidNoteKind rejects a kind that is not "" or checklist.
 var ErrInvalidNoteKind = errors.New("kind must be note or checklist")
+
+// Pin errors. The sentences reach the user as written.
+var (
+	// ErrPinLimit refuses the pin that would be one past model.MaxPinnedNotes.
+	ErrPinLimit = errors.New("you can pin up to fifty notes")
+	// ErrPinReorderInvalid refuses a reorder naming a note that is not the
+	// caller's, not pinned, or named twice.
+	ErrPinReorderInvalid = errors.New("every id must be one of your pinned notes")
+	// ErrPinBatchSize refuses a reorder of no notes or of more than can be
+	// pinned.
+	ErrPinBatchSize = errors.New("ids must name between 1 and 50 notes")
+)
 
 // MatchResult represents the result of a note matching operation
 type MatchResult struct {
@@ -469,6 +485,25 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		}
 		note.CleanMode = *updates.CleanMode
 	}
+	if updates.Pinned != nil {
+		switch {
+		case *updates.Pinned && !note.Pinned():
+			// A new pin lands last: its rank is one step past the highest in
+			// use, from the same drain that counts the pins for the limit.
+			// One drain of the partition, on a pin alone.
+			pinned, nextRank, err := s.countPinned(ctx, userID)
+			if err != nil {
+				return model.NoteIndex{}, err
+			}
+			if pinned >= model.MaxPinnedNotes {
+				return model.NoteIndex{}, ErrPinLimit
+			}
+			note.PinnedAt = model.FormatTime(s.now())
+			note.PinRank = nextRank
+		case !*updates.Pinned:
+			note.PinnedAt, note.PinRank = "", 0
+		}
+	}
 
 	// Update timestamp
 	note.UpdatedAt = model.Now()
@@ -536,6 +571,76 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	// between the read and this write; the caller reconciles rather than one of
 	// the two edits vanishing.
 	return s.putCarryingStamp(ctx, userID, note)
+}
+
+// countPinned is how many of the tenant's active notes are pinned, and the
+// rank a new pin takes to land last: one step past the highest in use, which
+// is count × PinRankStep while the ranks are compact and more once an unpin
+// has left a gap. Count × step would then equal an existing rank, and the
+// order's tie-break (the more recently pinned first) would put the new pin
+// above that note instead of below it. Zero when nothing is pinned.
+func (s *NotesService) countPinned(ctx context.Context, userID string) (count int, nextRank int64, err error) {
+	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to list notes: %w", err)
+	}
+	for _, n := range notes {
+		if n.Pinned() {
+			count++
+			nextRank = max(nextRank, n.PinRank+model.PinRankStep)
+		}
+	}
+	return count, nextRank, nil
+}
+
+// ReorderPins writes the listed notes' pin_rank as their position in ids,
+// PinRankStep apart, and returns them in that order. Every id must name one
+// of the caller's pinned, active notes, once; anything else refuses the whole
+// request, since a partial reorder is not an order anyone asked for. One
+// request per drag.
+//
+// Each note is read whole before it is written: a listed note carries no
+// search_text or cleaned_body, and PutNote writes the row it is given, so a
+// note put from a list projection would lose both. A note already at its
+// rank is not rewritten, so a drag that moves one note writes one row.
+func (s *NotesService) ReorderPins(ctx context.Context, userID string, ids []string) ([]model.NoteIndex, error) {
+	if len(ids) == 0 || len(ids) > model.MaxPinnedNotes {
+		return nil, ErrPinBatchSize
+	}
+	seen := make(map[string]bool, len(ids))
+	notes := make([]model.NoteIndex, 0, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			return nil, ErrPinReorderInvalid
+		}
+		seen[id] = true
+		note, err := s.store.GetNote(ctx, userID, id)
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrPinReorderInvalid
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to get note: %w", err)
+		}
+		if !note.Pinned() || !NoteIsActive(note) {
+			return nil, ErrPinReorderInvalid
+		}
+		notes = append(notes, note)
+	}
+	out := make([]model.NoteIndex, 0, len(notes))
+	for i, note := range notes {
+		rank := int64(i) * model.PinRankStep
+		if note.PinRank == rank {
+			out = append(out, note)
+			continue
+		}
+		note.PinRank = rank
+		stored, err := s.putCarryingStamp(ctx, userID, note)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, stored)
+	}
+	return out, nil
 }
 
 // putCarryingStamp is PutNote for a write that did not touch the clean stamp.
@@ -650,6 +755,9 @@ func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (
 	note.DeletedAt = model.FormatTime(now)
 	note.PurgeAfter = model.FormatTime(purgeAt)
 	note.PurgeAfterEpoch = purgeAt.Unix()
+	// The archive is never pinned, and a restore comes back unpinned: the
+	// pin was a place on Home, and the note has left Home.
+	note.PinnedAt, note.PinRank = "", 0
 
 	return s.putCarryingStamp(ctx, userID, note)
 }
