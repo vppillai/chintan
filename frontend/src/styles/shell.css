@@ -452,56 +452,11 @@
   box-shadow: var(--shadow-xs);
 }
 
-/*
- * The row and, for a pointer that can hover, its checkbox. The checkbox sits
- * at the row's left edge and is drawn only while the pointer rests on the row
- * or focus is inside it; the row's text slides right to make room. On a
- * device that cannot hover the checkbox is not rendered at all (`NoteRow`),
- * and the long press is the way in.
- */
+/* The row and, at its right, its ⋮ menu (`pins.css`). Positioned so the menu
+   can sit in the row's padding; no z-index, so the menu escapes to the sheet
+   layer over the rows beneath. */
 .note-row-wrap {
   position: relative;
-}
-
-.note-row__hover-check {
-  position: absolute;
-  inset-block-start: var(--space-2);
-  inset-inline-start: var(--space-2);
-  display: grid;
-  place-items: center;
-  inline-size: var(--layout-touch-target-min);
-  block-size: var(--layout-touch-target-min);
-  visibility: hidden;
-  opacity: 0;
-  transform: translateX(calc(-1 * var(--space-2)));
-  transition:
-    opacity var(--motion-duration-fast) var(--motion-ease-standard),
-    transform var(--motion-duration-fast) var(--motion-ease-standard),
-    visibility 0s linear var(--motion-duration-fast);
-}
-
-@media (hover: hover) {
-  .note-row-wrap:hover .note-row__hover-check,
-  .note-row-wrap:focus-within .note-row__hover-check {
-    visibility: visible;
-    opacity: 1;
-    transform: none;
-    transition-delay: 0s;
-  }
-
-  .note-row-wrap:hover > .note-row,
-  .note-row-wrap:focus-within > .note-row {
-    padding-inline-start: calc(var(--space-4) + var(--layout-touch-target-min));
-  }
-
-  .note-row-wrap > .note-row {
-    transition:
-      background-color var(--motion-duration-fast) var(--motion-ease-standard),
-      border-color var(--motion-duration-fast) var(--motion-ease-standard),
-      box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
-      padding var(--motion-duration-fast) var(--motion-ease-standard),
-      transform var(--motion-duration-fast) var(--motion-ease-standard);
-  }
 }
 
 /* A `<label>` wrapping a checkbox, standing in for the row's plain `<button>`

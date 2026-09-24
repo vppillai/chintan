@@ -44,7 +44,7 @@ describe('useLongPress', () => {
     expect(onTap).toHaveBeenCalledTimes(1);
   });
 
-  it('is cancelled by lifting early, by moving, and never fires for a mouse', async () => {
+  it('is cancelled by lifting early, by moving, and never arms on a right-click', async () => {
     const onLongPress = vi.fn();
     render(<Row onLongPress={onLongPress} onTap={() => {}} />);
     const row = screen.getByRole('button');
@@ -57,10 +57,29 @@ describe('useLongPress', () => {
     fireEvent.pointerMove(row, { pointerType: 'touch', clientX: 0, clientY: 30 });
     await wait(80);
 
-    fireEvent.pointerDown(row, { pointerType: 'mouse', clientX: 0, clientY: 0 });
+    // The secondary button is the context menu's; arming on it would suppress that menu.
+    fireEvent.pointerDown(row, { pointerType: 'mouse', button: 2, clientX: 0, clientY: 0 });
     await wait(80);
+    const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    row.dispatchEvent(menu);
+    expect(menu.defaultPrevented).toBe(false);
 
     expect(onLongPress).not.toHaveBeenCalled();
+  });
+
+  it('fires for a held mouse button too — press-and-hold is the one way in on every pointer', async () => {
+    const onLongPress = vi.fn();
+    const onTap = vi.fn();
+    render(<Row onLongPress={onLongPress} onTap={onTap} />);
+    const row = screen.getByRole('button');
+
+    fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 0, clientY: 0 });
+    await wait(80);
+    fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
+    fireEvent.click(row);
+
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+    expect(onTap).not.toHaveBeenCalled();
   });
 
   it('suppresses the context menu Android raises for the same hold', async () => {

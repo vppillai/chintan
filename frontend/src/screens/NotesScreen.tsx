@@ -36,7 +36,8 @@ import { useAskThread } from '@/features/ask/useAskThread.ts';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
-import { describeToday, groupByDay } from '@/features/notes/groups.ts';
+import { PinnedGroup } from '@/features/notes/PinnedGroup.tsx';
+import { describeToday, groupByDay, splitPinned } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
@@ -78,10 +79,15 @@ const AskPanel = lazy(() =>
  * Bulk select carries over from the two screens this replaces. In the active
  * view the actions are Archive and Delete forever; in the archive, Restore and
  * Delete forever. Deleting is gated by a typed word in both, because it is the
- * one thing here that cannot be undone. Selection starts from a row — a long
- * press on a phone, a checkbox that appears on hover with a mouse (see
+ * one thing here that cannot be undone. Selection starts from a row — press
+ * and hold it, with a finger or a mouse alike, or pick Select from its ⋮ (see
  * `NoteRow`) — and its bar sits above the tab bar, not at the end of the list
  * (backlog U2, Q6).
+ *
+ * Pinned notes come first, in a group of their own above the days, in the
+ * order the person dragged them into (`PinnedGroup`, 2026-09-24 B). The
+ * server lists them first too; the split here is what keeps the cached list
+ * on the same terms offline.
  */
 export function NotesScreen() {
   const [params, setParams] = useSearchParams();
@@ -293,8 +299,16 @@ export function NotesScreen() {
   const serverPending =
     searching && view === 'active' && online && (settled !== trimmed || server.isFetching);
 
-  const groups = useMemo(() => groupByDay(notes), [notes]);
-  const visible: NoteWire[] = searching ? hits.map((hit) => noteForHit(hit, notes)) : notes;
+  const { pinned, rest } = useMemo(() => splitPinned(notes), [notes]);
+  const groups = useMemo(() => groupByDay(rest), [rest]);
+  // In the order they are on screen, so Shift-click ranges over what the eye sees.
+  const visible: NoteWire[] = useMemo(
+    () =>
+      searching
+        ? hits.map((hit) => noteForHit(hit, notes))
+        : [...pinned, ...groups.flatMap((group) => group.notes)],
+    [searching, hits, notes, pinned, groups],
+  );
   const nothingToShow = visible.length === 0;
 
   const archivedCount = archived.data?.pages.reduce((sum, page) => sum + page.items.length, 0);
@@ -695,6 +709,14 @@ export function NotesScreen() {
         </ul>
       ) : (
         <div id={listId} className="note-groups">
+          {pinned.length > 0 && (
+            <PinnedGroup
+              notes={pinned}
+              selectable={selecting}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+            />
+          )}
           {groups.map((group) => (
             <section key={group.label} className="note-group" aria-label={group.label}>
               <h2 className="note-group__label">{group.label}</h2>

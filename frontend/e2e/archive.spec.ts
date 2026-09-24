@@ -107,14 +107,18 @@ test('delete forever is gated by typing "delete", and cascades', async ({ page, 
  * Bulk select, the same bar in both views: Archive from the library, Restore
  * from the archive, Delete forever in either behind a typed word.
  *
- * There is no Select button. With a mouse, resting on a row reveals a
- * checkbox at its left edge and clicking that starts the selection; on a
- * phone a long press does (the last test here). The bar sits above the tab
- * bar rather than at the end of the list (backlog U2, Q6).
+ * There is no Select button and no hover checkbox (owner, 2026-09-24: "not
+ * clean UX"). A press-and-hold on a row starts the selection with a mouse
+ * as with a finger (the last two tests here), and so does Select in the
+ * row's ⋮ menu, which a mouse reveals by resting on the row. The bar sits
+ * above the tab bar rather than at the end of the list (backlog U2, Q6).
  */
 async function startSelecting(page: Page, title: RegExp): Promise<void> {
-  await page.getByRole('button', { name: title }).hover();
-  await page.getByRole('checkbox', { name: new RegExp(`^Select ${title.source}`, 'i') }).click();
+  const row = page.getByRole('button', { name: title });
+  await row.hover();
+  // The ⋮ is named "More" and described by the title, so it is found from its row.
+  await page.locator('.note-row-wrap', { has: row }).getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Select' }).click();
   await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
 }
 
@@ -201,6 +205,33 @@ test('escape closes the delete dialog without deleting anything', async ({ page,
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(api.purged).toEqual([]);
   expect(api.notes['old-fence']).toBeDefined();
+});
+
+test('with a mouse, pressing and holding a row starts the selection; a click still opens it', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const row = page.getByRole('button', { name: /reading list/i });
+  await expect(row).toBeVisible();
+  // No checkbox waits at the row's edge for the pointer any more.
+  await row.hover();
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
+
+  const box = (await row.boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + 20);
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.up();
+
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
+  await expect(page.getByText('1 selected')).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toHaveCount(0);
+
+  // A plain click is still the way into the note.
+  await page.getByRole('button', { name: /reading list/i }).click();
+  await expect(page).toHaveURL(/\/notes\/reading-list$/);
 });
 
 test('on a phone, a long press on a row starts the selection', async ({ page }) => {

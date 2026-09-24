@@ -94,8 +94,10 @@ test('selection checkboxes and the playback slider are at least 24 px', async ({
   ];
 
   await page.goto('/');
-  await page.getByRole('button', { name: /roof repair/i }).hover();
-  await page.getByRole('checkbox', { name: /^Select roof repair/i }).click();
+  const roof = page.getByRole('button', { name: /roof repair/i });
+  await roof.hover();
+  await page.locator('.note-row-wrap', { has: roof }).getByRole('button', { name: 'More' }).click();
+  await page.getByRole('menuitem', { name: 'Select' }).click();
   await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
   const box = page.getByRole('checkbox').first();
   const checkbox = await box.boundingBox();

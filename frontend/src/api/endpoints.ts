@@ -31,6 +31,7 @@ import type {
   NoteCreateWire,
   NoteDetailWire,
   NoteListQuery,
+  NotePinsWire,
   NotePurgeResponseWire,
   NoteUpdateWire,
   NoteWire,
@@ -136,6 +137,15 @@ export class ChintanApi {
       body,
       idempotencyKey,
     });
+  }
+
+  /**
+   * The pinned notes' order, after a drag: `pin_rank` becomes `index × 1000`
+   * over the listed notes, which must all be pinned and the caller's own.
+   * One request per drag, answered with the rows as stored.
+   */
+  reorderPins(body: NotePinsWire, idempotencyKey?: string): Promise<{ items: NoteWire[] }> {
+    return this.client.request('/v1/notes/pins', { method: 'POST', body, idempotencyKey });
   }
 
   /**

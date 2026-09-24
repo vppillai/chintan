@@ -758,6 +758,22 @@ describe('selecting several recordings', () => {
     expect(boxes[0]).not.toBeChecked();
   });
 
+  it('enters selection on a held mouse button too, the same gesture Home teaches', async () => {
+    // `useLongPress` takes every pointer's primary button since the hover
+    // checkbox left Home (2026-09-24, C); this tab shares the hook, on purpose.
+    bucketStub();
+    mount(apiStub(TWO).fetchImpl);
+    const rows = await screen.findAllByRole('button', { name: isSummary });
+    const older = rows[1]!;
+
+    fireEvent.pointerDown(older, { pointerType: 'mouse', button: 0, clientX: 10, clientY: 10 });
+    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
+    fireEvent.pointerUp(older, { pointerType: 'mouse', button: 0 });
+
+    await screen.findByRole('toolbar', { name: 'Recording actions' });
+    expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
+  });
+
   it('a press that moves is a scroll, not a selection', async () => {
     bucketStub();
     mount(apiStub(TWO).fetchImpl);
