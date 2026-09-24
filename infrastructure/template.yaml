@@ -1880,6 +1880,9 @@ Resources:
   # Default Stage
   ApiStage:
     Type: AWS::ApiGatewayV2::Stage
+    # RouteSettings below names the inbox routes, which the stage cannot be
+    # created or updated ahead of.
+    DependsOn: [InboxCapturesRoute, InboxAudioRoute, InboxTextRoute]
     Properties:
       StageName: $default
       ApiId: !Ref HttpApi
@@ -1903,6 +1906,14 @@ Resources:
         DetailedMetricsEnabled: false
         ThrottlingBurstLimit: 100
         ThrottlingRateLimit: 50
+      # The three routes anyone on the internet can POST a body to. The
+      # Lambda refuses a bad key before it does anything else, but the
+      # invocation and the body transfer are paid before it runs; ten
+      # devices at two hundred requests a day need a small fraction of this.
+      RouteSettings:
+        'POST /v1/inbox/captures': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 20 }
+        'POST /v1/inbox/audio': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 20 }
+        'POST /v1/inbox/text': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 20 }
       Tags:
         Project: chintan
         Instance: !Ref InstanceName
