@@ -50,6 +50,7 @@ tags:
   - name: search
   - name: usage
   - name: ask
+  - name: devices
   - name: export
 
 security:
@@ -632,6 +633,67 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/devices:
+    get:
+      tags: [devices]
+      summary: List devices
+      description: |
+        The caller's live device keys — name, when issued, when last used.
+        Never the key or its hash; a key that is lost is revoked and a new
+        one issued. Revoked devices are not listed.
+      responses:
+        '200':
+          description: The live devices, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevicePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [devices]
+      summary: Issue a device key
+      description: |
+        Issues a key an external recorder, watch or app presents to the
+        inbox routes as `Authorization: Bearer ck_…`. The key is in this
+        response and nowhere else: only its SHA-256 is stored, and this
+        operation takes no `Idempotency-Key`, so no replay record holds it.
+        At most ten live devices (409 `you already have ten devices; remove
+        one first`). See `docs/design/inbox.md` and the README's "Connect a
+        device".
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceCreate' }
+      responses:
+        '201':
+          description: The device and, once, its key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceCreated' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Ten devices already.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/devices/{deviceId}:
+    parameters:
+      - $ref: '#/components/parameters/DeviceId'
+    delete:
+      tags: [devices]
+      summary: Revoke a device key
+      description: |
+        The key stops working at once: the inbox answers it 401 `unknown
+        device key` from then on. Revoking a revoked device is 204 again; a
+        device that is not the caller's is 404.
+      responses:
+        '204':
+          description: Revoked.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/captures:
     get:
       tags: [captures]
@@ -997,6 +1059,11 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema: { type: string }
     AskId:
       name: askId
       in: path
@@ -1911,6 +1978,49 @@ components:
                         description: The audio bytes held on that day, as the daily storage snapshot found them; 0 on a day it did not run.
             api: { $ref: '#/components/schemas/UsageApi' }
             storage: { $ref: '#/components/schemas/UsageStorage' }
+
+    Device:
+      type: object
+      required: [id, name, created_at, last_used_at]
+      properties:
+        id: { type: string }
+        name: { type: string, maxLength: 60 }
+        created_at: { type: string, format: date-time }
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the inbox last accepted a request with this key; null until it has.
+
+    DeviceCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: What to call the device; a recording from it says "From ⟨name⟩".
+
+    DeviceCreated:
+      allOf:
+        - $ref: '#/components/schemas/Device'
+        - type: object
+          required: [key]
+          properties:
+            key:
+              type: string
+              description: |
+                `ck_<id>_<secret>`. Shown once. The device sends it as
+                `Authorization: Bearer ck_…` on the `/v1/inbox/*` routes.
+
+    DevicePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Device' }
 
     AskRequest:
       type: object

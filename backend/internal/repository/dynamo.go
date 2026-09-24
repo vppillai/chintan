@@ -99,6 +99,19 @@ func askSK(askID string) string {
 	return "ASK#" + askID
 }
 
+func deviceSK(deviceID string) string {
+	return "DEVICE#" + deviceID
+}
+
+// deviceKeyGSI1PK is the GSI1 partition a live device key is found under. The
+// index is sparse: a revoked row carries no gsi1 keys, so the lookup cannot
+// see it.
+func deviceKeyGSI1PK(keyID string) string {
+	return "DEVICEKEY#" + keyID
+}
+
+const deviceKeyGSI1SK = "KEY"
+
 // noteCapturesGSI1PK is the GSI1 partition holding one note's captures. The
 // prefix is TENANT#, matching the CloudFormation template exactly.
 func noteCapturesGSI1PK(tenantID, noteID string) string {
@@ -1846,6 +1859,159 @@ func (s *DynamoStore) AbandonIdempotent(ctx context.Context, tenantID, key strin
 // PutAsk stores the question as one JSON blob. Nothing queries an ask by
 // anything but its key, so no attribute is promoted; the TTL is the row's
 // expiry, which is the only lifecycle it has.
+// deviceItemAttrs is a device row: every field a named attribute and no
+// blob, since nothing lists devices by projection and the inbox rewrites the
+// counter on every request.
+func deviceItemAttrs(tenantID string, d model.Device) map[string]types.AttributeValue {
+	item := map[string]types.AttributeValue{
+		"pk":                strAttr(userPK(tenantID)),
+		"sk":                strAttr(deviceSK(d.ID)),
+		"type":              strAttr("device"),
+		"device_id":         strAttr(d.ID),
+		"name":              strAttr(d.Name),
+		"key_hash":          strAttr(d.KeyHash),
+		"created_at":        strAttr(d.CreatedAt),
+		"last_used_at":      strAttr(d.LastUsedAt),
+		"requests_day":      numAttr(d.RequestsDay),
+		"requests_day_date": strAttr(d.RequestsDayDate),
+		"revoked_at":        strAttr(d.RevokedAt),
+		"version":           numAttr(d.Version),
+	}
+	if !d.Revoked() {
+		item["gsi1pk"] = strAttr(deviceKeyGSI1PK(d.ID))
+		item["gsi1sk"] = strAttr(deviceKeyGSI1SK)
+	} else if at, err := model.ParseTime(d.RevokedAt); err == nil {
+		item["ttl"] = numAttr(at.Add(model.RevokedDeviceRetention).Unix())
+	}
+	return item
+}
+
+func deviceFromItem(tenantID string, m map[string]types.AttributeValue) model.Device {
+	return model.Device{
+		ID:              readString(m, "device_id"),
+		TenantID:        tenantID,
+		Name:            readString(m, "name"),
+		KeyHash:         readString(m, "key_hash"),
+		CreatedAt:       readString(m, "created_at"),
+		LastUsedAt:      readString(m, "last_used_at"),
+		RequestsDay:     readInt(m, "requests_day"),
+		RequestsDayDate: readString(m, "requests_day_date"),
+		RevokedAt:       readString(m, "revoked_at"),
+		Version:         readInt(m, "version"),
+	}
+}
+
+func (s *DynamoStore) PutDevice(ctx context.Context, tenantID string, d model.Device) (model.Device, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Device{}, err
+	}
+	expected := d.Version
+	next := d
+	next.TenantID = tenantID
+	next.Version = expected + 1
+	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:                 aws.String(s.tableName),
+		Item:                      deviceItemAttrs(tenantID, next),
+		ConditionExpression:       aws.String(versionCondition(expected)),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":expected": numAttr(expected)},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return model.Device{}, ErrVersionConflict
+		}
+		return model.Device{}, fmt.Errorf("dynamo put device: %w", err)
+	}
+	return next, nil
+}
+
+func (s *DynamoStore) GetDevice(ctx context.Context, tenantID, deviceID string) (model.Device, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Device{}, err
+	}
+	out, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(deviceSK(deviceID)),
+		},
+	})
+	if err != nil {
+		return model.Device{}, fmt.Errorf("dynamo get device: %w", err)
+	}
+	if out.Item == nil {
+		return model.Device{}, ErrNotFound
+	}
+	return deviceFromItem(tenantID, out.Item), nil
+}
+
+func (s *DynamoStore) ListDevices(ctx context.Context, tenantID string) ([]model.Device, error) {
+	var start map[string]types.AttributeValue
+	out := []model.Device{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		res, err := s.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.tableName),
+			KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":        strAttr(userPK(tenantID)),
+				":sk_prefix": strAttr("DEVICE#"),
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dynamo query devices: %w", err)
+		}
+		for _, raw := range res.Items {
+			out = append(out, deviceFromItem(tenantID, raw))
+		}
+		start = res.LastEvaluatedKey
+		if len(start) == 0 {
+			break
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
+	return out, nil
+}
+
+// LookupDeviceKey is one index read for the row's keys and one GetItem for
+// the row: the index projects captures' attributes, not a device's, and a
+// device row is small enough that the second read costs less than widening
+// the projection would (an index rebuild).
+func (s *DynamoStore) LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Device{}, err
+	}
+	out, err := s.client.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(s.tableName),
+		IndexName:              aws.String(s.indexName),
+		KeyConditionExpression: aws.String("gsi1pk = :pk AND begins_with(gsi1sk, :sk_prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk":        strAttr(deviceKeyGSI1PK(keyID)),
+			":sk_prefix": strAttr(deviceKeyGSI1SK),
+		},
+		Limit: aws.Int32(1),
+	})
+	if err != nil {
+		return model.Device{}, fmt.Errorf("dynamo query device key: %w", err)
+	}
+	if len(out.Items) == 0 {
+		return model.Device{}, ErrNotFound
+	}
+	raw := out.Items[0]
+	tenantID := trimPrefix(readString(raw, "pk"), "USER#")
+	d, err := s.GetDevice(ctx, tenantID, trimPrefix(readString(raw, "sk"), "DEVICE#"))
+	if err != nil {
+		return model.Device{}, err
+	}
+	if d.Revoked() {
+		// The index entry outlived the revoke by a moment.
+		return model.Device{}, ErrNotFound
+	}
+	return d, nil
+}
+
 func (s *DynamoStore) PutAsk(ctx context.Context, tenantID string, a model.Ask) error {
 	if err := ctx.Err(); err != nil {
 		return err

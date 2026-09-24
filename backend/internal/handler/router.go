@@ -53,6 +53,9 @@ type Deps struct {
 	Storage *service.StorageService
 	// Ask answers POST /v1/ask and GET /v1/ask/{askId}. Nil answers 503.
 	Ask *service.AskService
+	// Devices issues and revokes device keys (/v1/devices) and authenticates
+	// the inbox routes with them.
+	Devices *service.DeviceService
 
 	// Store backs idempotent replay. It is the raw store rather than a service
 	// because idempotency is a property of the request, not of any one domain.

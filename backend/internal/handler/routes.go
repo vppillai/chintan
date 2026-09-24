@@ -57,6 +57,12 @@ func (rt *router) routes() {
 	rt.handle("POST "+p+"/ask", rt.beginAsk, idempotent(), body(MaxAskRequestBytes))
 	rt.handle("GET "+p+"/ask/{askId}", rt.getAsk)
 
+	// Devices: the keys external recorders post to the inbox with. The key is
+	// in the 201 and nowhere else.
+	rt.handle("GET "+p+"/devices", rt.listDevices)
+	rt.handle("POST "+p+"/devices", rt.createDevice)
+	rt.handle("DELETE "+p+"/devices/{deviceId}", rt.revokeDevice)
+
 	// Captures. POST /v1/captures is synchronous and fast: it writes the row and
 	// returns presigned PUTs. Nothing slow happens on a request path bounded by
 	// the gateway's fixed 30-second integration ceiling.

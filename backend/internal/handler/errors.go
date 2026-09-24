@@ -51,7 +51,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture has no note yet; choose one with /target instead of moving it", nil)
 	case errors.Is(err, service.ErrCaptureAudioExpired):
 		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
-	case errors.Is(err, service.ErrPinLimit):
+	case errors.Is(err, service.ErrPinLimit),
+		errors.Is(err, service.ErrDeviceLimit):
 		httperr.Conflict(w, r, err.Error(), nil)
 
 	// ---- client mistakes -------------------------------------------------
@@ -78,11 +79,21 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrInvalidNoteKind),
 		errors.Is(err, service.ErrPinReorderInvalid),
 		errors.Is(err, service.ErrPinBatchSize),
+		errors.Is(err, service.ErrDeviceNameRequired),
+		errors.Is(err, service.ErrDeviceNameTooLong),
 		errors.Is(err, service.ErrAskQuestionRequired),
 		errors.Is(err, service.ErrAskQuestionTooLong),
 		errors.Is(err, service.ErrAskHistoryTooLong),
 		errors.Is(err, service.ErrAskHistoryTurnBad):
 		httperr.BadRequest(w, r, err.Error())
+
+	// ---- the inbox's two refusals ---------------------------------------
+	// Fixed sentences: a device holding a key learns that it does not work or
+	// that it has worked enough today, and nothing about why.
+	case errors.Is(err, service.ErrDeviceKeyUnknown):
+		httperr.Unauthorized(w, r, err.Error())
+	case errors.Is(err, service.ErrDeviceDailyLimit):
+		httperr.Write(w, r, httperr.New(http.StatusTooManyRequests, err.Error()))
 
 	// ---- limits ----------------------------------------------------------
 	case errors.Is(err, service.ErrCaptureTooLarge):

@@ -523,6 +523,57 @@ type CaptureIndex struct {
 }
 
 // ---------------------------------------------------------------------------
+// Devices (the inbox for external recorders; docs/design/inbox.md)
+// ---------------------------------------------------------------------------
+
+// Device is one key a person issued to a recorder, watch or app so it can
+// drop audio or text into their notes over the inbox routes. The key itself
+// is shown once at creation and never stored: KeyHash is its SHA-256, and the
+// inbox compares hashes in constant time. It is stored under the tenant's
+// partition (sk DEVICE#<id>) with sparse GSI1 keys on the key id, so the
+// inbox can find the tenant from the key alone.
+type Device struct {
+	ID       string `json:"id"`
+	TenantID string `json:"tenant_id"`
+	// Name is what the person called it (≤ MaxDeviceNameRunes runes); it is
+	// what a recording's "From ⟨device⟩" says.
+	Name    string `json:"name"`
+	KeyHash string `json:"key_hash"`
+	// CreatedAt and LastUsedAt are for the device list. LastUsedAt is
+	// written with the request counter and is empty until the first use.
+	CreatedAt  string `json:"created_at"`
+	LastUsedAt string `json:"last_used_at,omitempty"`
+	// RequestsDay counts the key's inbox requests on RequestsDayDate (a UTC
+	// calendar day); the day rolling over resets it. DeviceDailyRequestLimit
+	// bounds it.
+	RequestsDay     int64  `json:"requests_day,omitempty"`
+	RequestsDayDate string `json:"requests_day_date,omitempty"`
+	// RevokedAt is set by DELETE /v1/devices/{id}. A revoked row keeps its
+	// hash but loses its GSI1 keys, so the key is unknown to the inbox from
+	// then on; the row itself expires RevokedDeviceRetention later.
+	RevokedAt string `json:"revoked_at,omitempty"`
+	// Version is the optimistic-concurrency counter, as on a note. The
+	// inbox's counter write is conditional on it, so a revoke that lands
+	// between the inbox's read and its write is not overwritten by the write.
+	Version int64 `json:"version"`
+}
+
+// Revoked reports whether the key has been revoked.
+func (d Device) Revoked() bool { return d.RevokedAt != "" }
+
+// Device bounds. Ten devices is a household of gadgets, not a fleet; two
+// hundred requests a day is one every seven minutes around the clock, which
+// bounds what a leaked key can cost before its owner notices.
+const (
+	MaxDevicesPerTenant     = 10
+	MaxDeviceNameRunes      = 60
+	DeviceDailyRequestLimit = 200
+	// RevokedDeviceRetention is how long a revoked row stays for the record
+	// before DynamoDB TTL drops it.
+	RevokedDeviceRetention = 30 * 24 * time.Hour
+)
+
+// ---------------------------------------------------------------------------
 // Ask (backlog D5)
 // ---------------------------------------------------------------------------
 

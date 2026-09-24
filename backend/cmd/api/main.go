@@ -169,6 +169,7 @@ func init() {
 		Requests:       usageStore,
 		Storage:        service.NewStorageService(store),
 		Ask:            askService,
+		Devices:        service.NewDeviceService(store),
 		Store:          store,
 		Verifier:       verifier,
 		AllowedOrigin:  allowedOrigin,

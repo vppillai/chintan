@@ -91,6 +91,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Requests:      h.usage,
 		Storage:       service.NewStorageService(h.store),
 		Ask:           service.NewAskService(h.store, h.worker),
+		Devices:       service.NewDeviceService(h.store),
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
 	}

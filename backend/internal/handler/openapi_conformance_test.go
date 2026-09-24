@@ -396,6 +396,7 @@ func concretePath(p string) string {
 		"{captureId}", "sample-capture",
 		"{exportId}", "sample-export",
 		"{askId}", "sample-ask",
+		"{deviceId}", "sample-device",
 	)
 	return r.Replace(p)
 }
@@ -697,6 +698,27 @@ func statusScenarios() map[string]scenario {
 		},
 		"GET /v1/ask/{askId} -> 401": get("/v1/ask/ask_1", ""),
 		"GET /v1/ask/{askId} -> 404": get("/v1/ask/ask_never", "user1"),
+
+		// ---- devices
+		"GET /v1/devices -> 200":  get("/v1/devices", "user1"),
+		"GET /v1/devices -> 401":  get("/v1/devices", ""),
+		"POST /v1/devices -> 201": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Watch"}),
+		"POST /v1/devices -> 400": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": " "}),
+		"POST /v1/devices -> 401": send(http.MethodPost, "/v1/devices", "", map[string]any{"name": "Watch"}),
+		"POST /v1/devices -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			for i := 0; i < model.MaxDevicesPerTenant; i++ {
+				h.do(t, http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Watch"})
+			}
+			return h.do(t, http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "One too many"}).Code
+		},
+		"DELETE /v1/devices/{deviceId} -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			created := h.createDevice(t, "user1", "Watch")
+			return h.do(t, http.MethodDelete, "/v1/devices/"+created.ID, "user1", nil).Code
+		},
+		"DELETE /v1/devices/{deviceId} -> 401": send(http.MethodDelete, "/v1/devices/dev_x", "", nil),
+		"DELETE /v1/devices/{deviceId} -> 404": send(http.MethodDelete, "/v1/devices/dev_missing", "user1", nil),
 
 		// ---- captures
 		"GET /v1/captures -> 200":  get("/v1/captures", "user1"),
