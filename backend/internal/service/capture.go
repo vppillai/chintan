@@ -374,6 +374,9 @@ func (s *CaptureService) IngestAudio(ctx context.Context, userID string, req Cap
 		return model.CaptureIndex{}, fmt.Errorf("failed to store capture: %w", err)
 	}
 	if err := s.objects.PutTagged(ctx, stored.AudioKey, body, contentType, upload.CaptureAudioTags(settings.RetentionDays)); err != nil {
+		// Best effort: a row with nothing behind it would otherwise sit at
+		// uploaded until the stuck-capture sweep fails it.
+		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
 		return model.CaptureIndex{}, fmt.Errorf("failed to store audio: %w", err)
 	}
 	logCaptureCreated(ctx, stored, contentType)
@@ -396,15 +399,20 @@ func (s *CaptureService) IngestText(ctx context.Context, userID string, req Capt
 	if err != nil {
 		return model.CaptureIndex{}, fmt.Errorf("failed to generate raw key: %w", err)
 	}
-	if err := s.objects.Put(ctx, rawKey, []byte(text), "text/plain"); err != nil {
-		return model.CaptureIndex{}, fmt.Errorf("failed to store text: %w", err)
-	}
 	capture.RawKey = rawKey
 	capture.Status = model.StatusTranscribed
 	capture.LastProgressAt = model.FormatTime(s.now())
+	// The row first, as IngestAudio orders them: nothing reads it until the
+	// worker is invoked below, whereas an object written first would be an
+	// orphan no lifecycle rule or capture delete ever reaches if the row
+	// write failed.
 	stored, err := s.store.PutCapture(ctx, capture)
 	if err != nil {
 		return model.CaptureIndex{}, fmt.Errorf("failed to store capture: %w", err)
+	}
+	if err := s.objects.Put(ctx, rawKey, []byte(text), "text/plain"); err != nil {
+		_ = s.store.DeleteCapture(ctx, userID, stored.ID)
+		return model.CaptureIndex{}, fmt.Errorf("failed to store text: %w", err)
 	}
 	logCaptureCreated(ctx, stored, "text/plain")
 	if err := s.invokeWorker(ctx, userID, stored.ID, "inbox-text"); err != nil {
