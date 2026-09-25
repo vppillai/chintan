@@ -702,7 +702,7 @@
 
 .device-form__error {
   font-size: var(--font-size-sm);
-  color: var(--color-accent);
+  color: var(--color-destructive);
 }
 
 /*
