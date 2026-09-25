@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { NoteWire } from '@/api/schema.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
@@ -49,6 +49,10 @@ function mount(note: NoteWire, { selectable = false } = {}) {
 }
 
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
+
+afterEach(() => {
+  Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+});
 
 function swipeOpen(): HTMLElement {
   const row = screen.getByRole('button', { name: /roof repair/i }).closest('.swipe') as HTMLElement;
@@ -161,6 +165,19 @@ describe('NoteRow swipe actions', () => {
     expect(box).toHaveClass('checklist__box');
     // Adjacent, as `.checklist__box:checked + .checklist__mark` needs.
     expect(box.nextElementSibling).toHaveClass('checklist__mark');
+  });
+
+  it('leaves Pin out of the tray while offline, where the PATCH would only queue', () => {
+    // The tray has no disabled state; a paused pin would fire later with a
+    // version the cache may no longer hold (review 2026-09-24, R4-11).
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    mount(ACTIVE);
+    const tray = screen.getByRole('group', { hidden: true });
+    expect(
+      within(tray)
+        .getAllByRole('button', { hidden: true })
+        .map((button) => button.textContent),
+    ).toEqual(['Archive', 'Delete']);
   });
 
   it('has no tray while bulk-select is on, nor for a pointer that can hover', () => {

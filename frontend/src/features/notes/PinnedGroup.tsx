@@ -15,6 +15,7 @@ import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
 import { FINE_POINTER_QUERY } from '@/components/SwipeRow.tsx';
 import { LONG_PRESS_MS, LONG_PRESS_TOLERANCE_PX } from '@/hooks/useLongPress.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 
 /**
  * The Pinned group at the top of Home (2026-09-24 contract, B): the notes the
@@ -34,7 +35,17 @@ import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
  * `POST /v1/notes/pins`. The lists are patched optimistically by the
  * mutation, so the rows never spring back while the request is in the air,
  * and put back by it if the server refuses. The grip also takes the arrow
- * keys, one step per press, for a keyboard.
+ * keys, one step per press, for a keyboard; and every pinned row's ⋮ offers
+ * Move up and Move down, the one path that needs no drag at all (WCAG 2.5.7)
+ * and the only visible sign on a phone that the order can change.
+ *
+ * Under a tag or Checklists chip the group is a subset of the pinned notes,
+ * and the server ranks exactly the ids it is sent, from 0: moving one row
+ * inside the filter hoisted the visible rows above every pinned note the
+ * filter hid (review 2026-09-24, R4-2). So the screen says whether the whole
+ * group is here (`reorderable`), and where it is not, nothing lifts and no
+ * grip is drawn. Offline the reorder would pause and fire later against a
+ * cache that has moved on, so it waits for the network too (R4-11).
  *
  * The gesture is delegated to the list rather than owned by each row. One
  * hold timer and one pointer capture for the whole group is less to get wrong
@@ -65,17 +76,21 @@ interface Hold {
 export function PinnedGroup({
   notes,
   selectable = false,
+  reorderable = true,
   selectedIds,
   onToggleSelect,
 }: {
   /** The pinned notes, already in `pin_rank` order (`splitPinned`). */
   notes: readonly NoteWire[];
   selectable?: boolean;
+  /** Whether `notes` is every pinned note, so an order made here is the whole order. */
+  reorderable?: boolean;
   selectedIds: ReadonlySet<string>;
   onToggleSelect: (noteId: string, options: SelectOptions) => void;
 }) {
   const reorder = useReorderPins();
   const finePointer = useMediaQuery(FINE_POINTER_QUERY);
+  const online = useOnline();
   const hintId = useId();
   const listRef = useRef<HTMLUListElement>(null);
   /** The order while a drag is on, or while its request is in the air. */
@@ -93,7 +108,10 @@ export function PinnedGroup({
     const note = byId.get(id);
     return note ? [note] : [];
   });
-  const grips = finePointer && !selectable;
+  const grips = finePointer && !selectable && reorderable;
+  const movable = reorderable && !selectable;
+  /** Whether a pointer can lift a row at all right now. */
+  const lifts = movable && online;
 
   const commit = (next: string[]): void => {
     if (next.join('\n') === ids.join('\n')) {
@@ -152,7 +170,7 @@ export function PinnedGroup({
 
   const onPointerDown = (event: ReactPointerEvent<HTMLUListElement>): void => {
     swallowClick.current = false;
-    if (selectable || event.button !== 0 || drag.current) return;
+    if (!lifts || event.button !== 0 || drag.current) return;
     const target = event.target as HTMLElement;
     const id = target.closest<HTMLElement>('[data-pin-id]')?.dataset['pinId'];
     if (!id) return;
@@ -216,15 +234,20 @@ export function PinnedGroup({
     setDraft(next);
   };
 
-  const onGripKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, id: string): void => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault();
+  /** One step up (-1) or down (+1) for the row, from the grip's arrow keys or the ⋮. */
+  const step = (id: string, by: -1 | 1): void => {
     const from = order.indexOf(id);
-    const to = from + (event.key === 'ArrowUp' ? -1 : 1);
+    const to = from + by;
     if (from === -1 || to < 0 || to >= order.length) return;
     const next = order.filter((other) => other !== id);
     next.splice(to, 0, id);
     commit(next);
+  };
+
+  const onGripKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, id: string): void => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    step(id, event.key === 'ArrowUp' ? -1 : 1);
   };
 
   const onClickCapture = (event: ReactMouseEvent<HTMLUListElement>): void => {
@@ -294,7 +317,7 @@ export function PinnedGroup({
         }}
         onClickCapture={onClickCapture}
       >
-        {rows.map((note) => (
+        {rows.map((note, index) => (
           <li
             key={note.id}
             className="pin-row"
@@ -302,21 +325,19 @@ export function PinnedGroup({
             data-grip={grips || undefined}
             data-dragging={draggingId === note.id || undefined}
           >
-            <NoteRow
-              note={note}
-              selectable={selectable}
-              selected={selectedIds.has(note.id)}
-              onToggleSelect={onToggleSelect}
-              // Under a finger the hold lifts the row; with a mouse it selects,
-              // and the grip is the handle.
-              holdToSelect={finePointer}
-            />
+            {/*
+              Before the row in the DOM, as it is on the screen: Tab then runs
+              grip → row → ⋮ instead of row → ⋮ at the right edge → back to the
+              grip at the left (WCAG 2.4.3; review 2026-09-24, R4-13). The grip
+              is absolutely positioned, so nothing moves.
+            */}
             {grips && (
               <button
                 type="button"
                 className="pin-grip"
                 aria-label={`Move ${note.title}`}
                 aria-describedby={hintId}
+                disabled={!online}
                 onKeyDown={(event) => {
                   onGripKeyDown(event, note.id);
                 }}
@@ -324,6 +345,20 @@ export function PinnedGroup({
                 <Icon name="grip" size={18} />
               </button>
             )}
+            <NoteRow
+              note={note}
+              selectable={selectable}
+              selected={selectedIds.has(note.id)}
+              onToggleSelect={onToggleSelect}
+              // Under a finger the hold lifts the row; with a mouse it selects,
+              // and the grip is the handle. Where nothing lifts — a filter is
+              // on, or the device is offline — the hold selects, as everywhere.
+              holdToSelect={finePointer || !lifts}
+              {...(movable && index > 0 ? { onMoveUp: () => step(note.id, -1) } : {})}
+              {...(movable && index < rows.length - 1
+                ? { onMoveDown: () => step(note.id, 1) }
+                : {})}
+            />
           </li>
         ))}
       </ul>
