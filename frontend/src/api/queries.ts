@@ -281,11 +281,12 @@ function restoreNoteLists(queryClient: QueryClient, lists: NoteLists | undefined
 export function usePinNote() {
   const api = useApi();
   const queryClient = useQueryClient();
-  const fromServer = (
-    saved: NoteWire,
-  ): Pick<NoteWire, 'pinned' | 'pin_rank' | 'version' | 'updated_at'> => ({
-    pinned: saved.pinned,
-    pin_rank: saved.pin_rank,
+  // Both pin fields are optional on the row type (rows cached before pins
+  // existed carry neither), so an absent `pinned` reads as not pinned and an
+  // absent rank as none; the server always sends both.
+  const fromServer = (saved: NoteWire) => ({
+    pinned: saved.pinned ?? false,
+    pin_rank: saved.pin_rank ?? null,
     version: saved.version,
     updated_at: saved.updated_at,
   });
