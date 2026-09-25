@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/middleware"
@@ -34,6 +35,13 @@ type harness struct {
 }
 
 type harnessOption func(*handler.Deps, *harness)
+
+// harnessNow is the device service's clock: one fixed instant, so a test that
+// drives a key's daily counter to its limit cannot have a UTC midnight pass
+// between two requests and reset it (the flake #89 took out of the service
+// tests, review 2026-09-24 R4-10). The router counts requests on its own
+// clock; handler.Deps carries none to pin.
+var harnessNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 // withBrokenStore makes every settings read fail, so readiness reports degraded.
 func withBrokenStore() harnessOption {
@@ -101,7 +109,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Requests:      h.usage,
 		Storage:       service.NewStorageService(h.store),
 		Ask:           service.NewAskService(h.store, h.worker),
-		Devices:       service.NewDeviceService(h.store),
+		Devices:       service.NewDeviceService(h.store).WithClock(func() time.Time { return harnessNow }),
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
 	}

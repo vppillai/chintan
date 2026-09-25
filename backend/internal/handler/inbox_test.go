@@ -27,13 +27,24 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	key := [2]string{"Authorization", "Bearer " + created.Key}
 	text := map[string]any{"text": "buy milk"}
 
+	// The day the router will count the request under. It reads its own clock
+	// (handler.Deps carries none to pin), so the day is taken before the
+	// request rather than after the whole test has run.
+	day := time.Now().UTC().Format("2006-01-02")
 	if w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, key); w.Code != http.StatusAccepted {
 		t.Fatalf("a live key: status = %d body = %s", w.Code, w.Body.String())
+	}
+	// The last character is flipped, as #89 does in the service test, so the
+	// wrong secret can never be the key; overwriting the last four with 0000
+	// made a key that ends in 0000 its own wrong secret.
+	wrongSecret := created.Key[:len(created.Key)-1] + "0"
+	if strings.HasSuffix(created.Key, "0") {
+		wrongSecret = created.Key[:len(created.Key)-1] + "1"
 	}
 	for name, header := range map[string][2]string{
 		"no key":        {"Authorization", ""},
 		"not a key":     {"Authorization", "Bearer hello"},
-		"wrong secret":  {"Authorization", "Bearer " + created.Key[:len(created.Key)-4] + "0000"},
+		"wrong secret":  {"Authorization", "Bearer " + wrongSecret},
 		"a session jwt": {"Authorization", "Bearer eyJhbGciOiJSUzI1NiJ9.e30.sig"},
 	} {
 		w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, header)
@@ -77,7 +88,7 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	}
 	// The one request that got through is counted against the tenant, like
 	// the app's own.
-	if n := h.usage.Requests("user1", time.Now().UTC().Format("2006-01-02")); n < 1 {
+	if n := h.usage.Requests("user1", day); n < 1 {
 		t.Fatalf("api_requests for the tenant = %d, want the device's request counted", n)
 	}
 }
