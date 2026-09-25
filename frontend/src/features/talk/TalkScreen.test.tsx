@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
-import { MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
+import { HOLD_NOTICE_MS, MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
 import { onAFakeClock } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
@@ -66,6 +66,8 @@ const fakeDeps: RecorderDeps = {
 };
 
 const creates: { note_id: string | null }[] = [];
+/** A test's hold on the answer to POST /v1/captures: the upload lands when it resolves. */
+let postGate: Promise<void> | null = null;
 const acceptingFetch: typeof fetch = async (input, init) => {
   const body = (payload: unknown, status = 200) =>
     new Response(JSON.stringify(payload), {
@@ -74,6 +76,7 @@ const acceptingFetch: typeof fetch = async (input, init) => {
     });
   if (String(input).includes('/v1/captures') && init?.method === 'POST') {
     creates.push(JSON.parse(String(init.body)) as { note_id: string | null });
+    await postGate;
     return body(
       {
         capture: { id: `srv-${String(creates.length)}`, status: 'uploaded', created_at: '', version: 1 },
@@ -106,6 +109,7 @@ const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 
 beforeEach(() => {
   creates.length = 0;
+  postGate = null;
   useCaptureStore.setState({ model: INITIAL_CAPTURE });
   useCaptureStore.getState().__configure({
     recorder: fakeDeps,
@@ -154,6 +158,45 @@ describe('the talk screen', () => {
     expect(creates).toEqual([{ note_id: 'roof-repair' }].map((c) => expect.objectContaining(c)));
     // Ready for the next one, into the same note.
     expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();
+  });
+
+  it('still says Sending when the upload outlives the hold notice, and Sent once it lands', async () => {
+    // A real clip on a phone link uploads for longer than HOLD_NOTICE_MS. Read
+    // from the hold's phase the status went blank at 1.5 s over a row still
+    // saying "Uploading… N%" and never said Sent; it is the store's.
+    let land: () => void = () => {};
+    postGate = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    mount();
+    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    await onAFakeClock(async () => {
+      fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
+      await wait(50);
+      expect(state()).toBe('recording');
+      act(() => {
+        vi.advanceTimersByTime(MIN_TALK_MS + 100);
+      });
+      act(() => {
+        recorder.emitChunk(10);
+      });
+      fireEvent.pointerUp(button, touch);
+      fireEvent.click(button);
+      await waitFor(() => {
+        expect(state()).toBe('uploading');
+      });
+      act(() => {
+        vi.advanceTimersByTime(HOLD_NOTICE_MS + 100);
+      });
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sending…');
+
+      land();
+      await waitFor(() => {
+        expect(state()).toBe('uploaded');
+      });
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sent · filing');
+    });
+    expect(creates).toHaveLength(1);
   });
 
   it('is the Space bar on a keyboard, and hints at a press too short to keep', async () => {
