@@ -1027,6 +1027,8 @@ describe('a capture that a device sent', () => {
     expect(within(row).queryByRole('region', { name: 'Recording' })).toBeNull();
     expect(within(row).queryByRole('button', { name: /play recording/i })).toBeNull();
     expect(row).not.toHaveTextContent(/no longer stored/i);
+    // Words never had timestamps for cleanup to lose, so the panel does not say so.
+    expect(row).not.toHaveTextContent(/no reliable timestamps/i);
     expect(row).toHaveTextContent('From Watch');
 
     // Nothing to download or transcribe again; the words themselves copy.

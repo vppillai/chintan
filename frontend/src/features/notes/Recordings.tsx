@@ -1032,6 +1032,8 @@ function RecordingRow({
              * above it. Timestamps exist only when the pipeline wrote them,
              * and without them the cleaned text is the view — the raw view
              * would say "nothing to jump to" about a recording that never was.
+             * Told the words were sent as words, the panel does not explain
+             * cleanup losing timestamps the text never had either.
              */
             <TranscriptPanel
               segments={segments}
@@ -1042,6 +1044,7 @@ function RecordingRow({
               onSeek={() => undefined}
               hasSegments={hasSegments}
               lang={lang}
+              textOnly
             />
           ) : noAudio ? (
             <p className="screen__count">

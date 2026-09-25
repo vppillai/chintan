@@ -58,6 +58,12 @@ export interface TranscriptPanelProps {
   hasSegments: boolean;
   /** The note text's language tag, for the lines (T60). */
   lang?: string | undefined;
+  /**
+   * True for words that arrived as words (`has_audio: false`): nothing was
+   * recorded, so no sentence about timestamps — lost to cleanup, or there to
+   * tap — is true of them.
+   */
+  textOnly?: boolean;
 }
 
 export function TranscriptPanel({
@@ -69,6 +75,7 @@ export function TranscriptPanel({
   onSeek,
   hasSegments,
   lang,
+  textOnly = false,
 }: TranscriptPanelProps) {
   const headingId = useId();
   /*
@@ -135,9 +142,12 @@ export function TranscriptPanel({
         the reader to do the one thing the same screen said was impossible.
         That empty state already explains itself; nothing to add here. And
         skipped once a line has been tapped: a tutorial sentence is for the
-        first time.
+        first time. And skipped altogether for words sent as words: they
+        never had timestamps for cleanup to lose, and a text row explaining
+        audio timestamps read as a fault (review 2026-09-24, R4-24).
       */}
-      {(effectiveView === 'cleaned' || (showHint && hasSegments && segments.length > 0)) && (
+      {!textOnly &&
+        (effectiveView === 'cleaned' || (showHint && hasSegments && segments.length > 0)) && (
         <p className="transcript__note">
           {effectiveView === 'raw'
             ? 'What was said, as recorded. Tap any line to jump there.'
