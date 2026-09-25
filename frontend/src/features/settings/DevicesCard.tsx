@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { ApiError } from '@/api/problem.ts';
 import { useCreateDevice, useDeleteDevice, useDevices } from '@/api/queries.ts';
@@ -84,6 +84,14 @@ export function DevicesCard() {
   const [minted, setMinted] = useState<DeviceWire | null>(null);
   /** The device Remove was tapped on, awaiting the confirmation. */
   const [removing, setRemoving] = useState<DeviceWire | null>(null);
+  const keyRef = useRef<HTMLDivElement>(null);
+
+  // The key box mounts already filled, which a live region often does not
+  // announce; focusing it reads the sentence and the key, and puts the next
+  // Tab on Copy key.
+  useEffect(() => {
+    if (minted) keyRef.current?.focus();
+  }, [minted]);
 
   const items = devices.data?.items ?? [];
   const full = items.length >= MAX_DEVICES;
@@ -179,7 +187,7 @@ export function DevicesCard() {
       )}
 
       {minted && (
-        <div className="device-key" role="status">
+        <div className="device-key" role="status" tabIndex={-1} ref={keyRef}>
           <p>
             The key for <strong>{minted.name}</strong>. Copy it now — it will not be shown again.
           </p>

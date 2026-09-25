@@ -121,6 +121,11 @@ describe('the devices card on You', () => {
     expect(shown).toHaveTextContent(deviceCreated.key ?? '');
     expect(shown).toHaveTextContent(/will not be shown again/i);
     expect(within(shown).getByRole('button', { name: 'Copy key' })).toBeInTheDocument();
+    // Focus lands on the box so the key is read out and the next Tab is Copy
+    // key (R4-25); the effect that moves it runs a tick after the box appears.
+    await waitFor(() => {
+      expect(shown).toHaveFocus();
+    });
     // Trimmed, and posted exactly once: the server does not replay this route,
     // so the client must not retry it (R4-5).
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
