@@ -15,7 +15,11 @@
   max-inline-size: var(--layout-content-max);
   min-block-size: 100%;
   margin-inline: auto;
-  padding: var(--space-6) var(--layout-gutter);
+  /* Less above and below than a card page: the hint under the disc is the
+     only mention of the Space bar, and on a 1280×800 laptop the column ran
+     under the tab bar with it — a smaller disc alone bought back one pixel
+     more than the overrun, which is no margin at all. */
+  padding: var(--space-3) var(--layout-gutter);
   text-align: center;
 }
 
@@ -42,8 +46,9 @@
 
 /*
  * A disc wide as the column on a phone and never more than 26rem, capped by
- * the height so it clears the pill and the hint on a landscape car mount:
- * at least two fifths of a phone's height, half a laptop's. Ink on the raised
+ * the height so it clears the pill above and the hint below on a landscape
+ * car mount and on a 1280×800 laptop, where 55svh pushed the hint under the
+ * tab bar: still at least two fifths of a phone's height. Ink on the raised
  * ground until held, as the capture screen's discs are; held, it is the one
  * accent on the page.
  */
@@ -52,7 +57,7 @@
   place-items: center;
   align-content: center;
   gap: var(--space-3);
-  inline-size: min(100%, 26rem, 55svh);
+  inline-size: min(100%, 26rem, 45svh);
   aspect-ratio: 1;
   padding: var(--space-4);
   border: 1px solid var(--color-line-strong);
