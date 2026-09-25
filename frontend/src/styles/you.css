@@ -315,6 +315,12 @@
   text-align: end;
 }
 
+/* The browser's default placeholder grey misses AA on the paper ground. */
+.you-input::placeholder {
+  color: var(--color-faint);
+  opacity: 1;
+}
+
 .you-field__suffix {
   font-size: var(--font-size-sm);
   color: var(--color-muted);
