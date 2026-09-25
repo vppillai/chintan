@@ -16,7 +16,9 @@ info:
        `deviceKey` scheme — a key issued by `POST /v1/devices`, presented
        as `Authorization: Bearer ck_…` and checked by the service itself.
        Those five, and only those five, are what the API Gateway route
-       table admits without its JWT authorizer. Sign-in happens against
+       table admits without its JWT authorizer (plus the CORS preflight
+       route, `OPTIONS /{proxy+}`, which the Lambda answers 204). Sign-in
+       happens against
        Cognito's managed login, never against this API. The service
        verifies signature, issuer, audience, expiry, and `token_use`
        itself; it does not rely on the API Gateway authorizer alone. There
@@ -666,7 +668,9 @@ paths:
         inbox routes as `Authorization: Bearer ck_…`. The key is in this
         response and nowhere else: only its SHA-256 is stored, and this
         operation takes no `Idempotency-Key`, so no replay record holds it.
-        At most ten live devices (409 `you already have ten devices; remove
+        Clients must not retry this request: an attempt whose 201 was lost
+        has still issued a key, and a retry issues a second one nobody
+        will see. At most ten live devices (409 `you already have ten devices; remove
         one first`). See `docs/design/inbox.md` and the README's "Connect a
         device".
       requestBody:
@@ -687,6 +691,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /v1/devices/{deviceId}:
     parameters:
@@ -1113,6 +1118,8 @@ paths:
               schema: { $ref: '#/components/schemas/InboxAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 

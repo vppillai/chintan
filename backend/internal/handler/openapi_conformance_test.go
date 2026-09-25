@@ -723,6 +723,8 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/devices -> 201": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Watch"}),
 		"POST /v1/devices -> 400": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": " "}),
 		"POST /v1/devices -> 401": send(http.MethodPost, "/v1/devices", "", map[string]any{"name": "Watch"}),
+		"POST /v1/devices -> 413": send(http.MethodPost, "/v1/devices", "user1",
+			[]byte(`{"name":"`+strings.Repeat("x", handler.MaxSmallRequestBytes)+`"}`)),
 		"POST /v1/devices -> 409": func(t *testing.T) int {
 			h := newHarness(t)
 			for i := 0; i < model.MaxDevicesPerTenant; i++ {
@@ -803,6 +805,16 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "  "}, h.deviceKey(t)).Code
 		},
 		"POST /v1/inbox/text -> 401": send(http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk"}),
+		"POST /v1/inbox/text -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk", "note_id": "note_missing"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/text -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			archived := h.createNote(t, "user1", "Archived", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+archived.ID, "user1", nil)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk", "note_id": archived.ID}, h.deviceKey(t)).Code
+		},
 		"POST /v1/inbox/text -> 413": func(t *testing.T) int {
 			h := newHarness(t)
 			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": strings.Repeat("x", handler.MaxInboxTextRequestBytes)}, h.deviceKey(t)).Code
