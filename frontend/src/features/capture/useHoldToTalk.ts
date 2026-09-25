@@ -287,21 +287,28 @@ export function useHoldToTalk({
 
   /*
    * The OS taking the page mid-hold — a call, the lock screen, an app switch —
-   * is the same cancel, and not every browser sends `pointercancel` for it.
-   * Left alone the microphone stayed open until the next press, whose release
-   * sent everything recorded meanwhile. `visibilitychange`, not `blur`: the
-   * permission prompt takes focus without hiding the page, and a hold must
-   * survive the prompt it raised.
+   * ends the hold, and not every browser sends `pointercancel` for it. Left
+   * alone the microphone stayed open until the next press, whose release sent
+   * everything recorded meanwhile. It ends as a release, not a cancel: what
+   * was said before the call is the message, and the rule above is that an
+   * interruption yields a partial recording, never a discard — a slip under
+   * `MIN_TALK_MS` still gets the hint, and the finger lifting on return is
+   * not a tap. An armed press has recorded nothing and stands down as
+   * `pointercancel` would. `visibilitychange`, not `blur`: the permission
+   * prompt takes focus without hiding the page, and a hold must survive the
+   * prompt it raised.
    */
   useEffect(() => {
     const onHidden = (): void => {
-      if (document.visibilityState === 'hidden') onPointerCancel();
+      if (document.visibilityState !== 'hidden') return;
+      if (phaseRef.current === 'holding') release();
+      else onPointerCancel();
     };
     document.addEventListener('visibilitychange', onHidden);
     return () => {
       document.removeEventListener('visibilitychange', onHidden);
     };
-  }, [onPointerCancel]);
+  }, [onPointerCancel, release]);
 
   const onContextMenu = useCallback((event: { preventDefault: () => void }) => {
     // Android raises the context menu for the same hold; iOS starts text

@@ -127,6 +127,16 @@ const where = () => document.querySelector('output')?.textContent;
 const overlay = () => document.querySelector('.hold-overlay');
 /** The one live region the overlay speaks from; the probe's `<output>` is a status too. */
 const status = () => document.querySelector('p[role="status"]');
+/** The OS covering the page — a call, the lock screen — which jsdom cannot do on its own. */
+const pageHidden = (hidden: boolean) => {
+  act(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      value: hidden ? 'hidden' : 'visible',
+      configurable: true,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+};
 
 beforeEach(() => {
   micRequests = 0;
@@ -283,30 +293,68 @@ describe('the record button, held', () => {
     expect(where()).toBe('/');
   });
 
-  it('lets the microphone go when the page is hidden mid-hold, so nothing recorded meanwhile is sent', async () => {
+  it('ends a hold as a release when the page is hidden, so a slip gets the hint rather than the mic', async () => {
     // A call, the lock screen, an app switch: not every browser sends
     // `pointercancel` for it, and the microphone stayed open until the next
-    // press, whose release sent everything recorded meanwhile.
+    // press, whose release sent everything recorded meanwhile. The hold ends
+    // as a release — the rule is a partial recording, never a discard — and
+    // one hidden inside MIN_TALK_MS is a slip.
     mount();
     const mic = screen.getByRole('button', { name: 'Record' });
-    fireEvent.pointerDown(mic, down);
-    await wait(HOLD_DELAY_MS + 50);
-    expect(state()).toBe('recording');
+    await onAFakeClock(async () => {
+      fireEvent.pointerDown(mic, down);
+      act(() => {
+        vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
+      });
+      await waitFor(() => {
+        expect(state()).toBe('recording');
+      });
 
-    act(() => {
-      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
-      document.dispatchEvent(new Event('visibilitychange'));
-    });
-    await waitFor(() => {
-      expect(state()).toBe('idle');
-    });
-    expect(overlay()).toBeNull();
-    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      pageHidden(true);
+      expect(overlay()).toHaveTextContent('Too short — hold to talk');
+      await waitFor(() => {
+        expect(state()).toBe('idle');
+      });
+      pageHidden(false);
 
-    // Back on the page, the finger lifts: not a send, and not a tap either.
-    fireEvent.pointerUp(mic, down);
-    fireEvent.click(mic);
+      // Back on the page, the finger lifts: not a send, and not a tap either.
+      fireEvent.pointerUp(mic, down);
+      fireEvent.click(mic);
+    });
     expect(creates).toBe(0);
+    expect(where()).toBe('/');
+  });
+
+  it('sends what was said before the page was hidden, rather than discarding it', async () => {
+    // An incoming call on Android both ends the track and covers Chrome; the
+    // words before it are the message, as when only the track ends.
+    mount('roof-repair');
+    const mic = screen.getByRole('button', { name: 'Record into this note' });
+    await onAFakeClock(async () => {
+      fireEvent.pointerDown(mic, down);
+      act(() => {
+        vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
+      });
+      await waitFor(() => {
+        expect(state()).toBe('recording');
+      });
+      act(() => {
+        vi.advanceTimersByTime(MIN_TALK_MS + 100);
+      });
+      act(() => {
+        recorder.emitChunk(10);
+      });
+
+      pageHidden(true);
+      await waitFor(() => {
+        expect(state()).toBe('uploaded');
+      });
+      pageHidden(false);
+      fireEvent.pointerUp(mic, down);
+      fireEvent.click(mic);
+    });
+    expect(recorder.state).toBe('inactive');
+    expect(creates).toBe(1);
     expect(where()).toBe('/');
   });
 
