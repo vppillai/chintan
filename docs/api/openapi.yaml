@@ -435,7 +435,10 @@ paths:
         back in that order. Every id must be one of the caller's pinned,
         active notes, named once; anything else refuses the whole request
         (400 `every id must be one of your pinned notes`). One request per
-        drag. Pinning and unpinning is `NoteUpdate.pinned`.
+        drag. Pinning and unpinning is `NoteUpdate.pinned`. A note whose
+        version moves while its rank is being written is re-read and
+        written once more, a few times; a note that keeps moving is 409
+        with nothing else of the order changed after it.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -451,6 +454,8 @@ paths:
               schema: { $ref: '#/components/schemas/NotePage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /v1/notes/match:
     post:

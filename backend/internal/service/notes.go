@@ -639,19 +639,47 @@ func (s *NotesService) ReorderPins(ctx context.Context, userID string, ids []str
 	}
 	out := make([]model.NoteIndex, 0, len(notes))
 	for i, note := range notes {
-		rank := int64(i) * model.PinRankStep
-		if note.PinRank == rank {
-			out = append(out, note)
-			continue
-		}
-		note.PinRank = rank
-		stored, err := s.putCarryingStamp(ctx, userID, note)
+		stored, err := s.putPinRank(ctx, userID, note, int64(i)*model.PinRankStep)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, stored)
 	}
 	return out, nil
+}
+
+// putPinRank writes rank onto note, re-reading it and writing again when its
+// version moved underneath. A body save or the worker's append stamp landing
+// on a pinned note mid-drag is not a reason to stop part-way through the
+// order — the rank is independent of whatever else changed — and stopping
+// left the earlier notes moved and the later ones not, behind a 409 the
+// client's rollback did not match (review 2026-09-24 R4-9). A note that keeps
+// moving is still that conflict; one unpinned or archived meanwhile is refused
+// as the validation before the loop would have refused it. A note already at
+// its rank is not rewritten, so a drag that moves one note writes one row.
+func (s *NotesService) putPinRank(ctx context.Context, userID string, note model.NoteIndex, rank int64) (model.NoteIndex, error) {
+	var err error
+	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
+		if attempt > 0 {
+			note, err = s.store.GetNote(ctx, userID, note.ID)
+			if err != nil {
+				return model.NoteIndex{}, fmt.Errorf("failed to get note: %w", err)
+			}
+			if !note.Pinned() || !NoteIsActive(note) {
+				return model.NoteIndex{}, ErrPinReorderInvalid
+			}
+		}
+		if note.PinRank == rank {
+			return note, nil
+		}
+		note.PinRank = rank
+		var stored model.NoteIndex
+		stored, err = s.putCarryingStamp(ctx, userID, note)
+		if !errors.Is(err, repository.ErrVersionConflict) {
+			return stored, err
+		}
+	}
+	return model.NoteIndex{}, err
 }
 
 // putCarryingStamp is PutNote for a write that did not touch the clean stamp.

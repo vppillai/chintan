@@ -609,6 +609,21 @@ func statusScenarios() map[string]scenario {
 		},
 		"POST /v1/notes/pins -> 400": send(http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{"not-pinned"}}),
 		"POST /v1/notes/pins -> 401": send(http.MethodPost, "/v1/notes/pins", "", map[string]any{"ids": []string{"x"}}),
+		// A note whose version keeps moving while its rank is written: the
+		// re-read and rewrite give up after a few rounds.
+		"POST /v1/notes/pins -> 409": func(t *testing.T) int {
+			conflict := false
+			h := newHarness(t, withConflictingNotePuts(&conflict))
+			a := h.createNote(t, "user1", "A", nil)
+			b := h.createNote(t, "user1", "B", nil)
+			for _, n := range []handler.Note{a, b} {
+				pin(t, h, "user1", n, true)
+			}
+			conflict = true
+			return h.do(t, http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{b.ID, a.ID}}).Code
+		},
+		"POST /v1/notes/pins -> 413": send(http.MethodPost, "/v1/notes/pins", "user1",
+			[]byte(`{"ids":["`+strings.Repeat("x", handler.MaxSmallRequestBytes)+`"]}`)),
 
 		"POST /v1/notes/match -> 200": func(t *testing.T) int {
 			h := newHarness(t)
