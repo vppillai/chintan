@@ -26,10 +26,13 @@
 # Usage:
 #   scripts/check-log-hygiene.sh [--json] [--self-test] [PATH ...]
 #
-# PATH defaults to backend/internal/provider, backend/internal/pipeline and
-# backend/internal/service — the adapters, and the two packages whose slog
-# lines carry the most context about a capture and so are the likeliest
-# places for a transcript to be added to a message (review 2026-09-05, S18).
+# PATH defaults to backend/internal/provider, backend/internal/pipeline,
+# backend/internal/service and backend/internal/handler — the adapters, the
+# two packages whose slog lines carry the most context about a capture and so
+# are the likeliest places for a transcript to be added to a message (review
+# 2026-09-05, S18), and the handler, which holds a device key exactly as the
+# caller presented it (`raw` in inbox.go) between the header and Authenticate
+# — the one place a key could be logged whole (review 2026-09-24, R4-37).
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
@@ -52,14 +55,17 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-[ "${#PATHS[@]}" -gt 0 ] || PATHS=("backend/internal/provider" "backend/internal/pipeline" "backend/internal/service")
+[ "${#PATHS[@]}" -gt 0 ] || PATHS=("backend/internal/provider" "backend/internal/pipeline" "backend/internal/service" "backend/internal/handler")
 
 # Calls whose argument list can end up in CloudWatch or in an HTTP response.
 EMITTERS='(log\.(Printf|Println|Print|Fatalf|Fatal|Panicf|Panic)|slog\.[A-Za-z]+|fmt\.(Errorf|Sprintf|Printf|Println|Print)|panic\()'
 
-# Identifiers that hold user speech, the audio itself, or the raw provider
-# response. `.Text` and `.Content` are the decoded fields of exactly those bodies.
-FORBIDDEN='(respBody|rawBody|bodyBytes|resp\.Body|\btranscript\b|\bTranscript\b|\baudio\b|\bAudio\b|\.Content\b|\.Text\b|cleanText|CleanText|\bprompt\b|\bPrompt\b|apiKey|APIKey)'
+# Identifiers that hold user speech, the audio itself, the raw provider
+# response, or a device key. `.Text` and `.Content` are the decoded fields of
+# exactly those bodies; `raw`, `rawKey`, `KeyHash` and `presented` are the
+# names the handler and the device service give a key on its way to being
+# hashed, and a request body before it is decoded.
+FORBIDDEN='(respBody|rawBody|bodyBytes|resp\.Body|\btranscript\b|\bTranscript\b|\baudio\b|\bAudio\b|\.Content\b|\.Text\b|cleanText|CleanText|\bprompt\b|\bPrompt\b|apiKey|APIKey|\brawKey\b|\braw\b|KeyHash|presented)'
 
 scan() {
     local root="$1"
@@ -126,6 +132,24 @@ GO
         die "self-test FAILED: the check passed on a file that logs a response body"
     fi
     ok "self-test: the check fails when a response body is logged"
+
+    # The handler case: a device key logged under the name the handler gives
+    # it. The dirty provider file is deleted first so this fails on its own.
+    rm -f "$tmp/provider/dirty.go"
+    mkdir -p "$tmp/handler"
+    cat >"$tmp/handler/inbox.go" <<'GO'
+package handler
+
+import "log/slog"
+
+func authenticate(raw string) {
+    slog.Info("inbox: refused key", "key", raw)
+}
+GO
+    if CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" handler >/dev/null 2>&1; then
+        die "self-test FAILED: the check passed on a file that logs a presented device key"
+    fi
+    ok "self-test: the check fails when a device key is logged"
     exit 0
 fi
 
