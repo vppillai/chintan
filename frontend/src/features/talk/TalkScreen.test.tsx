@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
@@ -99,6 +99,25 @@ function mount(path = '/talk') {
 }
 
 const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
+/**
+ * Runs a gesture on a fake clock that still moves with real time, as
+ * `NotesScreen.pins.test` holds a row: the recorder's promises and `waitFor`
+ * run as before, but a stall on a shared runner moves the clock one tick,
+ * not the length of the stall. Whether a press was a tap or a hold, and a
+ * hold a slip or a message, is read from `Date.now()` against `HOLD_DELAY_MS`
+ * and `MIN_TALK_MS`; on the real clock a long enough pause between two lines
+ * of a test flipped the answer.
+ */
+async function onAFakeClock(gesture: () => void | Promise<void>): Promise<void> {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    await gesture();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 const state = () => useCaptureStore.getState().model.state;
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 
@@ -127,24 +146,28 @@ describe('the talk screen', () => {
     // The target pill, seeded from the URL as on the capture screen.
     expect(await screen.findByRole('button', { name: /into roof repair/i })).toBeInTheDocument();
 
-    fireEvent.pointerDown(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 });
-    await wait(50);
-    expect(state()).toBe('recording');
-    expect(screen.getByRole('button', { name: 'Release to send' })).toHaveAttribute('data-holding');
-    await wait(MIN_TALK_MS + 100);
-    act(() => {
-      recorder.emitChunk(10);
-    });
-    fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch' });
-    fireEvent.click(button);
+    await onAFakeClock(async () => {
+      fireEvent.pointerDown(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 });
+      await wait(50);
+      expect(state()).toBe('recording');
+      expect(screen.getByRole('button', { name: 'Release to send' })).toHaveAttribute('data-holding');
+      act(() => {
+        vi.advanceTimersByTime(MIN_TALK_MS + 100);
+      });
+      act(() => {
+        recorder.emitChunk(10);
+      });
+      fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch' });
+      fireEvent.click(button);
 
-    // The upload's row under the button reads "Uploading… N%" until the PUT
-    // lands; a status above it already saying "Sent" contradicted it.
-    expect(document.querySelector('.talk__status')).toHaveTextContent('Sending…');
-    await waitFor(() => {
-      expect(state()).toBe('uploaded');
+      // The upload's row under the button reads "Uploading… N%" until the PUT
+      // lands; a status above it already saying "Sent" contradicted it.
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sending…');
+      await waitFor(() => {
+        expect(state()).toBe('uploaded');
+      });
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sent · filing');
     });
-    expect(document.querySelector('.talk__status')).toHaveTextContent('Sent · filing');
     expect(creates).toEqual([{ note_id: 'roof-repair' }].map((c) => expect.objectContaining(c)));
     // Ready for the next one, into the same note.
     expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();
@@ -152,14 +175,20 @@ describe('the talk screen', () => {
 
   it('is the Space bar on a keyboard, and hints at a press too short to keep', async () => {
     mount();
-    // From the page, with nothing focused, as a fresh screen is.
-    fireEvent.keyDown(document.body, { key: ' ' });
-    await wait(50);
-    expect(state()).toBe('recording');
-    // A held key repeats; the repeats are not new presses.
-    fireEvent.keyDown(document.body, { key: ' ', repeat: true });
-    fireEvent.keyUp(document.body, { key: ' ' });
-    expect(screen.getByRole('status')).toHaveTextContent('Too short — hold to talk');
+    await onAFakeClock(async () => {
+      // From the page, with nothing focused, as a fresh screen is.
+      fireEvent.keyDown(document.body, { key: ' ' });
+      await wait(50);
+      expect(state()).toBe('recording');
+      // A held key repeats; the repeats are not new presses.
+      fireEvent.keyDown(document.body, { key: ' ', repeat: true });
+      // Lifted 100 ms in: fewer than MIN_TALK_MS, however long the runner paused.
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      fireEvent.keyUp(document.body, { key: ' ' });
+      expect(screen.getByRole('status')).toHaveTextContent('Too short — hold to talk');
+    });
     await waitFor(() => {
       expect(state()).toBe('idle');
     });
