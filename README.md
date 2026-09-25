@@ -241,4 +241,4 @@ For a local backend, put the keys in the environment instead of SSM (`GROQ_API_K
 
 The frontend reads its per-instance configuration from build-time `VITE_*` variables that CI derives from the stack outputs (`frontend/src/config/env.ts` is the list). Nothing is written into the bundle at deploy time, so a service worker cannot pin an installed client to a stale endpoint.
 
-More: [`docs/backlog.md`](docs/backlog.md) · [`docs/api/openapi.yaml`](docs/api/openapi.yaml) · [`docs/design/`](docs/design/) · [`docs/ops/`](docs/ops/) · [`docs/qa/`](docs/qa/) · [`docs/history/`](docs/history/) (dated reports, not current).
+More: [`docs/backlog.md`](docs/backlog.md) · [`docs/api/openapi.yaml`](docs/api/openapi.yaml) · [`docs/design/`](docs/design/) · [`docs/ops/`](docs/ops/) · [`docs/qa/`](docs/qa/) · [`docs/reviews/`](docs/reviews/) (the review reports and the owner's queue) · [`docs/history/`](docs/history/) (dated reports, not current).
