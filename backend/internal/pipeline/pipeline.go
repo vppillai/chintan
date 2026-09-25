@@ -248,7 +248,7 @@ var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinishe
 // invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
-	return p.runCapture(ctx, tenantID, captureID, 0, "")
+	return p.runCapture(ctx, CaptureRef{TenantID: tenantID, CaptureID: captureID})
 }
 
 // RunUpload is Run for the S3 notification that starts a capture: the same
@@ -257,25 +257,39 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 // tenant's recordings occupy. The request-time size_bytes is the client's
 // claim; this is the measurement.
 func (p *Pipeline) RunUpload(ctx context.Context, ref CaptureRef) (model.CaptureIndex, error) {
-	return p.runCapture(ctx, ref.TenantID, ref.CaptureID, ref.SizeBytes, ref.ObjectKey)
+	return p.runCapture(ctx, ref)
 }
 
-// objectKey is set only for an S3 notification: the object it names is what
-// an upload with no row left behind.
-func (p *Pipeline) runCapture(ctx context.Context, tenantID, captureID string, audioBytes int64, objectKey string) (model.CaptureIndex, error) {
+// orphanObjectAfter is how old an S3 notification must be before a missing
+// capture row is read as "deleted" rather than "not visible yet". GetCapture
+// is an eventually consistent read and the inbox writes the row and then the
+// object back to back, so the first delivery can miss a row that exists;
+// replication lag is well under a second, and Lambda's first retry of a
+// failed invocation comes about a minute later, so thirty seconds cannot be
+// lag and is always met by the retry.
+const orphanObjectAfter = 30 * time.Second
+
+// ref.ObjectKey and ref.EventTime are set only for an S3 notification: the
+// object it names is what an upload with no row left behind.
+func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.CaptureIndex, error) {
+	tenantID, captureID, audioBytes := ref.TenantID, ref.CaptureID, ref.SizeBytes
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("capture_id", captureID))
 
 	capture, err := p.cfg.Store.GetCapture(ctx, tenantID, captureID)
-	if errors.Is(err, repository.ErrNotFound) && objectKey != "" {
+	if errors.Is(err, repository.ErrNotFound) && ref.ObjectKey != "" &&
+		!ref.EventTime.IsZero() && p.now().Sub(ref.EventTime) >= orphanObjectAfter {
 		// The row was deleted before its upload landed: DELETE lets a stuck
 		// upload go after fifteen minutes while the presigned PUT issued with
 		// it is good for thirty. Nothing can reach an object with no row, so
 		// it is removed here — as RejectOversizedCapture removes its own —
 		// rather than failing this invocation three times into the
 		// dead-letter queue and leaving the audio in the bucket for good
-		// (review 2026-09-24 R4-8).
-		if derr := p.cfg.Objects.Delete(ctx, objectKey); derr != nil && !errors.Is(derr, repository.ErrNotFound) {
+		// (review 2026-09-24 R4-8). Only a delivery old enough to be a retry
+		// says so, see orphanObjectAfter: a first delivery that misses the
+		// row fails below and is retried, which is when the row shows up or
+		// the object goes.
+		if derr := p.cfg.Objects.Delete(ctx, ref.ObjectKey); derr != nil && !errors.Is(derr, repository.ErrNotFound) {
 			return model.CaptureIndex{}, fmt.Errorf("pipeline: delete object for a deleted capture: %w", derr)
 		}
 		log.Warn("object for a deleted capture; removed")
