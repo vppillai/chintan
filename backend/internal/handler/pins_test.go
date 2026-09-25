@@ -226,3 +226,26 @@ func TestReorderPinsValidatesAndRewritesTheRanks(t *testing.T) {
 		t.Fatalf("stored note after reorder: rank %d, search text %q", stored.PinRank, stored.SearchText)
 	}
 }
+
+// A pin is not an edit: updated_at stays where it was across pin, pin again
+// and unpin, so an unpinned note goes back among the days where it was and a
+// pinned row does not read as touched just now. The version still moves, so
+// the client's optimistic write still has something to reconcile against.
+func TestPinningDoesNotTouchUpdatedAt(t *testing.T) {
+	h := newHarness(t)
+	a := h.createNote(t, "user1", "A", nil)
+	if a.UpdatedAt == "" {
+		t.Fatal("a fresh note has no updated_at")
+	}
+	pinned := pin(t, h, "user1", a, true)
+	again := pin(t, h, "user1", a, true)
+	unpinned := pin(t, h, "user1", a, false)
+	for name, got := range map[string]handler.Note{"pin": pinned, "pin again": again, "unpin": unpinned} {
+		if got.UpdatedAt != a.UpdatedAt {
+			t.Errorf("%s: updated_at = %s, want %s unchanged", name, got.UpdatedAt, a.UpdatedAt)
+		}
+	}
+	if unpinned.Version <= a.Version {
+		t.Errorf("version = %d after three pin writes, want past %d", unpinned.Version, a.Version)
+	}
+}

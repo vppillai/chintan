@@ -505,8 +505,17 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		}
 	}
 
-	// Update timestamp
-	note.UpdatedAt = model.Now()
+	// A pin is not an edit: it moves the note into the Pinned group, not
+	// among the days, so only a change to what the note says or is bumps
+	// updated_at and rewrites the meta object below. The version still moves,
+	// through putCarryingStamp. Before this, an unpinned note re-filed under
+	// Today and a pinned row read as edited just now (review 2026-09-24 R4-1).
+	touched := updates.Title != nil || updates.Aliases != nil || updates.Tags != nil ||
+		updates.Body != nil || updates.Verbatim != nil || updates.Language != nil ||
+		updates.AutoClean != nil || updates.CleanMode != nil || updates.Kind != nil
+	if touched {
+		note.UpdatedAt = model.Now()
+	}
 
 	// Handle body update. The client sends its whole draft with a Details
 	// change (language, kind, word-for-word, auto-clean), and a body that
@@ -552,19 +561,21 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	}
 
 	// Update metadata
-	metaData := map[string]interface{}{
-		"title":      note.Title,
-		"aliases":    note.Aliases,
-		"tags":       note.Tags,
-		"verbatim":   note.Verbatim,
-		"language":   note.Language,
-		"kind":       note.Kind,
-		"updated_at": note.UpdatedAt,
-	}
-	metaBytes, _ := json.Marshal(metaData)
-	err = s.objects.Put(ctx, note.S3MetaKey, metaBytes, "application/json")
-	if err != nil {
-		return model.NoteIndex{}, fmt.Errorf("failed to update meta: %w", err)
+	if touched {
+		metaData := map[string]interface{}{
+			"title":      note.Title,
+			"aliases":    note.Aliases,
+			"tags":       note.Tags,
+			"verbatim":   note.Verbatim,
+			"language":   note.Language,
+			"kind":       note.Kind,
+			"updated_at": note.UpdatedAt,
+		}
+		metaBytes, _ := json.Marshal(metaData)
+		err = s.objects.Put(ctx, note.S3MetaKey, metaBytes, "application/json")
+		if err != nil {
+			return model.NoteIndex{}, fmt.Errorf("failed to update meta: %w", err)
+		}
 	}
 
 	// Save to store. A version conflict here means somebody else wrote the note

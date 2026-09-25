@@ -1651,8 +1651,11 @@ components:
           type: boolean
           description: |
             `true` puts the note in Home's Pinned group, last among the pinned
-            notes (`pin_rank` = 1000 × the number already pinned); `false`
-            takes it out. At most fifty notes are pinned (409 `you can pin up
+            notes (`pin_rank` one step, 1000, past the highest rank in use, so
+            it lands last even after an unpin has left a gap); `false` takes
+            it out. Neither moves `updated_at`: a pin is not an edit, and the
+            note keeps its place among the days once unpinned. `version`
+            still moves. At most fifty notes are pinned (409 `you can pin up
             to fifty notes`). The order within the group is
             `POST /v1/notes/pins`.
 
