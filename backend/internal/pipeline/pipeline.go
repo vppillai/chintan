@@ -248,7 +248,7 @@ var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinishe
 // invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
-	return p.runCapture(ctx, tenantID, captureID, 0)
+	return p.runCapture(ctx, tenantID, captureID, 0, "")
 }
 
 // RunUpload is Run for the S3 notification that starts a capture: the same
@@ -257,14 +257,31 @@ func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.C
 // tenant's recordings occupy. The request-time size_bytes is the client's
 // claim; this is the measurement.
 func (p *Pipeline) RunUpload(ctx context.Context, ref CaptureRef) (model.CaptureIndex, error) {
-	return p.runCapture(ctx, ref.TenantID, ref.CaptureID, ref.SizeBytes)
+	return p.runCapture(ctx, ref.TenantID, ref.CaptureID, ref.SizeBytes, ref.ObjectKey)
 }
 
-func (p *Pipeline) runCapture(ctx context.Context, tenantID, captureID string, audioBytes int64) (model.CaptureIndex, error) {
+// objectKey is set only for an S3 notification: the object it names is what
+// an upload with no row left behind.
+func (p *Pipeline) runCapture(ctx context.Context, tenantID, captureID string, audioBytes int64, objectKey string) (model.CaptureIndex, error) {
 	ctx = obs.WithTenant(ctx, tenantID)
 	log := obs.Log(ctx).With(slog.String("capture_id", captureID))
 
 	capture, err := p.cfg.Store.GetCapture(ctx, tenantID, captureID)
+	if errors.Is(err, repository.ErrNotFound) && objectKey != "" {
+		// The row was deleted before its upload landed: DELETE lets a stuck
+		// upload go after fifteen minutes while the presigned PUT issued with
+		// it is good for thirty. Nothing can reach an object with no row, so
+		// it is removed here — as RejectOversizedCapture removes its own —
+		// rather than failing this invocation three times into the
+		// dead-letter queue and leaving the audio in the bucket for good
+		// (review 2026-09-24 R4-8).
+		if derr := p.cfg.Objects.Delete(ctx, objectKey); derr != nil && !errors.Is(derr, repository.ErrNotFound) {
+			return model.CaptureIndex{}, fmt.Errorf("pipeline: delete object for a deleted capture: %w", derr)
+		}
+		log.Warn("object for a deleted capture; removed")
+		obs.Count(ctx, "CaptureOrphanObjectRemoved", map[string]string{"Stage": string(model.StatusUploaded)})
+		return model.CaptureIndex{}, nil
+	}
 	if err != nil {
 		return model.CaptureIndex{}, fmt.Errorf("pipeline: get capture: %w", err)
 	}
