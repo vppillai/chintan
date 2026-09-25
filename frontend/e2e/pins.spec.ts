@@ -120,6 +120,9 @@ test.describe('on a phone', () => {
   // The descriptor's `defaultBrowserType` cannot be set inside a describe.
   const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7']!;
   test.use({ ...pixel, hasTouch: true, isMobile: true });
+  // The finger here is a CDP touch session, which only Chromium has; the
+  // mouse half of this file runs on WebKit too.
+  test.skip(({ browserName }) => browserName === 'webkit', 'CDP touch');
 
   /** A finger that lands, waits, then travels — the hold-then-drag. */
   async function holdAndDrag(
