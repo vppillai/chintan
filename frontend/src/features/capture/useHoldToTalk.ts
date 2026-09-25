@@ -35,7 +35,7 @@ export const HOLD_DELAY_MS = 350;
 export const MIN_TALK_MS = 600;
 /** How far off the button the pointer may be before release means cancel. */
 export const SLIDE_AWAY_PX = 80;
-/** How long the "Hold to talk" hint and the "Sent" confirmation stay up. */
+/** How long the too-short hint and the "Sent" confirmation stay up. */
 export const HOLD_NOTICE_MS = 1_500;
 /** Movement that turns an armed press into a scroll or a drag, as `useLongPress` draws it. */
 const ARM_TOLERANCE_PX = 10;
@@ -47,7 +47,7 @@ export type HoldPhase =
   | 'armed'
   /** The microphone has been asked for or is live; release sends. */
   | 'holding'
-  /** Released too soon: "Hold to talk", briefly. */
+  /** Released too soon: "Too short — hold to talk", briefly. */
   | 'hint'
   /** Released with a recording: "Sent", briefly. */
   | 'sent'

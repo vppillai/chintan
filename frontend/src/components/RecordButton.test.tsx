@@ -212,9 +212,9 @@ describe('the record button, held', () => {
     expect(region).toHaveTextContent('Release to send · slide away to cancel');
     fireEvent.pointerUp(mic, down);
     fireEvent.click(mic);
-    expect(overlay()).toHaveTextContent('Hold to talk');
+    expect(overlay()).toHaveTextContent('Too short — hold to talk');
     expect(status()).toBe(region);
-    expect(region).toHaveTextContent('Hold to talk');
+    expect(region).toHaveTextContent('Too short — hold to talk');
     await waitFor(() => {
       expect(state()).toBe('idle');
     });
@@ -238,7 +238,7 @@ describe('the record button, held', () => {
       expect(state()).toBe('idle');
     });
     expect(creates).toBe(0);
-    expect(screen.queryByText('Hold to talk')).toBeNull();
+    expect(screen.queryByText('Too short — hold to talk')).toBeNull();
   });
 
   it('sends what was said before a call ended the track, rather than discarding it', async () => {

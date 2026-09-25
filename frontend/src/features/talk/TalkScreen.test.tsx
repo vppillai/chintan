@@ -121,7 +121,7 @@ afterEach(() => {
 });
 
 describe('the talk screen', () => {
-  it('records from the first frame of a press, sends on release, and is ready again', async () => {
+  it('records from the first frame of a press, says Sending until the server has it, and is ready again', async () => {
     mount('/talk?note=roof-repair');
     const button = screen.getByRole('button', { name: 'Hold to talk' });
     // The target pill, seeded from the URL as on the capture screen.
@@ -138,10 +138,13 @@ describe('the talk screen', () => {
     fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch' });
     fireEvent.click(button);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Sent · filing');
+    // The upload's row under the button reads "Uploading… N%" until the PUT
+    // lands; a status above it already saying "Sent" contradicted it.
+    expect(document.querySelector('.talk__status')).toHaveTextContent('Sending…');
     await waitFor(() => {
       expect(state()).toBe('uploaded');
     });
+    expect(document.querySelector('.talk__status')).toHaveTextContent('Sent · filing');
     expect(creates).toEqual([{ note_id: 'roof-repair' }].map((c) => expect.objectContaining(c)));
     // Ready for the next one, into the same note.
     expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();

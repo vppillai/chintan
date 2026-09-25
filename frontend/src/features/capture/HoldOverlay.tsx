@@ -12,8 +12,9 @@ import { holdSendable, type HoldPhase } from './useHoldToTalk.ts';
  * the one instruction, in a card just above the bar — over the current
  * screen, not instead of it, so the note or the library stays where it was
  * and system Back is untouched. After a hold too short to keep, the same card
- * says "Hold to talk" for a moment; pressed while the last recording is still
- * leaving, "Still sending the last one…".
+ * says "Too short — hold to talk" for a moment, in the words `/talk` uses for
+ * the same slip; pressed while the last recording is still leaving, "Still
+ * sending the last one…".
  *
  * The instruction is spoken from one live region that is always mounted and
  * changes its text, never from the card: a screen reader reads what a live
@@ -37,7 +38,7 @@ export function HoldOverlay({ phase, away }: { phase: HoldPhase; away: boolean }
           ? 'Release to send · slide away to cancel'
           : 'Starting the microphone…'
       : phase === 'hint'
-        ? 'Hold to talk'
+        ? 'Too short — hold to talk'
         : phase === 'busy'
           ? 'Still sending the last one…'
           : '';

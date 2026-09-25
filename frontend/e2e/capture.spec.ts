@@ -357,7 +357,7 @@ test('sliding away before release cancels, and a hold too short is discarded wit
   await expect(page).toHaveURL(/\/$/);
 
   await holdTheMic(page, /^record$/i, 50);
-  await expect(page.locator('.hold-overlay--hint')).toHaveText('Hold to talk');
+  await expect(page.locator('.hold-overlay--hint')).toHaveText('Too short — hold to talk');
   await expect(page).toHaveURL(/\/$/);
 
   // Neither reached the server.

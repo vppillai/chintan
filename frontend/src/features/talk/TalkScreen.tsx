@@ -21,11 +21,11 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
  * bar is the button.
  *
  * What it shows is the store's truth, as everywhere: the level and the clock
- * only while the microphone is live, "Sent · filing" for a moment after a
- * release, and — because nothing else on this screen would — the upload's own
- * row while it is still leaving this device or when it failed, with the
- * row's Retry and Discard. The library's filing row and the note's banner
- * pick it up from there.
+ * only while the microphone is live, "Sending…" after a release until the
+ * server has the audio and then "Sent · filing" for a moment, and — because
+ * nothing else on this screen would — the upload's own row while it is still
+ * leaving this device or when it failed, with the row's Retry and Discard.
+ * The library's filing row and the note's banner pick it up from there.
  */
 export function TalkScreen() {
   const [params] = useSearchParams();
@@ -50,6 +50,15 @@ export function TalkScreen() {
 
   const holding = hold.phase === 'holding';
   const live = model.state === 'recording' || model.state === 'paused';
+  /*
+   * "Sent" only once the server has the audio. The row under the button reads
+   * "Uploading… N%" for the seconds a real clip takes on a phone link, and a
+   * status above it already saying "Sent" contradicted it; a failed upload
+   * is the row's and the failure line's to explain, not this line's.
+   */
+  const leaving =
+    model.state === 'stopping' || model.state === 'review' || model.state === 'uploading';
+  const sentStatus = leaving ? 'Sending…' : model.state === 'failed' ? '' : 'Sent · filing';
 
   /*
    * Space, held, is the button — from the page, not only from the button
@@ -139,7 +148,7 @@ export function TalkScreen() {
 
       <p className="talk__status" role="status" aria-live="polite">
         {hold.phase === 'sent'
-          ? 'Sent · filing'
+          ? sentStatus
           : hold.phase === 'hint'
             ? 'Too short — hold to talk'
             : hold.phase === 'busy'
