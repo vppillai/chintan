@@ -17,10 +17,12 @@ wire says `pinned: boolean` on every `Note` and `pin_rank: integer | null`.
 
 ## Writes
 
-`PATCH /v1/notes/{id} {pinned: true}` sets `pinned_at = now` and `pin_rank =
-1000 × (pinned notes so far)`, so a new pin lands last; the count is one drain
-of the partition, paid on a pin alone, and the fifty-first pin is refused (409
-`you can pin up to fifty notes`). `{pinned: false}` clears both. Pinning a
+`PATCH /v1/notes/{id} {pinned: true}` sets `pinned_at = now` and `pin_rank` to
+one step (1000) past the highest rank in use, so a new pin lands last even
+after an unpin has left a gap (count × 1000 would then equal an existing rank
+and the tie-break would put the new pin above it); finding the highest is one
+drain of the partition, paid on a pin alone, and the fifty-first pin is refused
+(409 `you can pin up to fifty notes`). `{pinned: false}` clears both. Pinning a
 pinned note changes nothing.
 
 `POST /v1/notes/pins {ids}` is the drag: `pin_rank` becomes each note's

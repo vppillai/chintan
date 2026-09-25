@@ -75,7 +75,7 @@ Your five points from the 24th (plus the desktop-selection remark) were implemen
 
 ## Status at the end of the afternoon (24 Sept)
 
-Everything above is merged and live: frontend 8da7821 (#88 pins and reorder, #85 return-to-note and hold-to-talk, #84 checklists, #83 Devices & shortcuts), backend v0.5.29 / ea7ab37 (#87 inbox and pins; #89 fixes two one-in-sixteen flakes in the device-key test that had failed #84's CI). Prod logs: 0 WARN/ERROR since the deploy window.
+Everything above was merged and live at 16:00: frontend 8da7821 (#88 pins and reorder, #85 return-to-note and hold-to-talk, #84 checklists, #83 Devices & shortcuts), backend v0.5.29 / ea7ab37 (#87 inbox and pins; #89 fixes two one-in-sixteen flakes in the device-key test that had failed #84's CI); by evening frontend 1848ba6 (#91) and backend v0.5.31 / 33d6b3f (#90, #92). Prod logs: 0 WARN/ERROR since the deploy window.
 
 **Live QA on prod, test tenant** (`orb:~/r3/live/qa0924-*`, 60 screenshots):
 
