@@ -114,6 +114,16 @@ row can say "From ⟨device⟩" once the frontend reads `GET /v1/devices`.
 - Per-key daily cap, body caps (4 MiB audio, 20,000 characters of text), a
   content-type allowlist, and the instance's spend cap above all of it bound
   what abuse costs.
+- Before any of that, the gateway throttles each of the three inbox routes
+  at one request a second (burst ten) — some forty times what ten devices
+  at two hundred requests a day can need — because a bad-key POST is billed
+  (the invocation and the body transfer) before the handler refuses it; a
+  CloudWatch alarm on the gateway's 4xx count (a thousand in five minutes)
+  e-mails when a flood is under way. The trade-off: the ceiling is per
+  route and shared by every caller, so a flood at the public URL pauses the
+  inbox for the owner's own devices while it lasts; the app itself uses
+  other routes and is untouched. If that ever matters, CloudFront in front
+  of the API with a WAF rate rule per source address is the path.
 - No key material in logs or responses beyond the 201 that issues it; the
   device id is what identifies a device everywhere else.
 
