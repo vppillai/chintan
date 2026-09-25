@@ -26,7 +26,7 @@ func (s *movingVersionStore) PutNote(ctx context.Context, tenantID string, n mod
 		if left > 0 {
 			s.moves[n.ID] = left - 1
 		}
-		fresh, err := s.Store.GetNote(ctx, tenantID, n.ID)
+		fresh, err := s.GetNote(ctx, tenantID, n.ID)
 		if err != nil {
 			return model.NoteIndex{}, err
 		}
