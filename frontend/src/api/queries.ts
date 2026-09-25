@@ -25,6 +25,7 @@ import type {
   AskRequestWire,
   AskWire,
   CaptureListQuery,
+  CaptureMoveWire,
   CaptureWire,
   DeviceCreateWire,
   NoteCreateWire,
@@ -950,25 +951,49 @@ export function useDeleteCaptures() {
   });
 }
 
+/** The batch outcome plus the note the recordings went to — the id asked for, or the one the server made. */
+export interface CaptureMoveResult extends CaptureBatchResult {
+  targetId: string;
+}
+
 export function useMoveCaptures() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       captureIds,
-      targetId,
+      target,
     }: {
       noteId: string;
-      targetId: string;
+      target: CaptureMoveWire;
       captureIds: string[];
-    }) => settleEach(captureIds, (id) => api.moveCapture(id, { note_id: targetId })),
-    onSuccess: (result, { noteId, targetId }) => {
+    }): Promise<CaptureMoveResult> => {
+      if ('note_id' in target) {
+        const result = await settleEach(captureIds, (id) => api.moveCapture(id, target));
+        return { ...result, targetId: target.note_id };
+      }
+      /*
+       * Into a note that does not exist yet: the first move makes it and the
+       * rest follow by id, so three recordings asked into one new note land
+       * in one note rather than in three named alike. A refusal of the first
+       * is the whole batch's — nothing has moved yet — and reaches the caller
+       * as the mutation's error, with the server's sentence.
+       */
+      const [first, ...rest] = captureIds;
+      if (first === undefined) throw new Error('nothing to move');
+      const targetId = (await api.moveCapture(first, target))?.note_id;
+      if (!targetId) throw new Error('the answer named no note');
+      const result = await settleEach(rest, (id) => api.moveCapture(id, { note_id: targetId }));
+      return { ...result, done: [first, ...result.done], targetId };
+    },
+    onSuccess: (result, { noteId }) => {
       dropCapturesFromNote(queryClient, noteId, result.done);
       if (result.done.length > 0) {
         // Both bodies changed: the source lost paragraphs, the target gained
-        // them in chronological position.
+        // them in chronological position. A target made just now is also a
+        // new row for the lists, which `refreshAppendedNote` invalidates.
         refreshAppendedNote(queryClient, noteId);
-        refreshAppendedNote(queryClient, targetId);
+        refreshAppendedNote(queryClient, result.targetId);
         void queryClient.invalidateQueries({ queryKey: ['captures'] });
       }
     },

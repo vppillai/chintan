@@ -1,7 +1,8 @@
 import { useId, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 import { useNotes } from '@/api/queries.ts';
-import type { NoteWire } from '@/api/schema.ts';
+import type { CaptureMoveWire, NoteWire } from '@/api/schema.ts';
 import { useModalFocus } from '@/components/useModalFocus.ts';
 
 import { openItemsText, parseChecklist } from './checklist.ts';
@@ -17,10 +18,15 @@ import { formatRowTime } from './groups.ts';
  * archive: the server refuses an archived target (409), and offering a row
  * that can only fail is not a choice.
  *
- * Deliberately no "New note". Moving is re-filing what exists; the capture
- * screen's target prompt is where a recording can start a note, because that
- * is the moment nobody yet knows where it goes. Offering creation here would
- * make every move a fork in the road.
+ * "New note…" heads the list. The sheet first shipped without it — moving
+ * was to be re-filing among notes that exist, and the capture screen's
+ * target prompt the one place a recording could start a note — but the
+ * moment a misfiled recording is found is as often the moment it becomes
+ * clear it belongs to a note nobody has made yet, and the owner asked to
+ * make it from here (2026-09-24). The row unfolds into a title field; Enter
+ * or "Create and move" sends the move with `new_note_title`, Escape or Back
+ * returns to the list. The paragraph the recording dictated goes with it
+ * either way: that is what the server's move does.
  *
  * The same modal discipline as `ConfirmDialog` — `useModalFocus` — so a
  * keyboard user is trapped inside it, Escape leaves, and focus returns to the
@@ -45,7 +51,8 @@ export function MoveSheet({
   excludeNoteId: string;
   pending: boolean;
   error: string | null;
-  onChoose: (note: NoteWire) => void;
+  /** The move to make, and the title of the note it goes to, for the notice. */
+  onChoose: (target: CaptureMoveWire, title: string) => void;
   onCancel: () => void;
 }) {
   if (!open) return null;
@@ -61,6 +68,9 @@ export function MoveSheet({
   );
 }
 
+/** The server's limit on a title, so the field cannot ask for a refusal. */
+const TITLE_MAX = 200;
+
 function SheetPanel({
   count,
   excludeNoteId,
@@ -73,14 +83,32 @@ function SheetPanel({
   excludeNoteId: string;
   pending: boolean;
   error: string | null;
-  onChoose: (note: NoteWire) => void;
+  onChoose: (target: CaptureMoveWire, title: string) => void;
   onCancel: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const newNoteRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const searchId = useId();
+  const nameId = useId();
   const [query, setQuery] = useState('');
-  useModalFocus(panelRef, onCancel);
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState('');
+
+  /*
+   * Escape steps back one level: out of the title field to the list, out of
+   * the list to the recordings. Back puts focus on the row that opened the
+   * field, synchronously, because the field it was in has just unmounted and
+   * focus would otherwise fall to the body — from where the next Tab leaves
+   * the dialog, since the trap only redirects from the panel's own edges.
+   */
+  const backToList = (): void => {
+    flushSync(() => {
+      setCreating(false);
+    });
+    newNoteRef.current?.focus();
+  };
+  useModalFocus(panelRef, creating ? backToList : onCancel);
 
   const list = useNotes({ state: 'active' });
   const notes = useMemo(() => {
@@ -99,6 +127,13 @@ function SheetPanel({
   }, [list.data, query, excludeNoteId]);
 
   const title = `Move ${count === 1 ? 'this recording' : `${String(count)} recordings`} to…`;
+  const trimmedName = name.trim();
+
+  const problem = error && (
+    <p className="target-picker__error" role="alert">
+      {error}
+    </p>
+  );
 
   return (
     <div className="dialog-layer">
@@ -117,71 +152,139 @@ function SheetPanel({
           The text it dictated goes with it, in order among that note&rsquo;s own recordings.
         </p>
 
-        <label className="visually-hidden" htmlFor={searchId}>
-          Search notes
-        </label>
-        <input
-          id={searchId}
-          className="move-sheet__search"
-          type="search"
-          value={query}
-          placeholder="Search notes"
-          autoComplete="off"
-          onChange={(event) => {
-            setQuery(event.target.value);
-          }}
-        />
-
-        {list.isLoading ? (
-          <p className="screen__count" role="status">
-            Loading your notes…
-          </p>
-        ) : notes.length === 0 ? (
-          <p className="screen__count">
-            {query.trim() ? `No note matches “${query.trim()}”.` : 'No other note to move into.'}
-          </p>
-        ) : (
-          <ul className="move-sheet__list" role="list">
-            {notes.map((note) => (
-              <li key={note.id}>
-                <button
-                  type="button"
-                  className="move-sheet__option"
-                  disabled={pending}
-                  onClick={() => {
-                    onChoose(note);
-                  }}
-                >
-                  <span className="move-sheet__option-title">{note.title}</span>
-                  <span className="move-sheet__option-meta">{optionMeta(note)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {list.hasNextPage && !query.trim() && (
-          <button
-            type="button"
-            className="move-sheet__more"
-            disabled={list.isFetchingNextPage}
-            onClick={() => void list.fetchNextPage()}
+        {creating ? (
+          <form
+            className="dialog__gate"
+            onSubmit={(event) => {
+              event.preventDefault();
+              // The button is disabled with nothing to name the note, and
+              // Enter in the field lands here too.
+              if (!trimmedName || pending) return;
+              onChoose({ new_note_title: trimmedName }, trimmedName);
+            }}
           >
-            {list.isFetchingNextPage ? 'Loading…' : 'Older notes'}
-          </button>
-        )}
+            <label className="dialog__gate-label" htmlFor={nameId}>
+              Name the new note
+            </label>
+            <input
+              id={nameId}
+              className="dialog__gate-input"
+              type="text"
+              value={name}
+              maxLength={TITLE_MAX}
+              autoComplete="off"
+              autoFocus
+              onChange={(event) => {
+                setName(event.target.value);
+              }}
+            />
+            {problem}
+            <div className="dialog__actions">
+              <button
+                type="button"
+                className="dialog__action"
+                disabled={pending}
+                onClick={backToList}
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                className="dialog__action dialog__action--primary"
+                disabled={pending || !trimmedName}
+              >
+                {pending ? 'Moving…' : 'Create and move'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <label className="visually-hidden" htmlFor={searchId}>
+              Search notes
+            </label>
+            <input
+              id={searchId}
+              className="move-sheet__search"
+              type="search"
+              value={query}
+              placeholder="Search notes"
+              autoComplete="off"
+              onChange={(event) => {
+                setQuery(event.target.value);
+              }}
+            />
 
-        {error && (
-          <p className="target-picker__error" role="alert">
-            {error}
-          </p>
-        )}
+            {/* Whatever the search says: a term no note matches is the
+                likeliest reason to want a new one, so it becomes the name
+                to start from. */}
+            <button
+              ref={newNoteRef}
+              type="button"
+              className="move-sheet__option"
+              disabled={pending}
+              onClick={() => {
+                setName((current) => current || query.trim());
+                setCreating(true);
+              }}
+            >
+              <span className="move-sheet__option-title">New note…</span>
+            </button>
 
-        <div className="dialog__actions">
-          <button type="button" className="dialog__action" onClick={onCancel} disabled={pending}>
-            {pending ? 'Moving…' : 'Cancel'}
-          </button>
-        </div>
+            {list.isLoading ? (
+              <p className="screen__count" role="status">
+                Loading your notes…
+              </p>
+            ) : notes.length === 0 ? (
+              <p className="screen__count">
+                {query.trim()
+                  ? `No note matches “${query.trim()}”.`
+                  : 'No other note to move into.'}
+              </p>
+            ) : (
+              <ul className="move-sheet__list" role="list">
+                {notes.map((note) => (
+                  <li key={note.id}>
+                    <button
+                      type="button"
+                      className="move-sheet__option"
+                      disabled={pending}
+                      onClick={() => {
+                        onChoose({ note_id: note.id }, note.title);
+                      }}
+                    >
+                      <span className="move-sheet__option-title">{note.title}</span>
+                      <span className="move-sheet__option-meta">{optionMeta(note)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {list.hasNextPage && !query.trim() && (
+              <button
+                type="button"
+                className="move-sheet__more"
+                disabled={list.isFetchingNextPage}
+                onClick={() => void list.fetchNextPage()}
+              >
+                {list.isFetchingNextPage ? 'Loading…' : 'Older notes'}
+              </button>
+            )}
+
+            {problem}
+
+            <div className="dialog__actions">
+              <button
+                type="button"
+                className="dialog__action"
+                onClick={onCancel}
+                disabled={pending}
+              >
+                {pending ? 'Moving…' : 'Cancel'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
