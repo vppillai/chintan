@@ -6,6 +6,7 @@ import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
 import { MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
+import { onAFakeClock } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { TalkScreen } from './TalkScreen.tsx';
@@ -99,24 +100,6 @@ function mount(path = '/talk') {
 }
 
 const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
-
-/**
- * Runs a gesture on a fake clock that still moves with real time, as
- * `NotesScreen.pins.test` holds a row: the recorder's promises and `waitFor`
- * run as before, but a stall on a shared runner moves the clock one tick,
- * not the length of the stall. Whether a press was a tap or a hold, and a
- * hold a slip or a message, is read from `Date.now()` against `HOLD_DELAY_MS`
- * and `MIN_TALK_MS`; on the real clock a long enough pause between two lines
- * of a test flipped the answer.
- */
-async function onAFakeClock(gesture: () => void | Promise<void>): Promise<void> {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  try {
-    await gesture();
-  } finally {
-    vi.useRealTimers();
-  }
-}
 
 const state = () => useCaptureStore.getState().model.state;
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
