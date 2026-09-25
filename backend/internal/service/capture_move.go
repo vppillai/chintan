@@ -46,15 +46,9 @@ var (
 // the cut finds nothing to cut, the insert finds its marker already there, and
 // the rest runs again.
 func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, targetNoteID string) (capture *model.CaptureIndex, moved bool, err error) {
-	current, err := s.store.GetCapture(ctx, userID, captureID)
+	current, err := s.movableCapture(ctx, userID, captureID)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to get capture: %w", err)
-	}
-	if current.NoteID == "" {
-		return nil, false, ErrCaptureUnfiled
-	}
-	if CaptureIsPending(current.Status) {
-		return nil, false, ErrCaptureInFlight
+		return nil, false, err
 	}
 	if current.NoteID == targetNoteID {
 		return &current, false, nil
@@ -67,7 +61,53 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 	if !NoteIsActive(target) {
 		return nil, false, ErrNoteArchived
 	}
+	capture, err = s.moveInto(ctx, userID, current, target)
+	if err != nil {
+		return nil, false, err
+	}
+	return capture, true, nil
+}
 
+// MoveCaptureToNewNote is MoveCapture into a note that does not exist yet: the
+// note is created with title, empty, and the recording moves into it, so its
+// paragraph is the new note's first. The capture is checked before the note is
+// made, so a refusal leaves no empty note behind; and a capture cannot already
+// be in a note that did not exist, so there is no no-op answer.
+func (s *CaptureService) MoveCaptureToNewNote(ctx context.Context, userID, captureID, title string) (*model.CaptureIndex, error) {
+	current, err := s.movableCapture(ctx, userID, captureID)
+	if err != nil {
+		return nil, err
+	}
+	if s.notes == nil {
+		return nil, ErrNoteCreationUnavailable
+	}
+	note, err := s.notes.CreateNote(ctx, userID, title, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create note: %w", err)
+	}
+	return s.moveInto(ctx, userID, current, note)
+}
+
+// movableCapture is the capture a move starts from: one the caller owns, with
+// a note to move from, that the worker is no longer writing.
+func (s *CaptureService) movableCapture(ctx context.Context, userID, captureID string) (model.CaptureIndex, error) {
+	current, err := s.store.GetCapture(ctx, userID, captureID)
+	if err != nil {
+		return model.CaptureIndex{}, fmt.Errorf("failed to get capture: %w", err)
+	}
+	if current.NoteID == "" {
+		return model.CaptureIndex{}, ErrCaptureUnfiled
+	}
+	if CaptureIsPending(current.Status) {
+		return model.CaptureIndex{}, ErrCaptureInFlight
+	}
+	return current, nil
+}
+
+// moveInto is the move itself: current's paragraph out of its note and into
+// the active target, then both indexes and the row.
+func (s *CaptureService) moveInto(ctx context.Context, userID string, current model.CaptureIndex, target model.NoteIndex) (*model.CaptureIndex, error) {
+	captureID, targetNoteID := current.ID, target.ID
 	sourceID := current.NoteID
 	sourceKey := ""
 	switch source, err := s.store.GetNote(ctx, userID, sourceID); {
@@ -75,7 +115,7 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 		// The source was purged from under the capture. There is no paragraph
 		// to carry; the row still moves.
 	case err != nil:
-		return nil, false, fmt.Errorf("failed to get source note: %w", err)
+		return nil, fmt.Errorf("failed to get source note: %w", err)
 	default:
 		sourceKey = source.S3MarkdownKey
 	}
@@ -84,7 +124,7 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 	// failure here changes nothing.
 	before, err := s.olderCapturesIn(ctx, userID, targetNoteID, current.CreatedAt)
 	if err != nil {
-		return nil, false, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+		return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
 	}
 
 	// 1. Cut the paragraph out of the source.
@@ -97,7 +137,7 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 			return rest, found
 		})
 		if err != nil {
-			return nil, false, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+			return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
 		}
 	}
 
@@ -110,7 +150,7 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 			return InsertCaptureParagraph(body, captureID, text, before), true
 		})
 		if err != nil {
-			return nil, false, s.undoCut(ctx, userID, sourceKey, sourceID, targetNoteID, current, text, err)
+			return nil, s.undoCut(ctx, userID, sourceKey, sourceID, targetNoteID, current, text, err)
 		}
 	}
 
@@ -121,18 +161,18 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 	if sourceKey != "" {
 		refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, sourceID)
 		if err != nil {
-			return nil, false, fmt.Errorf("failed to refresh the source note index: %w", err)
+			return nil, fmt.Errorf("failed to refresh the source note index: %w", err)
 		}
 		touched = append(touched, refreshed)
 	}
 	refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to refresh the target note index: %w", err)
+		return nil, fmt.Errorf("failed to refresh the target note index: %w", err)
 	}
 	touched = append(touched, refreshed)
 	updated, err := s.repointCapture(ctx, userID, captureID, targetNoteID)
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to re-point the capture: %w", err)
+		return nil, fmt.Errorf("failed to re-point the capture: %w", err)
 	}
 
 	// Both bodies changed, so both cleaned views are regenerated where asked
@@ -148,7 +188,7 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 		slog.String("to_note_id", targetNoteID),
 		slog.Bool("paragraph_moved", cut))
 	obs.Count(ctx, "CapturesMoved", map[string]string{"Stage": string(current.Status)})
-	return &updated, true, nil
+	return &updated, nil
 }
 
 // olderCapturesIn returns the before() an insert into noteID uses: true for a

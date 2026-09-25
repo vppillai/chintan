@@ -846,6 +846,17 @@ paths:
         and refreshes both notes' snippet and search text. The transcript is
         not re-run.
 
+        The target is an existing `note_id` or a `new_note_title`, as on
+        `/target`, never both (400 `supply either note_id or new_note_title,
+        not both`; neither is 400 `supply either note_id or new_note_title`).
+        With a title the note is created first, empty, and the recording
+        moves into it exactly as above, so its text is the new note's first
+        paragraph; the answer is the 200 below and the capture's `note_id`
+        is the new note's id — `GET /v1/notes/{note_id}` opens it. The
+        capture is checked before the note is made, so a refusal (404, 409)
+        leaves no empty note behind; only a move that fails after the cut
+        (the 503 below) can, and it is then an ordinary empty note.
+
         The two note bodies are written one after the other, each under an
         ETag condition. If the second write fails the first is undone and the
         answer is a 503 whose `type` is
@@ -866,7 +877,14 @@ paths:
               schema: { $ref: '#/components/schemas/Capture' }
         '204':
           description: The capture was already in that note. Nothing changed.
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: |
+            Neither or both of `note_id` and `new_note_title`, or a title
+            that is blank or over 200 characters (`title is required`,
+            `title is N characters; the limit is 200`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: No such capture, or no such target note, for this tenant.
@@ -1958,11 +1976,21 @@ components:
 
     CaptureMove:
       type: object
-      required: [note_id]
       properties:
         note_id:
           type: string
           description: The active note to move the recording into.
+        new_note_title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Create a note with this title and move the recording into it.
+            Trimmed and whitespace-collapsed as `NoteCreate.title` is. The
+            same field, with the same rules, as `CaptureTarget`.
+      oneOf:
+        - required: [note_id]
+        - required: [new_note_title]
 
     CaptureRetranscribe:
       type: object

@@ -962,7 +962,10 @@ func statusScenarios() map[string]scenario {
 			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
 			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": source.ID}).Code
 		},
-		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{}),
+		// Both fields at once; neither is the handler test's case, since the
+		// document declares one 400.
+		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1",
+			map[string]any{"note_id": "n1", "new_note_title": "New"}),
 		"POST /v1/captures/{captureId}/move -> 401": send(http.MethodPost, "/v1/captures/c_1/move", "", map[string]any{"note_id": "n1"}),
 		"POST /v1/captures/{captureId}/move -> 404": send(http.MethodPost, "/v1/captures/missing/move", "user1", map[string]any{"note_id": "n1"}),
 		"POST /v1/captures/{captureId}/move -> 409": func(t *testing.T) int {

@@ -29,10 +29,11 @@ func newEditHarness(t *testing.T) *editHarness {
 	t.Helper()
 	store := memory.NewStore()
 	objects := memory.NewObjects()
+	notes := NewNotesService(store, objects)
 	return &editHarness{
 		t: t, ctx: context.Background(), store: store, objects: objects,
-		notes:    NewNotesService(store, objects),
-		captures: NewCaptureService(store, objects),
+		notes:    notes,
+		captures: NewCaptureService(store, objects).WithNoteCreator(notes),
 	}
 }
 
@@ -469,6 +470,86 @@ func TestMoveCaptureRefusals(t *testing.T) {
 	}
 	if got := h.body(source); got != CaptureMarker("c_1")+"\nDictated." {
 		t.Fatalf("a refused move changed the source: %q", got)
+	}
+}
+
+// A move into a note that does not exist yet: the note is made with the title,
+// the paragraph travels with the recording — into the new note, out of the
+// source — and the capture points at it. A refused move makes no note.
+func TestMoveCaptureIntoANewNote(t *testing.T) {
+	cases := map[string]struct {
+		capture, title string
+		want           error
+	}{
+		"the paragraph travels": {"c_1", " Groceries  list ", nil},
+		"blank title":           {"c_1", "   ", ErrEmptyNoteTitle},
+		"capture with no note":  {"c_unfiled", "Orphan", ErrCaptureUnfiled},
+		"capture still running": {"c_busy", "Orphan", ErrCaptureInFlight},
+		"missing capture":       {"c_missing", "Orphan", repository.ErrNotFound},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newEditHarness(t)
+			original := CaptureMarker("c_1") + "\nDictated.\n\n" + CaptureMarker("c_2") + "\nStays."
+			source := h.note("u1", "Source", original)
+			h.appended("u1", source.ID, "c_1", t1000)
+			h.appended("u1", source.ID, "c_2", t1100)
+			unfiled := h.appended("u1", "", "c_unfiled", t1000)
+			unfiled.Status = model.StatusNeedsTarget
+			if _, err := h.store.PutCapture(h.ctx, unfiled); err != nil {
+				t.Fatalf("PutCapture: %v", err)
+			}
+			busy := h.appended("u1", source.ID, "c_busy", t1000)
+			busy.Status = model.StatusCleaning
+			if _, err := h.store.PutCapture(h.ctx, busy); err != nil {
+				t.Fatalf("PutCapture: %v", err)
+			}
+			before, _, err := h.store.DrainNotes(h.ctx, "u1", repository.DrainOptions{})
+			if err != nil {
+				t.Fatalf("DrainNotes: %v", err)
+			}
+
+			moved, err := h.captures.MoveCaptureToNewNote(h.ctx, "u1", tc.capture, tc.title)
+			if tc.want != nil {
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("MoveCaptureToNewNote = %v, want %v", err, tc.want)
+				}
+				after, _, err := h.store.DrainNotes(h.ctx, "u1", repository.DrainOptions{})
+				if err != nil {
+					t.Fatalf("DrainNotes: %v", err)
+				}
+				if len(after) != len(before) {
+					t.Errorf("a refused move left a note behind: %d notes, had %d", len(after), len(before))
+				}
+				if got := h.body(source); got != original {
+					t.Errorf("a refused move changed the source: %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("MoveCaptureToNewNote: %v", err)
+			}
+			note, err := h.store.GetNote(h.ctx, "u1", moved.NoteID)
+			if err != nil {
+				t.Fatalf("the capture points at %q, which does not exist: %v", moved.NoteID, err)
+			}
+			if note.Title != "Groceries list" {
+				t.Errorf("title = %q, want the trimmed one", note.Title)
+			}
+			if got, want := h.body(note), CaptureMarker("c_1")+"\nDictated."; got != want {
+				t.Errorf("new note body = %q, want %q", got, want)
+			}
+			if got, want := h.body(source), CaptureMarker("c_2")+"\nStays."; got != want {
+				t.Errorf("source body = %q, want %q", got, want)
+			}
+			if !strings.Contains(note.SearchText, "dictated") {
+				t.Errorf("the new note's index was not refreshed: %q", note.SearchText)
+			}
+			stored, err := h.store.GetCapture(h.ctx, "u1", "c_1")
+			if err != nil || stored.NoteID != note.ID {
+				t.Errorf("stored capture points at %q (%v), want %s", stored.NoteID, err, note.ID)
+			}
+		})
 	}
 }
 
