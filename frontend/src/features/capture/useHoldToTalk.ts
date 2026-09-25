@@ -285,6 +285,24 @@ export function useHoldToTalk({
     cancel();
   }, [cancel]);
 
+  /*
+   * The OS taking the page mid-hold — a call, the lock screen, an app switch —
+   * is the same cancel, and not every browser sends `pointercancel` for it.
+   * Left alone the microphone stayed open until the next press, whose release
+   * sent everything recorded meanwhile. `visibilitychange`, not `blur`: the
+   * permission prompt takes focus without hiding the page, and a hold must
+   * survive the prompt it raised.
+   */
+  useEffect(() => {
+    const onHidden = (): void => {
+      if (document.visibilityState === 'hidden') onPointerCancel();
+    };
+    document.addEventListener('visibilitychange', onHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', onHidden);
+    };
+  }, [onPointerCancel]);
+
   const onContextMenu = useCallback((event: { preventDefault: () => void }) => {
     // Android raises the context menu for the same hold; iOS starts text
     // selection from it. Neither belongs on a button being held.

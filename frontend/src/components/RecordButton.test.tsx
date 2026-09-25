@@ -272,6 +272,33 @@ describe('the record button, held', () => {
     expect(where()).toBe('/');
   });
 
+  it('lets the microphone go when the page is hidden mid-hold, so nothing recorded meanwhile is sent', async () => {
+    // A call, the lock screen, an app switch: not every browser sends
+    // `pointercancel` for it, and the microphone stayed open until the next
+    // press, whose release sent everything recorded meanwhile.
+    mount();
+    const mic = screen.getByRole('button', { name: 'Record' });
+    fireEvent.pointerDown(mic, down);
+    await wait(HOLD_DELAY_MS + 50);
+    expect(state()).toBe('recording');
+
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await waitFor(() => {
+      expect(state()).toBe('idle');
+    });
+    expect(overlay()).toBeNull();
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+
+    // Back on the page, the finger lifts: not a send, and not a tap either.
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    expect(creates).toBe(0);
+    expect(where()).toBe('/');
+  });
+
   it('says the last one is still sending when held mid-upload, and leaves the tap to the capture screen', async () => {
     act(() => {
       useCaptureStore.setState({
