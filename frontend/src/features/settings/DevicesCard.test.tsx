@@ -261,6 +261,16 @@ describe('the devices card on You', () => {
     expect(card).toHaveTextContent(/anything that can POST a file with one header/i);
     expect(within(card).getByRole('button', { name: 'Copy command' })).toBeInTheDocument();
     expect(within(card).getAllByRole('button', { name: 'Copy address' })).toHaveLength(2);
+    // Each recipe is a disclosure with its own chevron, not an underlined link (R4-29).
+    expect(card.querySelectorAll('details.recipe > summary > .recipe__chevron')).toHaveLength(3);
+  });
+
+  it('counts requests, not recordings, and says how to aim a device at one note (R4-30)', async () => {
+    mount();
+    const card = await screen.findByRole('region', { name: 'Devices & shortcuts' });
+    expect(card).toHaveTextContent(/two hundred requests a day \(recordings or text\), up to 4 MiB each/);
+    expect(card).not.toHaveTextContent(/recordings a day/);
+    expect(card).toHaveTextContent(/add the header X-Chintan-Note-Id with the note’s id/);
   });
 
   it('writes the curl recipe for the configured API', () => {

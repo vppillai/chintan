@@ -762,6 +762,24 @@
   color: var(--color-muted);
 }
 
+/* A recipe's summary is a disclosure, not a link: the underline belongs to
+   the foot's one-word "More"; here a chevron says there is more and turns
+   when it is open. */
+.recipe > .you-card__more-summary {
+  gap: var(--space-2);
+  text-decoration: none;
+}
+
+.recipe__chevron {
+  flex-shrink: 0;
+  color: var(--color-faint);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.recipe[open] .recipe__chevron {
+  transform: rotate(90deg);
+}
+
 .recipe__code {
   margin: 0;
   padding: var(--space-3);
@@ -788,6 +806,7 @@
 }
 
 .recipe__steps code,
+.recipes__lead code,
 .recipes__note code {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);

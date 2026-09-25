@@ -5,6 +5,7 @@ import { useCreateDevice, useDeleteDevice, useDevices } from '@/api/queries.ts';
 import type { DeviceWire } from '@/api/schema.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
+import { Icon } from '@/components/Icon.tsx';
 import { config } from '@/config/env.ts';
 import { describeAgo, formatRowTime } from '@/features/notes/groups.ts';
 
@@ -130,7 +131,7 @@ export function DevicesCard() {
       foot={
         <p>
           Each key is shown once and can be removed here at any time. A device may send two
-          hundred recordings a day.
+          hundred requests a day (recordings or text), up to 4 MiB each.
         </p>
       }
     >
@@ -300,9 +301,16 @@ function Recipes() {
         Everything posts to the same address with your key in one header. The recording is
         transcribed and filed exactly as one made here.
       </p>
+      <p className="recipes__lead">
+        To file into one note every time, add the header <code>X-Chintan-Note-Id</code> with the
+        note&rsquo;s id (the last part of its address).
+      </p>
 
       <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">From a terminal (curl)</summary>
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          From a terminal (curl)
+        </summary>
         <div className="you-card__more-body">
           <pre className="recipe__code">{curl}</pre>
           <div>
@@ -312,7 +320,10 @@ function Recipes() {
       </details>
 
       <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">iPhone or Apple Watch (Shortcuts)</summary>
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          iPhone or Apple Watch (Shortcuts)
+        </summary>
         <div className="you-card__more-body">
           <ol className="recipe__steps">
             <li>
@@ -336,7 +347,10 @@ function Recipes() {
       </details>
 
       <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">Android (HTTP Shortcuts app)</summary>
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          Android (HTTP Shortcuts app)
+        </summary>
         <div className="you-card__more-body">
           <ol className="recipe__steps">
             <li>
