@@ -53,7 +53,9 @@ interface Stage {
 }
 
 const STAGES: readonly Stage[] = [
-  { label: 'Uploaded', statuses: ['uploaded'] },
+  // "Upload", not "Uploaded": the strip suffixes " in progress" and
+  // " complete" for a screen reader, and "Uploaded in progress" was nonsense.
+  { label: 'Upload', statuses: ['uploaded'] },
   { label: 'Transcribing', statuses: ['transcribing'] },
   // Routing and cleaning are one segment to the user: "working out where this
   // goes and what it says" is one step, however many the pipeline takes.
