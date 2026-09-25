@@ -364,12 +364,15 @@ export class ChintanApi {
 
   /**
    * Mints a device key. The 201 is the only response that ever carries the
-   * key itself; the list below never does. An idempotency key matters more
-   * here than elsewhere: a retried create would mint a second key the person
-   * never sees.
+   * key itself; the list below never does. The server deliberately does not
+   * replay this operation — a replay record would hold the plaintext key
+   * (`docs/design/inbox.md`) — so the Idempotency-Key the client sends is
+   * ignored and a retry after a lost response mints a second live key that
+   * nobody is shown. `NO_RETRY`: one attempt, and the card tells the person
+   * to check the list when it cannot say whether that attempt landed.
    */
-  createDevice(body: DeviceCreateWire, idempotencyKey?: string): Promise<DeviceWire> {
-    return this.client.request('/v1/devices', { method: 'POST', body, idempotencyKey });
+  createDevice(body: DeviceCreateWire): Promise<DeviceWire> {
+    return this.client.request('/v1/devices', { method: 'POST', body, retry: NO_RETRY });
   }
 
   listDevices(): Promise<{ items: DeviceWire[] }> {

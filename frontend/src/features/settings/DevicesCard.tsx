@@ -40,9 +40,18 @@ export function curlRecipe(apiUrl: string = config.apiUrl): string {
   ].join('\n');
 }
 
-/** "Wait, remove one first" for the server's 409; its own words for the rest. */
+/**
+ * "Wait, remove one first" for the server's 409; its own words for the rest.
+ * A timeout is the one message not taken as is: the client's sentence
+ * promises a retry, and neither write here gets one — a create is sent once
+ * because the server will not replay it (`createDevice`), a remove has used
+ * its retries by the time it is reported — so the request may well have
+ * landed, and the honest next step is to look.
+ */
+export const UNCONFIRMED_TEXT = 'Could not confirm — check the list before trying again.';
+
 function failureText(error: unknown): string {
-  if (error instanceof ApiError) return error.userMessage;
+  if (error instanceof ApiError) return error.kind === 'timeout' ? UNCONFIRMED_TEXT : error.userMessage;
   return 'That did not go through. Try again.';
 }
 
@@ -90,6 +99,11 @@ export function DevicesCard() {
           setMinted(device);
           setAdding(false);
           setName('');
+        },
+        // "Check the list" is only honest if the list is current: a create
+        // that timed out may have minted a row this device never saw.
+        onError: (error) => {
+          if (error instanceof ApiError && error.kind === 'timeout') void devices.refetch();
         },
       },
     );
