@@ -1369,10 +1369,9 @@ Resources:
           # bucket → alias → function → role cycle; see ContentBucket.
           CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
           ALLOWED_ORIGIN: !Ref AllowedOrigin
-          LLM_BASE_URL: https://api.minimax.io/v1
-          LLM_MODEL: MiniMax-M3
-          GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
-          LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          # No LLM_* or *_KEY_PATH: cmd/api calls no provider and its role has
+          # no ssm:GetParameter, so the four the worker reads were set here and
+          # read by nothing (review 2026-09-24, R4-38).
           # Both halves are required. The service verifies tokens itself rather
           # than trusting the gateway authorizer, and it builds the JWKS issuer
           # URL from the region and the pool id — so with the client id alone it
@@ -1429,15 +1428,15 @@ Resources:
           # Spelled out rather than !Ref'd, to keep the function off the
           # bucket → alias → function → role cycle; see ContentBucket.
           CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
-          ALLOWED_ORIGIN: !Ref AllowedOrigin
           LLM_BASE_URL: https://api.minimax.io/v1
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
-          # No USER_POOL_ID / USER_POOL_CLIENT_ID: the worker is invoked by S3,
-          # EventBridge and the API, never with a user's token, and
-          # cmd/worker/main.go reads neither. They were copied from the API's
-          # environment and read by nothing (review 2026-09-05, S34).
+          # No USER_POOL_ID / USER_POOL_CLIENT_ID and no ALLOWED_ORIGIN: the
+          # worker is invoked by S3, EventBridge and the API, never with a
+          # user's token and never by a browser, and cmd/worker/main.go reads
+          # none of them. They were copied from the API's environment and read
+          # by nothing (reviews 2026-09-05 S34 and 2026-09-24 R4-38).
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
           # Its own live alias, spelled out for the same reason the API's
           # invoke grant is (a !Ref would close the alias → function cycle).
