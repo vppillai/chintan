@@ -153,6 +153,16 @@ describe('NoteRow swipe actions', () => {
     expect(screen.getByRole('checkbox')).toHaveFocus();
   });
 
+  it('draws the app’s own box while bulk-select is on, over the real checkbox', () => {
+    // Every other box in the app is drawn (F1); the browser's square tick
+    // beside them was the odd one out (review 2026-09-24, R4-12).
+    mount(ACTIVE, { selectable: true });
+    const box = screen.getByRole('checkbox');
+    expect(box).toHaveClass('checklist__box');
+    // Adjacent, as `.checklist__box:checked + .checklist__mark` needs.
+    expect(box.nextElementSibling).toHaveClass('checklist__mark');
+  });
+
   it('has no tray while bulk-select is on, nor for a pointer that can hover', () => {
     const { unmount } = mount(ACTIVE, { selectable: true });
     expect(screen.queryByRole('group', { hidden: true })).toBeNull();

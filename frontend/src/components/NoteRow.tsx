@@ -17,6 +17,7 @@ import {
   progressOf,
   snippetIsCut,
 } from '@/features/notes/checklist.ts';
+import { CheckMark } from '@/features/notes/ChecklistEditor.tsx';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useLongPress } from '@/hooks/useLongPress.ts';
@@ -209,15 +210,17 @@ export function NoteRow({
         }}
       >
         {/*
-          A 24 px box inside a 44 px one: the control itself meets the WCAG
-          2.5.8 minimum (it was 20 px), and the wrapper is the thumb's target.
-          The whole row is the label, so a tap anywhere toggles it regardless.
+          The app's drawn box (`CheckMark`, F1), not the browser's: the real
+          control is stretched invisibly over the 44 px wrapper, so it is the
+          thumb's target and meets WCAG 2.5.8 itself, and the mark beside the
+          words is what a finger sees. The whole row is the label, so a tap
+          anywhere toggles it regardless.
         */}
         <span className="note-row__check">
           <input
             ref={checkboxRef}
             type="checkbox"
-            className="note-row__checkbox"
+            className="checklist__box"
             checked={selected}
             onClick={(event) => {
               // `onChange` carries no modifier keys; the click does.
@@ -227,6 +230,7 @@ export function NoteRow({
               /* Handled on click, above, where Shift is known. */
             }}
           />
+          <CheckMark />
         </span>
         <span className="note-row__body">{body}</span>
       </label>
