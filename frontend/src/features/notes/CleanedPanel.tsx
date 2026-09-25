@@ -62,7 +62,8 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * switch, and the person who ticked Milk here, looked at Items and came back
  * must find Milk ticked, not the un-ticked proposal ready to overwrite the
  * body again. A reload starts over; the stale notice then says the proposal
- * is older than the note.
+ * is older than the note, and the rows are held until it is regenerated or
+ * taken outright with Use this list.
  */
 const adoptedSplits = new Map<string, string>();
 
@@ -219,7 +220,10 @@ export function CleanedPanel({
             </div>
           </div>
 
-          {checklist && !adopted && (
+          {/* Not while the proposal is stale: the rows are held then, and a
+              sentence about ticking above rows that cannot be ticked
+              contradicts itself. The stale notice below says what to do. */}
+          {checklist && !adopted && !cleaned.stale && (
             <p className="cleaned__meta">
               Ticking here replaces your list with the split version.
             </p>
@@ -249,10 +253,18 @@ export function CleanedPanel({
               lang={lang}
               data-stale={(cleaned.stale && !adopted) || undefined}
             >
+              {/*
+                Held while a regeneration is pending, and while the proposal
+                is older than the note: a tick then would write a list that
+                predates the note's later changes over the body in one save,
+                and an item a recording appended since would leave the body
+                silently. Use this list stays the explicit way to take a
+                stale proposal anyway.
+              */}
               <ChecklistPreview
                 body={splitBody}
                 label="Split up items"
-                disabled={pending}
+                disabled={pending || (cleaned.stale && !adopted)}
                 onToggle={(index) => {
                   adopt(toggleItem(splitBody, index));
                 }}

@@ -270,4 +270,39 @@ describe('a checklist note', () => {
     expect(panel().getByRole('button', { name: 'Use this list' })).toBeEnabled();
     expect(api.patches).toHaveLength(3);
   });
+
+  it('a stale proposal holds its rows: a tick writes nothing, Use this list still takes it', async () => {
+    const user = userEvent.setup();
+    // The list changed (a recording appended an item, say) after it was split.
+    const api = server({ ...SHOPPING, cleaned: { ...SPLIT, stale: true } });
+    // The note opens on the tab it was left on (sessionStorage), which the
+    // case before this one left at Split up; so wait for the strip, not Items.
+    await user.click(await screen.findByRole('tab', { name: 'Split up' }));
+
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
+    const stale = 'The note changed since this was generated.';
+    const caption = 'Ticking here replaces your list with the split version.';
+    expect(panel().getByText(stale)).toBeInTheDocument();
+    expect(panel().queryByText(caption)).toBeNull();
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
+    expect(preview().getByRole('button', { name: 'Delete Eggs' })).toBeDisabled();
+
+    // A tick or × on a held row writes nothing: one PATCH there would have
+    // put the old proposal over the body and lost the item added since.
+    await user.click(preview().getByRole('checkbox', { name: 'Butter' }));
+    await user.click(preview().getByRole('button', { name: 'Delete Eggs' }));
+    expect(api.patches).toHaveLength(0);
+
+    // Use this list is the explicit overwrite, and still is one: the body
+    // becomes the proposal as it stands, Butter unticked and Eggs kept.
+    await user.click(panel().getByRole('button', { name: 'Use this list' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
+    // The rows are the body now and free again; the stale notice has gone.
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
+    expect(panel().queryByText(stale)).toBeNull();
+  });
 });
