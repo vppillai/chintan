@@ -203,6 +203,9 @@ export function DevicesCard() {
               className="settings-status__action"
               onClick={() => {
                 setMinted(null);
+                // The mutation's result still held the key; "it will not be
+                // shown again" should mean it is gone from memory too.
+                create.reset();
               }}
             >
               Done
@@ -256,6 +259,7 @@ export function DevicesCard() {
           disabled={full || devices.isLoading}
           onClick={() => {
             setMinted(null);
+            create.reset();
             setAdding(true);
           }}
         />
