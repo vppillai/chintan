@@ -43,6 +43,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/vppillai/chintan/backend/internal/breaker"
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
@@ -482,18 +483,34 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		}
 	}
 
-	if capture.RoutedKey == "" && capture.CleanKey == "" {
-		// Recorded into a note, so routing — and with it the removal of the
-		// words addressed to the app — was skipped.
-		if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
+	switch {
+	case capture.CleanKey != "":
+		// Cleaned already; a retry resumes at the append.
+	case note.Kind == model.NoteKindChecklist && !note.Verbatim:
+		// A checklist takes items, not a cleaned paragraph, and the items
+		// come from the raw transcript: the extraction prompt handles the
+		// words addressed to the app itself, so neither the router's spans
+		// nor the instruction strip below is consulted — the item is not at
+		// the mercy of where a span ended ("Add umbrella to shopping list"
+		// routed as the item "list", owner feedback 2026-09-26). A verbatim
+		// checklist keeps the path below: the recording as spoken, one item.
+		if err := p.extractItems(ctx, tenantID, capture, note); err != nil {
 			return *capture, err
 		}
 		if service.CaptureIsTerminal(capture.Status) {
 			return *capture, nil
 		}
-	}
-
-	if capture.CleanKey == "" {
+	default:
+		if capture.RoutedKey == "" {
+			// Recorded into a note, so routing — and with it the removal of
+			// the words addressed to the app — was skipped.
+			if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
+				return *capture, err
+			}
+			if service.CaptureIsTerminal(capture.Status) {
+				return *capture, nil
+			}
+		}
 		if err := p.clean(ctx, tenantID, capture, note.Verbatim); err != nil {
 			return *capture, err
 		}
@@ -1219,6 +1236,99 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	return p.persist(ctx, capture)
 }
 
+// extractItems is clean for a checklist: one model call over the RAW
+// transcript that answers with the items to add (cleanup.ItemsPrompt), stored
+// one per line at CleanKey for the append to render. It runs in the cleaning
+// status and under the cleanup op and deadline, because it is the cleanup
+// call for this kind of note — one call replaces one call, and a retry that
+// finds CleanKey set does not make it again.
+//
+// A recording that names nothing to add — "create a shopping list" — is
+// StatusNoContent, exactly as an instruction-only recording is for a plain
+// note; the note the speaker asked for exists and gets no item. A reply that
+// is not a list of items falls back to the recording as one item, the
+// pre-2026-09-26 behaviour: the dictation is never lost to a bad reply, and
+// the fallback is counted so a prompt that has stopped working is visible.
+// A provider failure is handled as cleanup's is.
+func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) error {
+	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
+		return err
+	}
+	rawBytes, err := p.cfg.Objects.Get(ctx, capture.RawKey)
+	if err != nil {
+		return fmt.Errorf("pipeline: get raw text: %w", err)
+	}
+	transcript := string(rawBytes)
+	if strings.TrimSpace(transcript) == "" {
+		capture.Status = model.StatusNoContent
+		capture.Error = ""
+		return p.persist(ctx, capture)
+	}
+
+	var result provider.ChecklistItems
+	var unusable error
+	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
+		Provider: p.cfg.LLMProvider,
+		Model:    p.cfg.LLMModel,
+		Op:       meter.OpCleanup,
+		Usage: meter.Quantities{
+			meter.UnitInputTokens: estimateTokens(transcript),
+			// The items are words of the transcript; the provider's count
+			// reconciles what the JSON around them cost.
+			meter.UnitOutputTokens: estimateTokens(transcript),
+		},
+		TenantID: tenantID,
+	}, func(ctx context.Context) (breaker.Result, error) {
+		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanupTimeout)
+		defer cancel()
+		out, err := p.cfg.LLM.Items(stageCtx, transcript, note.Title, cleanupLanguage(*capture))
+		if errors.Is(err, cleanup.ErrNotAnItemList) {
+			// The provider answered and billed for it; a reply that would
+			// not parse is settled like any other and judged outside the
+			// reservation, where an error would release it.
+			result, unusable = out, err
+			return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
+		}
+		if err != nil {
+			return breaker.Result{}, err
+		}
+		result = out
+		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
+	})
+	if err != nil {
+		return p.handleProviderError(ctx, capture, "cleanup", err)
+	}
+	items := result.Items
+	switch {
+	case unusable != nil:
+		obs.Log(ctx).Warn("checklist item extraction returned no list; appending the recording as one item",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", unusable.Error()))
+		obs.Count(ctx, "ChecklistItemsDiscarded", map[string]string{"Reason": "unusable"})
+		items = []string{transcript}
+	case len(items) == 0:
+		// The speaker only told the app what to do.
+		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "none"})
+		capture.Status = model.StatusNoContent
+		capture.Error = ""
+		return p.persist(ctx, capture)
+	default:
+		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "items"})
+	}
+
+	cleanKey, err := keys.CaptureClean(tenantID, capture.ID)
+	if err != nil {
+		return fmt.Errorf("pipeline: clean key: %w", err)
+	}
+	if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(strings.Join(items, "\n")), "text/plain"); err != nil {
+		return fmt.Errorf("pipeline: store clean text: %w", err)
+	}
+	capture.CleanKey = cleanKey
+	capture.Status = model.StatusCleaned
+	capture.Error = ""
+	return p.persist(ctx, capture)
+}
+
 // cleanupLanguage is the ISO-639-1 code the cleanup prompt names the
 // transcript as being in: the code the transcription was asked for when it
 // was one, else the code for the language Whisper detected under auto, else
@@ -1245,9 +1355,14 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	}
 	cleanedText := string(cleanBytes)
 	if note.Kind == model.NoteKindChecklist {
-		// One recording is one item. The marker still goes on the line before
-		// it, so deleting or moving the recording cuts exactly this line.
-		cleanedText = checklistItem(cleanedText)
+		// One line per item the extraction returned, all under this one
+		// marker, so deleting or moving the recording cuts exactly its items.
+		// A verbatim checklist skipped the extraction and the cleaned text
+		// is the recording as spoken: one item however it was line-broken.
+		if note.Verbatim {
+			cleanedText = strings.Join(strings.Fields(cleanedText), " ")
+		}
+		cleanedText = checklistItems(cleanedText)
 	}
 
 	// The append is the one step that must happen exactly once. Append, index
@@ -1493,36 +1608,42 @@ func replaceCaptureParagraph(body, captureID, text string) string {
 	return service.InsertCaptureParagraph(rest, captureID, text, func(id string) bool { return id > captureID })
 }
 
-// keepTick returns text carrying old's tick: a checklist item the person
-// ticked stays ticked when its words are written again.
+// keepTick returns text carrying old's ticks, line for line: a checklist
+// item the person ticked stays ticked when its words are written again. A
+// recording that now yields a different number of items carries nothing —
+// there is no saying which new line was which old one, and an open item the
+// person can tick again is better than a tick on the wrong item.
 func keepTick(old, text string) string {
-	if strings.HasPrefix(old, "- [x] ") && strings.HasPrefix(text, "- [ ] ") {
-		return "- [x] " + strings.TrimPrefix(text, "- [ ] ")
+	oldLines, lines := strings.Split(old, "\n"), strings.Split(text, "\n")
+	if len(oldLines) != len(lines) {
+		return text
 	}
-	return text
+	for i, line := range lines {
+		if strings.HasPrefix(oldLines[i], "- [x] ") && strings.HasPrefix(line, "- [ ] ") {
+			lines[i] = "- [x] " + strings.TrimPrefix(line, "- [ ] ")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
-// maxChecklistItemRunes bounds one appended item. A checklist item is a line,
-// and a line the width of a paragraph is still one item — splitting it into
-// several tasks is the cleaned view's job (NoteCleanTasks), not the append's,
-// because the split is a judgement and the append must be a plain record of
-// what was said. Two thousand runes is a few minutes of speech.
-const maxChecklistItemRunes = 2000
-
-// checklistItem renders a recording's cleaned text as one open task-list
-// item: whitespace runs and line breaks collapsed to single spaces, trimmed,
-// cut to maxChecklistItemRunes. Text with no words stays empty — an empty
-// paragraph, as a plain note would get — rather than becoming an item with
-// nothing in it.
-func checklistItem(text string) string {
-	collapsed := strings.Join(strings.Fields(text), " ")
-	if collapsed == "" {
-		return ""
+// checklistItems renders a recording's items — one per line of the cleaned
+// text — as open task-list lines: each with its whitespace runs collapsed to
+// single spaces, trimmed, cut to cleanup.MaxChecklistItemRunes; blank lines
+// dropped. Text with no words stays empty — an empty paragraph, as a plain
+// note would get — rather than becoming an item with nothing in it.
+func checklistItems(text string) string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		collapsed := strings.Join(strings.Fields(line), " ")
+		if collapsed == "" {
+			continue
+		}
+		if runes := []rune(collapsed); len(runes) > cleanup.MaxChecklistItemRunes {
+			collapsed = strings.TrimSpace(string(runes[:cleanup.MaxChecklistItemRunes]))
+		}
+		lines = append(lines, "- [ ] "+collapsed)
 	}
-	if runes := []rune(collapsed); len(runes) > maxChecklistItemRunes {
-		collapsed = strings.TrimSpace(string(runes[:maxChecklistItemRunes]))
-	}
-	return "- [ ] " + collapsed
+	return strings.Join(lines, "\n")
 }
 
 // appendToNote adds text to the end of a note body under a conditional write,
