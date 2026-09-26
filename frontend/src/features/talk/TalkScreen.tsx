@@ -21,11 +21,12 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
  * bar is the button.
  *
  * What it shows is the store's truth, as everywhere: the level and the clock
- * only while the microphone is live, "Sent · filing" for a moment after a
- * release, and — because nothing else on this screen would — the upload's own
- * row while it is still leaving this device or when it failed, with the
- * row's Retry and Discard. The library's filing row and the note's banner
- * pick it up from there.
+ * only while the microphone is live, "Sending…" after a release until the
+ * server has the audio and then "Sent · filing" while the machine holds the
+ * landed upload, and — because nothing else on this screen would — the
+ * upload's own row while it is still leaving this device or when it failed,
+ * with the row's Retry and Discard. The library's filing row and the note's
+ * banner pick it up from there.
  */
 export function TalkScreen() {
   const [params] = useSearchParams();
@@ -138,13 +139,7 @@ export function TalkScreen() {
       </button>
 
       <p className="talk__status" role="status" aria-live="polite">
-        {hold.phase === 'sent'
-          ? 'Sent · filing'
-          : hold.phase === 'hint'
-            ? 'Too short — hold to talk'
-            : hold.phase === 'busy'
-              ? 'Still sending the last one…'
-              : ''}
+        {statusLine(hold.phase, model)}
       </p>
 
       {failure && (
@@ -168,4 +163,27 @@ function buttonLabel(phase: HoldPhase, away: boolean, model: CaptureModel): stri
   if (away) return 'Release to cancel';
   if (model.state === 'requesting') return 'Starting the microphone…';
   return 'Release to send';
+}
+
+/**
+ * The line under the button. The hold's own notices first; after that the
+ * store, not the hold's "sent" phase: that phase rests after `HOLD_NOTICE_MS`,
+ * and a real clip on a phone link is still uploading then, so gated on it
+ * the line went blank over a row still reading "Uploading… N%" and never said
+ * Sent. "Sent" only once the server has the audio — a status already saying
+ * so above that row contradicted it — and it stays while the machine holds
+ * the landed upload: until the next hold resets it or `useLocalUpload` lets
+ * it go, since on this screen no server row arrives to take it earlier. A
+ * failed upload is the row's and the failure line's to explain. Nothing
+ * while holding: a take that settled under the finger — the track ended —
+ * is still the hold's until release.
+ */
+function statusLine(phase: HoldPhase, model: CaptureModel): string {
+  if (phase === 'busy') return 'Still sending the last one…';
+  if (phase === 'hint') return 'Too short — hold to talk';
+  if (phase === 'holding') return '';
+  if (model.state === 'stopping' || model.state === 'review' || model.state === 'uploading') {
+    return 'Sending…';
+  }
+  return model.state === 'uploaded' ? 'Sent · filing' : '';
 }

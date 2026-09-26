@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router';
+import { matchPath, useLocation, useNavigate } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
 import { isCaptureBusy } from '@/features/capture/machine.ts';
@@ -36,6 +36,18 @@ export function RecordingIndicator() {
   if (
     model.state === 'uploading' &&
     (location.pathname === ROUTES.home || location.pathname === ROUTES.talk)
+  ) {
+    return null;
+  }
+  // A recording sent into a note returns to that note, whose filing banner
+  // draws the upload on every tab; this row above the bar was a second word
+  // for the same thing, and tapping it went to a capture screen that only
+  // bounced back. Only for the note it is going into: an upload aimed at a
+  // different note than the one open has no banner there, so it is still said.
+  if (
+    model.state === 'uploading' &&
+    model.noteId !== null &&
+    matchPath(ROUTES.notePattern, location.pathname)?.params.id === model.noteId
   ) {
     return null;
   }

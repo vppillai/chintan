@@ -92,6 +92,33 @@ describe('the microphone being open is never invisible', () => {
     expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();
   });
 
+  it('stands aside on the note an upload is going into, where the banner shows it, but not on another note', async () => {
+    // Send into a note returns to that note and its filing banner reads
+    // "Uploading… N%" on every tab; this row above the bar said the same
+    // thing and led to a capture screen that only bounced back. A note that
+    // is not the target has no banner, so there the row still speaks.
+    const router = mount(['/notes/roof-repair']);
+    // The back guard seeds the library beneath the deep link; wait for it to settle.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(router.state.location.pathname).toBe('/notes/roof-repair');
+
+    act(() => {
+      useCaptureStore.setState({
+        model: { ...INITIAL_CAPTURE, state: 'uploading', localId: 'cap-live', noteId: 'roof-repair' },
+      });
+    });
+    expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();
+
+    act(() => {
+      useCaptureStore.setState({
+        model: { ...INITIAL_CAPTURE, state: 'uploading', localId: 'cap-live', noteId: 'reading-list' },
+      });
+    });
+    expect(screen.getByRole('button', { name: /sending a recording — tap to return/i })).toBeInTheDocument();
+  });
+
   it('is absent when nothing is being captured', () => {
     mount(['/']);
     expect(screen.queryByRole('button', { name: /tap to return/i })).toBeNull();

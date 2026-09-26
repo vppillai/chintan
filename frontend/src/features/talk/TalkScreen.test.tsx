@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
-import { MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
+import { HOLD_NOTICE_MS, MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
+import { onAFakeClock } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { TalkScreen } from './TalkScreen.tsx';
@@ -65,6 +66,8 @@ const fakeDeps: RecorderDeps = {
 };
 
 const creates: { note_id: string | null }[] = [];
+/** A test's hold on the answer to POST /v1/captures: the upload lands when it resolves. */
+let postGate: Promise<void> | null = null;
 const acceptingFetch: typeof fetch = async (input, init) => {
   const body = (payload: unknown, status = 200) =>
     new Response(JSON.stringify(payload), {
@@ -73,6 +76,7 @@ const acceptingFetch: typeof fetch = async (input, init) => {
     });
   if (String(input).includes('/v1/captures') && init?.method === 'POST') {
     creates.push(JSON.parse(String(init.body)) as { note_id: string | null });
+    await postGate;
     return body(
       {
         capture: { id: `srv-${String(creates.length)}`, status: 'uploaded', created_at: '', version: 1 },
@@ -99,11 +103,13 @@ function mount(path = '/talk') {
 }
 
 const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+
 const state = () => useCaptureStore.getState().model.state;
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 
 beforeEach(() => {
   creates.length = 0;
+  postGate = null;
   useCaptureStore.setState({ model: INITIAL_CAPTURE });
   useCaptureStore.getState().__configure({
     recorder: fakeDeps,
@@ -121,42 +127,94 @@ afterEach(() => {
 });
 
 describe('the talk screen', () => {
-  it('records from the first frame of a press, sends on release, and is ready again', async () => {
+  it('records from the first frame of a press, says Sending until the server has it, and is ready again', async () => {
     mount('/talk?note=roof-repair');
     const button = screen.getByRole('button', { name: 'Hold to talk' });
     // The target pill, seeded from the URL as on the capture screen.
     expect(await screen.findByRole('button', { name: /into roof repair/i })).toBeInTheDocument();
 
-    fireEvent.pointerDown(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 });
-    await wait(50);
-    expect(state()).toBe('recording');
-    expect(screen.getByRole('button', { name: 'Release to send' })).toHaveAttribute('data-holding');
-    await wait(MIN_TALK_MS + 100);
-    act(() => {
-      recorder.emitChunk(10);
-    });
-    fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch' });
-    fireEvent.click(button);
+    await onAFakeClock(async () => {
+      fireEvent.pointerDown(button, { pointerId: 1, pointerType: 'touch', button: 0, clientX: 0, clientY: 0 });
+      await wait(50);
+      expect(state()).toBe('recording');
+      expect(screen.getByRole('button', { name: 'Release to send' })).toHaveAttribute('data-holding');
+      act(() => {
+        vi.advanceTimersByTime(MIN_TALK_MS + 100);
+      });
+      act(() => {
+        recorder.emitChunk(10);
+      });
+      fireEvent.pointerUp(button, { pointerId: 1, pointerType: 'touch' });
+      fireEvent.click(button);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Sent · filing');
-    await waitFor(() => {
-      expect(state()).toBe('uploaded');
+      // The upload's row under the button reads "Uploading… N%" until the PUT
+      // lands; a status above it already saying "Sent" contradicted it.
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sending…');
+      await waitFor(() => {
+        expect(state()).toBe('uploaded');
+      });
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sent · filing');
     });
     expect(creates).toEqual([{ note_id: 'roof-repair' }].map((c) => expect.objectContaining(c)));
     // Ready for the next one, into the same note.
     expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();
   });
 
+  it('still says Sending when the upload outlives the hold notice, and Sent once it lands', async () => {
+    // A real clip on a phone link uploads for longer than HOLD_NOTICE_MS. Read
+    // from the hold's phase the status went blank at 1.5 s over a row still
+    // saying "Uploading… N%" and never said Sent; it is the store's.
+    let land: () => void = () => {};
+    postGate = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    mount();
+    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    await onAFakeClock(async () => {
+      fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
+      await wait(50);
+      expect(state()).toBe('recording');
+      act(() => {
+        vi.advanceTimersByTime(MIN_TALK_MS + 100);
+      });
+      act(() => {
+        recorder.emitChunk(10);
+      });
+      fireEvent.pointerUp(button, touch);
+      fireEvent.click(button);
+      await waitFor(() => {
+        expect(state()).toBe('uploading');
+      });
+      act(() => {
+        vi.advanceTimersByTime(HOLD_NOTICE_MS + 100);
+      });
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sending…');
+
+      land();
+      await waitFor(() => {
+        expect(state()).toBe('uploaded');
+      });
+      expect(document.querySelector('.talk__status')).toHaveTextContent('Sent · filing');
+    });
+    expect(creates).toHaveLength(1);
+  });
+
   it('is the Space bar on a keyboard, and hints at a press too short to keep', async () => {
     mount();
-    // From the page, with nothing focused, as a fresh screen is.
-    fireEvent.keyDown(document.body, { key: ' ' });
-    await wait(50);
-    expect(state()).toBe('recording');
-    // A held key repeats; the repeats are not new presses.
-    fireEvent.keyDown(document.body, { key: ' ', repeat: true });
-    fireEvent.keyUp(document.body, { key: ' ' });
-    expect(screen.getByRole('status')).toHaveTextContent('Too short — hold to talk');
+    await onAFakeClock(async () => {
+      // From the page, with nothing focused, as a fresh screen is.
+      fireEvent.keyDown(document.body, { key: ' ' });
+      await wait(50);
+      expect(state()).toBe('recording');
+      // A held key repeats; the repeats are not new presses.
+      fireEvent.keyDown(document.body, { key: ' ', repeat: true });
+      // Lifted 100 ms in: fewer than MIN_TALK_MS, however long the runner paused.
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      fireEvent.keyUp(document.body, { key: ' ' });
+      expect(screen.getByRole('status')).toHaveTextContent('Too short — hold to talk');
+    });
     await waitFor(() => {
       expect(state()).toBe('idle');
     });

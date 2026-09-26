@@ -411,6 +411,16 @@
   border-color: var(--color-line-strong);
 }
 
+/*
+ * On a note the "Into this note" pill pokes up above the bar, exactly where
+ * the card's floor is, and the two touched. The pill's fact is the card's for
+ * the length of the hold — the button's name says where the recording goes —
+ * so it steps aside while any card is up and returns with the bar as it was.
+ */
+.tab-bar:has(.hold-overlay) .tab-bar__into {
+  visibility: hidden;
+}
+
 .hold-overlay--hint {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
