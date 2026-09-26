@@ -886,9 +886,11 @@ paths:
           description: The capture was already in that note. Nothing changed.
         '400':
           description: |
-            Neither or both of `note_id` and `new_note_title`, or a title
-            that is blank or over 200 characters (`title is required`,
-            `title is N characters; the limit is 200`).
+            Neither or both of `note_id` and `new_note_title`, a title that
+            is blank or over 200 characters (`title is required`, `title is
+            N characters; the limit is 200`), or a body that is not the JSON
+            object above (`the request body is not valid JSON for this
+            endpoint`, unknown fields included).
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -1299,9 +1301,9 @@ components:
     Retryable:
       description: |
         The operation failed part-way and was rolled back, so nothing changed
+        — a move into a `new_note_title` has also removed the note it made —
         and the same request can be repeated. The body's `type` is
         `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable`
-        — a move into a `new_note_title` has also removed the note it made —
         and a `Retry-After` header is set; a 503 without that type means the
         instance is not configured for the operation, which repeating will
         not fix.
