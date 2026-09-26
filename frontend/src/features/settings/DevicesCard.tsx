@@ -1,10 +1,11 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { ApiError } from '@/api/problem.ts';
 import { useCreateDevice, useDeleteDevice, useDevices } from '@/api/queries.ts';
 import type { DeviceWire } from '@/api/schema.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
+import { Icon } from '@/components/Icon.tsx';
 import { config } from '@/config/env.ts';
 import { describeAgo, formatRowTime } from '@/features/notes/groups.ts';
 
@@ -40,9 +41,18 @@ export function curlRecipe(apiUrl: string = config.apiUrl): string {
   ].join('\n');
 }
 
-/** "Wait, remove one first" for the server's 409; its own words for the rest. */
+/**
+ * "Wait, remove one first" for the server's 409; its own words for the rest.
+ * A timeout is the one message not taken as is: the client's sentence
+ * promises a retry, and neither write here gets one — a create is sent once
+ * because the server will not replay it (`createDevice`), a remove has used
+ * its retries by the time it is reported — so the request may well have
+ * landed, and the honest next step is to look.
+ */
+export const UNCONFIRMED_TEXT = 'Could not confirm — check the list before trying again.';
+
 function failureText(error: unknown): string {
-  if (error instanceof ApiError) return error.userMessage;
+  if (error instanceof ApiError) return error.kind === 'timeout' ? UNCONFIRMED_TEXT : error.userMessage;
   return 'That did not go through. Try again.';
 }
 
@@ -75,6 +85,14 @@ export function DevicesCard() {
   const [minted, setMinted] = useState<DeviceWire | null>(null);
   /** The device Remove was tapped on, awaiting the confirmation. */
   const [removing, setRemoving] = useState<DeviceWire | null>(null);
+  const keyRef = useRef<HTMLDivElement>(null);
+
+  // The key box mounts already filled, which a live region often does not
+  // announce; focusing it reads the sentence and the key, and puts the next
+  // Tab on Copy key.
+  useEffect(() => {
+    if (minted) keyRef.current?.focus();
+  }, [minted]);
 
   const items = devices.data?.items ?? [];
   const full = items.length >= MAX_DEVICES;
@@ -90,6 +108,11 @@ export function DevicesCard() {
           setMinted(device);
           setAdding(false);
           setName('');
+        },
+        // "Check the list" is only honest if the list is current: a create
+        // that timed out may have minted a row this device never saw.
+        onError: (error) => {
+          if (error instanceof ApiError && error.kind === 'timeout') void devices.refetch();
         },
       },
     );
@@ -108,7 +131,7 @@ export function DevicesCard() {
       foot={
         <p>
           Each key is shown once and can be removed here at any time. A device may send two
-          hundred recordings a day.
+          hundred requests a day (recordings or text), up to 4 MiB each.
         </p>
       }
     >
@@ -165,7 +188,7 @@ export function DevicesCard() {
       )}
 
       {minted && (
-        <div className="device-key" role="status">
+        <div className="device-key" role="status" tabIndex={-1} ref={keyRef}>
           <p>
             The key for <strong>{minted.name}</strong>. Copy it now — it will not be shown again.
           </p>
@@ -181,6 +204,9 @@ export function DevicesCard() {
               className="settings-status__action"
               onClick={() => {
                 setMinted(null);
+                // The mutation's result still held the key; "it will not be
+                // shown again" should mean it is gone from memory too.
+                create.reset();
               }}
             >
               Done
@@ -234,6 +260,7 @@ export function DevicesCard() {
           disabled={full || devices.isLoading}
           onClick={() => {
             setMinted(null);
+            create.reset();
             setAdding(true);
           }}
         />
@@ -274,9 +301,16 @@ function Recipes() {
         Everything posts to the same address with your key in one header. The recording is
         transcribed and filed exactly as one made here.
       </p>
+      <p className="recipes__lead">
+        To file into one note every time, add the header <code>X-Chintan-Note-Id</code> with the
+        note&rsquo;s id (the last part of its address).
+      </p>
 
       <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">From a terminal (curl)</summary>
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          From a terminal (curl)
+        </summary>
         <div className="you-card__more-body">
           <pre className="recipe__code">{curl}</pre>
           <div>
@@ -286,7 +320,10 @@ function Recipes() {
       </details>
 
       <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">iPhone or Apple Watch (Shortcuts)</summary>
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          iPhone or Apple Watch (Shortcuts)
+        </summary>
         <div className="you-card__more-body">
           <ol className="recipe__steps">
             <li>
@@ -310,7 +347,10 @@ function Recipes() {
       </details>
 
       <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">Android (HTTP Shortcuts app)</summary>
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          Android (HTTP Shortcuts app)
+        </summary>
         <div className="you-card__more-body">
           <ol className="recipe__steps">
             <li>

@@ -23,10 +23,11 @@ describe('About', () => {
 
     expect(screen.getByRole('heading', { name: config.appName, level: 1 })).toBeInTheDocument();
     expect(screen.getByText(config.appDescription)).toHaveClass('about__lede');
-    // What it does, in one paragraph under the name.
-    expect(screen.getByText(/tap record and talk/i)).toHaveTextContent(
-      /hear what you actually said/i,
-    );
+    // What it does, in one paragraph under the name, naming both gestures
+    // the mic answers to (round-4 R4-16).
+    const intro = screen.getByText(/tap record and talk/i);
+    expect(intro).toHaveTextContent(/hold the mic and let go to send/i);
+    expect(intro).toHaveTextContent(/hear what you actually said/i);
   });
 
   it('has three sections a person can find by heading: filing, data, and the source', () => {
@@ -42,11 +43,14 @@ describe('About', () => {
     expect(
       Array.from(steps.querySelectorAll('.about__step-title'), (title) => title.textContent?.replace(/^\d/, '')),
     ).toEqual(['Record', 'Transcribe', 'Route', 'Clean up', 'Append']);
+    // Step one names the hold as well as the tap.
+    expect(steps).toHaveTextContent(/hold the microphone and release to send/i);
 
     // The two ways a recording finds its note, both named, and what happens when it is not sure.
     expect(screen.getByText(/add this to the roof note/i)).toBeInTheDocument();
     // The tab bar's mic, not the control T6 removed (QA 2026-09-21, finding 12).
     expect(screen.getByText(/into this note/i)).toBeInTheDocument();
+    expect(screen.getByText(/tap to open the recorder, or hold to talk/i)).toBeInTheDocument();
     expect(screen.queryByText(/record into this/i)).toBeNull();
     expect(screen.getByText(/waits at the top of your notes/i)).toBeInTheDocument();
     // Cleanup follows the note.

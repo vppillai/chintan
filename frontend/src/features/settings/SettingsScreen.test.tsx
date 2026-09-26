@@ -412,6 +412,16 @@ describe('the cards', () => {
     expect(screen.queryByRole('heading', { name: 'Usage this month' })).toBeNull();
   });
 
+  it('leads to Hold to talk from the Recording card, since nothing else in the app does (R4-16)', async () => {
+    mountSettings();
+    const row = await screen.findByRole('link', { name: /hold to talk/i });
+    expect(row).toHaveAttribute('href', '/talk');
+    expect(row).toHaveTextContent('Hold, speak, release to send');
+    expect(row.closest('.you-card')).toBe(
+      screen.getByRole('heading', { name: 'Recording & transcription' }).closest('.you-card'),
+    );
+  });
+
   it('keeps one sentence of each footnote in view and the rest behind a native More', async () => {
     mountSettings();
     const card = (await screen.findByRole('heading', { name: 'Recording & transcription' })).closest(
