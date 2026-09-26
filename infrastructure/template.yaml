@@ -1369,10 +1369,9 @@ Resources:
           # bucket → alias → function → role cycle; see ContentBucket.
           CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
           ALLOWED_ORIGIN: !Ref AllowedOrigin
-          LLM_BASE_URL: https://api.minimax.io/v1
-          LLM_MODEL: MiniMax-M3
-          GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
-          LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          # No LLM_* or *_KEY_PATH: cmd/api calls no provider and its role has
+          # no ssm:GetParameter, so the four the worker reads were set here and
+          # read by nothing (review 2026-09-24, R4-38).
           # Both halves are required. The service verifies tokens itself rather
           # than trusting the gateway authorizer, and it builds the JWKS issuer
           # URL from the region and the pool id — so with the client id alone it
@@ -1429,15 +1428,15 @@ Resources:
           # Spelled out rather than !Ref'd, to keep the function off the
           # bucket → alias → function → role cycle; see ContentBucket.
           CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
-          ALLOWED_ORIGIN: !Ref AllowedOrigin
           LLM_BASE_URL: https://api.minimax.io/v1
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
-          # No USER_POOL_ID / USER_POOL_CLIENT_ID: the worker is invoked by S3,
-          # EventBridge and the API, never with a user's token, and
-          # cmd/worker/main.go reads neither. They were copied from the API's
-          # environment and read by nothing (review 2026-09-05, S34).
+          # No USER_POOL_ID / USER_POOL_CLIENT_ID and no ALLOWED_ORIGIN: the
+          # worker is invoked by S3, EventBridge and the API, never with a
+          # user's token and never by a browser, and cmd/worker/main.go reads
+          # none of them. They were copied from the API's environment and read
+          # by nothing (reviews 2026-09-05 S34 and 2026-09-24 R4-38).
           DAILY_SPEND_CAP_MICROS: !Ref DailySpendCapMicros
           # Its own live alias, spelled out for the same reason the API's
           # invoke grant is (a !Ref would close the alias → function cycle).
@@ -1908,12 +1907,18 @@ Resources:
         ThrottlingRateLimit: 50
       # The three routes anyone on the internet can POST a body to. The
       # Lambda refuses a bad key before it does anything else, but the
-      # invocation and the body transfer are paid before it runs; ten
-      # devices at two hundred requests a day need a small fraction of this.
+      # invocation and the body transfer are paid before it runs — a 4 MiB
+      # bad-key POST bills 170–300 ms of runtime decoding the base64 event
+      # before the handler sees it. One request a second is still some forty
+      # times what ten devices at two hundred requests a day can need, and it
+      # caps a saturated route at about a fifth of what 5 rps cost. The
+      # ceiling is per route and shared by every caller, so a flood pauses the
+      # inbox for the owner's own devices meanwhile; the app uses other routes.
+      # ApiClientErrorsAlarm below is what says a flood is under way.
       RouteSettings:
-        'POST /v1/inbox/captures': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 20 }
-        'POST /v1/inbox/audio': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 20 }
-        'POST /v1/inbox/text': { ThrottlingRateLimit: 5, ThrottlingBurstLimit: 20 }
+        'POST /v1/inbox/captures': { ThrottlingRateLimit: 1, ThrottlingBurstLimit: 10 }
+        'POST /v1/inbox/audio': { ThrottlingRateLimit: 1, ThrottlingBurstLimit: 10 }
+        'POST /v1/inbox/text': { ThrottlingRateLimit: 1, ThrottlingBurstLimit: 10 }
       Tags:
         Project: chintan
         Instance: !Ref InstanceName
@@ -2028,14 +2033,49 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
+  # The three inbox routes take a POST from anyone on the internet before any
+  # key is checked, and the gateway bills every refused one (ApiStage's
+  # RouteSettings bound the rate). Nothing else says a flood is happening:
+  # the Lambda log skips 401s, ApiRequests carries only a status class, and
+  # the first signal would be the budget's forecast e-mail about a day in.
+  # This is a Sum, not a rate: a thousand 4xx in five minutes is some forty
+  # times anything the app produces, so the alarm says one thing only — the
+  # public routes are being hammered — and stays quiet through a stale token
+  # or a mistyped key. ApiId alone is the dimension the gateway publishes
+  # without detailed metrics (review 2026-09-24, R4-7).
+  ApiClientErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-api-4xx'
+      AlarmDescription: >-
+        The gateway answered a thousand or more 4xx in five minutes. The open
+        inbox routes are being flooded with bad keys, or a client is stuck in
+        a retry loop; each refused request is billed before the key is checked.
+      Namespace: AWS/ApiGateway
+      MetricName: 4xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
   # There are deliberately no Throttles alarms, no worker Errors alarm and no
   # API 5xx-rate alarm. Each would be an alarm-month billed to say nothing
   # useful: a throttles alarm watches a reserved-concurrency ceiling one
   # browser tab cannot reach; a worker Errors alarm fires just before the DLQ
   # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
-  # five minutes, trips on a single 500 in ten requests. Four alarms exist,
-  # and none notifies on OK: an OK transition is not something anyone needs
-  # an e-mail about.
+  # five minutes, trips on a single 500 in ten requests. The 4xx alarm above
+  # is a count with a threshold nothing but a flood reaches, which is why it
+  # earns its alarm-month and a 5xx rate does not. Five alarms exist, and
+  # none notifies on OK: an OK transition is not something anyone needs an
+  # e-mail about.
   #
   # A single message here is one recording the user believes was filed and was
   # not — an asynchronous invocation of the worker failed all three attempts

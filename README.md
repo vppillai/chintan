@@ -117,7 +117,7 @@ Each note carries its own transcription `language` (absent, it inherits the user
 
 Any device or app that can make one HTTPS request with one header can drop a recording or a line of text into your notes — a watch, a ring's phone app, a desk recorder, an iOS Shortcut — and it is filed exactly as a recording made in the app: transcribed, routed, cleaned, appended. It authenticates with a **device key**, not your sign-in, so it can add to your notes and never read them, and you can revoke it on its own. `docs/design/inbox.md` has the design and the threat model.
 
-**Issue a key.** `POST /v1/devices {"name": "Kitchen watch"}` with your session token; the key `ck_…` is in that response and nowhere else (only its hash is stored), so copy it then. Until the app has a Devices screen, take the token from the signed-in app: DevTools → Application → Local Storage → the `chintan.tokens.v2` entry → `id_token`.
+**Issue a key.** In the app: **You → Devices & shortcuts → Add a device** shows the key once. Headless: `POST /v1/devices {"name": "Kitchen watch"}` with your session token; the key `ck_…` is in that response and nowhere else (only its hash is stored), so copy it then.
 
 ```bash
 API=https://<api-id>.execute-api.us-west-2.amazonaws.com   # the stack's ApiEndpoint output
