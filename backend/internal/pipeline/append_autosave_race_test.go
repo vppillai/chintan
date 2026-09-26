@@ -294,7 +294,7 @@ func TestAnAppendWaitsForAnotherCapturesFreshStampAndNotForAStaleOne(t *testing.
 		released := make(chan struct{})
 		go func() {
 			// capture0's index refresh, some time later.
-			<-time.After(3 * appendStampPoll)
+			<-time.After(3 * f.h.pipeline.cfg.AppendStampPoll)
 			if err := f.store.ClearNoteAppend(ctx, "user1", "note1", "capture0"); err != nil {
 				t.Errorf("ClearNoteAppend: %v", err)
 			}
@@ -323,7 +323,7 @@ func TestAnAppendWaitsForAnotherCapturesFreshStampAndNotForAStaleOne(t *testing.
 		f := newAppendFixture(t, memory.NewObjects(), nil)
 		ctx := context.Background()
 		note := mustGetNote(t, f.store, "user1", "note1")
-		dead := f.h.clock.Now().Add(-appendStampWait - time.Second)
+		dead := f.h.clock.Now().Add(-f.h.pipeline.cfg.AppendStampWait - time.Second)
 		if _, err := f.store.StampNoteAppend(ctx, "user1", "note1", "capture0", note.Version, dead); err != nil {
 			t.Fatalf("stamp for capture0: %v", err)
 		}
@@ -336,7 +336,7 @@ func TestAnAppendWaitsForAnotherCapturesFreshStampAndNotForAStaleOne(t *testing.
 		if final.Status != model.StatusAppended {
 			t.Fatalf("status = %s, want appended", final.Status)
 		}
-		if waited := time.Since(began); waited > appendStampWait/2 {
+		if waited := time.Since(began); waited > f.h.pipeline.cfg.AppendStampWait/2 {
 			t.Fatalf("the append waited %s on a stamp whose holder died long ago", waited)
 		}
 	})

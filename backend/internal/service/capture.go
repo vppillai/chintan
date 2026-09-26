@@ -193,7 +193,7 @@ func NewCaptureService(store repository.Store, objects repository.Objects) *Capt
 	}
 }
 
-// WithClock replaces the wall clock, for tests.
+// WithClock replaces the wall clock. Test seam.
 func (s *CaptureService) WithClock(now func() time.Time) *CaptureService {
 	s.now = now
 	return s

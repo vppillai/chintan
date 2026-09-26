@@ -188,7 +188,16 @@ func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 // Two deliveries racing against one note. Run under -race.
 func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
-	ctx := context.Background()
+	// The harness clock is fixed, so a delivery that finds the other's stamp
+	// waits until it clears and not until a wall-clock deadline; a short poll
+	// keeps that wait to milliseconds under -count=50.
+	f.h.pipeline.cfg.AppendStampPoll = 50 * time.Millisecond
+	// The fixed clock also means the wait has no deadline of its own: were
+	// finishAppend ever to stop clearing the stamp, the loser would poll for
+	// ever. The context is the bound, so that regression fails with ctx.Err()
+	// instead of hanging the package to the go test timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})

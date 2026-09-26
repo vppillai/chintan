@@ -107,13 +107,3 @@ func CapturePeaks(userID, captureID string) (string, error) {
 	}
 	return fmt.Sprintf("tenants/%s/captures/%s/peaks.json", userID, captureID), nil
 }
-
-func CaptureMeta(userID, captureID string) (string, error) {
-	if err := check(userID, "userID"); err != nil {
-		return "", err
-	}
-	if err := check(captureID, "captureID"); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("tenants/%s/captures/%s/meta.json", userID, captureID), nil
-}

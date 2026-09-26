@@ -132,7 +132,7 @@ func NewDeviceService(store repository.Store) *DeviceService {
 	return &DeviceService{store: store, now: time.Now}
 }
 
-// WithClock replaces the wall clock, for tests.
+// WithClock replaces the wall clock. Test seam.
 func (s *DeviceService) WithClock(now func() time.Time) *DeviceService {
 	s.now = now
 	return s

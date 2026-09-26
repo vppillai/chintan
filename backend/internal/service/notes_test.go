@@ -97,14 +97,15 @@ func TestNotesService(t *testing.T) {
 	})
 
 	t.Run("UpdateNote", func(t *testing.T) {
-		// Create a note first
-		created, err := notesService.CreateNote(ctx, userID, "Original", []string{"orig"})
+		// On the service's clock, so the update is a second after the create
+		// without sleeping for it.
+		now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+		clocked := service.NewNotesService(store, objects).WithClock(func() time.Time { return now })
+		created, err := clocked.CreateNote(ctx, userID, "Original", []string{"orig"})
 		if err != nil {
 			t.Fatalf("CreateNote failed: %v", err)
 		}
-
-		// Wait a moment to ensure different timestamps
-		time.Sleep(10 * time.Millisecond)
+		now = now.Add(time.Second)
 
 		updates := service.NoteUpdates{
 			Title:   stringPtr("Updated Title"),
@@ -112,7 +113,7 @@ func TestNotesService(t *testing.T) {
 			Body:    stringPtr("This is the body content"),
 		}
 
-		updated, err := notesService.UpdateNote(ctx, userID, created.ID, updates)
+		updated, err := clocked.UpdateNote(ctx, userID, created.ID, updates)
 		if err != nil {
 			t.Fatalf("UpdateNote failed: %v", err)
 		}

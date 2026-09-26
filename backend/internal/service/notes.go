@@ -176,8 +176,9 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 	}
 }
 
-// WithClock replaces the clock RequestClean stamps requests with; tests use it
-// to age a request past the worker's window.
+// WithClock replaces the clock the service stamps rows with (updated_at,
+// pinned_at, clean requests). Test seam: tests use it to age a request past
+// the worker's window, or to move an update a second past its create.
 func (s *NotesService) WithClock(now func() time.Time) *NotesService {
 	s.now = now
 	return s
@@ -225,7 +226,7 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 		aliases = []string{}
 	}
 
-	now := model.Now()
+	now := model.FormatTime(s.now())
 	note := model.NoteIndex{
 		ID:            noteID,
 		Title:         title,
@@ -559,7 +560,7 @@ func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note
 		updates.Body != nil || updates.Verbatim != nil || updates.Language != nil ||
 		updates.AutoClean != nil || updates.CleanMode != nil || updates.Kind != nil
 	if touched {
-		note.UpdatedAt = model.Now()
+		note.UpdatedAt = model.FormatTime(s.now())
 	}
 	return touched, nil
 }
@@ -597,7 +598,7 @@ func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex,
 
 	// The snippet (first ~500 chars) and the search text are the two
 	// derivations of the body the index row carries.
-	note.Snippet = generateSnippet(body)
+	note.Snippet = Snippet(body)
 	note.SearchText = SearchText(body)
 	// The cleaned view was generated from the body that just changed — unless
 	// the change was to adopt the view itself ("Use this list"): a body equal
@@ -790,7 +791,7 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 	return result, nil
 }
 
-// generateSnippet creates a snippet from a note body.
+// Snippet derives the list snippet from a note body.
 //
 // The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
 // writes invalid UTF-8 into DynamoDB and into the routing prompt.
@@ -798,7 +799,7 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 // The worker's append markers are removed first: the snippet is shown in the
 // notes list and handed to the router as a summary of the note, and neither
 // wants an HTML comment in it.
-func generateSnippet(body string) string {
+func Snippet(body string) string {
 	const maxRunes = 500
 	body = StripCaptureMarkers(body)
 	runes := []rune(body)

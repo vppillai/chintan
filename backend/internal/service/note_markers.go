@@ -304,18 +304,6 @@ func CutCaptureParagraph(body, captureID string) (rest, text string, found bool)
 	return body[:p.start] + body[p.end:], p.text, true
 }
 
-// CaptureMarkerIDs lists the capture ids whose markers appear in body, in body
-// order. It is what a chronological insert compares against.
-func CaptureMarkerIDs(body string) []string {
-	matches := captureMarkerFind.FindAllString(body, -1)
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		id := strings.TrimSuffix(strings.TrimPrefix(m, captureMarkerPrefix), captureMarkerSuffix)
-		out = append(out, id)
-	}
-	return out
-}
-
 // InsertCaptureParagraph writes captureID's marker and text into body ahead of
 // the first marker for which before(id) is true, or at the end when there is
 // none. before is how the caller says "this capture is older than that one";
