@@ -137,8 +137,10 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
       .poll(() => api.captures.length, { message: `capture ${attempt} created`, timeout: 15_000 })
       .toBe(attempt);
 
-    // Filed, so the row settles and the machine is released for the next take.
+    // Filed into a note, as the server always says, so the row settles into
+    // a receipt and the machine is released for the next take.
     api.captures.at(-1)!.status = 'appended';
+    api.captures.at(-1)!.note_id = 'roof-repair';
     await expect(page.getByText('Filed').first()).toBeVisible({ timeout: 10_000 });
   }
 });

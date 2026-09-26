@@ -2,7 +2,6 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
-import { cacheNoteList } from '@/offline/notesCache.ts';
 import { STUCK_CREATED_AT, capture, json, mount } from '@/test/filing.tsx';
 
 describe('a failed capture has a Retry that is actually wired', () => {
@@ -52,46 +51,6 @@ describe('a failed capture has a Retry that is actually wired', () => {
     mount([capture({ status: 'transcribing' })]);
     await screen.findByText('Filing your recording');
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-  });
-
-  it('offers the note once the capture has been filed', async () => {
-    mount([
-      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
-    ]);
-    expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
-  });
-
-  it('says which note it was filed into, and the whole receipt opens it', async () => {
-    /*
-     * Two receipts stacked read "Filed" and "Filed". The note is on the
-     * capture and its title is on the device whenever the library has listed
-     * it, so the receipt names it — and is itself the control, with a
-     * chevron, rather than carrying an "Open the note" pill under a bare word.
-     */
-    await cacheNoteList([
-      {
-        id: 'roof-repair',
-        title: 'Roof repair',
-        updated_at: '2026-08-06T09:14:00.000Z',
-        version: 3,
-        archived: false,
-      },
-    ]);
-    const user = userEvent.setup();
-    mount([
-      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
-    ]);
-
-    const receipt = await screen.findByRole('button', { name: /filed into “roof repair”/i });
-    expect(receipt).toHaveAccessibleName(/open the note/i);
-    expect(screen.queryByText('Filed')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
-
-    // Opening is acting on the receipt: it leaves with the navigation.
-    await user.click(receipt);
-    await waitFor(() => {
-      expect(screen.queryByText(/^Filed/)).toBeNull();
-    });
   });
 });
 

@@ -1,9 +1,10 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
 import { refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
+import { isTerminalStatus } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -12,7 +13,13 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import { FilingItem } from './filing/FilingItem.tsx';
-import { capFiledRows, retryMessage } from './filing/model.ts';
+import {
+  FILED_ROWS_MAX,
+  groupReceipts,
+  isStuck,
+  retryMessage,
+  type ReceiptGroup,
+} from './filing/model.ts';
 import { useLocalUpload } from './filing/useLocalUpload.ts';
 import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
@@ -37,8 +44,16 @@ export { useLocalUpload } from './filing/useLocalUpload.ts';
  * in the shell over every screen, because a recording on its way into the
  * library belongs at the top of the library.
  *
+ * Four tiers, in this order: this device's own upload, rows still moving,
+ * rows that need the person (failed, capped, asking for a note, stuck — never
+ * grouped, never folded), then one receipt per note the rest landed in,
+ * newest landing first, the fourth note onward folded behind a summary. A
+ * ring's day of thirteen recordings into one note is one line, and the
+ * busiest note is never the hidden one — with one card per capture and a
+ * three-card cap it was exactly that.
+ *
  * What a row says, and the four stage segments, are `filing/model.ts`; one
- * capture's row is `filing/FilingItem.tsx`; this device's own upload is
+ * row is `filing/FilingItem.tsx`; this device's own upload is
  * `filing/useLocalUpload.ts` and `LocalUploadItem` below.
  */
 export function FilingRow() {
@@ -68,6 +83,21 @@ export function FilingRow() {
   const dismiss = (captureId: string): void => {
     setDismissed(dismissCapture(captureId, dismissed));
   };
+  /** Every capture of the group, in one state update, so one render removes the row. */
+  const dismissGroup = (group: ReceiptGroup): void => {
+    setDismissed(group.captureIds.reduce((set, id) => dismissCapture(id, set), dismissed));
+  };
+  const openGroup = (group: ReceiptGroup): void => {
+    // The row says the note has just been written to, so the copy the app
+    // holds is by definition older than what the user is about to read. The
+    // poll usually caught the transition already; this is for when it did
+    // not (a poll that first saw the capture appended).
+    refreshAppendedNote(queryClient, group.noteId);
+    // Opening the note is acting on the row: it has been read, and the
+    // library the user comes back to should not offer it again.
+    dismissGroup(group);
+    void navigate(ROUTES.note(group.noteId));
+  };
 
   /*
    * Captures a person aimed at a note are that note's to show (contract §3):
@@ -93,45 +123,80 @@ export function FilingRow() {
     [cached.data],
   );
 
+  // The tiers. A stuck capture is non-terminal but needs the person, so it
+  // sits with the failed ones rather than among the rows still moving.
+  const moving = captures.filter((capture) => !isTerminalStatus(capture.status) && !isStuck(capture));
+  const needsYou = captures.filter(
+    (capture) =>
+      (isTerminalStatus(capture.status) && capture.status !== 'appended') || isStuck(capture),
+  );
+  const groups = groupReceipts(captures);
+  const shown = groups.slice(0, FILED_ROWS_MAX);
+  const folded = groups.slice(FILED_ROWS_MAX);
+  const foldedCaptures = folded.reduce((sum, group) => sum + group.captureIds.length, 0);
+
+  // The receipts say how long ago the last recording landed. A minute is the
+  // grain `describeAgo` speaks in, and the tick runs only while there is a
+  // receipt to read it.
+  const [now, setNow] = useState(Date.now);
+  const hasGroups = groups.length > 0;
+  useEffect(() => {
+    if (!hasGroups) return;
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [hasGroups]);
+
   if (captures.length === 0 && !local) return null;
 
-  // Everything that still needs something is shown; the receipts are capped.
-  const { visible, filedHidden } = capFiledRows(captures);
+  const receipt = (group: ReceiptGroup) => (
+    <FilingItem
+      key={group.newestId}
+      receipt={group}
+      noteTitle={titles.get(group.noteId)}
+      now={now}
+      onOpen={() => {
+        openGroup(group);
+      }}
+      onDismiss={() => {
+        dismissGroup(group);
+      }}
+    />
+  );
 
   return (
     <section className="filing" aria-label="Recordings being filed">
       {local && <LocalUploadItem model={local} />}
-      {visible.map((capture) => (
-        <FilingItem
-          key={capture.id}
-          capture={capture}
-          noteTitle={capture.note_id ? titles.get(capture.note_id) : undefined}
-          onOpen={() => {
-            if (!capture.note_id) return;
-            // The row says the note has just been written to, so the copy the
-            // app holds is by definition older than what the user is about to
-            // read. The poll usually caught the transition already; this is
-            // for when it did not (a poll that first saw the capture appended).
-            refreshAppendedNote(queryClient, capture.note_id);
-            // Opening the note is acting on the row: it has been read, and the
-            // library the user comes back to should not offer it again.
-            dismiss(capture.id);
-            void navigate(ROUTES.note(capture.note_id));
-          }}
-          onRetry={() => retry.mutate(capture.id)}
-          retrying={retry.isPending && retry.variables === capture.id}
-          retryError={
-            retry.isError && retry.variables === capture.id ? retryMessage(retry.error) : null
-          }
-          onDismiss={() => {
-            dismiss(capture.id);
-          }}
-        />
-      ))}
-      {filedHidden > 0 && (
-        <p className="filing__more" role="status">
-          <span className="numeric">{filedHidden}</span> more filed
-        </p>
+      {/*
+        One array, so a capture keeps its key — and its DOM node, and the live
+        region that announces the landing — as it passes from moving to
+        receipt: React finds a key only among siblings of the same array.
+      */}
+      {[...moving, ...needsYou, ...shown].map((row) =>
+        'captureIds' in row ? (
+          receipt(row)
+        ) : (
+          <FilingItem
+            key={row.id}
+            capture={row}
+            onRetry={() => retry.mutate(row.id)}
+            retrying={retry.isPending && retry.variables === row.id}
+            retryError={retry.isError && retry.variables === row.id ? retryMessage(retry.error) : null}
+            onDismiss={() => {
+              dismiss(row.id);
+            }}
+          />
+        ),
+      )}
+      {folded.length > 0 && (
+        <details className="filing__more">
+          <summary>
+            and <span className="numeric">{foldedCaptures}</span> more filed into {folded.length}{' '}
+            {folded.length === 1 ? 'note' : 'notes'}
+          </summary>
+          {folded.map(receipt)}
+        </details>
       )}
     </section>
   );

@@ -1,75 +1,78 @@
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
-import { formatDurationShort } from '@/features/notes/groups.ts';
+import { describeAgo, formatDurationShort } from '@/features/notes/groups.ts';
 
 import { TargetPrompt } from './TargetPrompt.tsx';
-import { STAGES, describe, isStuck, retryAccepted, stageIndex } from './model.ts';
+import {
+  STAGES,
+  describe,
+  isStuck,
+  retryAccepted,
+  stageIndex,
+  type ReceiptGroup,
+} from './model.ts';
 
-export interface FilingItemProps {
-  capture: CaptureWire;
-  /** The title of `capture.note_id`, when the device has it. */
-  noteTitle?: string | undefined;
-  onOpen: () => void;
-  onRetry: () => void;
-  retrying: boolean;
-  /** Why the last Retry on this row failed, or `null`. Silent failure is not an option here. */
-  retryError: string | null;
-  onDismiss: () => void;
-}
+export type FilingItemProps =
+  | {
+      /** A capture that is moving or stopped short. */
+      capture: CaptureWire;
+      onRetry: () => void;
+      retrying: boolean;
+      /** Why the last Retry on this row failed, or `null`. Silent failure is not an option here. */
+      retryError: string | null;
+      onDismiss: () => void;
+    }
+  | {
+      /** The captures that landed in one note, as one receipt. */
+      receipt: ReceiptGroup;
+      /** The title of the note, when the device has it. */
+      noteTitle?: string | undefined;
+      /** The clock the receipt's "just now" is read against; the row re-renders on its owner's minute tick. */
+      now: number;
+      /** Open the note. */
+      onOpen: () => void;
+      onDismiss: () => void;
+    };
 
 /**
- * One capture's row. The library's filing row lists these; the note screen's
- * `FilingBanner` draws one for the recording on its way into the open note,
- * so a failure is met with the same Retry and Dismiss wherever it is read.
+ * One row of the filing section: a capture that is moving or stopped short,
+ * or the receipt for everything that landed in one note. The library's
+ * filing row lists these; the note screen's `FilingBanner` draws one for the
+ * recording on its way into the open note, so a failure is met with the same
+ * Retry and Dismiss wherever it is read.
+ *
+ * The receipt is a branch of this component rather than a component of its
+ * own on purpose. React keeps a DOM node across renders only for an element
+ * of the same type under the same key: the moving row for capture `x` and
+ * the receipt keyed by `x` (the group's newest id) must both be a
+ * `<FilingItem>`, or the `<p role="status">` is swapped at the flip and the
+ * landing — what a person waiting on Home is listening for — goes unspoken.
  */
-export function FilingItem({
-  capture,
-  noteTitle,
-  onOpen,
-  onRetry,
-  retrying,
-  retryError,
-  onDismiss,
-}: FilingItemProps) {
-  const failed = capture.status === 'failed' || capture.status === 'spend_capped';
-  const stuck = isStuck(capture);
-  // A stuck capture gets the same way out a failed one does: retrying is safe
-  // (the backend resumes from whichever artifact already exists) and dismissing
-  // stops the row sitting at the top of the library forever. Retry itself
-  // waits until the server will take it — see `retryAccepted`.
-  const actionable = failed || stuck;
-  const retryable = failed || retryAccepted(capture);
-  const done = capture.status === 'appended';
-  const needsTarget = capture.status === 'needs_target';
-  const stage = STAGES[stageIndex(capture.status)];
-  const duration =
-    typeof capture.duration_ms === 'number' && capture.duration_ms > 0
-      ? formatDurationShort(capture.duration_ms)
-      : null;
-
-  if (done && capture.note_id) {
+export function FilingItem(props: FilingItemProps) {
+  if ('receipt' in props) {
     /*
      * A receipt is one control. The row itself opens the note — with a
      * chevron, as every row that leads somewhere has — and the × dismisses
-     * it; the "Open the note" pill under a bare "Filed" was a second thing to
-     * find on a row whose whole point is the note.
-     *
-     * The title stays where every row keeps it — first in the head, outside
-     * the button — so the `<p role="status">` a moving row rendered is the
-     * same node once the poll flips it to appended. A live region announces a
-     * change to its text, not the text it mounted with: when the receipt was
-     * its own subtree React swapped the node and the landing went unspoken.
-     * The button is the chevron, named by the title and its own hidden words,
-     * and its ::after stretches over the row (capture.css).
+     * it. The title stays where every row keeps it — first in the head,
+     * outside the button — so the live region a moving row rendered is the
+     * node the receipt updates. The button is the chevron, named by the title
+     * and its own hidden words, and its ::after stretches over the row
+     * (capture.css). The slot a moving row gives to the recording's length
+     * says how long ago the last one landed: the note's Recordings tab has
+     * the lengths.
      */
-    const titleId = `filing-title-${capture.id}`;
+    const { receipt, noteTitle, now, onOpen, onDismiss } = props;
+    const count = receipt.captureIds.length;
+    const titleId = `filing-title-${receipt.newestId}`;
     return (
-      <article className="filing-row filing-row--receipt" data-status={capture.status}>
+      <article className="filing-row filing-row--receipt" data-status="appended">
         <div className="filing-row__head">
           <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
-            {describe(capture, stuck, noteTitle)}
+            {count > 1 && <span className="numeric">{count}</span>}
+            {count > 1 ? ' filed' : 'Filed'}
+            {noteTitle ? ` into “${noteTitle}”` : ''}
           </p>
-          {duration && <span className="filing-row__duration numeric">{duration}</span>}
+          <span className="filing-row__duration numeric">{describeAgo(receipt.latestAt, now)}</span>
         </div>
         <button
           type="button"
@@ -94,6 +97,22 @@ export function FilingItem({
     );
   }
 
+  const { capture, onRetry, retrying, retryError, onDismiss } = props;
+  const failed = capture.status === 'failed' || capture.status === 'spend_capped';
+  const stuck = isStuck(capture);
+  // A stuck capture gets the same way out a failed one does: retrying is safe
+  // (the backend resumes from whichever artifact already exists) and dismissing
+  // stops the row sitting at the top of the library forever. Retry itself
+  // waits until the server will take it — see `retryAccepted`.
+  const actionable = failed || stuck;
+  const retryable = failed || retryAccepted(capture);
+  const needsTarget = capture.status === 'needs_target';
+  const stage = STAGES[stageIndex(capture.status)];
+  const duration =
+    typeof capture.duration_ms === 'number' && capture.duration_ms > 0
+      ? formatDurationShort(capture.duration_ms)
+      : null;
+
   /*
    * The stage strip is for a capture that is still moving. It used to render
    * for every status the explicit branches did not name, which meant
@@ -106,7 +125,7 @@ export function FilingItem({
     <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
       <div className="filing-row__head">
         <p className="filing-row__title" role="status" aria-live="polite">
-          {describe(capture, stuck, noteTitle)}
+          {describe(capture, stuck)}
           {running && stage && !stuck && (
             <span className="visually-hidden">{` — ${stage.label}`}</span>
           )}
@@ -116,7 +135,7 @@ export function FilingItem({
 
       {running && <FilingStages capture={capture} />}
 
-      {(done || actionable || capture.status === 'no_content') && (
+      {(actionable || capture.status === 'no_content') && (
         <div className="filing-row__actions">
           {/*
             A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
@@ -138,11 +157,9 @@ export function FilingItem({
           )}
 
           {/*
-            Terminal statuses need a way off the screen. `done` is included
-            too: a "Filed" row stays until the user acts on it, and polling
-            stops the moment nothing left is non-terminal — so once the last
-            capture appends, nothing else will ever refetch this away. Dismiss
-            or Open (which also dismisses) is how it leaves.
+            A stopped capture needs a way off the screen: nothing will ever
+            refetch it away on its own, and a row that only says what went
+            wrong would otherwise sit at the top of the library for ever.
           */}
           <button type="button" className="filing-row__action" onClick={onDismiss}>
             <span>Dismiss</span>
