@@ -478,7 +478,8 @@ for (const theme of THEMES) {
 }
 
 /**
- * The update prompt is the app's only toast. It used to be `position: fixed`
+ * The update prompt was the app's only toast (the Undo toast is the same shell
+ * row now, `.toast`). It used to be `position: fixed`
  * against the bottom of the viewport with a z-index above the tab bar, which put
  * it squarely on top of the record button — the one control the product exists
  * to offer.
@@ -490,6 +491,17 @@ for (const theme of THEMES) {
     await useTheme(page, theme);
     await page.goto('/');
     await expect(page.locator('.tab-bar')).toBeVisible();
+
+    // The Undo toast's live region is in the same row, and has to be in the
+    // accessibility tree before it has anything to say — `display: none`
+    // would take it out, and a region shown together with its text is the
+    // one that is not announced. Displayed, then, but with no footprint.
+    const toast = await page.locator('.toast').evaluate((el) => ({
+      display: getComputedStyle(el).display,
+      height: el.getBoundingClientRect().height,
+    }));
+    expect(toast.display).not.toBe('none');
+    expect(toast.height).toBe(0);
 
     // The real prompt only appears when a waiting service worker exists, which
     // no test can conjure reliably. The markup is what is under test, so it is
@@ -519,6 +531,37 @@ for (const theme of THEMES) {
     expect(collision?.bar, 'the update prompt covers the tab bar').toBeLessThanOrEqual(0);
     expect(collision?.record, 'the update prompt covers the record button').toBeLessThanOrEqual(0);
     assertClean(await inspect(page), `update prompt @ 390x844/${theme}`);
+  });
+}
+
+/**
+ * The held confirm's fill crosses a button painted in the accent. In Nocturne
+ * `--color-accent-strong` is the accent itself, which is how the first fill
+ * came to be invisible in the dark theme; the fill has to differ from the
+ * button under it in both.
+ */
+for (const theme of THEMES) {
+  test(`the hold fill is a different colour from the button it crosses · ${theme}`, async ({
+    page,
+  }) => {
+    await withoutServiceWorker(page);
+    await useTheme(page, theme);
+    await page.goto('/');
+    await expect(page.locator('.tab-bar')).toBeVisible();
+
+    const colours = await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'dialog__action dialog__action--destructive dialog__action--hold';
+      button.setAttribute('data-holding', 'true');
+      button.innerHTML = '<span class="dialog__hold-fill" aria-hidden="true"></span>Hold to delete 12 notes';
+      document.querySelector('.app')?.append(button);
+      return {
+        button: getComputedStyle(button).backgroundColor,
+        fill: getComputedStyle(button.firstElementChild as Element).backgroundColor,
+      };
+    });
+    expect(colours.fill, `${theme}: the fill is the button's own colour`).not.toBe(colours.button);
   });
 }
 

@@ -37,10 +37,10 @@ export function useModalFocus(panelRef: RefObject<HTMLElement | null>, onCancel:
   // of the document.
   useEffect(() => {
     const restore = document.activeElement as HTMLElement | null;
-    // The first focusable, which is Cancel on a plain dialog, the typing
-    // field on a gated one and the search field on the move sheet. Never a
-    // confirm control: the safe option should be under the thumb and under
-    // the Enter key of someone who opened this by accident.
+    // The first focusable, which is Cancel on a dialog and the search field
+    // on the move sheet. Never a confirm control: the safe option should be
+    // under the thumb and under the Enter key of someone who opened this by
+    // accident.
     const [first] = focusables();
     first?.focus();
 

@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { NoteWire } from '@/api/schema.ts';
+import { Toast, dismissToast } from '@/components/Toast.tsx';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import { setCanHover } from '@/test/setup.ts';
 
@@ -73,6 +74,19 @@ function server(
       return json({ items: ids.map((id) => state.get(id)) });
     }
     const one = /\/v1\/notes\/([^/]+)$/.exec(url.pathname);
+    // Delete is the archive, and as on the server it takes the pin with it;
+    // the restore comes back unpinned, which is what Undo has to make good.
+    if (one && method === 'DELETE') {
+      const note = state.get(one[1]!)!;
+      Object.assign(note, { archived: true, pinned: false, pin_rank: null, version: note.version + 1 });
+      return new Response(null, { status: 204 });
+    }
+    const restore = /\/v1\/notes\/([^/]+)\/restore$/.exec(url.pathname);
+    if (restore && method === 'POST') {
+      const note = state.get(restore[1]!)!;
+      Object.assign(note, { archived: false, version: note.version + 1 });
+      return json(note);
+    }
     if (one && method === 'PATCH') {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       const note = state.get(one[1]!)!;
@@ -128,6 +142,8 @@ function mount(fetchImpl: typeof fetch, path = '/') {
     <TestProviders api={testApiContext(fetchImpl)}>
       <MemoryRouter initialEntries={[path]}>
         <NotesScreen />
+        {/* The shell's, in the app; here so the Undo a row offers can be pressed. */}
+        <Toast />
       </MemoryRouter>
     </TestProviders>,
   );
@@ -145,6 +161,7 @@ function goOffline(): void {
 afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
   onlineManager.setOnline(true);
+  dismissToast();
 });
 
 function pinnedTitles(): string[] {
@@ -204,6 +221,33 @@ describe('pinned notes on Home', () => {
     await waitFor(() => {
       expect(pinnedTitles()).toEqual(['Two', 'Three']);
     });
+  });
+
+  it('Undo after deleting a pinned note brings it back pinned: the restore, then PATCH {pinned: true}', async () => {
+    // The server clears the pin on archive and its restore comes back
+    // unpinned; an Undo that left the note in the days would not be one.
+    const user = userEvent.setup();
+    const api = server(THREE);
+    mount(api.fetchImpl);
+    await screen.findByRole('button', { name: /^One/ });
+    expect(pinnedTitles()).toEqual(['One', 'Two']);
+
+    await user.click(moreFor('One'));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(pinnedTitles()).toEqual(['Two']);
+    });
+    expect(api.state.get('one')).toMatchObject({ archived: true, pinned: false });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => {
+      expect(api.patches).toEqual([{ id: 'one', body: { version: 5, pinned: true } }]);
+    });
+    // Back in the Pinned group — last, as a fresh pin lands on the server.
+    await waitFor(() => {
+      expect(pinnedTitles()).toEqual(['Two', 'One']);
+    });
+    expect(api.state.get('one')).toMatchObject({ archived: false, pinned: true });
   });
 
   it('a mouse drag on the grip reorders the group and posts the order once', async () => {
@@ -378,7 +422,6 @@ describe('pinned notes on Home', () => {
     await user.click(moreFor('One'));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Unpin',
-      'Archive',
       'Delete',
       'Select',
       'Move down',
@@ -500,7 +543,7 @@ describe('pinned notes on Home', () => {
     expect(screen.getByRole('button', { name: 'Move One' })).toBeDisabled();
     await user.click(moreFor('Three'));
     expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: 'Archive' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled();
     await user.keyboard('{Escape}');
     await user.click(moreFor('One'));
     expect(screen.getByRole('menuitem', { name: 'Unpin' })).toBeDisabled();

@@ -1,4 +1,12 @@
-import { useId, useRef, useState } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type PointerEvent,
+} from 'react';
 
 import { useModalFocus } from './useModalFocus.ts';
 
@@ -13,6 +21,13 @@ import { useModalFocus } from './useModalFocus.ts';
  * would make the gate on the app's destructive actions the one component that
  * cannot be unit-tested. The trap itself lives in `useModalFocus`, shared with
  * the note screen's "Move to…" sheet.
+ *
+ * Focus lands on Cancel: the safe option should be under the Enter key of
+ * someone who opened this by accident. There is no typed word (owner,
+ * 2026-09-26: "I have to type delete. I don't like that UX"); the sentence
+ * says what goes, and the one action large enough to want a second gesture —
+ * emptying an archive of more than ten notes — asks for a press held for
+ * `holdMs` instead.
  */
 
 export interface ConfirmDialogProps {
@@ -24,17 +39,16 @@ export interface ConfirmDialogProps {
   /** Styles the confirm control as the dangerous option. */
   destructive?: boolean;
   /**
-   * Text the user must type before the confirm control unlocks.
-   *
-   * For the one action in the app that cannot be undone. A dialog whose confirm
-   * button sits where "OK" usually sits is dismissed by muscle memory; typing
-   * the note's own title is the smallest thing that makes deleting it a
-   * deliberate act. Matched case-insensitively and trimmed — this is a speed
-   * bump, not a password.
+   * Press and hold for this long to confirm, instead of a tap. For a bulk
+   * delete forever of many notes: a tap can be a slip, a second held down
+   * cannot. The hold is a pointer's gate only — a finger or a mouse button.
+   * Enter or Space on the keyboard, and whatever a screen reader or a switch
+   * activates a button with, confirm at once: a keystroke that has to be held
+   * is a timing WCAG 2.1.1 forbids, and focus lands on Cancel, so reaching
+   * this control took a deliberate Tab. The fill across the button shows how
+   * far along the hold is, and jumps to full under reduced motion.
    */
-  requireText?: string;
-  /** Labels the typing field. Ignored unless `requireText` is set. */
-  requireLabel?: string;
+  holdMs?: number | undefined;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -43,10 +57,9 @@ export interface ConfirmDialogProps {
  * The open/closed switch, and nothing else.
  *
  * The panel is a separate component so that everything inside it — the focus
- * trap, the key listener, and the typed-confirmation field — exists only while
- * the dialog is on screen. That is what makes the typing field reset itself: a
- * dialog that was cancelled half-typed unmounts, so reopening it cannot arrive
- * already unlocked, and no effect has to reach in and clear anything.
+ * trap, the key listener, a hold in progress — exists only while the dialog
+ * is on screen, and a dialog that was cancelled unmounts rather than having
+ * to reset itself.
  */
 export function ConfirmDialog({ open, ...rest }: ConfirmDialogProps) {
   if (!open) return null;
@@ -59,21 +72,19 @@ function DialogPanel({
   confirmLabel,
   cancelLabel = 'Cancel',
   destructive = false,
-  requireText,
-  requireLabel,
+  holdMs,
   onConfirm,
   onCancel,
 }: Omit<ConfirmDialogProps, 'open'>) {
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const bodyId = useId();
-  const confirmTextId = useId();
-  const [typed, setTyped] = useState('');
-
-  const unlocked =
-    !requireText || typed.trim().toLowerCase() === requireText.trim().toLowerCase();
 
   useModalFocus(panelRef, onCancel);
+
+  const confirmClass = `dialog__action ${
+    destructive ? 'dialog__action--destructive' : 'dialog__action--primary'
+  }`;
 
   return (
     <div className="dialog-layer">
@@ -99,42 +110,117 @@ function DialogPanel({
           {body}
         </p>
 
-        {requireText && (
-          <div className="dialog__gate">
-            <label className="dialog__gate-label" htmlFor={confirmTextId}>
-              {requireLabel ?? `Type ${requireText} to confirm`}
-            </label>
-            <input
-              id={confirmTextId}
-              className="dialog__gate-input"
-              type="text"
-              value={typed}
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              onChange={(event) => {
-                setTyped(event.target.value);
-              }}
-            />
-          </div>
-        )}
-
         <div className="dialog__actions">
           <button type="button" className="dialog__action" onClick={onCancel}>
             {cancelLabel}
           </button>
-          <button
-            type="button"
-            className={`dialog__action ${
-              destructive ? 'dialog__action--destructive' : 'dialog__action--primary'
-            }`}
-            disabled={!unlocked}
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
+          {holdMs ? (
+            <HoldButton className={confirmClass} ms={holdMs} onHeld={onConfirm}>
+              {confirmLabel}
+            </HoldButton>
+          ) : (
+            <button type="button" className={confirmClass} onClick={onConfirm}>
+              {confirmLabel}
+            </button>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * A button that fires only once a pointer has held it down for `ms`.
+ *
+ * Its own timer rather than `useLongPress`: that hook is a gesture on a row —
+ * cancelled by travel, with a click to swallow afterwards — and this is a
+ * control. The hold gates pointers only, because a pointer is where the slip
+ * is. A click that no pointer made — Enter or Space on the keyboard, a screen
+ * reader's or a switch's activation — confirms outright: the first version
+ * asked for Space or Enter held for the second too, which is a timed
+ * keystroke (WCAG 2.1.1) and, for assistive technology that activates with a
+ * synthetic click, no way to confirm at all. Leaving the button, losing focus
+ * or the pointer being cancelled all disarm it, so a hold is a hold and
+ * nothing else.
+ */
+function HoldButton({
+  className,
+  ms,
+  onHeld,
+  children,
+}: {
+  className: string;
+  ms: number;
+  onHeld: () => void;
+  children: string;
+}) {
+  const [holding, setHolding] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set on the way down so the click that follows the release is known for
+  // a pointer's and swallowed. Cleared when the pointer leaves, since no click
+  // from that press can land here unless it comes back — and then `detail`,
+  // the click count, still says a pointer made it.
+  const pointerPressed = useRef(false);
+
+  const release = (): void => {
+    if (!timer.current) return;
+    clearTimeout(timer.current);
+    timer.current = null;
+    setHolding(false);
+  };
+  const press = (): void => {
+    if (timer.current) return;
+    setHolding(true);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setHolding(false);
+      onHeld();
+    }, ms);
+  };
+  const leave = (): void => {
+    pointerPressed.current = false;
+    release();
+  };
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  return (
+    <button
+      type="button"
+      className={`${className} dialog__action--hold`}
+      data-holding={holding || undefined}
+      style={{ '--hold-ms': `${String(ms)}ms` } as CSSProperties}
+      onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
+        if (event.button !== 0) return;
+        pointerPressed.current = true;
+        press();
+      }}
+      onPointerUp={release}
+      onPointerCancel={leave}
+      onPointerLeave={leave}
+      onBlur={release}
+      onClick={(event: MouseEvent<HTMLButtonElement>) => {
+        // A pointer's click arrives after its release: a tap, or a hold let go
+        // early. Neither confirms. A completed hold has already confirmed and
+        // closed the dialog, so its click never reaches this button.
+        const fromPointer = pointerPressed.current || event.detail > 0;
+        pointerPressed.current = false;
+        if (fromPointer) {
+          event.preventDefault();
+          return;
+        }
+        onHeld();
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+      }}
+    >
+      <span className="dialog__hold-fill" aria-hidden="true" />
+      {children}
+    </button>
   );
 }

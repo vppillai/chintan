@@ -1,21 +1,37 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
 
 /**
- * The gate on the one action in the app that cannot be undone.
- *
- * Everything here is about the dialog refusing to fire until the user has done
- * something only a deliberate user does. Escape and the focus trap are covered
- * by the existing behaviour; what is new is the typing gate, and the property
- * that matters most about it is that it does not survive a cancel.
+ * The confirm on a destructive action. Plain by default — a sentence, Cancel
+ * under the Enter key, one button that does it — and, for the bulk purge of
+ * many notes, a button that has to be held rather than tapped. There is no
+ * typed word anywhere any more (owner, 2026-09-26).
  */
 
-describe('ConfirmDialog with a typing gate', () => {
-  it('keeps the confirm control disabled until the text matches', async () => {
+function mountHold(onConfirm: () => void, ms = 1000) {
+  return render(
+    <ConfirmDialog
+      open
+      title="Delete 12 notes forever?"
+      body="Everything goes."
+      confirmLabel="Hold to delete 12 notes"
+      holdMs={ms}
+      destructive
+      onConfirm={onConfirm}
+      onCancel={vi.fn()}
+    />,
+  );
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('ConfirmDialog', () => {
+  it('is plain: no text field, focus on Cancel, and the confirm control fires at once', async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
 
@@ -25,101 +41,94 @@ describe('ConfirmDialog with a typing gate', () => {
         title="Delete this note forever?"
         body="Everything goes."
         confirmLabel="Delete forever"
-        requireText="Old fence"
         destructive
         onConfirm={onConfirm}
         onCancel={vi.fn()}
       />,
     );
 
-    const confirm = screen.getByRole('button', { name: 'Delete forever' });
-    expect(confirm).toBeDisabled();
-
-    await user.type(screen.getByRole('textbox'), 'Old fenc');
-    expect(confirm).toBeDisabled();
-
-    await user.type(screen.getByRole('textbox'), 'e');
-    expect(confirm).toBeEnabled();
-
-    await user.click(confirm);
+    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it('accepts a different case and stray whitespace, since it is a speed bump', async () => {
-    const user = userEvent.setup();
+  it('with holdMs, a tap does nothing and a press held for the duration confirms', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onConfirm = vi.fn();
+    mountHold(onConfirm);
+    const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
 
-    render(
-      <ConfirmDialog
-        open
-        title="Delete this note forever?"
-        body="Everything goes."
-        confirmLabel="Delete forever"
-        requireText="Old fence"
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
+    // A tap, as a browser delivers one: down, up, then the click.
+    fireEvent.pointerDown(button, { button: 0 });
+    fireEvent.pointerUp(button);
+    fireEvent.click(button, { detail: 1 });
+    expect(onConfirm).not.toHaveBeenCalled();
 
-    await user.type(screen.getByRole('textbox'), '  OLD FENCE ');
-    expect(screen.getByRole('button', { name: 'Delete forever' })).toBeEnabled();
+    fireEvent.pointerDown(button, { button: 0 });
+    expect(button).toHaveAttribute('data-holding');
+    act(() => {
+      vi.advanceTimersByTime(999);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it('forgets what was typed when it is cancelled and opened again', async () => {
-    const user = userEvent.setup();
+  it('letting go early confirms nothing, and the fill lets go with it', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onConfirm = vi.fn();
+    mountHold(onConfirm);
+    const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
 
-    function Host() {
-      const [open, setOpen] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => { setOpen(true); }}>
-            Delete forever
-          </button>
-          <ConfirmDialog
-            open={open}
-            title="Delete this note forever?"
-            body="Everything goes."
-            confirmLabel="Yes, delete it"
-            requireText="Old fence"
-            onConfirm={vi.fn()}
-            onCancel={() => { setOpen(false); }}
-          />
-        </>
-      );
-    }
-
-    render(<Host />);
-
-    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
-    await user.type(screen.getByRole('textbox'), 'Old fence');
-    expect(screen.getByRole('button', { name: 'Yes, delete it' })).toBeEnabled();
-
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
-
-    // Reopening a half-answered dialog pre-unlocked is how a second, unintended
-    // delete happens: the user taps the same place twice and the gate is
-    // already open.
-    expect(screen.getByRole('textbox')).toHaveValue('');
-    expect(screen.getByRole('button', { name: 'Yes, delete it' })).toBeDisabled();
+    fireEvent.pointerDown(button, { button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    fireEvent.pointerUp(button);
+    expect(button).not.toHaveAttribute('data-holding');
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('leaves an ungated dialog exactly as it was', async () => {
+  it('confirms at once from the keyboard and from a click no pointer made — the hold gates pointers only', async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
+    mountHold(onConfirm);
+    const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
 
-    render(
-      <ConfirmDialog
-        open
-        title="Archive this note?"
-        body="You can restore it."
-        confirmLabel="Archive it"
-        onConfirm={onConfirm}
-        onCancel={vi.fn()}
-      />,
-    );
-
-    expect(screen.queryByRole('textbox')).toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Archive it' }));
+    // Focus lands on Cancel; reaching the confirm takes a deliberate Tab.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.tab();
+    expect(button).toHaveFocus();
+    await user.keyboard('{Enter}');
     expect(onConfirm).toHaveBeenCalledTimes(1);
+    await user.keyboard(' ');
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+
+    // What a screen reader or a switch sends: a click with no pointer before it.
+    fireEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledTimes(3);
+  });
+
+  it('a press that wanders off the button and back, then lets go, is still a tap and confirms nothing', () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const onConfirm = vi.fn();
+    mountHold(onConfirm);
+    const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
+
+    fireEvent.pointerDown(button, { button: 0 });
+    fireEvent.pointerLeave(button);
+    expect(button).not.toHaveAttribute('data-holding');
+    fireEvent.pointerUp(button);
+    fireEvent.click(button, { detail: 1 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 });

@@ -9,7 +9,9 @@ import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import { setCanHover } from '@/test/setup.ts';
 
-import { NotesScreen, chipScrollBy } from './NotesScreen.tsx';
+import { Toast, dismissToast } from '@/components/Toast.tsx';
+
+import { HOLD_TO_DELETE_MS, NotesScreen, chipScrollBy } from './NotesScreen.tsx';
 
 const ARCHIVED_NOTES = TEST_NOTES.map((note) => ({
   ...note,
@@ -23,6 +25,8 @@ function mount(fetchImpl: typeof fetch, path = '/') {
     <TestProviders api={testApiContext(fetchImpl)}>
       <MemoryRouter initialEntries={[path]}>
         <NotesScreen />
+        {/* The shell's, in the app; here so the Undo the bar offers can be pressed. */}
+        <Toast />
       </MemoryRouter>
     </TestProviders>,
   );
@@ -72,6 +76,8 @@ function goOffline(): void {
 afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
   onlineManager.setOnline(true);
+  dismissToast();
+  vi.useRealTimers();
 });
 
 /**
@@ -481,17 +487,35 @@ describe('doing something to several notes at once', () => {
     expect(screen.queryByRole('toolbar')).toBeNull();
   });
 
-  it('archives every selected note and leaves selection mode', async () => {
+  it('Delete archives every selected note with no dialog, and Undo brings them back', async () => {
     const user = userEvent.setup();
     setCanHover(true);
-    const archived: string[] = [];
+    const archived = new Set<string>();
+    const restored: string[] = [];
     const base = library();
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      const url = String(input);
+      const url = new URL(String(input));
       const method = init?.method ?? 'GET';
-      if (method === 'DELETE' && url.includes('/v1/notes/')) {
-        archived.push(decodeURIComponent(url.split('/v1/notes/')[1] ?? ''));
+      if (method === 'DELETE' && url.pathname.includes('/v1/notes/')) {
+        archived.add(decodeURIComponent(url.pathname.split('/v1/notes/')[1] ?? ''));
         return json({});
+      }
+      if (method === 'POST' && url.pathname.endsWith('/restore')) {
+        const id = decodeURIComponent(url.pathname.split('/v1/notes/')[1]?.split('/restore')[0] ?? '');
+        archived.delete(id);
+        restored.push(id);
+        return json({});
+      }
+      // The two lists move as the server's would, and the device's copy —
+      // which keys a note by its `archived` flag — follows the archived page.
+      if (url.pathname.endsWith('/v1/notes')) {
+        const wantArchived = url.searchParams.get('state') === 'archived';
+        return json({
+          items: TEST_NOTES.filter((note) => archived.has(note.id) === wantArchived).map((note) => ({
+            ...note,
+            archived: wantArchived,
+          })),
+        });
       }
       return base(input, init);
     });
@@ -507,29 +531,37 @@ describe('doing something to several notes at once', () => {
     expect(
       within(bar).getByText((_content, el) => el?.textContent === '1 selected'),
     ).toBeInTheDocument();
-    // Count · Select all · Archive · Delete forever · Cancel, in that order.
+    // Count · Select all · Delete · Cancel, in that order: one destructive
+    // action on Home, and no separate Archive (owner, 2026-09-26).
     expect(within(bar).getAllByRole('button').map((el) => el.textContent)).toEqual([
       'Select all',
-      'Archive',
-      'Delete forever',
+      'Delete',
       'Cancel',
     ]);
 
-    await user.click(within(bar).getByRole('button', { name: 'Archive' }));
-    // One note selected reads as one (round-3 T63).
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent(/^Archive 1 note\?/);
-    expect(dialog).toHaveTextContent(/It leaves your notes/);
-    await user.click(within(dialog).getByRole('button', { name: 'Archive it' }));
+    await user.click(within(bar).getByRole('button', { name: 'Delete' }));
 
+    // No dialog: the note is archived on the tap.
+    expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => {
-      expect(archived).toEqual([TEST_NOTES[0]?.id]);
+      expect([...archived]).toEqual([TEST_NOTES[0]?.id]);
     });
-    // Back to the plain list: no bar, no row checkboxes.
+    // Back to the plain list: no bar, no row checkboxes, and the row is gone.
     await waitFor(() => {
       expect(screen.queryByRole('toolbar')).toBeNull();
     });
-    expect(screen.queryAllByRole('checkbox', { checked: true })).toEqual([]);
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
+    });
+
+    // The toast offers Undo, which restores the note and the row returns.
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    expect(undo.closest('.toast')).toHaveTextContent('Deleted · kept in Archive for 30 days');
+    await user.click(undo);
+    await waitFor(() => {
+      expect(restored).toEqual([TEST_NOTES[0]?.id]);
+    });
+    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
   });
 
   it('starts selecting on a long press, with a haptic tick', async () => {
@@ -609,10 +641,10 @@ describe('doing something to several notes at once', () => {
     });
   });
 
-  it('names the one selected note in the delete dialog, as the row’s own dialog does (QA 2026-09-21, finding 14)', async () => {
+  it('names the one selected note in the delete-forever dialog, as the row’s own dialog does (QA 2026-09-21, finding 14)', async () => {
     const user = userEvent.setup();
     setCanHover(true);
-    mount(library());
+    mount(library(), '/?view=archived');
 
     await startSelecting(user, 'Roof repair');
     await user.click(screen.getByRole('button', { name: 'Delete forever' }));
@@ -620,68 +652,75 @@ describe('doing something to several notes at once', () => {
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent('Delete 1 note forever?');
     expect(dialog).toHaveTextContent('“Roof repair” and its recordings and transcripts are destroyed.');
-    expect(within(dialog).getByRole('button', { name: 'Delete it forever' })).toBeDisabled();
+    // Nothing to type: the sentence is the warning, and the button works at once.
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Delete it forever' })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
   });
 
-  it('deletes every selected note forever: archives, then purges, behind a typed confirmation', async () => {
+  it('deleting more than ten notes forever takes a press held for a second, not a tap', async () => {
     const user = userEvent.setup();
     setCanHover(true);
-    const archived: string[] = [];
-    let purged: string[] = [];
-    const base = library();
+    const many: NoteWire[] = Array.from({ length: 11 }, (_unused, i) => ({
+      ...TEST_NOTES[0]!,
+      id: `archived-${String(i)}`,
+      title: `Archived ${String(i)}`,
+      archived: true,
+    }));
+    let purged: string[] | null = null;
+    const base = library({ archived: many });
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = String(input);
-      const method = init?.method ?? 'GET';
-      if (method === 'DELETE' && url.includes('/v1/notes/')) {
-        archived.push(decodeURIComponent(url.split('/v1/notes/')[1] ?? ''));
-        return json({});
-      }
-      if (method === 'POST' && url.endsWith('/v1/notes/purge')) {
+      if ((init?.method ?? 'GET') === 'POST' && url.endsWith('/v1/notes/purge')) {
         const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
         purged = body.note_ids;
         return json({ results: purged.map((id) => ({ note_id: id, status: 'purged' })) });
       }
       return base(input, init);
     });
-    mount(fetchImpl);
+    mount(fetchImpl, '/?view=archived');
 
-    await startSelecting(user, 'Roof repair');
+    await startSelecting(user, 'Archived 0');
     await user.click(screen.getByRole('button', { name: 'Select all' }));
     await user.click(screen.getByRole('button', { name: 'Delete forever' }));
 
-    // Gated: the confirm stays disabled until the word is typed.
-    const confirm = await screen.findByRole('button', { name: 'Delete them forever' });
-    expect(confirm).toBeDisabled();
-    await user.type(screen.getByLabelText('Type "delete" to confirm'), 'delete');
+    const confirm = await screen.findByRole('button', { name: 'Hold to delete 11 notes' });
+    // A tap is not enough.
     await user.click(confirm);
+    expect(purged).toBeNull();
 
-    await waitFor(() => {
-      expect(purged).toEqual(TEST_NOTES.map((note) => note.id));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fireEvent.pointerDown(confirm, { button: 0 });
+    await act(async () => {
+      vi.advanceTimersByTime(HOLD_TO_DELETE_MS);
     });
-    // Every note was archived first, because the server only purges archived notes.
-    expect([...archived].sort()).toEqual(TEST_NOTES.map((note) => note.id).sort());
+    await waitFor(() => {
+      expect(purged).toEqual(many.map((note) => note.id));
+    });
     await waitFor(() => {
       expect(screen.queryByRole('toolbar')).toBeNull();
     });
   });
 
-  it('drops the chip of a tag whose last note was deleted forever', async () => {
+  it('drops the chip of a tag whose last note was deleted', async () => {
     /*
-     * QA D16: two notes tagged `bulkmobile`, select all, delete forever. The
-     * notes went, the chip stayed, and pressing it said "No notes are tagged
+     * QA D16: two notes tagged `bulkmobile`, select all, delete. The notes
+     * went, the chip stayed, and pressing it said "No notes are tagged
      * bulkmobile" until a reload — `['tags']` was never invalidated.
      */
     const user = userEvent.setup();
     setCanHover(true);
     let active: NoteWire[] = TEST_NOTES.map((note) => ({ ...note, tags: ['bulkmobile'] }));
+    // The archived page lists what went, so the device's copy stops calling it active.
+    const archivedNow: NoteWire[] = [];
     const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
       const url = new URL(String(input));
       const method = init?.method ?? 'GET';
-      if (method === 'DELETE' && url.pathname.includes('/v1/notes/')) return json({});
-      if (method === 'POST' && url.pathname.endsWith('/v1/notes/purge')) {
-        const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
-        active = active.filter((note) => !body.note_ids.includes(note.id));
-        return json({ results: body.note_ids.map((id) => ({ note_id: id, status: 'purged' })) });
+      if (method === 'DELETE' && url.pathname.includes('/v1/notes/')) {
+        const id = decodeURIComponent(url.pathname.split('/v1/notes/')[1] ?? '');
+        active = active.filter((note) => note.id !== id);
+        archivedNow.push({ ...TEST_NOTES.find((note) => note.id === id)!, archived: true });
+        return json({});
       }
       // Tags are derived from the active notes, as the real endpoint derives them.
       if (url.pathname.endsWith('/v1/tags')) {
@@ -689,7 +728,7 @@ describe('doing something to several notes at once', () => {
         return json({ items: [...names].map((name) => ({ name, count: 1 })) });
       }
       if (url.pathname.endsWith('/v1/notes')) {
-        return json({ items: url.searchParams.get('state') === 'archived' ? [] : active });
+        return json({ items: url.searchParams.get('state') === 'archived' ? archivedNow : active });
       }
       return json({ items: [] });
     });
@@ -698,9 +737,7 @@ describe('doing something to several notes at once', () => {
     expect(await screen.findByRole('button', { name: 'bulkmobile' })).toBeInTheDocument();
     await startSelecting(user, 'Roof repair');
     await user.click(screen.getByRole('button', { name: 'Select all' }));
-    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
-    await user.type(screen.getByLabelText('Type "delete" to confirm'), 'delete');
-    await user.click(screen.getByRole('button', { name: 'Delete them forever' }));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
@@ -785,9 +822,9 @@ describe('doing something to several notes at once', () => {
     await user.click(screen.getByRole('button', { name: 'Delete forever' }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(await screen.findByRole('button', { name: 'Delete them forever' })).toBeDisabled();
-    await user.type(await screen.findByLabelText(/type "delete" to confirm/i), 'delete');
-    await user.click(await screen.findByRole('button', { name: 'Delete them forever' }));
+    // Two notes: a plain confirm, nothing to type and nothing to hold.
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Delete them forever' }));
 
     await waitFor(() => {
       expect(purgeBody).toEqual({ note_ids: ARCHIVED_NOTES.map((n) => n.id) });

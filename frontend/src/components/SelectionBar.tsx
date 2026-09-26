@@ -13,8 +13,8 @@ import { useEffect, type ReactNode } from 'react';
  * would sit on it.
  *
  * Two lines by design: the count and Select all on the first, the actions and
- * Cancel on the second. One line of five pills wrapped wherever it ran out of
- * room — on a 412 px phone after "Archive", leaving "Delete forever · Cancel"
+ * Cancel on the second. One line of pills wrapped wherever it ran out of room
+ * — on a 412 px phone in the archive it left "Delete forever · Cancel"
  * orphaned beneath — and a wrap that lands differently per screen reads as an
  * accident. Two lines that always break in the same place read as a layout.
  *

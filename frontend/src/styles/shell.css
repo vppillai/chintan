@@ -1841,6 +1841,65 @@
   font-weight: var(--font-weight-medium);
 }
 
+/*
+ * The Undo toast: the same shell row as the prompt above, for the same
+ * reason. The outer `.toast` is the live region and is always displayed —
+ * `display: none` takes a `role="status"` node out of the accessibility tree,
+ * and a region that reappears together with its text is the case that is
+ * frequently not announced (VoiceOver especially). So the region itself has
+ * no footprint, and the card — ground, padding, shadow, the slide-up on the
+ * motion tokens, which reduced motion sets to a frame — is an inner element
+ * that exists only while there is something to say.
+ */
+.toast {
+  inline-size: calc(100% - 2 * var(--layout-gutter));
+  max-inline-size: var(--layout-card-max);
+  margin-inline: auto;
+}
+
+.toast__card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-block-end: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background-color: var(--color-ink);
+  color: var(--color-ground);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  animation: toast-in var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.toast__action {
+  flex-shrink: 0;
+  min-block-size: var(--layout-touch-target-min);
+  min-inline-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-ground);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-medium);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* The global ring is ink, and so is the card: on it the ring has to be ground. */
+.toast__action:focus-visible {
+  outline-color: var(--color-ground);
+}
+
+.toast__action:active {
+  background-color: var(--color-muted);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+
 /* --------------------------------------------------------------------------
    Confirm dialog
    -------------------------------------------------------------------------- */
@@ -1972,7 +2031,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   The typed confirmation, for the one action that cannot be undone
+   A text field inside a dialog: the move sheet's "Name the new note"
    -------------------------------------------------------------------------- */
 
 .dialog__gate {
@@ -1998,8 +2057,54 @@
   color: var(--color-ink);
 }
 
-/* A disabled confirm has to *look* disabled, or the gate reads as a broken
-   button rather than as a lock waiting to be opened. */
+/* --------------------------------------------------------------------------
+   Hold to confirm, for a bulk delete forever of many notes
+   -------------------------------------------------------------------------- */
+
+/*
+ * The fill grows across the button for the length of the hold (`--hold-ms`,
+ * set by the component), behind the label and above the button's own
+ * ground: within the button's stacking context a negative z-index child
+ * paints over the background and under the text. Letting go part-way clears
+ * `data-holding` and the fill snaps back. Under reduced motion the fill
+ * appears whole at once; the second's wait is the gate, the animation only
+ * shows it passing.
+ *
+ * `--color-destructive` rather than `--color-accent-strong`: in Nocturne
+ * accent-strong *is* the accent the button is painted with, so the fill was
+ * invisible in the dark theme. The destructive token differs from the accent
+ * in both themes and stays legible under `--color-on-accent`.
+ */
+.dialog__action--hold {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dialog__hold-fill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: var(--color-destructive);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.dialog__action--hold[data-holding] .dialog__hold-fill {
+  transform: scaleX(1);
+  transition: transform var(--hold-ms, 1s) linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog__action--hold[data-holding] .dialog__hold-fill {
+    transition: none;
+  }
+}
+
+/* A disabled confirm has to *look* disabled, or it reads as a broken button. */
 .dialog__action[disabled],
 .dialog__action--destructive[disabled] {
   background-color: var(--color-raised);
@@ -2772,8 +2877,8 @@
 }
 
 /* Delete wears the accent, as the confirm dialog's destructive control does:
-   the one consequential colour, on the one action here that ends in a
-   typed confirmation. */
+   the one consequential colour, on the one action here that takes something
+   away. */
 .swipe__action[data-destructive] {
   background-color: var(--color-accent);
   background-image: var(--gradient-lift);
@@ -2785,10 +2890,12 @@
   background-image: none;
 }
 
+/* Centred so "Delete forever" can break onto two lines in the tray's 72 px. */
 .swipe__action-label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-wide);
+  text-align: center;
 }
 
 /* The note row's tray takes the row's corners. */

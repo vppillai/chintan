@@ -39,7 +39,7 @@ async function longPress(page: Page, selector: string): Promise<void> {
   await target.dispatchEvent('pointerup', { pointerType: 'touch', bubbles: true });
 }
 
-test('a recording can be deleted with its paragraph, behind a typed word', async ({ page, api }) => {
+test('a recording can be deleted with its paragraph, behind a plain confirm', async ({ page, api }) => {
   await page.goto(RECORDINGS);
   await expect(page.getByRole('button', { name: ROW })).toBeVisible();
 
@@ -48,10 +48,9 @@ test('a recording can be deleted with its paragraph, behind a typed word', async
 
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText(/paragraph it dictated/i);
-  const confirm = dialog.getByRole('button', { name: 'Delete it' });
-  await expect(confirm).toBeDisabled();
-  await dialog.getByRole('textbox').fill('delete');
-  await confirm.click();
+  // Nothing to type (owner, 2026-09-26): the sentence is the warning.
+  await expect(dialog.getByRole('textbox')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Delete it' }).click();
 
   await expect(page.getByRole('button', { name: ROW })).toHaveCount(0);
   await expect(page.getByText('Recording deleted')).toBeVisible();
@@ -71,7 +70,6 @@ test('a recording that is still filing cannot be deleted yet, and the screen say
 
   await page.getByRole('button', { name: ROW }).click();
   await page.getByRole('menuitem', { name: 'Delete recording' }).click();
-  await page.getByRole('dialog').getByRole('textbox').fill('delete');
   await page.getByRole('button', { name: 'Delete it' }).click();
 
   await expect(page.getByText('Wait until it has finished filing.')).toBeVisible();

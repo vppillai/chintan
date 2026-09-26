@@ -563,7 +563,7 @@ describe('a row swiped aside', () => {
     ).toEqual(['Move', 'Delete']);
   });
 
-  it('Delete opens the same typed confirmation the menu does; Move the same sheet', async () => {
+  it('Delete opens the same confirmation the menu does; Move the same sheet', async () => {
     const user = userEvent.setup();
     bucketStub();
     mount(apiStub().fetchImpl);
@@ -571,8 +571,9 @@ describe('a row swiped aside', () => {
 
     swipeOpen(summary);
     await user.click(screen.getByRole('button', { name: 'Delete' }));
-    expect(await screen.findByRole('dialog', { name: 'Delete this recording?' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Type "delete" to confirm')).toBeInTheDocument();
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this recording?' });
+    // Nothing to type (owner, 2026-09-26): the sentence is the warning.
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     swipeOpen(summary);
@@ -594,7 +595,7 @@ describe('a row swiped aside', () => {
 });
 
 describe('deleting a recording', () => {
-  it('asks for the word, deletes the capture, drops the row and refetches the note', async () => {
+  it('confirms plainly, deletes the capture, drops the row and refetches the note', async () => {
     const user = userEvent.setup();
     bucketStub();
     const api = apiStub();
@@ -606,10 +607,8 @@ describe('deleting a recording', () => {
     const dialog = await screen.findByRole('dialog');
     // It says what else goes: the paragraph the recording dictated.
     expect(dialog).toHaveTextContent(/paragraph it dictated/i);
-    const confirm = within(dialog).getByRole('button', { name: 'Delete it' });
-    expect(confirm).toBeDisabled();
-    await user.type(within(dialog).getByLabelText('Type "delete" to confirm'), 'delete');
-    await user.click(confirm);
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Delete it' }));
 
     await waitFor(() => {
       expect(api.calls).toContainEqual(
@@ -650,8 +649,7 @@ describe('deleting a recording', () => {
 
     await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete recording' }));
-    await user.type(await screen.findByLabelText('Type "delete" to confirm'), 'delete');
-    await user.click(screen.getByRole('button', { name: 'Delete it' }));
+    await user.click(await screen.findByRole('button', { name: 'Delete it' }));
 
     expect(await screen.findByText('Wait until it has finished filing.')).toBeInTheDocument();
     // The row stays.
@@ -918,7 +916,7 @@ describe('selecting several recordings', () => {
     }
   });
 
-  it('deletes every selected recording behind one typed confirmation', async () => {
+  it('deletes every selected recording behind one plain confirmation', async () => {
     const user = userEvent.setup();
     bucketStub();
     const api = apiStub(TWO);
@@ -931,7 +929,7 @@ describe('selecting several recordings', () => {
     await user.click(within(bar).getByRole('button', { name: 'Delete' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Delete 2 recordings?' });
-    await user.type(within(dialog).getByLabelText('Type "delete" to confirm'), 'delete');
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
     await user.click(within(dialog).getByRole('button', { name: 'Delete them' }));
 
     await waitFor(() => {

@@ -3,7 +3,8 @@ import type { Page } from '@playwright/test';
 import { expect, noteAction, test } from './fixtures.ts';
 
 /**
- * Removing a note: archive, see the archive, restore, delete forever.
+ * Removing a note: delete (the archive), see the archive, undo or restore,
+ * delete forever.
  *
  * All four operations the backend serves and `endpoints.ts` wraps must be
  * reachable from a control. Without them the app is append-only: every
@@ -12,24 +13,75 @@ import { expect, noteAction, test } from './fixtures.ts';
  * screen's "may have been archived or purged" describes two states the UI can
  * neither produce nor show.
  *
+ * No typed word anywhere (owner, 2026-09-26: "I have to type delete. I don't
+ * like that UX"). Delete on Home archives on the tap and offers Undo in a
+ * toast; Delete forever, in the archive, is a plain confirm.
+ *
  * These run against the stubbed API in `fixtures.ts`, which implements the same
  * four operations `openapi.yaml` declares.
  */
 
-test('a note can be archived from its own screen', async ({ page, api }) => {
+/** Tabs forward until the named button has focus, so Undo is reached as a keyboard would. */
+async function tabTo(page: Page, name: string): Promise<void> {
+  for (let i = 0; i < 40; i += 1) {
+    if (await page.getByRole('button', { name }).evaluate((el) => el === document.activeElement)) return;
+    await page.keyboard.press('Tab');
+  }
+  throw new Error(`Tab never reached "${name}"`);
+}
+
+test('Delete on a note archives it with no dialog, and Undo on the library restores it', async ({
+  page,
+  api,
+}) => {
   await page.goto('/notes/roof-repair');
   await expect(page.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
 
-  await noteAction(page, 'Archive');
+  await noteAction(page, 'Delete');
 
-  // Archiving is reversible, so it asks once and plainly rather than demanding
-  // the title be typed — that discipline is reserved for the irreversible one.
-  await page.getByRole('button', { name: 'Archive it' }).click();
-
-  // Back on the library, and the app is not left sitting on a note that is gone.
+  // No dialog: back on the library, and the app is not left sitting on a note that is gone.
+  await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('button', { name: /roof repair/i })).toHaveCount(0);
   expect(api.notes['roof-repair']?.archived).toBe(true);
+
+  // The toast says where it went and offers the way back, in a polite live region.
+  const toast = page.locator('.toast');
+  await expect(toast).toHaveAttribute('aria-live', 'polite');
+  await expect(toast).toContainText('Deleted · kept in Archive for 30 days');
+  await toast.getByRole('button', { name: 'Undo' }).click();
+
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+  expect(api.notes['roof-repair']?.archived).toBe(false);
+  await expect(toast).toBeEmpty();
+});
+
+test('Delete on a row archives it, and Undo is reached from the keyboard', async ({ page, api }) => {
+  await page.goto('/');
+  const row = page.getByRole('button', { name: /roof repair/i });
+  await row.hover();
+  await page.locator('.note-row-wrap', { has: row }).getByRole('button', { name: 'More' }).click();
+  // The row's ⋮ has Pin, Delete and Select — no separate Archive on Home.
+  await expect(page.getByRole('menuitem')).toHaveText(['Pin', 'Delete', 'Select']);
+  await page.getByRole('menuitem', { name: 'Delete' }).click();
+
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+  expect(api.notes['roof-repair']?.archived).toBe(true);
+
+  await tabTo(page, 'Undo');
+  // The ring has to be seen on the ink card: the global ring is ink too.
+  const ring = await page.getByRole('button', { name: 'Undo' }).evaluate((el) => ({
+    style: getComputedStyle(el).outlineStyle,
+    outline: getComputedStyle(el).outlineColor,
+    card: getComputedStyle(el.closest('.toast__card')!).backgroundColor,
+  }));
+  expect(ring.style).not.toBe('none');
+  expect(ring.outline).not.toBe(ring.card);
+
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+  expect(api.notes['roof-repair']?.archived).toBe(false);
 });
 
 test('the archive is a chip on the library, and says when each note is purged', async ({
@@ -75,7 +127,7 @@ test('an archived note can be restored', async ({ page, api }) => {
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
 });
 
-test('delete forever is gated by typing "delete", and cascades', async ({ page, api }) => {
+test('delete forever is a plain confirm with focus on Cancel, and cascades', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
   await noteAction(page, 'Delete forever');
@@ -86,15 +138,12 @@ test('delete forever is gated by typing "delete", and cascades', async ({ page, 
   // recoverable either, and a dialog that only names the note is not consent.
   await expect(dialog).toContainText(/recordings and transcripts/i);
 
-  // And which note: the title is in the sentence, not the thing to type.
+  // And which note: the title is in the sentence. There is nothing to type,
+  // and Enter lands on Cancel.
   await expect(dialog).toContainText('Old fence');
+  await expect(dialog.getByRole('textbox')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
   const confirm = dialog.getByRole('button', { name: 'Delete forever' });
-  await expect(confirm).toBeDisabled();
-
-  await dialog.getByRole('textbox').fill('delet');
-  await expect(confirm).toBeDisabled();
-
-  await dialog.getByRole('textbox').fill('delete');
   await expect(confirm).toBeEnabled();
   await confirm.click();
 
@@ -104,8 +153,8 @@ test('delete forever is gated by typing "delete", and cascades', async ({ page, 
 });
 
 /**
- * Bulk select, the same bar in both views: Archive from the library, Restore
- * from the archive, Delete forever in either behind a typed word.
+ * Bulk select, the same bar in both views: Delete from the library (the
+ * archive, with Undo), Restore and Delete forever from the archive.
  *
  * There is no Select button and no hover checkbox (owner, 2026-09-24: "not
  * clean UX"). A press-and-hold on a row starts the selection with a mouse
@@ -122,7 +171,10 @@ async function startSelecting(page: Page, title: RegExp): Promise<void> {
   await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
 }
 
-test('several notes can be archived at once from the library', async ({ page, api }) => {
+test('several notes can be deleted at once from the library, and Undo brings them all back', async ({
+  page,
+  api,
+}) => {
   await page.goto('/');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Select' })).toHaveCount(0);
@@ -137,14 +189,25 @@ test('several notes can be archived at once from the library', async ({ page, ap
   const tabs = await page.locator('.tab-bar').boundingBox();
   expect(bar!.y + bar!.height).toBeLessThanOrEqual(tabs!.y + 1);
 
-  await page.getByRole('toolbar', { name: 'Bulk actions' }).getByRole('button', { name: 'Archive' }).click();
-  await page.getByRole('button', { name: 'Archive them' }).click();
+  // One destructive action, no dialog.
+  const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
+  await expect(toolbar.getByRole('button')).toHaveText(['Deselect all', 'Delete', 'Cancel']);
+  await toolbar.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 
   await expect(page.getByText(/tap record to make your first note/i)).toBeVisible();
   expect(api.notes['roof-repair']?.archived).toBe(true);
   expect(api.notes['reading-list']?.archived).toBe(true);
   // And the chip now counts them.
   await expect(page.getByRole('button', { name: 'Archived · 4' })).toBeVisible();
+
+  const toast = page.locator('.toast');
+  await expect(toast).toContainText('2 notes deleted · kept in Archive for 30 days');
+  await toast.getByRole('button', { name: 'Undo' }).click();
+  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /reading list/i })).toBeVisible();
+  expect(api.notes['roof-repair']?.archived).toBe(false);
+  expect(api.notes['reading-list']?.archived).toBe(false);
 });
 
 test.describe('on a phone', () => {
@@ -170,10 +233,7 @@ test.describe('on a phone', () => {
   });
 });
 
-test('the archive can be emptied: select all, delete forever, type the word', async ({
-  page,
-  api,
-}) => {
+test('the archive can be emptied: select all, delete forever, confirm', async ({ page, api }) => {
   await page.goto('/?view=archived');
   await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
 
@@ -181,16 +241,64 @@ test('the archive can be emptied: select all, delete forever, type the word', as
   await page.getByRole('button', { name: 'Select all' }).click();
   await page.getByRole('button', { name: 'Delete forever' }).click();
 
+  // A handful of notes: a plain confirm. More than ten would be a held press.
   const dialog = page.getByRole('dialog');
-  const confirm = dialog.getByRole('button', { name: 'Delete them forever' });
-  await expect(confirm).toBeDisabled();
-  await dialog.getByRole('textbox').fill('delete');
-  await confirm.click();
+  await expect(dialog.getByRole('textbox')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Delete them forever' }).click();
 
   await expect(page.getByText(/nothing is archived/i)).toBeVisible();
   expect(api.notes['old-fence']).toBeUndefined();
   expect(api.notes['stray-thought']).toBeUndefined();
   // The active notes were never touched.
+  expect(api.notes['roof-repair']).toBeDefined();
+});
+
+test('emptying an archive of more than ten notes takes a held press: a click does nothing, a second held does', async ({
+  page,
+  api,
+}) => {
+  for (let i = 0; i < 11; i += 1) {
+    api.notes[`stale-${String(i)}`] = {
+      id: `stale-${String(i)}`,
+      title: `Stale ${String(i)}`,
+      body: 'Nothing came of it.',
+      snippet: 'Nothing came of it.',
+      tags: [],
+      aliases: [],
+      updated_at: new Date(Date.UTC(2026, 5, 1 + i)).toISOString(),
+      version: 1,
+      archived: true,
+      captures: [],
+    };
+  }
+  await page.goto('/?view=archived');
+  await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
+
+  await startSelecting(page, /old fence/i);
+  await page.getByRole('button', { name: 'Select all' }).click();
+  await expect(page.getByText('13 selected')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete forever' }).click();
+
+  const dialog = page.getByRole('dialog');
+  const confirm = dialog.getByRole('button', { name: 'Hold to delete 13 notes' });
+  // A click is a tap, and a tap is not a hold.
+  await confirm.click();
+  await expect(dialog).toBeVisible();
+  expect(api.purged).toEqual([]);
+
+  // A real mouse button, held for the second: `touch-action`, the CSS
+  // variable the fill runs on and the pointer's click afterwards, all in a
+  // browser rather than jsdom.
+  const box = (await confirm.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(confirm).toHaveAttribute('data-holding', 'true');
+  await page.waitForTimeout(1100);
+  await page.mouse.up();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(/nothing is archived/i)).toBeVisible();
+  expect(api.purged).toHaveLength(13);
   expect(api.notes['roof-repair']).toBeDefined();
 });
 

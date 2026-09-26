@@ -18,6 +18,7 @@ import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 import { RecordingIndicator } from './RecordingIndicator.tsx';
 import { StatusRegion } from './StatusRegion.tsx';
 import { TabBar } from './TabBar.tsx';
+import { Toast } from './Toast.tsx';
 
 /** Which of the app's surfaces a URL is. Drives layout and announcements. */
 export type Screen = 'library' | 'note' | 'you' | 'usage' | 'about' | 'capture' | 'talk' | 'other';
@@ -155,10 +156,11 @@ export function AppShell() {
         {screen !== 'capture' && <RecordingIndicator />}
 
         {/*
-          Above the bar, not over it. The update prompt is a shell row, so it
-          can never cover the record button — which is what it did while it was
-          a fixed-position toast.
+          Above the bar, not over it. The update prompt and the Undo toast are
+          shell rows, so they can never cover the record button — which is
+          what the prompt did while it was a fixed-position toast.
         */}
+        <Toast />
         <UpdatePrompt />
 
         {screen !== 'capture' && <TabBar />}
