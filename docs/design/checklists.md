@@ -74,8 +74,9 @@ transcript would refuse the STT-garbling fix the prompt asks for, and a rule
 dropping an item equal to the title would silently lose "add batteries" to a
 list titled Batteries. An item the prompt should not have produced is visible
 in the list and one tap from gone; a dropped one is lost. So an invented item
-is caught only by the live evaluation (`provider.TestLiveChecklistItems`,
-run against the real model before a prompt change ships) —
+is caught only by the live evaluation (`provider.TestLiveEval/items` over
+`testdata/eval/fixtures.json`, run against the real model before a prompt
+change ships; `docs/design/prompts.md`) —
 `ChecklistItemsExtracted{Outcome=items}` counts recordings, not whether their
 items were spoken.
 

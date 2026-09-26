@@ -67,14 +67,12 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 }
 
 // routeReply is the part of the router's answer that says which words to drop.
-// Pointers distinguish a field the model left out from one it set to empty.
+// The pointer distinguishes a field the model left out from one it set to
+// empty. Until 2026-09-26 it also carried the pre-spans contract's `content`
+// field, accepted when verbatim; that path fired zero times in the week
+// measured (round-5 prompts lens, F3) and is gone.
 type routeReply struct {
 	Spans *[]routing.Span
-	// Content is the pre-span contract, honoured only when a model still
-	// answers with it and only when it is verbatim. It costs nothing to accept
-	// and keeps a model that ignores the new format from filing the instruction
-	// into the note.
-	Content *string
 }
 
 // routedContent derives the note content from the transcript and the router's
@@ -89,14 +87,8 @@ func routedContent(ctx context.Context, transcript, title string, reply routeRep
 	dictated := len(routing.Words(transcript))
 
 	if reply.Spans == nil {
-		if reply.Content != nil && llm.VerifySubsequence(*reply.Content, transcript) && strings.TrimSpace(*reply.Content) != "" {
-			obs.Count(ctx, "RouterLegacyContent", map[string]string{"Outcome": "accepted"})
-			return strings.TrimSpace(*reply.Content)
-		}
 		// No spans at all is a router that ignored the format, not an answer.
-		legacyField := reply.Content != nil
-		return discard("missing_field", "router returned no instruction_spans; keeping the dictation",
-			slog.Bool("legacy_content_field", legacyField))
+		return discard("missing_field", "router returned no instruction_spans; keeping the dictation")
 	}
 
 	content, err := routing.RemoveSpans(transcript, *reply.Spans)
@@ -149,8 +141,8 @@ func sanitizeTitle(title string) string {
 }
 
 // parseRouteDecision tolerates markdown fences and surrounding prose. The reply
-// carries the span list (or the legacy content field) as the model gave it, so
-// routedContent can tell "nothing to remove" from "ignored the format".
+// carries the span list as the model gave it, so routedContent can tell
+// "nothing to remove" from "ignored the format".
 func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 	jsonText, err := llm.ExtractJSONObject(raw)
 	if err != nil {
@@ -167,7 +159,6 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 			StartWord *float64 `json:"start_word"`
 			EndWord   *float64 `json:"end_word"`
 		} `json:"instruction_spans"`
-		Content *string `json:"content"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &parsed); err != nil {
 		return RouteDecision{}, routeReply{}, fmt.Errorf("provider: decode route decision: %w", err)
@@ -197,7 +188,7 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 	}
 	decision.Title = sanitizeTitle(decision.Title)
 
-	reply := routeReply{Content: parsed.Content}
+	var reply routeReply
 	if parsed.Spans != nil {
 		spans := make([]routing.Span, 0, len(*parsed.Spans))
 		for _, s := range *parsed.Spans {

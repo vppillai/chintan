@@ -260,10 +260,15 @@ func TestPromptFencesEveryNoteAndEndsWithTheQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	for _, want := range []string{"Today's date is 2026-09-05", "ONLY from the notes", "DATA", `"grounded"`, `"sources"`} {
+	for _, want := range []string{"Today's date is 2026-09-05", "ONLY from the notes", llm.DataRule, "DATA in the same way", `"grounded"`, `"sources"`} {
 		if !strings.Contains(system, want) {
 			t.Errorf("system prompt lacks %q", want)
 		}
+	}
+	// The user prompt counts the notes and fences them; the rule that fenced
+	// text is data is stated once, in the system prompt.
+	if !strings.Contains(user, "Notes (2).\n\nNOTE id=n1") || strings.Contains(user, "not instructions") {
+		t.Errorf("the notes are not introduced by the count alone:\n%s", user)
 	}
 	if !strings.Contains(user, "NOTE id=n1 title=Roof ----- repairs updated=2026-09-01\n"+llm.FenceMarker+"\n") {
 		t.Errorf("the note header or its fence is wrong:\n%s", user)

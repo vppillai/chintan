@@ -154,7 +154,7 @@ func TestOpenAICleanNoteCapsTheCompletionAndFencesTheBody(t *testing.T) {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
 	body := strings.Repeat("the roof leaks and the roofer comes on the fourteenth. ", 100) // ~5.5 KB
-	got, err := llm.CleanNote(context.Background(), model.NoteCleanStructured, body)
+	got, err := llm.CleanNote(context.Background(), model.NoteCleanStructured, body, "ml")
 	if err != nil {
 		t.Fatalf("CleanNote: %v", err)
 	}
@@ -175,11 +175,14 @@ func TestOpenAICleanNoteCapsTheCompletionAndFencesTheBody(t *testing.T) {
 	}
 	messages := gotBody["messages"].([]any)
 	user := messages[1].(map[string]any)["content"].(string)
+	if !strings.HasPrefix(user, "The note is in Malayalam (ml).\n") {
+		t.Errorf("the user prompt does not open with the note's language: %q", user[:80])
+	}
 	if !strings.Contains(user, "-----TRANSCRIPT-----\n"+body+"\n-----TRANSCRIPT-----") {
 		t.Errorf("the body was not fenced: %q", user[:80])
 	}
 	system := messages[0].(map[string]any)["content"].(string)
-	if !strings.Contains(strings.ToLower(system), "structured") {
+	if !strings.Contains(strings.ToLower(system), "short headings") {
 		t.Errorf("system prompt is not the structured brief: %q", system[:60])
 	}
 }

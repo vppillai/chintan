@@ -237,13 +237,14 @@ func (f *LLM) AskCalls() []ask.Prompt {
 
 // NoteCall is one CleanNote request as the fake saw it.
 type NoteCall struct {
-	Mode model.NoteCleanMode
-	Body string
+	Mode     model.NoteCleanMode
+	Body     string
+	Language string
 }
 
-func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (provider.Cleaned, error) {
+func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language string) (provider.Cleaned, error) {
 	f.mu.Lock()
-	f.noteCalls = append(f.noteCalls, NoteCall{Mode: mode, Body: body})
+	f.noteCalls = append(f.noteCalls, NoteCall{Mode: mode, Body: body, Language: language})
 	call := len(f.noteCalls) - 1
 	f.mu.Unlock()
 
