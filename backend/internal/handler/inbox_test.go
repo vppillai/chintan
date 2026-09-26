@@ -117,11 +117,11 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 		t.Fatalf("api_requests for the tenant = %d, want the device's request counted", n)
 	}
 
-	// One InboxKeyRefused per refusal, by reason. The revoked key reads as
-	// unknown: the revoke dropped the row's index keys, so the lookup does
-	// not find it.
+	// One InboxKeyRefused per refusal, by reason. The revoked key counts as
+	// revoked: the memory store returns the row as the index does for the
+	// moment after a revoke, and Authenticate reads revoked_at.
 	wantReasons["daily_limit"]++
-	wantReasons["unknown"]++
+	wantReasons["revoked"]++
 	got := map[string]int{}
 	for _, line := range strings.Split(metrics.String(), "\n") {
 		if !strings.Contains(line, `"InboxKeyRefused"`) {
@@ -140,10 +140,10 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	// The WARN names the device id and the reason, once per refusal whose id
 	// parsed: the malformed ones say nothing, so a probe writes nothing.
 	refusedLines := strings.Count(logs.String(), `"device key refused"`)
-	if wantLines := wantReasons["wrong_secret"] + wantReasons["unknown"] + wantReasons["daily_limit"]; refusedLines != wantLines {
+	if wantLines := wantReasons["wrong_secret"] + wantReasons["unknown"] + wantReasons["revoked"] + wantReasons["daily_limit"]; refusedLines != wantLines {
 		t.Errorf("%d 'device key refused' lines, want %d:\n%s", refusedLines, wantLines, logs.String())
 	}
-	for _, want := range []string{`"device_id":"` + created.ID + `"`, `"reason":"wrong_secret"`, `"reason":"daily_limit"`, `"reason":"unknown"`} {
+	for _, want := range []string{`"device_id":"` + created.ID + `"`, `"reason":"wrong_secret"`, `"reason":"daily_limit"`, `"reason":"unknown"`, `"reason":"revoked"`} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("the log lacks %s:\n%s", want, logs.String())
 		}

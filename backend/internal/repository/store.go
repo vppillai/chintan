@@ -326,7 +326,10 @@ type Store interface {
 	ListDevices(ctx context.Context, tenantID string) ([]model.Device, error)
 	// LookupDeviceKey finds the device a key id belongs to, in whatever
 	// tenant, through the sparse GSI1 keys — the inbox's one read that does
-	// not start from a tenant. A revoked or unknown id is ErrNotFound.
+	// not start from a tenant. An unknown id is ErrNotFound. A revoked row
+	// is returned as it is while the index still carries its entry (the
+	// moment after the revoke; always, in the memory store), and the caller
+	// refuses it by revoked_at.
 	LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error)
 
 	// PutAsk writes a question row (sk ASK#<id>) whole, replacing what is

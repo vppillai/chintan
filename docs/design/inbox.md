@@ -192,8 +192,10 @@ both fields out, and the wire test pins that.
   the dimensionless rollup the alarm reads), and a WARN `device key refused`
   names the device id and the reason once the id parsed — a malformed key
   logs nothing, so a probe cannot write bytes of its choosing into the log.
-  A revoked key normally counts as `unknown`, since the revoke drops the
-  row's index keys. The `InboxKeyRefusedAlarm` (Sum ≥ 25 per 15 minutes on
+  A revoked key counts as `revoked` while the index still carries its entry
+  (the moment after the revoke) and as `unknown` once the revoke has dropped
+  the row's index keys, so a device still sending a long-revoked key shows
+  under `unknown`. The `InboxKeyRefusedAlarm` (Sum ≥ 25 per 15 minutes on
   the rollup) e-mails when a key is being guessed or a device is still
   sending with a revoked or exhausted one. The 401 itself is unchanged.
 - No key material in logs or responses beyond the 201 that issues it; the

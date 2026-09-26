@@ -237,9 +237,11 @@ func (s *DeviceService) RevokeDevice(ctx context.Context, userID, deviceID strin
 // so a key hammered past the limit costs one read per request and no write.
 // Each is wrapped in a DeviceRefusal that says which, for the metric.
 //
-// A revoked key normally reads as unknown rather than revoked: the revoke
-// drops the row's index keys, so the lookup does not find it. The revoked
-// reason is for the moment between the revoke and the index catching up.
+// A revoked key reads as revoked while the index still carries its entry —
+// the moment after the revoke on DynamoDB, always on the memory store — and
+// as unknown once the revoke has dropped the row's index keys and the
+// lookup no longer finds it, so a device still sending a key revoked long
+// ago shows up under unknown.
 //
 // The counter and last_used_at are written under the row's version, so a
 // revoke landing between the read and the write is not overwritten: the

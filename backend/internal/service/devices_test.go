@@ -202,12 +202,15 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 		t.Fatalf("first request of October: %+v, %v", got, err)
 	}
 
-	// Revoked: unknown from then on, and revoking again is not an error.
+	// Revoked: unknown on the wire from then on and revoked underneath (the
+	// memory store returns the row, as the index does for the moment after a
+	// revoke); revoking again is not an error.
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) {
-		t.Fatalf("revoked key: %v", err)
+	var revoked *DeviceRefusal
+	if _, err := svc.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &revoked) || revoked.Reason != "revoked" || revoked.DeviceID != device.ID {
+		t.Fatalf("revoked key: %v (refusal %+v)", err, revoked)
 	}
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
 		t.Fatalf("second revoke: %v", err)

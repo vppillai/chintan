@@ -2037,7 +2037,10 @@ func (s *DynamoStore) ListDevices(ctx context.Context, tenantID string) ([]model
 // LookupDeviceKey is one index read for the row's keys and one GetItem for
 // the row: the index projects captures' attributes, not a device's, and a
 // device row is small enough that the second read costs less than widening
-// the projection would (an index rebuild).
+// the projection would (an index rebuild). The row comes back as it is,
+// revoked or not: a revoke drops the index keys, but the index can carry
+// the entry for a moment longer, and the caller's revoked_at check is what
+// tells that case apart from a key never issued.
 func (s *DynamoStore) LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error) {
 	if err := ctx.Err(); err != nil {
 		return model.Device{}, err
@@ -2060,15 +2063,7 @@ func (s *DynamoStore) LookupDeviceKey(ctx context.Context, keyID string) (model.
 	}
 	raw := out.Items[0]
 	tenantID := trimPrefix(readString(raw, "pk"), "USER#")
-	d, err := s.GetDevice(ctx, tenantID, trimPrefix(readString(raw, "sk"), "DEVICE#"))
-	if err != nil {
-		return model.Device{}, err
-	}
-	if d.Revoked() {
-		// The index entry outlived the revoke by a moment.
-		return model.Device{}, ErrNotFound
-	}
-	return d, nil
+	return s.GetDevice(ctx, tenantID, trimPrefix(readString(raw, "sk"), "DEVICE#"))
 }
 
 func (s *DynamoStore) PutAsk(ctx context.Context, tenantID string, a model.Ask) error {
