@@ -445,119 +445,19 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		return note, repository.ErrVersionConflict
 	}
 
-	// Apply updates
-	if updates.Title != nil {
-		title := sanitizeNoteTitle(*updates.Title)
-		if title == "" {
-			return model.NoteIndex{}, ErrEmptyNoteTitle
-		}
-		note.Title = title
-	}
-	if updates.Aliases != nil {
-		note.Aliases = *updates.Aliases
-	}
-	if updates.Tags != nil {
-		note.Tags = normalizeTags(*updates.Tags)
-	}
-	if updates.Verbatim != nil {
-		note.Verbatim = *updates.Verbatim
-	}
-	if updates.Language != nil {
-		lang := strings.ToLower(strings.TrimSpace(*updates.Language))
-		if lang != "" && !model.ValidLanguage(lang) {
-			return model.NoteIndex{}, ErrInvalidLanguage
-		}
-		note.Language = lang
-	}
-	if updates.AutoClean != nil {
-		note.AutoClean = *updates.AutoClean
-	}
-	if updates.Kind != nil {
-		if !model.ValidNoteKind(*updates.Kind) {
-			return model.NoteIndex{}, ErrInvalidNoteKind
-		}
-		note.Kind = *updates.Kind
-	}
-	if updates.CleanMode != nil {
-		// Checked against the kind as this request leaves it, so a note can
-		// become a checklist and take tasks in one PATCH.
-		if err := CheckCleanMode(note, *updates.CleanMode); err != nil {
-			return model.NoteIndex{}, err
-		}
-		note.CleanMode = *updates.CleanMode
-	}
-	if updates.Pinned != nil {
-		switch {
-		case *updates.Pinned && !note.Pinned():
-			// A new pin lands last: its rank is one step past the highest in
-			// use, from the same drain that counts the pins for the limit.
-			// One drain of the partition, on a pin alone.
-			pinned, nextRank, err := s.countPinned(ctx, userID)
-			if err != nil {
-				return model.NoteIndex{}, err
-			}
-			if pinned >= model.MaxPinnedNotes {
-				return model.NoteIndex{}, ErrPinLimit
-			}
-			note.PinnedAt = model.FormatTime(s.now())
-			note.PinRank = nextRank
-		case !*updates.Pinned:
-			note.PinnedAt, note.PinRank = "", 0
-		}
+	touched, err := s.applyNoteUpdates(ctx, userID, &note, updates)
+	if err != nil {
+		return model.NoteIndex{}, err
 	}
 
-	// A pin is not an edit: it moves the note into the Pinned group, not
-	// among the days, so only a change to what the note says or is bumps
-	// updated_at and rewrites the meta object below. The version still moves,
-	// through putCarryingStamp. Before this, an unpinned note re-filed under
-	// Today and a pinned row read as edited just now (review 2026-09-24 R4-1).
-	touched := updates.Title != nil || updates.Aliases != nil || updates.Tags != nil ||
-		updates.Body != nil || updates.Verbatim != nil || updates.Language != nil ||
-		updates.AutoClean != nil || updates.CleanMode != nil || updates.Kind != nil
-	if touched {
-		note.UpdatedAt = model.Now()
-	}
-
-	// Handle body update. The client sends its whole draft with a Details
-	// change (language, kind, word-for-word, auto-clean), and a body that
-	// reads the same as the stored one is not an edit: CarryCaptureMarkers
-	// hands the stored bytes back for it, and nothing below is done — a
-	// language change that marked the cleaned view stale had the Split up tab
-	// offer a pointless Regenerate (review 2026-09-21 r4).
 	if updates.Body != nil {
-		body := CarryCaptureMarkers(string(storedBody), *updates.Body)
-		if body != string(storedBody) {
-			// Write to markdown file, conditional on the object still carrying the
-			// ETag read above. An unconditional Put here destroys a voice append
-			// that landed in the meantime and only then reports the conflict — the
-			// client is told to re-read text that no longer exists anywhere.
-			err = s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(body), "text/markdown", bodyETag)
-			if errors.Is(err, repository.ErrPreconditionFailed) {
-				// Somebody else wrote the body between the read and this write.
-				// That is the same 409 the version check answers, and the client
-				// reconciles it the same way.
-				return note, repository.ErrVersionConflict
+		if err := s.writeNoteBody(ctx, &note, storedBody, bodyETag, *updates.Body); err != nil {
+			if errors.Is(err, repository.ErrVersionConflict) {
+				// The row as read, for the client to reconcile against: the
+				// same answer the version check above gives.
+				return note, err
 			}
-			if err != nil {
-				return model.NoteIndex{}, fmt.Errorf("failed to update markdown: %w", err)
-			}
-
-			// Update snippet (first ~500 chars) and the search text, which are the
-			// two derivations of the body the index row carries.
-			note.Snippet = generateSnippet(*updates.Body)
-			note.SearchText = SearchText(*updates.Body)
-			// The cleaned view was generated from the body that just changed —
-			// unless the change was to adopt the view itself ("Use this list"): a
-			// body equal to CleanedBody, trailing whitespace aside, IS the view,
-			// so it is current whatever an earlier edit had marked it. Left
-			// stale, the tab offered to regenerate a list identical to the note
-			// (smoke 2026-09-21, finding 3).
-			trim := func(s string) string { return strings.TrimRightFunc(s, unicode.IsSpace) }
-			if note.CleanedBody != "" && trim(*updates.Body) == trim(note.CleanedBody) {
-				note.CleanedStale = false
-			} else {
-				MarkCleanedStale(&note)
-			}
+			return model.NoteIndex{}, err
 		}
 	}
 
@@ -583,6 +483,134 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	// between the read and this write; the caller reconciles rather than one of
 	// the two edits vanishing.
 	return s.putCarryingStamp(ctx, userID, note)
+}
+
+// applyNoteUpdates writes each field the PATCH names onto note, validating as
+// it goes, and reports whether any of them was an edit: a change to what the
+// note says or is, which is what bumps updated_at and has UpdateNote rewrite
+// the meta object.
+//
+// A pin is not an edit: it moves the note into the Pinned group, not among
+// the days, so it is left out of touched. The version still moves, through
+// putCarryingStamp. Before this, an unpinned note re-filed under Today and a
+// pinned row read as edited just now (review 2026-09-24 R4-1).
+func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note *model.NoteIndex, updates NoteUpdates) (touched bool, err error) {
+	if updates.Title != nil {
+		title := sanitizeNoteTitle(*updates.Title)
+		if title == "" {
+			return false, ErrEmptyNoteTitle
+		}
+		note.Title = title
+	}
+	if updates.Aliases != nil {
+		note.Aliases = *updates.Aliases
+	}
+	if updates.Tags != nil {
+		note.Tags = normalizeTags(*updates.Tags)
+	}
+	if updates.Verbatim != nil {
+		note.Verbatim = *updates.Verbatim
+	}
+	if updates.Language != nil {
+		lang := strings.ToLower(strings.TrimSpace(*updates.Language))
+		if lang != "" && !model.ValidLanguage(lang) {
+			return false, ErrInvalidLanguage
+		}
+		note.Language = lang
+	}
+	if updates.AutoClean != nil {
+		note.AutoClean = *updates.AutoClean
+	}
+	if updates.Kind != nil {
+		if !model.ValidNoteKind(*updates.Kind) {
+			return false, ErrInvalidNoteKind
+		}
+		note.Kind = *updates.Kind
+	}
+	if updates.CleanMode != nil {
+		// Checked against the kind as this request leaves it, so a note can
+		// become a checklist and take tasks in one PATCH.
+		if err := CheckCleanMode(*note, *updates.CleanMode); err != nil {
+			return false, err
+		}
+		note.CleanMode = *updates.CleanMode
+	}
+	if updates.Pinned != nil {
+		switch {
+		case *updates.Pinned && !note.Pinned():
+			// A new pin lands last: its rank is one step past the highest in
+			// use, from the same drain that counts the pins for the limit.
+			// One drain of the partition, on a pin alone.
+			pinned, nextRank, err := s.countPinned(ctx, userID)
+			if err != nil {
+				return false, err
+			}
+			if pinned >= model.MaxPinnedNotes {
+				return false, ErrPinLimit
+			}
+			note.PinnedAt = model.FormatTime(s.now())
+			note.PinRank = nextRank
+		case !*updates.Pinned:
+			note.PinnedAt, note.PinRank = "", 0
+		}
+	}
+
+	touched = updates.Title != nil || updates.Aliases != nil || updates.Tags != nil ||
+		updates.Body != nil || updates.Verbatim != nil || updates.Language != nil ||
+		updates.AutoClean != nil || updates.CleanMode != nil || updates.Kind != nil
+	if touched {
+		note.UpdatedAt = model.Now()
+	}
+	return touched, nil
+}
+
+// writeNoteBody puts the client's draft under the ETag UpdateNote read before
+// the row, with the worker's markers carried forward, and re-derives what the
+// index row keeps of the body: the snippet, the search text and whether the
+// cleaned view is stale.
+//
+// The client sends its whole draft with a Details change (language, kind,
+// word-for-word, auto-clean), and a body that reads the same as the stored one
+// is not an edit: CarryCaptureMarkers hands the stored bytes back for it, and
+// nothing is written — a language change that marked the cleaned view stale
+// had the Split up tab offer a pointless Regenerate (review 2026-09-21 r4).
+//
+// A body somebody else wrote between the read and this write is reported as
+// repository.ErrVersionConflict: that is the same 409 the version check
+// answers, and the client reconciles it the same way.
+func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex, storedBody []byte, etag, body string) error {
+	carried := CarryCaptureMarkers(string(storedBody), body)
+	if carried == string(storedBody) {
+		return nil
+	}
+	// Conditional on the object still carrying the ETag read above. An
+	// unconditional Put here destroys a voice append that landed in the
+	// meantime and only then reports the conflict — the client is told to
+	// re-read text that no longer exists anywhere.
+	err := s.objects.PutIfMatch(ctx, note.S3MarkdownKey, []byte(carried), "text/markdown", etag)
+	if errors.Is(err, repository.ErrPreconditionFailed) {
+		return repository.ErrVersionConflict
+	}
+	if err != nil {
+		return fmt.Errorf("failed to update markdown: %w", err)
+	}
+
+	// The snippet (first ~500 chars) and the search text are the two
+	// derivations of the body the index row carries.
+	note.Snippet = generateSnippet(body)
+	note.SearchText = SearchText(body)
+	// The cleaned view was generated from the body that just changed — unless
+	// the change was to adopt the view itself ("Use this list"): a body equal
+	// to CleanedBody, trailing whitespace aside, IS the view, so it is current
+	// whatever an earlier edit had marked it. Left stale, the tab offered to
+	// regenerate a list identical to the note (smoke 2026-09-21, finding 3).
+	trim := func(s string) string { return strings.TrimRightFunc(s, unicode.IsSpace) }
+	if note.CleanedBody != "" && trim(body) == trim(note.CleanedBody) {
+		note.CleanedStale = false
+	} else {
+		MarkCleanedStale(note)
+	}
+	return nil
 }
 
 // countPinned is how many of the tenant's active notes are pinned, and the

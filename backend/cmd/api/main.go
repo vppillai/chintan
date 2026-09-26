@@ -1,3 +1,7 @@
+// Command api is the HTTP API Lambda behind API Gateway: it wires the
+// repositories, services and handlers together and answers requests. The slow
+// half of a capture is the worker's (cmd/worker). The contract it serves is
+// docs/api/openapi.yaml.
 package main
 
 import (

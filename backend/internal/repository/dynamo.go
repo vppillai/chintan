@@ -343,7 +343,7 @@ func NoteItemAttributes(tenantID string, n model.NoteIndex) (map[string]types.At
 	return noteItemAttrs(tenantID, n)
 }
 
-// CaptureItemAttributes: see NoteItemAttributes.
+// CaptureItemAttributes is NoteItemAttributes for a capture row.
 func CaptureItemAttributes(c model.CaptureIndex) (map[string]types.AttributeValue, error) {
 	return captureItemAttrs(c)
 }

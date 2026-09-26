@@ -1,3 +1,7 @@
+// Package keys derives every S3 object key from the ids that own it. Every key
+// is tenants/<tenant>/…, which is what isolates one tenant's objects from
+// another's (README, "Tenancy"); an id that could escape that prefix is refused
+// here, once, rather than checked at each caller.
 package keys
 
 import (

@@ -1,3 +1,7 @@
+// Package match ranks a tenant's notes against a spoken description, for
+// POST /v1/notes/match (docs/api/openapi.yaml): token-overlap and substring
+// scores over title, aliases and tags, and a confidence rule that says when
+// the top match may be taken without asking.
 package match
 
 import (
