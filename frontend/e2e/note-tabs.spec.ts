@@ -24,7 +24,7 @@ test('opens on the text, and Recordings is one tap away with its count', async (
   await expect(page.getByRole('region', { name: 'Recording', exact: true })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveCount(0);
   // The tab bar's mic records into this note on every tab.
-  await expect(page.getByRole('button', { name: /record into this/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^PTT into this note/ })).toBeVisible();
 
   // Remembered for the session: a reload lands on the same tab, and so does
   // reopening the note from the library.
