@@ -27,10 +27,11 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	key := [2]string{"Authorization", "Bearer " + created.Key}
 	text := map[string]any{"text": "buy milk"}
 
-	// The day the router will count the request under. It reads its own clock
-	// (handler.Deps carries none to pin), so the day is taken before the
-	// request rather than after the whole test has run.
-	day := time.Now().UTC().Format("2006-01-02")
+	// The days the router may count the request under. It reads its own
+	// clock (handler.Deps carries none to pin), so a request sent just before
+	// midnight can land on either side of it; both days are summed.
+	now := time.Now().UTC()
+	day, nextDay := now.Format("2006-01-02"), now.AddDate(0, 0, 1).Format("2006-01-02")
 	if w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, key); w.Code != http.StatusAccepted {
 		t.Fatalf("a live key: status = %d body = %s", w.Code, w.Body.String())
 	}
@@ -88,7 +89,7 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	}
 	// The one request that got through is counted against the tenant, like
 	// the app's own.
-	if n := h.usage.Requests("user1", day); n < 1 {
+	if n := h.usage.Requests("user1", day) + h.usage.Requests("user1", nextDay); n < 1 {
 		t.Fatalf("api_requests for the tenant = %d, want the device's request counted", n)
 	}
 }
