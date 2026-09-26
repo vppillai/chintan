@@ -287,9 +287,11 @@ export function DevicesCard() {
 }
 
 /**
- * How the common clients are pointed at the inbox. Three recipes behind
+ * How the common clients are pointed at the inbox. Four recipes behind
  * disclosures, each with its copy button, and one sentence for everything
- * else — the point of a bearer key is that nothing here is special.
+ * else — the point of a bearer key is that nothing here is special. The
+ * ring's is the one that posts a form rather than a file; the inbox reads
+ * both, so the recipe is still an address and a header.
  */
 function Recipes() {
   const audioUrl = inboxAudioUrl();
@@ -364,6 +366,32 @@ function Recipes() {
               instead).
             </li>
             <li>Place it on the home screen or as a Quick Settings tile.</li>
+          </ol>
+          <div>
+            <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
+          </div>
+        </div>
+      </details>
+
+      <details className="you-card__more recipe">
+        <summary className="you-card__more-summary">
+          <Icon name="chevron-right" size={16} className="recipe__chevron" />
+          Pebble Index 01 ring
+        </summary>
+        <div className="you-card__more-body">
+          <ol className="recipe__steps">
+            <li>
+              In the Pebble app, open <strong>Index</strong> → <strong>Webhook</strong>. URL:{' '}
+              <code>{audioUrl}</code>.
+            </li>
+            <li>
+              Add a header <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>. The
+              bare key, without &ldquo;Bearer&rdquo;, works too.
+            </li>
+            <li>
+              Send the <strong>Recording</strong> (or <strong>Both</strong>). A note from the ring
+              lands like any recording: transcribed, filed and cleaned.
+            </li>
           </ol>
           <div>
             <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />

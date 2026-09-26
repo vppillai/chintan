@@ -128,7 +128,7 @@ curl -sS "$API/v1/devices" -H "Authorization: Bearer $ID_TOKEN" \
 
 `GET /v1/devices` lists your devices (never the keys); `DELETE /v1/devices/{id}` revokes one, immediately. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
 
-**curl.** Three ways in, each `Authorization: Bearer ck_…`:
+**curl.** Three ways in, each `Authorization: Bearer ck_…` (the bare `ck_…`, or `X-Device-Key: ck_…`, is the same key):
 
 ```bash
 KEY=ck_dev_…
@@ -145,6 +145,8 @@ Accepted audio types: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/m4a`, `audi
 **iOS Shortcut.** *Record Audio* (Quality: Normal, Start: Immediately, Finish: On Tap) → *Get Contents of URL*: URL `$API/v1/inbox/audio`, Method **POST**, Headers `Authorization` = `Bearer ck_…` and `Content-Type` = `audio/mp4`, Request Body **File**, File = *Recorded Audio*. Add it to the Home Screen, the Action Button or a watch complication; *Dictate Text* → *Get Contents of URL* with Request Body **JSON** (`text` = *Dictated Text*) to `$API/v1/inbox/text` is the text version and works on an Apple Watch. To file into one note, add a `X-Chintan-Note-Id` header with the note's id from the app's address bar.
 
 **Android.** The *HTTP Shortcuts* app (Play Store, open source): a shortcut with Method POST, URL `$API/v1/inbox/audio`, a header `Authorization` = `Bearer ck_…`, Request Body Type **File** — it then appears in the share sheet of any recorder, or records itself with the built-in "record audio" body option; a second shortcut with Request Body Type **Custom text** (`{"text": "{{prompt}}"}`, Content-Type `application/json`) to `/v1/inbox/text` asks for a line and sends it. Tasker's *HTTP Request* action does the same. Any watch or ring whose companion app can POST a file or a string with one header works the same way; there is no per-vendor integration.
+
+**Pebble Index 01 ring.** In the Pebble app, *Index* → *Webhook*: URL `$API/v1/inbox/audio`, header `Authorization` = `Bearer ck_…` (the bare `ck_…` works too), send **Recording** (or **Both**). The ring posts a `multipart/form-data` form; its `audio` part is filed like any recording, and a form with *Transcription* alone is filed as `/v1/inbox/text` files text.
 
 ---
 

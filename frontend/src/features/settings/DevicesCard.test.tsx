@@ -260,9 +260,24 @@ describe('the devices card on You', () => {
     expect(card).toHaveTextContent(inboxAudioUrl());
     expect(card).toHaveTextContent(/anything that can POST a file with one header/i);
     expect(within(card).getByRole('button', { name: 'Copy command' })).toBeInTheDocument();
-    expect(within(card).getAllByRole('button', { name: 'Copy address' })).toHaveLength(2);
+    expect(within(card).getAllByRole('button', { name: 'Copy address' })).toHaveLength(3);
     // Each recipe is a disclosure with its own chevron, not an underlined link (R4-29).
-    expect(card.querySelectorAll('details.recipe > summary > .recipe__chevron')).toHaveLength(3);
+    expect(card.querySelectorAll('details.recipe > summary > .recipe__chevron')).toHaveLength(4);
+  });
+
+  it('walks the Pebble Index ring’s webhook to the inbox: the address, the header, Recording (OF-RING)', async () => {
+    mount();
+    const card = await screen.findByRole('region', { name: 'Devices & shortcuts' });
+    const ring = within(card).getByText('Pebble Index 01 ring').closest('details');
+    expect(ring).not.toBeNull();
+    expect(ring).toHaveTextContent(/Index → Webhook/);
+    expect(ring).toHaveTextContent(inboxAudioUrl());
+    expect(ring).toHaveTextContent(/Authorization = Bearer YOUR_KEY/);
+    // The ring's header field is a bare value; the inbox takes the key without the scheme.
+    expect(ring).toHaveTextContent(/bare key, without “Bearer”, works too/);
+    expect(ring).toHaveTextContent(/Send the Recording \(or Both\)/);
+    expect(ring).toHaveTextContent(/lands like any recording/);
+    expect(within(ring as HTMLElement).getByRole('button', { name: 'Copy address' })).toBeInTheDocument();
   });
 
   it('counts requests, not recordings, and says how to aim a device at one note (R4-30)', async () => {
