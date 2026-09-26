@@ -190,7 +190,7 @@ describe('the library nudge', () => {
       );
 
     const empty = mountLibrary([]);
-    expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
+    expect(await screen.findByText(/tap PTT to record your first note/i)).toBeInTheDocument();
     expect(screen.queryByRole('note', { name: /passkey suggestion/i })).toBeNull();
     empty.unmount();
 

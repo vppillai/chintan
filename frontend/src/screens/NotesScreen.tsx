@@ -693,7 +693,7 @@ export function NotesScreen() {
             No checklists yet. Open a note and turn it into one from Details.
           </p>
         ) : (
-          <p className="screen__empty">Tap Record to make your first note.</p>
+          <p className="screen__empty">Tap PTT to record your first note, or hold it and talk.</p>
         ))}
 
       {asking ? null : searching ? (
@@ -762,7 +762,7 @@ export function NotesScreen() {
       {/*
         The way into the archive from the active list, whatever its chip is
         doing — once there is a library to walk from or an archive to walk
-        into. A first-run screen showed "Tap Record to make your first note."
+        into. A first-run screen showed "Tap PTT to record your first note, or hold it and talk."
         and then "Archive · 0", the nothing T17 took out of the chips; the
         row hides a zero for the same reason the chip does (QA 2026-09-21,
         finding 13).

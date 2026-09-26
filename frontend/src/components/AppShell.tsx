@@ -42,7 +42,7 @@ const SCREEN_TITLES: Record<Screen, string> = {
   usage: 'Usage',
   about: 'About',
   capture: 'Recording',
-  talk: 'Hold to talk',
+  talk: 'PTT',
   other: 'Screen',
 };
 

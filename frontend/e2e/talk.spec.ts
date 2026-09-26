@@ -10,7 +10,7 @@ import { expect, test } from './fixtures.ts';
  */
 
 async function holdTheButton(page: Page, ms: number): Promise<void> {
-  const button = page.getByRole('button', { name: 'Hold to talk' });
+  const button = page.getByRole('button', { name: /^PTT: hold to talk/ });
   const box = await button.boundingBox();
   if (!box) throw new Error('the button has no box');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -21,7 +21,7 @@ async function holdTheButton(page: Page, ms: number): Promise<void> {
 
 test('is one giant button, and the manifest offers it as a shortcut', async ({ page, request }) => {
   await page.goto('/talk');
-  const button = page.getByRole('button', { name: 'Hold to talk' });
+  const button = page.getByRole('button', { name: /^PTT: hold to talk/ });
   await expect(button).toBeVisible();
   const viewport = page.viewportSize()!;
   const box = (await button.boundingBox())!;
@@ -35,9 +35,9 @@ test('is one giant button, and the manifest offers it as a shortcut', async ({ p
   const manifest = (await (await request.get(manifestHref)).json()) as {
     shortcuts: { name: string; description: string; url: string }[];
   };
-  const talk = manifest.shortcuts.find((shortcut) => shortcut.name === 'Hold to talk');
+  const talk = manifest.shortcuts.find((shortcut) => shortcut.name === 'PTT');
   expect(talk?.url.endsWith('/talk')).toBe(true);
-  expect(talk?.description).toBe('Hold, speak, release to send');
+  expect(talk?.description).toBe('Hold to talk, release to send');
 });
 
 test('hold sends, a tap is too short, Space is the button, and Back leaves to Home', async ({
@@ -54,10 +54,10 @@ test('hold sends, a tap is too short, Space is the button, and Back leaves to Ho
   expect(api.captures[0]?.note_id).toBeNull();
   // Ready again, in place. The status keeps saying Sent while the machine
   // holds the landed upload; the next hold resets it.
-  await expect(page.getByRole('button', { name: 'Hold to talk' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^PTT: hold to talk/ })).toBeVisible();
 
   // A tap is not a message.
-  await page.getByRole('button', { name: 'Hold to talk' }).click();
+  await page.getByRole('button', { name: /^PTT: hold to talk/ }).click();
   await expect(page.locator('.talk__status')).toHaveText('Too short — hold to talk');
   await page.waitForTimeout(800);
   expect(api.captures).toHaveLength(1);
@@ -78,7 +78,7 @@ test('hold sends, a tap is too short, Space is the button, and Back leaves to Ho
 
 test('slides away to cancel', async ({ page, api }) => {
   await page.goto('/talk');
-  const button = page.getByRole('button', { name: 'Hold to talk' });
+  const button = page.getByRole('button', { name: /^PTT: hold to talk/ });
   const box = (await button.boundingBox())!;
   const x = box.x + box.width / 2;
   const y = box.y + box.height / 2;
@@ -94,7 +94,7 @@ test('slides away to cancel', async ({ page, api }) => {
   await expect(page.getByRole('button', { name: 'Release to cancel' })).toBeVisible();
   await page.mouse.up();
 
-  await expect(page.getByRole('button', { name: 'Hold to talk' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^PTT: hold to talk/ })).toBeVisible();
   await page.waitForTimeout(800);
   expect(api.captures).toHaveLength(0);
   await expect(page.locator('.talk__status')).toHaveText('');

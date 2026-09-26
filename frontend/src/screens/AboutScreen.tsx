@@ -18,7 +18,7 @@ const STEPS: readonly { icon: IconName; title: string; detail: string }[] = [
   {
     icon: 'mic',
     title: 'Record',
-    detail: 'Tap Record and speak, or hold the microphone and release to send. The audio uploads as you go.',
+    detail: 'Tap PTT and speak, or hold it and release to send. The audio uploads as you go.',
   },
   { icon: 'transcribe', title: 'Transcribe', detail: 'Speech becomes text, in the language you set.' },
   { icon: 'route', title: 'Route', detail: 'The router works out which note this belongs to.' },
@@ -68,7 +68,7 @@ export function AboutScreen() {
         <h1 className="about__title">{config.appName}</h1>
         <p className="about__lede">{config.appDescription}</p>
         <p className="about__intro">
-          Tap Record and talk — or hold the mic and let go to send — while walking, driving,
+          Tap PTT and talk — or hold it and let go to send — while walking, driving,
           washing up. {config.appName} transcribes
           the recording, works out which of your notes it belongs to, tidies the words into text
           you would have typed, and appends it to that note. The recording stays beneath the note
