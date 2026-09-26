@@ -15,12 +15,15 @@
 #
 # Usage:
 #   scripts/bootstrap.sh --instance dev --region us-west-2 \
-#       --origin https://owner.github.io [--environment prod] [--apply]
+#       --origin https://owner.github.io [--site-base URL] [--environment prod] [--apply]
 #
 # Options:
 #   --instance NAME     instance name (lowercase, digits, hyphens)
 #   --region REGION     AWS region
 #   --origin ORIGIN     CORS allowed origin, scheme and host only
+#   --site-base URL     where the bundle is served from, without the site path
+#                       (default: ORIGIN/<repo name>, the GitHub Pages form; a
+#                       custom-domain instance passes its origin here too)
 #   --environment ENV   prod | staging | dev   (default: prod)
 #   --repo OWNER/NAME   GitHub repository (default: resolved with gh)
 #   --apply             execute; without it, print the plan and change nothing
@@ -31,6 +34,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 INSTANCE=""
 REGION=""
 ALLOWED_ORIGIN=""
+SITE_BASE_URL=""
 ENVIRONMENT="prod"
 REPO=""
 
@@ -46,6 +50,10 @@ while [ $# -gt 0 ]; do
             ;;
         --origin)
             ALLOWED_ORIGIN="${2:?--origin needs a value}"
+            shift
+            ;;
+        --site-base)
+            SITE_BASE_URL="${2:?--site-base needs a value}"
             shift
             ;;
         --environment)
@@ -83,8 +91,9 @@ TEMPLATE="$REPO_ROOT/infrastructure/template.yaml"
 
 [ -n "$REPO" ] || REPO="$(github_repo)"
 REPO_NAME="${REPO#*/}"
-PAGES_HOST="${ALLOWED_ORIGIN#*://}"
-PAGES_HOST="${PAGES_HOST%%/*}"
+# The same value scripts/ci-deploy-stack.sh computes: Pages serves a project
+# site under the repository name, a custom domain from its root.
+[ -n "$SITE_BASE_URL" ] || SITE_BASE_URL="${ALLOWED_ORIGIN%/}/${REPO_NAME}"
 
 info "instance:    $INSTANCE"
 info "environment: $ENVIRONMENT"
@@ -146,8 +155,7 @@ dim "  AllowedOrigin=$ALLOWED_ORIGIN"
 dim "  LambdaCodeBucket=$BUCKET"
 dim "  LambdaCodeKey=$S3_KEY"
 dim "  WorkerCodeKey=$WORKER_S3_KEY"
-dim "  PagesHost=$PAGES_HOST"
-dim "  RepoName=$REPO_NAME"
+dim "  SiteBaseUrl=$SITE_BASE_URL"
 
 if ! confirm_apply "$APPLY" "deploy $STACK in $REGION"; then
     exit 0
@@ -170,8 +178,7 @@ aws_cli cloudformation deploy \
     "LambdaCodeBucket=$BUCKET" \
     "LambdaCodeKey=$S3_KEY" \
     "WorkerCodeKey=$WORKER_S3_KEY" \
-    "PagesHost=$PAGES_HOST" \
-    "RepoName=$REPO_NAME" \
+    "SiteBaseUrl=$SITE_BASE_URL" \
     "${ROLE_ARGS[@]}" \
     --tags Application=Chintan Project=chintan \
     "Instance=$INSTANCE" "Environment=$ENVIRONMENT"

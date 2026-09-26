@@ -502,6 +502,64 @@ Resources:
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/apis/*'
                   - !Sub 'arn:aws:apigateway:${AWS::Region}::/tags/*'
 
+              # The custom API domain (template.yaml ApiHost). A domain name
+              # and its API mapping live under /domainnames, which the /apis
+              # grant above does not reach. Dormant until an instance config
+              # sets api_host, and harmless meanwhile.
+              - Effect: Allow
+                Action:
+                  - apigateway:GET
+                  - apigateway:POST
+                  - apigateway:PUT
+                  - apigateway:PATCH
+                  - apigateway:DELETE
+                  - apigateway:TagResource
+                  - apigateway:UntagResource
+                Resource:
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/domainnames'
+                  - !Sub 'arn:aws:apigateway:${AWS::Region}::/domainnames/*'
+
+              # ACM, for ApiCertificate. The KMS shape: a certificate has no
+              # ARN before it exists (a UUID), so request and read on '*', and
+              # the mutations conditioned on the Project tag the template puts
+              # on it at creation. RequestCertificate with tags needs
+              # AddTagsToCertificate beside it.
+              - Effect: Allow
+                Action:
+                  - acm:RequestCertificate
+                  - acm:AddTagsToCertificate
+                  - acm:DescribeCertificate
+                  - acm:GetCertificate
+                  - acm:ListTagsForCertificate
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - acm:DeleteCertificate
+                  - acm:RemoveTagsFromCertificate
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'aws:ResourceTag/Project': chintan
+
+              # Route 53, exercised only when DnsZoneId is set: CloudFormation
+              # writes the certificate's validation CNAME (ACM's
+              # DomainValidationOptions.HostedZoneId) and ApiAliasRecord as
+              # this role. A zone id is opaque, so there is no name to
+              # prefix-scope on.
+              # ponytail: any zone in the account; scope to one zone through a
+              # bootstrap parameter if the account ever holds a zone that is
+              # not this project's.
+              - Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:ListResourceRecordSets
+                  - route53:GetHostedZone
+                Resource: 'arn:aws:route53:::hostedzone/*'
+              - Effect: Allow
+                Action:
+                  - route53:GetChange
+                Resource: 'arn:aws:route53:::change/*'
+
               - Effect: Allow
                 Action:
                   - sqs:CreateQueue

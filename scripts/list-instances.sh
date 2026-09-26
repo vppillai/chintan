@@ -25,6 +25,24 @@
 #                 Default: display_name — which must then fit.
 #   description   One sentence: <meta name="description">, the manifest's
 #                 `description`, the lede on About. Required.
+#   api_host      Custom hostname for this stack's API, e.g. api.example.com.
+#                 Optional; a bare lowercase hostname, no scheme, no path. The
+#                 stack then fronts the HTTP API with it under a free ACM
+#                 certificate and its ApiEndpoint output — so the bundle's
+#                 VITE_API_URL and the Devices card — becomes https://<api_host>.
+#                 Reaches the template as ApiHost.
+#   app_host      The GitHub Pages custom domain the bundles are served from,
+#                 e.g. app.example.com. Optional. Pages has ONE domain per
+#                 site, so every config sets the same value or none does; a
+#                 mix is refused. Sets every stack's Cognito callback URLs and
+#                 CORS origin (scripts/ci-deploy-stack.sh) and makes
+#                 scripts/ci-build-site.sh build for the site root. GitHub is
+#                 told the domain by scripts/setup.sh, because Pages ignores a
+#                 CNAME file published from a workflow.
+#   dns_zone_id   Route 53 hosted zone that holds api_host. Optional; set, the
+#                 stack writes the certificate's validation record and the API
+#                 alias itself. Refused without api_host. Reaches the template
+#                 as DnsZoneId.
 #
 # None of the three may contain ", <, > or &. Vite writes them into
 # frontend/index.html by plain substitution (%VITE_APP_NAME% in <title>, the
@@ -63,6 +81,7 @@
 #   scripts/list-instances.sh                        # every instance, as JSON
 #   scripts/list-instances.sh --environment staging  # only staging entries
 #   scripts/list-instances.sh --format text          # one "stack region" per line
+#   scripts/list-instances.sh --app-host             # the one Pages custom domain, or nothing
 #   scripts/list-instances.sh --self-test            # prove the character check fails
 
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
@@ -82,6 +101,7 @@ while [ $# -gt 0 ]; do
             FORMAT="${2:?--format needs a value}"
             shift
             ;;
+        --app-host) FORMAT="app-host" ;;
         --self-test) SELF_TEST=1 ;;
         -h | --help)
             usage_from_header "${BASH_SOURCE[0]}"
@@ -93,8 +113,8 @@ while [ $# -gt 0 ]; do
 done
 
 case "$FORMAT" in
-    json | text) ;;
-    *) die "--format must be json or text" ;;
+    json | text | app-host) ;;
+    *) die "--format must be json, text or app-host" ;;
 esac
 
 require_cmd python3 jq
@@ -135,6 +155,33 @@ YAML
         done
     done
     ok "self-test: every one of the four characters is refused in every identity field"
+
+    # The custom-domain fields. A host with a scheme would reach the template
+    # as ApiHost and fail its AllowedPattern one deploy later; two configs
+    # naming different app_hosts would give one stack callback URLs on a
+    # domain Pages does not serve. Both are refused here.
+    printf 'name: one\ndisplay_name: One\ndescription: Fine.\napi_host: https://api.example.com\n' >"$tmp/config/instances/one.yaml"
+    if CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text >/dev/null 2>&1; then
+        die "self-test FAILED: an api_host with a scheme resolved"
+    fi
+    printf 'name: one\ndisplay_name: One\ndescription: Fine.\napp_host: app.example.com\n' >"$tmp/config/instances/one.yaml"
+    printf 'name: one\nenvironment: staging\ndisplay_name: One\ndescription: Fine.\napp_host: other.example.com\n' >"$tmp/config/instances/two.yaml"
+    if CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text >/dev/null 2>&1; then
+        die "self-test FAILED: two configs disagreeing on app_host resolved"
+    fi
+    printf 'name: one\nenvironment: staging\ndisplay_name: One\ndescription: Fine.\n' >"$tmp/config/instances/two.yaml"
+    if CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --format text >/dev/null 2>&1; then
+        die "self-test FAILED: app_host in one config and not the other resolved"
+    fi
+    printf 'name: one\nenvironment: staging\ndisplay_name: One\ndescription: Fine.\napp_host: app.example.com\napi_host: api-staging.example.com\n' >"$tmp/config/instances/two.yaml"
+    got="$(CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" --app-host)"
+    [ "$got" = "app.example.com" ] || die "self-test FAILED: --app-host printed '$got', expected app.example.com"
+    params="$(CHINTAN_REPO_ROOT="$tmp" "${BASH_SOURCE[0]}" | jq -r '.[] | select(.environment=="staging") | .parameters[]')"
+    case "$params" in
+        *"ApiHost=api-staging.example.com"*) ;;
+        *) die "self-test FAILED: api_host did not reach the parameters: $params" ;;
+    esac
+    ok "self-test: hosts are bare, app_host is one value for the site, api_host reaches the stack"
     exit 0
 fi
 
@@ -151,6 +198,7 @@ entries="$(
 import json
 import os
 import pathlib
+import re
 import sys
 
 try:
@@ -178,7 +226,15 @@ KNOWN_FIELDS = {
     "daily_spend_cap_micros",
     "refresh_token_validity_days",
     "enable_alarms",
+    "api_host",
+    "app_host",
+    "dns_zone_id",
 }
+
+# A bare hostname: labels of lowercase letters, digits and hyphens, at least
+# one dot. No scheme, path or port — the template's ApiHost AllowedPattern is
+# this same shape, and refusing here is one deploy round trip cheaper.
+HOST = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$")
 
 out = []
 seen = set()
@@ -246,6 +302,23 @@ for path in sorted(config_dir.glob("*.yaml")):
             f"set one when 'display_name' is longer than that"
         )
 
+    def host(key):
+        value = doc.get(key)
+        if value is None or value == "":
+            return ""
+        if not isinstance(value, str) or not HOST.match(value):
+            sys.exit(
+                f"{path}: '{key}' must be a bare lowercase hostname such as "
+                f"api.example.com — no scheme, no path, no port (got {value!r})"
+            )
+        return value
+
+    api_host = host("api_host")
+    app_host = host("app_host")
+    dns_zone_id = doc.get("dns_zone_id")
+    if dns_zone_id and not api_host:
+        sys.exit(f"{path}: 'dns_zone_id' without 'api_host' has nothing to write; remove it or set api_host")
+
     unknown = sorted(set(doc) - KNOWN_FIELDS)
     if unknown:
         sys.exit(
@@ -266,10 +339,16 @@ for path in sorted(config_dir.glob("*.yaml")):
         # HasSpendCap false and the spend-cap alarm uncreated.
         "DailySpendCapMicros": doc.get("daily_spend_cap_micros"),
         "RefreshTokenValidityDays": doc.get("refresh_token_validity_days"),
-        # CloudWatch bills alarms beyond ten alarm-months, and this template
-        # declares exactly ten, so a second environment doubles into the paid
-        # band. Absent means the template default, true.
+        # CloudWatch bills alarms beyond ten alarm-months for the account, and
+        # this template declares up to six per stack, so a second environment
+        # with alarms on crosses into the paid band. Absent means the template
+        # default, true.
         "EnableAlarms": doc.get("enable_alarms"),
+        # The custom API domain. Both template parameters default to '' and
+        # every resource behind them is conditional, so absent here means the
+        # execute-api URL and nothing created.
+        "ApiHost": api_host,
+        "DnsZoneId": dns_zone_id,
     }
 
     def render(v):
@@ -297,12 +376,28 @@ for path in sorted(config_dir.glob("*.yaml")):
             "display_name": display_name,
             "short_name": short_name,
             "description": description,
+            "app_host": app_host,
             "parameters": parameters,
         }
     )
 
 if not out:
     sys.exit(f"{config_dir}: no instance configs found")
+
+# One Pages site, one custom domain. A stack whose callbacks name the Pages
+# host while Pages redirects that host to the custom domain can never finish a
+# sign-in (redirect_mismatch), so a mix is refused, not defaulted.
+hosts = {e["app_host"] for e in out}
+if len(hosts) > 1:
+    if "" in hosts:
+        sys.exit(
+            "app_host is set in some configs and not others; GitHub Pages serves every "
+            "instance from one domain, so set it in every config or in none"
+        )
+    sys.exit(
+        f"configs disagree on app_host ({', '.join(sorted(hosts))}); "
+        f"GitHub Pages has one custom domain per site"
+    )
 
 json.dump(out, sys.stdout)
 PY
@@ -315,6 +410,10 @@ fi
 
 if [ "$FORMAT" = "text" ]; then
     printf '%s' "$entries" | jq -r '.[] | "\(.stack) \(.region) \(.site_path)"'
+elif [ "$FORMAT" = "app-host" ]; then
+    # Every entry carries the same value (enforced above), so the first is the
+    # answer; an empty line when no config sets one.
+    printf '%s\n' "$(printf '%s' "$entries" | jq -r '.[0].app_host // ""')"
 else
     printf '%s\n' "$(printf '%s' "$entries" | jq -c .)"
 fi

@@ -15,7 +15,9 @@
 #   scripts/ci-build-site.sh --out site
 #
 # Environment:
-#   PAGES_BASE   URL path prefix for the site, e.g. /chintan   (required)
+#   PAGES_BASE   URL path prefix for the site, e.g. /chintan   (required; ignored
+#                — the site root — when the instance configs set app_host, because
+#                GitHub Pages serves a custom domain from its root)
 #
 # Requires AWS credentials: the API endpoint, user pool and client ID are read
 # from each instance's stack outputs, so the built bundle cannot disagree with
@@ -45,6 +47,21 @@ done
 require_cmd bun jq aws
 
 cd "$REPO_ROOT" || die "cannot enter $REPO_ROOT"
+
+# One custom domain for the whole Pages site (app_host, the same in every
+# config; list-instances.sh refuses a mix). Pages serves a custom domain from
+# its root, so the repository-name prefix the workflow passes does not exist
+# there and the bundles sit directly under /<site_path>/.
+APP_HOST="$(scripts/list-instances.sh --app-host)"
+if [ -n "$APP_HOST" ]; then
+    info "custom domain ${APP_HOST}: building for the site root, not ${PAGES_BASE}"
+    PAGES_BASE=""
+fi
+# The leading path segments the 404 redirect below keeps: one for the
+# repository name on Pages, none on a custom domain, plus one for the
+# instance's site_path either way.
+SEGMENTS_TO_KEEP=$(($(printf '%s' "$PAGES_BASE" | tr -cd '/' | wc -c) + 1))
+
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
@@ -185,20 +202,23 @@ HTML
 # a broken deep link belongs to: it is the "spa-github-pages" trick (rafgraph,
 # MIT License, https://github.com/rafgraph/spa-github-pages), redirecting to
 # the site root with the real path encoded as a query string. It reads the
-# first two path segments — the repo name, then whichever instance's
+# leading path segments — the repo name on Pages, then whichever instance's
 # site_path the browser actually requested — off the URL itself and preserves
 # them verbatim, so /chintan/dev-staging/notes/x round-trips to
 # dev-staging's own index.html exactly as /chintan/dev/notes/x round-trips to
-# dev's. frontend/index.html's inline script (see its head) decodes the
-# redirect back into the real path before the SPA router ever reads it.
-cat >"${OUT}/404.html" <<'HTML'
+# dev's; on a custom domain there is no repo segment and one is kept
+# (SEGMENTS_TO_KEEP above). frontend/index.html's inline script (see its
+# head) decodes the redirect back into the real path before the SPA router
+# ever reads it. The heredoc is unquoted for that one variable; the script
+# holds no other `$`, backtick or backslash.
+cat >"${OUT}/404.html" <<HTML
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <title>Chintan</title>
     <script type="text/javascript">
-      var pathSegmentsToKeep = 2;
+      var pathSegmentsToKeep = ${SEGMENTS_TO_KEEP};
 
       var l = window.location;
       l.replace(

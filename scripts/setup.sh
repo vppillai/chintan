@@ -2,9 +2,12 @@
 #
 # One-time account and repository setup: the bootstrap stack with the GitHub OIDC
 # deploy and build roles, the repository secrets and variables, the deployment
-# environments and Pages.
+# environments and Pages — including the Pages custom domain, when the instance
+# configs declare one (app_host).
 #
-# Run this once per AWS account + fork, before scripts/bootstrap.sh.
+# Run this once per AWS account + fork, before scripts/bootstrap.sh; run it
+# again after adding app_host to config/instances/*.yaml. Every step is
+# idempotent, so a re-run changes only what differs.
 #
 # It does NOT create the agent IAM principal, its permissions boundary or
 # CloudTrail — scripts/bootstrap-agent.sh does that, it needs administrative
@@ -58,7 +61,7 @@ done
 export AWS_REGION="$REGION"
 require_aws
 require_gh
-require_cmd jq
+require_cmd jq python3
 
 [ -n "$REPO" ] || REPO="$(github_repo)"
 OWNER="${REPO%/*}"
@@ -68,6 +71,9 @@ NAME="${REPO#*/}"
 ACCOUNT_ID="$(aws_account_id)"
 TEMPLATE="$REPO_ROOT/infrastructure/bootstrap.yaml"
 [ -f "$TEMPLATE" ] || die "bootstrap template not found: $TEMPLATE"
+# The Pages custom domain, if the configs set one. Read up front so the plan
+# below can show it, and validated by list-instances.sh, the one reader.
+APP_HOST="$("$REPO_ROOT/scripts/list-instances.sh" --app-host)"
 
 info "account:     $ACCOUNT_ID"
 info "region:      $REGION"
@@ -106,7 +112,7 @@ dim "  gh secret           AWS_ACCOUNT_ID"
 dim "  gh variable         BUILD_ROLE_ARN, CFN_DEPLOY_ROLE_ARN"
 dim "  gh environment      production (reviewers: ${REVIEWERS[*]}, protected branches only)"
 dim "  gh environment      staging"
-dim "  gh pages            build_type=workflow"
+dim "  gh pages            build_type=workflow${APP_HOST:+, custom domain $APP_HOST}"
 
 if ! confirm_apply "$APPLY" "create the bootstrap stack and configure $REPO"; then
     exit 0
@@ -214,6 +220,24 @@ elif gh api -X PUT "repos/${REPO}/pages" -f build_type=workflow >/dev/null 2>&1;
 else
     warn "could not configure Pages via the API"
     warn "set Settings -> Pages -> Source: GitHub Actions by hand"
+fi
+
+# The custom domain is a repository setting and only that: a site published
+# from a workflow ignores any CNAME file in the artifact (GitHub's words), so
+# nothing in the build can carry it. One domain for the whole site, hence one
+# value across every config, which list-instances.sh enforces. Enforce HTTPS
+# is left to the owner: GitHub offers it only once it has issued the
+# certificate, up to a day after the CNAME resolves.
+if [ -n "$APP_HOST" ]; then
+    info "setting the Pages custom domain to $APP_HOST"
+    if gh api -X PUT "repos/${REPO}/pages" -f cname="$APP_HOST" >/dev/null 2>&1; then
+        ok "Pages custom domain: $APP_HOST"
+        dim "  DNS: CNAME $APP_HOST -> ${OWNER}.github.io"
+        dim "  then Settings -> Pages -> Enforce HTTPS once the certificate is issued"
+    else
+        warn "could not set the Pages custom domain via the API"
+        warn "set Settings -> Pages -> Custom domain to $APP_HOST by hand"
+    fi
 fi
 
 log ""
