@@ -220,7 +220,7 @@ func TestPackerStopsAtTheBudgetAndSkipsEmptyBodies(t *testing.T) {
 		// the budget; the eighth is refused.
 		t.Errorf("packed %d notes, want 7", added)
 	}
-	if p.remaining >= minUsefulExcerptRunes {
+	if !p.Full() {
 		t.Errorf("remaining = %d, the packer should be full", p.remaining)
 	}
 	total := 0

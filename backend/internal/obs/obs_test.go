@@ -109,6 +109,10 @@ func captureLogs(t *testing.T, run func()) []map[string]any {
 // the list — which the old two-segment prefix could not do. The pattern is
 // recorded from inside the mux, because outside it r.Pattern is empty.
 func TestCorrelateLogsTheMatchedRoutePattern(t *testing.T) {
+	// Without Correlate upstream there is no label to set; the call must be a
+	// no-op, as its comment promises the handler wrapper.
+	SetRoutePattern(context.Background(), "GET /x")
+
 	mux := http.NewServeMux()
 	for _, pattern := range []string{"POST /v1/notes", "POST /v1/notes/purge", "GET /v1/captures/{id}/download"} {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
