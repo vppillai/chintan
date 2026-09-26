@@ -266,10 +266,16 @@ for path in sorted(config_dir.glob("*.yaml")):
         # HasSpendCap false and the spend-cap alarm uncreated.
         "DailySpendCapMicros": doc.get("daily_spend_cap_micros"),
         "RefreshTokenValidityDays": doc.get("refresh_token_validity_days"),
-        # CloudWatch bills alarms beyond ten alarm-months, and this template
-        # declares exactly ten, so a second environment doubles into the paid
-        # band. Absent means the template default, true.
+        # CloudWatch bills alarms beyond ten alarm-months for the account, and
+        # this template declares up to six per stack, so a second environment
+        # with alarms on crosses into the paid band. Absent means the template
+        # default, true.
         "EnableAlarms": doc.get("enable_alarms"),
+        # The custom API domain. Both template parameters default to '' and
+        # every resource behind them is conditional, so absent here means the
+        # execute-api URL and nothing created.
+        "ApiHost": api_host,
+        "DnsZoneId": dns_zone_id,
     }
 
     def render(v):

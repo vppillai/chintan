@@ -103,10 +103,11 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: >
-      Create the CloudWatch alarms for this stack. The template declares four
-      (three, plus the spend-cap alarm when a cap is set): API function errors,
-      the capture dead-letter queue, a rejected provider key, and the spend
-      cap. CloudWatch's always-free allowance is ten alarm-months for the whole
+      Create the CloudWatch alarms for this stack. The template declares six
+      (five, plus the spend-cap alarm when a cap is set): API function errors,
+      a gateway 4xx flood, refused inbox keys, the capture dead-letter queue, a
+      rejected provider key, and the spend cap. CloudWatch's always-free
+      allowance is ten alarm-months for the whole
       account, and the account's other project holds alarms too, so a second
       environment's copies are billed. Set false on an environment whose
       failures are already caught some other way; the deploy's own smoke test
@@ -2066,6 +2067,36 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
+  # The gap between the 4xx flood alarm and silence. deviceAuthenticated
+  # counts every inbox request it refuses as Chintan/InboxKeyRefused — a
+  # counter, no key material — through the same rollup ProviderKeyRejected
+  # uses, so this reads the dimensionless identity and is a plain metric
+  # alarm inside the free ten. Twenty-five in fifteen minutes is far above
+  # one wrong header and far below the flood: it is the shape of a device
+  # that keeps posting with a key its owner revoked, or of somebody walking
+  # key ids. Until the metric is emitted (the handler half of this change)
+  # the metric does not exist, which notBreaching reads as healthy.
+  InboxKeyRefusedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: AlarmsEnabled
+    Properties:
+      AlarmName: !Sub 'chintan-${InstanceName}-${Environment}-inbox-key-refused'
+      AlarmDescription: >-
+        Twenty-five or more inbox requests refused in fifteen minutes: a device
+        is still posting with a revoked or mistyped key, or someone is probing
+        a key id — far below the gateway flood alarm, far above one wrong
+        header.
+      Namespace: Chintan
+      MetricName: InboxKeyRefused
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 24
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
   # There are deliberately no Throttles alarms, no worker Errors alarm and no
   # API 5xx-rate alarm. Each would be an alarm-month billed to say nothing
   # useful: a throttles alarm watches a reserved-concurrency ceiling one
@@ -2073,9 +2104,12 @@ Resources:
   # alarm says the same thing; and a 5xx-rate alarm, an average over a quiet
   # five minutes, trips on a single 500 in ten requests. The 4xx alarm above
   # is a count with a threshold nothing but a flood reaches, which is why it
-  # earns its alarm-month and a 5xx rate does not. Five alarms exist, and
+  # earns its alarm-month and a 5xx rate does not. Six alarms exist, and
   # none notifies on OK: an OK transition is not something anyone needs an
-  # e-mail about.
+  # e-mail about. The sixth, InboxKeyRefusedAlarm above, earns its slot as
+  # the only signal between one mistyped header and the thousand-in-five-
+  # minutes flood: a device left posting with a revoked key is invisible to
+  # every other alarm here and costs a billed request per attempt.
   #
   # A single message here is one recording the user believes was filed and was
   # not — an asynchronous invocation of the worker failed all three attempts
