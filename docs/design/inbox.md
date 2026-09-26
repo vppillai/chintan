@@ -112,8 +112,11 @@ those plus the probes.
   the identical bytes — the key is bound to a fingerprint of the raw body,
   and a re-encoded multipart form has a new boundary, so the retry is 409
   `this Idempotency-Key was used for a different request`.
-- `POST /v1/inbox/text` takes 1 to 20,000 characters. The text is written
-  where the transcript would be (`RawKey`), the row starts at `transcribed`
+- `POST /v1/inbox/text` takes 1 to 20,000 characters, filed into the body's
+  `note_id` or, when the body has none, the note `X-Chintan-Note-Id` names
+  (the same tenant-scoped lookup and the same 404 as the audio route; the
+  form's transcription-only road takes the header the same way). The text
+  is written where the transcript would be (`RawKey`), the row starts at `transcribed`
   with no audio key and no duration, and the API invokes the worker since no
   object lands to wake it. The pipeline gates transcription on `RawKey` being
   empty, so it routes, cleans and appends the text as it would a transcript;

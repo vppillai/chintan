@@ -1098,9 +1098,7 @@ paths:
         - deviceKey: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - name: X-Chintan-Note-Id
-          in: header
-          schema: { type: string }
+        - $ref: '#/components/parameters/InboxNoteId'
         - name: X-Chintan-Language
           in: header
           schema: { type: string, pattern: '^(auto|[a-z]{2})$' }
@@ -1169,10 +1167,16 @@ paths:
         transcript would be, the capture starts at `transcribed` with
         `has_audio: false` and no duration, and the worker routes, cleans
         and appends it as it would a transcript. 1 to 20,000 characters.
+        The target note is the body's `note_id` or, for a client that can
+        set headers but cannot build the JSON, the `X-Chintan-Note-Id`
+        header; the body wins when both are sent. A form on
+        `/v1/inbox/audio` that carries only a `transcription` is filed by
+        this rule too.
       security:
         - deviceKey: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/InboxNoteId'
       requestBody:
         required: true
         content:
@@ -1283,6 +1287,14 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    InboxNoteId:
+      name: X-Chintan-Note-Id
+      in: header
+      description: |
+        File this capture into this note, for a client that can set headers
+        but cannot build JSON. On `/v1/inbox/text` the body's `note_id` wins
+        when both are sent. Another tenant's note, or none, is 404.
+      schema: { type: string }
     IdempotencyKey:
       name: Idempotency-Key
       in: header

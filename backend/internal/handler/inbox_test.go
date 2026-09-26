@@ -5,6 +5,7 @@ import (
 	"context"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"net/textproto"
 	"strings"
 	"testing"
@@ -175,6 +176,51 @@ func TestInboxTextIsACaptureAlreadyTranscribed(t *testing.T) {
 	}
 	if w := h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "x", "note_id": "missing"}, key); w.Code != http.StatusNotFound {
 		t.Errorf("unknown note: status = %d, want 404", w.Code)
+	}
+}
+
+// The text route reads X-Chintan-Note-Id as the audio route does, for a
+// client that can set headers but cannot build the JSON (the Devices card
+// and the README promise it for both). The body's note_id wins when both
+// are sent; another tenant's id is the same fixed 404 as no note at all.
+func TestInboxTextTakesTheNoteIdHeader(t *testing.T) {
+	h := newHarness(t)
+	groceries := h.createNote(t, "user1", "Groceries", nil)
+	errands := h.createNote(t, "user1", "Errands", nil)
+	theirs := h.createNote(t, "user2", "Not yours", nil)
+	key := h.deviceKey(t)
+
+	post := func(t *testing.T, body map[string]any, headers ...[2]string) *httptest.ResponseRecorder {
+		t.Helper()
+		return h.do(t, http.MethodPost, "/v1/inbox/text", "", body, append([][2]string{key}, headers...)...)
+	}
+	noteOf := func(t *testing.T, w *httptest.ResponseRecorder) string {
+		t.Helper()
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+		}
+		var accepted handler.InboxAccepted
+		decodeInto(t, w, &accepted)
+		if accepted.Capture.NoteID == nil {
+			t.Fatalf("capture on the wire = %+v; want a note", accepted.Capture)
+		}
+		return *accepted.Capture.NoteID
+	}
+
+	if got := noteOf(t, post(t, map[string]any{"text": "buy milk"}, [2]string{handler.HeaderInboxNoteID, groceries.ID})); got != groceries.ID {
+		t.Errorf("header alone: note_id = %q, want %q", got, groceries.ID)
+	}
+	if got := noteOf(t, post(t, map[string]any{"text": "post the letter", "note_id": errands.ID}, [2]string{handler.HeaderInboxNoteID, groceries.ID})); got != errands.ID {
+		t.Errorf("body and header: note_id = %q, want the body's %q", got, errands.ID)
+	}
+
+	missing := post(t, map[string]any{"text": "x"}, [2]string{handler.HeaderInboxNoteID, "missing"})
+	otherTenant := post(t, map[string]any{"text": "x"}, [2]string{handler.HeaderInboxNoteID, theirs.ID})
+	if missing.Code != http.StatusNotFound || otherTenant.Code != http.StatusNotFound {
+		t.Fatalf("missing = %d, another tenant's = %d; want 404 for both", missing.Code, otherTenant.Code)
+	}
+	if want, got := problemOf(t, missing)["detail"], problemOf(t, otherTenant)["detail"]; got != want || want != "no such resource" {
+		t.Errorf("another tenant's note: detail = %q, want the missing note's %q", got, want)
 	}
 }
 
