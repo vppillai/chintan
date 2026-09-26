@@ -8,6 +8,7 @@ import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 import { INITIAL_CAPTURE, type CaptureModel } from '@/features/capture/machine.ts';
 import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { bytesOf } from '@/test/blob.ts';
+import { onAFakeClock } from '@/test/clock.ts';
 import { testQueryClient } from '@/test/providers.tsx';
 import {
   CAPTURE,
@@ -285,9 +286,15 @@ describe('selecting several recordings', () => {
     const rows = await screen.findAllByRole('button', { name: isSummary });
     const older = rows[1]!;
 
-    fireEvent.pointerDown(older, { pointerType: 'touch', clientX: 10, clientY: 10 });
-    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
-    fireEvent.pointerUp(older, { pointerType: 'touch' });
+    await onAFakeClock(async () => {
+
+      fireEvent.pointerDown(older, { pointerType: 'touch', clientX: 10, clientY: 10 });
+
+      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
+
+      fireEvent.pointerUp(older, { pointerType: 'touch' });
+
+    });
 
     const bar = await screen.findByRole('toolbar', { name: 'Recording actions' });
     expect(within(bar).getByText((_c, el) => el?.textContent === '1 selected')).toBeInTheDocument();
@@ -304,9 +311,15 @@ describe('selecting several recordings', () => {
     const rows = await screen.findAllByRole('button', { name: isSummary });
     const older = rows[1]!;
 
-    fireEvent.pointerDown(older, { pointerType: 'mouse', button: 0, clientX: 10, clientY: 10 });
-    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
-    fireEvent.pointerUp(older, { pointerType: 'mouse', button: 0 });
+    await onAFakeClock(async () => {
+
+      fireEvent.pointerDown(older, { pointerType: 'mouse', button: 0, clientX: 10, clientY: 10 });
+
+      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
+
+      fireEvent.pointerUp(older, { pointerType: 'mouse', button: 0 });
+
+    });
 
     await screen.findByRole('toolbar', { name: 'Recording actions' });
     expect(screen.getAllByRole('checkbox')[1]).toBeChecked();
@@ -317,10 +330,17 @@ describe('selecting several recordings', () => {
     mount(apiStub(TWO).fetchImpl);
     const [row] = await screen.findAllByRole('button', { name: isSummary });
 
-    fireEvent.pointerDown(row!, { pointerType: 'touch', clientX: 10, clientY: 10 });
-    fireEvent.pointerMove(row!, { pointerType: 'touch', clientX: 10, clientY: 40 });
-    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
-    fireEvent.pointerUp(row!, { pointerType: 'touch' });
+    await onAFakeClock(async () => {
+
+      fireEvent.pointerDown(row!, { pointerType: 'touch', clientX: 10, clientY: 10 });
+
+      fireEvent.pointerMove(row!, { pointerType: 'touch', clientX: 10, clientY: 40 });
+
+      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
+
+      fireEvent.pointerUp(row!, { pointerType: 'touch' });
+
+    });
 
     expect(screen.queryByRole('toolbar')).toBeNull();
   });

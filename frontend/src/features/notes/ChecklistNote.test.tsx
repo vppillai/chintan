@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
@@ -114,6 +114,16 @@ function tabNames(): string[] {
     .map((tab) => tab.textContent ?? '');
 }
 
+// The Split up poll on a fake clock that still moves with real time, as
+// CleanedPanel.test.tsx: a test advances CLEAN_POLL_MS rather than waiting it.
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('a checklist note', () => {
   it('has Items and Split up for tabs, the editor for a body, and the count in the meta line', async () => {
     const user = userEvent.setup();
@@ -195,9 +205,8 @@ describe('a checklist note', () => {
     expect(api.cleans).toEqual([null]);
 
     const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
-    await waitFor(() => panel().getByRole('list', { name: 'Split up items' }), {
-      timeout: CLEAN_POLL_MS * 3,
-    });
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => panel().getByRole('list', { name: 'Split up items' }));
     const boxes = preview().getAllByRole('checkbox');
     expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true, false, false]);
     for (const box of boxes) expect(box).toBeEnabled();
@@ -259,12 +268,10 @@ describe('a checklist note', () => {
     // arrives is a new proposal: the caption and Use this list are back.
     await user.click(panel().getByRole('button', { name: 'Regenerate' }));
     for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
-    await waitFor(
-      () => {
-        expect(preview().getAllByRole('checkbox')).toHaveLength(4);
-      },
-      { timeout: CLEAN_POLL_MS * 3 },
-    );
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(preview().getAllByRole('checkbox')).toHaveLength(4);
+    });
     for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
     expect(panel().getByText(caption)).toBeInTheDocument();
     expect(panel().getByRole('button', { name: 'Use this list' })).toBeEnabled();

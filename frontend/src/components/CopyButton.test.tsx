@@ -1,8 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CopyButton } from './CopyButton.tsx';
+import { onAFakeClock } from '@/test/clock.ts';
+
+import { CopyButton, SETTLE_MS } from './CopyButton.tsx';
 
 /**
  * The owner asked for a one-tap copy. The failure modes matter as much as the
@@ -63,19 +65,19 @@ describe('CopyButton', () => {
     withClipboard(async () => {});
 
     render(<CopyButton label="Copy note" text={() => 'x'} />);
-    await user.click(screen.getByRole('button', { name: 'Copy note' }));
+    // The settle timer is the behaviour under test; it is armed by the click
+    // and fires on a fake clock advanced past it, rather than two and a half
+    // real seconds later.
+    await onAFakeClock(async () => {
+      await user.click(screen.getByRole('button', { name: 'Copy note' }));
 
-    // Where the thumb already is — and announced once for a screen reader.
-    expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Copied');
+      // Where the thumb already is — and announced once for a screen reader.
+      expect(await screen.findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent('Copied');
 
-    // Real time, not faked: the settle timer is the behaviour under test.
-    await waitFor(
-      () => {
-        expect(screen.getByRole('button', { name: 'Copy note' })).toBeInTheDocument();
-      },
-      { timeout: 4_000 },
-    );
+      await act(() => vi.advanceTimersByTimeAsync(SETTLE_MS + 50));
+    });
+    expect(screen.getByRole('button', { name: 'Copy note' })).toBeInTheDocument();
     expect(screen.queryByRole('status')).toBeNull();
   });
 

@@ -24,7 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export type CopyState = 'idle' | 'copied' | 'failed';
 
 /** How long the confirmation stays before the control returns to rest. */
-const SETTLE_MS = 2_500;
+export const SETTLE_MS = 2_500;
 
 export interface CopyButtonProps {
   /** Produced on click, not on render: the note is still being edited. */

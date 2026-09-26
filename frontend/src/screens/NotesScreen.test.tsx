@@ -4,8 +4,10 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { SERVER_SEARCH_DEBOUNCE_MS } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
+import { onAFakeClock } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import { setCanHover } from '@/test/setup.ts';
 
@@ -358,13 +360,19 @@ describe('search narrows the list as you type, from what is already on the devic
     mount(fetchImpl);
     await screen.findByRole('button', { name: /roof repair/i });
 
-    await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
-
-    // The client retries a network failure with jittered backoff, so the notice
-    // is a few seconds away. That delay is the app's, not the test's.
-    expect(
-      await screen.findByText(/server search did not respond/i, undefined, { timeout: 8_000 }),
-    ).toBeInTheDocument();
+    // The client retries a network failure with jittered backoff — up to
+    // 0.4 + 0.8 + 1.6 s of it — after the field's own debounce, so the notice
+    // is a few seconds away. That delay is the app's; the test moves a fake
+    // clock past the whole of it rather than sleeping it.
+    await onAFakeClock(async () => {
+      await user.type(screen.getByRole('searchbox', { name: /search notes/i }), 'roof');
+      await act(() => vi.advanceTimersByTimeAsync(SERVER_SEARCH_DEBOUNCE_MS));
+      // The backoff is jittered, so the clock is stepped until the notice lands.
+      for (let step = 0; step < 20 && !screen.queryByText(/server search did not respond/i); step += 1) {
+        await act(() => vi.advanceTimersByTimeAsync(500));
+      }
+      expect(screen.getByText(/server search did not respond/i)).toBeInTheDocument();
+    });
     expect(screen.getByRole('button', { name: /roof repair/i })).toBeInTheDocument();
   });
 
@@ -572,9 +580,15 @@ describe('doing something to several notes at once', () => {
     mount(library());
     const row = await screen.findByRole('button', { name: /reading list/i });
 
-    fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 12, clientY: 12 });
-    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
-    fireEvent.pointerUp(row, { pointerType: 'touch' });
+    await onAFakeClock(async () => {
+
+      fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 12, clientY: 12 });
+
+      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
+
+      fireEvent.pointerUp(row, { pointerType: 'touch' });
+
+    });
     fireEvent.click(row);
 
     const bar = await screen.findByRole('toolbar', { name: 'Bulk actions' });
@@ -592,9 +606,15 @@ describe('doing something to several notes at once', () => {
     const row = await screen.findByRole('button', { name: /reading list/i });
     expect(screen.queryByRole('checkbox')).toBeNull();
 
-    fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 12, clientY: 12 });
-    await act(() => new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 60)));
-    fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
+    await onAFakeClock(async () => {
+
+      fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 12, clientY: 12 });
+
+      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
+
+      fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
+
+    });
     fireEvent.click(row);
 
     await screen.findByRole('toolbar', { name: 'Bulk actions' });

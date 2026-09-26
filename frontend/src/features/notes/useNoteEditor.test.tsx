@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { NoteDetailWire } from '@/api/schema.ts';
+import { onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { APPEND_WAIT_LIMIT, AUTOSAVE_DELAY_MS } from './autosave.ts';
@@ -111,9 +112,10 @@ describe('an edit is never dropped on the way out of the screen', () => {
 
   it('does not save a note that was never edited', async () => {
     const { patches, wrapper } = harness();
-    renderHook(() => useNoteEditor(NOTE), { wrapper }).unmount();
-
-    await new Promise((resolve) => setTimeout(resolve, AUTOSAVE_DELAY_MS / 4));
+    await onAFakeClock(async () => {
+      renderHook(() => useNoteEditor(NOTE), { wrapper }).unmount();
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS * 2);
+    });
     expect(patches).toHaveLength(0);
   });
 });
@@ -479,22 +481,24 @@ describe('a save that arrives while a recording is being filed into the note', (
     act(() => {
       view.result.current.edit({ body: 'My own words.' });
     });
-    await act(async () => {
-      await view.result.current.saveNow();
-    });
+    // The wait is a timer the 409 arms, so it runs on a fake clock the test
+    // moves past the server's second rather than sleeping it.
+    await onAFakeClock(async () => {
+      await act(async () => {
+        await view.result.current.saveNow();
+      });
 
-    // Refused once: the draft is still owed, and nothing is a failure or a choice.
-    expect(patches).toHaveLength(1);
-    expect(view.result.current.model.state).toBe('dirty');
-    expect(view.result.current.model.error).toBeNull();
-    expect(view.result.current.model.theirs).toBeNull();
+      // Refused once: the draft is still owed, and nothing is a failure or a choice.
+      expect(patches).toHaveLength(1);
+      expect(view.result.current.model.state).toBe('dirty');
+      expect(view.result.current.model.error).toBeNull();
+      expect(view.result.current.model.theirs).toBeNull();
 
-    await waitFor(
-      () => {
+      await act(() => vi.advanceTimersByTimeAsync(1_100));
+      await waitFor(() => {
         expect(view.result.current.model.state).toBe('saved');
-      },
-      { timeout: 3_000 },
-    );
+      });
+    });
     expect(patches).toHaveLength(2);
     // The same write, on the same version — not rebased, and not before the server's delay.
     expect(patches.map((patch) => patch.body['version'])).toEqual([NOTE.version, NOTE.version]);

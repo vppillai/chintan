@@ -1,8 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { askPending } from '@/api/__fixtures__/pending.ts';
+import { onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { NOT_SENT_MESSAGE, THREAD_KEY, loadThread } from './thread.ts';
@@ -174,13 +175,15 @@ describe('a question whose 202 lands after the screen has been mounted again', (
     });
     first.unmount();
 
-    const second = renderHook(() => useAskThread(), { wrapper });
-    await waitFor(
-      () => {
-        expect(second.result.current.turns[0]?.status).toBe('pending');
-      },
-      { timeout: 4_000 },
-    );
+    // The client waits out the 409 on a jittered backoff timer, so the clock
+    // is fake and stepped until the replayed 202 has landed.
+    await onAFakeClock(async () => {
+      const second = renderHook(() => useAskThread(), { wrapper });
+      for (let step = 0; step < 20 && second.result.current.turns[0]?.status !== 'pending'; step += 1) {
+        await act(() => vi.advanceTimersByTimeAsync(500));
+      }
+      expect(second.result.current.turns[0]?.status).toBe('pending');
+    });
     expect(posts).toHaveLength(3);
     expect(new Set(posts.map((post) => post.key)).size).toBe(1);
     expect(new Set(posts.map((post) => post.body)).size).toBe(1);
@@ -201,16 +204,17 @@ describe('Try again on a question that never reached this side', () => {
     const wrapper = wrapperFor(fetchImpl);
     const { result } = renderHook(() => useAskThread(), { wrapper });
 
-    act(() => {
-      result.current.ask('what did I decide about the roof?');
+    // The client's own retries (three, with jittered backoff under three
+    // seconds) run out first — on a fake clock stepped past them.
+    await onAFakeClock(async () => {
+      act(() => {
+        result.current.ask('what did I decide about the roof?');
+      });
+      for (let step = 0; step < 20 && result.current.turns[0]?.status !== 'failed'; step += 1) {
+        await act(() => vi.advanceTimersByTimeAsync(500));
+      }
+      expect(result.current.turns[0]?.status).toBe('failed');
     });
-    // The client's own retries (three, with backoff under three seconds) run out first.
-    await waitFor(
-      () => {
-        expect(result.current.turns[0]?.status).toBe('failed');
-      },
-      { timeout: 8_000 },
-    );
     expect(result.current.turns[0]?.error).toBe(NOT_SENT_MESSAGE);
     expect(posts).toHaveLength(4);
     const key = result.current.turns[0]?.key;
@@ -227,5 +231,5 @@ describe('Try again on a question that never reached this side', () => {
     expect(new Set(posts.map((post) => post.body)).size).toBe(1);
     expect(result.current.turns).toHaveLength(1);
     expect(result.current.turns[0]?.key).toBe(key);
-  }, 10_000);
+  });
 });
