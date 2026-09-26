@@ -80,10 +80,27 @@ function snapshot(): ToastNotice | null {
 
 export function Toast() {
   const notice = useSyncExternalStore(subscribe, snapshot, () => null);
+
+  return (
+    <div className="toast" role="status" aria-live="polite" aria-atomic="true">
+      {notice && <Card notice={notice} />}
+    </div>
+  );
+}
+
+/**
+ * The card is its own component so that `attended` lives and dies with it.
+ * Held in `Toast`, the flag outlived the card: Undo unmounts the card inside
+ * the click, so no blur or pointerleave ever fires to clear it, and the next
+ * notice mounted with the clock already stopped and never closed. A notice
+ * that replaces another keeps the same card — and its attention, since the
+ * pointer that rests on it has not moved.
+ */
+function Card({ notice }: { notice: ToastNotice }) {
   const [attended, setAttended] = useState(false);
 
   useEffect(() => {
-    if (!notice || attended) return;
+    if (attended) return;
     const timer = setTimeout(dismissToast, TOAST_MS);
     return () => {
       clearTimeout(timer);
@@ -91,37 +108,33 @@ export function Toast() {
   }, [notice, attended]);
 
   return (
-    <div className="toast" role="status" aria-live="polite" aria-atomic="true">
-      {notice && (
-        <div
-          className="toast__card"
-          onPointerEnter={() => {
-            setAttended(true);
-          }}
-          onPointerLeave={() => {
-            setAttended(false);
-          }}
-          onFocus={() => {
-            setAttended(true);
-          }}
-          onBlur={() => {
-            setAttended(false);
+    <div
+      className="toast__card"
+      onPointerEnter={() => {
+        setAttended(true);
+      }}
+      onPointerLeave={() => {
+        setAttended(false);
+      }}
+      onFocus={() => {
+        setAttended(true);
+      }}
+      onBlur={() => {
+        setAttended(false);
+      }}
+    >
+      <span className="toast__text">{notice.message}</span>
+      {notice.action && (
+        <button
+          type="button"
+          className="toast__action"
+          onClick={() => {
+            dismissToast();
+            notice.action?.onSelect();
           }}
         >
-          <span className="toast__text">{notice.message}</span>
-          {notice.action && (
-            <button
-              type="button"
-              className="toast__action"
-              onClick={() => {
-                dismissToast();
-                notice.action?.onSelect();
-              }}
-            >
-              {notice.action.label}
-            </button>
-          )}
-        </div>
+          {notice.action.label}
+        </button>
       )}
     </div>
   );
