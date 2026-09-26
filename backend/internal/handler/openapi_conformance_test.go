@@ -609,6 +609,21 @@ func statusScenarios() map[string]scenario {
 		},
 		"POST /v1/notes/pins -> 400": send(http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{"not-pinned"}}),
 		"POST /v1/notes/pins -> 401": send(http.MethodPost, "/v1/notes/pins", "", map[string]any{"ids": []string{"x"}}),
+		// A note whose version keeps moving while its rank is written: the
+		// re-read and rewrite give up after a few rounds.
+		"POST /v1/notes/pins -> 409": func(t *testing.T) int {
+			conflict := false
+			h := newHarness(t, withConflictingNotePuts(&conflict))
+			a := h.createNote(t, "user1", "A", nil)
+			b := h.createNote(t, "user1", "B", nil)
+			for _, n := range []handler.Note{a, b} {
+				pin(t, h, "user1", n, true)
+			}
+			conflict = true
+			return h.do(t, http.MethodPost, "/v1/notes/pins", "user1", map[string]any{"ids": []string{b.ID, a.ID}}).Code
+		},
+		"POST /v1/notes/pins -> 413": send(http.MethodPost, "/v1/notes/pins", "user1",
+			[]byte(`{"ids":["`+strings.Repeat("x", handler.MaxSmallRequestBytes)+`"]}`)),
 
 		"POST /v1/notes/match -> 200": func(t *testing.T) int {
 			h := newHarness(t)
@@ -708,6 +723,8 @@ func statusScenarios() map[string]scenario {
 		"POST /v1/devices -> 201": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Watch"}),
 		"POST /v1/devices -> 400": send(http.MethodPost, "/v1/devices", "user1", map[string]any{"name": " "}),
 		"POST /v1/devices -> 401": send(http.MethodPost, "/v1/devices", "", map[string]any{"name": "Watch"}),
+		"POST /v1/devices -> 413": send(http.MethodPost, "/v1/devices", "user1",
+			[]byte(`{"name":"`+strings.Repeat("x", handler.MaxSmallRequestBytes)+`"}`)),
 		"POST /v1/devices -> 409": func(t *testing.T) int {
 			h := newHarness(t)
 			for i := 0; i < model.MaxDevicesPerTenant; i++ {
@@ -788,6 +805,16 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "  "}, h.deviceKey(t)).Code
 		},
 		"POST /v1/inbox/text -> 401": send(http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk"}),
+		"POST /v1/inbox/text -> 404": func(t *testing.T) int {
+			h := newHarness(t)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk", "note_id": "note_missing"}, h.deviceKey(t)).Code
+		},
+		"POST /v1/inbox/text -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			archived := h.createNote(t, "user1", "Archived", nil)
+			h.do(t, http.MethodDelete, "/v1/notes/"+archived.ID, "user1", nil)
+			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": "buy milk", "note_id": archived.ID}, h.deviceKey(t)).Code
+		},
 		"POST /v1/inbox/text -> 413": func(t *testing.T) int {
 			h := newHarness(t)
 			return h.do(t, http.MethodPost, "/v1/inbox/text", "", map[string]any{"text": strings.Repeat("x", handler.MaxInboxTextRequestBytes)}, h.deviceKey(t)).Code
@@ -935,7 +962,10 @@ func statusScenarios() map[string]scenario {
 			h.seedAppended(t, "user1", source, "c_1", model.Now(), "Dictated.")
 			return h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"note_id": source.ID}).Code
 		},
-		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{}),
+		// Both fields at once; neither is the handler test's case, since the
+		// document declares one 400.
+		"POST /v1/captures/{captureId}/move -> 400": send(http.MethodPost, "/v1/captures/c_1/move", "user1",
+			map[string]any{"note_id": "n1", "new_note_title": "New"}),
 		"POST /v1/captures/{captureId}/move -> 401": send(http.MethodPost, "/v1/captures/c_1/move", "", map[string]any{"note_id": "n1"}),
 		"POST /v1/captures/{captureId}/move -> 404": send(http.MethodPost, "/v1/captures/missing/move", "user1", map[string]any{"note_id": "n1"}),
 		"POST /v1/captures/{captureId}/move -> 409": func(t *testing.T) int {

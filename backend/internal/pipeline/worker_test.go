@@ -340,10 +340,13 @@ func TestRetryResumesFromTheLastGoodStageWithoutRetranscribing(t *testing.T) {
 // identical failures only fill the dead-letter queue.
 func TestInfrastructureFailureFailsTheInvocation(t *testing.T) {
 	h := newHarness(t, harnessOpts{})
-	// No capture row at all: GetCapture fails, which is a store fault.
+	// No capture row at all: GetCapture fails, which is a store fault. The
+	// event is stamped from the clock so the missing row is judged by the
+	// orphan age gate — a fresh delivery is not old enough — rather than
+	// skipping it for a zero eventTime.
 	worker := NewWorker(h.pipeline)
 
-	if err := worker.Handle(context.Background(), s3Event("tenants/user1/captures/c_missing/audio.webm")); err == nil {
+	if err := worker.Handle(context.Background(), s3EventAt("tenants/user1/captures/c_missing/audio.webm", h.clock.Now())); err == nil {
 		t.Fatal("Handle returned nil for a store fault; Lambda would treat the capture as done and never retry it")
 	}
 }

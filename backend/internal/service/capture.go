@@ -89,9 +89,14 @@ var (
 	ErrCaptureAudioExpired = errors.New("the recording's audio has expired")
 )
 
-// NoteCreator creates the destination note for a capture that has none.
+// NoteCreator creates the destination note for a capture that has none, and
+// takes back one that a move made and then could not use.
 type NoteCreator interface {
 	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
+	// DiscardNote hard-deletes a note nothing references: its body, its
+	// metadata and its index row, with no capture cascade. See
+	// NotesService.DiscardNote for why the cascade is left out.
+	DiscardNote(ctx context.Context, userID string, note model.NoteIndex) error
 }
 
 // Invoker hands a capture to the worker Lambda.

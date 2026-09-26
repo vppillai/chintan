@@ -16,7 +16,9 @@ info:
        `deviceKey` scheme — a key issued by `POST /v1/devices`, presented
        as `Authorization: Bearer ck_…` and checked by the service itself.
        Those five, and only those five, are what the API Gateway route
-       table admits without its JWT authorizer. Sign-in happens against
+       table admits without its JWT authorizer (plus the CORS preflight
+       route, `OPTIONS /{proxy+}`, which the Lambda answers 204). Sign-in
+       happens against
        Cognito's managed login, never against this API. The service
        verifies signature, issuer, audience, expiry, and `token_use`
        itself; it does not rely on the API Gateway authorizer alone. There
@@ -435,7 +437,10 @@ paths:
         back in that order. Every id must be one of the caller's pinned,
         active notes, named once; anything else refuses the whole request
         (400 `every id must be one of your pinned notes`). One request per
-        drag. Pinning and unpinning is `NoteUpdate.pinned`.
+        drag. Pinning and unpinning is `NoteUpdate.pinned`. A note whose
+        version moves while its rank is being written is re-read and
+        written once more, a few times; a note that keeps moving is 409
+        with nothing else of the order changed after it.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -451,6 +456,8 @@ paths:
               schema: { $ref: '#/components/schemas/NotePage' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /v1/notes/match:
     post:
@@ -661,7 +668,9 @@ paths:
         inbox routes as `Authorization: Bearer ck_…`. The key is in this
         response and nowhere else: only its SHA-256 is stored, and this
         operation takes no `Idempotency-Key`, so no replay record holds it.
-        At most ten live devices (409 `you already have ten devices; remove
+        Clients must not retry this request: an attempt whose 201 was lost
+        has still issued a key, and a retry issues a second one nobody
+        will see. At most ten live devices (409 `you already have ten devices; remove
         one first`). See `docs/design/inbox.md` and the README's "Connect a
         device".
       requestBody:
@@ -682,6 +691,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
 
   /v1/devices/{deviceId}:
     parameters:
@@ -836,6 +846,24 @@ paths:
         and refreshes both notes' snippet and search text. The transcript is
         not re-run.
 
+        The target is an existing `note_id` or a `new_note_title`, as on
+        `/target`, never both (400 `supply either note_id or new_note_title,
+        not both`; neither is 400 `supply either note_id or new_note_title`).
+        With a title the note is created first, empty, and the recording
+        moves into it exactly as above, so its text is the new note's first
+        paragraph; the answer is the 200 below and the capture's `note_id`
+        is the new note's id — `GET /v1/notes/{note_id}` opens it. The
+        capture is checked before the note is made, so a refusal (404, 409)
+        leaves no empty note behind, and neither does the 503 below: the note
+        is made before the move, and a move that fails with nothing written
+        into it — every rolled-back failure — removes it again, so a repeat of
+        the request makes one fresh note, not one per attempt. A move that
+        fails after the text is in the new note (a 500) keeps that note, since
+        it holds the only copy of the text, and the capture still names its
+        old note; a repeat moves the capture into a second new note, and the
+        first is an ordinary note to delete or merge by hand. Its id is in the
+        server log.
+
         The two note bodies are written one after the other, each under an
         ETag condition. If the second write fails the first is undone and the
         answer is a 503 whose `type` is
@@ -856,7 +884,16 @@ paths:
               schema: { $ref: '#/components/schemas/Capture' }
         '204':
           description: The capture was already in that note. Nothing changed.
-        '400': { $ref: '#/components/responses/BadRequest' }
+        '400':
+          description: |
+            Neither or both of `note_id` and `new_note_title`, a title that
+            is blank or over 200 characters (`title is required`, `title is
+            N characters; the limit is 200`), or a body that is not the JSON
+            object above (`the request body is not valid JSON for this
+            endpoint`, unknown fields included).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: No such capture, or no such target note, for this tenant.
@@ -1108,6 +1145,8 @@ paths:
               schema: { $ref: '#/components/schemas/InboxAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/PayloadTooLarge' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
@@ -1262,6 +1301,7 @@ components:
     Retryable:
       description: |
         The operation failed part-way and was rolled back, so nothing changed
+        — a move into a `new_note_title` has also removed the note it made —
         and the same request can be repeated. The body's `type` is
         `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable`
         and a `Retry-After` header is set; a 503 without that type means the
@@ -1651,8 +1691,11 @@ components:
           type: boolean
           description: |
             `true` puts the note in Home's Pinned group, last among the pinned
-            notes (`pin_rank` = 1000 × the number already pinned); `false`
-            takes it out. At most fifty notes are pinned (409 `you can pin up
+            notes (`pin_rank` one step, 1000, past the highest rank in use, so
+            it lands last even after an unpin has left a gap); `false` takes
+            it out. Neither moves `updated_at`: a pin is not an edit, and the
+            note keeps its place among the days once unpinned. `version`
+            still moves. At most fifty notes are pinned (409 `you can pin up
             to fifty notes`). The order within the group is
             `POST /v1/notes/pins`.
 
@@ -1943,11 +1986,21 @@ components:
 
     CaptureMove:
       type: object
-      required: [note_id]
       properties:
         note_id:
           type: string
           description: The active note to move the recording into.
+        new_note_title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: |
+            Create a note with this title and move the recording into it.
+            Trimmed and whitespace-collapsed as `NoteCreate.title` is. The
+            same field, with the same rules, as `CaptureTarget`.
+      oneOf:
+        - required: [note_id]
+        - required: [new_note_title]
 
     CaptureRetranscribe:
       type: object

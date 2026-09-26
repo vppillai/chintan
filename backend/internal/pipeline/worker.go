@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 
@@ -226,6 +227,10 @@ type CaptureRef struct {
 	// Zero means "this invocation did not come with a measurement".
 	ObjectKey string
 	SizeBytes int64
+	// EventTime is when S3 wrote the object, from the same notification. A
+	// Lambda retry redelivers the identical payload, so the event's age is
+	// what tells a retry from a first delivery. Zero for the API's payload.
+	EventTime time.Time
 }
 
 // parseInvocation resolves a payload to the captures it refers to and the
@@ -268,6 +273,7 @@ func parseInvocation(raw json.RawMessage) ([]CaptureRef, string, error) {
 		}
 		ref.ObjectKey = r.S3.Object.Key
 		ref.SizeBytes = r.S3.Object.Size
+		ref.EventTime = r.EventTime
 		refs = append(refs, ref)
 	}
 	return refs, "", nil

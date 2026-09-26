@@ -160,17 +160,24 @@ func TestMoveCaptureRefusalsOverHTTP(t *testing.T) {
 	h.seedAppended(t, "user1", source, "c_1", "2026-01-01T10:00:00.000000000Z", "Dictated.")
 	h.putCapture(t, model.CaptureIndex{ID: "c_unfiled", UserID: "user1", Status: model.StatusNeedsTarget, CreatedAt: model.Now()})
 
+	// detail, when set, is the sentence the refusal must carry.
 	cases := map[string]struct {
-		path string
-		body any
-		want int
+		path   string
+		body   any
+		want   int
+		detail string
 	}{
-		"archived target":      {"/v1/captures/c_1/move", map[string]any{"note_id": archived.ID}, http.StatusConflict},
-		"missing target":       {"/v1/captures/c_1/move", map[string]any{"note_id": "note_missing"}, http.StatusNotFound},
-		"missing capture":      {"/v1/captures/missing/move", map[string]any{"note_id": source.ID}, http.StatusNotFound},
-		"no note_id":           {"/v1/captures/c_1/move", map[string]any{}, http.StatusBadRequest},
-		"unknown field":        {"/v1/captures/c_1/move", map[string]any{"note_id": source.ID, "title": "x"}, http.StatusBadRequest},
-		"capture with no note": {"/v1/captures/c_unfiled/move", map[string]any{"note_id": source.ID}, http.StatusConflict},
+		"archived target":      {"/v1/captures/c_1/move", map[string]any{"note_id": archived.ID}, http.StatusConflict, ""},
+		"missing target":       {"/v1/captures/c_1/move", map[string]any{"note_id": "note_missing"}, http.StatusNotFound, ""},
+		"missing capture":      {"/v1/captures/missing/move", map[string]any{"note_id": source.ID}, http.StatusNotFound, ""},
+		"neither field":        {"/v1/captures/c_1/move", map[string]any{}, http.StatusBadRequest, "supply either note_id or new_note_title"},
+		"both fields":          {"/v1/captures/c_1/move", map[string]any{"note_id": source.ID, "new_note_title": "New"}, http.StatusBadRequest, "supply either note_id or new_note_title, not both"},
+		"blank title":          {"/v1/captures/c_1/move", map[string]any{"new_note_title": "   "}, http.StatusBadRequest, "title is required"},
+		"title over the limit": {"/v1/captures/c_1/move", map[string]any{"new_note_title": strings.Repeat("x", handler.MaxTitleRunes+1)}, http.StatusBadRequest, "title is 201 characters; the limit is 200"},
+		"unknown field":        {"/v1/captures/c_1/move", map[string]any{"note_id": source.ID, "title": "x"}, http.StatusBadRequest, ""},
+		"capture with no note": {"/v1/captures/c_unfiled/move", map[string]any{"note_id": source.ID}, http.StatusConflict, ""},
+		"no note, new title":   {"/v1/captures/c_unfiled/move", map[string]any{"new_note_title": "Orphan"}, http.StatusConflict, ""},
+		"missing, new title":   {"/v1/captures/missing/move", map[string]any{"new_note_title": "Orphan"}, http.StatusNotFound, ""},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -178,11 +185,51 @@ func TestMoveCaptureRefusalsOverHTTP(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("status = %d body = %s, want %d", w.Code, w.Body.String(), tc.want)
 			}
-			problemOf(t, w)
+			if p := problemOf(t, w); tc.detail != "" && p["detail"] != tc.detail {
+				t.Fatalf("detail = %q, want %q", p["detail"], tc.detail)
+			}
 		})
 	}
 	if got := h.noteBody(t, "user1", source.ID); got != "Dictated." {
 		t.Fatalf("a refused move changed the source: %q", got)
+	}
+	// A refused move into a new title made no note: the capture is checked
+	// before the note is.
+	if got, _ := listIDs(t, h, "user1", 50); len(got) != 1 || got[0] != source.ID {
+		t.Fatalf("notes after the refusals = %v, want the source alone", got)
+	}
+}
+
+// "New note…" in the Move sheet: the note is made with the title, and the
+// recording and its paragraph move into it, so the new note reads the dictated
+// text and the source no longer does. The answer is the capture pointing at
+// the new note, which is how the client opens it.
+func TestMoveCaptureIntoANewNote(t *testing.T) {
+	h := newHarness(t)
+	source := h.createNote(t, "user1", "Source", nil)
+	h.seedAppended(t, "user1", source, "c_1", "2026-01-01T10:00:00.000000000Z", "Dictated.")
+	h.seedAppended(t, "user1", source, "c_2", "2026-01-01T11:00:00.000000000Z", "Stays.")
+
+	w := h.do(t, http.MethodPost, "/v1/captures/c_1/move", "user1", map[string]any{"new_note_title": "  Groceries   list "})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+	}
+	var moved handler.Capture
+	decodeInto(t, w, &moved)
+	if moved.NoteID == nil || *moved.NoteID == source.ID || *moved.NoteID == "" {
+		t.Fatalf("note_id = %v, want a new note", moved.NoteID)
+	}
+	got := h.do(t, http.MethodGet, "/v1/notes/"+*moved.NoteID, "user1", nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("GET the new note: %d %s", got.Code, got.Body.String())
+	}
+	var detail handler.NoteDetail
+	decodeInto(t, got, &detail)
+	if detail.Title != "Groceries list" || detail.Body != "Dictated." {
+		t.Errorf("new note = %q / %q, want the trimmed title over the dictated text", detail.Title, detail.Body)
+	}
+	if body := h.noteBody(t, "user1", source.ID); body != "Stays." {
+		t.Errorf("source body = %q, want the other recording alone", body)
 	}
 }
 

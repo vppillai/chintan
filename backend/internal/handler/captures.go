@@ -24,9 +24,11 @@ type captureTargetRequest struct {
 	NewNoteTitle string `json:"new_note_title"`
 }
 
-// captureMoveRequest is the OpenAPI CaptureMove schema.
+// captureMoveRequest is the OpenAPI CaptureMove schema: an existing note by
+// id or a new one by title, the same two fields as CaptureTarget.
 type captureMoveRequest struct {
-	NoteID string `json:"note_id"`
+	NoteID       string `json:"note_id"`
+	NewNoteTitle string `json:"new_note_title"`
 }
 
 // captureRetranscribeRequest is the OpenAPI CaptureRetranscribe schema.
@@ -307,9 +309,10 @@ func (rt *router) deleteCapture(w http.ResponseWriter, r *http.Request) {
 }
 
 // moveCapture relocates one recording, and the paragraph it dictated, to
-// another note. The paragraph lands among the target's recordings in
-// chronological order, not at the end. 200 with the re-pointed capture; 204
-// when it was already there.
+// another note — an existing one by id, or a new one by title, which is made
+// first. The paragraph lands among the target's recordings in chronological
+// order, not at the end. 200 with the re-pointed capture, whose note_id is
+// how the client opens a new note; 204 when it was already there.
 func (rt *router) moveCapture(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
@@ -320,8 +323,25 @@ func (rt *router) moveCapture(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, MaxSmallRequestBytes, &req) {
 		return
 	}
-	if req.NoteID == "" {
-		httperr.BadRequest(w, r, "note_id is required")
+	// The same refusals, in the same words, as setCaptureTarget: the Move
+	// sheet's "New note…" is the Into chooser's, one screen later.
+	switch {
+	case req.NoteID != "" && req.NewNoteTitle != "":
+		httperr.BadRequest(w, r, "supply either note_id or new_note_title, not both")
+		return
+	case req.NoteID == "" && req.NewNoteTitle == "":
+		httperr.BadRequest(w, r, "supply either note_id or new_note_title")
+		return
+	case req.NewNoteTitle != "":
+		if err := checkTitle(req.NewNoteTitle); answerValidation(w, r, err) {
+			return
+		}
+		capture, err := rt.Captures.MoveCaptureToNewNote(r.Context(), userID, r.PathValue("captureId"), req.NewNoteTitle)
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, captureOf(*capture))
 		return
 	}
 

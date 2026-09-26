@@ -505,8 +505,17 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 		}
 	}
 
-	// Update timestamp
-	note.UpdatedAt = model.Now()
+	// A pin is not an edit: it moves the note into the Pinned group, not
+	// among the days, so only a change to what the note says or is bumps
+	// updated_at and rewrites the meta object below. The version still moves,
+	// through putCarryingStamp. Before this, an unpinned note re-filed under
+	// Today and a pinned row read as edited just now (review 2026-09-24 R4-1).
+	touched := updates.Title != nil || updates.Aliases != nil || updates.Tags != nil ||
+		updates.Body != nil || updates.Verbatim != nil || updates.Language != nil ||
+		updates.AutoClean != nil || updates.CleanMode != nil || updates.Kind != nil
+	if touched {
+		note.UpdatedAt = model.Now()
+	}
 
 	// Handle body update. The client sends its whole draft with a Details
 	// change (language, kind, word-for-word, auto-clean), and a body that
@@ -552,19 +561,21 @@ func (s *NotesService) UpdateNote(ctx context.Context, userID, noteID string, up
 	}
 
 	// Update metadata
-	metaData := map[string]interface{}{
-		"title":      note.Title,
-		"aliases":    note.Aliases,
-		"tags":       note.Tags,
-		"verbatim":   note.Verbatim,
-		"language":   note.Language,
-		"kind":       note.Kind,
-		"updated_at": note.UpdatedAt,
-	}
-	metaBytes, _ := json.Marshal(metaData)
-	err = s.objects.Put(ctx, note.S3MetaKey, metaBytes, "application/json")
-	if err != nil {
-		return model.NoteIndex{}, fmt.Errorf("failed to update meta: %w", err)
+	if touched {
+		metaData := map[string]interface{}{
+			"title":      note.Title,
+			"aliases":    note.Aliases,
+			"tags":       note.Tags,
+			"verbatim":   note.Verbatim,
+			"language":   note.Language,
+			"kind":       note.Kind,
+			"updated_at": note.UpdatedAt,
+		}
+		metaBytes, _ := json.Marshal(metaData)
+		err = s.objects.Put(ctx, note.S3MetaKey, metaBytes, "application/json")
+		if err != nil {
+			return model.NoteIndex{}, fmt.Errorf("failed to update meta: %w", err)
+		}
 	}
 
 	// Save to store. A version conflict here means somebody else wrote the note
@@ -628,19 +639,52 @@ func (s *NotesService) ReorderPins(ctx context.Context, userID string, ids []str
 	}
 	out := make([]model.NoteIndex, 0, len(notes))
 	for i, note := range notes {
-		rank := int64(i) * model.PinRankStep
-		if note.PinRank == rank {
-			out = append(out, note)
-			continue
-		}
-		note.PinRank = rank
-		stored, err := s.putCarryingStamp(ctx, userID, note)
+		stored, err := s.putPinRank(ctx, userID, note, int64(i)*model.PinRankStep)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, stored)
 	}
 	return out, nil
+}
+
+// putPinRank writes rank onto note, re-reading it and writing again when its
+// version moved underneath. A body save or the worker's append stamp landing
+// on a pinned note mid-drag is not a reason to stop part-way through the
+// order — the rank is independent of whatever else changed — and stopping
+// left the earlier notes moved and the later ones not, behind a 409 the
+// client's rollback did not match (review 2026-09-24 R4-9). A note that keeps
+// moving is still that conflict; one unpinned or archived meanwhile is refused
+// as the validation before the loop would have refused it. A note already at
+// its rank is not rewritten, so a drag that moves one note writes one row.
+//
+// The row a conflict hands back is the one now stored (putCarryingStamp read
+// it to tell a stamp from a moved version), so the next attempt starts from
+// it rather than reading again. A returned row whose version did not move is
+// the exception: it is the copy just offered, carrying the rank as if it had
+// landed, because the read inside failed or a second writer got in behind it;
+// the winner is unknown, and the conflict is reported as it stands.
+func (s *NotesService) putPinRank(ctx context.Context, userID string, note model.NoteIndex, rank int64) (model.NoteIndex, error) {
+	var err error
+	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
+		if attempt > 0 && (!note.Pinned() || !NoteIsActive(note)) {
+			return model.NoteIndex{}, ErrPinReorderInvalid
+		}
+		if note.PinRank == rank {
+			return note, nil
+		}
+		note.PinRank = rank
+		var stored model.NoteIndex
+		stored, err = s.putCarryingStamp(ctx, userID, note)
+		if !errors.Is(err, repository.ErrVersionConflict) {
+			return stored, err
+		}
+		if stored.Version == note.Version {
+			return model.NoteIndex{}, err
+		}
+		note = stored
+	}
+	return model.NoteIndex{}, err
 }
 
 // putCarryingStamp is PutNote for a write that did not touch the clean stamp.
@@ -820,6 +864,27 @@ func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string
 		return err
 	}
 	return s.store.DeleteNote(ctx, userID, noteID)
+}
+
+// DiscardNote removes a note nothing references — one CreateNote made for a
+// move whose write into it never landed. The body and the metadata go first
+// and the index row last, as in hardDeleteNote, so a failure leaves the note
+// visible and deletable rather than as objects nobody can reach.
+//
+// It deliberately runs none of hardDeleteNote's capture cascade. That cascade
+// deletes every capture row filed against the note together with its audio
+// and transcripts, and the caller cannot prove that no row points here: a
+// re-point that reported a fault may still have landed. A note left behind by
+// mistake costs two empty objects; a cascade that guessed wrong costs a
+// recording.
+func (s *NotesService) DiscardNote(ctx context.Context, userID string, note model.NoteIndex) error {
+	if err := s.deleteObject(ctx, note.S3MarkdownKey); err != nil {
+		return fmt.Errorf("failed to delete the note body: %w", err)
+	}
+	if err := s.deleteObject(ctx, note.S3MetaKey); err != nil {
+		return fmt.Errorf("failed to delete the note meta: %w", err)
+	}
+	return s.store.DeleteNote(ctx, userID, note.ID)
 }
 
 // unindexedCaptures is the tenant's captures the note index cannot see (see

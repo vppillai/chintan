@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/middleware"
@@ -34,6 +35,13 @@ type harness struct {
 }
 
 type harnessOption func(*handler.Deps, *harness)
+
+// harnessNow is the device service's clock: one fixed instant, so a test that
+// drives a key's daily counter to its limit cannot have a UTC midnight pass
+// between two requests and reset it (the flake #89 took out of the service
+// tests, review 2026-09-24 R4-10). The router counts requests on its own
+// clock; handler.Deps carries none to pin.
+var harnessNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
 // withBrokenStore makes every settings read fail, so readiness reports degraded.
 func withBrokenStore() harnessOption {
@@ -59,6 +67,16 @@ func withFailingBodyWrite(key *string) harnessOption {
 			WithInvoker(h.worker).
 			WithNoteCreator(h.notes)
 		d.Captures = h.captures
+	}
+}
+
+// withConflictingNotePuts makes every note write lose its version check while
+// *on is set, the way a note written to from elsewhere throughout a drag would;
+// the harness's own seeding runs with it off.
+func withConflictingNotePuts(on *bool) harnessOption {
+	return func(d *handler.Deps, h *harness) {
+		h.notes = service.NewNotesService(conflictingNotePuts{Store: h.store, on: on}, h.objects).WithInvoker(h.worker)
+		d.Notes = h.notes
 	}
 }
 
@@ -91,7 +109,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Requests:      h.usage,
 		Storage:       service.NewStorageService(h.store),
 		Ask:           service.NewAskService(h.store, h.worker),
-		Devices:       service.NewDeviceService(h.store),
+		Devices:       service.NewDeviceService(h.store).WithClock(func() time.Time { return harnessNow }),
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
 	}
@@ -247,6 +265,20 @@ func TestMain(m *testing.M) {
 	restore := obs.SetMetricOutput(io.Discard)
 	defer restore()
 	os.Exit(m.Run())
+}
+
+// conflictingNotePuts answers every PutNote with a version conflict while *on
+// is set, and is the memory store otherwise.
+type conflictingNotePuts struct {
+	repository.Store
+	on *bool
+}
+
+func (c conflictingNotePuts) PutNote(ctx context.Context, tenantID string, n model.NoteIndex) (model.NoteIndex, error) {
+	if *c.on {
+		return model.NoteIndex{}, repository.ErrVersionConflict
+	}
+	return c.Store.PutNote(ctx, tenantID, n)
 }
 
 // failingPutIfMatch fails the conditional write for the key *key names, and is
