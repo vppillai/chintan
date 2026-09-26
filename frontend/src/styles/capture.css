@@ -22,11 +22,6 @@
   text-align: center;
 }
 
-.capture__title {
-  font-size: var(--font-size-lg);
-  color: var(--color-muted);
-}
-
 .capture__timer {
   font-size: var(--font-size-4xl);
   font-weight: var(--font-weight-regular);
@@ -49,18 +44,6 @@
   overflow: hidden;
   background-color: var(--color-surface);
   border-radius: var(--radius-lg);
-}
-
-.capture__waveform-placeholder {
-  inline-size: 60%;
-  block-size: 1px;
-  background-color: var(--color-line-strong);
-}
-
-.capture__status {
-  max-inline-size: 24rem;
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
 }
 
 /*

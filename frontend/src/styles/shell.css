@@ -337,8 +337,7 @@
   color: var(--color-muted);
 }
 
-.screen__count,
-.screen__meta {
+.screen__count {
   font-size: var(--font-size-sm);
   color: var(--color-muted);
 }
@@ -387,23 +386,6 @@
   box-shadow: none;
   color: var(--color-faint);
   cursor: default;
-}
-
-.icon-button {
-  display: grid;
-  place-items: center;
-  min-inline-size: var(--layout-touch-target-min);
-  min-block-size: var(--layout-touch-target-min);
-  border-radius: var(--radius-md);
-  color: var(--color-muted);
-}
-
-.icon-button:hover {
-  color: var(--color-ink);
-}
-
-.icon-button:active {
-  background-color: var(--color-surface);
 }
 
 /* A tappable phrase inside a sentence — "Try again", "OK". The 44 px target
@@ -688,10 +670,6 @@
   font-size: var(--font-size-md);
   line-height: var(--line-height-relaxed);
   padding-block: var(--space-4);
-}
-
-.prose__placeholder {
-  color: var(--color-muted);
 }
 
 .tag-list {
@@ -1050,7 +1028,6 @@
  */
 .capture__control--primary .capture__control-disc,
 .filing-row__action--primary,
-.note-bar__action--primary,
 .dialog__action--primary,
 .dialog__action--destructive,
 .signed-out__action,
@@ -1067,7 +1044,6 @@
 
 .capture__control--primary:active .capture__control-disc,
 .filing-row__action--primary:active,
-.note-bar__action--primary:active,
 .dialog__action--primary:active,
 .dialog__action--destructive:active,
 .signed-out__action:active,
@@ -1350,10 +1326,6 @@
   cursor: default;
 }
 
-.filing-row__open-icon {
-  transform: rotate(180deg);
-}
-
 /* --------------------------------------------------------------------------
    Offline banner — says plainly when the data on screen is cached.
    -------------------------------------------------------------------------- */
@@ -1385,17 +1357,6 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-}
-
-.player__play {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  inline-size: 3rem;
-  block-size: 3rem;
-  border-radius: var(--radius-full);
-  background-color: var(--color-ink);
-  color: var(--color-ground);
 }
 
 /* The whole 44 px box is the slider's hit area; the track is drawn through
@@ -2012,19 +1973,11 @@
    -------------------------------------------------------------------------- */
 
 /*
- * Below the editor, and separated by a rule rather than by colour.
- *
- * These are the only controls on the screen whose effect is not undone by
- * typing something else, so they get distance from the body text rather than a
- * red that the palette has not defined. `--color-accent` is the app's one
- * "consequential" signal and is already carrying the destructive dialog.
+ * The archived note's status line and the one error a note action can raise.
+ * `--color-accent` is the app's one "consequential" signal and is already
+ * carrying the destructive dialog, so the error wears it rather than a red
+ * the palette has not defined.
  */
-.note-actions {
-  margin-block-start: var(--space-8);
-  padding-block-start: var(--space-4);
-  border-block-start: 1px solid var(--color-line);
-}
-
 .note-actions__state {
   font-size: var(--font-size-sm);
   color: var(--color-muted);
@@ -2033,11 +1986,6 @@
 .note-actions__error {
   margin-block-start: var(--space-2);
   font-size: var(--font-size-sm);
-  color: var(--color-accent);
-}
-
-.screen__action--destructive {
-  border-color: var(--color-accent);
   color: var(--color-accent);
 }
 
@@ -2210,27 +2158,15 @@
   color: var(--color-accent);
 }
 
-.player__actions {
-  display: flex;
-}
-
-.transcript__copy {
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
-  color: var(--color-muted);
-}
-
 /* ==========================================================================
-   Note screen — back link, meta line, recordings, action bar
+   Note screen — back link, meta line, recordings
    ========================================================================== */
 
 /*
- * The bar carries its own bottom padding, so the screen gives up the usual
- * one: a sticky element rests in its in-flow position at the end of the
- * scroll, and 2rem of screen padding beneath it would float it.
+ * The drawer at the foot carries its own bottom padding (notes.css), so the
+ * screen gives up the usual one: a sticky element rests in its in-flow
+ * position at the end of the scroll, and 2rem of screen padding beneath it
+ * would float it.
  *
  * A column at least as tall as the scroll region, with the bars pushed to
  * its foot. A sticky bar only sticks while there is something to scroll;
@@ -2243,10 +2179,6 @@
   flex-direction: column;
   min-block-size: 100%;
   padding-block-end: 0;
-}
-
-.note-screen > .note-bar-anchor {
-  margin-block-start: auto;
 }
 
 .back-link {
@@ -3000,8 +2932,8 @@
    -------------------------------------------------------------------------- */
 
 /*
- * Sticky to the foot of the scrolling region, exactly as `.note-bar-anchor`
- * is: the tab bar owns the viewport's bottom row, so this rests on top of it
+ * Sticky to the foot of the scrolling region, as the note's drawer is: the
+ * tab bar owns the viewport's bottom row, so this rests on top of it
  * rather than over it, and the scroll container clips it. The bar used to be a
  * card at the end of the list — six thousand pixels down on a phone (QA Q6).
  */
@@ -3151,33 +3083,8 @@
 }
 
 /* --------------------------------------------------------------------------
-   Action bar — Tags · Share · Archive · Record into this
+   Note panel — the body of the Details and Share drawer (notes.css)
    -------------------------------------------------------------------------- */
-
-/*
- * Sticky to the foot of the scrolling region, not fixed to the viewport: the
- * tab bar owns the viewport's bottom row and a fixed bar here would sit on it.
- * Inside `.app__main` a sticky element is clipped by that region, so it can
- * cover nothing outside the note.
- */
-.note-bar-anchor {
-  position: sticky;
-  inset-block-end: 0;
-  z-index: var(--z-content);
-  display: grid;
-  gap: var(--space-3);
-  margin-block-start: var(--space-6);
-  padding-block: var(--space-3) var(--space-4);
-  background-color: var(--color-ground-deep);
-  border-block-start: 1px solid var(--color-line);
-  box-shadow: var(--shadow-sheet);
-}
-
-/* `display: grid` above outranks the UA's `[hidden]`, so stepping aside for
-   the recordings' selection bar has to be said here as well. */
-.note-bar-anchor[hidden] {
-  display: none;
-}
 
 .note-panel {
   display: grid;
@@ -3187,56 +3094,6 @@
 /* The editors carry a top padding for the inline layout they came from. */
 .note-panel .tag-editor {
   padding-block-start: 0;
-}
-
-.note-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.note-bar__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-ink);
-  white-space: nowrap;
-}
-
-.note-bar__action[aria-expanded='true'],
-.note-bar__action:not(.note-bar__action--primary):active {
-  background-color: var(--color-surface);
-}
-
-.note-bar__action[disabled] {
-  color: var(--color-faint);
-  cursor: default;
-}
-
-/* Record is the bar's one strong control, and it takes whatever room is
-   left so it reads as the primary action rather than one pill among four. */
-.note-bar__action--primary {
-  flex: 1 1 auto;
-  background-color: var(--color-ink);
-  border-color: var(--color-ink);
-  color: var(--color-ground);
-}
-
-.note-bar__action--destructive {
-  border-color: var(--color-accent);
-}
-
-/* The drawn plus before "Record into this": the same stroke as every other
-   glyph, where a text "＋" was a different weight in every font. */
-.note-bar__icon {
-  margin-inline-end: var(--space-1);
 }
 
 /* --------------------------------------------------------------------------
@@ -3265,11 +3122,6 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-ink);
-}
-
-.passkey-nudge__detail {
-  font-size: var(--font-size-xs);
-  color: var(--color-muted);
 }
 
 .passkey-nudge__actions {

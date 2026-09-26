@@ -9,6 +9,12 @@
  * Written by hand rather than pulled in as a stylelint dependency: the whole
  * rule is a hundred lines and adding a linter plus its plugin tree to enforce
  * three patterns is a worse trade than owning them.
+ *
+ * A second pass fails on a class selector in `src/styles` that no `.ts`,
+ * `.tsx` or `index.html` names. Round 5 found 236 lines in 29 rule blocks
+ * styling controls removed weeks earlier (the Search | Ask segment, the
+ * note's action bar, `.icon-button`); a class nothing renders is a rule
+ * nobody can see fail.
  */
 
 import { readdir, readFile } from 'node:fs/promises';
@@ -65,10 +71,55 @@ function stripComments(source) {
   return source.replace(/\/\*[\s\S]*?\*\//g, (match) => match.replace(/[^\n]/g, ' '));
 }
 
+/**
+ * Classes a stylesheet may name without a source file spelling them out:
+ * state classes the runtime or a library writes. Keep this short; a class a
+ * component sets from a string literal is already found by the token scan.
+ */
+const CLASS_ALLOW_LIST = new Set([]);
+
+/** Class names in a selector: `.chip`, `.chip--pressed`; never `.5rem` or `0.5`. */
+const CLASS_IN_SELECTOR = /\.(-?[A-Za-z_][\w-]*)/g;
+/** Every identifier-shaped token in a source file, the way a class name would appear in one. */
+const SOURCE_TOKEN = /-?[A-Za-z_][\w-]*/g;
+
+/**
+ * The class names a stylesheet selects on. A selector is the text before a
+ * `{` back to the previous brace, at any nesting depth, so a rule inside
+ * `@media` is read too; declarations (inside the braces) are not, so a
+ * `transition: 0.2s` cannot look like a class.
+ */
+function classesSelected(css) {
+  const found = new Set();
+  let start = 0;
+  for (let index = 0; index < css.length; index += 1) {
+    const char = css[index];
+    if (char === '{') {
+      const prelude = css.slice(start, index);
+      if (!prelude.trimStart().startsWith('@')) {
+        for (const match of prelude.matchAll(CLASS_IN_SELECTOR)) found.add(match[1]);
+      }
+      start = index + 1;
+    } else if (char === '}') {
+      start = index + 1;
+    }
+  }
+  return found;
+}
+
 const violations = [];
 
 function report(file, index, label, detail) {
   violations.push(`${file}:${index + 1}  ${label}: ${detail.trim()}`);
+}
+
+/** Stylesheet text per file (comments blanked), for the class pass. */
+const stylesheets = new Map();
+/** Every identifier-shaped token in the sources and index.html. */
+const sourceTokens = new Set();
+
+for (const match of (await readFile(join(ROOT, 'index.html'), 'utf8')).matchAll(SOURCE_TOKEN)) {
+  sourceTokens.add(match[0]);
 }
 
 for await (const path of walk(join(ROOT, 'src'))) {
@@ -79,7 +130,13 @@ for await (const path of walk(join(ROOT, 'src'))) {
   const isSource = /\.tsx?$/.test(file);
   if (!isCss && !isSource) continue;
 
-  const lines = stripComments(await readFile(path, 'utf8')).split('\n');
+  const stripped = stripComments(await readFile(path, 'utf8'));
+  if (isCss) stylesheets.set(file, stripped);
+  // Tests may still name a class the app stopped rendering; only the app counts.
+  if (isSource && !/\.test\.tsx?$/.test(file)) {
+    for (const match of stripped.matchAll(SOURCE_TOKEN)) sourceTokens.add(match[0]);
+  }
+  const lines = stripped.split('\n');
 
   lines.forEach((line, index) => {
     // SVG icon geometry carries `stroke="currentColor"` and `fill="none"`,
@@ -122,6 +179,24 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
+const unused = [];
+for (const [file, css] of stylesheets) {
+  for (const name of classesSelected(css)) {
+    if (sourceTokens.has(name) || CLASS_ALLOW_LIST.has(name)) continue;
+    unused.push(`${file}  .${name}`);
+  }
+}
+
+if (unused.length > 0) {
+  console.error(
+    'Dead CSS — these class selectors match nothing in src/**/*.{ts,tsx} or index.html.\n' +
+      'Delete the rule, or add a runtime-written state class to CLASS_ALLOW_LIST in scripts/check-tokens.mjs:\n',
+  );
+  for (const line of unused) console.error(`  ${line}`);
+  console.error(`\n${unused.length} unused class selector(s).`);
+  process.exit(1);
+}
+
 console.log(
-  `check-tokens: no literal colours or font sizes outside ${TOKEN_FILE}`,
+  `check-tokens: no literal colours or font sizes outside ${TOKEN_FILE}; every class selector is rendered`,
 );

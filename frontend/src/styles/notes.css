@@ -3,8 +3,7 @@
  * record button's caption while a note is open, and the Details/Share drawer
  * at the foot. Split from shell.css the way capture.css was (#62), so the
  * Home stream's edits there do not collide; the strip, the tab panels and
- * the recordings stay in shell.css, whose `.note-bar*` rules this file
- * supersedes.
+ * the recordings stay in shell.css.
  */
 
 /* --------------------------------------------------------------------------
