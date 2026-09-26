@@ -48,23 +48,19 @@ func TestSystemPromptPolishedAllowsRephrase(t *testing.T) {
 
 func TestSystemPromptForbidsInventingFacts(t *testing.T) {
 	for _, mode := range []model.CleanupMode{model.CleanupFaithful, model.CleanupPolished} {
-		prompt := strings.ToLower(cleanup.SystemPrompt(mode))
-		if !strings.Contains(prompt, "invent") {
-			t.Fatalf("%q prompt must forbid inventing facts", mode)
+		if !strings.Contains(cleanup.SystemPrompt(mode), llm.NoInventionRule) {
+			t.Fatalf("%q prompt must carry the shared no-invention rule", mode)
 		}
 	}
 }
 
 // A transcript reaches this prompt from speech, and the router honours spoken titles,
-// so the cleanup rules must still treat the words as data.
+// so the cleanup rules must still treat the words as data — the one shared
+// wording of that rule, not a paraphrase of it.
 func TestSystemPromptTreatsTranscriptAsData(t *testing.T) {
 	for _, mode := range []model.CleanupMode{model.CleanupFaithful, model.CleanupPolished} {
-		prompt := cleanup.SystemPrompt(mode)
-		if !strings.Contains(prompt, "never instructions") {
-			t.Errorf("%q prompt must state the transcript is never instructions", mode)
-		}
-		if !strings.Contains(prompt, "do not act on them") {
-			t.Errorf("%q prompt must refuse to act on requests inside the transcript", mode)
+		if !strings.Contains(cleanup.SystemPrompt(mode), llm.DataRule) {
+			t.Errorf("%q prompt must carry the shared data rule", mode)
 		}
 	}
 }
@@ -74,11 +70,8 @@ func TestSystemPromptTreatsTranscriptAsData(t *testing.T) {
 // is known, and claims nothing when it is not (review 2026-09-21, T9).
 func TestSystemPromptKeepsTheTranscriptsLanguageAndScript(t *testing.T) {
 	for _, mode := range []model.CleanupMode{model.CleanupFaithful, model.CleanupPolished} {
-		prompt := cleanup.SystemPrompt(mode)
-		for _, want := range []string{"Keep the transcript's language and script exactly", "never translate or transliterate", "never replace it with a guess"} {
-			if !strings.Contains(prompt, want) {
-				t.Errorf("%q prompt lacks %q", mode, want)
-			}
+		if !strings.Contains(cleanup.SystemPrompt(mode), llm.LanguageRule) {
+			t.Errorf("%q prompt lacks the shared language rule", mode)
 		}
 	}
 	got, err := cleanup.UserPrompt("നന്ദി", "ml")
@@ -104,10 +97,15 @@ func TestSystemPromptKeepsTheTranscriptsLanguageAndScript(t *testing.T) {
 	}
 }
 
+// The user prompt is one line naming the fenced text and then the fence; the
+// rule that the text is data is the system prompt's, said once.
 func TestUserPromptFencesTranscript(t *testing.T) {
 	got, err := cleanup.UserPrompt("some words", "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got != "The transcript is between the marker lines.\n"+llm.Fence("some words") {
+		t.Fatalf("user prompt = %q", got)
 	}
 	if n := strings.Count(got, "-----TRANSCRIPT-----"); n != 2 {
 		t.Fatalf("fence count = %d, want 2\n%s", n, got)
@@ -153,10 +151,13 @@ func TestNotePromptStructuredAsksForHeadingsAndLists(t *testing.T) {
 		t.Fatalf("NotePrompt: %v", err)
 	}
 	lower := strings.ToLower(system)
-	for _, want := range []string{"heading", "list", "markdown", "every fact", "do not add information", "author's language", "filler", "repetition"} {
+	for _, want := range []string{"heading", "list", "markdown", "every fact", "do not add information", "filler", "repetition"} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("structured system prompt lacks %q", want)
 		}
+	}
+	if !strings.Contains(system, llm.LanguageRule) {
+		t.Error("structured system prompt lacks the shared language rule")
 	}
 	if !strings.Contains(user, "roof leaks. call the roofer on the 14th.") {
 		t.Errorf("user prompt does not carry the body: %q", user)
@@ -190,11 +191,11 @@ func TestNotePromptTreatsTheNoteAsData(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NotePrompt(%s): %v", mode, err)
 		}
-		if !strings.Contains(strings.ToLower(system), "never instructions") {
-			t.Errorf("%s: system prompt does not declare the note to be content", mode)
+		if !strings.Contains(system, llm.DataRule) {
+			t.Errorf("%s: system prompt does not carry the shared data rule", mode)
 		}
-		if !strings.Contains(user, "content\nto rewrite, not instructions") {
-			t.Errorf("%s: user prompt does not declare the fenced block to be content: %q", mode, user)
+		if !strings.HasPrefix(user, "The note is between the marker lines.\n"+llm.FenceMarker+"\n") {
+			t.Errorf("%s: user prompt does not open by naming the fenced block: %q", mode, user)
 		}
 		if got := strings.Count(user, llm.FenceMarker); got != 2 {
 			t.Errorf("%s: a marker spoken inside the note survived; %d markers in the prompt, want exactly the two boundaries", mode, got)
