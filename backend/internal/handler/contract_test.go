@@ -903,8 +903,12 @@ func seededContractHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	ctx := context.Background()
 
+	// Both active notes are pinned: POST /v1/notes/pins refuses an id that is
+	// not a pinned, active note of the caller's, and that refusal is a 400
+	// the replay would read as a shape problem.
 	if _, err := h.store.PutNote(ctx, contractUser, model.NoteIndex{
 		ID: "contract-note", Title: "Contract note", UpdatedAt: model.Now(), CreatedAt: model.Now(),
+		PinnedAt: contractTime, PinRank: 0,
 	}); err != nil {
 		t.Fatalf("seed note: %v", err)
 	}
@@ -924,6 +928,7 @@ func seededContractHarness(t *testing.T) *harness {
 	// requests to carry.
 	if _, err := h.store.PutNote(ctx, contractUser, model.NoteIndex{
 		ID: "contract-note-2", Title: "Second contract note", UpdatedAt: model.Now(), CreatedAt: model.Now(),
+		PinnedAt: contractTime, PinRank: model.PinRankStep,
 	}); err != nil {
 		t.Fatalf("seed second note: %v", err)
 	}
@@ -942,6 +947,20 @@ func seededContractHarness(t *testing.T) *harness {
 		CleanKey:    "tenants/user1/captures/contract-capture/clean.txt",
 	}); err != nil {
 		t.Fatalf("seed capture: %v", err)
+	}
+	// The device the recorder revokes and the ask it polls, so each request
+	// reaches its handler instead of stopping at "no such id".
+	if _, err := h.store.PutDevice(ctx, contractUser, model.Device{
+		ID: "contract-device", Name: "Contract device", CreatedAt: model.FormatTime(harnessNow),
+	}); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	if err := h.store.PutAsk(ctx, contractUser, model.Ask{
+		ID: "contract-ask", UserID: contractUser, Status: model.AskPending,
+		Question: "what did I decide about the roof?", Sources: []model.AskSource{},
+		CreatedAt: model.FormatTime(harnessNow),
+	}); err != nil {
+		t.Fatalf("seed ask: %v", err)
 	}
 	return h
 }
