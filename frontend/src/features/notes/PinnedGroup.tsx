@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
@@ -13,6 +12,7 @@ import type { NoteWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
 import { FINE_POINTER_QUERY } from '@/components/SwipeRow.tsx';
+import { useDragReorder } from '@/hooks/useDragReorder.ts';
 import { LONG_PRESS_MS, LONG_PRESS_TOLERANCE_PX } from '@/hooks/useLongPress.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
@@ -47,23 +47,15 @@ import { useOnline } from '@/hooks/useOnline.ts';
  * grip is drawn. Offline the reorder would pause and fire later against a
  * cache that has moved on, so it waits for the network too (R4-11).
  *
- * The gesture is delegated to the list rather than owned by each row. One
- * hold timer and one pointer capture for the whole group is less to get wrong
- * than one per row, and capture on the list is what keeps the moves arriving
- * once the dragged row has moved out from under the pointer. A finger that
- * has lifted a row must not also scroll the page, and `touch-action` cannot
- * change mid-gesture, so a native non-passive `touchmove` listener cancels the
- * scroll only while a drag is on; before the hold fires, a finger that moves
- * is scrolling, and the hold lets go. The click the browser fires when the
- * pointer lifts after a drag, or after a hold that never moved, would open the
- * note under it; the list swallows exactly that one.
+ * The drag itself — capture on the list, the slot by midpoint, the draft
+ * until release, Escape, the swallowed click — is `useDragReorder`, shared
+ * with the Items tab. What is this group's own: the hold that lifts a row on
+ * a phone (one timer for the whole list; before it fires, a finger that moves
+ * is scrolling, and the hold lets go), the grip-versus-row routing of a
+ * press, the gating, and the one request. The hook swallows the click that
+ * follows any lift, moved or not, so releasing a finger that held a row
+ * does not open the note it had lifted.
  */
-
-interface Drag {
-  pointerId: number;
-  id: string;
-  moved: boolean;
-}
 
 interface Hold {
   pointerId: number;
@@ -93,21 +85,13 @@ export function PinnedGroup({
   const online = useOnline();
   const hintId = useId();
   const listRef = useRef<HTMLUListElement>(null);
-  /** The order while a drag is on, or while its request is in the air. */
-  const [draft, setDraft] = useState<string[] | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const drag = useRef<Drag | null>(null);
+  /** The order while its request is in the air, so the rows never spring back before the optimistic patch lands. */
+  const [pending, setPending] = useState<string[] | null>(null);
   const hold = useRef<Hold | null>(null);
-  const live = useRef<string[]>([]);
-  const swallowClick = useRef(false);
 
   const ids = notes.map((note) => note.id);
-  const order = draft ?? ids;
+  const shown = pending ?? ids;
   const byId = new Map(notes.map((note) => [note.id, note]));
-  const rows = order.flatMap((id) => {
-    const note = byId.get(id);
-    return note ? [note] : [];
-  });
   const grips = finePointer && !selectable && reorderable;
   const movable = reorderable && !selectable;
   /** Whether a pointer can lift a row at all right now. */
@@ -115,20 +99,27 @@ export function PinnedGroup({
 
   const commit = (next: string[]): void => {
     if (next.join('\n') === ids.join('\n')) {
-      setDraft(null);
+      setPending(null);
       return;
     }
-    setDraft(next);
+    setPending(next);
     // The optimistic patch has re-ranked the rows by the time this settles,
     // or the rollback has restored them; either way the props carry the
-    // order to show, and the draft steps aside.
+    // order to show, and the pending order steps aside.
     void reorder
       .mutateAsync(next)
       .catch(() => undefined)
       .finally(() => {
-        setDraft(null);
+        setPending(null);
       });
   };
+
+  const drag = useDragReorder({ listRef, ids: shown, onCommit: commit });
+  const order = drag.draft ?? shown;
+  const rows = order.flatMap((id) => {
+    const note = byId.get(id);
+    return note ? [note] : [];
+  });
 
   const cancelHold = (): void => {
     if (hold.current) clearTimeout(hold.current.timer);
@@ -137,42 +128,18 @@ export function PinnedGroup({
 
   const start = (pointerId: number, id: string): void => {
     cancelHold();
-    drag.current = { pointerId, id, moved: false };
-    live.current = ids;
-    setDraft(ids);
-    setDraggingId(id);
-    try {
-      listRef.current?.setPointerCapture(pointerId);
-    } catch {
-      /* jsdom, or a pointer the browser has already released; the drag still works. */
-    }
+    drag.start(pointerId, id);
   };
 
-  const finish = (pointerId: number, cancelled: boolean): void => {
-    if (hold.current?.pointerId === pointerId) cancelHold();
-    const current = drag.current;
-    if (!current || current.pointerId !== pointerId) return;
-    drag.current = null;
-    setDraggingId(null);
-    try {
-      listRef.current?.releasePointerCapture(pointerId);
-    } catch {
-      /* Already released. */
-    }
-    // Whether it moved or not, the pointer lifting after a lifted row is not a tap.
-    swallowClick.current = true;
-    if (cancelled || !current.moved) {
-      setDraft(null);
-      return;
-    }
-    commit(live.current);
+  /** The hold's pointer lifting or leaving: the hold is over, whatever the drag does. */
+  const releaseHold = (event: ReactPointerEvent<HTMLUListElement>): void => {
+    if (hold.current?.pointerId === event.pointerId) cancelHold();
   };
 
   const onPointerDown = (event: ReactPointerEvent<HTMLUListElement>): void => {
-    swallowClick.current = false;
-    if (!lifts || event.button !== 0 || drag.current) return;
+    if (!lifts || event.button !== 0 || drag.draggingId !== null) return;
     const target = event.target as HTMLElement;
-    const id = target.closest<HTMLElement>('[data-pin-id]')?.dataset['pinId'];
+    const id = target.closest<HTMLElement>('[data-drag-id]')?.dataset['dragId'];
     if (!id) return;
     if (target.closest('.pin-grip')) {
       start(event.pointerId, id);
@@ -210,77 +177,14 @@ export function PinnedGroup({
     ) {
       cancelHold();
     }
-    const current = drag.current;
-    if (!current || current.pointerId !== event.pointerId) return;
-    const items = Array.from(
-      listRef.current?.querySelectorAll<HTMLElement>('[data-pin-id]') ?? [],
-    );
-    const from = items.findIndex((item) => item.dataset['pinId'] === current.id);
-    if (from === -1) return;
-    // The slot whose midpoint the pointer has crossed: the nearest above when
-    // moving up, the farthest below when moving down.
-    let to = from;
-    items.forEach((item, index) => {
-      const box = item.getBoundingClientRect();
-      const middle = box.top + box.height / 2;
-      if (index < from && to === from && event.clientY < middle) to = index;
-      if (index > from && event.clientY > middle) to = index;
-    });
-    if (to === from) return;
-    current.moved = true;
-    const next = live.current.filter((id) => id !== current.id);
-    next.splice(to, 0, current.id);
-    live.current = next;
-    setDraft(next);
-  };
-
-  /** One step up (-1) or down (+1) for the row, from the grip's arrow keys or the ⋮. */
-  const step = (id: string, by: -1 | 1): void => {
-    const from = order.indexOf(id);
-    const to = from + by;
-    if (from === -1 || to < 0 || to >= order.length) return;
-    const next = order.filter((other) => other !== id);
-    next.splice(to, 0, id);
-    commit(next);
+    drag.listHandlers.onPointerMove(event);
   };
 
   const onGripKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, id: string): void => {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
     event.preventDefault();
-    step(id, event.key === 'ArrowUp' ? -1 : 1);
+    drag.step(id, event.key === 'ArrowUp' ? -1 : 1);
   };
-
-  const onClickCapture = (event: ReactMouseEvent<HTMLUListElement>): void => {
-    if (!swallowClick.current) return;
-    swallowClick.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  // The scroll a finger would start is cancelled only while a row is lifted.
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const block = (event: TouchEvent): void => {
-      if (drag.current && event.cancelable) event.preventDefault();
-    };
-    list.addEventListener('touchmove', block, { passive: false });
-    return () => {
-      list.removeEventListener('touchmove', block);
-    };
-  }, []);
-
-  // Escape drops the row where it was.
-  useEffect(() => {
-    if (!draggingId) return;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && drag.current) finish(drag.current.pointerId, true);
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  });
 
   useEffect(() => cancelHold, []);
 
@@ -296,34 +200,35 @@ export function PinnedGroup({
         ref={listRef}
         className="note-list pin-list"
         role="list"
-        data-dragging={draggingId !== null || undefined}
+        data-dragging={drag.draggingId !== null || undefined}
+        {...drag.listHandlers}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={(event) => {
-          finish(event.pointerId, false);
+          releaseHold(event);
+          drag.listHandlers.onPointerUp(event);
         }}
         onPointerCancel={(event) => {
-          finish(event.pointerId, true);
+          releaseHold(event);
+          drag.listHandlers.onPointerCancel(event);
         }}
         onLostPointerCapture={(event) => {
-          // Only the list losing its own capture is the browser taking the
-          // drag away; the row's implicit capture handing over is not.
-          if (event.target === event.currentTarget) finish(event.pointerId, true);
+          if (event.target === event.currentTarget) releaseHold(event);
+          drag.listHandlers.onLostPointerCapture(event);
         }}
         onContextMenu={(event) => {
-          // Android raises its menu for the same hold; it is also where text
-          // selection begins.
-          if (hold.current || drag.current) event.preventDefault();
+          // Android raises its menu for the hold too.
+          if (hold.current) event.preventDefault();
+          drag.listHandlers.onContextMenu(event);
         }}
-        onClickCapture={onClickCapture}
       >
         {rows.map((note, index) => (
           <li
             key={note.id}
             className="pin-row"
-            data-pin-id={note.id}
+            data-drag-id={note.id}
             data-grip={grips || undefined}
-            data-dragging={draggingId === note.id || undefined}
+            data-dragging={drag.draggingId === note.id || undefined}
           >
             {/*
               Before the row in the DOM, as it is on the screen: Tab then runs
@@ -354,9 +259,9 @@ export function PinnedGroup({
               // and the grip is the handle. Where nothing lifts — a filter is
               // on, or the device is offline — the hold selects, as everywhere.
               holdToSelect={finePointer || !lifts}
-              {...(movable && index > 0 ? { onMoveUp: () => step(note.id, -1) } : {})}
+              {...(movable && index > 0 ? { onMoveUp: () => drag.step(note.id, -1) } : {})}
               {...(movable && index < rows.length - 1
-                ? { onMoveDown: () => step(note.id, 1) }
+                ? { onMoveDown: () => drag.step(note.id, 1) }
                 : {})}
             />
           </li>

@@ -1,9 +1,11 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
+import { Toast, dismissToast } from '@/components/Toast.tsx';
+
+import { ChecklistEditor, doneStorageKey, parseMotionMs } from './ChecklistEditor.tsx';
 import { initialEditor, type NoteDraft } from './autosave.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
@@ -11,12 +13,14 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * The editor against a stand-in for `useNoteEditor` that applies every
  * `edit({ body })` and counts every `saveNow()`, so what these assert is the
  * body the real editor would have been handed — the one thing this component
- * exists to produce — and when it would have been asked to save.
+ * exists to produce — and when it would have been asked to save. `setBody`
+ * is the outside world changing the note under the editor, as a refetch does.
  */
-function mount(initial: string) {
-  const log = { bodies: [] as string[], saves: 0 };
+function mount(initial: string, noteId = 'shopping') {
+  const log = { bodies: [] as string[], saves: 0, setBody: (_next: string): void => {} };
   function Harness() {
     const [body, setBody] = useState(initial);
+    log.setBody = setBody;
     const editor: NoteEditor = {
       model: initialEditor(
         { title: 'Shopping', body, aliases: [], tags: [], kind: 'checklist' },
@@ -34,10 +38,30 @@ function mount(initial: string) {
       keepMine: () => {},
       keepBoth: () => {},
     };
-    return <ChecklistEditor editor={editor} />;
+    return <ChecklistEditor editor={editor} noteId={noteId} />;
   }
-  render(<Harness />);
-  return { log, body: () => log.bodies.at(-1) ?? initial };
+  const view = render(
+    <>
+      <Harness />
+      {/* The shell's, in the app; here so the Undo that Delete done offers can be pressed. */}
+      <Toast />
+    </>,
+  );
+  return { log, body: () => log.bodies.at(-1) ?? initial, unmount: view.unmount };
+}
+
+afterEach(() => {
+  dismissToast();
+  sessionStorage.clear();
+});
+
+const mouse = { pointerType: 'mouse', button: 0, pointerId: 1 };
+
+/** The open rows' words, top to bottom — the add row's empty field last. */
+function openValues(): string[] {
+  return within(items())
+    .getAllByRole('textbox')
+    .map((box) => (box as HTMLTextAreaElement).value);
 }
 
 const LIST = '- [ ] Milk\n- [x] Eggs\n- [ ] Bread';
@@ -84,7 +108,7 @@ describe('ChecklistEditor', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(1);
-    expect(screen.getByRole('status')).toHaveTextContent('Marked done');
+    expect(screen.getByText('Marked done')).toHaveAttribute('role', 'status');
     // The row stays where the finger is, ticked and struck, for as long as
     // the tick takes to draw — a row that moved at once would mount in Done
     // already ticked, and nothing would be seen to happen.
@@ -98,7 +122,7 @@ describe('ChecklistEditor', () => {
 
     await user.click(within(doneSection()).getByRole('checkbox', { name: 'Eggs' }));
     expect(body()).toBe('- [x] Milk\n- [ ] Eggs\n- [ ] Bread');
-    expect(screen.getByRole('status')).toHaveTextContent('Reopened');
+    expect(screen.getByText('Reopened')).toHaveAttribute('role', 'status');
     // Reopened the same way: unticked under Done for the beat, then back up.
     expect(within(doneSection()).getByRole('checkbox', { name: 'Eggs' })).not.toBeChecked();
     expect(await within(items()).findByRole('checkbox', { name: 'Eggs' })).not.toBeChecked();
@@ -199,6 +223,199 @@ describe('ChecklistEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveValue('Ridge tiles have slipped.');
     await user.click(screen.getByRole('checkbox', { name: 'Call Ellis' }));
     expect(body()).toBe('- [ ] Ridge tiles have slipped.\n- [x] Call Ellis');
+  });
+});
+
+describe('reordering by the grip', () => {
+  it('a drag past the next row shows the new order at once and writes the body once, on release', () => {
+    const { log, body } = mount(LIST);
+    const list = items();
+    const grip = screen.getByRole('button', { name: 'Move Milk' });
+    expect(grip).toHaveAccessibleDescription(/arrow keys/);
+
+    // jsdom lays nothing out — every row's midpoint is 0 — so a move to a
+    // positive y is "below every row" and a negative one "above every row".
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 10, clientY: 40 });
+    expect(openValues()).toEqual(['Bread', 'Milk', '']);
+    expect(grip.closest('li')).toHaveAttribute('data-dragging');
+    // Nothing is written while the row is lifted.
+    expect(log.bodies).toEqual([]);
+
+    fireEvent.pointerUp(list, { ...mouse, clientX: 10, clientY: 40 });
+    // One write: Milk takes Bread's slot; Eggs, done, keeps its line where it was.
+    expect(log.bodies).toEqual(['- [x] Eggs\n- [ ] Bread\n- [ ] Milk']);
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk');
+    expect(log.saves).toBe(1);
+    expect(openValues()).toEqual(['Bread', 'Milk', '']);
+    // The click the browser fires as the mouse lifts is not a tap on the grip.
+    fireEvent.click(screen.getByRole('button', { name: 'Move Milk' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a tap on the grip opens the row’s menu, whose Move down writes the body', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount(LIST);
+    const grip = screen.getByRole('button', { name: 'Move Milk' });
+
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    expect(log.bodies).toEqual([]);
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Move up',
+      'Move down',
+      'Move to top',
+      'Move to bottom',
+      'Delete',
+    ]);
+    // The top row cannot move up.
+    expect(within(menu).getByRole('menuitem', { name: 'Move up' })).toBeDisabled();
+    expect(within(menu).getByRole('menuitem', { name: 'Move to top' })).toBeDisabled();
+
+    await user.click(within(menu).getByRole('menuitem', { name: 'Move down' }));
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk');
+    expect(log.saves).toBe(1);
+    // Focus follows the row, so the next move starts from where it landed.
+    expect(screen.getByRole('button', { name: 'Move Milk' })).toHaveFocus();
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('Delete in the grip’s menu removes the row and puts focus on the next one', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount(LIST);
+    const grip = screen.getByRole('button', { name: 'Move Milk' });
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(1);
+    expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveValue('Bread');
+    expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveFocus();
+  });
+
+  it('Escape mid-drag drops the row where it was and writes nothing', () => {
+    const { log } = mount(LIST);
+    const list = items();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Milk' }), {
+      ...mouse,
+      clientX: 10,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 10, clientY: 40 });
+    expect(openValues()).toEqual(['Bread', 'Milk', '']);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(openValues()).toEqual(['Milk', 'Bread', '']);
+    fireEvent.pointerUp(list, { ...mouse, clientX: 10, clientY: 40 });
+    expect(log.bodies).toEqual([]);
+    expect(log.saves).toBe(0);
+  });
+
+  it('the arrow keys on a grip move the row one slot and keep the keyboard on it', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] Butter');
+    const grip = screen.getByRole('button', { name: 'Move Milk' });
+    grip.focus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk\n- [ ] Butter');
+    expect(log.saves).toBe(1);
+    expect(screen.getByRole('button', { name: 'Move Milk' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Butter\n- [ ] Milk');
+    // At the bottom, a further step does nothing and writes nothing.
+    await user.keyboard('{ArrowDown}');
+    expect(log.saves).toBe(2);
+    await user.keyboard('{ArrowUp}');
+    expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk\n- [ ] Butter');
+  });
+
+  it('done rows have no grip', () => {
+    mount(LIST);
+    expect(within(items()).getAllByRole('button', { name: /^Move / })).toHaveLength(2);
+    expect(within(doneSection()).queryByRole('button', { name: /^Move / })).toBeNull();
+  });
+
+  it('a body that changes under a lifted row drops it', () => {
+    const { log } = mount(LIST);
+    const list = items();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Milk' }), {
+      ...mouse,
+      clientX: 10,
+      clientY: 0,
+    });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 10, clientY: 40 });
+    expect(openValues()).toEqual(['Bread', 'Milk', '']);
+
+    // A recording lands by refetch while the row is in the air.
+    act(() => {
+      log.setBody(`${LIST}\n- [ ] Jam`);
+    });
+    expect(openValues()).toEqual(['Milk', 'Bread', 'Jam', '']);
+    expect(list).not.toHaveAttribute('data-dragging');
+    fireEvent.pointerUp(list, { ...mouse, clientX: 10, clientY: 40 });
+    expect(log.bodies).toEqual([]);
+  });
+});
+
+describe('the Done section', () => {
+  it('is a disclosure, open by default, that remembers being closed for the session', async () => {
+    const user = userEvent.setup();
+    const { unmount } = mount(LIST, 'party');
+    const toggle = screen.getByRole('button', { name: /Done \(1\)/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(within(doneSection()).getByRole('checkbox', { name: 'Eggs' })).toBeVisible();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(within(doneSection()).queryByRole('list')).toBeNull();
+    expect(within(doneSection()).getByRole('list', { hidden: true })).not.toBeVisible();
+    expect(sessionStorage.getItem(doneStorageKey('party'))).toBe('collapsed');
+
+    // The heading still names the count, for the region and the page outline.
+    expect(screen.getByRole('heading', { name: /Done \(1\)/ })).toBeInTheDocument();
+
+    unmount();
+    const again = mount(LIST, 'party');
+    expect(screen.getByRole('button', { name: /Done \(1\)/ })).toHaveAttribute('aria-expanded', 'false');
+    // Another note is not affected.
+    again.unmount();
+    mount(LIST, 'shopping');
+    expect(screen.getByRole('button', { name: /Done \(1\)/ })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('Uncheck all reopens every item in one write and says so', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
+    await user.click(screen.getByRole('button', { name: 'Uncheck all' }));
+    expect(body()).toBe('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(1);
+    expect(screen.getByText('All items reopened')).toHaveAttribute('role', 'status');
+    expect(screen.queryByRole('region', { name: /^Done/ })).toBeNull();
+  });
+
+  it('Delete done drops the done lines, offers Undo in the toast, and Undo puts the body back', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    expect(body()).toBe('- [ ] Bread');
+    expect(log.saves).toBe(1);
+    expect(screen.queryByRole('region', { name: /^Done/ })).toBeNull();
+    expect(screen.getByText('2 done items deleted', { selector: '.toast__text' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(2);
+    expect(screen.getByRole('heading', { name: /Done \(2\)/ })).toBeInTheDocument();
+  });
+
+  it('says "1 done item" for one', async () => {
+    const user = userEvent.setup();
+    mount(LIST);
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    expect(screen.getByText('1 done item deleted', { selector: '.toast__text' })).toBeInTheDocument();
   });
 });
 

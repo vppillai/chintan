@@ -121,6 +121,26 @@ describe('pull to refresh', () => {
     expect(downward.defaultPrevented).toBe(true);
   });
 
+  it('stands down for a touch another handler has already claimed', () => {
+    // A row lifted by its grip prevents the default of every touchmove
+    // (`useDragReorder`); a downward drag at the top of the list is then the
+    // row's, and the page must not be pulled along under it.
+    const onRefresh = vi.fn(async () => {});
+    const { container, indicator } = mount(onRefresh);
+    const claimed = touch('touchmove', 100 + PULL_THRESHOLD_PX / PULL_DAMPING + 10);
+    claimed.preventDefault();
+    act(() => {
+      container.dispatchEvent(touch('touchstart', 100));
+      container.dispatchEvent(claimed);
+    });
+    expect(indicator().dataset['phase']).toBe('idle');
+    expect(indicator().style.getPropertyValue('--pull-offset')).toBe('0px');
+    act(() => {
+      container.dispatchEvent(touch('touchend', 300));
+    });
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
   it('does not refresh twice while one refresh is still running', () => {
     let release: () => void = () => {};
     const onRefresh = vi.fn(

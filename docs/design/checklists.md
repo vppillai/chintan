@@ -9,7 +9,10 @@ view differs — and why the body stays the single source of truth. Code:
 `Pipeline.append` (`backend/internal/pipeline/append.go`), the items prompt and `ParseItems`
 (`backend/internal/cleanup/items.go`), `service.CheckCleanMode` /
 `EffectiveCleanMode` (`backend/internal/service/note_clean.go`), the `tasks`
-prompt and `NoteOutput` (`backend/internal/cleanup/prompt.go`).
+prompt and `NoteOutput` (`backend/internal/cleanup/prompt.go`). The frontend
+half — the parser, the Items tab, the grip's drag — is
+`frontend/src/features/notes/checklist.ts`, `ChecklistEditor.tsx` and
+`frontend/src/hooks/useDragReorder.ts`, and "Editing the list" below.
 
 ## Data model
 
@@ -28,6 +31,27 @@ open, `- [x] text` done — and nothing else. Blank lines are ignored by every
 reader. The server never converts a body: switching `kind` is a PATCH that
 carries the converted body from the client, and a body the client did not
 send is left as it is.
+
+A sub-item is two spaces of indent under its parent — `  - [ ] Plates` under
+`- [ ] Party`. The frontend parser (`parseChecklist`) reads the indent as a
+depth clamped to the parent's plus one — a jump of two levels reads as one, a
+child with no parent is top level — and writes it back exactly, so a body
+indented in another editor round-trips byte for byte. Until 2026-09-26 such a
+line missed the item pattern altogether: it showed as an open row whose text
+was the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
+save. No writer invents an indent today. The worker appends at the end of the
+body with none, so a filed item is top level by construction; the editor
+gives a new item the depth of the item it follows and nothing else; a moved
+item takes the depth of the slot it lands in and carries its sub-items with
+it (`blockOf`, `moveItem`). The backend is indent-blind until the nesting
+phase, in three places: `keepTick` (`pipeline/append.go`) carries a tick only
+from a line that begins `- [x] `, which every worker-written line does;
+`lowerTick` and
+`checklistItemLine` (`cleanup/prompt.go`) trim a line before reading it, so a
+`tasks` answer over a nested body is checked and stored flat — adopting the
+view drops the indent, never a tick; and the row's "3 of 7 done" counts every
+item whatever its depth. Whether nesting gets an editor, and how deep, is the
+owner's (`docs/backlog.md` CL-D1); the parser has no upper clamp until then.
 
 ## The append rule
 
@@ -144,6 +168,59 @@ Stored in `cleaned_body` as today; `stale` and `auto_clean` are unchanged.
 With items now extracted per recording, the split has less to do; whether
 Split up still earns its place is an open question for the owner
 (`docs/backlog.md` F2, C7).
+
+## Editing the list
+
+Body order is display order for the open items, and a reorder is one body
+write. The grip at a row's left edge is the one control for the order: a
+drag lifts the row and the list re-sorts under the pointer
+(`useDragReorder`, the pinned group's gesture, shared), nothing is written
+while it is in the air, and on release `moveItem` rewrites the body once and
+the editor saves at once, as it does for a tick — a discrete act, not typing.
+The arrow keys on a focused grip move the row one slot. A tap on the grip —
+a lift that never moved — opens the row's menu: Move up, Move down, Move to
+top, Move to bottom, Delete. That is the single-pointer path WCAG 2.5.7 asks
+for, and it hangs on the grip rather than on a ⋮ of its own because a phone's
+width has no room for a grip, a box, a dictated sentence and a ⋮ in one row.
+The hook reports the tap before it swallows the browser's click: once the
+list holds the pointer capture, that click is targeted at the list, not at
+the grip, so the menu could not be opened by it. A body that changes under a
+lifted row — a recording landing by refetch, a conflict's answer — drops the
+row, since the slots it was moving between are gone. The touch-driven
+pull-to-refresh stands down for a `touchmove` whose default the lifted row
+has already prevented, or a downward drag at the top of a list pulled the
+page along under the row.
+
+Done items keep their line where it stands; the Done section is the view's
+grouping, not the body's. It is a disclosure — the `<h2>` holds a button
+with `aria-expanded` — remembered per note for the session in
+`sessionStorage` (`chintan.checklist-done.<id>`, open by default, the
+NoteTabs pattern), with Uncheck all and Delete done beside it. Uncheck all
+flips every `[x]` to `[ ]` in place (`uncheckAll`). Delete done drops every
+done line, and a done parent's sub-items with it (`removeDone`), and offers
+Undo in the shell's toast for six seconds — no typed word and no dialog
+(OF-DEL): Undo writes the previous body back and saves. Done rows have no
+grip, because their order is the body's and nothing shows it; a drag among
+them would move lines whose places are invisible.
+
+The capture-marker rule is unchanged by a reorder. Every save from the Items
+tab already carries the markers to the end (`serialiseChecklist` writes no
+paragraph break, so `CarryCaptureMarkers` finds none to keep a marker at),
+and a reorder is such a save. Per-line ownership — a marker on every item,
+so a recording's items stayed deletable together after a reorder — was
+rejected: a reorder can separate a recording's items, after which "delete
+this recording's items" is either a surprise or a lie. Autosave and the
+conflict prompt are unchanged too: a plain 409 whose only difference is an
+appended item still offers Keep both (`additionTo` / `withAddition`), which
+places the new item after the reordered draft; any other divergence is the
+usual choice.
+
+Rejected: items as rows, or order metadata beside the body — the state of a
+task in two places, see below; hold-to-lift on the row as the pinned group
+has — a row's words are a field, and a hold on them should select words, not
+lift the row, so the grip is where every pointer lifts; unlimited nesting
+depth — one level is what a spoken list needs, and the parser's clamp to
+parent+1 is ready for whichever the owner picks.
 
 ## Why the body stays the single source of truth
 

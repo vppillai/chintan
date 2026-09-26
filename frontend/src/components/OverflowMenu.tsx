@@ -1,4 +1,12 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 
 import { Icon } from './Icon.tsx';
 
@@ -15,6 +23,11 @@ import { Icon } from './Icon.tsx';
  * Positioned under its trigger by CSS (`.overflow-menu`), inside the row, so
  * the layout sweep's overlap and bleeding checks see it when it is open and
  * the scroll container clips it like anything else.
+ *
+ * The trigger is the ⋮ unless the owner renders its own (`trigger`): the
+ * checklist's grip is a drag handle that is also the row's menu button, and
+ * it spreads the same props, so the menu's wiring — the name, the popup
+ * semantics, the toggle — is one thing whichever control wears it.
  */
 
 export interface OverflowMenuItem {
@@ -24,11 +37,28 @@ export interface OverflowMenuItem {
   disabled?: boolean;
 }
 
+/**
+ * What the menu's trigger must carry, whichever button it is. No ref: the
+ * menu finds its own trigger by the popup attribute when Escape hands focus
+ * back, so an owner's render function is handed nothing it could read during
+ * render.
+ */
+export interface OverflowMenuTriggerProps {
+  type: 'button';
+  'aria-label': string;
+  'aria-describedby': string | undefined;
+  'aria-haspopup': 'menu';
+  'aria-expanded': boolean;
+  'aria-controls': string | undefined;
+  onClick: () => void;
+}
+
 export function OverflowMenu({
   label,
   describedBy,
   items,
   triggerRef: ownerRef,
+  trigger,
 }: {
   /** The trigger's accessible name, naming the row: "More for recording from Today 14:02". */
   label: string;
@@ -45,6 +75,8 @@ export function OverflowMenu({
    * menuitem, so without this the owner has nothing to return to.
    */
   triggerRef?: RefObject<HTMLButtonElement | null>;
+  /** The owner's own control to open the menu from, in place of the ⋮; it spreads the props it is given. */
+  trigger?: (props: OverflowMenuTriggerProps) => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const menuId = useId();
@@ -64,7 +96,8 @@ export function OverflowMenu({
       if (event.key === 'Escape') {
         event.preventDefault();
         setOpen(false);
-        triggerRef.current?.focus();
+        // The ⋮ is in the ref; an owner's own trigger is found by what makes it one.
+        (triggerRef.current ?? root?.querySelector<HTMLElement>('[aria-haspopup="menu"]'))?.focus();
       }
     };
     document.addEventListener('pointerdown', onPointerDown, true);
@@ -87,23 +120,27 @@ export function OverflowMenu({
     nodes[(index + step + nodes.length) % nodes.length]?.focus();
   };
 
+  const triggerProps: OverflowMenuTriggerProps = {
+    type: 'button',
+    'aria-label': label,
+    'aria-describedby': describedBy,
+    'aria-haspopup': 'menu',
+    'aria-expanded': open,
+    'aria-controls': open ? menuId : undefined,
+    onClick: () => {
+      setOpen((current) => !current);
+    },
+  };
+
   return (
     <div ref={rootRef} className="overflow">
-      <button
-        ref={triggerRef}
-        type="button"
-        className="overflow__trigger"
-        aria-label={label}
-        aria-describedby={describedBy}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-controls={open ? menuId : undefined}
-        onClick={() => {
-          setOpen((current) => !current);
-        }}
-      >
-        <Icon name="more" size={20} />
-      </button>
+      {trigger ? (
+        trigger(triggerProps)
+      ) : (
+        <button ref={triggerRef} className="overflow__trigger" {...triggerProps}>
+          <Icon name="more" size={20} />
+        </button>
+      )}
 
       {open && (
         <div id={menuId} className="overflow-menu" role="menu" onKeyDown={onMenuKeyDown}>
