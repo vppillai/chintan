@@ -10,7 +10,10 @@ machine and store (`frontend/src/features/capture/machine.ts`, `store.ts`),
 the screen (`CaptureScreen.tsx`), the gesture (`useHoldToTalk.ts`,
 `HoldOverlay.tsx`, `components/RecordButton.tsx`, `components/TabBar.tsx`),
 `/talk` (`features/talk/TalkScreen.tsx`), the note's filing banner
-(`FilingBanner.tsx`, `FilingRow.tsx`, `features/notes/NoteDetailScreen.tsx`),
+(`FilingBanner.tsx`, `features/notes/NoteDetailScreen.tsx`), the library's
+filing row (`FilingRow.tsx`, with its parts under `filing/`: `model.ts` for
+what a row says, `FilingItem.tsx` for one capture's row, `TargetPrompt.tsx`
+for "which note?", `useLocalUpload.ts` for this device's own upload),
 the shell's indicator (`components/RecordingIndicator.tsx`), the manifest
 (`frontend/manifest.config.ts`).
 

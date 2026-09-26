@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { isFilingRelevant, useRetryCapture } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 
-import { FilingItem, LocalUploadItem, retryMessage } from './FilingRow.tsx';
+import { LocalUploadItem, retryMessage } from './FilingRow.tsx';
+import { FilingItem } from './filing/FilingItem.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import type { CaptureModel } from './machine.ts';
 
