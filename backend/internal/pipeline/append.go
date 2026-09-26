@@ -124,7 +124,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	// it had, and the paragraph just dictated was gone with nothing left to
 	// retry it (review 2026-09-05, S1). The stamp bumps the version now and
 	// names the capture, so service.UpdateNote refuses a body write for as long
-	// as the append can still be in flight, and refreshNoteIndex clears it.
+	// as the append can still be in flight, and the index refresh clears it.
 	//
 	// The row's version has usually moved since run() read it — the stages
 	// before this one take seconds — so a lost race re-reads and stamps again.
@@ -209,7 +209,16 @@ const appendStampPoll = 200 * time.Millisecond
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
 func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
-	refreshed, err := p.refreshNoteIndex(ctx, tenantID, note.ID, capture.ID)
+	// The worker's refresh is the editor's (service.RefreshNoteIndex) on the
+	// worker's clock, clearing this capture's stamp, and refusing to index a
+	// body it could not read — a paragraph was just written, so a failed read
+	// is a fault to retry, not an empty note.
+	refreshed, err := service.RefreshNoteIndex(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note.ID, service.RefreshOptions{
+		Now:                 p.now,
+		ClearAppendStampFor: capture.ID,
+		RequireBody:         true,
+		Attempts:            maxIndexRefreshAttempts,
+	})
 	if err != nil {
 		return *capture, fmt.Errorf("pipeline: refresh note index: %w", err)
 	}
@@ -333,9 +342,10 @@ func checklistItems(text string) string {
 // preceded by the capture's marker.
 //
 // A bare read-concat-write with no concurrency control silently discards one of
-// a voice append and an editor save that land together. Here the write carries
-// the ETag that was read; a lost race re-reads and retries so both edits
-// survive.
+// a voice append and an editor save that land together. The write carries the
+// ETag that was read and a lost race re-reads and retries so both edits
+// survive; that loop is service.RewriteNoteBody, the same one the delete and
+// move paths use, and only the edit is the worker's.
 //
 // The marker and the paragraph go into the body in one PUT, so there is no
 // state in which one is present without the other. The API keeps the marker
@@ -347,19 +357,8 @@ func checklistItems(text string) string {
 // body. That one rule covers a recording transcribed again and this capture's
 // own attempt that wrote the body, died, and was taken over after the lease.
 func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string) error {
-	var lastErr error
-	for attempt := 0; attempt < maxAppendAttempts; attempt++ {
-		existingContent, etag, err := p.cfg.Objects.GetWithETag(ctx, noteKey)
-		switch {
-		case errors.Is(err, repository.ErrNotFound):
-			existingContent, etag = nil, ""
-		case err != nil:
-			return fmt.Errorf("pipeline: get existing note: %w", err)
-		}
-
-		var newContent string
-		switch {
-		case service.HasCaptureMarker(string(existingContent), captureID):
+	_, err := service.RewriteNoteBody(ctx, p.cfg.Objects, noteKey, func(existing string) (string, bool) {
+		if service.HasCaptureMarker(existing, captureID) {
 			// A recording whose text is already in the note: transcribed
 			// again (service.RetranscribeCapture, or run's re-transcription
 			// after a retry from before the language was recorded), or this
@@ -367,78 +366,16 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 			// paragraph is replaced where it stands; appending would leave
 			// the wrong-script text beside the right one.
 			obs.Count(ctx, "AppendReplacedParagraph", map[string]string{"Stage": string(service.StatusAppending)})
-			newContent = replaceCaptureParagraph(string(existingContent), captureID, text)
-		default:
-			newContent = service.CaptureMarker(captureID) + "\n" + text
-			if len(existingContent) > 0 {
-				newContent = string(existingContent) + "\n\n" + newContent
-			}
+			return replaceCaptureParagraph(existing, captureID, text), true
 		}
-
-		err = p.cfg.Objects.PutIfMatch(ctx, noteKey, []byte(newContent), "text/markdown", etag)
-		if err == nil {
-			return nil
+		paragraph := service.CaptureMarker(captureID) + "\n" + text
+		if existing != "" {
+			paragraph = existing + "\n\n" + paragraph
 		}
-		if !errors.Is(err, repository.ErrPreconditionFailed) {
-			return fmt.Errorf("pipeline: update note: %w", err)
-		}
-		lastErr = err
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Duration(attempt+1) * 10 * time.Millisecond):
-		}
+		return paragraph, true
+	})
+	if err != nil {
+		return fmt.Errorf("pipeline: update note: %w", err)
 	}
-	return fmt.Errorf("pipeline: update note after %d attempts: %w", maxAppendAttempts, lastErr)
-}
-
-// refreshNoteIndex re-derives the snippet, search text, touch time and the
-// cleaned view's stale flag from the note body that is now in object storage,
-// and returns the note as stored. The body is authoritative, so a version
-// conflict is resolved by re-reading rather than by overwriting whoever won.
-//
-// A body that cannot be read is an error, not a body to guess at. Until
-// 2026-09 a failed read fell back to the paragraph just appended, so one S3
-// 5xx or timeout at this moment rewrote the note's search text and snippet to
-// that paragraph alone; the capture was then marked appended, nothing retried,
-// and server search, the offline corpus and Ask lost the rest of the note
-// until the next body write. Returning the error fails the invocation instead.
-// The retry finds the capture's marker in the body and finishes the append
-// from here, so nothing is written twice.
-func (p *Pipeline) refreshNoteIndex(ctx context.Context, tenantID, noteID, captureID string) (model.NoteIndex, error) {
-	var lastErr error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
-		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
-		if err != nil {
-			return model.NoteIndex{}, err
-		}
-		existing, err := p.cfg.Objects.Get(ctx, note.S3MarkdownKey)
-		if err != nil {
-			return model.NoteIndex{}, fmt.Errorf("read note body: %w", err)
-		}
-		body := string(existing)
-		note.Snippet = service.Snippet(body)
-		note.SearchText = service.SearchText(body)
-		note.UpdatedAt = model.FormatTime(p.now())
-		// The paragraph just appended is not in the cleaned view.
-		service.MarkCleanedStale(&note)
-		// The body now carries the paragraph, so the row's version is once more
-		// a witness of it and editor saves may resume. Only this capture's own
-		// stamp is cleared: two captures appending to one note stamp in turn,
-		// and the second's body write may still be in flight when the first
-		// refreshes.
-		if note.AppendingCapture == captureID {
-			note.AppendingCapture, note.AppendingAt = "", ""
-		}
-
-		if stored, err := p.cfg.Store.PutNote(ctx, tenantID, note); err == nil {
-			return stored, nil
-		} else if !errors.Is(err, repository.ErrVersionConflict) {
-			return model.NoteIndex{}, err
-		} else {
-			lastErr = err
-		}
-	}
-	return model.NoteIndex{}, lastErr
+	return nil
 }

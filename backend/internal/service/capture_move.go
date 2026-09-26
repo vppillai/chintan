@@ -172,7 +172,7 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 	var text string
 	cut := false
 	if sourceKey != "" {
-		cut, err = rewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
+		cut, err = RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
 			rest, t, found := CutCaptureParagraph(body, captureID)
 			text = t
 			return rest, found
@@ -184,7 +184,7 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 
 	// 2. Put it into the target, or put it back where it was.
 	if cut {
-		_, err = rewriteNoteBody(ctx, s.objects, target.S3MarkdownKey, func(body string) (string, bool) {
+		_, err = RewriteNoteBody(ctx, s.objects, target.S3MarkdownKey, func(body string) (string, bool) {
 			if HasCaptureMarker(body, captureID) {
 				return body, false
 			}
@@ -200,13 +200,13 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 	// in yet; a retry after a failure here re-runs exactly these steps.
 	var touched []model.NoteIndex
 	if sourceKey != "" {
-		refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, sourceID)
+		refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, sourceID, RefreshOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to refresh the source note index: %w", err)
 		}
 		touched = append(touched, refreshed)
 	}
-	refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID)
+	refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, targetNoteID, RefreshOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh the target note index: %w", err)
 	}
@@ -265,7 +265,7 @@ func (s *CaptureService) undoCut(ctx context.Context, userID, sourceKey, sourceI
 		// Losing the position is better than losing the text.
 		before = func(string) bool { return false }
 	}
-	_, rerr := rewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
+	_, rerr := RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
 		if HasCaptureMarker(body, c.ID) {
 			return body, false
 		}
