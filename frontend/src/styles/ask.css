@@ -8,83 +8,6 @@
    this feature could land in the same week without touching the same file.
    -------------------------------------------------------------------------- */
 
-/* The field and its mode switch on one line; the form takes what is left,
-   and the row carries the gap beneath that the form used to. */
-.search-row {
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
-  padding-block-end: var(--space-3);
-}
-
-.search-row .search-form {
-  flex: 1 1 auto;
-  min-inline-size: 0;
-  padding-block-end: 0;
-}
-
-/* Search | Ask: two radios drawn as one segmented control. The inputs are
-   real and focusable — stretched invisibly over their labels, the way the
-   cleaned panel's checkbox is — so the keyboard and the reader get radios
-   while the eye gets a segment. */
-.field-mode {
-  display: flex;
-  flex: none;
-  gap: var(--space-1);
-  margin: 0;
-  padding: var(--space-1);
-  border: 0;
-  background-color: var(--color-surface);
-  border-radius: var(--radius-lg);
-}
-
-.field-mode__option {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-inline-size: var(--layout-touch-target-min);
-  min-block-size: var(--layout-touch-target-min);
-  padding-inline: var(--space-3);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-muted);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.field-mode__input {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  /* Sized explicitly as well as pinned: WebKit keeps a native radio at its
-     intrinsic 12 px unless told otherwise, and 12 px is not a target. */
-  inline-size: 100%;
-  block-size: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.field-mode__option:has(.field-mode__input:checked) {
-  background-color: var(--color-raised);
-  color: var(--color-ink);
-  box-shadow: var(--shadow-sm);
-}
-
-/* The focus ring on the label, since the input that has focus is invisible. */
-.field-mode__option:has(.field-mode__input:focus-visible) {
-  outline: var(--layout-focus-ring-width) solid var(--color-ink);
-  outline-offset: var(--layout-focus-ring-offset);
-}
-
-.field-mode__label {
-  pointer-events: none;
-}
-
 /* ---- The panel --------------------------------------------------------- */
 
 .ask {
@@ -268,10 +191,6 @@
 .ask__source:hover {
   background-color: var(--color-raised);
   border-color: var(--color-ink);
-}
-
-.ask__follow-up {
-  margin-block-start: var(--space-2);
 }
 
 .ask__actions {

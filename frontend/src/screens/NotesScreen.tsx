@@ -1,56 +1,28 @@
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  Suspense,
-  lazy,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Suspense, lazy, useCallback, useId, useMemo } from 'react';
 
-import {
-  SERVER_SEARCH_DEBOUNCE_MS,
-  useBulkArchiveNotes,
-  useBulkPurgeNotes,
-  useBulkRestoreNotes,
-  useUndoDelete,
-  useNotes,
-  useSearch,
-  useSearchCorpus,
-} from '@/api/queries.ts';
-import { ApiError } from '@/api/problem.ts';
-import type { NoteKind, NoteState, NoteWire } from '@/api/schema.ts';
-import { ARCHIVED_VIEW, ASK_MODE, ROUTES } from '@/app/routes.ts';
-import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
-import { Icon } from '@/components/Icon.tsx';
-import { LoadMore } from '@/components/LoadMore.tsx';
-import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
+import { SERVER_SEARCH_DEBOUNCE_MS, useNotes, useSearch, useSearchCorpus } from '@/api/queries.ts';
+import type { NoteWire } from '@/api/schema.ts';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
-import { SelectionBar } from '@/components/SelectionBar.tsx';
-import { showDeleted } from '@/components/Toast.tsx';
 import { Wordmark } from '@/components/Wordmark.tsx';
 import { useAskThread } from '@/features/ask/useAskThread.ts';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
-import { PinnedGroup } from '@/features/notes/PinnedGroup.tsx';
 import { groupByDay, splitPinned } from '@/features/notes/groups.ts';
-import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
+import { mergeResults, rankLocal } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
-import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
-/** Below this the search field no longer fits the long placeholder beside its Ask glyph. */
-export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
+import { LibraryField } from './library/LibraryField.tsx';
+import { LibraryList, noteForHit } from './library/LibraryList.tsx';
+import { useLibraryParams } from './library/useLibraryParams.ts';
+import { LibrarySelectionBar, useLibrarySelection } from './library/useLibrarySelection.tsx';
 
-/** A bulk Delete forever of more than this many notes is a hold, not a tap. */
-export const HOLD_TO_DELETE_ABOVE = 10;
-export const HOLD_TO_DELETE_MS = 1000;
+// The screen's parts live under `library/`; the tests keep importing these from here.
+export { NARROW_FIELD_QUERY, chipScrollBy } from './library/LibraryField.tsx';
+export { HOLD_TO_DELETE_ABOVE, HOLD_TO_DELETE_MS } from './library/useLibrarySelection.tsx';
 
 /*
  * The Ask panel is a chunk of its own (round-3 T47): the thread, its markdown
@@ -69,60 +41,33 @@ const AskPanel = lazy(() =>
  * narrows the list as you type from the corpus already on the device, a row of
  * chips — All, Checklists, one per tag, Archived — and the rows grouped by day
  * beneath. All of it lives in the URL (`q`, `kind`, `tag`, `view`), so a filter
- * is shareable, survives reload and is what Back returns to. Checklists is
- * the one place every checklist can be found from, which is what the owner
- * asked for; it combines with a tag and with the archive like any filter.
+ * is shareable, survives reload and is what Back returns to
+ * (`useLibraryParams`). Checklists is the one place every checklist can be
+ * found from, which is what the owner asked for; it combines with a tag and
+ * with the archive like any filter.
  *
  * The field has a second mode, Ask (`mode=ask`, backlog D5): the same box
  * takes a question instead of a filter, Enter sends it, and the Ask panel
- * stands in for the list with the answer and the notes it came from. The
- * switch is a glyph inside the field's trailing edge; once a thread is open
- * the same field takes the follow-up (round-3 T17, T21). The mode is in the
- * URL like the filters; the question and the thread are not
- * (`features/ask/thread.ts`).
+ * stands in for the list with the answer and the notes it came from
+ * (`LibraryField`). The mode is in the URL like the filters; the question and
+ * the thread are not (`features/ask/thread.ts`).
  *
- * Bulk select carries over from the two screens this replaces. In the active
- * view the one action is Delete — the archive, on the tap, with Undo in the
- * toast, since the notes wait in the Archive for thirty days (owner,
- * 2026-09-26: no typed word anywhere). In the archive the actions are Restore
- * and Delete forever, the one thing here that cannot be undone: it asks once,
- * plainly, and for more than ten notes the confirm is a press held for a
- * second rather than a tap. Selection starts from a row — press and hold it,
- * with a finger or a mouse alike, or pick Select from its ⋮ (see `NoteRow`) —
- * and its bar sits above the tab bar, not at the end of the list (backlog U2,
- * Q6).
+ * Bulk select carries over from the two screens this replaces
+ * (`useLibrarySelection`). Selection starts from a row — press and hold it,
+ * with a finger or a mouse alike, or pick Select from its ⋮ (see `NoteRow`).
  *
- * Pinned notes come first, in a group of their own above the days, in the
- * order the person dragged them into (`PinnedGroup`, 2026-09-24 B). The
- * server lists them first too; the split here is what keeps the cached list
- * on the same terms offline.
+ * This component is the composition: it reads the filters, fetches the lists
+ * and the search, and hands the rows to `LibraryList`. What it keeps for
+ * itself is what the parts have to share — the rows in screen order, which
+ * the selection ranges over.
  */
 export function NotesScreen() {
-  const [params, setParams] = useSearchParams();
-  const view: NoteState = params.get('view') === ARCHIVED_VIEW ? 'archived' : 'active';
-  const tag = params.get('tag');
-  const kind: NoteKind | null = params.get('kind') === 'checklist' ? 'checklist' : null;
-  const asking = params.get('mode') === ASK_MODE;
-  const query = params.get('q') ?? '';
+  const params = useLibraryParams();
+  const { view, tag, kind, asking, query } = params;
   const trimmed = query.trim();
   const searching = trimmed.length > 0;
-  /*
-   * The question being typed. Component state rather than the URL: `q` is a
-   * filter and belongs there, but a question is sent once, on Enter, and
-   * should be in nobody's history or shared link.
-   */
-  const [question, setQuestion] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-  const chipsRef = useRef<HTMLDivElement>(null);
   const askThread = useAskThread();
-  /** A thread is open, so the field is its follow-up rather than a first question. */
-  const following = askThread.turns.length > 0;
-  // On a 320 px phone the field, less its Ask glyph, clips the long
-  // placeholder mid-word ("…tags, tran"). A placeholder cannot be changed
-  // from CSS, so the width is read here.
-  const narrowField = useMediaQuery(NARROW_FIELD_QUERY);
 
-  const inputId = useId();
   const listId = useId();
   const askPanelId = useId();
   const online = useOnline();
@@ -143,31 +88,6 @@ export function NotesScreen() {
       ]),
     [queryClient],
   );
-
-  /*
-   * Filters are *replaced* in the URL, not pushed. Typing must not turn Back
-   * into a character-by-character undo, and a chip is a way of looking at the
-   * list, not a place the user went — Back from the library should leave the
-   * library, not step through every filter they tried on the way.
-   *
-   * `flushSync`, because the next change is built from this render's params.
-   * React Router commits a navigation inside a transition, which React may
-   * hold for tens of milliseconds on a busy device, so a keystroke landing
-   * before that render had committed read the *previous* filter and put it
-   * back: clearing the field and typing the next word produced
-   * "flashingzebra7" once in the QA pass, and pressing All then typing
-   * restored `view=archived`. Committing synchronously closes the window
-   * (`App.tsx` mounts the `react-router/dom` provider, which is what makes
-   * the option do anything).
-   */
-  const setFilter = (changes: Record<string, string | null>): void => {
-    const next = new URLSearchParams(params);
-    for (const [key, value] of Object.entries(changes)) {
-      if (value === null || value === '') next.delete(key);
-      else next.set(key, value);
-    }
-    setParams(next, { replace: true, flushSync: true });
-  };
 
   const list = useNotes({ state: view, ...(tag ? { tag } : {}), ...(kind ? { kind } : {}) });
   const cached = useCachedNotes(view, { prefetchBodies: true });
@@ -198,29 +118,6 @@ export function NotesScreen() {
    * back through `cached`; this only fills it.
    */
   useSearchCorpus(online);
-
-  /*
-   * Multi-select, for doing something to several notes at once rather than one
-   * at a time from inside each note's own screen. Confined to component state
-   * rather than the URL: leaving the screen is exactly when "which notes were
-   * selected" should stop mattering.
-   */
-  const [selecting, setSelecting] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  /** The last row toggled, for Shift-click to extend from. */
-  const anchorRef = useRef<string | null>(null);
-  const [confirming, setConfirming] = useState<'restore' | 'purge' | null>(null);
-  const bulkArchive = useBulkArchiveNotes();
-  const bulkRestore = useBulkRestoreNotes();
-  const undo = useUndoDelete();
-  const bulkPurge = useBulkPurgeNotes();
-  const bulkBusy = bulkArchive.isPending || bulkRestore.isPending || bulkPurge.isPending;
-
-  const exitSelecting = (): void => {
-    setSelecting(false);
-    setSelectedIds(new Set());
-    anchorRef.current = null;
-  };
 
   /*
    * TanStack *pauses* a query when the browser reports no connection: it does
@@ -314,7 +211,7 @@ export function NotesScreen() {
         : [...pinned, ...groups.flatMap((group) => group.notes)],
     [searching, hits, notes, pinned, groups],
   );
-  const nothingToShow = visible.length === 0;
+  const selection = useLibrarySelection(visible);
 
   const archivedCount = archived.data?.pages.reduce((sum, page) => sum + page.items.length, 0);
   const checklistCount = checklists.data?.pages.reduce(
@@ -332,68 +229,11 @@ export function NotesScreen() {
     return [...names].sort((a, b) => a.localeCompare(b));
   }, [activeCache.data, serverNotes, view, tag, kind]);
 
-  /*
-   * The pressed chip is where the reader is, so the row is scrolled to show
-   * it: the Archived chip sits at the row's far end and was off a phone's
-   * screen whether you arrived by the Archive row or `?view=archived` (QA
-   * 2026-09-21, finding 6). Keyed on what lays the row out, not on the chip
-   * becoming pressed: on a cold `?view=archived` the tag chips land later
-   * from IndexedDB and the counts from the network, and they pushed a chip
-   * that had scrolled itself in straight back off the screen. The row's own
-   * scrollLeft, not scrollIntoView: Chromium moves the sequential focus
-   * navigation starting point to the element it scrolls to, so the first Tab
-   * landed after the pressed chip instead of on the skip link. In jsdom every
-   * box is empty and nothing moves, which is the right thing there.
-   */
-  useEffect(() => {
-    const row = chipsRef.current;
-    const chip = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
-    if (!row || !chip) return;
-    const gutter = Number.parseFloat(getComputedStyle(row).paddingInlineEnd) || 0;
-    const by = chipScrollBy(row.getBoundingClientRect(), chip.getBoundingClientRect(), gutter);
-    if (by !== 0) row.scrollLeft += by;
-  }, [asking, view, tag, kind, tagNames, checklistCount, archivedCount]);
-
-  const selectableIds = visible.map((note) => note.id);
-  const allSelected = selectableIds.length > 0 && selectedIds.size === selectableIds.length;
-  // One note selected reads as one note (round-3 T63): "Delete it forever", not
-  // "them" — and, as the row's own dialog does, the sentence names it (QA
-  // 2026-09-21, finding 14).
-  const one = selectedIds.size === 1;
-  const onlySelected = one ? visible.find((note) => selectedIds.has(note.id)) : undefined;
   // Known once something — the server or the device — has answered.
   const count = serverNotes !== undefined || fromCache ? notes.length : undefined;
 
-  /*
-   * A row asking to be selected — the first one starts the mode. With Shift
-   * held (a mouse), every row between the last one toggled and this one is
-   * selected too, in the order they are on screen; the anchor moves here
-   * either way, so a second Shift-click extends from this row.
-   */
-  const toggleSelect = (noteId: string, { range }: SelectOptions): void => {
-    const anchor = anchorRef.current;
-    anchorRef.current = noteId;
-    setSelecting(true);
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (range && anchor) {
-        const from = selectableIds.indexOf(anchor);
-        const to = selectableIds.indexOf(noteId);
-        if (from !== -1 && to !== -1) {
-          for (const id of selectableIds.slice(Math.min(from, to), Math.max(from, to) + 1)) {
-            next.add(id);
-          }
-          return next;
-        }
-      }
-      if (next.has(noteId)) next.delete(noteId);
-      else next.add(noteId);
-      return next;
-    });
-  };
-
   return (
-    <div className="screen library" data-selecting={selecting || undefined}>
+    <div className="screen library" data-selecting={selection.selecting || undefined}>
       <PullToRefresh onRefresh={refresh} />
 
       {/*
@@ -435,163 +275,20 @@ export function NotesScreen() {
         </p>
       </header>
 
-      {/*
-        One field, two modes. Searching filters on every keystroke through
-        the URL's `q`; asking holds the question until Enter, because a
-        question is a request that costs a model call, not a filter to
-        narrow. The glyph inside the field's trailing edge is the switch, a
-        pressed button rather than the Search | Ask segment that took a third
-        of the row (round-3 T17); switching to Ask drops the filter so coming
-        back to Search shows the whole library. With a thread open the field
-        is the follow-up (round-3 T21): one field for one conversation. A
-        second question typed while the first is unanswered stays in the
-        field until Enter can send it: `useAskThread.ask` drops it, so the
-        field must not be cleared on its account, and says it is waiting
-        (`aria-busy`) for the reader who cannot see the panel's status line.
-      */}
-      <form
-        className="search-form"
-        role="search"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!asking || askThread.busy) return;
-          askThread.ask(question);
-          setQuestion('');
-        }}
-      >
-        <label className="visually-hidden" htmlFor={inputId}>
-          {asking ? (following ? 'Ask a follow-up' : 'Ask your notes') : 'Search notes'}
-        </label>
-        <div className="search-field">
-          <input
-            ref={inputRef}
-            id={inputId}
-            className="search-input"
-            type="search"
-            value={asking ? question : query}
-            placeholder={
-              asking
-                ? following
-                  ? 'Ask a follow-up…'
-                  : 'Ask your notes…'
-                : narrowField
-                  ? 'Search notes'
-                  : 'Search titles, tags, transcripts'
-            }
-            autoComplete="off"
-            enterKeyHint={asking ? 'send' : 'search'}
-            maxLength={asking ? 1000 : undefined}
-            aria-controls={asking ? askPanelId : listId}
-            aria-busy={asking && askThread.busy}
-            onChange={(event) => {
-              if (asking) setQuestion(event.target.value);
-              else setFilter({ q: event.target.value });
-            }}
-          />
-          {/* `type="button"`: inside the form so it can sit inside the field, never its submit. */}
-          <button
-            type="button"
-            className="ask-toggle"
-            aria-pressed={asking}
-            aria-label="Ask"
-            title={asking ? 'Back to search' : 'Ask your notes'}
-            onClick={() => {
-              setFilter(asking ? { mode: null } : { mode: ASK_MODE, q: null });
-              inputRef.current?.focus();
-            }}
-          >
-            <Icon name="sparkle" size={20} />
-          </button>
-        </div>
-      </form>
+      <LibraryField
+        {...params}
+        thread={askThread}
+        askPanelId={askPanelId}
+        listId={listId}
+        tagNames={tagNames}
+        checklists={{ count: checklistCount, more: checklists.hasNextPage }}
+        archived={{ count: archivedCount, more: archived.hasNextPage }}
+      />
 
       {asking && (
         <Suspense fallback={null}>
           <AskPanel id={askPanelId} thread={askThread} />
         </Suspense>
-      )}
-
-      {!asking && (
-        <div ref={chipsRef} className="chips" role="group" aria-label="Filter notes">
-          <Chip
-            label="All"
-            pressed={view === 'active' && !tag && !kind}
-            onClick={() => {
-              setFilter({ view: null, tag: null, kind: null });
-            }}
-          />
-          {/*
-            On the same terms as Archived below: not while there is nothing
-            behind it. Checklists are learnt about where they are made, on a
-            note's Details; a chip reading "Checklists · 0" taught nothing.
-          */}
-          {(kind === 'checklist' || (checklistCount ?? 0) > 0) && (
-            <Chip
-              label={
-                <>
-                  Checklists
-                  {checklistCount !== undefined && (
-                    <>
-                      {' · '}
-                      <span className="numeric">
-                        {checklistCount}
-                        {checklists.hasNextPage ? '+' : ''}
-                      </span>
-                    </>
-                  )}
-                </>
-              }
-              name={
-                checklistCount === undefined
-                  ? 'Checklists'
-                  : `Checklists · ${String(checklistCount)}`
-              }
-              pressed={kind === 'checklist'}
-              onClick={() => {
-                setFilter({ kind: kind ? null : 'checklist' });
-              }}
-            />
-          )}
-          {tagNames.map((name) => (
-            <Chip
-              key={name}
-              label={name}
-              pressed={tag === name}
-              onClick={() => {
-                setFilter({ tag: tag === name ? null : name });
-              }}
-            />
-          ))}
-          {/*
-            Not while there is nothing behind it (round-3 T17): "Archived · 0"
-            offered a filter of nothing. The archive is still one tap away,
-            as a row at the list's end below; the chip returns with the
-            first archived note, and is always there in the archive itself.
-          */}
-          {(view === 'archived' || (archivedCount ?? 0) > 0) && (
-            <Chip
-              label={
-                <>
-                  Archived
-                  {archivedCount !== undefined && (
-                    <>
-                      {' · '}
-                      <span className="numeric">
-                        {archivedCount}
-                        {archived.hasNextPage ? '+' : ''}
-                      </span>
-                    </>
-                  )}
-                </>
-              }
-              name={archivedCount === undefined ? 'Archived' : `Archived · ${String(archivedCount)}`}
-              pressed={view === 'archived'}
-              onClick={() => {
-                setFilter({ view: view === 'archived' ? null : ARCHIVED_VIEW });
-              }}
-            />
-          )}
-        </div>
       )}
 
       {/*
@@ -608,378 +305,32 @@ export function NotesScreen() {
         </>
       )}
 
-      {!asking && list.isLoading && !paused && !fromCache && (
-        <p className="screen__count" role="status">
-          Loading…
-        </p>
-      )}
-
-      {!asking && showingCached && (
-        <p className="screen__count" role="status">
-          Saved on this device. Recordings and transcripts need a connection.
-        </p>
-      )}
-
-      {!asking && searching && (
-        <p className="screen__count" aria-live="polite">
-          {`${String(hits.length)} ${hits.length === 1 ? 'result' : 'results'}${
-            serverPending ? ' so far…' : ''
-          }`}
-        </p>
-      )}
-
-      {/*
-        The server search did not run, or ran and failed. Said even when
-        nothing matched — that is the one case where the user most needs to
-        know a note they own was not actually looked for.
-      */}
-      {!asking && searching && serverUnavailable && (
-        <p className="search-offline" role="status">
-          {online
-            ? 'The server search did not respond, so only notes on this device were searched.'
-            : 'Searching offline — notes on this device only. Transcripts are not included.'}
-        </p>
-      )}
-
-      {!asking && (!online || paused) && nothingToShow && !searching && (
-        <p className="screen__empty" role="status">
-          {view === 'archived'
-            ? 'You are offline, so the archive could not be loaded.'
-            : 'You are offline and no notes are cached on this device yet. They will appear when you reconnect.'}
-        </p>
-      )}
-
-      {/*
-        A real control, not an instruction for a gesture the app does not
-        implement. The previous copy said "Pull down to try again." — there is
-        no pull-to-refresh anywhere in the codebase.
-      */}
-      {!asking && list.isError && online && !paused && nothingToShow && (
-        <div className="screen__empty" role="alert">
-          <p>{failureMessage(list.error)}</p>
-          <div className="screen__actions">
-            <button
-              type="button"
-              className="screen__action"
-              onClick={() => void list.refetch()}
-              disabled={list.isFetching}
-            >
-              {list.isFetching ? 'Trying…' : 'Try again'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {!asking && searching && nothingToShow && !serverPending && (
-        <p className="screen__empty">
-          Nothing matches &ldquo;{trimmed}&rdquo;
-          {view === 'archived' ? ' in the archive.' : ' in the notes searched.'}
-        </p>
-      )}
-
-      {!asking &&
-        !searching &&
-        online &&
-        !paused &&
-        !list.isLoading &&
-        !list.isError &&
-        nothingToShow &&
-        (view === 'archived' ? (
-          <p className="screen__empty">Nothing is archived.</p>
-        ) : tag ? (
-          <p className="screen__empty">No notes are tagged &ldquo;{tag}&rdquo;.</p>
-        ) : kind ? (
-          <p className="screen__empty">
-            No checklists yet. Open a note and turn it into one from Details.
-          </p>
-        ) : (
-          <p className="screen__empty">Tap PTT to record your first note, or hold it and talk.</p>
-        ))}
-
-      {asking ? null : searching ? (
-        <ul id={listId} className="note-list" role="list">
-          {hits.map((hit) => (
-            <li key={hit.noteId}>
-              <NoteRow
-                note={noteForHit(hit, notes)}
-                excerpt={hit.excerpt}
-                highlight={trimmed}
-                selectable={selecting}
-                selected={selectedIds.has(hit.noteId)}
-                onToggleSelect={toggleSelect}
-              />
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <div id={listId} className="note-groups">
-          {pinned.length > 0 && (
-            <PinnedGroup
-              notes={pinned}
-              selectable={selecting}
-              // Under a tag or Checklists chip the group is a subset of the
-              // pinned notes, and re-ranking a subset from 0 scrambles the rest.
-              reorderable={!tag && !kind}
-              selectedIds={selectedIds}
-              onToggleSelect={toggleSelect}
-            />
-          )}
-          {groups.map((group) => (
-            <section key={group.label} className="note-group" aria-label={group.label}>
-              <h2 className="note-group__label">{group.label}</h2>
-              <ul className="note-list" role="list">
-                {group.notes.map((note) => (
-                  <li key={note.id}>
-                    <NoteRow
-                      note={note}
-                      selectable={selecting}
-                      selected={selectedIds.has(note.id)}
-                      onToggleSelect={toggleSelect}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
-
-      {/*
-        Cursor pagination is on every list endpoint by contract, so the library
-        loads a page at a time rather than assuming the corpus is small — and
-        asks for the next one as the reader nears the end of this one, so the
-        day groups run on without a button to press (backlog U3). The button
-        is still there, for a keyboard and a screen reader.
-      */}
-      {!asking && !searching && (
-        <LoadMore
-          hasMore={list.hasNextPage}
-          loading={list.isFetchingNextPage}
-          onLoad={loadMore}
+      {!asking && (
+        <LibraryList
+          id={listId}
+          view={view}
+          tag={tag}
+          kind={kind}
+          list={list}
+          online={online}
+          paused={paused}
+          fromCache={fromCache}
+          showingCached={showingCached}
+          notes={notes}
+          pinned={pinned}
+          groups={groups}
+          searching={searching}
+          trimmed={trimmed}
+          hits={hits}
+          serverPending={serverPending}
+          serverUnavailable={serverUnavailable}
+          selection={selection}
+          loadMore={loadMore}
+          archived={{ count: archivedCount, more: archived.hasNextPage }}
         />
       )}
 
-      {/*
-        The way into the archive from the active list, whatever its chip is
-        doing — once there is a library to walk from or an archive to walk
-        into. A first-run screen showed "Tap PTT to record your first note, or hold it and talk."
-        and then "Archive · 0", the nothing T17 took out of the chips; the
-        row hides a zero for the same reason the chip does (QA 2026-09-21,
-        finding 13).
-      */}
-      {!asking &&
-        !searching &&
-        view === 'active' &&
-        (notes.length > 0 || (archivedCount ?? 0) > 0) && (
-          <Link to={ROUTES.archive} className="library-archive">
-            <Icon name="archive" size={18} />
-            <span>
-              Archive
-              {archivedCount !== undefined && archivedCount > 0 && (
-                <>
-                  {' · '}
-                  <span className="numeric">
-                    {archivedCount}
-                    {archived.hasNextPage ? '+' : ''}
-                  </span>
-                </>
-              )}
-            </span>
-            <Icon name="chevron-right" size={18} className="library-archive__glyph" />
-          </Link>
-      )}
-
-      {!asking && selecting && (
-        <SelectionBar
-          label="Bulk actions"
-          count={selectedIds.size}
-          allSelected={allSelected}
-          onSelectAll={() => {
-            setSelectedIds(allSelected ? new Set() : new Set(selectableIds));
-          }}
-          onCancel={exitSelecting}
-        >
-          {view === 'active' ? (
-            /*
-              Delete on Home is the archive, on the tap: the notes wait in the
-              Archive for thirty days, and the toast offers Undo, which
-              restores the ones that went — pinned again, where they were
-              pinned (`useUndoDelete`). This screen stays mounted through
-              the mutation, so the per-call `onSuccess` is safe here where a
-              row's is not (`NoteRow`).
-            */
-            <button
-              type="button"
-              className="selection-bar__action selection-bar__action--destructive"
-              disabled={selectedIds.size === 0 || bulkBusy}
-              onClick={() => {
-                const chosen = visible.filter((note) => selectedIds.has(note.id));
-                bulkArchive.mutate(
-                  chosen.map((note) => note.id),
-                  {
-                    onSuccess: (results) => {
-                      exitSelecting();
-                      const gone = chosen.filter((_note, i) => results[i]?.status === 'fulfilled');
-                      if (gone.length === 0) return;
-                      showDeleted(gone.length, () => {
-                        undo.mutate(gone);
-                      });
-                    },
-                  },
-                );
-              }}
-            >
-              {bulkArchive.isPending ? 'Deleting…' : 'Delete'}
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="selection-bar__action"
-                disabled={selectedIds.size === 0 || bulkBusy}
-                onClick={() => {
-                  setConfirming('restore');
-                }}
-              >
-                {bulkRestore.isPending ? 'Restoring…' : 'Restore'}
-              </button>
-              <button
-                type="button"
-                className="selection-bar__action selection-bar__action--destructive"
-                disabled={selectedIds.size === 0 || bulkBusy}
-                onClick={() => {
-                  setConfirming('purge');
-                }}
-              >
-                {bulkPurge.isPending ? 'Deleting…' : 'Delete forever'}
-              </button>
-            </>
-          )}
-        </SelectionBar>
-      )}
-
-      <ConfirmDialog
-        open={confirming === 'restore'}
-        title={`Restore ${countLabel(selectedIds.size)}?`}
-        body={
-          one
-            ? 'It leaves the archive and returns to your notes.'
-            : 'They leave the archive and return to your notes.'
-        }
-        confirmLabel={one ? 'Restore it' : 'Restore them'}
-        onCancel={() => {
-          setConfirming(null);
-        }}
-        onConfirm={() => {
-          setConfirming(null);
-          bulkRestore.mutate(Array.from(selectedIds), { onSuccess: exitSelecting });
-        }}
-      />
-
-      {/*
-        Emptying the archive. A plain confirm up to ten notes; past that the
-        button has to be held for a second (`holdMs`), because "select all,
-        delete forever" on a full archive is the one tap in the app whose
-        slip cannot be taken back, and a hold is a gesture no slip makes.
-      */}
-      <ConfirmDialog
-        open={confirming === 'purge'}
-        title={`Delete ${countLabel(selectedIds.size)} forever?`}
-        body={`${
-          one
-            ? `${onlySelected ? `“${onlySelected.title}” and its` : 'Its'} recordings and transcripts are`
-            : 'Their recordings and transcripts are'
-        } destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
-        confirmLabel={
-          selectedIds.size > HOLD_TO_DELETE_ABOVE
-            ? `Hold to delete ${String(selectedIds.size)} notes`
-            : one
-              ? 'Delete it forever'
-              : 'Delete them forever'
-        }
-        holdMs={selectedIds.size > HOLD_TO_DELETE_ABOVE ? HOLD_TO_DELETE_MS : undefined}
-        destructive
-        onCancel={() => {
-          setConfirming(null);
-        }}
-        onConfirm={() => {
-          const ids = Array.from(selectedIds);
-          setConfirming(null);
-          bulkPurge.mutate(ids, { onSuccess: exitSelecting });
-        }}
-      />
+      <LibrarySelectionBar selection={selection} view={view} asking={asking} />
     </div>
   );
-}
-
-function Chip({
-  label,
-  name,
-  pressed,
-  onClick,
-}: {
-  label: ReactNode;
-  /** The accessible name, when the visible label is more than plain text. */
-  name?: string;
-  pressed: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="chip"
-      aria-pressed={pressed}
-      aria-label={name}
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  );
-}
-
-/**
- * How far a chip row must scroll sideways for `chip` to sit inside it, a
- * gutter in from the edge: positive to the right, negative to the left, zero
- * when it already does. Exported for its test.
- */
-export function chipScrollBy(
-  row: Pick<DOMRect, 'left' | 'right'>,
-  chip: Pick<DOMRect, 'left' | 'right'>,
-  gutter: number,
-): number {
-  if (chip.right > row.right - gutter) return chip.right - (row.right - gutter);
-  if (chip.left < row.left + gutter) return chip.left - (row.left + gutter);
-  return 0;
-}
-
-/**
- * The row to draw for a search hit. A local hit is the note itself; a hit only
- * the server returned — a transcript match on a note beyond the loaded pages —
- * has a title and an excerpt but no timestamp, so it renders undated rather
- * than being dropped.
- */
-function noteForHit(hit: MergedHit, notes: readonly NoteWire[]): NoteWire {
-  return (
-    notes.find((note) => note.id === hit.noteId) ?? {
-      id: hit.noteId,
-      title: hit.title,
-      snippet: hit.excerpt,
-      updated_at: '',
-      version: 0,
-      archived: false,
-    }
-  );
-}
-
-function countLabel(count: number): string {
-  return `${String(count)} ${count === 1 ? 'note' : 'notes'}`;
-}
-
-/**
- * The server's own wording where there is one, so a 401 reads as "sign in
- * again" rather than as a generic fault the user cannot act on.
- */
-function failureMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.userMessage;
-  return 'Your notes could not be loaded.';
 }

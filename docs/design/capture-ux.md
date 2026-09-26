@@ -15,7 +15,8 @@ filing row (`FilingRow.tsx`, with its parts under `filing/`: `model.ts` for
 what a row says, `FilingItem.tsx` for one capture's row, `TargetPrompt.tsx`
 for "which note?", `useLocalUpload.ts` for this device's own upload),
 the shell's indicator (`components/RecordingIndicator.tsx`), the manifest
-(`frontend/manifest.config.ts`).
+(`frontend/manifest.config.ts`), the sheet (`styles/capture.css`: the filing
+row, target picker and indicator, then the screen).
 
 ## The machine, in one paragraph
 

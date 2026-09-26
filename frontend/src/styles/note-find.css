@@ -167,11 +167,10 @@
  * (e2e layout check). Zero minimums on the select and on the two containers
  * it lives in let `.settings-select`'s `max-inline-size: 100%` take effect.
  * Here rather than in shell.css, which another branch is reworking; fold
- * these three lines into `.settings-field` and `.language-field` when it lands.
+ * these lines into `.language-field` when it lands.
  */
 .language-select,
-.language-field,
-.settings-field--select {
+.language-field {
   min-inline-size: 0;
 }
 
