@@ -9,7 +9,10 @@ import type { SVGProps } from 'react';
  * `vector-effect: non-scaling-stroke` keeps it 1.75 device-independent pixels
  * at every size, so a 16 px chevron beside a 22 px tab icon reads as the same
  * pen. Before this the weight was 1.6 units and thinned with the box, so the
- * small icons came out at just over a pixel next to the tab bar's.
+ * small icons came out at just over a pixel next to the tab bar's. The two
+ * display-size discs — the tab bar's PTT and `/talk` — pass their own
+ * `strokeWidth`: 1.75 px was set for 16–30 px UI glyphs and reads thin on a
+ * 76 px accent disc.
  *
  * Every icon is `aria-hidden`: the accessible name always comes from the
  * control's own text or `aria-label`, never from the glyph.

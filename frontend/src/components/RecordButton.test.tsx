@@ -164,7 +164,7 @@ afterEach(() => {
 describe('the record button, held', () => {
   it('still opens the capture screen on a tap, without touching the microphone', async () => {
     mount();
-    const mic = screen.getByRole('button', { name: 'Record' });
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
     await onAFakeClock(() => {
       fireEvent.pointerDown(mic, down);
       act(() => {
@@ -180,7 +180,7 @@ describe('the record button, held', () => {
 
   it('records into the note while held, and sends on release', async () => {
     mount('roof-repair');
-    const mic = screen.getByRole('button', { name: 'Record into this note' });
+    const mic = screen.getByRole('button', { name: /^PTT into this note/ });
 
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 50);
@@ -189,7 +189,7 @@ describe('the record button, held', () => {
     expect(state()).toBe('recording');
     expect(useCaptureStore.getState().model.noteId).toBe('roof-repair');
     expect(overlay()).toHaveTextContent('Release to send · slide away to cancel');
-    expect(screen.getByRole('button', { name: 'Recording — release to send' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Recording: release to send' })).toHaveAttribute(
       'data-holding',
     );
     expect(document.querySelector('canvas.waveform')).not.toBeNull();
@@ -213,7 +213,7 @@ describe('the record button, held', () => {
 
   it('discards a hold too short to be a message, with a hint, and one that slid away, silently', async () => {
     mount();
-    const mic = screen.getByRole('button', { name: 'Record' });
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
     // The live region is there before anything is said in it, and stays the
     // same node: a screen reader announces what a region changes to, not
     // what a freshly mounted one contains.
@@ -264,7 +264,7 @@ describe('the record button, held', () => {
 
   it('sends what was said before a call ended the track, rather than discarding it', async () => {
     mount();
-    const mic = screen.getByRole('button', { name: 'Record' });
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 50);
     expect(state()).toBe('recording');
@@ -300,7 +300,7 @@ describe('the record button, held', () => {
     // as a release — the rule is a partial recording, never a discard — and
     // one hidden inside MIN_TALK_MS is a slip.
     mount();
-    const mic = screen.getByRole('button', { name: 'Record' });
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
     await onAFakeClock(async () => {
       fireEvent.pointerDown(mic, down);
       act(() => {
@@ -329,7 +329,7 @@ describe('the record button, held', () => {
     // An incoming call on Android both ends the track and covers Chrome; the
     // words before it are the message, as when only the track ends.
     mount('roof-repair');
-    const mic = screen.getByRole('button', { name: 'Record into this note' });
+    const mic = screen.getByRole('button', { name: /^PTT into this note/ });
     await onAFakeClock(async () => {
       fireEvent.pointerDown(mic, down);
       act(() => {
@@ -365,7 +365,7 @@ describe('the record button, held', () => {
       });
     });
     mount();
-    const mic = screen.getByRole('button', { name: 'Record' });
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
 
     await onAFakeClock(() => {
       // Held: a word rather than a dead button, and the release is not a tap.
@@ -398,7 +398,7 @@ describe('the record button, held', () => {
 
   it('only taps on /talk, where the screen\'s own button is the hold', async () => {
     mount(null, '/talk');
-    const mic = screen.getByRole('button', { name: 'Record' });
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 100);
     expect(micRequests).toBe(0);

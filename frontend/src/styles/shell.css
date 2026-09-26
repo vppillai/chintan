@@ -121,12 +121,16 @@
 }
 
 /* --------------------------------------------------------------------------
-   Record button — the only element permitted to use --color-accent.
+   Record button (PTT) — the only element permitted to use --color-accent.
    -------------------------------------------------------------------------- */
 
+/* The glyph over a caps "PTT", as the hero-era button carried "RECORD": the
+   disc names itself, since PTT is what the app calls it everywhere else. */
 .record-button {
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: var(--space-1);
   inline-size: var(--layout-record-button-size);
   block-size: var(--layout-record-button-size);
   border-radius: var(--radius-full);
@@ -143,6 +147,14 @@
 .record-button:active {
   transform: scale(0.96);
   box-shadow: var(--shadow-sm), var(--shadow-highlight);
+}
+
+.record-button__label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  line-height: 1;
 }
 
 /* --------------------------------------------------------------------------

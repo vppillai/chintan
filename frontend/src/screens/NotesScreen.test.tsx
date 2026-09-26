@@ -138,13 +138,13 @@ describe('the library never claims an empty library it cannot see', () => {
     expect(
       await screen.findByText(/offline and no notes are cached/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/tap record/i)).toBeNull();
+    expect(screen.queryByText(/tap PTT/i)).toBeNull();
     expect(fetchImpl, 'a paused query must not reach the network').not.toHaveBeenCalled();
   });
 
   it('invites the first recording for a genuinely empty library', async () => {
     mount(library({ active: [], archived: [], tags: [] }));
-    expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
+    expect(await screen.findByText(/tap PTT to record your first note/i)).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).toBeNull();
     // And offers no way into nothing: no "Archive · 0" row, no "Checklists · 0" chip.
     expect(screen.queryByRole('link', { name: /^Archive/ })).toBeNull();
