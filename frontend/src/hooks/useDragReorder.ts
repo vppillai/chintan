@@ -32,11 +32,12 @@ import {
  * Two things a finger needs. `touch-action` cannot change mid-gesture, so a
  * native non-passive `touchmove` listener cancels the page's scroll only
  * while a row is lifted — before that, a finger that moves is scrolling. And
- * the click the browser fires when the pointer lifts after a drag would
- * activate whatever is under it — open the note, tick the box — so the list
- * swallows exactly that one. Whether a lift that never moved swallows its
- * click too is the caller's (`swallowTap`): a row lifted by a hold must not
- * open on release, but a grip whose tap opens the row's menu needs the click.
+ * the click the browser fires when the pointer lifts after a lift, moved or
+ * not, would activate whatever is under it — open the note, tick the box —
+ * so the list swallows exactly that one. A lift that never moved is a tap
+ * on the handle, and the caller hears of it as `onTap` (the grip's menu);
+ * it cannot use the browser's click for that, because once the list holds
+ * the capture that click is targeted at the list, not at the handle.
  */
 
 interface Drag<T> {
@@ -72,14 +73,14 @@ export function useDragReorder<T extends string>({
   listRef,
   ids,
   onCommit,
-  swallowTap = true,
+  onTap,
 }: {
   listRef: RefObject<HTMLElement | null>;
   /** The ids in the order shown, one per row with `data-drag-id`. */
   ids: readonly T[];
   onCommit: (next: T[], moved: T) => void;
-  /** Whether the click after a lift that never moved is swallowed as well as the one after a drag. */
-  swallowTap?: boolean;
+  /** A lift that ended where it began: the pointer tapped the handle of row `id`. */
+  onTap?: (id: T) => void;
 }): DragReorder<T> {
   const [draft, setDraft] = useState<T[] | null>(null);
   const [draggingId, setDraggingId] = useState<T | null>(null);
@@ -111,8 +112,13 @@ export function useDragReorder<T extends string>({
     } catch {
       /* Already released. */
     }
-    // The pointer lifting after a drag is not a tap on what is under it.
-    swallowClick.current = current.moved || swallowTap;
+    // Told before the flag below is set: what the caller does with a tap —
+    // click its own handle to open the row's menu — is a click through this
+    // list too, and must not be the one swallowed.
+    if (!cancelled && !current.moved) onTap?.(current.id);
+    // Whether it moved or not, the pointer lifting after a lifted row is not
+    // a tap on what is under it.
+    swallowClick.current = true;
     if (cancelled || !current.moved) return;
     onCommit(live.current, current.id);
   };

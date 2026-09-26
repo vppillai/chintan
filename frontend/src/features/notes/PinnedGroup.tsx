@@ -52,9 +52,9 @@ import { useOnline } from '@/hooks/useOnline.ts';
  * with the Items tab. What is this group's own: the hold that lifts a row on
  * a phone (one timer for the whole list; before it fires, a finger that moves
  * is scrolling, and the hold lets go), the grip-versus-row routing of a
- * press, the gating, and the one request. A hold that never moved still
- * swallows the click that follows (`swallowTap`), or releasing the finger
- * would open the note it had lifted.
+ * press, the gating, and the one request. The hook swallows the click that
+ * follows any lift, moved or not, so releasing a finger that held a row
+ * does not open the note it had lifted.
  */
 
 interface Hold {

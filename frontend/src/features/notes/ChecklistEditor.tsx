@@ -10,14 +10,20 @@ import {
 } from 'react';
 
 import { ICON_STROKE_WIDTH, Icon, PATHS } from '@/components/Icon.tsx';
+import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
+import { showToast } from '@/components/Toast.tsx';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
+import { useDragReorder } from '@/hooks/useDragReorder.ts';
 
 import {
   insertItemAfter,
+  moveItem,
   parseChecklist,
+  removeDone,
   removeItem,
   setItemText,
   toggleItem,
+  uncheckAll,
   type ChecklistItem,
 } from './checklist.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -25,29 +31,51 @@ import type { NoteEditor } from './useNoteEditor.ts';
 /**
  * The Items tab: a checklist note's body as rows to tick off.
  *
- * Open items first, in body order, each a real checkbox and a text field
- * that wraps and grows with its words; an "Add an item" row under them; then
- * the done items, greyed and
- * struck through, each with its checkbox to reopen it and a × to delete it.
- * Ticking an item moves it down to Done, as Google Keep does — the body keeps
- * its order and only the item's own line changes (`toggleItem`), so a
- * recording the worker appends meanwhile lands where it would have anyway.
+ * Open items first, in body order, each a grip, a real checkbox and a text
+ * field that wraps and grows with its words; an "Add an item" row under
+ * them; then the done items under a Done heading, greyed and struck through,
+ * each with its checkbox to reopen it and a × to delete it. Ticking an item
+ * moves it down to Done, as Google Keep does — the body keeps its order and
+ * only the item's own line changes (`toggleItem`), so a recording the worker
+ * appends meanwhile lands where it would have anyway.
+ *
+ * The grip is the one control for the order (2026-09-26, CL-3). A drag on
+ * it lifts the row and the list re-sorts under the pointer (`useDragReorder`,
+ * the pinned group's gesture); nothing is written until release, then the
+ * body is rewritten once (`moveItem`) and saved, as a tick is. The arrow
+ * keys on it move the row one slot. A tap on it — a lift that never moved —
+ * opens the row's menu: Move up, Move down, Move to top, Move to bottom,
+ * Delete; the path that needs no drag at all (WCAG 2.5.7), and a menu on
+ * the grip rather than a ⋮ per row because a phone's width has no room for
+ * both beside a dictated sentence. A body that changes under a lifted row —
+ * a recording landing by refetch — drops the row, since the slots it was
+ * moving between are gone. Done rows have no grip: their order is the
+ * body's, and nothing shows it.
+ *
+ * Done is a disclosure, remembered per note for the session
+ * (`sessionStorage`, open by default, the NoteTabs pattern), with Uncheck
+ * all and Delete done beside it; Delete done offers Undo in the shell's
+ * toast for six seconds rather than asking first (OF-DEL: no typed word,
+ * no dialog for what can be undone).
  *
  * Every change is `editor.edit({ body })` and rides the note's own autosave,
- * conflict prompt and offline queue; a tick and a delete save at once, as a
- * discrete act does, and typing saves on blur. Nothing here knows about the
- * server.
+ * conflict prompt and offline queue; a tick, a move and a delete save at
+ * once, as a discrete act does, and typing saves on blur. Nothing here knows
+ * about the server.
  *
  * Keyboard: Enter in an item starts a new one under it; Backspace in an
  * emptied item removes it and steps back to the one above; Enter in the add
  * row adds and stays there for the next.
  */
-export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
+export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId: string }) {
   const body = editor.model.draft.body;
   const items = useMemo(() => parseChecklist(body), [body]);
   const doneId = useId();
+  const doneListId = useId();
+  const hintId = useId();
   const [announcement, setAnnouncement] = useState('');
   const [adding, setAdding] = useState('');
+  const [doneOpen, setDoneOpen] = useState(() => readDoneOpen(noteId));
 
   /*
    * The row just ticked stays where it is for one beat, so the tick draws
@@ -70,15 +98,26 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
   }, [held]);
 
   /*
-   * Where the caret goes after a write that moved it: the index of the item
-   * to focus, or `ADD_ROW` for the add row. Set with the edit and consumed by
-   * the effect after the render that drew the new rows — the new item's input
-   * does not exist until then.
+   * Where focus goes after a write that moved it: the index of the item
+   * whose field to focus, or `ADD_ROW` for the add row; or the open-list
+   * position of the grip to focus, after a move made from the keyboard, so
+   * a second arrow press finds the same row. Set with the edit and consumed
+   * by the effect after the render that drew the new rows — the new item's
+   * input does not exist until then, and the moved row's grip is a fresh
+   * element, keyed by its new index.
    */
   const inputs = useRef(new Map<number, HTMLTextAreaElement>());
+  const grips = useRef(new Map<number, HTMLButtonElement>());
   const addRef = useRef<HTMLTextAreaElement>(null);
   const focusAfterWrite = useRef<number | null>(null);
+  const focusGripAfterWrite = useRef<number | null>(null);
   useEffect(() => {
+    const grip = focusGripAfterWrite.current;
+    if (grip !== null) {
+      focusGripAfterWrite.current = null;
+      grips.current.get(grip)?.focus();
+      return;
+    }
     const target = focusAfterWrite.current;
     if (target === null) return;
     focusAfterWrite.current = null;
@@ -120,6 +159,48 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
   const open = entries.filter(({ item, index }) => (index === held ? item.done : !item.done));
   const done = entries.filter(({ item, index }) => (index === held ? !item.done : item.done));
 
+  /**
+   * Puts the open item at body index `index` in the slot of the open item at
+   * `position`: one body write, saved at once. `focusGrip` keeps the keyboard
+   * on the moved row after the render.
+   */
+  const moveOpen = (index: number, position: number, focusGrip: boolean): void => {
+    const target = open[position];
+    if (!target || target.index === index) return;
+    write(moveItem(body, index, target.index));
+    if (focusGrip) focusGripAfterWrite.current = position;
+    save();
+  };
+
+  // The drag's ids are body indices, as strings; the order shown while a
+  // row is lifted is the hook's draft.
+  const listRef = useRef<HTMLUListElement>(null);
+  const openIds = open.map(({ index }) => String(index));
+  const drag = useDragReorder({
+    listRef,
+    ids: openIds,
+    onCommit: (next, moved) => {
+      moveOpen(Number(moved), next.indexOf(moved), false);
+    },
+    // A tap on the grip opens the row's menu: the grip is the menu's own
+    // trigger, so clicking it is the same as any press on it.
+    onTap: (id) => {
+      grips.current.get(openIds.indexOf(id))?.click();
+    },
+  });
+  const dragging = drag.draggingId !== null;
+  useEffect(() => {
+    if (dragging) drag.cancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a body change should drop the row; `cancel` is remade every render
+  }, [body]);
+  const byId = new Map(open.map((entry) => [String(entry.index), entry]));
+  const shownOpen = drag.draft
+    ? drag.draft.flatMap((id) => {
+        const entry = byId.get(id);
+        return entry ? [entry] : [];
+      })
+    : open;
+
   const onItemKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number): void => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -137,37 +218,141 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
     }
   };
 
+  const onGripKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number, position: number): void => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    moveOpen(index, position + (event.key === 'ArrowUp' ? -1 : 1), true);
+  };
+
+  /** The grip's menu: the no-drag path to every place a row can go, then the row's delete. */
+  const gripMenu = (index: number, position: number): OverflowMenuItem[] => {
+    const first = position === 0;
+    const last = position === open.length - 1;
+    return [
+      { label: 'Move up', disabled: first, onSelect: () => moveOpen(index, position - 1, true) },
+      { label: 'Move down', disabled: last, onSelect: () => moveOpen(index, position + 1, true) },
+      { label: 'Move to top', disabled: first, onSelect: () => moveOpen(index, 0, true) },
+      { label: 'Move to bottom', disabled: last, onSelect: () => moveOpen(index, open.length - 1, true) },
+      // Phase 2 (owner decision CL-D1): "Make a sub-item" / "Move out" go here.
+      {
+        label: 'Delete',
+        destructive: true,
+        onSelect: () => {
+          // Focus lands on the next open row, which moves up one index, or on the add row.
+          const following = open[position + 1];
+          remove(index, following ? following.index - 1 : ADD_ROW);
+        },
+      },
+    ];
+  };
+
+  const toggleDone = (): void => {
+    const next = !doneOpen;
+    setDoneOpen(next);
+    rememberDoneOpen(noteId, next);
+  };
+
+  const reopenAll = (): void => {
+    write(uncheckAll(body));
+    setAnnouncement('All items reopened');
+    save();
+  };
+
+  const deleteDone = (): void => {
+    const previous = body;
+    const count = done.length;
+    write(removeDone(body));
+    save();
+    const message = `${String(count)} done item${count === 1 ? '' : 's'} deleted`;
+    setAnnouncement(message);
+    showToast({
+      message,
+      action: {
+        label: 'Undo',
+        onSelect: () => {
+          write(previous);
+          save();
+        },
+      },
+    });
+  };
+
   return (
     <div className="checklist-editor">
-      <ul className="checklist" role="list" aria-label="Items">
-        {open.map(({ item, index }, position) => (
-          <li key={index} className={rowClass(item)}>
-            <Check
-              checked={item.done}
-              name={item.text || `Item ${String(position + 1)}`}
-              onChange={() => {
-                toggle(index, item);
-              }}
-            />
-            <ItemField
-              ref={(element) => {
-                if (element) inputs.current.set(index, element);
-                else inputs.current.delete(index);
-              }}
-              value={item.text}
-              aria-label={`Item ${String(position + 1)}`}
-              enterKeyHint="next"
-              onChange={(event) => {
-                write(setItemText(body, index, event.target.value));
-              }}
-              onKeyDown={(event) => {
-                onItemKeyDown(event, index);
-              }}
-              onBlur={save}
-            />
-          </li>
-        ))}
+      {open.length > 0 && (
+        <p id={hintId} className="visually-hidden">
+          To reorder, drag a handle, or focus it and press the up and down arrow keys; tap it for
+          more.
+        </p>
+      )}
+      <ul
+        ref={listRef}
+        className="checklist"
+        role="list"
+        aria-label="Items"
+        data-dragging={dragging || undefined}
+        {...drag.listHandlers}
+      >
+        {shownOpen.map(({ item, index }, position) => {
+          const id = String(index);
+          return (
+            <li
+              key={index}
+              className={rowClass(item)}
+              data-drag-id={id}
+              data-dragging={drag.draggingId === id || undefined}
+            >
+              <OverflowMenu
+                label={`Move ${item.text || 'item'}`}
+                describedBy={hintId}
+                items={gripMenu(index, position)}
+                trigger={(props) => (
+                  <button
+                    {...props}
+                    ref={(element) => {
+                      if (element) grips.current.set(position, element);
+                      else grips.current.delete(position);
+                    }}
+                    className="checklist__grip"
+                    onPointerDown={(event) => {
+                      if (event.button === 0) drag.start(event.pointerId, id);
+                    }}
+                    onKeyDown={(event) => {
+                      onGripKeyDown(event, index, position);
+                    }}
+                  >
+                    <Icon name="grip" size={18} />
+                  </button>
+                )}
+              />
+              <Check
+                checked={item.done}
+                name={item.text || `Item ${String(position + 1)}`}
+                onChange={() => {
+                  toggle(index, item);
+                }}
+              />
+              <ItemField
+                ref={(element) => {
+                  if (element) inputs.current.set(index, element);
+                  else inputs.current.delete(index);
+                }}
+                value={item.text}
+                aria-label={`Item ${String(position + 1)}`}
+                enterKeyHint="next"
+                onChange={(event) => {
+                  write(setItemText(body, index, event.target.value));
+                }}
+                onKeyDown={(event) => {
+                  onItemKeyDown(event, index);
+                }}
+                onBlur={save}
+              />
+            </li>
+          );
+        })}
         <li className="checklist__row checklist__row--add">
+          <span className="checklist__grip-space" aria-hidden="true" />
           <span className="checklist__check checklist__add-mark" aria-hidden="true">
             <Icon name="plus" size={18} />
           </span>
@@ -195,12 +380,35 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
 
       {done.length > 0 && (
         <section className="checklist__done" aria-labelledby={doneId}>
-          <h2 id={doneId} className="eyebrow">
-            Done <span className="numeric">({done.length})</span>
-          </h2>
-          <ul className="checklist" role="list">
+          <div className="checklist__done-head">
+            <h2 id={doneId} className="checklist__done-title">
+              <button
+                type="button"
+                className="checklist__disclosure"
+                aria-expanded={doneOpen}
+                aria-controls={doneListId}
+                onClick={toggleDone}
+              >
+                <Icon name="chevron-down" size={16} className="checklist__chevron" />
+                <span className="eyebrow">
+                  Done <span className="numeric">({done.length})</span>
+                </span>
+              </button>
+            </h2>
+            <div className="checklist__done-actions">
+              <button type="button" className="checklist__done-action" onClick={reopenAll}>
+                Uncheck all
+              </button>
+              <span aria-hidden="true">·</span>
+              <button type="button" className="checklist__done-action" onClick={deleteDone}>
+                Delete done
+              </button>
+            </div>
+          </div>
+          <ul id={doneListId} className="checklist" role="list" hidden={!doneOpen}>
             {done.map(({ item, index }) => (
               <li key={index} className={rowClass(item)}>
+                <span className="checklist__grip-space" aria-hidden="true" />
                 <Check
                   checked={item.done}
                   name={item.text || 'Item'}
@@ -231,6 +439,28 @@ export function ChecklistEditor({ editor }: { editor: NoteEditor }) {
       </p>
     </div>
   );
+}
+
+/** Where a note's Done section remembers whether it is open, for the session. */
+export function doneStorageKey(noteId: string): string {
+  return `chintan.checklist-done.${noteId}`;
+}
+
+function readDoneOpen(noteId: string): boolean {
+  try {
+    return sessionStorage.getItem(doneStorageKey(noteId)) !== 'collapsed';
+  } catch {
+    // Storage denied: the section simply opens, as it does the first time.
+    return true;
+  }
+}
+
+function rememberDoneOpen(noteId: string, open: boolean): void {
+  try {
+    sessionStorage.setItem(doneStorageKey(noteId), open ? 'open' : 'collapsed');
+  } catch {
+    /* Storage denied. */
+  }
 }
 
 /** The add row, as a focus target. Never an item index. */

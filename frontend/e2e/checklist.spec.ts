@@ -1,8 +1,8 @@
 import process from 'node:process';
 
-import type { Locator, Page } from '@playwright/test';
+import { devices, type Locator, type Page } from '@playwright/test';
 
-import { CLEAN_WORKER_MS, expect, noteAction, test, type ApiState } from './fixtures.ts';
+import { CLEAN_WORKER_MS, expect, noteAction, seedChecklist as seedShopping, test } from './fixtures.ts';
 
 /** The text of every field in a list of items, in order — the add row's empty one last. */
 function values(list: Locator): Promise<string[]> {
@@ -17,22 +17,6 @@ function values(list: Locator): Promise<string[]> {
  * that converts a note and sends `kind` with the body, and the Split up tab
  * whose one mode the server applies unasked.
  */
-
-function seedShopping(api: ApiState): void {
-  api.notes['shopping'] = {
-    id: 'shopping',
-    kind: 'checklist',
-    title: 'Shopping',
-    body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter',
-    snippet: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter',
-    tags: ['house'],
-    aliases: [],
-    updated_at: '2026-08-07T08:00:00.000Z',
-    version: 1,
-    archived: false,
-    captures: [],
-  };
-}
 
 test('Home has a Checklists chip after All that filters the library through the URL', async ({
   page,
@@ -200,6 +184,149 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
   await expect(page.getByText('The note changed since this was generated.')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
+});
+
+/** The PATCHes the note has received. */
+function saves(api: { requests: { method: string; url: string }[] }): number {
+  return api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping').length;
+}
+
+test.describe('reordering by the grip', () => {
+  test('a mouse drag on a grip re-sorts the rows under the pointer and writes the body once, on release', async ({
+    page,
+    api,
+  }) => {
+    seedShopping(api);
+    await page.goto('/notes/shopping');
+    const items = page.getByRole('list', { name: 'Items' });
+    await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+    // The grip is a real target, 44 px each way, before the box.
+    const grip = page.getByRole('button', { name: 'Move Milk' });
+    const from = (await grip.boundingBox())!;
+    expect(from.width).toBeGreaterThanOrEqual(44);
+    expect(from.height).toBeGreaterThanOrEqual(44);
+    const below = (await items.locator('li').nth(1).boundingBox())!;
+
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    // Past the next row's midpoint, in steps, as a hand moves.
+    await page.mouse.move(from.x + from.width / 2, below.y + below.height - 2, { steps: 8 });
+    // Lifted: the list has re-sorted, and nothing is saved yet.
+    await expect.poll(() => values(items)).toEqual(['Bread and butter', 'Milk', '']);
+    expect(saves(api)).toBe(0);
+    await page.mouse.up();
+
+    // One write: Milk takes Bread's slot; Eggs, done, keeps its line where it was.
+    await expect.poll(() => api.notes['shopping']?.body).toBe('- [x] Eggs\n- [ ] Bread and butter\n- [ ] Milk');
+    expect(saves(api)).toBe(1);
+    // The release did not open the grip's menu.
+    await expect(page.getByRole('menu')).toHaveCount(0);
+
+    // The arrow keys on a grip move a row one slot, for a keyboard.
+    await page.getByRole('button', { name: 'Move Milk' }).focus();
+    await page.keyboard.press('ArrowUp');
+    await expect.poll(() => api.notes['shopping']?.body).toBe('- [x] Eggs\n- [ ] Milk\n- [ ] Bread and butter');
+    await expect(page.getByRole('button', { name: 'Move Milk' })).toBeFocused();
+  });
+
+  test('a tap on the grip opens the row’s menu, the path that needs no drag', async ({ page, api }) => {
+    seedShopping(api);
+    await page.goto('/notes/shopping');
+    const items = page.getByRole('list', { name: 'Items' });
+    await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+    await page.getByRole('button', { name: 'Move Bread and butter' }).click();
+    const menu = page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole('menuitem')).toHaveText([
+      'Move up',
+      'Move down',
+      'Move to top',
+      'Move to bottom',
+      'Delete',
+    ]);
+    // The bottom row cannot move down.
+    await expect(menu.getByRole('menuitem', { name: 'Move down' })).toBeDisabled();
+    await menu.getByRole('menuitem', { name: 'Move to top' }).click();
+    await expect.poll(() => values(items)).toEqual(['Bread and butter', 'Milk', '']);
+    await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Bread and butter\n- [ ] Milk\n- [x] Eggs');
+    await expect(menu).toHaveCount(0);
+  });
+
+  test.describe('with a finger', () => {
+    // The descriptor's `defaultBrowserType` cannot be set inside a describe.
+    const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7']!;
+    test.use({ ...pixel, hasTouch: true, isMobile: true });
+    // The finger here is a CDP touch session, which only Chromium has.
+    test.skip(({ browserName }) => browserName === 'webkit', 'CDP touch');
+
+    test('a touch drag on a grip lifts the row at once — no hold — and reorders', async ({ page, api }) => {
+      seedShopping(api);
+      await page.goto('/notes/shopping');
+      const items = page.getByRole('list', { name: 'Items' });
+      await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+
+      const cdp = await page.context().newCDPSession(page);
+      const grip = (await page.getByRole('button', { name: 'Move Milk' }).boundingBox())!;
+      const below = (await items.locator('li').nth(1).boundingBox())!;
+      const x = grip.x + grip.width / 2;
+      const y = grip.y + grip.height / 2;
+      const toY = below.y + below.height - 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      const steps = 10;
+      for (let i = 1; i <= steps; i += 1) {
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x, y: y + ((toY - y) * i) / steps }],
+        });
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+      await expect.poll(() => api.notes['shopping']?.body).toBe('- [x] Eggs\n- [ ] Bread and butter\n- [ ] Milk');
+      // The finger lifting after the drag neither opened the menu nor ticked a box.
+      await expect(page.getByRole('menu')).toHaveCount(0);
+      await expect(page.getByText('1 of 3 done')).toBeVisible();
+    });
+  });
+});
+
+test('Done is a disclosure remembered for the session; Delete done is undone from the keyboard; Uncheck all reopens in place', async ({
+  page,
+  api,
+}) => {
+  seedShopping(api);
+  await page.goto('/notes/shopping');
+  const done = page.getByRole('region', { name: 'Done (1)' });
+  const toggle = done.getByRole('button', { name: 'Done (1)' });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(done.getByRole('checkbox', { name: 'Eggs' })).toBeVisible();
+
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(done.getByRole('checkbox', { name: 'Eggs' })).toBeHidden();
+  // Remembered across a reload, for this tab.
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Done (1)' })).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('button', { name: 'Done (1)' }).click();
+  await expect(page.getByRole('checkbox', { name: 'Eggs' })).toBeVisible();
+
+  // Delete done asks nothing: the body loses its done line and Undo waits in
+  // the shell's toast, a real button a keyboard reaches.
+  await page.getByRole('button', { name: 'Delete done' }).click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread and butter');
+  await expect(page.getByRole('region', { name: /^Done/ })).toHaveCount(0);
+  const undo = page.getByRole('button', { name: 'Undo' });
+  await expect(undo).toBeVisible();
+  await undo.focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter');
+  await expect(page.getByRole('heading', { name: 'Done (1)' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Uncheck all' }).click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Eggs\n- [ ] Bread and butter');
+  await expect(page.getByRole('region', { name: /^Done/ })).toHaveCount(0);
+  await expect(page.getByText('0 of 3 done')).toBeVisible();
 });
 
 /*
