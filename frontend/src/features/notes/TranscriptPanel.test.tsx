@@ -89,6 +89,24 @@ describe('a capture with no segments does not contradict itself', () => {
   });
 });
 
+describe('words sent as words', () => {
+  it('shows the text with no sentence about timestamps', () => {
+    // A text-only device row is forced into the cleaned view, whose caption
+    // explained cleanup losing the timestamps — words posted as words never
+    // had any (review 2026-09-24, R4-24).
+    mount({
+      segments: [],
+      hasSegments: false,
+      cleanedText: 'Buy milk on the way home.',
+      view: 'cleaned',
+      textOnly: true,
+    });
+    expect(screen.getByText('Buy milk on the way home.')).toBeInTheDocument();
+    expect(screen.queryByText(/no reliable timestamps/i)).toBeNull();
+    expect(screen.queryByText(/tap any line/i)).toBeNull();
+  });
+});
+
 describe('the panel is the transcript and its switch, nothing else', () => {
   it('has no copy control of its own; that is the row menu’s (T41)', () => {
     mount({ cleanedText: 'Cleaned.' });

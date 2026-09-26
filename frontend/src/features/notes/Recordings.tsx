@@ -14,6 +14,7 @@ import {
 } from '@/api/queries.ts';
 import {
   isTerminalStatus,
+  type CaptureMoveWire,
   type CaptureStatus,
   type CaptureWire,
   type NoteDetailWire,
@@ -224,17 +225,27 @@ export function Recordings({
     );
   };
 
-  const runMove = (ids: string[], target: NoteWire): void => {
+  /*
+   * `title` is the sheet's word for where they went — the note's own, or the
+   * name just typed for a note the server is about to make; the id of that
+   * one is known only from the answer, which is why the notice's "Open …"
+   * takes it from the result.
+   */
+  const runMove = (ids: string[], target: CaptureMoveWire, title: string): void => {
     setNotice(null);
     moveCaptures.mutate(
-      { noteId: note.id, targetId: target.id, captureIds: ids },
+      { noteId: note.id, target, captureIds: ids },
       {
         onSuccess: (result) => {
           setPending(null);
           const outcome = describeOutcome(result.done.length, result.failed, 'moved');
           setNotice(
             result.done.length > 0
-              ? { ...outcome, text: `${outcome.text} to “${target.title}”`, target }
+              ? {
+                  ...outcome,
+                  text: `${outcome.text} to “${title}”`,
+                  target: { id: result.targetId, title },
+                }
               : outcome,
           );
           if (result.done.length === ids.length) stopSelecting();
@@ -487,8 +498,8 @@ export function Recordings({
         onCancel={() => {
           setPending(null);
         }}
-        onChoose={(target) => {
-          runMove(pending?.ids ?? [], target);
+        onChoose={(target, title) => {
+          runMove(pending?.ids ?? [], target, title);
         }}
       />
     </>
@@ -531,7 +542,7 @@ interface Notice {
   text: string;
   tone: 'ok' | 'error';
   /** The note the recordings went to, offered as "Open <title>". */
-  target?: NoteWire;
+  target?: Pick<NoteWire, 'id' | 'title'>;
 }
 
 /**
@@ -1032,6 +1043,8 @@ function RecordingRow({
              * above it. Timestamps exist only when the pipeline wrote them,
              * and without them the cleaned text is the view — the raw view
              * would say "nothing to jump to" about a recording that never was.
+             * Told the words were sent as words, the panel does not explain
+             * cleanup losing timestamps the text never had either.
              */
             <TranscriptPanel
               segments={segments}
@@ -1042,6 +1055,7 @@ function RecordingRow({
               onSeek={() => undefined}
               hasSegments={hasSegments}
               lang={lang}
+              textOnly
             />
           ) : noAudio ? (
             <p className="screen__count">

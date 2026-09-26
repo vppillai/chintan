@@ -296,9 +296,11 @@ export class ChintanApi {
   }
 
   /**
-   * Moves a recording and its paragraph into another active note, spliced in
-   * chronological position among that note's own recordings. 200 with the
-   * re-pointed capture; 204 — `undefined` here — when it was already there.
+   * Moves a recording and its paragraph into another active note — one that
+   * exists, by `note_id`, or one made for it from `new_note_title` — spliced
+   * in chronological position among that note's own recordings. 200 with the
+   * re-pointed capture, whose `note_id` names the note either way; 204 —
+   * `undefined` here — when it was already there.
    * The contract's 503 means "nothing changed, repeat", so the default retry
    * policy stands, made safe by the idempotency key the client always sends.
    */

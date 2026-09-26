@@ -430,10 +430,13 @@ export interface PresignedDownloadWire {
   expires_at: string;
 }
 
-/** POST /v1/captures/{captureId}/move. 200 with the re-pointed capture, 204 when already there. */
-export interface CaptureMoveWire {
-  note_id: string;
-}
+/**
+ * POST /v1/captures/{captureId}/move: an existing active note by id, or the
+ * title of a note to make for it — the same choice `CaptureTargetWire` gives
+ * a capture that has no note yet. 200 with the re-pointed capture, whose
+ * `note_id` names the note either way; 204 when it was already there.
+ */
+export type CaptureMoveWire = { note_id: string } | { new_note_title: string };
 
 /**
  * One entry of GET /v1/notes/{noteId}/recordings/urls: a presigned GET for a

@@ -140,7 +140,10 @@ function apiStub(
     if (method === 'POST' && url.pathname.endsWith('/move')) {
       if (overrides.move) return overrides.move(init);
       drop(captureId);
-      return json({ ...CAPTURE, id: captureId, note_id: 'reading-list' });
+      // Re-pointed at the note asked for — or, asked for a title, at the
+      // note made from it, which only the answer names.
+      const body = JSON.parse(String(init?.body)) as { note_id?: string };
+      return json({ ...CAPTURE, id: captureId, note_id: body.note_id ?? 'made-from-title' });
     }
     if (method === 'POST' && url.pathname.endsWith('/retranscribe')) {
       if (overrides.retranscribe) return overrides.retranscribe(init);
@@ -657,7 +660,7 @@ describe('deleting a recording', () => {
 });
 
 describe('moving a recording to another note', () => {
-  it('lists the other active notes, recent first, with no way to create one', async () => {
+  it('lists the other active notes, recent first, under a New note… row', async () => {
     const user = userEvent.setup();
     bucketStub();
     const api = apiStub();
@@ -668,10 +671,9 @@ describe('moving a recording to another note', () => {
 
     const sheet = await screen.findByRole('dialog', { name: /move this recording to/i });
     const options = await within(sheet).findAllByRole('button', { name: /reading list|old fence/i });
-    // The note being moved out of is not offered, and there is no "new note".
+    // The note being moved out of is not offered; a note not yet made is.
     expect(within(sheet).queryByRole('button', { name: /roof repair/i })).toBeNull();
-    expect(within(sheet).queryByPlaceholderText(/new note/i)).toBeNull();
-    expect(within(sheet).queryByRole('button', { name: /create/i })).toBeNull();
+    expect(within(sheet).getByRole('button', { name: 'New note…' })).toBeInTheDocument();
     expect(options.length).toBe(2);
     // Each option says when it was touched and how its text begins (T42), so
     // two notes with the same dictated title can be told apart.
@@ -716,6 +718,96 @@ describe('moving a recording to another note', () => {
     const invalidated = invalidate.mock.calls.map(([filters]) => JSON.stringify(filters?.queryKey));
     expect(invalidated).toContain(JSON.stringify(queryKeys.note('roof-repair')));
     expect(invalidated).toContain(JSON.stringify(queryKeys.note('reading-list')));
+  });
+
+  it('into a note named here: the move carries the title, and the note it made is offered', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub();
+    const queryClient = testQueryClient();
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
+    mount(api.fetchImpl, queryClient);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Move to…' }));
+    const sheet = await screen.findByRole('dialog');
+    await user.click(within(sheet).getByRole('button', { name: 'New note…' }));
+    await user.type(within(sheet).getByLabelText('Name the new note'), 'Trip notes{Enter}');
+
+    // One request: the server makes the note and moves the paragraph in it.
+    await waitFor(() => {
+      expect(api.calls).toContainEqual(
+        expect.objectContaining({
+          method: 'POST',
+          path: '/v1/captures/cap-1/move',
+          body: { new_note_title: 'Trip notes' },
+        }),
+      );
+    });
+    expect(
+      api.calls.some((call) => call.method === 'POST' && call.path.startsWith('/v1/notes')),
+    ).toBe(false);
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(screen.queryByRole('button', { name: /more for recording from/i })).toBeNull();
+    // The same words as for a note that existed, with the name just typed,
+    // and the offer to open it — at the id only the answer knew.
+    expect(await screen.findByText(/recording moved to “trip notes”/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open Trip notes' })).toBeInTheDocument();
+
+    const invalidated = invalidate.mock.calls.map(([filters]) => JSON.stringify(filters?.queryKey));
+    expect(invalidated).toContain(JSON.stringify(queryKeys.note('roof-repair')));
+    expect(invalidated).toContain(JSON.stringify(queryKeys.note('made-from-title')));
+    expect(invalidated).toContain(JSON.stringify(['notes']));
+  });
+
+  it('several recordings into one new note: the first move makes it, the rest follow it by id', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub({ ...NOTE, captures: [CAPTURE, OLDER] });
+    mount(api.fetchImpl);
+
+    await user.click((await screen.findAllByRole('button', { name: /more for recording from/i }))[0]!);
+    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
+    const bar = await screen.findByRole('toolbar', { name: 'Recording actions' });
+    await user.click(within(bar).getByRole('button', { name: 'Select all' }));
+    await user.click(within(bar).getByRole('button', { name: 'Move' }));
+    const sheet = await screen.findByRole('dialog', { name: /move 2 recordings to/i });
+    await user.click(within(sheet).getByRole('button', { name: 'New note…' }));
+    await user.type(within(sheet).getByLabelText('Name the new note'), 'Trip notes{Enter}');
+
+    // Run together, two titles would have made two notes named alike.
+    await waitFor(() => {
+      expect(api.calls.filter((call) => call.path.endsWith('/move')).map((call) => call.body)).toEqual([
+        { new_note_title: 'Trip notes' },
+        { note_id: 'made-from-title' },
+      ]);
+    });
+    expect(await screen.findByText(/2 recordings moved to “trip notes”/i)).toBeInTheDocument();
+  });
+
+  it('a refused title moves nothing and the sheet says why', async () => {
+    const user = userEvent.setup();
+    bucketStub();
+    const api = apiStub(NOTE, {
+      move: () =>
+        json(
+          { type: 'about:blank', title: 'Bad Request', status: 400, detail: 'title is too long' },
+          400,
+        ),
+    });
+    mount(api.fetchImpl);
+
+    await user.click(await screen.findByRole('button', { name: /more for recording from/i }));
+    await user.click(screen.getByRole('menuitem', { name: 'Move to…' }));
+    const sheet = await screen.findByRole('dialog');
+    await user.click(within(sheet).getByRole('button', { name: 'New note…' }));
+    await user.type(within(sheet).getByLabelText('Name the new note'), 'Trip notes{Enter}');
+
+    expect(await within(sheet).findByRole('alert')).toHaveTextContent('title is too long');
+    expect(screen.getByRole('button', { name: /more for recording from/i })).toBeInTheDocument();
+    expect(screen.queryByText(/moved to/i)).toBeNull();
   });
 });
 
@@ -1027,6 +1119,8 @@ describe('a capture that a device sent', () => {
     expect(within(row).queryByRole('region', { name: 'Recording' })).toBeNull();
     expect(within(row).queryByRole('button', { name: /play recording/i })).toBeNull();
     expect(row).not.toHaveTextContent(/no longer stored/i);
+    // Words never had timestamps for cleanup to lose, so the panel does not say so.
+    expect(row).not.toHaveTextContent(/no reliable timestamps/i);
     expect(row).toHaveTextContent('From Watch');
 
     // Nothing to download or transcribe again; the words themselves copy.
