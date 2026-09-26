@@ -5,14 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/httperr"
 	"github.com/vppillai/chintan/backend/internal/middleware"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -30,12 +33,17 @@ import (
 const MaxInboxTextRequestBytes = 128 << 10
 
 // Headers a one-shot POST carries beside its body, for a client that can
-// set headers but cannot build JSON. X-Chintan-Note-Id is read on both
-// one-shot routes; the other two only mean something for a recording.
+// set headers but cannot build JSON. X-Chintan-Note-Id and
+// X-Chintan-Recorded-At are read on both one-shot routes; the other two
+// only mean something for a recording.
 const (
-	HeaderInboxNoteID     = "X-Chintan-Note-Id"
-	HeaderInboxLanguage   = "X-Chintan-Language"
-	HeaderInboxDurationMS = "X-Chintan-Duration-Ms"
+	HeaderInboxNoteID      = "X-Chintan-Note-Id"
+	HeaderInboxLanguage    = "X-Chintan-Language"
+	HeaderInboxDurationMS  = "X-Chintan-Duration-Ms"
+	HeaderInboxRecordedAt  = "X-Chintan-Recorded-At"
+	recordedAtMaxAge       = 7 * 24 * time.Hour
+	recordedAtMaxSkew      = 5 * time.Minute
+	recordedAtMaxPartBytes = 64
 )
 
 // HeaderDeviceKey carries the device key for a client whose Authorization
@@ -81,13 +89,13 @@ func (rt *router) deviceAuthenticated(next http.Handler) http.Handler {
 			httperr.ServiceUnavailable(w, r, "the inbox is not configured on this instance")
 			return
 		}
-		raw, ok := deviceKeyOf(r)
-		if !ok {
-			fail(w, r, service.ErrDeviceKeyUnknown)
-			return
-		}
-		device, err := rt.Devices.Authenticate(r.Context(), raw)
+		// No key at all takes the same road as a malformed one, so the
+		// refusal is counted the same way. ContentLength is -1 when the
+		// body's length is not known up front; the month's byte counter
+		// then goes without this request.
+		device, err := rt.Devices.Authenticate(r.Context(), deviceKeyOf(r), max(r.ContentLength, 0))
 		if err != nil {
+			countRefusal(r.Context(), err)
 			fail(w, r, err)
 			return
 		}
@@ -105,18 +113,66 @@ func (rt *router) deviceAuthenticated(next http.Handler) http.Handler {
 // second header, which is why it is read first. Whichever spelling, what
 // follows is the same check and the same fixed 401, so nothing here widens
 // the threat model: the key is still the only thing that opens the inbox.
-func deviceKeyOf(r *http.Request) (string, bool) {
+// "" when the request presents none.
+func deviceKeyOf(r *http.Request) string {
 	if raw := strings.TrimSpace(r.Header.Get(HeaderDeviceKey)); raw != "" {
-		return raw, true
+		return raw
 	}
 	auth := r.Header.Get("Authorization")
 	if raw, ok := middleware.BearerToken(auth); ok {
-		return raw, true
+		return raw
 	}
 	if raw := strings.TrimSpace(auth); strings.HasPrefix(raw, "ck_") {
-		return raw, true
+		return raw
 	}
-	return "", false
+	return ""
+}
+
+// countRefusal makes a refused key visible without any of the key: one
+// InboxKeyRefused per refusal, by reason, with the dimensionless rollup the
+// InboxKeyRefusedAlarm reads, and a WARN naming the device id and the reason
+// once the id parsed. A malformed key logs nothing, so a probe cannot write
+// bytes of its choosing into the log; the 401 on the wire is unchanged.
+func countRefusal(ctx context.Context, err error) {
+	var ref *service.DeviceRefusal
+	if !errors.As(err, &ref) {
+		return
+	}
+	obs.CountWithRollup(ctx, "InboxKeyRefused", map[string]string{"Reason": ref.Reason})
+	if ref.DeviceID != "" {
+		obs.Log(ctx).Warn("device key refused",
+			slog.String("device_id", ref.DeviceID),
+			slog.String("reason", ref.Reason))
+	}
+}
+
+// parseRecordedAt reads a sender's claim of when it recorded — milliseconds
+// since the epoch (10 to 13 digits) or RFC 3339 — into the row's own layout.
+// It is telemetry, not input: a value that does not parse, or that is more
+// than seven days before now or five minutes after it (a device clock that
+// is wrong), is dropped and the request goes on. Never a 400.
+func parseRecordedAt(raw string, now time.Time) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	var at time.Time
+	if n := len(raw); n >= 10 && n <= 13 && strings.Trim(raw, "0123456789") == "" {
+		ms, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			return "", false
+		}
+		at = time.UnixMilli(ms)
+	} else {
+		var err error
+		if at, err = time.Parse(time.RFC3339Nano, raw); err != nil {
+			return "", false
+		}
+	}
+	if at.Before(now.Add(-recordedAtMaxAge)) || at.After(now.Add(recordedAtMaxSkew)) {
+		return "", false
+	}
+	return model.FormatTime(at), true
 }
 
 // inboxIdentity is the tenant and device deviceAuthenticated put on the
@@ -187,6 +243,7 @@ func (rt *router) inboxAudio(w http.ResponseWriter, r *http.Request) {
 		Language:    r.Header.Get(HeaderInboxLanguage),
 		Source:      model.DeviceSource(device.ID),
 	}
+	req.RecordedAt, _ = parseRecordedAt(r.Header.Get(HeaderInboxRecordedAt), time.Now())
 	if raw := strings.TrimSpace(r.Header.Get(HeaderInboxDurationMS)); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n < 0 {
@@ -226,9 +283,9 @@ func (rt *router) inboxAudio(w http.ResponseWriter, r *http.Request) {
 // only its transcription still makes a note. With both, the audio wins and
 // the ring's transcription is dropped: the pipeline transcribes with the
 // note's language, which the ring's does not know. client names nothing this
-// route acts on. recordedAt (milliseconds since the epoch) is ignored because
-// a capture has no recorded-at field — created_at is the server's clock, as
-// for every capture — so there is nowhere honest to put it.
+// route acts on. recordedAt (milliseconds since the epoch) is the ring's
+// clock at the moment it recorded and goes to the row's timing record, as
+// the X-Chintan-Recorded-At header does; created_at stays the server's.
 //
 // The whole form is read under MaxInboxAudioBytes, the raw body's cap: the
 // gateway limit that cap exists for applies to the body as the gateway sees
@@ -274,6 +331,16 @@ func (rt *router) inboxAudioForm(w http.ResponseWriter, r *http.Request, userID 
 			// Invalid UTF-8 becomes U+FFFD, as the JSON route's decoder
 			// makes it, so both roads file the same text.
 			transcription = strings.ToValidUTF8(string(raw), "\uFFFD")
+		case "recordedAt":
+			// Epoch milliseconds; a longer part is not a timestamp.
+			raw, err := io.ReadAll(io.LimitReader(part, recordedAtMaxPartBytes))
+			if err != nil {
+				unreadableForm(w, r, err)
+				return
+			}
+			if at, ok := parseRecordedAt(string(raw), time.Now()); ok {
+				req.RecordedAt = at
+			}
 		}
 		// Any other part is skipped: the next NextPart discards what is left
 		// of this one.
@@ -282,7 +349,7 @@ func (rt *router) inboxAudioForm(w http.ResponseWriter, r *http.Request, userID 
 	case len(audio) > 0:
 		rt.acceptInboxAudio(w, r, userID, req, audio)
 	case strings.TrimSpace(transcription) != "":
-		rt.acceptInboxText(w, r, userID, service.CaptureRequest{NoteID: req.NoteID, Source: req.Source}, transcription)
+		rt.acceptInboxText(w, r, userID, service.CaptureRequest{NoteID: req.NoteID, Source: req.Source, RecordedAt: req.RecordedAt}, transcription)
 	default:
 		httperr.BadRequest(w, r, "the form has no audio or transcription part")
 	}
@@ -363,8 +430,10 @@ func (rt *router) inboxText(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, MaxInboxTextRequestBytes, &req) {
 		return
 	}
+	recordedAt, _ := parseRecordedAt(r.Header.Get(HeaderInboxRecordedAt), time.Now())
 	rt.acceptInboxText(w, r, userID, service.CaptureRequest{
-		NoteID: req.NoteID,
-		Source: model.DeviceSource(device.ID),
+		NoteID:     req.NoteID,
+		Source:     model.DeviceSource(device.ID),
+		RecordedAt: recordedAt,
 	}, req.Text)
 }

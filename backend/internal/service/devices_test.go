@@ -110,51 +110,103 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 		}
 	}
 
-	// Authenticate: the right key counts; a wrong secret, an unknown id, a
-	// foreign tenant's guess at the id and a revoked key all read as unknown.
-	got, err := svc.Authenticate(ctx, key)
+	// Authenticate: the right key counts the request, its bytes and the
+	// month; a wrong secret, an unknown id, a foreign tenant's guess at the
+	// id and a revoked key all read as unknown on the wire, and each says
+	// why underneath, for the metric.
+	got, err := svc.Authenticate(ctx, key, 100)
 	if err != nil || got.ID != device.ID || got.TenantID != "u1" || got.RequestsDay != 1 || got.LastUsedAt == "" {
 		t.Fatalf("Authenticate = %+v, %v", got, err)
+	}
+	if got.RequestsMonth != 1 || got.BytesMonth != 100 || got.Month != "2026-09" {
+		t.Fatalf("month counters after one request of 100 bytes = %+v", got)
 	}
 	// Flip the last character so the "wrong secret" can never equal the key.
 	wrongSecret := key[:len(key)-1] + "0"
 	if strings.HasSuffix(key, "0") {
 		wrongSecret = key[:len(key)-1] + "1"
 	}
-	for _, bad := range []string{wrongSecret, "ck_dev_000000000000_" + strings.Repeat("a", 48), "not a key", ""} {
-		if _, err := svc.Authenticate(ctx, bad); !errors.Is(err, ErrDeviceKeyUnknown) {
+	for bad, want := range map[string]DeviceRefusal{
+		wrongSecret: {Reason: "wrong_secret", DeviceID: device.ID},
+		"ck_dev_000000000000_" + strings.Repeat("a", 48): {Reason: "unknown", DeviceID: "dev_000000000000"},
+		"not a key": {Reason: "malformed"},
+		"":          {Reason: "malformed"},
+	} {
+		_, err := svc.Authenticate(ctx, bad, 5)
+		if !errors.Is(err, ErrDeviceKeyUnknown) || err.Error() != ErrDeviceKeyUnknown.Error() {
 			t.Errorf("Authenticate(%q) = %v, want unknown", bad, err)
 		}
+		var ref *DeviceRefusal
+		if !errors.As(err, &ref) || ref.Reason != want.Reason || ref.DeviceID != want.DeviceID {
+			t.Errorf("Authenticate(%q) refusal = %+v, want %+v", bad, ref, want)
+		}
+	}
+	// A refusal counts nothing.
+	if after, _ := store.GetDevice(ctx, "u1", device.ID); after.RequestsMonth != 1 || after.BytesMonth != 100 {
+		t.Fatalf("a refused request was counted: %+v", after)
 	}
 
-	// The day's counter: the 200th request passes, the 201st is refused, and
-	// the next UTC day starts over.
+	// The day's counter: the 200th request passes, the 201st is refused
+	// before anything is counted, and the next UTC day starts over.
 	stored, _ = store.GetDevice(ctx, "u1", device.ID)
 	stored.RequestsDay = model.DeviceDailyRequestLimit - 1
 	if _, err := store.PutDevice(ctx, "u1", stored); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := svc.Authenticate(ctx, key); err != nil || got.RequestsDay != model.DeviceDailyRequestLimit {
+	if got, err := svc.Authenticate(ctx, key, 200); err != nil || got.RequestsDay != model.DeviceDailyRequestLimit || got.RequestsMonth != 2 || got.BytesMonth != 300 {
 		t.Fatalf("200th request: %+v, %v", got, err)
 	}
 	atLimit, _ := store.GetDevice(ctx, "u1", device.ID)
-	if _, err := svc.Authenticate(ctx, key); !errors.Is(err, ErrDeviceDailyLimit) {
+	_, err = svc.Authenticate(ctx, key, 50)
+	if !errors.Is(err, ErrDeviceDailyLimit) {
 		t.Fatalf("201st request: %v, want the daily limit", err)
 	}
-	// Refused without a write: the row is as the 200th request left it.
-	if after, _ := store.GetDevice(ctx, "u1", device.ID); after.Version != atLimit.Version || after.RequestsDay != model.DeviceDailyRequestLimit {
-		t.Fatalf("the refused request wrote the row: version %d → %d, requests_day %d", atLimit.Version, after.Version, after.RequestsDay)
+	var limited *DeviceRefusal
+	if !errors.As(err, &limited) || limited.Reason != "daily_limit" || limited.DeviceID != device.ID {
+		t.Fatalf("201st request's refusal = %+v", limited)
 	}
-	at = at.Add(2 * time.Minute) // past midnight UTC
-	if got, err := svc.Authenticate(ctx, key); err != nil || got.RequestsDay != 1 || got.RequestsDayDate != "2026-09-25" {
+	// Refused without a write: the row is as the 200th request left it.
+	if after, _ := store.GetDevice(ctx, "u1", device.ID); after.Version != atLimit.Version || after.RequestsDay != model.DeviceDailyRequestLimit || after.BytesMonth != 300 {
+		t.Fatalf("the refused request wrote the row: version %d → %d, requests_day %d, bytes_month %d", atLimit.Version, after.Version, after.RequestsDay, after.BytesMonth)
+	}
+	at = at.Add(2 * time.Minute) // past midnight UTC, same month
+	if got, err := svc.Authenticate(ctx, key, 0); err != nil || got.RequestsDay != 1 || got.RequestsDayDate != "2026-09-25" {
 		t.Fatalf("first request of the next day: %+v, %v", got, err)
+	} else if got.RequestsMonth != 3 || got.BytesMonth != 300 || got.Month != "2026-09" {
+		t.Fatalf("month counters after 100, 200 and 0 bytes = %+v", got)
+	}
+	// The list shows the month's counters while it is the month, and
+	// nothing once it is not; the row keeps them until its next request.
+	listed := func() model.Device {
+		t.Helper()
+		live, err := svc.ListDevices(ctx, "u1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range live {
+			if d.ID == device.ID {
+				return d
+			}
+		}
+		t.Fatal("the device is not listed")
+		return model.Device{}
+	}
+	if d := listed(); d.Month != "2026-09" || d.RequestsMonth != 3 || d.BytesMonth != 300 {
+		t.Fatalf("listed in September: %+v", d)
+	}
+	at = time.Date(2026, 10, 1, 0, 0, 1, 0, time.UTC)
+	if d := listed(); d.Month != "" || d.RequestsMonth != 0 || d.BytesMonth != 0 {
+		t.Fatalf("listed in October before any request: %+v; want September's counters cleared", d)
+	}
+	if got, err := svc.Authenticate(ctx, key, 7); err != nil || got.RequestsMonth != 1 || got.BytesMonth != 7 || got.Month != "2026-10" {
+		t.Fatalf("first request of October: %+v, %v", got, err)
 	}
 
 	// Revoked: unknown from then on, and revoking again is not an error.
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Authenticate(ctx, key); !errors.Is(err, ErrDeviceKeyUnknown) {
+	if _, err := svc.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) {
 		t.Fatalf("revoked key: %v", err)
 	}
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
@@ -206,7 +258,7 @@ func TestRevokeDeviceOutlivesACounterWriteItRacedWith(t *testing.T) {
 	if !racing.raced || !stored.Revoked() || stored.RequestsDay != 1 {
 		t.Fatalf("stored = %+v (raced %v); want revoked with the counter write kept", stored, racing.raced)
 	}
-	if _, err := NewDeviceService(mem).Authenticate(ctx, key); !errors.Is(err, ErrDeviceKeyUnknown) {
+	if _, err := NewDeviceService(mem).Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) {
 		t.Fatalf("revoked key: %v", err)
 	}
 }

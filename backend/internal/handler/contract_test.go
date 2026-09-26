@@ -440,22 +440,26 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 
 	// ---- devices
 	h = newHarness(t)
-	// One device seeded as if it had sent something, so the list carries a
-	// last_used_at beside the null of the device the POST below creates. Only
-	// an inbox request sets last_used_at through the API, and the creation
-	// instant is put before the harness clock so the seeded device lists first.
+	// One device seeded as if it had sent something once this month, so the
+	// list carries a last_used_at and a usage_month beside the nulls of the
+	// device the POST below creates. Only an inbox request sets them through
+	// the API, and the creation instant is put before the harness clock so
+	// the seeded device lists first.
 	if _, err := h.store.PutDevice(context.Background(), contractUser, model.Device{
 		ID: "dev_contract_watch", Name: "Watch",
-		CreatedAt:  model.FormatTime(harnessNow.AddDate(0, 0, -3)),
-		LastUsedAt: model.FormatTime(harnessNow.Add(-time.Hour)),
+		CreatedAt:     model.FormatTime(harnessNow.AddDate(0, 0, -3)),
+		LastUsedAt:    model.FormatTime(harnessNow.Add(-time.Hour)),
+		Month:         harnessNow.Format("2006-01"),
+		RequestsMonth: 1,
+		BytesMonth:    2048,
 	}); err != nil {
 		t.Fatalf("seed device: %v", err)
 	}
 	add("deviceCreated", "DeviceCreatedWire",
-		"POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5).",
+		"POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). `usage_month` is null: nothing has been sent.",
 		h.do(t, http.MethodPost, "/v1/devices", contractUser, map[string]any{"name": "Shortcut on the phone"}))
 	add("devicesPage", "Page<DeviceWire>",
-		"GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at set) and one that has not (null). No cursor.",
+		"GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at and usage_month set) and one that has not (both null). No cursor.",
 		h.do(t, http.MethodGet, "/v1/devices", contractUser, nil))
 
 	// ---- problem documents
