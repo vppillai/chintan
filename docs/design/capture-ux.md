@@ -86,7 +86,10 @@ met with exactly the library's controls.
 once). PTT is the name the app gives both — on the disc under its glyph, the
 `/talk` heading, the You row and the manifest shortcut (owner feedback
 2026-09-26); "hold to talk" is the instruction beneath the name, and the
-buttons' `aria-label`s spell it out for a screen reader. Phases: idle → armed → holding → hint | sent | busy. The rules, with the
+buttons' `aria-label`s spell it out for a screen reader — except the disc on
+`/talk`, which only taps there and says only "tap to record".
+
+Phases: idle → armed → holding → hint | sent | busy. The rules, with the
 constants that pin them:
 
 - Armed for `HOLD_DELAY_MS` (350 ms). Moving more than 10 px while armed is a

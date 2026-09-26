@@ -398,7 +398,8 @@ describe('the record button, held', () => {
 
   it('only taps on /talk, where the screen\'s own button is the hold', async () => {
     mount(null, '/talk');
-    const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
+    // The name matches the behaviour: no "hold to talk" where there is no hold.
+    const mic = screen.getByRole('button', { name: /^PTT: tap to record$/ });
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 100);
     expect(micRequests).toBe(0);

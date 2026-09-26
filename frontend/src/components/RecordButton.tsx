@@ -30,7 +30,9 @@ import { Icon } from './Icon.tsx';
  *
  * On `/talk` it only taps: that screen's disc is the hold, into the note its
  * pill names, and a second hold surface in the same viewport recording
- * somewhere else would be two answers to one question.
+ * somewhere else would be two answers to one question. Its name there says
+ * only "tap to record", because a name that promised a hold the control
+ * refuses would be an instruction the screen reader cannot follow up on.
  */
 export function RecordButton({ noteId = null }: { noteId?: string | null }) {
   const navigate = useNavigate();
@@ -49,9 +51,11 @@ export function RecordButton({ noteId = null }: { noteId?: string | null }) {
         aria-label={
           holding
             ? 'Recording: release to send'
-            : into
-              ? 'PTT into this note: tap to record, hold to talk'
-              : 'PTT: tap to record, hold to talk'
+            : onTalk
+              ? 'PTT: tap to record'
+              : into
+                ? 'PTT into this note: tap to record, hold to talk'
+                : 'PTT: tap to record, hold to talk'
         }
         {...(onTalk ? {} : hold.handlers)}
         onClick={() => {
