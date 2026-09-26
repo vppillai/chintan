@@ -5,8 +5,8 @@ ticked, crossed items sink, and all checklists are one filter away. This note
 is the backend half — what is stored, what the worker writes, how the cleaned
 view differs — and why the body stays the single source of truth. Code:
 `model.NoteIndex.Kind` (`backend/internal/model/types.go`),
-`Pipeline.extractItems` and `checklistItems` in `Pipeline.append`
-(`backend/internal/pipeline/pipeline.go`), the items prompt and `ParseItems`
+`Pipeline.extractItems` (`backend/internal/pipeline/clean.go`), `checklistItems` in
+`Pipeline.append` (`backend/internal/pipeline/append.go`), the items prompt and `ParseItems`
 (`backend/internal/cleanup/items.go`), `service.CheckCleanMode` /
 `EffectiveCleanMode` (`backend/internal/service/note_clean.go`), the `tasks`
 prompt and `NoteOutput` (`backend/internal/cleanup/prompt.go`).
