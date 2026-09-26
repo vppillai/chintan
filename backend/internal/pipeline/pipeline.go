@@ -53,10 +53,6 @@ const (
 	// list IS the window; there is no separate pool to drain and cut.
 	maxRouteCandidates = 50
 
-	// maxAppendAttempts bounds the ETag-conditional retry when a note body is
-	// being written concurrently.
-	maxAppendAttempts = 5
-
 	// maxIndexRefreshAttempts bounds the optimistic-concurrency retry on the note
 	// index after an append.
 	maxIndexRefreshAttempts = 5

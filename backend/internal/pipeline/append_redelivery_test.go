@@ -52,7 +52,7 @@ func rewindAppendClaim(t *testing.T, store *memory.Store, d time.Duration) {
 }
 
 // A worker that died AFTER writing the note body — a Lambda timeout, five lost
-// version conflicts in refreshNoteIndex, a DynamoDB fault — and the first
+// version conflicts in the index refresh, a DynamoDB fault — and the first
 // automatic retry that follows about a minute later.
 //
 // That retry arrives inside the 20-minute claim lease. Under SQS it used to
