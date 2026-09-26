@@ -22,6 +22,13 @@ type Cleaned struct {
 	Usage TokenUsage
 }
 
+// ChecklistItems is the result of an Items call: the items to append, in
+// the order spoken, none when the recording only told the app what to do.
+type ChecklistItems struct {
+	Items []string
+	Usage TokenUsage
+}
+
 // Answer is the result of an ask call: the model's answer, the note ids it
 // cited (unfiltered — the caller keeps only the notes it packed), and whether
 // the model says the notes held the answer.
@@ -42,6 +49,12 @@ type LLM interface {
 	// as one document in the given mode. The caller bounds the body and
 	// checks the answer with cleanup.NoteOutput.
 	CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (Cleaned, error)
+	// Items turns one raw transcript into the items to add to the checklist
+	// titled listTitle (cleanup.ItemsPrompt). It replaces Cleanup for a
+	// recording filed into a checklist: the transcript is the raw one, the
+	// spoken instruction included, because the prompt handles those words
+	// itself. A reply that is not a list of items is cleanup.ErrNotAnItemList.
+	Items(ctx context.Context, transcript, listTitle, language string) (ChecklistItems, error)
 	// Ask answers a question from the packed notes in q (backlog D5). The
 	// caller bounds the notes and the question; the adapter renders the
 	// prompt, makes one completion and decodes it with ask.ParseAnswer.

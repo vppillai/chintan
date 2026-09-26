@@ -86,6 +86,26 @@ func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode,
 	return Cleaned{Text: text, Usage: usage}, nil
 }
 
+// Items asks for the checklist items in one recording. The completion is a
+// JSON object read back with the shared extractor and bounded by the input it
+// extracts from; the caller falls back to the recording as one item when the
+// reply is not a list.
+func (c *OpenAICleanup) Items(ctx context.Context, transcript, listTitle, language string) (ChecklistItems, error) {
+	systemPrompt, userPrompt, err := cleanup.ItemsPrompt(transcript, listTitle, language)
+	if err != nil {
+		return ChecklistItems{}, err
+	}
+	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, cleanup.ItemsMaxTokens(transcript))
+	if err != nil {
+		return ChecklistItems{}, err
+	}
+	items, err := cleanup.ParseItems(out, listTitle)
+	if err != nil {
+		return ChecklistItems{Usage: usage}, err
+	}
+	return ChecklistItems{Items: items, Usage: usage}, nil
+}
+
 // Ask answers one question over the packed notes. Like Route the completion
 // is a JSON object and is read back with the shared extractor, so a model
 // that wraps its answer in a fence or a sentence still parses; the caller

@@ -125,6 +125,13 @@ type LLM struct {
 	HangCalls int
 	NoteHang  int
 
+	// ItemsResponse, when set, is what Items answers verbatim; otherwise the
+	// fake splits the transcript on " and " and commas, one item each, so a
+	// harness test can assert the shape of an append without scripting the
+	// reply. ItemsErr fails Items alone.
+	ItemsResponse []string
+	ItemsErr      error
+
 	mu    sync.Mutex
 	calls int
 	// noteCalls records every whole-note request: the mode and the body, so a
@@ -132,6 +139,49 @@ type LLM struct {
 	noteCalls []NoteCall
 	// askCalls records every ask prompt as the worker built it.
 	askCalls []ask.Prompt
+	// itemCalls records every Items request: the transcript the worker sent,
+	// so a test can assert it was the raw one, and the list title.
+	itemCalls []ItemsCall
+}
+
+// ItemsCall is one Items request as the fake saw it.
+type ItemsCall struct {
+	Transcript, Title, Language string
+}
+
+// Items records the request and answers as configured.
+func (f *LLM) Items(ctx context.Context, transcript, listTitle, language string) (provider.ChecklistItems, error) {
+	f.mu.Lock()
+	f.itemCalls = append(f.itemCalls, ItemsCall{Transcript: transcript, Title: listTitle, Language: language})
+	f.mu.Unlock()
+
+	if f.OnCall != nil {
+		f.OnCall()
+	}
+	if f.ItemsErr != nil {
+		return provider.ChecklistItems{}, f.ItemsErr
+	}
+	if f.ShouldFail {
+		return provider.ChecklistItems{}, fmt.Errorf("fake LLM failed")
+	}
+	usage := provider.TokenUsage{InputTokens: len(strings.Fields(transcript)), OutputTokens: 8}
+	if f.ItemsResponse != nil {
+		return provider.ChecklistItems{Items: append([]string(nil), f.ItemsResponse...), Usage: usage}, nil
+	}
+	var items []string
+	for _, part := range strings.Split(strings.ReplaceAll(transcript, " and ", ","), ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			items = append(items, part)
+		}
+	}
+	return provider.ChecklistItems{Items: items, Usage: usage}, nil
+}
+
+// ItemsCalls reports every Items request, in order.
+func (f *LLM) ItemsCalls() []ItemsCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]ItemsCall(nil), f.itemCalls...)
 }
 
 // Ask records the prompt and answers as configured.
