@@ -205,5 +205,5 @@ The pipeline: upload → `appended_at` in **~4 s** for an 8 s clip; the UI adds 
 
 ## Scripts and artefacts
 
-- `frontend/qa/playwright.config.ts`, `frontend/qa/tests/*.spec.ts` (`10-library`, `20-record`, `21-record-detail`, `30-note`, `31-note-detail`, `32-followups`, `40-settings`, `50-offline`, `60-a11y`, `70-perf`, `90-signout`, `auth.setup`), `frontend/qa/tests/{helpers,api}.ts`, `frontend/qa/make-speech.sh`. Run from `frontend/` with `QA_USER=… QA_PASS=… npx playwright test -c qa/playwright.config.ts [--project=mobile|desktop]` under Node (the Playwright runner does not work under Bun; orb has Node in `~/temp/node`). They are outside vitest's `src/**` include and `playwright.config.ts`'s `./e2e` testDir, and pass the repo's eslint config; run artefacts (`results/`, `shots/`, `state/`, `speech.wav`) are git-ignored.
+- The scripts that produced this pass lived in `frontend/qa/` until 8f80f59 (the last commit to carry them); they drove the pre-#75 UI — a top-level Select button, a bulk Archive action, `.bulk-bar` — and were removed. See git history.
 - Screenshots referenced above are in this directory (`mobile-*`, `desktop-*`, `setup-*`); `old-build/` holds the pre-#22 evidence. Full request/console logs: `~/temp/chintan-qa/frontend/qa/shots/*.log.json` on orb.
