@@ -126,13 +126,14 @@ curl -sS "$API/v1/devices" -H "Authorization: Bearer $ID_TOKEN" \
 # → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"key":"ck_dev_…_…"}
 ```
 
-`GET /v1/devices` lists your devices (never the keys); `DELETE /v1/devices/{id}` revokes one, immediately. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
+`GET /v1/devices` lists your devices (never the keys) with what each sent this month; `DELETE /v1/devices/{id}` revokes one, immediately. In the app, **Rotate key** mints a new key for the same device and revokes the old one when you tap Done; paste the new key into the device first. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
 
 **curl.** Three ways in, each `Authorization: Bearer ck_…` (the bare `ck_…`, or `X-Device-Key: ck_…`, is the same key):
 
 ```bash
 KEY=ck_dev_…
-# One-shot: the recording is the body. Optional headers: X-Chintan-Note-Id, X-Chintan-Language (auto or a code), X-Chintan-Duration-Ms.
+# One-shot: the recording is the body. Optional headers: X-Chintan-Note-Id, X-Chintan-Language (auto or a code), X-Chintan-Duration-Ms,
+# X-Chintan-Recorded-At (when the device recorded, epoch ms or RFC 3339; telemetry for `chintanctl latency`, never shown in the app).
 curl -sS "$API/v1/inbox/audio" -H "Authorization: Bearer $KEY" -H 'Content-Type: audio/mp4' --data-binary @memo.m4a
 # Text: no transcription; routed, cleaned and appended as a transcript would be.
 curl -sS "$API/v1/inbox/text" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{"text":"call the roofer about the gutter"}'
@@ -173,6 +174,7 @@ Accepted audio types: `audio/webm`, `audio/ogg`, `audio/mp4`, `audio/m4a`, `audi
 | `erase` | Deletes one tenant everywhere; `--apply` requires the tenant id typed exactly. |
 | `backfill-search-text` | Fills the searchable body text for notes written before it existed. |
 | `usage` | Every tenant's provider spend, calls, audio, API requests and per-operation cost for one month, from the `USAGE#` rows. Read-only. |
+| `latency` | Per-hop pipeline timings for one month from the capture rows: device lag, queue, transcribe, route, clean, append, total; count, p50, p95 and max by source (`app` or `device:<id>`). Read-only. |
 
 The table name is derived from the instance; the bucket is read from the stack's `ContentBucketName` output, so the principal needs `cloudformation:DescribeStacks` on `chintan-*`. Both can be overridden with `--table` / `--bucket`.
 
@@ -188,6 +190,7 @@ The table name is derived from the instance; the bucket is read from the stack's
 | Recover failed processing | The app's Retry for one capture; `chintanctl reconcile` for what the table and the bucket disagree about. |
 | Back up, restore, export | `chintanctl backup` and `chintanctl restore`; `chintanctl export` for a vault Obsidian opens. |
 | Inspect usage | `chintanctl usage` for every tenant; **You → Usage** in the app for your own. |
+| Inspect latency | `chintanctl latency` for a month's per-hop timings by source; the `CaptureQueueDelay` and `CaptureEndToEnd` metrics in CloudWatch for the live picture. |
 | Tear down | `scripts/cleanup-aws.sh` for one stack and what it retains; `scripts/clean-instance-orphans.sh` after a failed create; `scripts/teardown.sh` for everything — every note and recording; the CloudTrail trail, its bucket and the agent principal are left alone. |
 
 **Costs.** At single-user volume the AWS side is a few cents a month — Lambda, DynamoDB, S3, SNS, EventBridge and CloudWatch sit inside the always-free tiers, the alarms and the CloudTrail digests are the lines that do not — and the transcription and cleanup providers are the real bill, from under a dollar a month for light use to the daily spend cap you set. Those are two different numbers: **provider spend** (Groq, MiniMax) is metered per call by the worker and attributable to each user, while **AWS spend** is the account's month-to-date actual read once a day from the stack's Budget, which is the instance's cost only on an account dedicated to it and an upper bound on a shared one. **You → Usage** shows both, plus each user's estimated share of the AWS figure, apportioned by provider cost (`docs/design/usage-accounting.md`). Every resource carries `Project`, `Instance` and `Environment` tags, and the budget is defined in `infrastructure/template.yaml`; activate the tags once in Billing → Cost allocation tags to see the per-instance view.
