@@ -52,7 +52,8 @@ grip — the row is the phone's width — and the press-and-hold that selects a
 row everywhere else lifts a pinned row instead; Select is still in its ⋮. The
 two holds never arm together: the row's selects exactly where the pointer is
 fine, the list's lifts exactly where it is coarse, so a finger on a
-touchscreen laptop selects and the grip drags. The list owns the gesture — one
+touchscreen laptop selects and the grip drags. The list owns the gesture
+(`hooks/useDragReorder.ts`, shared with the Items tab's grip) — one
 hold timer, one pointer capture, a non-passive `touchmove` that blocks the
 scroll only while a row is lifted — and the dragged row takes the slot whose
 midpoint the pointer crosses, so the group re-sorts under the pointer. Lifting
@@ -170,7 +171,14 @@ Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 `components/NoteRow.test.tsx`, `NoteRow.checklist.test.tsx`, `SwipeRow.test.tsx`,
 `components/Toast.test.tsx`, `components/ConfirmDialog.test.tsx`,
 `hooks/useLongPress.test.tsx`, `offline/useNotesCache.test.tsx`,
-`offline/notesCache.test.ts`, `features/notes/ChecklistEditor.test.tsx`; end to
-end, `frontend/e2e/pins.spec.ts` (the group, the grip drag, the phone's hold
-and tray), `swipe.spec.ts`, `archive.spec.ts`, `offline.spec.ts`,
-`checklist.spec.ts`.
+`offline/notesCache.test.ts`, `features/notes/ChecklistEditor.test.tsx` (the
+rows and the tick; the grip's drag writing one body on release, its tap menu
+and arrow keys, Escape and a body change dropping a lifted row; the Done
+disclosure remembered per note; Uncheck all; Delete done with its Undo),
+`features/notes/checklist.test.ts`, `components/PullToRefresh.test.tsx`; end
+to end, `frontend/e2e/pins.spec.ts` (the group, the grip drag, the phone's
+hold and tray), `swipe.spec.ts`, `archive.spec.ts`, `offline.spec.ts`,
+`checklist.spec.ts` (the Items tab; the grip's mouse drag and arrow keys, the
+tap menu, a CDP touch drag on a phone, the Done disclosure across a reload,
+Delete done undone from the keyboard, Uncheck all), `a11y.spec.ts` (the Items
+tab with a grip menu open, both themes).
