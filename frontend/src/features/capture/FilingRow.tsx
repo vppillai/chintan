@@ -12,7 +12,7 @@ import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
-import { dismissCapture, loadDismissed } from './dismissed.ts';
+import { dismissCapture, dismissCaptures, loadDismissed } from './dismissed.ts';
 import { FilingItem } from './filing/FilingItem.tsx';
 import {
   FILED_ROWS_MAX,
@@ -86,7 +86,7 @@ export function FilingRow() {
   };
   /** Every capture of the group, in one state update, so one render removes the row. */
   const dismissGroup = (group: ReceiptGroup): void => {
-    setDismissed(group.captureIds.reduce((set, id) => dismissCapture(id, set), dismissed));
+    setDismissed(dismissCaptures(group.captureIds, dismissed));
   };
   const openGroup = (group: ReceiptGroup): void => {
     // The row says the note has just been written to, so the copy the app
@@ -149,7 +149,10 @@ export function FilingRow() {
     };
   }, [hasGroups]);
 
-  if (captures.length === 0 && !local) return null;
+  // The tiers decide, not the raw list: an appended capture the server did
+  // not name a note for is in no tier, and alone it must not leave an empty
+  // labelled section on the page.
+  if (moving.length + needsYou.length + groups.length === 0 && !local) return null;
 
   const receipt = (group: ReceiptGroup) => (
     <FilingItem

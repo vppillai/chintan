@@ -48,8 +48,19 @@ export function loadDismissed(): ReadonlySet<string> {
 
 /** Records a dismissal and returns the new set. Newest last, so the cap drops the oldest. */
 export function dismissCapture(captureId: string, current: ReadonlySet<string>): ReadonlySet<string> {
-  const next = Array.from(current).filter((id) => id !== captureId);
-  next.push(captureId);
+  return dismissCaptures([captureId], current);
+}
+
+/**
+ * Records several dismissals — a receipt's whole group — with one write to
+ * the device, rather than one per capture.
+ */
+export function dismissCaptures(
+  captureIds: readonly string[],
+  current: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const next = Array.from(current).filter((id) => !captureIds.includes(id));
+  next.push(...captureIds);
   const kept = next.slice(-DISMISSED_LIMIT);
   write(kept);
   return new Set(kept);

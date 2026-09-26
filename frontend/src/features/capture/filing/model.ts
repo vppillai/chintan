@@ -37,8 +37,11 @@ export function stageIndex(status: CaptureStatus): number {
 
 /**
  * Whether a non-terminal capture has sat past `STUCK_AFTER_MS` (defined with
- * the poll, which backs off to once a minute at the same point) and the row
- * should stop trusting the pipeline and offer a way out.
+ * the poll, which backs off to once a minute at the same threshold) and the
+ * row should stop trusting the pipeline and offer a way out. This measures
+ * from `created_at`; the poll measures from `last_progress_at` when the
+ * server sends it, so the two agree exactly only for a capture that never
+ * moved.
  */
 export function isStuck(capture: CaptureWire): boolean {
   if (isTerminalStatus(capture.status)) return false;
