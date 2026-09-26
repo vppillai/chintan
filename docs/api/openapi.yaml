@@ -1086,8 +1086,9 @@ paths:
         under a 6 MB cap, so a longer recording goes through
         `/v1/inbox/captures` and its PUT. Optional headers: `X-Chintan-Note-Id` (file into this note),
         `X-Chintan-Language` (`auto` or a code, for this recording),
-        `X-Chintan-Duration-Ms`; on a form that carries only a
-        `transcription` the last two are ignored, since there is no audio.
+        `X-Chintan-Duration-Ms`, `X-Chintan-Recorded-At` (when the device
+        recorded; telemetry only); on a form that carries only a
+        `transcription` the language and duration are ignored, since there is no audio.
         Retries: a webhook that cannot set `Idempotency-Key` (the ring's
         cannot) files a second capture when it retries. A sender that sets
         one must resend the identical bytes — the key is bound to a
@@ -1099,6 +1100,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/InboxNoteId'
+        - $ref: '#/components/parameters/InboxRecordedAt'
         - name: X-Chintan-Language
           in: header
           schema: { type: string, pattern: '^(auto|[a-z]{2})$' }
@@ -1122,8 +1124,9 @@ paths:
           with `has_audio: false`); with both, the audio is filed and the
           transcription dropped, because the pipeline transcribes with the
           note's language. A form with neither is 400 `the form has no audio
-          or transcription part`. `recordedAt` and `client`, which the ring
-          also sends, are ignored.
+          or transcription part`. `recordedAt`, which the ring also sends,
+          is kept on the row as telemetry (see `X-Chintan-Recorded-At`);
+          `client` is ignored.
         content:
           audio/*:
             schema: { type: string, format: binary }
@@ -1141,7 +1144,11 @@ paths:
                 recordedAt:
                   type: integer
                   format: int64
-                  description: Milliseconds since the Unix epoch; ignored — a capture has no recorded-at field.
+                  description: |
+                    Milliseconds since the Unix epoch, the moment the ring
+                    recorded. Telemetry only, as `X-Chintan-Recorded-At`
+                    is: kept on the row, never on the wire, ignored when
+                    unparseable or implausible.
                 client:
                   type: string
                   description: Ignored.
@@ -1171,12 +1178,14 @@ paths:
         set headers but cannot build the JSON, the `X-Chintan-Note-Id`
         header; the body wins when both are sent. A form on
         `/v1/inbox/audio` that carries only a `transcription` is filed by
-        this rule too.
+        this rule too. `X-Chintan-Recorded-At` is read as on the audio
+        route.
       security:
         - deviceKey: []
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/InboxNoteId'
+        - $ref: '#/components/parameters/InboxRecordedAt'
       requestBody:
         required: true
         content:
@@ -1294,6 +1303,16 @@ components:
         File this capture into this note, for a client that can set headers
         but cannot build JSON. On `/v1/inbox/text` the body's `note_id` wins
         when both are sent. Another tenant's note, or none, is 404.
+      schema: { type: string }
+    InboxRecordedAt:
+      name: X-Chintan-Recorded-At
+      in: header
+      description: |
+        When the device recorded, as milliseconds since the Unix epoch or
+        RFC 3339. Telemetry only: it is kept on the capture row for the
+        operator's latency figures (`chintanctl latency`), never returned on
+        the wire, and ignored — never a 400 — when unparseable, more than
+        seven days before now or more than five minutes after it.
       schema: { type: string }
     IdempotencyKey:
       name: Idempotency-Key
@@ -2269,7 +2288,7 @@ components:
 
     Device:
       type: object
-      required: [id, name, created_at, last_used_at]
+      required: [id, name, created_at, last_used_at, usage_month]
       properties:
         id: { type: string }
         name: { type: string, maxLength: 60 }
@@ -2279,6 +2298,28 @@ components:
           format: date-time
           nullable: true
           description: When the inbox last accepted a request with this key; null until it has.
+        usage_month:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DeviceUsage'
+          description: |
+            What the key sent in the current UTC month, or null when nothing
+            — a fresh device, and one that last sent in an earlier month.
+
+    DeviceUsage:
+      type: object
+      required: [requests, bytes, month]
+      properties:
+        requests:
+          type: integer
+          description: Inbox requests the key was accepted for this month. Requests, not recordings; a two-step upload is two.
+        bytes:
+          type: integer
+          description: The bodies of those requests, summed; a request whose length was not declared adds nothing.
+        month:
+          type: string
+          pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+          description: The UTC month the counters are for, as yyyy-mm.
 
     DeviceCreate:
       type: object

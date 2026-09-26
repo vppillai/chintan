@@ -13,6 +13,7 @@
 //	chintanctl erase     --instance <name> --tenant <id> [--apply]
 //	chintanctl backfill-search-text --instance <name> [--tenant <id>] [--apply]
 //	chintanctl usage     --instance <name> [--month yyyy-mm] [--tenant <id>]
+//	chintanctl latency   --instance <name> [--month yyyy-mm] [--tenant <id>]
 //
 // Three conventions are load-bearing and shared with scripts/:
 //
@@ -59,6 +60,9 @@ Commands:
   usage      List every tenant's provider spend, calls, audio, API requests
              and per-operation cost for one month, from the USAGE# rows the
              worker and the API write. Read-only.
+  latency    Per-hop pipeline timings for one month from the capture rows:
+             device lag, queue, transcribe, route, clean, append, total,
+             as count, p50, p95 and max by source (app or device). Read-only.
 
 Run "chintanctl <command> --help" for the flags of one command.
 `
@@ -170,6 +174,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdBackfillSearchText(ctx, rest, stdout, stderr, stdin)
 	case "usage":
 		return cmdUsage(ctx, rest, stdout, stderr, stdin)
+	case "latency":
+		return cmdLatency(ctx, rest, stdout, stderr, stdin)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)

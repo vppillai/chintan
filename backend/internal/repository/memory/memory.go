@@ -659,9 +659,11 @@ func (s *Store) CompleteCaptureAppend(ctx context.Context, tenantID, captureID, 
 	if c.AppendedAt > 0 {
 		return c, nil
 	}
+	now := time.Now()
 	c.Status = model.StatusAppended
 	c.Error = ""
-	c.AppendedAt = time.Now().Unix()
+	c.AppendedAt = now.Unix()
+	c.StageEntered(model.StatusAppended, model.FormatTime(now))
 	c.Version++
 	s.captures[tenantID][captureID] = c
 	return c, nil
@@ -801,8 +803,10 @@ func (s *Store) ListDevices(ctx context.Context, tenantID string) ([]model.Devic
 	return out, nil
 }
 
-// LookupDeviceKey walks every tenant, as the sparse index does: a revoked row
-// has no index entry and is not found.
+// LookupDeviceKey walks every tenant, as the sparse index does. A revoked
+// row is returned as it is, the way the real index returns one whose entry
+// has outlived the revoke by a moment; the caller reads revoked_at, so the
+// revoked refusal is what a test sees here.
 func (s *Store) LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error) {
 	if err := s.checkCtx(ctx); err != nil {
 		return model.Device{}, err
@@ -810,7 +814,7 @@ func (s *Store) LookupDeviceKey(ctx context.Context, keyID string) (model.Device
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, devices := range s.devices {
-		if d, ok := devices[keyID]; ok && !d.Revoked() {
+		if d, ok := devices[keyID]; ok {
 			return d, nil
 		}
 	}
