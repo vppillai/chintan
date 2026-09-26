@@ -15,7 +15,7 @@ import (
 // order kept, nothing invented or merged — and task-list lines as the whole
 // answer, since NoteOutput refuses anything else.
 func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
-	system, user, err := cleanup.NotePrompt(model.NoteCleanTasks, "- [ ] call the roofer and buy sealant\n- [x] passport")
+	system, user, err := cleanup.NotePrompt(model.NoteCleanTasks, "- [ ] call the roofer and buy sealant\n- [x] passport", "")
 	if err != nil {
 		t.Fatalf("NotePrompt: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
 		}
 	}
 	for _, other := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished} {
-		if s, _, _ := cleanup.NotePrompt(other, "x"); s == system {
+		if s, _, _ := cleanup.NotePrompt(other, "x", ""); s == system {
 			t.Errorf("tasks shares its system prompt with %s", other)
 		}
 	}

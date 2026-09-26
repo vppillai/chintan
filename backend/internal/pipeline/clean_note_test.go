@@ -78,6 +78,7 @@ func TestCleanNoteTaskStoresTheViewFromTheMarkerStrippedBody(t *testing.T) {
 	seedNoteWithBody(t, h, "n1", dictated, func(n *model.NoteIndex) {
 		n.CleanedStale = true
 		n.CleanedError = "an earlier failure"
+		n.Language = "ml"
 	})
 
 	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "n1", model.NoteCleanStructured)); err != nil {
@@ -96,6 +97,9 @@ func TestCleanNoteTaskStoresTheViewFromTheMarkerStrippedBody(t *testing.T) {
 	}
 	if calls[0].Body != "the gutter leaks again\n\ncall the roofer on the fourteenth" {
 		t.Errorf("body sent = %q", calls[0].Body)
+	}
+	if calls[0].Language != "ml" {
+		t.Errorf("language sent = %q, want the note row's", calls[0].Language)
 	}
 
 	n := getNote(t, h, "n1")
