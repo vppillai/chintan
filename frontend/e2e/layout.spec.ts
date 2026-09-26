@@ -466,7 +466,7 @@ for (const theme of THEMES) {
          * not push anything else sideways or under the controls.
          */
         // A second of audio, so the review draws a waveform rather than a hairline.
-        await page.waitForTimeout(1_100);
+        await expect(page.locator('.capture__timer')).toHaveText('00:01');
         await page.getByRole('button', { name: 'Stop' }).click();
         await expect(page.locator('.capture__state')).toHaveText('Ready to send');
         await expect(page.getByRole('slider', { name: 'Playback position' })).toBeVisible();

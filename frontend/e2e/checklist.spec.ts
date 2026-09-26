@@ -2,7 +2,7 @@ import process from 'node:process';
 
 import { devices, type Locator, type Page } from '@playwright/test';
 
-import { CLEAN_WORKER_MS, expect, noteAction, seedChecklist as seedShopping, test } from './fixtures.ts';
+import { expect, noteAction, seedChecklist as seedShopping, test } from './fixtures.ts';
 
 /** The text of every field in a list of items, in order — the add row's empty one last. */
 function values(list: Locator): Promise<string[]> {
@@ -139,7 +139,6 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
   await expect(page.getByText('Not split up yet')).toBeVisible();
 
   await page.getByRole('button', { name: 'Generate' }).click();
-  await page.waitForTimeout(CLEAN_WORKER_MS);
   const preview = page.getByRole('list', { name: 'Split up items' });
   await expect(preview).toBeVisible({ timeout: 10_000 });
   await expect(preview.getByRole('checkbox')).toHaveCount(4);
@@ -369,7 +368,6 @@ for (const viewport of SHOT_VIEWPORTS) {
 
       await page.getByRole('tab', { name: 'Split up' }).click();
       await page.getByRole('button', { name: 'Generate' }).click();
-      await page.waitForTimeout(CLEAN_WORKER_MS);
       await expect(page.getByRole('list', { name: 'Split up items' })).toBeVisible({ timeout: 10_000 });
       await shot('split-up');
     });

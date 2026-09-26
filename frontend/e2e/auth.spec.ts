@@ -227,7 +227,7 @@ test.describe('signing out', () => {
 
     await page.getByRole('button', { name: /^PTT: tap to record/ }).click();
     await expect(page.locator('.capture__state')).toHaveText('Recording');
-    await page.waitForTimeout(1_200);
+    await expect(page.locator('.capture__timer')).toHaveText('00:01');
     await page.getByRole('button', { name: 'Stop' }).click();
     await page.getByRole('button', { name: 'Send' }).click();
     await expect(page.getByText(/safe on this device/i)).toBeVisible({ timeout: 15_000 });

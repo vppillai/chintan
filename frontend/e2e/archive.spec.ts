@@ -1,5 +1,8 @@
 import type { Page } from '@playwright/test';
 
+import { LONG_PRESS_MS } from '../src/hooks/useLongPress.ts';
+import { HOLD_TO_DELETE_MS } from '../src/screens/library/holdToDelete.ts';
+
 import { expect, noteAction, test } from './fixtures.ts';
 
 /**
@@ -293,7 +296,7 @@ test('emptying an archive of more than ten notes takes a held press: a click doe
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await expect(confirm).toHaveAttribute('data-holding', 'true');
-  await page.waitForTimeout(1100);
+  await page.waitForTimeout(HOLD_TO_DELETE_MS + 100);
   await page.mouse.up();
 
   await expect(dialog).toHaveCount(0);
@@ -328,7 +331,7 @@ test('with a mouse, pressing and holding a row starts the selection; a click sti
   const box = (await row.boundingBox())!;
   await page.mouse.move(box.x + 40, box.y + 20);
   await page.mouse.down();
-  await page.waitForTimeout(650);
+  await page.waitForTimeout(LONG_PRESS_MS + 100);
   await page.mouse.up();
 
   await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
@@ -359,7 +362,7 @@ test('on a phone, a long press on a row starts the selection', async ({ page }) 
     isPrimary: true,
     bubbles: true,
   });
-  await page.waitForTimeout(650);
+  await page.waitForTimeout(LONG_PRESS_MS + 100);
   await row.dispatchEvent('pointerup', { pointerType: 'touch', bubbles: true });
   await row.dispatchEvent('click', { bubbles: true });
 

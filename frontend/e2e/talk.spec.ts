@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import { MIN_TALK_MS } from '../src/features/capture/holdTiming.ts';
+
 import { expect, test } from './fixtures.ts';
 
 /**
@@ -47,7 +49,7 @@ test('hold sends, a tap is too short, Space is the button, and Back leaves to Ho
   await page.goto('/talk');
 
   // Held: recording from the first frame, the button says what release does.
-  await holdTheButton(page, 1_500);
+  await holdTheButton(page, MIN_TALK_MS + 100);
   await expect(page.locator('.talk__status')).toHaveText('Sent · filing');
   await expect(page).toHaveURL(/\/talk$/);
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
@@ -56,17 +58,16 @@ test('hold sends, a tap is too short, Space is the button, and Back leaves to Ho
   // holds the landed upload; the next hold resets it.
   await expect(page.getByRole('button', { name: /^PTT: hold to talk/ })).toBeVisible();
 
-  // A tap is not a message.
+  // A tap is not a message: once the hint has cleared, nothing more was sent.
   await page.getByRole('button', { name: /^PTT: hold to talk/ }).click();
   await expect(page.locator('.talk__status')).toHaveText('Too short — hold to talk');
-  await page.waitForTimeout(800);
+  await expect(page.locator('.talk__status')).toHaveText('', { timeout: 5_000 });
   expect(api.captures).toHaveLength(1);
 
   // The Space bar, from the page.
-  await expect(page.locator('.talk__status')).toHaveText('', { timeout: 5_000 });
   await page.keyboard.down('Space');
   await expect(page.getByRole('button', { name: 'Release to send' })).toBeVisible();
-  await page.waitForTimeout(1_500);
+  await page.waitForTimeout(MIN_TALK_MS + 100);
   await page.keyboard.up('Space');
   await expect(page.locator('.talk__status')).toHaveText('Sent · filing');
   await expect.poll(() => api.captures.length, { message: 'second capture created' }).toBe(2);
@@ -85,7 +86,7 @@ test('slides away to cancel', async ({ page, api }) => {
   await page.mouse.move(x, y);
   await page.mouse.down();
   await expect(page.getByRole('button', { name: 'Release to send' })).toBeVisible();
-  await page.waitForTimeout(1_200);
+  await page.waitForTimeout(MIN_TALK_MS + 100);
   // Away is measured from the disc's edge, not the press point: halfway to
   // the edge is still a send, and clear of it by more than the margin is not.
   await page.mouse.move(x + box.width / 4, y, { steps: 4 });
@@ -95,7 +96,7 @@ test('slides away to cancel', async ({ page, api }) => {
   await page.mouse.up();
 
   await expect(page.getByRole('button', { name: /^PTT: hold to talk/ })).toBeVisible();
-  await page.waitForTimeout(800);
-  expect(api.captures).toHaveLength(0);
+  // Cancelled: the status says nothing, and nothing was sent.
   await expect(page.locator('.talk__status')).toHaveText('');
+  expect(api.captures).toHaveLength(0);
 });
