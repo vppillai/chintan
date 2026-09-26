@@ -80,7 +80,14 @@ const CLASS_ALLOW_LIST = new Set([]);
 
 /** Class names in a selector: `.chip`, `.chip--pressed`; never `.5rem` or `0.5`. */
 const CLASS_IN_SELECTOR = /\.(-?[A-Za-z_][\w-]*)/g;
-/** Every identifier-shaped token in a source file, the way a class name would appear in one. */
+/**
+ * Every identifier-shaped token in a source file, the way a class name would
+ * appear in one. The ceiling: a class counts as used if any identifier in a
+ * non-test source or a `//` comment spells it (`stripComments` blanks only
+ * `/* … *\/`), so `.chip`, `.numeric`, `.hidden` — any class that is also a
+ * variable name — can never be reported dead. The pass is for whole dead rule
+ * blocks, which it finds; a token-exact scan would cost a parser.
+ */
 const SOURCE_TOKEN = /-?[A-Za-z_][\w-]*/g;
 
 /**
