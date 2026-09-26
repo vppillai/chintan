@@ -73,7 +73,7 @@ describe('About', () => {
     expect(data).toHaveTextContent(/neither provider is asked to retain anything/i);
     expect(screen.getByText(/clears it when you sign out/i)).toBeInTheDocument();
     // Retention is set at upload (round-3 T5), so the sentence says so.
-    expect(screen.getByText(/thirty days after you archive it/i)).toHaveTextContent(
+    expect(screen.getByText(/thirty days after you delete it/i)).toHaveTextContent(
       /earlier recordings keep the retention they were uploaded with/i,
     );
     expect(screen.queryByText(/nowhere else/i)).toBeNull();

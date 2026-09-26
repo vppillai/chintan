@@ -2060,6 +2060,11 @@
  * `data-holding` and the fill snaps back. Under reduced motion the fill
  * appears whole at once; the second's wait is the gate, the animation only
  * shows it passing.
+ *
+ * `--color-destructive` rather than `--color-accent-strong`: in Nocturne
+ * accent-strong *is* the accent the button is painted with, so the fill was
+ * invisible in the dark theme. The destructive token differs from the accent
+ * in both themes and stays legible under `--color-on-accent`.
  */
 .dialog__action--hold {
   position: relative;
@@ -2074,7 +2079,7 @@
   position: absolute;
   inset: 0;
   z-index: -1;
-  background-color: var(--color-accent-strong);
+  background-color: var(--color-destructive);
   transform: scaleX(0);
   transform-origin: left;
 }

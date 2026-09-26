@@ -59,7 +59,10 @@ describe('ConfirmDialog', () => {
     mountHold(onConfirm);
     const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
 
-    fireEvent.click(button);
+    // A tap, as a browser delivers one: down, up, then the click.
+    fireEvent.pointerDown(button, { button: 0 });
+    fireEvent.pointerUp(button);
+    fireEvent.click(button, { detail: 1 });
     expect(onConfirm).not.toHaveBeenCalled();
 
     fireEvent.pointerDown(button, { button: 0 });
@@ -92,25 +95,40 @@ describe('ConfirmDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('is held from the keyboard too: Space down for the duration, not a tap of it', () => {
+  it('confirms at once from the keyboard and from a click no pointer made — the hold gates pointers only', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    mountHold(onConfirm);
+    const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
+
+    // Focus lands on Cancel; reaching the confirm takes a deliberate Tab.
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.tab();
+    expect(button).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    await user.keyboard(' ');
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+
+    // What a screen reader or a switch sends: a click with no pointer before it.
+    fireEvent.click(button);
+    expect(onConfirm).toHaveBeenCalledTimes(3);
+  });
+
+  it('a press that wanders off the button and back, then lets go, is still a tap and confirms nothing', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const onConfirm = vi.fn();
     mountHold(onConfirm);
     const button = screen.getByRole('button', { name: 'Hold to delete 12 notes' });
 
-    fireEvent.keyDown(button, { key: ' ' });
-    fireEvent.keyUp(button, { key: ' ' });
+    fireEvent.pointerDown(button, { button: 0 });
+    fireEvent.pointerLeave(button);
+    expect(button).not.toHaveAttribute('data-holding');
+    fireEvent.pointerUp(button);
+    fireEvent.click(button, { detail: 1 });
     act(() => {
       vi.advanceTimersByTime(1000);
     });
     expect(onConfirm).not.toHaveBeenCalled();
-
-    fireEvent.keyDown(button, { key: 'Enter' });
-    // The browser repeats a held key; a repeat must not restart the hold.
-    fireEvent.keyDown(button, { key: 'Enter', repeat: true });
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-    expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 });

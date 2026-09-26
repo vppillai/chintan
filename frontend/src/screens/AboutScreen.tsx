@@ -153,7 +153,7 @@ export function AboutScreen() {
             were made — indefinitely unless a limit was set. Changing it applies to recordings made
             from then on; earlier recordings keep the retention they were uploaded with. Deleting a
             note moves it to the Archive, where Undo or Restore brings it back; an archived note,
-            with its recordings and transcripts, is deleted thirty days after you archive it, or
+            with its recordings and transcripts, is gone for good thirty days after you delete it, or
             when you choose Delete forever there.
           </p>
           <p>

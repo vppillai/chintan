@@ -524,6 +524,37 @@ for (const theme of THEMES) {
 }
 
 /**
+ * The held confirm's fill crosses a button painted in the accent. In Nocturne
+ * `--color-accent-strong` is the accent itself, which is how the first fill
+ * came to be invisible in the dark theme; the fill has to differ from the
+ * button under it in both.
+ */
+for (const theme of THEMES) {
+  test(`the hold fill is a different colour from the button it crosses · ${theme}`, async ({
+    page,
+  }) => {
+    await withoutServiceWorker(page);
+    await useTheme(page, theme);
+    await page.goto('/');
+    await expect(page.locator('.tab-bar')).toBeVisible();
+
+    const colours = await page.evaluate(() => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'dialog__action dialog__action--destructive dialog__action--hold';
+      button.setAttribute('data-holding', 'true');
+      button.innerHTML = '<span class="dialog__hold-fill" aria-hidden="true"></span>Hold to delete 12 notes';
+      document.querySelector('.app')?.append(button);
+      return {
+        button: getComputedStyle(button).backgroundColor,
+        fill: getComputedStyle(button.firstElementChild as Element).backgroundColor,
+      };
+    });
+    expect(colours.fill, `${theme}: the fill is the button's own colour`).not.toBe(colours.button);
+  });
+}
+
+/**
  * A landscape phone with the keyboard open leaves roughly 300 CSS px of height.
  * A centred dialog in a layer that cannot scroll puts its confirm button below
  * the fold and out of reach, which turns a destructive confirmation into a trap.

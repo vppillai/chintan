@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
 } from 'react';
 
@@ -41,9 +41,12 @@ export interface ConfirmDialogProps {
   /**
    * Press and hold for this long to confirm, instead of a tap. For a bulk
    * delete forever of many notes: a tap can be a slip, a second held down
-   * cannot. A finger, a mouse button, or Space or Enter held on the keyboard;
-   * the fill across the button shows how far along the hold is, and jumps to
-   * full under reduced motion.
+   * cannot. The hold is a pointer's gate only — a finger or a mouse button.
+   * Enter or Space on the keyboard, and whatever a screen reader or a switch
+   * activates a button with, confirm at once: a keystroke that has to be held
+   * is a timing WCAG 2.1.1 forbids, and focus lands on Cancel, so reaching
+   * this control took a deliberate Tab. The fill across the button shows how
+   * far along the hold is, and jumps to full under reduced motion.
    */
   holdMs?: number | undefined;
   onConfirm: () => void;
@@ -127,16 +130,18 @@ function DialogPanel({
 }
 
 /**
- * A button that fires only once it has been held down for `ms`.
+ * A button that fires only once a pointer has held it down for `ms`.
  *
  * Its own timer rather than `useLongPress`: that hook is a gesture on a row —
- * pointer only, cancelled by travel, with a click to swallow afterwards — and
- * this is a control, which a keyboard must be able to hold too. Space and
- * Enter arm it on the way down and disarm on the way up, and their default
- * click is suppressed so a tap of either cannot confirm on its own; the
- * pointer's click after a completed hold lands on a dialog that has closed.
- * Leaving the button, losing focus or the pointer being cancelled all disarm
- * it, so a hold is a hold and nothing else.
+ * cancelled by travel, with a click to swallow afterwards — and this is a
+ * control. The hold gates pointers only, because a pointer is where the slip
+ * is. A click that no pointer made — Enter or Space on the keyboard, a screen
+ * reader's or a switch's activation — confirms outright: the first version
+ * asked for Space or Enter held for the second too, which is a timed
+ * keystroke (WCAG 2.1.1) and, for assistive technology that activates with a
+ * synthetic click, no way to confirm at all. Leaving the button, losing focus
+ * or the pointer being cancelled all disarm it, so a hold is a hold and
+ * nothing else.
  */
 function HoldButton({
   className,
@@ -151,6 +156,11 @@ function HoldButton({
 }) {
   const [holding, setHolding] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set on the way down so the click that follows the release is known for
+  // a pointer's and swallowed. Cleared when the pointer leaves, since no click
+  // from that press can land here unless it comes back — and then `detail`,
+  // the click count, still says a pointer made it.
+  const pointerPressed = useRef(false);
 
   const release = (): void => {
     if (!timer.current) return;
@@ -167,15 +177,16 @@ function HoldButton({
       onHeld();
     }, ms);
   };
+  const leave = (): void => {
+    pointerPressed.current = false;
+    release();
+  };
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
     },
     [],
   );
-
-  const isHoldKey = (event: KeyboardEvent<HTMLButtonElement>): boolean =>
-    event.key === ' ' || event.key === 'Enter';
 
   return (
     <button
@@ -184,24 +195,25 @@ function HoldButton({
       data-holding={holding || undefined}
       style={{ '--hold-ms': `${String(ms)}ms` } as CSSProperties}
       onPointerDown={(event: PointerEvent<HTMLButtonElement>) => {
-        if (event.button === 0) press();
+        if (event.button !== 0) return;
+        pointerPressed.current = true;
+        press();
       }}
       onPointerUp={release}
-      onPointerCancel={release}
-      onPointerLeave={release}
+      onPointerCancel={leave}
+      onPointerLeave={leave}
       onBlur={release}
-      onKeyDown={(event) => {
-        if (!isHoldKey(event)) return;
-        event.preventDefault();
-        if (!event.repeat) press();
-      }}
-      onKeyUp={(event) => {
-        if (!isHoldKey(event)) return;
-        event.preventDefault();
-        release();
-      }}
-      onClick={(event) => {
-        event.preventDefault();
+      onClick={(event: MouseEvent<HTMLButtonElement>) => {
+        // A pointer's click arrives after its release: a tap, or a hold let go
+        // early. Neither confirms. A completed hold has already confirmed and
+        // closed the dialog, so its click never reaches this button.
+        const fromPointer = pointerPressed.current || event.detail > 0;
+        pointerPressed.current = false;
+        if (fromPointer) {
+          event.preventDefault();
+          return;
+        }
+        onHeld();
       }}
       onContextMenu={(event) => {
         event.preventDefault();

@@ -244,6 +244,55 @@ test('the archive can be emptied: select all, delete forever, confirm', async ({
   expect(api.notes['roof-repair']).toBeDefined();
 });
 
+test('emptying an archive of more than ten notes takes a held press: a click does nothing, a second held does', async ({
+  page,
+  api,
+}) => {
+  for (let i = 0; i < 11; i += 1) {
+    api.notes[`stale-${String(i)}`] = {
+      id: `stale-${String(i)}`,
+      title: `Stale ${String(i)}`,
+      body: 'Nothing came of it.',
+      snippet: 'Nothing came of it.',
+      tags: [],
+      aliases: [],
+      updated_at: new Date(Date.UTC(2026, 5, 1 + i)).toISOString(),
+      version: 1,
+      archived: true,
+      captures: [],
+    };
+  }
+  await page.goto('/?view=archived');
+  await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
+
+  await startSelecting(page, /old fence/i);
+  await page.getByRole('button', { name: 'Select all' }).click();
+  await expect(page.getByText('13 selected')).toBeVisible();
+  await page.getByRole('button', { name: 'Delete forever' }).click();
+
+  const dialog = page.getByRole('dialog');
+  const confirm = dialog.getByRole('button', { name: 'Hold to delete 13 notes' });
+  // A click is a tap, and a tap is not a hold.
+  await confirm.click();
+  await expect(dialog).toBeVisible();
+  expect(api.purged).toEqual([]);
+
+  // A real mouse button, held for the second: `touch-action`, the CSS
+  // variable the fill runs on and the pointer's click afterwards, all in a
+  // browser rather than jsdom.
+  const box = (await confirm.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(confirm).toHaveAttribute('data-holding', 'true');
+  await page.waitForTimeout(1100);
+  await page.mouse.up();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(/nothing is archived/i)).toBeVisible();
+  expect(api.purged).toHaveLength(13);
+  expect(api.notes['roof-repair']).toBeDefined();
+});
+
 test('escape closes the delete dialog without deleting anything', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
