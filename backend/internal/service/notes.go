@@ -657,17 +657,18 @@ func (s *NotesService) ReorderPins(ctx context.Context, userID string, ids []str
 // moving is still that conflict; one unpinned or archived meanwhile is refused
 // as the validation before the loop would have refused it. A note already at
 // its rank is not rewritten, so a drag that moves one note writes one row.
+//
+// The row a conflict hands back is the one now stored (putCarryingStamp read
+// it to tell a stamp from a moved version), so the next attempt starts from
+// it rather than reading again. A returned row whose version did not move is
+// the exception: it is the copy just offered, carrying the rank as if it had
+// landed, because the read inside failed or a second writer got in behind it;
+// the winner is unknown, and the conflict is reported as it stands.
 func (s *NotesService) putPinRank(ctx context.Context, userID string, note model.NoteIndex, rank int64) (model.NoteIndex, error) {
 	var err error
 	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
-		if attempt > 0 {
-			note, err = s.store.GetNote(ctx, userID, note.ID)
-			if err != nil {
-				return model.NoteIndex{}, fmt.Errorf("failed to get note: %w", err)
-			}
-			if !note.Pinned() || !NoteIsActive(note) {
-				return model.NoteIndex{}, ErrPinReorderInvalid
-			}
+		if attempt > 0 && (!note.Pinned() || !NoteIsActive(note)) {
+			return model.NoteIndex{}, ErrPinReorderInvalid
 		}
 		if note.PinRank == rank {
 			return note, nil
@@ -678,6 +679,10 @@ func (s *NotesService) putPinRank(ctx context.Context, userID string, note model
 		if !errors.Is(err, repository.ErrVersionConflict) {
 			return stored, err
 		}
+		if stored.Version == note.Version {
+			return model.NoteIndex{}, err
+		}
+		note = stored
 	}
 	return model.NoteIndex{}, err
 }
