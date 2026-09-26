@@ -3,7 +3,7 @@
 The worker appends a recording's paragraph to a note body that the person may
 be typing into at the same moment. This note is the protocol that keeps both
 edits, and why each part of it is there. Code: `Pipeline.append` and
-`refreshNoteIndex` (`backend/internal/pipeline/pipeline.go`),
+`refreshNoteIndex` (`backend/internal/pipeline/append.go`),
 `NotesService.UpdateNote` (`backend/internal/service/notes.go`),
 `Store.StampNoteAppend` / `ClearNoteAppend` (`backend/internal/repository`).
 
