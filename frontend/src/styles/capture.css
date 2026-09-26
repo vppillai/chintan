@@ -7,6 +7,287 @@
  */
 
 /* --------------------------------------------------------------------------
+   Filing row — a recording on its way into the library, at the top of it
+
+   Four stage segments, not a determinate bar. The client cannot know how long
+   transcription takes, and a bar parked at 100% reads as broken — which is
+   precisely what v1's did.
+   -------------------------------------------------------------------------- */
+
+.filing {
+  display: grid;
+  gap: var(--space-2);
+  margin-block-end: var(--space-4);
+}
+
+.filing-row {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+/* The receipts past the cap, as one quiet line rather than more cards. */
+.filing__more {
+  padding-inline: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.filing-row[data-status='failed'],
+.filing-row[data-status='spend_capped'],
+.filing-row[data-status='upload-failed'],
+.filing-row[data-stuck] {
+  border-color: var(--color-line-strong);
+}
+
+/*
+ * The upload's own bar — the one determinate bar in the row, because the
+ * client knows the uploader's steps. Same height as a stage segment so the
+ * server row that replaces it lands in the same place.
+ */
+.filing-row__upload {
+  block-size: var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background-color: var(--color-line);
+}
+
+.filing-row__upload-fill {
+  display: block;
+  block-size: 100%;
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  transition: inline-size var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.filing-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.filing-row__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+.filing-row__duration {
+  flex: none;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+.filing-row__stages {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.filing-row__stage {
+  block-size: var(--space-1);
+  border-radius: var(--radius-full);
+  background-color: var(--color-line);
+  transition: background-color var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.filing-row__stage[data-state='done'] {
+  background-color: var(--color-muted);
+}
+
+.filing-row__stage[data-state='active'] {
+  background-color: var(--color-accent);
+  animation: stage-pulse 1.6s var(--motion-ease-standard) infinite;
+}
+
+@keyframes stage-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.filing-row__status {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+.filing-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* What a Retry could not do, said under the row it was asked of. */
+.filing-row__error {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent-strong);
+}
+
+/* --------------------------------------------------------------------------
+   Target picker — the answer to "which note should this go in?"
+   -------------------------------------------------------------------------- */
+
+.target-picker {
+  display: grid;
+  gap: var(--space-2);
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.target-picker__list {
+  display: grid;
+  gap: var(--space-1);
+  max-block-size: 30dvh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.target-picker__new {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.target-picker__input {
+  flex: 1 1 10rem;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-3);
+  background-color: var(--color-ground);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-inset);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.target-picker__option {
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  text-align: start;
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.target-picker__new .target-picker__option {
+  inline-size: auto;
+}
+
+.target-picker__option[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+.target-picker__error {
+  font-size: var(--font-size-xs);
+  color: var(--color-ink);
+}
+
+/* --------------------------------------------------------------------------
+   Recording indicator — the microphone is open and you are not on /capture
+   -------------------------------------------------------------------------- */
+
+.recording-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  inline-size: calc(100% - 2 * var(--layout-gutter));
+  max-inline-size: var(--layout-card-max);
+  min-block-size: var(--layout-touch-target-min);
+  margin-block: var(--space-2);
+  margin-inline: auto;
+  padding: var(--space-2) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+.recording-indicator__dot {
+  inline-size: var(--space-2);
+  block-size: var(--space-2);
+  border-radius: var(--radius-full);
+  background-color: var(--color-accent);
+  animation: recording-pulse 1.6s var(--motion-ease-standard) infinite;
+}
+
+@keyframes recording-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recording-indicator__dot {
+    animation: none;
+  }
+}
+
+.filing-row__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+.filing-row__action[disabled] {
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/* --------------------------------------------------------------------------
+   The router's answer, offered rather than buried
+   -------------------------------------------------------------------------- */
+
+/* The suggestion is the one action the row wants taken, so it reads as such
+   against the "choose another note" beside it. */
+.filing-row__action--primary {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.target-picker__back {
+  align-self: flex-start;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------------------------
    Capture
    -------------------------------------------------------------------------- */
 
@@ -258,7 +539,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Filing row additions — the receipt; the rest of the row is in shell.css
+   Filing row additions — the receipt; the rest of the row is above
    -------------------------------------------------------------------------- */
 
 /* Title, chevron, ×: one control wide, with the × in its own column. */

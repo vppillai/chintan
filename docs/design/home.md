@@ -15,7 +15,8 @@ empty states) — `features/notes/groups.ts`
 `hooks/useSwipeActions.ts`, `hooks/useLongPress.ts`,
 `components/SelectionBar.tsx`, `components/Toast.tsx`,
 `components/ConfirmDialog.tsx`, `usePinNote` and `useReorderPins`
-(`api/queries.ts`), `offline/useNotesCache.ts`, the drawn checkbox
+(`api/queries.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
+the rows, chips, field and heading, then the overrides), the drawn checkbox
 (`features/notes/ChecklistEditor.tsx` `Check` / `CheckMark`,
 `styles/checklist.css`).
 

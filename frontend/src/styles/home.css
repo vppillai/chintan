@@ -9,10 +9,398 @@
  * native <details> and moved Usage behind one row. The rules here override
  * the shell's where a shape changed, and live in their own sheet so the
  * note-screen stream could land in the same week without touching the same
- * file (`notes.css` is its).
+ * file (`notes.css` is its). The library's base rules — its padding and
+ * heading, the note rows, the day groups and chips, the search field and its
+ * results — lead the sheet, moved whole from shell.css (round 5, CH-6); the
+ * overrides below them stand as they were.
  *
  * Tokens only — no literal colour or font size lives here.
  */
+
+/* --------------------------------------------------------------------------
+   Library — the screen's padding and its heading row
+   -------------------------------------------------------------------------- */
+
+/*
+ * The library's list ends a full bar's height above the bottom of its scroll
+ * container, safe area included. The tab bar is a grid row in normal flow and
+ * cannot overlay a row — but the last row used to stop 32px from the edge,
+ * right against the bar, and on a phone the thumb resting on Record covered
+ * its lower half. Now it always clears the bar with room to spare.
+ */
+.library {
+  padding-block-end: calc(var(--layout-bottom-bar-height) + var(--safe-bottom));
+}
+
+/* While selecting, the selection bar is what sits above the tab bar, and it
+   carries its own bottom padding; the screen's would only float it. */
+.library[data-selecting] {
+  padding-block-end: 0;
+}
+
+/*
+ * The library's heading row. These are the base shapes; home.css overrides
+ * them for the row the brand leads (round-3 T17 and R5-BR-H1): the wordmark
+ * first, "Notes · N" quiet at the row's end, and no date line.
+ */
+.library-header {
+  padding-block-end: var(--space-3);
+}
+
+.library-heading {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+}
+
+/* "Notes", in the notes' own serif, with the count beside it. */
+.library-heading__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--font-serif);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-tight);
+  line-height: var(--line-height-tight);
+  color: var(--color-ink);
+}
+
+/* The count is a numeral beside the word, quieter than it: regular weight,
+   a step down, the muted ink. The separator is the same, and hidden from
+   assistive technology — "Notes, 12" needs no dot read out. */
+.library-heading__separator,
+.library-heading__count {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Note list
+   -------------------------------------------------------------------------- */
+
+.note-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.note-row {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+  padding: var(--space-4);
+  text-align: start;
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  /* A card on the page: the hairline is the edge, the shadow is the rest.
+     It lifts a step under the pointer and settles back when pressed. */
+  box-shadow: var(--shadow-xs);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.note-row:hover {
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.note-row:active {
+  transform: scale(0.995);
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-xs);
+}
+
+/* The row and, at its right, its ⋮ menu (`pins.css`). Positioned so the menu
+   can sit in the row's padding; no z-index, so the menu escapes to the sheet
+   layer over the rows beneath. */
+.note-row-wrap {
+  position: relative;
+}
+
+/* A `<label>` wrapping a checkbox, standing in for the row's plain `<button>`
+   while bulk-select is active — see NoteRow's own doc comment. */
+.note-row--selectable {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+/* The touch target around the checkbox, pulled into the row's padding so the
+   drawn box sits where the native one did. Positioned, because the real
+   control (`.checklist__box`, checklist.css) is stretched invisibly over it
+   and the mark (`.checklist__mark`) is what shows — the app's one box, not
+   the browser's (review 2026-09-24, R4-12). */
+.note-row__check {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  margin-block-start: calc(-1 * var(--space-2));
+  margin-inline-start: calc(-1 * var(--space-2));
+}
+
+.note-row--selectable[data-selected] {
+  border-color: var(--color-line-strong);
+  background-color: var(--color-surface);
+}
+
+.note-row__body {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.note-row__title {
+  font-family: var(--font-serif);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--line-height-snug);
+  letter-spacing: var(--letter-spacing-tight);
+  color: var(--color-ink);
+}
+
+.note-row__snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+.note-row__meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-block-start: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
+
+/* Title on the left, time on the right, on one line; the title wraps, the
+   time never does. */
+.note-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.note-row__time {
+  flex: none;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+/* One line of tags is a summary; eight lines is the tag list wearing the note
+   row as a hat. Twenty tags is a legal note, so the list takes what is left
+   after the recordings count, wraps, and is cut at one line — the note screen
+   has them all. `contain: inline-size` is what stops twenty chips reporting a
+   1700px min-content width up through the row, the list and the screen;
+   without it the whole library scrolled sideways. */
+.note-row__tags {
+  display: flex;
+  flex: 1 1 0;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  max-block-size: calc(var(--font-size-xs) * var(--line-height-normal) + 2px);
+  overflow: hidden;
+  contain: inline-size;
+}
+
+/* A tag on a row is a label, not a control: no border weight, no 44px floor.
+   A 56-character tag is legal too; it ends in an ellipsis rather than pushing
+   the row wider than the screen. */
+.note-row__tag {
+  flex: none;
+  max-inline-size: 100%;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-full);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-row__recordings {
+  flex: none;
+  margin-inline-start: auto;
+  white-space: nowrap;
+}
+
+.note-row__purge {
+  flex: none;
+}
+
+/* The archived row's deadline. Muted like any other row meta, except when the
+   note is already past its purge date and the sweeper has yet to run. */
+.note-row__purge[data-purge='due'] {
+  color: var(--color-accent-strong);
+}
+
+/* What a swipe action could not do, said under the row it was asked of. */
+.note-row__error {
+  padding: var(--space-1) var(--space-4) 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent-strong);
+}
+
+/* --------------------------------------------------------------------------
+   Library: day groups and filter chips
+   -------------------------------------------------------------------------- */
+
+.note-groups {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.note-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.note-group__label {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+  padding-inline: var(--space-1);
+}
+
+/* One scrolling row on a phone, wrapping never: a library with thirty tags is
+   a legal library and three lines of chips is the filter wearing the screen as
+   a hat. The row is the one container in the app allowed to scroll sideways. */
+.chips {
+  display: flex;
+  gap: var(--space-2);
+  margin-inline: calc(-1 * var(--layout-gutter));
+  padding-inline: var(--layout-gutter);
+  padding-block-end: var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-padding-inline: var(--layout-gutter);
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  flex: none;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  /* A tonal fill, not an outline alone: the chip is a shape on the page. */
+  background-color: var(--color-surface);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip:not([aria-pressed='true']):active {
+  background-color: var(--color-line);
+  color: var(--color-ink);
+}
+
+.chip[aria-pressed='true'] {
+  background-color: var(--color-ink);
+  border-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+/* --------------------------------------------------------------------------
+   Search
+   -------------------------------------------------------------------------- */
+
+.search-form {
+  padding-block-end: var(--space-3);
+}
+
+.search-input {
+  inline-size: 100%;
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--color-raised);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inset);
+  font-size: var(--font-size-md);
+  color: var(--color-ink);
+}
+
+.search-input::placeholder {
+  color: var(--color-faint);
+}
+
+/* --------------------------------------------------------------------------
+   Search
+   -------------------------------------------------------------------------- */
+
+.search-hit {
+  background-color: var(--color-selection);
+  color: inherit;
+  border-radius: var(--radius-sm);
+}
+
+.search-offline {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+.load-more {
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  margin-block-start: var(--space-4);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+}
+
+/* The observer's target: nothing to see, one line after the last row. */
+.load-more-sentinel {
+  block-size: 0;
+}
+
+/* Where the observer does the loading, the button is for the keyboard and
+   the screen reader alone: hidden until it is focused, then a real button. */
+.load-more.visually-hidden:focus-visible {
+  position: static;
+  inline-size: 100%;
+  block-size: auto;
+  margin: var(--space-4) 0 0;
+  padding: var(--space-2) var(--space-4);
+  overflow: visible;
+  clip-path: none;
+  white-space: normal;
+}
 
 /* ==========================================================================
    Home — the heading row carries the wordmark; the shell's banner is empty

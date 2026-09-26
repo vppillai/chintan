@@ -1,0 +1,406 @@
+/*
+ * A recording, read back: the inline player and its scrubber, the transcript
+ * beneath it, and the Recordings tab's dated rows with their selection bar.
+ * Moved whole from shell.css (round 5, CH-6); the swipe tray the rows share
+ * with Home stays there. Tokens only — no literal colour or font size lives
+ * here.
+ */
+
+/* ==========================================================================
+   Note detail — inline playback
+   ========================================================================== */
+
+.player {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+}
+
+.player__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* The whole 44 px box is the slider's hit area; the track is drawn through
+   its middle. It was 16 px tall, under the WCAG 2.5.8 minimum of 24. */
+.player__range {
+  inline-size: 100%;
+  block-size: var(--layout-touch-target-min);
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--color-ink);
+}
+
+.player__error {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+/* The scrubber's two waveform tones, exposed as custom properties so the
+   canvas code reads them rather than naming a hue. */
+.scrubber {
+  --waveform-played: var(--color-ink);
+  --waveform-unplayed: var(--color-line-strong);
+
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+}
+
+.scrubber__track {
+  position: relative;
+  block-size: 3.5rem;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: var(--radius-sm);
+}
+
+.scrubber__canvas {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+.scrubber__playhead {
+  position: absolute;
+  inset-block: 0;
+  inline-size: 2px;
+  background-color: var(--color-accent);
+  pointer-events: none;
+}
+
+.scrubber__times {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Transcript
+   -------------------------------------------------------------------------- */
+
+.transcript {
+  display: grid;
+  gap: var(--space-3);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--color-line);
+}
+
+.transcript__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.transcript__heading {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-caps);
+  text-transform: uppercase;
+  color: var(--color-faint);
+}
+
+.transcript__toggle {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-full);
+}
+
+.transcript__toggle-option {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-muted);
+}
+
+.transcript__toggle-option[aria-pressed='true'] {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.transcript__note {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-muted);
+}
+
+.transcript__list {
+  display: grid;
+  gap: var(--space-1);
+  max-block-size: 22rem;
+  overflow-y: auto;
+  scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Every line is a seek target, so it carries the same 44px floor as every
+   other control — it was 36px, which is a miss on a moving vehicle. */
+.transcript__line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-3);
+  text-align: start;
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.transcript__line:hover,
+.transcript__line:active {
+  background-color: var(--color-surface);
+}
+
+.transcript__line[data-active] {
+  background-color: var(--color-surface);
+  box-shadow: inset 2px 0 0 0 var(--color-accent);
+}
+
+.transcript__time {
+  font-size: var(--font-size-xs);
+  color: var(--color-faint);
+}
+
+.transcript__text {
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  color: var(--color-ink);
+}
+
+.transcript__line[data-active] .transcript__text {
+  font-weight: var(--font-weight-medium);
+}
+
+.transcript__cleaned {
+  max-block-size: 22rem;
+  overflow-y: auto;
+  font-size: var(--font-size-sm);
+}
+
+.transcript__empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+/* --------------------------------------------------------------------------
+   Recordings — the sources, as dated rows beneath the body
+   -------------------------------------------------------------------------- */
+
+/* A panel of its own now, so no rule or margin separates it from a body
+   that is no longer above it. */
+.recordings {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.recordings__empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.recordings__list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recording {
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-raised);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.recording[data-expanded] {
+  border-color: var(--color-line-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.recording__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.recording__play {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-full);
+  background-color: var(--color-ink);
+  color: var(--color-ground);
+}
+
+.recording__play[disabled] {
+  background-color: var(--color-line);
+  color: var(--color-faint);
+  cursor: default;
+}
+
+/*
+ * When · how it was filed · duration, as one button that opens the row.
+ * A wrapping line: the duration is pushed to the right while everything fits
+ * and drops to a second line when it does not — on a 320 px phone the row's
+ * play and More controls leave it 160 px, and a three-column grid overflowed
+ * the note screen sideways by twenty pixels.
+ */
+.recording__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-1);
+  text-align: start;
+  border-radius: var(--radius-md);
+  color: var(--color-ink);
+}
+
+.recording__summary:active {
+  background-color: var(--color-surface);
+}
+
+.recording__when {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.recording__filed {
+  font-size: var(--font-size-xs);
+  color: var(--color-muted);
+}
+
+.recording__filed[data-running] {
+  color: var(--color-accent);
+}
+
+.recording[data-status='failed'] .recording__filed,
+.recording[data-status='spend_capped'] .recording__filed,
+.recording[data-status='needs_target'] .recording__filed {
+  color: var(--color-ink);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Serif tabular numerals, like every duration in the app; flush right. */
+.recording__duration {
+  margin-inline-start: auto;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+  white-space: nowrap;
+}
+
+.recording__body {
+  display: grid;
+  gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.recording__error {
+  font-size: var(--font-size-sm);
+  color: var(--color-ink);
+}
+
+.recording__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Inside a row the player has the row's padding already. */
+.recording .player {
+  padding-block: 0;
+}
+
+/* The upload this device is still making, first in the list: the library's
+   filing row as it is, in a list item that adds no second card around it. */
+.recordings__filing {
+  display: grid;
+}
+
+/* The stage strip under a row that is still being filed, inset to the row's
+   text and clear of the head's controls. */
+.recording__progress {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* A row while recordings are being selected: the checkbox and its label
+   stand where the play and disclosure controls were, the same height, so the
+   list does not reflow when the mode changes. */
+.recording__select {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  cursor: pointer;
+}
+
+.recording__check {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+}
+
+.recording__checkbox {
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  margin: 0;
+  accent-color: var(--color-ink);
+}
+
+.recording__summary--static {
+  flex: 1 1 auto;
+}
+
+.recording[data-selected] {
+  border-color: var(--color-line-strong);
+  background-color: var(--color-surface);
+}
+
+/* What the last action did, beneath the rows: "Recording moved to “Roof
+   repair” · Open Roof repair", or why it did not. */
+.recordings__notice {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
+}
+
+.recordings__notice[data-tone='error'] {
+  color: var(--color-ink);
+}
+
+.recordings__notice-link {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-1);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}

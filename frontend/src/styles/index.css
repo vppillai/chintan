@@ -2,6 +2,8 @@
 @import './reset.css';
 @import './base.css';
 @import './shell.css';
+@import './recordings.css';
+@import './cleaned.css';
 @import './capture.css';
 @import './you.css';
 @import './ask.css';
