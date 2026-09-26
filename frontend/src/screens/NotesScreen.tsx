@@ -32,13 +32,13 @@ import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { showDeleted } from '@/components/Toast.tsx';
-import { config } from '@/config/env.ts';
+import { Wordmark } from '@/components/Wordmark.tsx';
 import { useAskThread } from '@/features/ask/useAskThread.ts';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
 import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { PinnedGroup } from '@/features/notes/PinnedGroup.tsx';
-import { describeToday, groupByDay, splitPinned } from '@/features/notes/groups.ts';
+import { groupByDay, splitPinned } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
@@ -397,21 +397,21 @@ export function NotesScreen() {
       <PullToRefresh onRefresh={refresh} />
 
       {/*
-        The heading is "Notes", in the notes' serif, with how many beside it;
-        the wordmark sits small at the row's right with the day beneath it.
-        The shell's banner used to say the name above, the h1 said "Notes"
-        and the tab said Home — the same place named three times in the top
-        45 percent of a phone (round-3 T17) — so on this screen the banner
-        holds nothing and the name is a small-caps line here. The day was the
-        big text once (backlog U5) and then the h1's eyebrow; it is the
-        wordmark's second line now, out of the heading, so a screen reader
-        hears "Notes, 12" and the a11y sweep and the route tests still find
-        a heading that starts with "Notes". The count is what has been
-        loaded, with "+" while there is more. The archive is headed
-        "Archived": under "Notes" its only label was a pressed chip at the
-        far end of a row scrolled to its start, off a phone's screen, and
-        with notes in it the view was indistinguishable from Home (QA
-        2026-09-21, finding 6).
+        One row: the brand leads, "Notes · 12" is its quiet right end. The
+        shell's banner used to say the name above, the h1 said "Notes" and
+        the tab said Home — the same place named three times in the top 45
+        percent of a phone (round-3 T17) — so on this screen the banner holds
+        nothing and the wordmark is here, in the same lockup the banner wears
+        elsewhere. The h1 stays first in the DOM and the brand is moved before
+        it by `order` (home.css), so a screen reader still hears "Notes, 12"
+        and the a11y sweep and the route tests still find a heading that
+        starts with "Notes"; the visual emphasis is the CSS's. The day is
+        gone from the row (owner feedback 2026-09-26): the group label under
+        it already says Today. The count is what has been loaded, with "+"
+        while there is more. The archive is headed "Archived": under "Notes"
+        its only label was a pressed chip at the far end of a row scrolled to
+        its start, off a phone's screen, and with notes in it the view was
+        indistinguishable from Home (QA 2026-09-21, finding 6).
       */}
       <header className="screen__header library-header">
         <h1 className="library-heading">
@@ -431,8 +431,7 @@ export function NotesScreen() {
           </span>
         </h1>
         <p className="library-brand">
-          <span className="library-brand__wordmark">{config.appName}</span>
-          <span className="library-brand__date">{describeToday()}</span>
+          <Wordmark />
         </p>
       </header>
 
