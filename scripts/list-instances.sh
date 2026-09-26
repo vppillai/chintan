@@ -114,7 +114,7 @@ done
 
 case "$FORMAT" in
     json | text | app-host) ;;
-    *) die "--format must be json or text" ;;
+    *) die "--format must be json, text or app-host" ;;
 esac
 
 require_cmd python3 jq
