@@ -1075,15 +1075,25 @@ paths:
       tags: [inbox]
       summary: Drop a recording into the inbox (one-shot)
       description: |
-        The body is the recording; `Content-Type` is its audio type. The API
-        writes the object to the capture's audio key itself, with the same
-        retention tags a client's PUT carries, and the bucket's notification
-        runs the pipeline as for any upload. For a client that can only POST
-        a file. At most 4 MiB (413 above it): the gateway hands the body to
-        the function base64-encoded under a 6 MB cap, so a longer recording
-        goes through `/v1/inbox/captures` and its PUT. Optional headers: `X-Chintan-Note-Id` (file into this note),
+        The body is the recording — raw, with `Content-Type` naming its audio
+        type, or a `multipart/form-data` form whose `audio` part is the
+        recording (the shape a webhook posts; the Pebble Index ring's is
+        one). The API writes the object to the capture's audio key itself,
+        with the same retention tags a client's PUT carries, and the bucket's
+        notification runs the pipeline as for any upload. For a client that
+        can only POST a file. At most 4 MiB, form envelope included (413
+        above it): the gateway hands the body to the function base64-encoded
+        under a 6 MB cap, so a longer recording goes through
+        `/v1/inbox/captures` and its PUT. Optional headers: `X-Chintan-Note-Id` (file into this note),
         `X-Chintan-Language` (`auto` or a code, for this recording),
-        `X-Chintan-Duration-Ms`.
+        `X-Chintan-Duration-Ms`; on a form that carries only a
+        `transcription` the last two are ignored, since there is no audio.
+        Retries: a webhook that cannot set `Idempotency-Key` (the ring's
+        cannot) files a second capture when it retries. A sender that sets
+        one must resend the identical bytes — the key is bound to a
+        fingerprint of the raw body, and a re-encoded multipart form has a
+        new boundary, so the retry is 409 `this Idempotency-Key was used for
+        a different request`.
       security:
         - deviceKey: []
       parameters:
@@ -1100,15 +1110,46 @@ paths:
       requestBody:
         required: true
         description: |
-          The recording. `Content-Type` is its audio type, one of `audio/webm`,
-          `audio/ogg`, `audio/mp4`, `audio/m4a`, `audio/mpeg`, `audio/wav`,
-          `audio/x-wav` (400 for anything else).
+          The recording, in one of two shapes. Raw: the body is the audio and
+          `Content-Type` is its type, one of `audio/webm`, `audio/ogg`,
+          `audio/mp4`, `audio/m4a`, `audio/mpeg`, `audio/wav`, `audio/x-wav`
+          (400 for anything else). A form: `multipart/form-data` with an
+          `audio` part whose own `Content-Type` is the audio type, from the
+          same list (a part with none is 400 `Content-Type is required: the
+          recording's audio type`: RFC 7578 makes an untyped part
+          `text/plain`), filed exactly as a raw body is; and, optionally, a
+          `transcription` part, the sender's own text (invalid UTF-8 in it
+          becomes U+FFFD, as on `/v1/inbox/text`). With no `audio` part, the `transcription` is filed as
+          `/v1/inbox/text` files text (the capture starts at `transcribed`
+          with `has_audio: false`); with both, the audio is filed and the
+          transcription dropped, because the pipeline transcribes with the
+          note's language. A form with neither is 400 `the form has no audio
+          or transcription part`. `recordedAt` and `client`, which the ring
+          also sends, are ignored.
         content:
           audio/*:
             schema: { type: string, format: binary }
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: The recording; the part's own `Content-Type` is its audio type, and is required.
+                transcription:
+                  type: string
+                  description: The sender's own transcription; filed only when there is no `audio` part.
+                recordedAt:
+                  type: integer
+                  format: int64
+                  description: Milliseconds since the Unix epoch; ignored — a capture has no recorded-at field.
+                client:
+                  type: string
+                  description: Ignored.
       responses:
         '202':
-          description: The recording is stored and the pipeline is running; the capture is `uploaded`.
+          description: The recording is stored and the pipeline is running; the capture is `uploaded` (or `transcribed`, for a form that carried only a transcription).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/InboxAccepted' }
@@ -1203,7 +1244,14 @@ components:
         only. Stored as a SHA-256 hash and compared in constant time; a
         revoked or unknown key is 401 `unknown device key`, and a key past
         two hundred requests in a UTC day is 429 `this device has reached
-        today's limit` — fixed sentences, whichever the reason.
+        today's limit` — fixed sentences, whichever the reason. Three
+        spellings of the one credential are accepted: `Authorization: Bearer
+        ck_…`; the same value bare, `Authorization: ck_…`, for a webhook form
+        that takes header key/value pairs and knows no scheme; and
+        `X-Device-Key: ck_…`, for a non-browser client whose Authorization
+        header is spoken for (read first when both are sent); it is not in
+        the CORS allow-list, so a browser page cannot send it. The check and
+        the 401 are the same for all three.
 
   parameters:
     Cursor:

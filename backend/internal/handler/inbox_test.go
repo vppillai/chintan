@@ -1,8 +1,11 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -291,5 +294,203 @@ func TestInboxCapturesIsBeginCaptureForADevice(t *testing.T) {
 	// And the inbox does not answer a session.
 	if w := h.do(t, http.MethodPost, "/v1/inbox/captures", "user1", map[string]any{"content_type": "audio/webm"}); w.Code != http.StatusUnauthorized {
 		t.Fatalf("a session on the inbox: status = %d", w.Code)
+	}
+}
+
+// The key is one credential in three spellings: Bearer, bare (a webhook form
+// with header key/value pairs and no scheme — the Pebble Index ring's) and
+// X-Device-Key. Anything else in either header is the one fixed 401.
+func TestInboxTakesTheKeyBareAndInXDeviceKey(t *testing.T) {
+	h := newHarness(t)
+	created := h.createDevice(t, "user1", "Ring")
+	text := map[string]any{"text": "buy milk"}
+
+	for name, header := range map[string][2]string{
+		"bearer":       {"Authorization", "Bearer " + created.Key},
+		"bare":         {"Authorization", created.Key},
+		"bare, spaced": {"Authorization", "  " + created.Key + " "},
+		"x-device-key": {handler.HeaderDeviceKey, created.Key},
+	} {
+		if w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, header); w.Code != http.StatusAccepted {
+			t.Errorf("%s: status = %d body = %s", name, w.Code, w.Body.String())
+		}
+	}
+	for name, header := range map[string][2]string{
+		"bare, not a key":         {"Authorization", "hello"},
+		"bare, a session jwt":     {"Authorization", "eyJhbGciOiJSUzI1NiJ9.e30.sig"},
+		"x-device-key, not a key": {handler.HeaderDeviceKey, "hello"},
+	} {
+		w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, header)
+		if w.Code != http.StatusUnauthorized || problemOf(t, w)["detail"] != "unknown device key" {
+			t.Errorf("%s: status = %d body = %s", name, w.Code, w.Body.String())
+		}
+	}
+	// X-Device-Key decides when both are sent, so a client whose
+	// Authorization header is spoken for is not refused for it.
+	w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text,
+		[2]string{"Authorization", "Basic c29tZWJvZHk6ZWxzZQ=="}, [2]string{handler.HeaderDeviceKey, created.Key})
+	if w.Code != http.StatusAccepted {
+		t.Errorf("X-Device-Key beside a foreign Authorization: status = %d body = %s", w.Code, w.Body.String())
+	}
+}
+
+// ringForm builds the multipart/form-data body the Pebble Index ring's
+// webhook posts: client and recordedAt always, an audio part when audio is
+// not nil (under audioType, or with no Content-Type when that is ""), and a
+// transcription part when one is given.
+func ringForm(t *testing.T, audio []byte, audioType, transcription string) (body []byte, contentType string) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(mw.WriteField("client", "ring"))
+	must(mw.WriteField("recordedAt", "1790000000000"))
+	if audio != nil {
+		hdr := textproto.MIMEHeader{"Content-Disposition": {`form-data; name="audio"; filename="memo.m4a"`}}
+		if audioType != "" {
+			hdr.Set("Content-Type", audioType)
+		}
+		part, err := mw.CreatePart(hdr)
+		must(err)
+		_, err = part.Write(audio)
+		must(err)
+	}
+	if transcription != "" {
+		must(mw.WriteField("transcription", transcription))
+	}
+	must(mw.Close())
+	return buf.Bytes(), mw.FormDataContentType()
+}
+
+// The ring's webhook posts a form. Its audio part is ingested as a raw body
+// is — the part's type on the object, the tenant's retention tags, the
+// bucket's notification and no worker call; its transcription alone takes
+// the text route; both together, the audio wins.
+func TestInboxAudioTakesTheRingsForm(t *testing.T) {
+	h := newHarness(t)
+	if w := h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{"retention_days": 30}); w.Code != http.StatusOK {
+		t.Fatalf("settings: %d", w.Code)
+	}
+	note := h.createNote(t, "user1", "Dictation", nil)
+	key := h.deviceKey(t)
+	audio := []byte("ftyp fake m4a bytes")
+	post := func(t *testing.T, body []byte, contentType string, headers ...[2]string) (accepted handler.InboxAccepted, stored model.CaptureIndex) {
+		t.Helper()
+		headers = append([][2]string{key, {"Content-Type", contentType}}, headers...)
+		w := h.do(t, http.MethodPost, "/v1/inbox/audio", "", body, headers...)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+		}
+		decodeInto(t, w, &accepted)
+		var err error
+		if stored, err = h.store.GetCapture(context.Background(), "user1", accepted.Capture.ID); err != nil {
+			t.Fatal(err)
+		}
+		return accepted, stored
+	}
+
+	t.Run("audio", func(t *testing.T) {
+		body, contentType := ringForm(t, audio, "audio/mp4", "")
+		accepted, stored := post(t, body, contentType,
+			[2]string{handler.HeaderInboxNoteID, note.ID}, [2]string{handler.HeaderInboxDurationMS, "4200"})
+		c := accepted.Capture
+		if c.Status != string(model.StatusUploaded) || !c.HasAudio || c.HasPeaks || c.DurationMS == nil || *c.DurationMS != 4200 || c.NoteID == nil || *c.NoteID != note.ID {
+			t.Fatalf("capture on the wire = %+v", c)
+		}
+		if !strings.HasSuffix(stored.AudioKey, "/audio.m4a") || stored.RawKey != "" || stored.Source != model.DeviceSource(strings.TrimPrefix(c.Source, "device:")) {
+			t.Fatalf("stored capture = %+v; want audio/mp4 on the key and the device as source", stored)
+		}
+		object, err := h.objects.Get(context.Background(), stored.AudioKey)
+		if err != nil || string(object) != string(audio) {
+			t.Fatalf("audio object = %q, %v", object, err)
+		}
+		tags := h.objects.Tags(stored.AudioKey)
+		if tags[upload.ArtifactTagKey] != upload.ArtifactCaptureAudio || tags[upload.RetentionTagKey] != "30" {
+			t.Fatalf("audio object tags = %v", tags)
+		}
+		if len(h.worker.calls) != 0 {
+			t.Fatalf("the API invoked the worker for an upload the bucket notifies on: %v", h.worker.calls)
+		}
+	})
+	t.Run("audio with its own type", func(t *testing.T) {
+		body, contentType := ringForm(t, audio, "audio/mpeg", "")
+		if _, stored := post(t, body, contentType); !strings.HasSuffix(stored.AudioKey, "/audio.mp3") {
+			t.Fatalf("audio key = %q, want the part's audio/mpeg", stored.AudioKey)
+		}
+	})
+	t.Run("transcription only", func(t *testing.T) {
+		before := len(h.worker.calls)
+		body, contentType := ringForm(t, nil, "", "  remember the gutter  ")
+		accepted, stored := post(t, body, contentType, [2]string{handler.HeaderInboxNoteID, note.ID})
+		c := accepted.Capture
+		if c.Status != string(model.StatusTranscribed) || c.HasAudio || c.DurationMS != nil || c.NoteID == nil || *c.NoteID != note.ID {
+			t.Fatalf("capture on the wire = %+v", c)
+		}
+		if stored.AudioKey != "" || stored.RawKey == "" {
+			t.Fatalf("stored capture = %+v; want a raw key and no audio key", stored)
+		}
+		raw, err := h.objects.Get(context.Background(), stored.RawKey)
+		if err != nil || string(raw) != "remember the gutter" {
+			t.Fatalf("raw transcript = %q, %v", raw, err)
+		}
+		if len(h.worker.calls) != before+1 {
+			t.Fatalf("worker calls = %v, want one hand-off for the text", h.worker.calls)
+		}
+	})
+	t.Run("transcription with invalid UTF-8", func(t *testing.T) {
+		body, contentType := ringForm(t, nil, "", "caf\xff\xfe au lait")
+		_, stored := post(t, body, contentType)
+		raw, err := h.objects.Get(context.Background(), stored.RawKey)
+		if err != nil || string(raw) != "caf\uFFFD au lait" {
+			t.Fatalf("raw transcript = %q, %v; want the invalid run replaced with U+FFFD", raw, err)
+		}
+	})
+	t.Run("both: the audio wins", func(t *testing.T) {
+		before := len(h.worker.calls)
+		body, contentType := ringForm(t, audio, "audio/mp4", "the ring's own words")
+		accepted, stored := post(t, body, contentType)
+		if !accepted.Capture.HasAudio || stored.RawKey != "" || len(h.worker.calls) != before {
+			t.Fatalf("capture = %+v stored = %+v worker = %v; want the audio filed and the transcription dropped", accepted.Capture, stored, h.worker.calls)
+		}
+		object, err := h.objects.Get(context.Background(), stored.AudioKey)
+		if err != nil || string(object) != string(audio) {
+			t.Fatalf("audio object = %q, %v", object, err)
+		}
+	})
+
+	emptyForm, emptyType := ringForm(t, nil, "", "")
+	emptyAudio, emptyAudioType := ringForm(t, []byte{}, "audio/mp4", "")
+	untyped, untypedType := ringForm(t, audio, "", "")
+	notAudio, notAudioType := ringForm(t, audio, "text/plain", "")
+	longText, longTextType := ringForm(t, nil, "", strings.Repeat("x", service.MaxInboxTextRunes+1))
+	overCap, overCapType := ringForm(t, make([]byte, service.MaxInboxAudioBytes+1), "audio/mp4", "")
+	for name, tc := range map[string]struct {
+		body        []byte
+		contentType string
+		status      int
+		detail      string
+	}{
+		"no usable part":   {emptyForm, emptyType, http.StatusBadRequest, "the form has no audio or transcription part"},
+		"an empty audio":   {emptyAudio, emptyAudioType, http.StatusBadRequest, "the form has no audio or transcription part"},
+		"untyped audio":    {untyped, untypedType, http.StatusBadRequest, "Content-Type is required: the recording's audio type"},
+		"not audio":        {notAudio, notAudioType, http.StatusBadRequest, "content_type must be one of audio/webm, audio/ogg, audio/mp4, audio/m4a, audio/mpeg, audio/wav, audio/x-wav"},
+		"too long a text":  {longText, longTextType, http.StatusBadRequest, ""},
+		"no boundary seen": {[]byte("not a form"), "multipart/form-data; boundary=x", http.StatusBadRequest, "the form has no audio or transcription part"},
+		"one byte over":    {overCap, overCapType, http.StatusRequestEntityTooLarge, "the recording exceeds 4194304 bytes"},
+		"multipart/mixed":  {emptyForm, strings.Replace(emptyType, "form-data", "mixed", 1), http.StatusBadRequest, ""},
+		"boundary missing": {emptyForm, "multipart/form-data", http.StatusBadRequest, "the request body could not be read"},
+	} {
+		w := h.do(t, http.MethodPost, "/v1/inbox/audio", "", tc.body, key, [2]string{"Content-Type", tc.contentType})
+		if w.Code != tc.status {
+			t.Errorf("%s: status = %d, want %d; body = %s", name, w.Code, tc.status, w.Body.String())
+			continue
+		}
+		if tc.detail != "" && problemOf(t, w)["detail"] != tc.detail {
+			t.Errorf("%s: detail = %q, want %q", name, problemOf(t, w)["detail"], tc.detail)
+		}
 	}
 }

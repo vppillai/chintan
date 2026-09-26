@@ -40,8 +40,16 @@ it. Revoking a revoked device is 204 again.
 
 ## The check
 
-`Authorization: Bearer ck_…` on the three inbox routes. The key is parsed,
-the id looked up through the index, and the presented key's hash compared
+`Authorization: Bearer ck_…` on the three inbox routes — or the same value
+bare (`Authorization: ck_…`: a webhook that takes header key/value pairs,
+the Pebble Index ring's for one, has nowhere to learn the Bearer scheme), or
+`X-Device-Key: ck_…` for a non-browser client whose Authorization header is
+spoken for, read first when both are sent (the header is not in the CORS
+allow-list and is not added to it: a browser page has the session and no
+business on the inbox). Three spellings, one credential
+(`deviceKeyOf`); the threat model is unchanged because the key is still the
+only thing checked, and the refusal never says which spelling failed. The
+key is parsed, the id looked up through the index, and the presented key's hash compared
 with the stored one by `crypto/subtle.ConstantTimeCompare`. Malformed,
 unknown, revoked and wrong-secret all answer the same fixed 401 `unknown
 device key`; nothing in the wording or the timing says which. The key reaches
@@ -86,7 +94,24 @@ those plus the probes.
   flow orders them — with the same retention tags a presigned PUT carries, so
   the bucket notifies the worker and the lifecycle rules expire it as for any
   upload. No peaks key is recorded: nothing computed an envelope. 202 with
-  the capture at `uploaded`.
+  the capture at `uploaded`. The same route takes a `multipart/form-data`
+  body, the shape a webhook posts (`inboxAudioForm`): the `audio` part, under
+  its own `Content-Type` (required, as the raw body's is — RFC 7578 makes an
+  untyped part `text/plain`, and the ring sends `audio/mp4` explicitly — so
+  a part with none is the raw path's 400), is ingested exactly as a raw body
+  is; a `transcription` part alone goes the text route below (invalid UTF-8
+  becomes U+FFFD, as the JSON decoder makes it on `/v1/inbox/text`),
+  so a ring set to send only its transcription still files a note; with
+  both, the audio wins and the sender's transcription is dropped, because
+  the pipeline transcribes with the note's language. The Pebble Index ring's
+  `recordedAt` and `client` are ignored — a capture has no recorded-at
+  field. The whole form is read under the same 4 MiB cap, envelope included,
+  since the gateway's limit applies to the body as the gateway sees it.
+  Retries: a webhook that cannot set `Idempotency-Key` (the ring's cannot)
+  files a second capture when it retries. A sender that sets one must resend
+  the identical bytes — the key is bound to a fingerprint of the raw body,
+  and a re-encoded multipart form has a new boundary, so the retry is 409
+  `this Idempotency-Key was used for a different request`.
 - `POST /v1/inbox/text` takes 1 to 20,000 characters. The text is written
   where the transcript would be (`RawKey`), the row starts at `transcribed`
   with no audio key and no duration, and the API invokes the worker since no
