@@ -65,9 +65,9 @@ race made deterministic.
    `cleaned_body` or `search_text` over a concurrent writer's, and the version
    should move for exactly the reason the save is told about. A lost race
    re-reads and stamps again. Two captures appending to one note wait on each
-   other's stamp for up to `appendStampWait` before stamping over it, so the
-   row's one stamp always names the write in flight; only a holder that died
-   mid-append is ever stamped over.
+   other's stamp for up to `Config.AppendStampWait` (10 s by default) before
+   stamping over it, so the row's one stamp always names the write in flight;
+   only a holder that died mid-append is ever stamped over.
 2. **Clear after indexing.** `RefreshNoteIndex` (`ClearAppendStampFor`) clears
    the two attributes in the same `PutNote` that publishes the paragraph's
    snippet and search text,
