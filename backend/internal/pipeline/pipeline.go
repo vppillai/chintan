@@ -32,6 +32,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/breaker"
@@ -299,7 +300,17 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		capture.AudioBytes = audioBytes
 	}
 
+	// The timing record's first hop: how long the capture waited between the
+	// row being written and this worker picking it up. Source is two values,
+	// app or device, never the device id — a dimension is a billed identity.
 	started := p.now()
+	source := map[string]string{"Source": sourceDim(capture.Source)}
+	created, createdErr := model.ParseTime(capture.CreatedAt)
+	var queue time.Duration
+	if createdErr == nil {
+		queue = started.Sub(created)
+		obs.Duration(ctx, "CaptureQueueDelay", queue, source)
+	}
 	final, err := p.run(ctx, &capture)
 	elapsed := p.now().Sub(started)
 
@@ -308,6 +319,9 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 	// outcome counter alongside it would be a second billable metric per
 	// dimension value telling us a number this one already holds.
 	obs.Duration(ctx, "CapturePipelineDuration", elapsed, map[string]string{"Outcome": string(final.Status)})
+	if createdErr == nil && final.Status == model.StatusAppended {
+		obs.Duration(ctx, "CaptureEndToEnd", p.now().Sub(created), source)
+	}
 	p.markAudioProcessedIfSafe(ctx, &final)
 	if err == nil && service.CaptureIsTerminal(final.Status) {
 		p.verifyPeaks(ctx, &final)
@@ -327,10 +341,29 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		log.Error("capture pipeline could not complete", slog.String("error", err.Error()))
 		return final, err
 	}
-	log.Info("capture pipeline finished",
+	finished := []any{
 		slog.String("status", string(final.Status)),
-		slog.Int64("elapsed_ms", elapsed.Milliseconds()))
+		slog.Int64("elapsed_ms", elapsed.Milliseconds()),
+		slog.Int64("queue_ms", queue.Milliseconds()),
+		slog.String("source", source["Source"]),
+	}
+	// How far behind the device's own clock the row was written, when the
+	// sender said when it recorded.
+	if recorded, rerr := model.ParseTime(capture.RecordedAt); rerr == nil && createdErr == nil {
+		finished = append(finished, slog.Int64("device_lag_ms", created.Sub(recorded).Milliseconds()))
+	}
+	log.Info("capture pipeline finished", finished...)
 	return final, nil
+}
+
+// sourceDim is the Source dimension of the timing metrics: "device" for a
+// capture a device key made, "app" for the app's own. Two values, so the
+// metric costs two identities; the device id stays in the row.
+func sourceDim(source string) string {
+	if strings.HasPrefix(source, "device:") {
+		return "device"
+	}
+	return "app"
 }
 
 // RejectOversizedCapture fails a capture whose uploaded object is larger than

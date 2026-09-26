@@ -41,6 +41,10 @@ func (p *Pipeline) persist(ctx context.Context, capture *model.CaptureIndex) err
 	// Every write is progress: the API's retry reads this to know whether a
 	// worker can still be alive on the capture (service.CaptureStuck).
 	capture.LastProgressAt = model.FormatTime(p.now())
+	// The same instant is the stage's entry time in the timing record, once
+	// per status; CaptureStageEntered counts the stages, StageAt holds the
+	// times.
+	capture.StageEntered(capture.Status, capture.LastProgressAt)
 	updated, err := p.cfg.Store.PutCapture(ctx, *capture)
 	if err == nil {
 		*capture = updated
