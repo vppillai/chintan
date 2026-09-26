@@ -343,6 +343,21 @@
   gap: var(--space-2);
 }
 
+/*
+ * The summary's flex layout replaces the UA's list-item marker, so this is
+ * the disclosure cue in its place (a touch screen never shows the pointer).
+ * The motion token is 1 ms under reduced motion.
+ */
+.filing__more-chevron {
+  flex-shrink: 0;
+  color: var(--color-faint);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.filing__more[open] .filing__more-chevron {
+  transform: rotate(90deg);
+}
+
 /* --------------------------------------------------------------------------
    Filing banner — the note screen's copy of the row, for a recording still
    on its way into the open note (owner feedback 2026-09-24)

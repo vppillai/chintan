@@ -6,6 +6,7 @@ import { useApi } from '@/api/ApiProvider.tsx';
 import { refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
 import { isTerminalStatus } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
+import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
@@ -191,9 +192,19 @@ export function FilingRow() {
       )}
       {folded.length > 0 && (
         <details className="filing__more">
+          {/*
+            The summary's `display: flex` drops the native disclosure triangle,
+            and on a touch screen `cursor: pointer` shows nothing, so the
+            chevron is the cue that this line opens — the same one the You
+            screen's recipe uses. One span holds the sentence so flex layout
+            does not trim the word spaces between its text and its figures.
+          */}
           <summary>
-            and <span className="numeric">{foldedCaptures}</span> more filed into {folded.length}{' '}
-            {folded.length === 1 ? 'note' : 'notes'}
+            <Icon name="chevron-right" size={18} className="filing__more-chevron" />
+            <span>
+              and <span className="numeric">{foldedCaptures}</span> more filed into{' '}
+              <span className="numeric">{folded.length}</span> {folded.length === 1 ? 'note' : 'notes'}
+            </span>
           </summary>
           {folded.map(receipt)}
         </details>

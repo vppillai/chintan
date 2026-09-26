@@ -722,6 +722,8 @@ describe('receipts are one row per note, behind the rows that still need somethi
     const more = document.querySelector('details.filing__more');
     expect(more).not.toBeNull();
     expect(more?.querySelector('summary')).toHaveTextContent('and 2 more filed into 2 notes');
+    // The summary is flex, which drops the native disclosure triangle; the chevron is the cue in its place.
+    expect(more?.querySelector('summary > .filing__more-chevron')).not.toBeNull();
     expect(more?.querySelectorAll('.filing-row--receipt')).toHaveLength(2);
     // A native disclosure: the folded rows are on the page, reachable at zero state.
     expect(within(more as HTMLElement).getAllByRole('button', { name: /open the note/i })).toHaveLength(2);

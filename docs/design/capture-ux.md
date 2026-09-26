@@ -136,7 +136,9 @@ landing first: "Filed into “Roof repair”", or "3 filed into “Kitchen
 rebuild”" with how long ago the last one landed where a moving row shows the
 recording's length (the note's Recordings tab has the lengths). The first
 three notes are rows; the fourth onward fold behind a native `<details>`
-whose summary reads "and 4 more filed into 2 notes", so nothing is
+whose summary reads "and 4 more filed into 2 notes" behind a chevron that
+turns as it opens (the summary's flex layout drops the native marker, and a
+touch screen shows no pointer), so nothing is
 unreachable and the busiest note is never the invisible one — with one card
 per capture and a three-card cap, live on prod with 4 + 2 + 1 filings, the
 two Kitchen-rebuild receipts showed twice while all four Shopping-list
