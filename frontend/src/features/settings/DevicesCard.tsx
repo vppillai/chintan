@@ -10,10 +10,29 @@ import { config } from '@/config/env.ts';
 import { describeAgo, formatRowTime } from '@/features/notes/groups.ts';
 
 import { RowButton, SettingsCard } from './SettingsCard.tsx';
+import { formatMegabytes } from './usage.ts';
 
 /** The server's own limits (`docs/design/inbox.md`); said here so the row can say why it is disabled. */
 export const MAX_DEVICES = 10;
 export const DEVICE_NAME_MAX = 60;
+/** Why Add and Rotate are held at the limit: a rotation briefly needs an eleventh row. */
+const FULL_HINT = 'Ten is the limit; remove one first';
+
+/**
+ * The row's second line: what the key sent this month and when last, once it
+ * has sent something this month; when it was added and whether it was ever
+ * used, otherwise. "Sent" counts requests, which is captures near enough — a
+ * two-step upload is two of them.
+ */
+export function deviceHint(device: DeviceWire): string {
+  if (device.usage_month) {
+    const { requests, bytes } = device.usage_month;
+    const last = device.last_used_at ? ` · Last used ${describeAgo(device.last_used_at)}` : '';
+    return `${String(requests)} sent this month · ${formatMegabytes(bytes)}${last}`;
+  }
+  const added = device.created_at ? `Added ${formatRowTime(device.created_at)} · ` : '';
+  return `${added}${device.last_used_at ? `Last used ${describeAgo(device.last_used_at)}` : 'Never used'}`;
+}
 
 /** The one-shot inbox: POST the audio bytes, one header, done. */
 export function inboxAudioUrl(apiUrl: string = config.apiUrl): string {
@@ -72,6 +91,11 @@ function failureText(error: unknown): string {
  * where the thumb is, and stays until Done: a person who taps away before
  * copying has lost nothing but a minute, because the next step is Remove and
  * Add again.
+ *
+ * Rotate key is that pair in the right order, new key first: it mints a
+ * device with the same name, shows the key, and revokes the old device only
+ * on Done, so the device is never without a working key while the person
+ * pastes the new one in. No wire of its own — a POST and then a DELETE.
  */
 export function DevicesCard() {
   const devices = useDevices();
@@ -83,6 +107,8 @@ export function DevicesCard() {
   const [name, setName] = useState('');
   /** The device just created, whose key is on screen until Done. */
   const [minted, setMinted] = useState<DeviceCreatedWire | null>(null);
+  /** The device whose key `minted` replaces, revoked on Done; null for a plain Add. */
+  const [rotating, setRotating] = useState<DeviceWire | null>(null);
   /** The device Remove was tapped on, awaiting the confirmation. */
   const [removing, setRemoving] = useState<DeviceWire | null>(null);
   const keyRef = useRef<HTMLDivElement>(null);
@@ -124,6 +150,39 @@ export function DevicesCard() {
     create.reset();
   };
 
+  // One send, as Add is (R4-5). A failed create rotates nothing: the old key
+  // is untouched and the server's words show under the list.
+  const rotate = (device: DeviceWire): void => {
+    setAdding(false);
+    setMinted(null);
+    setRotating(null);
+    create.reset();
+    create.mutate(
+      { name: device.name },
+      {
+        onSuccess: (created) => {
+          setMinted(created);
+          setRotating(device);
+        },
+        onError: (error) => {
+          if (error instanceof ApiError && error.kind === 'timeout') void devices.refetch();
+        },
+      },
+    );
+  };
+
+  const done = (): void => {
+    // The old key goes only now, once the new one has been on screen. A
+    // remove that fails shows the remove error and leaves both rows listed,
+    // so the old device can be removed by hand.
+    if (rotating) remove.mutate(rotating.id);
+    setRotating(null);
+    setMinted(null);
+    // The mutation's result still held the key; "it will not be shown again"
+    // should mean it is gone from memory too.
+    create.reset();
+  };
+
   return (
     <SettingsCard
       title="Devices & shortcuts"
@@ -158,12 +217,21 @@ export function DevicesCard() {
             <li key={device.id} className="you-row">
               <span className="you-row__label">
                 <span className="you-row__label-text">{device.name}</span>
-                <span className="you-row__hint">
-                  {device.created_at ? `Added ${formatRowTime(device.created_at)} · ` : ''}
-                  {device.last_used_at ? `Last used ${describeAgo(device.last_used_at)}` : 'Never used'}
-                </span>
+                <span className="you-row__hint">{deviceHint(device)}</span>
               </span>
               <div className="you-row__control">
+                <button
+                  type="button"
+                  className="settings-status__action"
+                  aria-label={`Rotate key for ${device.name}`}
+                  title={full ? FULL_HINT : undefined}
+                  disabled={full || create.isPending || remove.isPending}
+                  onClick={() => {
+                    rotate(device);
+                  }}
+                >
+                  Rotate key
+                </button>
                 <button
                   type="button"
                   className="settings-status__action"
@@ -186,11 +254,18 @@ export function DevicesCard() {
           {failureText(remove.error)}
         </p>
       )}
+      {!adding && create.isError && (
+        <p className="you-card__note" role="alert">
+          {failureText(create.error)}
+        </p>
+      )}
 
       {minted && (
         <div className="device-key" role="status" tabIndex={-1} ref={keyRef}>
           <p>
-            The key for <strong>{minted.name}</strong>. Copy it now — it will not be shown again.
+            {rotating ? 'The new key for ' : 'The key for '}
+            <strong>{minted.name}</strong>. Copy it now — it will not be shown again.
+            {rotating ? ' The old key keeps working until you tap Done.' : ''}
           </p>
           <code className="device-key__value">{minted.key}</code>
           <div className="device-key__actions">
@@ -199,16 +274,7 @@ export function DevicesCard() {
               text={() => minted.key}
               className="settings-status__action settings-status__action--primary"
             />
-            <button
-              type="button"
-              className="settings-status__action"
-              onClick={() => {
-                setMinted(null);
-                // The mutation's result still held the key; "it will not be
-                // shown again" should mean it is gone from memory too.
-                create.reset();
-              }}
-            >
+            <button type="button" className="settings-status__action" onClick={done}>
               Done
             </button>
           </div>
@@ -255,11 +321,12 @@ export function DevicesCard() {
       ) : (
         <RowButton
           label="Add a device"
-          hint={full ? 'Ten is the limit; remove one first' : 'Get a key for a watch, a shortcut or another app'}
+          hint={full ? FULL_HINT : 'Get a key for a watch, a shortcut or another app'}
           icon="plus"
           disabled={full || devices.isLoading}
           onClick={() => {
             setMinted(null);
+            setRotating(null);
             create.reset();
             setAdding(true);
           }}

@@ -636,13 +636,16 @@ export interface UsageWire extends UsageTotalsWire {
 /**
  * One device, as `GET /v1/devices` lists it — never with its key, of which the
  * server keeps only a hash. `last_used_at` is null until the device has sent
- * something.
+ * something; `usage_month` is what the key sent in the current UTC month
+ * (accepted requests and their body bytes) and null when nothing, including
+ * a device that last sent in an earlier month.
  */
 export interface DeviceWire {
   id: string;
   name: string;
   created_at: string;
   last_used_at: string | null;
+  usage_month: { requests: number; bytes: number; month: string } | null;
 }
 
 /**
