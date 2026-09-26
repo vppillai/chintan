@@ -66,8 +66,9 @@ func NoteIsActive(n model.NoteIndex) bool {
 	return strings.TrimSpace(n.DeletedAt) == ""
 }
 
-// maxTagLen bounds one tag. Tags are rendered into list filters and into the
-// routing prompt, so an unbounded tag is a stored cost amplifier.
+// maxTagLen bounds one tag. Tags are rendered into list filters and search
+// (never into the routing prompt, which sees titles and aliases only), so an
+// unbounded tag is a stored cost amplifier.
 const maxTagLen = 40
 
 // normalizeTags folds tags to a canonical form: trimmed, lowercased, collapsed

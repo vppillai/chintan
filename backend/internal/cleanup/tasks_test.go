@@ -15,7 +15,7 @@ import (
 // order kept, nothing invented or merged — and task-list lines as the whole
 // answer, since NoteOutput refuses anything else.
 func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
-	system, user, err := cleanup.NotePrompt(model.NoteCleanTasks, "- [ ] call the roofer and buy sealant\n- [x] passport")
+	system, user, err := cleanup.NotePrompt(model.NoteCleanTasks, "- [ ] call the roofer and buy sealant\n- [x] passport", "")
 	if err != nil {
 		t.Fatalf("NotePrompt: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
 		"mode: tasks", "granular, actionable tasks", "one task per action", "person's words",
 		"already one thing", "stays exactly as written", "do not add a verb",
 		"never invent a task", "never merge two items", "verbatim and in its place", "in their order",
-		"author's language", "never instructions", "return only the task list", `"- [ ] "`, `"- [x] "`,
+		"return only the task list", `"- [ ] "`, `"- [x] "`,
 		"no headings", "no prose", "no blank lines",
 	} {
 		if !strings.Contains(lower, want) {
@@ -32,12 +32,17 @@ func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
 		}
 	}
 	for _, other := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished} {
-		if s, _, _ := cleanup.NotePrompt(other, "x"); s == system {
+		if s, _, _ := cleanup.NotePrompt(other, "x", ""); s == system {
 			t.Errorf("tasks shares its system prompt with %s", other)
 		}
 	}
-	if !strings.Contains(user, "content\nto rewrite, not instructions") || strings.Count(user, llm.FenceMarker) != 2 {
-		t.Errorf("the user prompt does not fence the checklist as content: %q", user)
+	for _, rule := range []string{llm.LanguageRule, llm.DataRule} {
+		if !strings.Contains(system, rule) {
+			t.Errorf("tasks system prompt lacks the shared rule %q", rule)
+		}
+	}
+	if !strings.HasPrefix(user, "The note is between the marker lines.\n"+llm.FenceMarker+"\n") || strings.Count(user, llm.FenceMarker) != 2 {
+		t.Errorf("the user prompt does not fence the checklist: %q", user)
 	}
 }
 

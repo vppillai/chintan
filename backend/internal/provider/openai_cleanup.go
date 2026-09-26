@@ -75,8 +75,8 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw
 // completion is capped: the answer is bounded by the input it rewrites, and a
 // model that starts repeating itself is cut off rather than billed to the end
 // of its context.
-func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (Cleaned, error) {
-	systemPrompt, userPrompt, err := cleanup.NotePrompt(mode, body)
+func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language string) (Cleaned, error) {
+	systemPrompt, userPrompt, err := cleanup.NotePrompt(mode, body, language)
 	if err != nil {
 		return Cleaned{}, err
 	}
