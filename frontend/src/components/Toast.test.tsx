@@ -37,6 +37,37 @@ describe('Toast', () => {
     expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
   });
 
+  it('pauses while Undo has focus, and a later notice starts its own clock after Undo closed one', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<Toast />);
+
+    act(() => {
+      showToast({ message: 'Deleted', action: { label: 'Undo', onSelect: () => undefined } });
+    });
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    act(() => {
+      undo.focus();
+    });
+    act(() => {
+      vi.advanceTimersByTime(TOAST_MS + 500);
+    });
+    expect(screen.getByRole('status')).toHaveTextContent('Deleted');
+
+    // Undo unmounts the card mid-click: no blur fires, so the attention it
+    // recorded must not carry over to the next notice.
+    await user.click(undo);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+
+    act(() => {
+      showToast({ message: '2 notes deleted' });
+    });
+    act(() => {
+      vi.advanceTimersByTime(TOAST_MS + 500);
+    });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+  });
+
   it('clears itself after TOAST_MS', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     render(<Toast />);
