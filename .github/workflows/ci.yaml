@@ -124,6 +124,14 @@ jobs:
         run: |
           python3 -m pip install --quiet --disable-pip-version-check cfn-lint==1.56.0
           cfn-lint infrastructure/*.yaml
+      # The custom-domain resources exist only when an instance config sets
+      # api_host. cfn-lint proves the Conditions they name exist; this proves
+      # they name them, so the shipped configs still deploy nothing new.
+      # PyYAML arrives with cfn-lint.
+      - name: The custom-domain provision is dormant without api_host
+        run: scripts/check-custom-domain-dormant.sh
+      - name: Prove the check can fail
+        run: scripts/check-custom-domain-dormant.sh --self-test
 
   shell:
     name: shellcheck and shfmt

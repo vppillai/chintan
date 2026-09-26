@@ -33,15 +33,46 @@ Parameters:
       - staging
       - dev
   
-  PagesHost:
+  SiteBaseUrl:
     Type: String
-    Description: GitHub Pages host for Cognito callbacks
-    MinLength: 1
-  
-  RepoName:
+    MinLength: 8
+    AllowedPattern: '^https://[^/]+(/[^/]+)*$'
+    Description: >
+      Where the bundles are served from, without the instance's site path and
+      without a trailing slash: https://<owner>.github.io/<repo> on GitHub
+      Pages, or https://app.example.com behind a custom domain (`app_host` in
+      config/instances/*.yaml). The Cognito callback and logout URLs are this
+      base, a slash, the site path and a slash, and Cognito matches
+      redirect_uri byte for byte. Computed by scripts/ci-deploy-stack.sh. It
+      replaced the PagesHost and RepoName pair, which could only spell the
+      Pages form of that URL.
+
+  ApiHost:
     Type: String
-    Description: Repository name for Cognito callback URLs
-    MinLength: 1
+    Default: ''
+    AllowedPattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+    Description: >
+      Custom hostname for the API, e.g. api.example.com — `api_host` in
+      config/instances/*.yaml. Empty, the default, leaves the API on its
+      execute-api URL and creates nothing: ApiCertificate, ApiDomainName,
+      ApiMapping and ApiAliasRecord all carry Condition HasApiHost. Set, the
+      stack requests an ACM certificate for the name (DNS validation, free),
+      fronts the HTTP API with it, and the ApiEndpoint output becomes
+      https://<ApiHost> — which scripts/ci-build-site.sh bakes into the bundle
+      as VITE_API_URL and the Devices card hands to every recorder.
+
+  DnsZoneId:
+    Type: String
+    Default: ''
+    Description: >
+      Route 53 hosted zone that holds ApiHost — `dns_zone_id` in the instance
+      config. Set, the stack writes the certificate's validation CNAME and the
+      API's alias record itself and the deploy completes unattended. Empty, the
+      two records are yours to create at the DNS provider: the validation
+      CNAME is printed in the stack events while ApiCertificate waits for it,
+      and the API's target is the ApiDomainTarget output. Ignored without
+      ApiHost. The stack never creates a zone: a zone costs $0.50 a month and
+      outlives any stack, so it is the owner's decision, not a resource here.
 
   SitePath:
     Type: String
@@ -173,6 +204,11 @@ Parameters:
 Conditions:
   ThreatProtectionAvailable: !Equals [!Ref CognitoTier, 'PLUS']
   HasSitePath: !Not [!Equals [!Ref SitePath, '']]
+  # The custom API domain. Both false on every deploy that has no `api_host`,
+  # so the four resources they guard do not exist and today's stacks are
+  # unchanged; scripts/check-custom-domain-dormant.sh holds them to that.
+  HasApiHost: !Not [!Equals [!Ref ApiHost, '']]
+  HasDnsZone: !And [!Condition HasApiHost, !Not [!Equals [!Ref DnsZoneId, '']]]
   HasPasskeys: !Not [!Equals [!Ref PasskeyRelyingPartyID, '']]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   HasSpendCap: !Not [!Equals [!Ref DailySpendCapMicros, 0]]
@@ -320,11 +356,11 @@ Resources:
         # client requests a scope the pool no longer grants.
       CallbackURLs:
         - !Sub
-          - 'https://${PagesHost}/${RepoName}/${Path}/'
+          - '${SiteBaseUrl}/${Path}/'
           - Path: !If [HasSitePath, !Ref SitePath, !Ref InstanceName]
       LogoutURLs:
         - !Sub
-          - 'https://${PagesHost}/${RepoName}/${Path}/'
+          - '${SiteBaseUrl}/${Path}/'
           - Path: !If [HasSitePath, !Ref SitePath, !Ref InstanceName]
       SupportedIdentityProviders:
         - COGNITO
@@ -1938,6 +1974,93 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*'
 
   # ---------------------------------------------------------------------------
+  # The custom API domain: api.example.com in front of the HTTP API.
+  #
+  # Four resources, every one conditional on ApiHost, so a stack with no
+  # `api_host` in its config is byte-for-byte the stack it was before these
+  # existed. Nothing above changes for them: the API id, the routes, the
+  # authorizer and LambdaApiPermission's SourceArn are all keyed on HttpApi,
+  # and a request that arrives through the domain is the same API invocation.
+  # The origin the browser and every device use is the ApiEndpoint output,
+  # which flips to https://<ApiHost> below.
+  #
+  # The certificate is regional and free. An HTTP API's custom domain is a
+  # REGIONAL endpoint, so the certificate has to be in this stack's region —
+  # unlike a Cognito custom domain, whose CloudFront-fronted certificate has to
+  # be in us-east-1 and cannot come from this template; that is why the
+  # sign-in page keeps its amazoncognito.com address (README, Custom domain).
+  #
+  # Validation is by DNS, in one of two ways. With DnsZoneId, CloudFormation
+  # writes the validation CNAME into the zone as the deploy role and the
+  # certificate issues in a few minutes. Without it, ApiCertificate sits in
+  # CREATE_IN_PROGRESS with the record to create in its stack events
+  # ("Content of DNS Record is: ...") until the owner adds it; ACM issues the
+  # same validation record for the same name in the same account every time,
+  # so a stack rebuilt later validates against the record already there.
+  # ---------------------------------------------------------------------------
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasApiHost
+    Properties:
+      DomainName: !Ref ApiHost
+      ValidationMethod: DNS
+      DomainValidationOptions: !If
+        - HasDnsZone
+        - - DomainName: !Ref ApiHost
+            HostedZoneId: !Ref DnsZoneId
+        - !Ref AWS::NoValue
+      # The Project tag is what CfnDeployRole's acm:DeleteCertificate grant is
+      # conditioned on (infrastructure/bootstrap.yaml); born tagged, like the
+      # KMS key was.
+      Tags:
+        - Key: Project
+          Value: chintan
+        - Key: Instance
+          Value: !Ref InstanceName
+        - Key: Application
+          Value: Chintan
+
+  ApiDomainName:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasApiHost
+    Properties:
+      DomainName: !Ref ApiHost
+      DomainNameConfigurations:
+        - CertificateArn: !Ref ApiCertificate
+          EndpointType: REGIONAL
+          SecurityPolicy: TLS_1_2
+      Tags:
+        Project: chintan
+        Instance: !Ref InstanceName
+        Application: Chintan
+
+  # Every path on the domain maps to this API's $default stage, so
+  # https://api.example.com/v1/health is the same request as the execute-api
+  # URL's. The stage name is a string, not a reference, hence DependsOn.
+  ApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasApiHost
+    DependsOn: ApiStage
+    Properties:
+      ApiId: !Ref HttpApi
+      DomainName: !Ref ApiDomainName
+      Stage: '$default'
+
+  # Only with a zone to write into. Without one, ApiDomainTarget in Outputs is
+  # the value to CNAME the host to at the DNS provider.
+  ApiAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsZone
+    Properties:
+      HostedZoneId: !Ref DnsZoneId
+      Name: !Ref ApiHost
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApiDomainName.RegionalDomainName
+        HostedZoneId: !GetAtt ApiDomainName.RegionalHostedZoneId
+        EvaluateTargetHealth: false
+
+  # ---------------------------------------------------------------------------
   # Alerting. An unattended pipeline that fails silently is worse than no
   # pipeline: the user believes the recording was filed.
   # ---------------------------------------------------------------------------
@@ -2297,11 +2420,32 @@ Resources:
             Resource: !Sub 'arn:aws:budgets::${AWS::AccountId}:budget/${MonthlyBudget}'
 
 Outputs:
+  # The API's public origin: the custom domain when ApiHost is set, otherwise
+  # the execute-api URL. This is what scripts/ci-build-site.sh bakes into the
+  # bundle as VITE_API_URL and what the Devices card prints, so setting
+  # `api_host` in the config moves the app and every recorder with one deploy.
   ApiEndpoint:
-    Description: HTTP API Gateway endpoint URL
-    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Description: The API origin the bundle and every device use
+    Value: !If
+      - HasApiHost
+      - !Sub 'https://${ApiHost}'
+      - !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
     Export:
       Name: !Sub '${AWS::StackName}-ApiEndpoint'
+
+  # The execute-api URL, unconditionally. scripts/deploy.sh smokes this one so
+  # a deploy proves the Lambda before DNS proves the domain; it smokes
+  # ApiEndpoint as well when the two differ.
+  ApiGatewayEndpoint:
+    Description: HTTP API Gateway endpoint URL, regardless of ApiHost
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiGatewayEndpoint'
+
+  ApiDomainTarget:
+    Condition: HasApiHost
+    Description: CNAME ApiHost to this at the DNS provider when DnsZoneId is not set
+    Value: !GetAtt ApiDomainName.RegionalDomainName
 
   UserPoolId:
     Description: Cognito User Pool ID
