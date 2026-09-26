@@ -19,6 +19,12 @@
   display: grid;
 }
 
+/* The collapsed Done list: the class above outranks the browser's own
+   `[hidden]` rule, so the attribute has to be honoured here. */
+.checklist[hidden] {
+  display: none;
+}
+
 /* A row is the 44 px target its checkbox needs, and a hairline apart from the
    next; the last one keeps the card's own edge. Its parts align to the top,
    not the middle: an item that wraps onto more lines grows downward and its

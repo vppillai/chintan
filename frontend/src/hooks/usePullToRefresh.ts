@@ -15,6 +15,11 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
  * this never sees it. Once pulling, the default is prevented so the browser's
  * own rubber-band or native pull-to-refresh does not fire underneath
  * (`overscroll-behavior: contain` on `.app__main` is the belt to this brace).
+ * A move whose default something nearer the finger has already prevented is
+ * that handler's touch, not a pull — a row lifted by its grip or by a hold
+ * (`useDragReorder`) says so on every `touchmove` — and the pull stands down
+ * for it: without this a downward drag at the top of a list pulled the page
+ * along under the lifted row, and the row never crossed its neighbour.
  *
  * The pull distance is written straight to a CSS custom property on the
  * indicator element rather than through React state — a `touchmove` fires at
@@ -100,6 +105,11 @@ export function usePullToRefresh(
 
     const onTouchMove = (event: TouchEvent): void => {
       if (startY === null || busy) return;
+      if (event.defaultPrevented) {
+        // Claimed nearer the finger: a lifted row being dragged. Not a pull.
+        reset();
+        return;
+      }
       const y = clientYOf(event);
       if (y === null) return;
       const distance = y - startY;
