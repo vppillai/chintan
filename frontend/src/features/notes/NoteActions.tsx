@@ -8,6 +8,7 @@ import {
   usePinNote,
   useRestoreNote,
   useSettings,
+  useUndoDelete,
 } from '@/api/queries.ts';
 import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
@@ -18,13 +19,13 @@ import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
+import { showDeleted } from '@/components/Toast.tsx';
 import { languageName } from '@/features/settings/languages.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import { CheckMark } from './ChecklistEditor.tsx';
 import { checklistToProse, proseToChecklist } from './checklist.ts';
 import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
-import { showDeleted } from './purge.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
@@ -88,6 +89,7 @@ export function NoteMenu({
   const navigate = useNavigate();
   const archive = useArchiveNote();
   const restore = useRestoreNote();
+  const undo = useUndoDelete();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
   // A pin made offline would pause until the network returned and then fire
@@ -95,8 +97,9 @@ export function NoteMenu({
   const online = useOnline();
   const [confirmingPurge, setConfirmingPurge] = useState(false);
 
-  const busy = archive.isPending || restore.isPending || purge.isPending || pin.isPending;
-  const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
+  const busy =
+    archive.isPending || restore.isPending || undo.isPending || purge.isPending || pin.isPending;
+  const failure = archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error;
 
   const items: OverflowMenuItem[] = [
     { label: 'Details', onSelect: () => onOpenPanel('details') },
@@ -142,10 +145,11 @@ export function NoteMenu({
                 // history means Back walks straight into a screen that 404s.
                 // The toast outlives this menu — it is the shell's — and Undo
                 // restores through this hook, whose own `onSuccess` refetches
-                // the lists whether or not the menu is still mounted.
+                // the lists whether or not the menu is still mounted; handed
+                // the note as it was, it re-pins a pinned one (`useUndoDelete`).
                 onSuccess: () => {
                   showDeleted(1, () => {
-                    restore.mutate(note.id);
+                    undo.mutate([note]);
                   });
                   void navigate(ROUTES.notes, { replace: true });
                 },

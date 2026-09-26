@@ -92,9 +92,11 @@ the note header's ⋮ and the selection bar — is the archive (`useArchiveNote`
 `useBulkArchiveNotes`): it happens on the tap with no dialog, and a toast in
 the shell (`components/Toast.tsx`, a row above the tab bar like the update
 prompt, never over the record button) says "Deleted · kept in Archive for 30
-days" with an Undo button for six seconds. Undo is the restore mutation; the
-toast is a polite live region that is always mounted, and the button is a
-real one, so a keyboard reaches it. There is no separate Archive item: the
+days" with an Undo button for six seconds — the clock stops while a pointer
+rests on it or focus is in it. Undo restores, and re-pins what was pinned; the
+toast is a polite live region that is always mounted and displayed (the card
+inside it comes and goes), and the button is a real one, so a keyboard reaches
+it. There is no separate Archive item: the
 Archive is where deleted notes wait, thirty days, until the sweep purges them
 or Restore brings them back. The Archived chip and view keep their names.
 
@@ -102,9 +104,13 @@ Delete forever, in the archive only — row, header and bar — is a plain
 `ConfirmDialog`: the sentence names the note and what goes with it, one
 destructive button, Cancel with focus. For a bulk Delete forever of more than
 ten notes (`HOLD_TO_DELETE_ABOVE`) the button reads "Hold to delete N notes"
-and has to be held for a second (`holdMs`): a finger, a mouse button, or Space
-or Enter held on the keyboard; the fill across it shows the second passing and
-appears whole under reduced motion. Deleting a recording (`Recordings.tsx`) is
+and has to be held for a second (`holdMs`) under a finger or a mouse button —
+the pointer is where the slip is; the fill across it shows the second passing
+and appears whole under reduced motion. Enter or Space, and whatever a screen
+reader or a switch activates a button with, confirm at once: a held keystroke
+is a timing WCAG 2.1.1 forbids, and focus lands on Cancel, so reaching the
+control took a deliberate Tab. Undo re-pins a note that was pinned (the
+server's restore comes back unpinned; `useUndoDelete`). Deleting a recording (`Recordings.tsx`) is
 a plain confirm too. The `requireText` typed gate is gone from `ConfirmDialog`.
 
 ## The chips

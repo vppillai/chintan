@@ -1,5 +1,3 @@
-import { showToast } from '@/components/Toast.tsx';
-
 /**
  * How long an archived note has left.
  *
@@ -58,15 +56,3 @@ export function describePurge(countdown: PurgeCountdown): string {
   }
 }
 
-/**
- * The Undo toast after a delete on Home, which is an archive: the note (or
- * the notes) can be had back for the purge window, and this is the one place
- * the app says so at the moment it matters. `undo` restores them; the caller
- * knows which mutation that is.
- */
-export function showDeleted(count: number, undo: () => void): void {
-  showToast({
-    message: `${count === 1 ? 'Deleted' : `${String(count)} notes deleted`} · kept in Archive for 30 days`,
-    action: { label: 'Undo', onSelect: undo },
-  });
-}

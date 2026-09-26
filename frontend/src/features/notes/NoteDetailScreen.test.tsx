@@ -51,12 +51,35 @@ async function openPanel(user: ReturnType<typeof userEvent.setup>, item: 'Detail
 function server(initial: StoredNote[]) {
   const notes = new Map(initial.map((note) => [note.id, note]));
   const patches: { version: number; status: number; body: Record<string, unknown> }[] = [];
+  const calls: string[] = [];
   let gets = 0;
 
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     const method = init?.method ?? 'GET';
+    calls.push(`${method} ${url.pathname}`);
     const detail = /\/v1\/notes\/([^/]+)$/.exec(url.pathname);
+
+    // The three ways a note leaves: the archive (204), the way back from it,
+    // and the purge, which the header's ⋮ reaches through a dialog.
+    if (detail && method === 'DELETE') {
+      const note = notes.get(detail[1] ?? '');
+      if (note) Object.assign(note, { archived: true, version: note.version + 1 });
+      return new Response(null, { status: 204 });
+    }
+    const restore = /\/v1\/notes\/([^/]+)\/restore$/.exec(url.pathname);
+    if (restore && method === 'POST') {
+      const note = notes.get(restore[1] ?? '');
+      if (!note) return json({ type: 'about:blank', title: 'Not found', status: 404 }, 404);
+      Object.assign(note, { archived: false, version: note.version + 1 });
+      const { body: _body, captures: _captures, ...row } = note;
+      return json(row);
+    }
+    const permanent = /\/v1\/notes\/([^/]+)\/permanent$/.exec(url.pathname);
+    if (permanent && method === 'DELETE') {
+      notes.delete(permanent[1] ?? '');
+      return new Response(null, { status: 204 });
+    }
 
     if (detail && method === 'GET') {
       gets += 1;
@@ -108,6 +131,7 @@ function server(initial: StoredNote[]) {
   return {
     fetchImpl,
     patches,
+    calls,
     notes,
     get gets() {
       return gets;
@@ -583,6 +607,77 @@ describe('the note is panels under one strip', () => {
     expect(screen.getByRole('heading', { name: 'Share' })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Close share' }));
     expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+  });
+});
+
+/**
+ * Getting rid of the note from its own screen, through the header's ⋮
+ * (`NoteMenu`). Delete is the archive and asks nothing; Delete forever asks
+ * once, plainly. There is no typed word (owner, 2026-09-26).
+ */
+describe('deleting from the note screen', () => {
+  async function loaded() {
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+  }
+
+  it('Delete archives with no dialog, lands on the library and offers Undo, which restores', async () => {
+    const user = userEvent.setup();
+    const api = server([ROOF]);
+    const { router } = mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/roof-repair');
+    });
+    expect(api.calls).not.toContain('DELETE /v1/notes/roof-repair/permanent');
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
+    // The note's URL is not left in the history for Back to 404 into.
+    expect(router.state.location.search).toBe('');
+
+    // The toast is the shell's, so it survives the navigation, and says where the note went.
+    expect(screen.getByText('Deleted · kept in Archive for 30 days')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('POST /v1/notes/roof-repair/restore');
+    });
+    expect(api.notes.get('roof-repair')?.archived).toBe(false);
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('Delete forever on an archived note opens a plain confirm — no textbox, focus on Cancel — whose button purges', async () => {
+    const user = userEvent.setup();
+    const api = server([
+      { ...ROOF, archived: true, purge_after: new Date(Date.now() + 10 * 86_400_000).toISOString() },
+    ]);
+    const { router } = mount(api.fetchImpl, '/notes/roof-repair');
+    await loaded();
+
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete forever' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(dialog).toHaveTextContent(/recordings and transcripts/i);
+
+    await user.click(within(dialog).getByRole('button', { name: 'Delete forever' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('DELETE /v1/notes/roof-repair/permanent');
+    });
+    expect(api.calls).not.toContain('DELETE /v1/notes/roof-repair');
+    expect(api.notes.has('roof-repair')).toBe(false);
+    // Back to the archive, which is where this note was.
+    await waitFor(() => {
+      expect(router.state.location.search).toBe('?view=archived');
+    });
   });
 });
 

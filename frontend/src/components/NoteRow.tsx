@@ -7,6 +7,7 @@ import {
   useDeleteNoteForever,
   usePinNote,
   useRestoreNote,
+  useUndoDelete,
 } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
@@ -19,11 +20,12 @@ import {
 } from '@/features/notes/checklist.ts';
 import { CheckMark } from '@/features/notes/ChecklistEditor.tsx';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
-import { describePurge, purgeCountdown, showDeleted } from '@/features/notes/purge.ts';
+import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useLongPress } from '@/hooks/useLongPress.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
+import { showDeleted } from './Toast.tsx';
 import { Icon } from './Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu.tsx';
 import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
@@ -135,6 +137,7 @@ export function NoteRow({
   );
   const archive = useArchiveNote();
   const restore = useRestoreNote();
+  const undo = useUndoDelete();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
   const [confirmingPurge, setConfirmingPurge] = useState(false);
@@ -149,8 +152,9 @@ export function NoteRow({
     focusCheckbox.current = false;
     checkboxRef.current?.focus();
   }, [selectable]);
-  const busy = archive.isPending || restore.isPending || purge.isPending || pin.isPending;
-  const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
+  const busy =
+    archive.isPending || restore.isPending || undo.isPending || purge.isPending || pin.isPending;
+  const failure = archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error;
 
   const tags = note.tags ?? [];
   const time = formatRowTime(note.updated_at);
@@ -262,17 +266,19 @@ export function NoteRow({
    * Delete on Home: archive, then offer Undo. Chained on the promise rather
    * than in a per-call `onSuccess`, which TanStack drops once the row has
    * unmounted — and the archive's own refetch is about to remove this row
-   * from the list it is in. Undo calls the restore hook of this same row for
+   * from the list it is in. Undo calls the undo hook of this same row for
    * the same reason: its hook-level `onSuccess` refetches the lists whether
-   * or not the row is still mounted. A failure lands on the mutation's state
-   * and is shown beneath the row, with no toast claiming otherwise.
+   * or not the row is still mounted. It is handed the note as it was, so a
+   * pinned note comes back pinned — the server's restore alone would not
+   * (`useUndoDelete`). A failure lands on the mutation's state and is shown
+   * beneath the row, with no toast claiming otherwise.
    */
   const remove = (): void => {
     void archive
       .mutateAsync(note.id)
       .then(() => {
         showDeleted(1, () => {
-          restore.mutate(note.id);
+          undo.mutate([note]);
         });
       })
       .catch(() => undefined);

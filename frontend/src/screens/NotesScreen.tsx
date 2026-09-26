@@ -17,6 +17,7 @@ import {
   useBulkArchiveNotes,
   useBulkPurgeNotes,
   useBulkRestoreNotes,
+  useUndoDelete,
   useNotes,
   useSearch,
   useSearchCorpus,
@@ -30,6 +31,7 @@ import { LoadMore } from '@/components/LoadMore.tsx';
 import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
+import { showDeleted } from '@/components/Toast.tsx';
 import { config } from '@/config/env.ts';
 import { useAskThread } from '@/features/ask/useAskThread.ts';
 import { PasskeyNudge } from '@/features/auth/PasskeyNudge.tsx';
@@ -37,7 +39,6 @@ import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { PinnedGroup } from '@/features/notes/PinnedGroup.tsx';
 import { describeToday, groupByDay, splitPinned } from '@/features/notes/groups.ts';
-import { showDeleted } from '@/features/notes/purge.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
@@ -211,6 +212,7 @@ export function NotesScreen() {
   const [confirming, setConfirming] = useState<'restore' | 'purge' | null>(null);
   const bulkArchive = useBulkArchiveNotes();
   const bulkRestore = useBulkRestoreNotes();
+  const undo = useUndoDelete();
   const bulkPurge = useBulkPurgeNotes();
   const bulkBusy = bulkArchive.isPending || bulkRestore.isPending || bulkPurge.isPending;
 
@@ -802,7 +804,8 @@ export function NotesScreen() {
             /*
               Delete on Home is the archive, on the tap: the notes wait in the
               Archive for thirty days, and the toast offers Undo, which
-              restores the ones that went. This screen stays mounted through
+              restores the ones that went — pinned again, where they were
+              pinned (`useUndoDelete`). This screen stays mounted through
               the mutation, so the per-call `onSuccess` is safe here where a
               row's is not (`NoteRow`).
             */
@@ -811,17 +814,20 @@ export function NotesScreen() {
               className="selection-bar__action selection-bar__action--destructive"
               disabled={selectedIds.size === 0 || bulkBusy}
               onClick={() => {
-                const ids = Array.from(selectedIds);
-                bulkArchive.mutate(ids, {
-                  onSuccess: (results) => {
-                    exitSelecting();
-                    const gone = ids.filter((_id, i) => results[i]?.status === 'fulfilled');
-                    if (gone.length === 0) return;
-                    showDeleted(gone.length, () => {
-                      bulkRestore.mutate(gone);
-                    });
+                const chosen = visible.filter((note) => selectedIds.has(note.id));
+                bulkArchive.mutate(
+                  chosen.map((note) => note.id),
+                  {
+                    onSuccess: (results) => {
+                      exitSelecting();
+                      const gone = chosen.filter((_note, i) => results[i]?.status === 'fulfilled');
+                      if (gone.length === 0) return;
+                      showDeleted(gone.length, () => {
+                        undo.mutate(gone);
+                      });
+                    },
                   },
-                });
+                );
               }}
             >
               {bulkArchive.isPending ? 'Deleting…' : 'Delete'}
