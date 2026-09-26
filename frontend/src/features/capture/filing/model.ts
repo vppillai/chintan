@@ -1,4 +1,5 @@
 import { ApiError } from '@/api/problem.ts';
+import { STUCK_AFTER_MS } from '@/api/queries.ts';
 import { isTerminalStatus, type CaptureStatus, type CaptureWire } from '@/api/schema.ts';
 
 /**
@@ -35,18 +36,10 @@ export function stageIndex(status: CaptureStatus): number {
 }
 
 /**
- * How long a capture can sit in a non-terminal status before the row stops
- * trusting the pipeline and offers a way out.
- *
- * A capture only reaches this state if the upload event that should have
- * driven the worker never arrived, or the worker died mid-stage without
- * writing a `failed` status — both silent by design elsewhere in the stack
- * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
- * this). Without a client-side timeout the row polls forever showing a stage
- * strip that will never move, with no error and no Retry.
+ * Whether a non-terminal capture has sat past `STUCK_AFTER_MS` (defined with
+ * the poll, which backs off to once a minute at the same point) and the row
+ * should stop trusting the pipeline and offer a way out.
  */
-export const STUCK_AFTER_MS = 10 * 60 * 1000;
-
 export function isStuck(capture: CaptureWire): boolean {
   if (isTerminalStatus(capture.status)) return false;
   const createdAt = Date.parse(capture.created_at);
@@ -83,13 +76,9 @@ export function retryAccepted(capture: CaptureWire): boolean {
   return Date.now() - since > after;
 }
 
-export function describe(capture: CaptureWire, stuck: boolean, noteTitle?: string): string {
+/** The row's title for a capture that is moving or stopped short. An appended one is a receipt (`ReceiptGroup`). */
+export function describe(capture: CaptureWire, stuck: boolean): string {
   switch (capture.status) {
-    case 'appended':
-      // Two receipts stacked were indistinguishable: the note is on the
-      // capture, and its title is on the device whenever the library has
-      // listed it. "Filed" alone only when it is not.
-      return noteTitle ? `Filed into “${noteTitle}”` : 'Filed';
     case 'needs_target':
       return 'Which note should this go in?';
     case 'no_content':
@@ -105,35 +94,57 @@ export function describe(capture: CaptureWire, stuck: boolean, noteTitle?: strin
 }
 
 /**
- * How many "Filed" receipts are shown at once.
+ * How many receipts are drawn as rows before the rest fold behind a summary.
  *
  * A receipt stays for a day or until the user acts on it (`isFilingRelevant`),
  * and on a device that has dismissed none — a second phone, cleared storage,
- * the QA account after a day of recordings — that is every capture appended
- * in the last day among the newest twenty: the QA pass saw nineteen
- * full-height cards above the first note. Three is enough to say "your last
- * recordings landed, here they are"; the rest are counted. Rows that still
- * need something — moving, failed, asking for a target — are never hidden
- * behind the cap.
+ * a ring's day of recordings — that is every capture appended in the last day
+ * among the newest twenty. One row per note keeps thirteen ring recordings
+ * into one note to one line; three notes is enough to say "your last
+ * recordings landed, here they are", and the rest are folded, not gone. Rows
+ * that still need something — moving, failed, asking for a target — are never
+ * grouped and never folded.
  */
 export const FILED_ROWS_MAX = 3;
 
+/** The appended captures that landed in one note, as one receipt. */
+export interface ReceiptGroup {
+  noteId: string;
+  /** Server order, newest first. */
+  captureIds: string[];
+  /** The first of `captureIds`: the row's React key, so the node of the capture that just landed is kept. */
+  newestId: string;
+  /** The latest landing in the group: the greatest `appended_at ?? created_at`, which orders the groups. */
+  latestAt: string;
+}
+
 /**
- * The rows to draw, and how many receipts were left out. Order is kept — the
- * server's, newest first — so the receipts shown are the most recent and the
- * hidden ones are older. Pure, so the cap is testable without a poll.
+ * One group per destination note among the appended captures, newest
+ * landing first. An appended capture without a note is skipped — the wire
+ * always names one, and a receipt with nothing to open is not a receipt.
+ * Pure, so the grouping is testable without a poll.
  */
-export function capFiledRows(
-  captures: readonly CaptureWire[],
-  max: number = FILED_ROWS_MAX,
-): { visible: CaptureWire[]; filedHidden: number } {
-  let filed = 0;
-  const visible = captures.filter((capture) => {
-    if (capture.status !== 'appended') return true;
-    filed += 1;
-    return filed <= max;
-  });
-  return { visible, filedHidden: Math.max(0, filed - max) };
+export function groupReceipts(captures: readonly CaptureWire[]): ReceiptGroup[] {
+  const byNote = new Map<string, ReceiptGroup>();
+  for (const capture of captures) {
+    if (capture.status !== 'appended' || !capture.note_id) continue;
+    const at = capture.appended_at ?? capture.created_at;
+    const group = byNote.get(capture.note_id);
+    if (!group) {
+      byNote.set(capture.note_id, {
+        noteId: capture.note_id,
+        captureIds: [capture.id],
+        newestId: capture.id,
+        latestAt: at,
+      });
+      continue;
+    }
+    group.captureIds.push(capture.id);
+    if (Date.parse(at) > Date.parse(group.latestAt)) group.latestAt = at;
+  }
+  return Array.from(byNote.values()).sort(
+    (a, b) => Date.parse(b.latestAt) - Date.parse(a.latestAt),
+  );
 }
 
 /**
