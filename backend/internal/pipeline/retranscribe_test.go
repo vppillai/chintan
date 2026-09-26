@@ -50,7 +50,7 @@ func retranscribeNote(t *testing.T, kind string) (*harness, model.NoteIndex) {
 	t.Helper()
 	h := newHarness(t, harnessOpts{
 		stt: &fake.STT{Response: "the words as they were said"},
-		llm: &fake.LLM{Response: "The words as they were said."},
+		llm: &fake.LLM{Response: "The words as they were said.", ItemsResponse: []string{"The words", "as they", "were said"}},
 	})
 	note, err := h.store.PutNote(context.Background(), "user1", model.NoteIndex{
 		ID: "note1", Title: "Destination", Kind: kind, Language: "ml", UpdatedAt: model.Now(),
@@ -102,21 +102,22 @@ func TestRetranscribingAnAppendedRecordingReplacesItsParagraphInPlace(t *testing
 	}
 }
 
-// A checklist item is replaced as one line, and a tick the person made stays:
-// the words were transcribed again, not the decision.
-func TestRetranscribingAChecklistItemKeepsItOneLineAndTicked(t *testing.T) {
+// A recording's items are replaced as one paragraph, and the ticks the person
+// made stay, line for line: the words were transcribed again, not the
+// decisions.
+func TestRetranscribingAChecklistRecordingKeepsItsItemsTicked(t *testing.T) {
 	h, note := retranscribeNote(t, model.NoteKindChecklist)
 	ctx := context.Background()
-	seedAppendedInto(t, h, note, "c_1", "- [x] first item, wrong script")
-	seedAppendedInto(t, h, note, "c_2", "- [ ] second item")
+	seedAppendedInto(t, h, note, "c_1", "- [ ] first, wrong script\n- [x] second, wrong script\n- [ ] third, wrong script")
+	seedAppendedInto(t, h, note, "c_2", "- [ ] another recording")
 
 	svc := service.NewCaptureService(h.store, h.objects).WithInvoker(directInvoker{h.pipeline})
 	if _, err := svc.RetranscribeCapture(ctx, "user1", "c_1", ""); err != nil {
 		t.Fatalf("RetranscribeCapture: %v", err)
 	}
 	body, _ := h.objects.Get(ctx, note.S3MarkdownKey)
-	want := service.CaptureMarker("c_1") + "\n- [x] The words as they were said.\n\n" +
-		service.CaptureMarker("c_2") + "\n- [ ] second item"
+	want := service.CaptureMarker("c_1") + "\n- [ ] The words\n- [x] as they\n- [ ] were said\n\n" +
+		service.CaptureMarker("c_2") + "\n- [ ] another recording"
 	if string(body) != want {
 		t.Fatalf("checklist body after retranscription:\n%s\nwant:\n%s", body, want)
 	}

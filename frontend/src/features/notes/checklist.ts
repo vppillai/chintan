@@ -3,11 +3,11 @@
  *
  * The body of a checklist is GitHub task-list syntax, one item per line:
  * `- [ ] text` open, `- [x] text` done. That is the whole format — the worker
- * appends a recording as one such line, the cleanup model rewrites the list
- * as more of them, and `chintanctl export` needs nothing special because it
- * is Markdown. Everything here is pure: the editor reads the body through
- * `parseChecklist`, changes the items, and writes it back through
- * `serialiseChecklist`, so every write leaves the body normalised.
+ * appends a recording as one such line per item it named, the cleanup model
+ * rewrites the list as more of them, and `chintanctl export` needs nothing
+ * special because it is Markdown. Everything here is pure: the editor reads
+ * the body through `parseChecklist`, changes the items, and writes it back
+ * through `serialiseChecklist`, so every write leaves the body normalised.
  *
  * Two tolerances on the way in, neither on the way out. Blank lines are
  * dropped — the worker's append separators, a stray Enter. A line that is

@@ -3,12 +3,14 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
@@ -102,6 +104,28 @@ func TestOpenAICleanupRejectsEmptyRaw(t *testing.T) {
 	_, err = llm.Cleanup(context.Background(), model.CleanupFaithful, "   ", "")
 	if err == nil {
 		t.Fatal("expected error for empty raw")
+	}
+}
+
+// An empty completion to the items call is "not a list", the reply the
+// pipeline falls back from to the recording as one item — not the provider
+// failure it is for cleanup, which would leave the capture red.
+func TestOpenAIItemsTreatsEmptyContentAsNotAList(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"  "}}],"usage":{"prompt_tokens":40,"completion_tokens":0}}`))
+	}))
+	t.Cleanup(srv.Close)
+	llm, err := NewOpenAICleanup("test-llm-key", srv.URL, "MiniMax-M3", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+	if _, err := llm.Items(context.Background(), "add milk", "Shopping list", "en"); !errors.Is(err, cleanup.ErrNotAnItemList) {
+		t.Fatalf("Items(empty content) = %v, want ErrNotAnItemList", err)
+	}
+	if _, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "add milk", "en"); err == nil || errors.Is(err, cleanup.ErrNotAnItemList) {
+		t.Fatalf("Cleanup(empty content) = %v, want a plain provider error", err)
 	}
 }
 
