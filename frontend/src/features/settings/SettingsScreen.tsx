@@ -275,7 +275,7 @@ export function SettingsScreen() {
           manifest shortcut needs a long press on an installed icon, and a
           person who only ever taps the mic never meets the hold gesture.
         */}
-        <RowLink to={ROUTES.talk} label="Hold to talk" hint="Hold, speak, release to send" />
+        <RowLink to={ROUTES.talk} label="PTT" hint="Hold to talk, release to send" />
       </SettingsCard>
 
       {/* ---- Appearance: applied on the device at once, and saved ---------- */}

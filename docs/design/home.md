@@ -15,6 +15,18 @@ or pin. This note is the frontend; `pins.md` is the backend of pinning. Code:
 (`features/notes/ChecklistEditor.tsx` `Check` / `CheckMark`,
 `styles/checklist.css`).
 
+## Header
+
+One row. The brand leads: `Wordmark` (`components/Wordmark.tsx`), the name in
+the serif at `lg`, semibold, ink — the same lockup the shell's banner wears on
+every other screen, left-aligned there too. "Notes · 12" is the row's quiet
+right end, sans at `sm`, muted. No date: the day is the group label beneath
+(owner feedback 2026-09-26 — the date line and `describeToday` went with it).
+The h1 stays first in the DOM and the brand is moved ahead of it by `order`
+(`home.css`), so a screen reader hears "Notes, 12" and the a11y sweep still
+finds a heading that starts with Notes. The lockup's mark slot is empty until
+the logo decision (R5-BR-L1).
+
 ## Order and groups
 
 `GET /v1/notes?state=active` pages arrive in the server's order — the pinned

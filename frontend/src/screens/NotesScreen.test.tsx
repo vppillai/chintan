@@ -94,8 +94,8 @@ async function startSelecting(
   await screen.findByRole('toolbar', { name: 'Bulk actions' });
 }
 
-describe('the heading is Notes with the count beside it; the wordmark and the day sit at its right', () => {
-  it('is one h1 whose text starts with Notes, then the count; the day is under the wordmark', async () => {
+describe('the heading is Notes with the count beside it; the brand leads the row', () => {
+  it('is one h1 whose text starts with Notes, then the count; the wordmark is beside it, with no date', async () => {
     mount(library());
     await screen.findByRole('button', { name: /roof repair/i });
 
@@ -103,12 +103,14 @@ describe('the heading is Notes with the count beside it; the wordmark and the da
     const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'long' }).format(new Date());
     expect(heading).toHaveAccessibleName(/^Notes/);
     expect(within(heading).getByText(String(TEST_NOTES.length))).toHaveClass('numeric');
-    // The name and the day share the heading row's right (round-3 T17), out
-    // of the h1, so a screen reader hears "Notes, 2" and no more.
-    expect(heading).not.toHaveTextContent(weekday);
-    const brand = heading.parentElement?.querySelector('.library-brand');
-    expect(brand).toHaveTextContent(/^Chintan/);
-    expect(brand).toHaveTextContent(weekday);
+    // The brand shares the heading row (round-3 T17), out of the h1, so a
+    // screen reader hears "Notes, 2" and no more; it is the shell's lockup,
+    // and the date line is gone (owner feedback 2026-09-26) — the group
+    // label under the row says Today.
+    const row = heading.parentElement!;
+    const brand = row.querySelector('.library-brand');
+    expect(brand?.querySelector('.wordmark')).toHaveTextContent(/^Chintan$/);
+    expect(row).not.toHaveTextContent(weekday);
     // And only the one h1 on the screen.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
@@ -136,13 +138,13 @@ describe('the library never claims an empty library it cannot see', () => {
     expect(
       await screen.findByText(/offline and no notes are cached/i),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/tap record/i)).toBeNull();
+    expect(screen.queryByText(/tap PTT/i)).toBeNull();
     expect(fetchImpl, 'a paused query must not reach the network').not.toHaveBeenCalled();
   });
 
   it('invites the first recording for a genuinely empty library', async () => {
     mount(library({ active: [], archived: [], tags: [] }));
-    expect(await screen.findByText(/tap record to make your first note/i)).toBeInTheDocument();
+    expect(await screen.findByText(/tap PTT to record your first note/i)).toBeInTheDocument();
     expect(screen.queryByText(/offline/i)).toBeNull();
     // And offers no way into nothing: no "Archive · 0" row, no "Checklists · 0" chip.
     expect(screen.queryByRole('link', { name: /^Archive/ })).toBeNull();

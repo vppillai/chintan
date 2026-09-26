@@ -25,8 +25,8 @@ describe('About', () => {
     expect(screen.getByText(config.appDescription)).toHaveClass('about__lede');
     // What it does, in one paragraph under the name, naming both gestures
     // the mic answers to (round-4 R4-16).
-    const intro = screen.getByText(/tap record and talk/i);
-    expect(intro).toHaveTextContent(/hold the mic and let go to send/i);
+    const intro = screen.getByText(/tap PTT and talk/i);
+    expect(intro).toHaveTextContent(/hold it and let go to send/i);
     expect(intro).toHaveTextContent(/hear what you actually said/i);
   });
 
@@ -44,7 +44,7 @@ describe('About', () => {
       Array.from(steps.querySelectorAll('.about__step-title'), (title) => title.textContent?.replace(/^\d/, '')),
     ).toEqual(['Record', 'Transcribe', 'Route', 'Clean up', 'Append']);
     // Step one names the hold as well as the tap.
-    expect(steps).toHaveTextContent(/hold the microphone and release to send/i);
+    expect(steps).toHaveTextContent(/hold it and release to send/i);
 
     // The two ways a recording finds its note, both named, and what happens when it is not sure.
     expect(screen.getByText(/add this to the roof note/i)).toBeInTheDocument();

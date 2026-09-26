@@ -129,7 +129,7 @@ afterEach(() => {
 describe('the talk screen', () => {
   it('records from the first frame of a press, says Sending until the server has it, and is ready again', async () => {
     mount('/talk?note=roof-repair');
-    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
     // The target pill, seeded from the URL as on the capture screen.
     expect(await screen.findByRole('button', { name: /into roof repair/i })).toBeInTheDocument();
 
@@ -157,7 +157,7 @@ describe('the talk screen', () => {
     });
     expect(creates).toEqual([{ note_id: 'roof-repair' }].map((c) => expect.objectContaining(c)));
     // Ready for the next one, into the same note.
-    expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^PTT: hold to talk/ })).toBeInTheDocument();
   });
 
   it('still says Sending when the upload outlives the hold notice, and Sent once it lands', async () => {
@@ -169,7 +169,7 @@ describe('the talk screen', () => {
       land = resolve;
     });
     mount();
-    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
     await onAFakeClock(async () => {
       fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
       await wait(50);
@@ -231,7 +231,7 @@ describe('the talk screen', () => {
     await waitFor(() => {
       expect(state()).toBe('idle');
     });
-    expect(screen.getByRole('button', { name: 'Hold to talk' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^PTT: hold to talk/ })).toBeInTheDocument();
     expect(creates).toHaveLength(0);
     // And the next press is a new hold, not blocked by the one that never released.
     fireEvent.keyDown(document.body, { key: ' ' });
@@ -246,7 +246,7 @@ describe('the talk screen', () => {
       });
     });
     mount();
-    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
     fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
     expect(state()).toBe('uploading');
     expect(document.querySelector('.talk__status')).toHaveTextContent('Still sending the last one…');
@@ -257,7 +257,7 @@ describe('the talk screen', () => {
 
   it('measures sliding away from the disc, not from where the thumb landed on it', async () => {
     mount();
-    const button = screen.getByRole('button', { name: 'Hold to talk' });
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
     // jsdom lays nothing out; give the disc the box it has on a phone.
     button.getBoundingClientRect = () =>
       ({ x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 400, width: 400, height: 400 }) as DOMRect;

@@ -27,7 +27,7 @@ test.describe('signing in', () => {
 
     // None of the authenticated surfaces mount, so nothing asks the API who
     // this is. `GET /v1/captures?status=pending → 401` was the reported symptom.
-    await expect(page.getByRole('button', { name: /^record$/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^PTT: tap to record/ })).toHaveCount(0);
     await expect(page.getByRole('navigation')).toHaveCount(0);
     expect(api.requests.filter((request) => request.url.startsWith('/v1/'))).toHaveLength(0);
   });
@@ -39,7 +39,7 @@ test.describe('signing in', () => {
     await page.getByRole('button', { name: 'Sign in' }).click();
 
     // Back on the library, signed in.
-    await expect(page.getByRole('button', { name: /^record$/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: /^PTT: tap to record/ })).toBeVisible({ timeout: 15_000 });
     await expect(page).toHaveURL(/\/$/);
 
     const tokens = await storedTokens(page);
@@ -59,7 +59,7 @@ test.describe('signing in', () => {
     await startSignedOut(page);
     await page.goto('/');
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.getByRole('button', { name: /^record$/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: /^PTT: tap to record/ })).toBeVisible({ timeout: 15_000 });
 
     const authorize = api.auth.authorize[0];
     expect(authorize?.['response_type']).toBe('code');
@@ -93,7 +93,7 @@ test.describe('signing in', () => {
     await startSignedOut(page);
     await page.goto('/');
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(page.getByRole('button', { name: /^record$/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('button', { name: /^PTT: tap to record/ })).toBeVisible({ timeout: 15_000 });
 
     expect(new URL(page.url()).searchParams.get('code')).toBeNull();
     expect(new URL(page.url()).searchParams.get('state')).toBeNull();
@@ -225,7 +225,7 @@ test.describe('signing out', () => {
     await page.goto('/');
     api.offline = true;
 
-    await page.getByRole('button', { name: /^record$/i }).click();
+    await page.getByRole('button', { name: /^PTT: tap to record/ }).click();
     await expect(page.locator('.capture__state')).toHaveText('Recording');
     await page.waitForTimeout(1_200);
     await page.getByRole('button', { name: 'Stop' }).click();

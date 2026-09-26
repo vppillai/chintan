@@ -35,7 +35,7 @@ const TABS: readonly Tab[] = [
 ];
 
 /**
- * The bottom tab bar: Home · Record · You.
+ * The bottom tab bar: Home · PTT · You.
  *
  * The record button is centred *in the bar* and is a grid child like the two
  * tabs — not a floating action button. A FAB overlays the last note row in the

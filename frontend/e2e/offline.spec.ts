@@ -15,7 +15,7 @@ test('a recording made offline survives and is sent on reconnect', async ({ page
 
   api.offline = true;
 
-  await page.getByRole('button', { name: /^record$/i }).click();
+  await page.getByRole('button', { name: /^PTT: tap to record/ }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
   await page.waitForTimeout(1_200);
   await page.getByRole('button', { name: 'Stop' }).click();
@@ -78,7 +78,7 @@ test('a stranded recording is offered back after a reload', async ({ page, api }
   await page.goto('/');
   api.offline = true;
 
-  await page.getByRole('button', { name: /^record$/i }).click();
+  await page.getByRole('button', { name: /^PTT: tap to record/ }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
   await page.waitForTimeout(1_000);
   await page.getByRole('button', { name: 'Stop' }).click();
