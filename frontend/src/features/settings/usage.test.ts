@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { usageRich } from '@/api/__fixtures__/pending.ts';
+import { usageRich } from '@/api/__fixtures__/responses.ts';
 import { usage, usageEmpty } from '@/api/__fixtures__/responses.ts';
 
 import {
@@ -234,9 +234,9 @@ describe('the AWS line', () => {
   });
 
   it('adds the user’s own share instead, when the backend has apportioned one', () => {
-    // The fixture: 2,721 of providers plus a 123,456 share, not the 2,345,678 instance bill.
+    // The fixture: 2,721 of providers plus a 117,284 share, not the 2,345,678 instance bill.
     expect(totalBasis(usageRich.aws)).toBe('share');
-    expect(combinedMicros(usageRich)).toBe(126_177);
+    expect(combinedMicros(usageRich)).toBe(120_005);
     // A share of nothing is still a share — a user who spent nothing owes nothing.
     const aws = { ...usageRich.aws!, share_micros: 0 };
     expect(combinedMicros({ ...usageRich, aws })).toBe(2_721);

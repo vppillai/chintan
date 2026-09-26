@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { askPending } from '@/api/__fixtures__/pending.ts';
+import { askPending } from '@/api/__fixtures__/responses.ts';
 import { onAFakeClock } from '@/test/clock.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 

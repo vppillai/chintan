@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/pending.ts';
+import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/responses.ts';
 import { noteCreated } from '@/api/__fixtures__/responses.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 import type { AskWire, NoteCreateWire } from '@/api/schema.ts';
@@ -44,6 +44,20 @@ function json(body: unknown, status = 200): Response {
 }
 
 /**
+ * The generated row, with its sources told apart. The contract generator
+ * writes every `note_id` as one stand-in (`fixture-note-id`), and the panel
+ * and the saved note dedupe sources by id — so the two are given the ids the
+ * fixture would carry if the stabiliser numbered them.
+ */
+const ANSWERED: AskWire = {
+  ...askAnswered,
+  sources: askAnswered.sources.map((source, index) => ({
+    ...source,
+    note_id: index === 0 ? source.note_id : `${source.note_id}-${String(index + 1)}`,
+  })),
+};
+
+/**
  * A library plus the Ask endpoints: the POST answers 202 with the pending
  * row, and the poll answers `pending` for the first `pendingPolls` reads of
  * each question and then `final`. What was posted, and how many polls there
@@ -52,7 +66,7 @@ function json(body: unknown, status = 200): Response {
  */
 function server({
   pendingPolls = 1,
-  final = askAnswered,
+  final = ANSWERED,
   holdCreate = false,
 }: { pendingPolls?: number; final?: AskWire; holdCreate?: boolean } = {}) {
   const posts: { question: string; history?: unknown }[] = [];
@@ -276,7 +290,7 @@ describe('a question is sent on Enter and its answer polled for', () => {
   it('tells same-titled sources apart by the note’s date from the device, or a number when it has none', async () => {
     const user = fakeTime();
     const twins: AskWire = {
-      ...askAnswered,
+      ...ANSWERED,
       sources: [
         // In the library the test serves, so its date is on the device.
         { note_id: 'roof-repair', title: 'Roof repair' },
@@ -435,7 +449,7 @@ describe('the thread', () => {
     });
     expect(api.posts[1]).toEqual({
       question: 'and when?',
-      history: [{ question: 'what did I decide about the roof?', answer: askAnswered.answer }],
+      history: [{ question: 'what did I decide about the roof?', answer: ANSWERED.answer }],
     });
     // Both questions stay on screen, and a third typed while the second is
     // unanswered is held rather than posted (the busy guard in `ask`).
@@ -467,7 +481,7 @@ describe('the thread', () => {
   it('shows three source chips and folds the rest behind "+n more"', async () => {
     const user = fakeTime();
     const many: AskWire = {
-      ...askAnswered,
+      ...ANSWERED,
       sources: ['a', 'b', 'c', 'd', 'e'].map((id) => ({ note_id: id, title: `Note ${id}` })),
     };
     mount(server({ final: many }).fetchImpl);
@@ -495,7 +509,7 @@ describe('the thread', () => {
   it('shows a fourth chip outright rather than "+1 more" (QA 2026-09-21, finding 11)', async () => {
     const user = fakeTime();
     const four: AskWire = {
-      ...askAnswered,
+      ...ANSWERED,
       sources: ['a', 'b', 'c', 'd'].map((id) => ({ note_id: id, title: `Note ${id}` })),
     };
     mount(server({ final: four }).fetchImpl);
@@ -586,7 +600,7 @@ describe('the thread', () => {
   });
 
   it('comes back from session storage when the screen is remounted, without asking again', async () => {
-    const turn = applyRow(newTurn('k1', 'what did I decide about the roof?'), askAnswered);
+    const turn = applyRow(newTurn('k1', 'what did I decide about the roof?'), ANSWERED);
     saveThread([turn]);
     const api = server();
     mount(api.fetchImpl, '/?mode=ask');

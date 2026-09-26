@@ -3,8 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { usageRich as USAGE } from '@/api/__fixtures__/pending.ts';
-import { usage as USAGE_TODAY } from '@/api/__fixtures__/responses.ts';
+import { usage as USAGE_TODAY, usageRich as USAGE } from '@/api/__fixtures__/responses.ts';
 import type { UsageWire } from '@/api/schema.ts';
 import { routes } from '@/app/router.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
@@ -143,9 +142,9 @@ describe('the usage screen', () => {
     mountUsage({ usage: USAGE });
     const facts = await screen.findByRole('group', { name: 'This month' });
 
-    expect(facts).toHaveTextContent(/API requests\s*312 requests/);
-    expect(facts).toHaveTextContent(/Recordings stored\s*41 recordings · 23.2 min · 9.1 MB/);
-    expect(facts).toHaveTextContent(/Notes\s*12 notes/);
+    expect(facts).toHaveTextContent(/API requests\s*21 requests/);
+    expect(facts).toHaveTextContent(/Recordings stored\s*3 recordings · 23.2 min · 9.1 MB/);
+    expect(facts).toHaveTextContent(/Notes\s*1 note/);
     // The month's storage-days, priced here as an estimate at a named rate;
     // 18 MB·days is real but rounds below a tenth of a cent.
     expect(facts).toHaveTextContent(
@@ -157,8 +156,8 @@ describe('the usage screen', () => {
   it('marks the stored figures approximate when the backend stopped counting at its cap', async () => {
     mountUsage({ usage: { ...USAGE, storage: { ...USAGE.storage!, approximate: true } } });
     const facts = await screen.findByRole('group', { name: 'This month' });
-    expect(facts).toHaveTextContent(/41 recordings · 23.2 min · 9.1 MB · approx\./);
-    expect(facts).toHaveTextContent(/12 notes · approx\./);
+    expect(facts).toHaveTextContent(/3 recordings · 23.2 min · 9.1 MB · approx\./);
+    expect(facts).toHaveTextContent(/1 note · approx\./);
   });
 
   it('shows the user’s estimated share of AWS and totals with that, saying so', async () => {
@@ -167,11 +166,11 @@ describe('the usage screen', () => {
     const aws = (await screen.findByText('AWS')).closest('.usage__cell');
     // The instance figure stays; the share sits beneath it.
     expect(aws).toHaveTextContent('$2.35');
-    expect(aws).toHaveTextContent(/Your estimated share: \$0\.123 \(by provider spend\)/);
+    expect(aws).toHaveTextContent(/Your estimated share: \$0\.117 \(by provider spend\)/);
 
-    // 2,721 + 123,456 microdollars, not 2,721 + 2,345,678.
+    // 2,721 + 117,284 microdollars, not 2,721 + 2,345,678.
     const total = screen.getByText('Total').closest('.usage__cell');
-    expect(total).toHaveTextContent('$0.126');
+    expect(total).toHaveTextContent('$0.120');
     expect(total).toHaveTextContent(/providers \+ your AWS share/);
   });
 

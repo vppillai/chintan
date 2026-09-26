@@ -433,6 +433,119 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"GET /v1/usage?month=2025-12 → 200 for a month with no usage: zeros and empty collections, never 404; `aws` is null when no reading has been recorded for the month.",
 		h.do(t, http.MethodGet, "/v1/usage?month=2025-12", contractUser, nil))
 
+	// A month with every op the You screen names — the pipeline's three plus a
+	// clean-note and an ask — two providers, the API requests the month took,
+	// and what is stored, so the screen's rows and facts are all pinned to
+	// what the router sends. This used to be a hand-typed stand-in
+	// (`__fixtures__/pending.ts`) the contract gate never saw.
+	rich := newHarness(t)
+	for _, rec := range []usage.Record{
+		{TenantID: contractUser, Day: "2026-01-03", Provider: "groq", Op: meter.OpTranscribe, CostMicros: 311,
+			Usage: meter.Quantities{meter.UnitAudioSeconds: 28.5}},
+		{TenantID: contractUser, Day: "2026-01-03", Provider: "openai", Op: meter.OpCleanup, CostMicros: 640,
+			Usage: meter.Quantities{meter.UnitInputTokens: 900, meter.UnitOutputTokens: 300}},
+		{TenantID: contractUser, Day: "2026-01-04", Provider: "openai", Op: meter.OpRoute, CostMicros: 420,
+			Usage: meter.Quantities{meter.UnitInputTokens: 1200, meter.UnitOutputTokens: 100}},
+		{TenantID: contractUser, Day: "2026-01-04", Provider: "openai", Op: meter.OpCleanNote, CostMicros: 250,
+			Usage: meter.Quantities{meter.UnitInputTokens: 700, meter.UnitOutputTokens: 200}},
+		{TenantID: contractUser, Day: "2026-01-04", Provider: "openai", Op: meter.OpAsk, CostMicros: 1100,
+			Usage: meter.Quantities{meter.UnitInputTokens: 3000, meter.UnitOutputTokens: 250}},
+		// Another tenant's spend, so the caller's share of the AWS bill is a
+		// share (2,721 of 54,420) rather than the whole of it.
+		{TenantID: "user2", Day: "2026-01-03", Provider: "openai", Op: meter.OpCleanup, CostMicros: 51_699,
+			Usage: meter.Quantities{meter.UnitInputTokens: 90_000, meter.UnitOutputTokens: 30_000}},
+	} {
+		if err := rich.usage.Record(context.Background(), rec); err != nil {
+			t.Fatalf("seed rich usage: %v", err)
+		}
+	}
+	for day, n := range map[string]int{"2026-01-03": 12, "2026-01-04": 9} {
+		for i := 0; i < n; i++ {
+			if err := rich.usage.CountRequest(context.Background(), contractUser, day); err != nil {
+				t.Fatalf("seed request count: %v", err)
+			}
+		}
+	}
+	for _, snap := range []usage.StorageSnapshot{
+		{TenantID: contractUser, Day: "2026-01-03", AudioBytes: 9_000_000, Notes: 11},
+		{TenantID: contractUser, Day: "2026-01-04", AudioBytes: 9_123_456, Notes: 12},
+	} {
+		if _, err := rich.usage.AddStorageDay(context.Background(), snap); err != nil {
+			t.Fatalf("seed storage snapshot: %v", err)
+		}
+	}
+	if err := rich.usage.PutAWSCost(context.Background(), usage.AWSCost{
+		Month: "2026-01", MonthMicros: 2_345_678, BudgetMicros: &budgetMicros,
+		AsOf: time.Date(2026, 1, 5, 6, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed aws cost: %v", err)
+	}
+	// What is stored is counted from the rows at read time: three recordings
+	// with their lengths and sizes, in a note that is active.
+	kept := rich.createNote(t, contractUser, "Kept", nil)
+	for i, c := range []struct {
+		ms    int64
+		bytes int64
+	}{{34_000, 3_000_000}, {31_200, 2_123_456}, {1_326_000, 4_000_000}} {
+		rich.putCapture(t, model.CaptureIndex{
+			ID: fmt.Sprintf("c_kept_%d", i+1), UserID: contractUser, NoteID: kept.ID,
+			Status: model.StatusAppended, CreatedAt: model.Now(), AppendedAt: time.Now().Unix(),
+			DurationMS: c.ms, AudioBytes: c.bytes,
+			AudioKey: fmt.Sprintf("tenants/user1/captures/c_kept_%d/audio.webm", i+1),
+		})
+	}
+	add("usageRich", "UsageWire",
+		"GET /v1/usage?month=2026-01 → 200 for a month with every op (transcribe, route, cleanup, clean_note, ask) across two providers, "+
+			"the month's API requests in total and per day, and what is stored: three recordings' lengths and bytes, one active note, the month's byte-days.",
+		rich.do(t, http.MethodGet, "/v1/usage?month=2026-01", contractUser, nil))
+
+	// ---- ask
+	// The API writes only the pending row; the worker writes the answer, so
+	// the answered, ungrounded and failed rows are seeded as it leaves them.
+	h = newHarness(t)
+	add("askPending", "AskWire",
+		"POST /v1/ask → 202. The row as first written: pending, nothing answered yet; every member present so the client polling GET /v1/ask/{askId} never has to guess.",
+		h.do(t, http.MethodPost, "/v1/ask", contractUser, map[string]any{"question": "what did I decide about the roof?"}))
+	for _, a := range []model.Ask{
+		{
+			ID: "contract-ask-answered", UserID: contractUser, Status: model.AskAnswered,
+			Question: "what did I decide about the roof?",
+			Answer: "You decided to get two quotes before the rain and to have the **ridge tiles** on the south slope reset.\n\n" +
+				"- The tiler can start on the fourteenth.\n- The gutter leak goes to the roofer.",
+			Grounded: true, NotesConsidered: 12,
+			Sources: []model.AskSource{
+				{NoteID: "contract-note", Title: "Roof repair"},
+				{NoteID: "contract-note-2", Title: "Kitchen rebuild"},
+			},
+			CreatedAt: contractTime, AnsweredAt: "2026-01-01T00:00:04.000000000Z",
+		},
+		{
+			ID: "contract-ask-not-in-notes", UserID: contractUser, Status: model.AskAnswered,
+			Question: "what colour is my car?", Answer: "Your notes do not say anything about a car.",
+			Grounded: false, NotesConsidered: 12, Sources: []model.AskSource{},
+			CreatedAt: contractTime, AnsweredAt: "2026-01-01T00:00:03.000000000Z",
+		},
+		{
+			ID: "contract-ask-failed", UserID: contractUser, Status: model.AskFailed,
+			Question: "what did I decide about the roof?", Error: "the answer could not be produced; try again",
+			NotesConsidered: 12, Sources: []model.AskSource{},
+			CreatedAt: contractTime, AnsweredAt: "2026-01-01T00:00:30.000000000Z",
+		},
+	} {
+		if err := h.store.PutAsk(context.Background(), contractUser, a); err != nil {
+			t.Fatalf("seed ask %s: %v", a.ID, err)
+		}
+	}
+	add("askAnswered", "AskWire",
+		"GET /v1/ask/{askId} → 200 once the worker has answered from the notes. Sources are only notes the model was given AND cited, most relevant first; the answer carries the light Markdown the cleaned view uses.",
+		h.do(t, http.MethodGet, "/v1/ask/contract-ask-answered", contractUser, nil))
+	add("askNotInNotes", "AskWire",
+		"GET /v1/ask/{askId} → 200 for a question the notes do not answer: answered, not failed, with grounded false and no sources.",
+		h.do(t, http.MethodGet, "/v1/ask/contract-ask-not-in-notes", contractUser, nil))
+	add("askFailed", "AskWire",
+		"GET /v1/ask/{askId} → 200 after the worker gave up. `error` is one of the fixed sentences, never provider text; answer is null and sources empty.",
+		h.do(t, http.MethodGet, "/v1/ask/contract-ask-failed", contractUser, nil))
+
 	// ---- export
 	h = newHarness(t)
 	add("exportJob", "ExportJobWire", "POST /v1/export → 202",
@@ -669,6 +782,7 @@ func renderContractFixtures(t *testing.T, fixtures []contractFixture) string {
 // neededSchemaTypes is the sorted set of schema.ts names the annotations use.
 func neededSchemaTypes(fixtures []contractFixture) []string {
 	known := map[string]bool{
+		"AskWire":            true,
 		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
 		"NotePurgeResponseWire": true,

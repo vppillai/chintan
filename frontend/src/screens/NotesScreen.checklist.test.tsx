@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { noteRowChecklist } from '@/api/__fixtures__/pending.ts';
+import { notesPageChecklists } from '@/api/__fixtures__/responses.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { cacheNoteList } from '@/offline/notesCache.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
@@ -17,7 +17,7 @@ import { NotesScreen } from './NotesScreen.tsx';
  * device's copy when the server cannot be asked.
  */
 
-const NOTES: NoteWire[] = [...(TEST_NOTES as NoteWire[]), noteRowChecklist];
+const NOTES: NoteWire[] = [...(TEST_NOTES as NoteWire[]), ...notesPageChecklists.items];
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -93,7 +93,7 @@ describe('the Checklists chip', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
     });
-    expect(screen.getByRole('button', { name: /shopping/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /packing/i })).toBeInTheDocument();
 
     // All clears it.
     await user.click(chips.getByRole('button', { name: 'All' }));
@@ -108,7 +108,7 @@ describe('the Checklists chip', () => {
     const { fetchImpl } = library();
     mount(fetchImpl, '/?kind=checklist');
 
-    expect(await screen.findByRole('button', { name: /shopping/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /packing/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
     expect(screen.queryByRole('button', { name: /reading list/i })).toBeNull();
   });
