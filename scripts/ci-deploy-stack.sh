@@ -12,10 +12,12 @@
 # containing a quote becomes shell syntax rather than data.
 #
 # Required environment:
-#   INSTANCE, ENVIRONMENT, LAMBDA_BUCKET, LAMBDA_KEY, PAGES_HOST, REPO_NAME
+#   INSTANCE, ENVIRONMENT, LAMBDA_BUCKET, LAMBDA_KEY, WORKER_KEY, PAGES_HOST, REPO_NAME
 # Optional:
 #   EXTRA_PARAMETERS      JSON array of "Key=Value" strings from the instance config
-#   ALLOWED_ORIGIN        default: https://$PAGES_HOST
+#   APP_HOST              the Pages custom domain (app_host in the instance
+#                         config); the site base and the CORS origin follow it
+#   ALLOWED_ORIGIN        default: https://$APP_HOST, else https://$PAGES_HOST
 #   CFN_DEPLOY_ROLE_ARN   passed through to deploy.sh
 #   TEMPLATE              default: infrastructure/template.yaml
 #
@@ -48,7 +50,21 @@ for v in INSTANCE ENVIRONMENT LAMBDA_BUCKET LAMBDA_KEY PAGES_HOST REPO_NAME; do
 done
 
 TEMPLATE="${TEMPLATE:-infrastructure/template.yaml}"
-ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-https://${PAGES_HOST}}"
+
+# Where the bundles are served from. On GitHub Pages that is the owner's Pages
+# host plus the repository name; behind a custom domain (app_host, which is
+# also the Pages site's own custom domain) it is the host alone, because Pages
+# serves a custom domain from its root. The template takes the base for the
+# Cognito callback URLs and the origin for CORS separately — an origin has no
+# path — and both come from the same host here so they cannot disagree.
+if [ -n "${APP_HOST:-}" ]; then
+    SITE_ORIGIN="https://${APP_HOST}"
+    SITE_BASE_URL="$SITE_ORIGIN"
+else
+    SITE_ORIGIN="https://${PAGES_HOST}"
+    SITE_BASE_URL="${SITE_ORIGIN}/${REPO_NAME}"
+fi
+ALLOWED_ORIGIN="${ALLOWED_ORIGIN:-$SITE_ORIGIN}"
 
 # The worker is a SEPARATE main package (backend/cmd/worker) and needs its own
 # artifact. Were the worker given the API zip instead, the API entrypoint fed
@@ -84,8 +100,7 @@ args=(
     --parameter "LambdaCodeBucket=${LAMBDA_BUCKET}"
     --parameter "LambdaCodeKey=${LAMBDA_KEY}"
     --parameter "WorkerCodeKey=${WORKER_KEY}"
-    --parameter "PagesHost=${PAGES_HOST}"
-    --parameter "RepoName=${REPO_NAME}"
+    --parameter "SiteBaseUrl=${SITE_BASE_URL}"
     --parameter "SitePath=${SITE_PATH:-}"
     --parameter "PasskeyRelyingPartyID=${PASSKEY_RP_ID}"
     --tag Application=Chintan

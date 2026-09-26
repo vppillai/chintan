@@ -72,7 +72,9 @@ cd "$REPO_ROOT/backend"
 package() {
     local pkg="$1" out="$2"
     echo "Building bootstrap from $pkg (linux/arm64)..."
-    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -trimpath -o bootstrap "$pkg"
+    # -s -w drops the symbol and DWARF tables, which the Lambda runtime never
+    # reads; measured api zip 8.36 MB -> 4.29 MB, so cold starts fetch half.
+    GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -trimpath -ldflags="-s -w" -o bootstrap "$pkg"
     echo "Packaging $out..."
     rm -f "$out"
     zip -j -X -q "$out" bootstrap

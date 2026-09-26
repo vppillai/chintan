@@ -209,6 +209,10 @@ jobs:
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
           SITE_PATH: ${{ matrix.entry.site_path }}
+          # The Pages custom domain, when the configs set one (app_host):
+          # ci-deploy-stack.sh derives the site base and the CORS origin from
+          # it. Empty on today's configs, and the Pages form is used.
+          APP_HOST: ${{ matrix.entry.app_host }}
           # When the bootstrap stack exports it, CloudFormation acts under a
           # service role scoped to one stack rather than under the CI role.
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
@@ -253,6 +257,10 @@ jobs:
           PAGES_HOST: ${{ github.repository_owner }}.github.io
           REPO_NAME: ${{ github.event.repository.name }}
           SITE_PATH: ${{ matrix.entry.site_path }}
+          # The Pages custom domain, when the configs set one (app_host):
+          # ci-deploy-stack.sh derives the site base and the CORS origin from
+          # it. Empty on today's configs, and the Pages form is used.
+          APP_HOST: ${{ matrix.entry.app_host }}
           CFN_DEPLOY_ROLE_ARN: ${{ vars.CFN_DEPLOY_ROLE_ARN }}
           # A secret rather than a field in config/instances/*.yaml, because this
           # repository is public and that file is not the place to publish an
