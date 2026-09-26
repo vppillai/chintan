@@ -43,6 +43,7 @@ func TestDeviceRowsRoundTripAndTheKeyIndexIsSparse(t *testing.T) {
 
 	// The counter write carries the version forward.
 	found.RequestsDay, found.RequestsDayDate, found.LastUsedAt = 1, "2026-09-24", "2026-09-24T09:00:00.000000000Z"
+	found.RequestsMonth, found.BytesMonth, found.Month = 1, 2048, "2026-09"
 	counted, err := store.PutDevice(ctx, found.TenantID, found)
 	if err != nil || counted.Version != 2 {
 		t.Fatalf("count: %+v, %v", counted, err)
@@ -51,7 +52,7 @@ func TestDeviceRowsRoundTripAndTheKeyIndexIsSparse(t *testing.T) {
 		t.Fatalf("a stale write was accepted: %v", err)
 	}
 	again, err := store.GetDevice(ctx, "tenant-a", "dev_0001")
-	if err != nil || again.RequestsDay != 1 || again.LastUsedAt == "" {
+	if err != nil || again.RequestsDay != 1 || again.LastUsedAt == "" || again.RequestsMonth != 1 || again.BytesMonth != 2048 || again.Month != "2026-09" {
 		t.Fatalf("GetDevice = %+v, %v", again, err)
 	}
 

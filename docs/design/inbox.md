@@ -32,11 +32,21 @@ read for the row's keys, one `GetItem` for the row (the index projects a
 capture's attributes, not a device's, and a device row is smaller than an
 index rebuild). Ten live devices per tenant.
 
-`GET /v1/devices` lists id, name, when issued and when last used — never the
-key or its hash; a key that is lost is revoked and a new one issued. `DELETE
+`GET /v1/devices` lists id, name, when issued, when last used and what the
+key sent this month — never the key or its hash; a key that is lost is
+revoked and a new one issued. The month's figures (`usage_month`: requests,
+their body bytes, the month) come from three counters on the device row
+(`requests_month`, `bytes_month`, `month`) that the check writes in the same
+`PutDevice` as the day's counter and `last_used_at`, so they cost no extra
+write; a new month starts them over on the key's next request, and the
+service lists an earlier month's counters as null. "Sent" counts accepted
+requests, which is captures near enough: a two-step upload is two. `DELETE
 /v1/devices/{id}` revokes: `revoked_at` is set, the GSI1 keys are dropped so
 the lookup cannot see the row, and a TTL thirty days out lets DynamoDB drop
-it. Revoking a revoked device is 204 again.
+it. Revoking a revoked device is 204 again. The Devices card's Rotate key is
+those two in the right order, with no wire of its own: it mints a new key for
+the same device name and revokes the old one when the person taps Done, so
+the device is never without a working key while the new one is pasted in.
 
 ## The check
 
@@ -104,9 +114,11 @@ those plus the probes.
   so a ring set to send only its transcription still files a note; with
   both, the audio wins and the sender's transcription is dropped, because
   the pipeline transcribes with the note's language. The Pebble Index ring's
-  `recordedAt` and `client` are ignored — a capture has no recorded-at
-  field. The whole form is read under the same 4 MiB cap, envelope included,
-  since the gateway's limit applies to the body as the gateway sees it.
+  `recordedAt` (epoch milliseconds) goes to the row's timing record, as the
+  `X-Chintan-Recorded-At` header does on either one-shot route (see Timing
+  record below); `client` is ignored. The whole form is read under the same
+  4 MiB cap, envelope included, since the gateway's limit applies to the
+  body as the gateway sees it.
   Retries: a webhook that cannot set `Idempotency-Key` (the ring's cannot)
   files a second capture when it retries. A sender that sets one must resend
   the identical bytes — the key is bound to a fingerprint of the raw body,
@@ -130,6 +142,25 @@ Every inbox capture carries `source: device:<id>` (the wire says `app` for
 the app's own, and for every capture from before the field existed), so the
 row can say "From ⟨device⟩" once the frontend reads `GET /v1/devices`.
 
+## Timing record
+
+Two fields on the capture row, in the record blob only, say when things
+happened: `recorded_at`, the sender's own claim of when it recorded
+(`X-Chintan-Recorded-At` on either one-shot route, epoch milliseconds or RFC
+3339, or the ring form's `recordedAt`; dropped, never a 400, when it does
+not parse or sits more than seven days before or five minutes after the
+server's clock), and `stage_at`, status → the moment the pipeline first
+wrote that status, stamped by every persist and by the append's completion.
+The worker emits two metrics from them, `CaptureQueueDelay` (row written →
+worker picked it up) and `CaptureEndToEnd` (row written → appended), with a
+`Source` dimension of `app` or `device` — never the device id — and its
+"capture pipeline finished" line carries `queue_ms`, `source` and, when the
+sender said when it recorded, `device_lag_ms`. `chintanctl latency --month
+yyyy-mm` reads the rows back as per-hop percentiles (device lag, queue,
+transcribe, route, clean, append, total) by source, the device id included
+there. None of it reaches the wire, the app or About: `captureOf` leaves
+both fields out, and the wire test pins that.
+
 ## Threat model, in one place
 
 - The key is hashed at rest and shown once; a table read yields no usable
@@ -152,6 +183,16 @@ row can say "From ⟨device⟩" once the frontend reads `GET /v1/devices`.
   inbox for the owner's own devices while it lasts; the app itself uses
   other routes and is untouched. If that ever matters, CloudFront in front
   of the API with a WAF rate rule per source address is the path.
+- Below the gateway's threshold, refusals are still visible from the Lambda
+  side: every refused key counts one `InboxKeyRefused` with a `Reason` of
+  `malformed`, `unknown`, `revoked`, `wrong_secret` or `daily_limit` (plus
+  the dimensionless rollup the alarm reads), and a WARN `device key refused`
+  names the device id and the reason once the id parsed — a malformed key
+  logs nothing, so a probe cannot write bytes of its choosing into the log.
+  A revoked key normally counts as `unknown`, since the revoke drops the
+  row's index keys. The `InboxKeyRefusedAlarm` (Sum ≥ 25 per 15 minutes on
+  the rollup) e-mails when a key is being guessed or a device is still
+  sending with a revoked or exhausted one. The 401 itself is unchanged.
 - No key material in logs or responses beyond the 201 that issues it; the
   device id is what identifies a device everywhere else.
 

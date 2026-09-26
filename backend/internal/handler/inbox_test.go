@@ -3,16 +3,21 @@ package handler_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/handler"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/service"
 	"github.com/vppillai/chintan/backend/internal/upload"
 )
@@ -24,8 +29,16 @@ func (h *harness) deviceKey(t *testing.T) [2]string {
 }
 
 // The inbox's refusals are fixed sentences: a revoked key, a wrong secret and
-// no key at all read the same, and the day's limit is its own 429.
+// no key at all read the same, and the day's limit is its own 429. Each is
+// counted by reason for the operator — the metric and a WARN with the device
+// id, never any of the key — which is the one place the reasons differ.
 func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
+	var metrics, logs bytes.Buffer
+	defer obs.SetMetricOutput(&metrics)()
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+
 	h := newHarness(t)
 	created := h.createDevice(t, "user1", "Watch")
 	key := [2]string{"Authorization", "Bearer " + created.Key}
@@ -46,13 +59,20 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	if strings.HasSuffix(created.Key, "0") {
 		wrongSecret = created.Key[:len(created.Key)-1] + "1"
 	}
-	for name, header := range map[string][2]string{
-		"no key":        {"Authorization", ""},
-		"not a key":     {"Authorization", "Bearer hello"},
-		"wrong secret":  {"Authorization", "Bearer " + wrongSecret},
-		"a session jwt": {"Authorization", "Bearer eyJhbGciOiJSUzI1NiJ9.e30.sig"},
+	neverIssued := "ck_dev_000000000000_" + strings.Repeat("a", 48)
+	wantReasons := map[string]int{}
+	for name, tc := range map[string]struct {
+		header [2]string
+		reason string
+	}{
+		"no key":          {[2]string{"Authorization", ""}, "malformed"},
+		"not a key":       {[2]string{"Authorization", "Bearer hello"}, "malformed"},
+		"wrong secret":    {[2]string{"Authorization", "Bearer " + wrongSecret}, "wrong_secret"},
+		"a session jwt":   {[2]string{"Authorization", "Bearer eyJhbGciOiJSUzI1NiJ9.e30.sig"}, "malformed"},
+		"an unissued key": {[2]string{"Authorization", "Bearer " + neverIssued}, "unknown"},
 	} {
-		w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, header)
+		wantReasons[tc.reason]++
+		w := h.do(t, http.MethodPost, "/v1/inbox/text", "", text, tc.header)
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: status = %d, want 401", name, w.Code)
 			continue
@@ -95,6 +115,126 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	// the app's own.
 	if n := h.usage.Requests("user1", day) + h.usage.Requests("user1", nextDay); n < 1 {
 		t.Fatalf("api_requests for the tenant = %d, want the device's request counted", n)
+	}
+
+	// One InboxKeyRefused per refusal, by reason. The revoked key reads as
+	// unknown: the revoke dropped the row's index keys, so the lookup does
+	// not find it.
+	wantReasons["daily_limit"]++
+	wantReasons["unknown"]++
+	got := map[string]int{}
+	for _, line := range strings.Split(metrics.String(), "\n") {
+		if !strings.Contains(line, `"InboxKeyRefused"`) {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("metric line is not JSON: %v (%s)", err, line)
+		}
+		reason, _ := rec["Reason"].(string)
+		got[reason]++
+	}
+	if fmt.Sprint(got) != fmt.Sprint(wantReasons) {
+		t.Errorf("InboxKeyRefused by reason = %v, want %v", got, wantReasons)
+	}
+	// The WARN names the device id and the reason, once per refusal whose id
+	// parsed: the malformed ones say nothing, so a probe writes nothing.
+	refusedLines := strings.Count(logs.String(), `"device key refused"`)
+	if wantLines := wantReasons["wrong_secret"] + wantReasons["unknown"] + wantReasons["daily_limit"]; refusedLines != wantLines {
+		t.Errorf("%d 'device key refused' lines, want %d:\n%s", refusedLines, wantLines, logs.String())
+	}
+	for _, want := range []string{`"device_id":"` + created.ID + `"`, `"reason":"wrong_secret"`, `"reason":"daily_limit"`, `"reason":"unknown"`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the log lacks %s:\n%s", want, logs.String())
+		}
+	}
+	// Never the key, in any spelling, in either stream.
+	for name, stream := range map[string]string{"metrics": metrics.String(), "logs": logs.String()} {
+		if strings.Contains(stream, "ck_") || strings.Contains(stream, "hello") || strings.Contains(stream, "eyJ") {
+			t.Errorf("%s carry a presented key:\n%s", name, stream)
+		}
+	}
+}
+
+// The sender's recorded-at claim — the ring form's recordedAt part, or the
+// X-Chintan-Recorded-At header on either one-shot route — is kept on the row
+// as telemetry and answers nothing: a value that is not a time, or is too far
+// from now to be one, is dropped and the request is still 202.
+func TestInboxKeepsTheSendersRecordedAtOnTheRow(t *testing.T) {
+	h := newHarness(t)
+	key := h.deviceKey(t)
+	now := time.Now().UTC()
+	recorded := now.Add(-30 * time.Second)
+	stored := func(t *testing.T, w *httptest.ResponseRecorder) model.CaptureIndex {
+		t.Helper()
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+		}
+		var accepted handler.InboxAccepted
+		decodeInto(t, w, &accepted)
+		c, err := h.store.GetCapture(context.Background(), "user1", accepted.Capture.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	text := map[string]any{"text": "buy milk"}
+
+	t.Run("the ring form's recordedAt part", func(t *testing.T) {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		part, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Disposition": {`form-data; name="audio"; filename="memo.m4a"`},
+			"Content-Type":        {"audio/mp4"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte("ftyp fake m4a bytes")); err != nil {
+			t.Fatal(err)
+		}
+		if err := mw.WriteField("recordedAt", strconv.FormatInt(recorded.UnixMilli(), 10)); err != nil {
+			t.Fatal(err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		c := stored(t, h.do(t, http.MethodPost, "/v1/inbox/audio", "", buf.Bytes(), key, [2]string{"Content-Type", mw.FormDataContentType()}))
+		if want := model.FormatTime(recorded.Truncate(time.Millisecond)); c.RecordedAt != want {
+			t.Fatalf("recorded_at = %q, want %q", c.RecordedAt, want)
+		}
+	})
+	t.Run("the header on a raw recording", func(t *testing.T) {
+		c := stored(t, h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("ftyp fake m4a bytes"), key,
+			[2]string{"Content-Type", "audio/mp4"}, [2]string{handler.HeaderInboxRecordedAt, recorded.Format(time.RFC3339)}))
+		if want := model.FormatTime(recorded.Truncate(time.Second)); c.RecordedAt != want {
+			t.Fatalf("recorded_at = %q, want %q", c.RecordedAt, want)
+		}
+	})
+	t.Run("the header on text, as epoch milliseconds", func(t *testing.T) {
+		c := stored(t, h.do(t, http.MethodPost, "/v1/inbox/text", "", text, key,
+			[2]string{handler.HeaderInboxRecordedAt, strconv.FormatInt(recorded.UnixMilli(), 10)}))
+		if want := model.FormatTime(recorded.Truncate(time.Millisecond)); c.RecordedAt != want {
+			t.Fatalf("recorded_at = %q, want %q", c.RecordedAt, want)
+		}
+	})
+	t.Run("nothing sent", func(t *testing.T) {
+		if c := stored(t, h.do(t, http.MethodPost, "/v1/inbox/text", "", text, key)); c.RecordedAt != "" {
+			t.Fatalf("recorded_at = %q with no header", c.RecordedAt)
+		}
+	})
+	for name, value := range map[string]string{
+		"not a time":                "yesterday",
+		"ten days old":              now.AddDate(0, 0, -10).Format(time.RFC3339),
+		"an hour ahead":             now.Add(time.Hour).Format(time.RFC3339),
+		"seconds, not milliseconds": strconv.FormatInt(now.Unix(), 10),
+		"too many digits":           strconv.FormatInt(now.UnixMilli(), 10) + "000",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if c := stored(t, h.do(t, http.MethodPost, "/v1/inbox/text", "", text, key, [2]string{handler.HeaderInboxRecordedAt, value})); c.RecordedAt != "" {
+				t.Fatalf("recorded_at = %q from %q; an unusable value is dropped", c.RecordedAt, value)
+			}
+		})
 	}
 }
 

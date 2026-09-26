@@ -31,6 +31,27 @@ var (
 	ErrDeviceDailyLimit = errors.New("this device has reached today's limit")
 )
 
+// DeviceRefusal is why Authenticate refused a key, for the inbox's metric
+// and its log line only. It unwraps to the fixed error the device is
+// answered with — ErrDeviceKeyUnknown or ErrDeviceDailyLimit — so the
+// handler's errors.Is mapping and the sentence on the wire are exactly what
+// they were; a probing client still learns nothing. Reason is one of
+// malformed, unknown, revoked, wrong_secret or daily_limit. DeviceID is set
+// once the id parsed and empty for a malformed key, so nothing a probe sends
+// can reach a log line through it.
+type DeviceRefusal struct {
+	Reason   string
+	DeviceID string
+	err      error
+}
+
+func (r *DeviceRefusal) Error() string { return r.err.Error() }
+func (r *DeviceRefusal) Unwrap() error { return r.err }
+
+func refuseDevice(reason, deviceID string, err error) error {
+	return &DeviceRefusal{Reason: reason, DeviceID: deviceID, err: err}
+}
+
 // Device key format: ck_<id>_<secret>, where the id is dev_<12 hex> and the
 // secret is 24 random bytes in hex — hex rather than base64url so the
 // secret can hold no underscore and the last underscore always separates the
@@ -152,17 +173,26 @@ func (s *DeviceService) CreateDevice(ctx context.Context, userID, name string) (
 }
 
 // ListDevices is the tenant's live devices, oldest first. Revoked rows stay
-// in the table for the record and are not listed.
+// in the table for the record and are not listed. A device whose monthly
+// counters belong to an earlier month is listed with them cleared: the row
+// keeps them until its next request rolls the month over, but the list
+// answers "this month", and the clock that decides which month it is lives
+// here, not in the handler.
 func (s *DeviceService) ListDevices(ctx context.Context, userID string) ([]model.Device, error) {
 	all, err := s.store.ListDevices(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list devices: %w", err)
 	}
+	month := s.now().UTC().Format("2006-01")
 	live := make([]model.Device, 0, len(all))
 	for _, d := range all {
-		if !d.Revoked() {
-			live = append(live, d)
+		if d.Revoked() {
+			continue
 		}
+		if d.Month != month {
+			d.Month, d.RequestsMonth, d.BytesMonth = "", 0, 0
+		}
+		live = append(live, d)
 	}
 	return live, nil
 }
@@ -200,31 +230,40 @@ func (s *DeviceService) RevokeDevice(ctx context.Context, userID, deviceID strin
 }
 
 // Authenticate resolves a presented key to its device and counts the
-// request against the key's day. Every failure to use the key — malformed,
+// request — and its body's bodyBytes, when the caller knows them — against
+// the key's day and month. Every failure to use the key — malformed,
 // unknown, revoked, wrong secret — is ErrDeviceKeyUnknown; a key at its
 // daily limit is ErrDeviceDailyLimit, refused before anything is written,
 // so a key hammered past the limit costs one read per request and no write.
+// Each is wrapped in a DeviceRefusal that says which, for the metric.
+//
+// A revoked key normally reads as unknown rather than revoked: the revoke
+// drops the row's index keys, so the lookup does not find it. The revoked
+// reason is for the moment between the revoke and the index catching up.
 //
 // The counter and last_used_at are written under the row's version, so a
 // revoke landing between the read and the write is not overwritten: the
 // write loses, the row is read again, and the revoke is seen. Two requests
 // from one device at the same moment lose to each other the same way and
 // try again; a burst that loses every attempt is a fault, not a refusal.
-func (s *DeviceService) Authenticate(ctx context.Context, rawKey string) (model.Device, error) {
+func (s *DeviceService) Authenticate(ctx context.Context, rawKey string, bodyBytes int64) (model.Device, error) {
 	id, ok := parseDeviceKey(rawKey)
 	if !ok {
-		return model.Device{}, ErrDeviceKeyUnknown
+		return model.Device{}, refuseDevice("malformed", "", ErrDeviceKeyUnknown)
 	}
 	for attempt := 0; attempt < deviceWriteAttempts; attempt++ {
 		d, err := s.store.LookupDeviceKey(ctx, id)
 		if errors.Is(err, repository.ErrNotFound) {
-			return model.Device{}, ErrDeviceKeyUnknown
+			return model.Device{}, refuseDevice("unknown", id, ErrDeviceKeyUnknown)
 		}
 		if err != nil {
 			return model.Device{}, fmt.Errorf("failed to look up device key: %w", err)
 		}
-		if d.Revoked() || !deviceKeyMatches(d.KeyHash, rawKey) {
-			return model.Device{}, ErrDeviceKeyUnknown
+		if d.Revoked() {
+			return model.Device{}, refuseDevice("revoked", id, ErrDeviceKeyUnknown)
+		}
+		if !deviceKeyMatches(d.KeyHash, rawKey) {
+			return model.Device{}, refuseDevice("wrong_secret", id, ErrDeviceKeyUnknown)
 		}
 
 		now := s.now().UTC()
@@ -233,9 +272,18 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string) (model.
 			d.RequestsDayDate, d.RequestsDay = day, 0
 		}
 		if d.RequestsDay >= model.DeviceDailyRequestLimit {
-			return d, ErrDeviceDailyLimit
+			return d, refuseDevice("daily_limit", id, ErrDeviceDailyLimit)
 		}
 		d.RequestsDay++
+		// The month's counters share this write, so they cost nothing more.
+		month := now.Format("2006-01")
+		if d.Month != month {
+			d.Month, d.RequestsMonth, d.BytesMonth = month, 0, 0
+		}
+		d.RequestsMonth++
+		if bodyBytes > 0 {
+			d.BytesMonth += bodyBytes
+		}
 		d.LastUsedAt = model.FormatTime(now)
 		stored, err := s.store.PutDevice(ctx, d.TenantID, d)
 		if errors.Is(err, repository.ErrVersionConflict) {

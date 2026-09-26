@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -27,8 +28,8 @@ func TestDeviceKeyIsShownOnceAndNeverListed(t *testing.T) {
 	if !strings.HasPrefix(created.Key, "ck_"+created.ID+"_") {
 		t.Fatalf("key %q does not carry the device id %q", created.Key, created.ID)
 	}
-	if created.LastUsedAt != nil {
-		t.Fatalf("a fresh device has been used at %v", *created.LastUsedAt)
+	if created.LastUsedAt != nil || created.UsageMonth != nil {
+		t.Fatalf("a fresh device has been used: %+v", created)
 	}
 
 	w := h.do(t, http.MethodGet, "/v1/devices", "user1", nil)
@@ -60,5 +61,41 @@ func TestDeviceKeyIsShownOnceAndNeverListed(t *testing.T) {
 	decodeInto(t, w, &page)
 	if len(page.Items) != 0 {
 		t.Fatalf("a revoked device is still listed: %+v", page.Items)
+	}
+}
+
+// The list says what each key sent this month — requests and their bytes,
+// from the counters the inbox writes with the day's — and null for a key
+// that sent nothing.
+func TestDeviceListShowsWhatTheKeySentThisMonth(t *testing.T) {
+	h := newHarness(t)
+	used := h.createDevice(t, "user1", "Watch")
+	idle := h.createDevice(t, "user1", "Shortcut")
+	body, err := json.Marshal(map[string]any{"text": "buy milk and eggs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := h.do(t, http.MethodPost, "/v1/inbox/text", "", body, [2]string{"Authorization", "Bearer " + used.Key}); w.Code != http.StatusAccepted {
+		t.Fatalf("inbox: status = %d body = %s", w.Code, w.Body.String())
+	}
+
+	w := h.do(t, http.MethodGet, "/v1/devices", "user1", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: %d", w.Code)
+	}
+	var page handler.Page[handler.Device]
+	decodeInto(t, w, &page)
+	byID := map[string]handler.Device{}
+	for _, d := range page.Items {
+		byID[d.ID] = d
+	}
+	if got := byID[used.ID].UsageMonth; got == nil || got.Requests != 1 || got.Bytes != int64(len(body)) || got.Month != harnessNow.Format("2006-01") {
+		t.Fatalf("used device's usage_month = %+v, want 1 request of %d bytes in %s", got, len(body), harnessNow.Format("2006-01"))
+	}
+	if got := byID[idle.ID].UsageMonth; got != nil {
+		t.Fatalf("idle device's usage_month = %+v, want null", got)
+	}
+	if !strings.Contains(w.Body.String(), `"usage_month":null`) {
+		t.Fatalf("the idle device's usage is not null on the wire: %s", w.Body.String())
 	}
 }

@@ -853,29 +853,36 @@ export const exportJob: ExportJobWire = {
   "url": "https://example.invalid/presigned"
 };
 
-/** POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). */
+/** POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). `usage_month` is null: nothing has been sent. */
 export const deviceCreated: DeviceCreatedWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "key": "ck_fixture-id_0123456789abcdef0123456789abcdef0123456789abcdef",
   "last_used_at": null,
-  "name": "Shortcut on the phone"
+  "name": "Shortcut on the phone",
+  "usage_month": null
 };
 
-/** GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at set) and one that has not (null). No cursor. */
+/** GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at and usage_month set) and one that has not (both null). No cursor. */
 export const devicesPage: Page<DeviceWire> = {
   "items": [
     {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "last_used_at": "2026-01-01T00:00:00.000000000Z",
-      "name": "Watch"
+      "name": "Watch",
+      "usage_month": {
+        "bytes": 2048,
+        "month": "2026-09",
+        "requests": 1
+      }
     },
     {
       "created_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "last_used_at": null,
-      "name": "Shortcut on the phone"
+      "name": "Shortcut on the phone",
+      "usage_month": null
     }
   ]
 };

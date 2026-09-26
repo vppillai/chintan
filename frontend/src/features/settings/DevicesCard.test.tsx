@@ -7,7 +7,7 @@ import { DEFAULT_TIMEOUT_MS } from '@/api/client.ts';
 import type { DeviceCreatedWire, DeviceWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { DevicesCard, MAX_DEVICES, UNCONFIRMED_TEXT, curlRecipe, inboxAudioUrl } from './DevicesCard.tsx';
+import { DevicesCard, MAX_DEVICES, UNCONFIRMED_TEXT, curlRecipe, deviceHint, inboxAudioUrl } from './DevicesCard.tsx';
 
 /**
  * The generated list with its ids made distinct: the fixture generator
@@ -85,11 +85,35 @@ describe('the devices card on You', () => {
     const rows = await deviceRows();
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent('Watch');
-    expect(rows[0]).toHaveTextContent(/Added .+ · Last used on/);
+    // The device that has sent this month says how much, then when last.
+    expect(rows[0]).toHaveTextContent(/1 sent this month · .+ MB · Last used on/);
+    expect(rows[0]).not.toHaveTextContent(/Added/);
     expect(rows[1]).toHaveTextContent('Shortcut on the phone');
-    expect(rows[1]).toHaveTextContent('Never used');
+    expect(rows[1]).toHaveTextContent(/Added .+ · Never used/);
+    expect(rows[1]).not.toHaveTextContent(/sent this month/);
     // No key anywhere on the list: the server never sends one here.
     expect(card).not.toHaveTextContent('ck_');
+  });
+
+  it('says when it was added and last used for a device that sent nothing this month', () => {
+    expect(
+      deviceHint({
+        id: 'dev_1',
+        name: 'Watch',
+        created_at: '2026-01-01T00:00:00Z',
+        last_used_at: '2026-02-01T00:00:00Z',
+        usage_month: null,
+      }),
+    ).toMatch(/^Added .+ · Last used /);
+    expect(
+      deviceHint({
+        id: 'dev_1',
+        name: 'Watch',
+        created_at: '2026-01-01T00:00:00Z',
+        last_used_at: '2026-02-01T00:00:00Z',
+        usage_month: { requests: 12, bytes: 8_700_000, month: '2026-02' },
+      }),
+    ).toMatch(/^12 sent this month · 8\.7 MB · Last used /);
   });
 
   it('says so when there are none, and stops adding at ten', async () => {
@@ -98,19 +122,69 @@ describe('the devices card on You', () => {
     expect(screen.getByRole('button', { name: /add a device/i })).toBeEnabled();
   });
 
-  it('is full at ten devices', async () => {
+  it('is full at ten devices, for Add and for Rotate alike', async () => {
     mount(
       Array.from({ length: MAX_DEVICES }, (_, index) => ({
         id: `dev_${String(index)}`,
         name: `Device ${String(index)}`,
         created_at: '2026-01-01T00:00:00Z',
         last_used_at: null,
+        usage_month: null,
       })),
     );
     expect(await deviceRows()).toHaveLength(MAX_DEVICES);
     const add = screen.getByRole('button', { name: /add a device/i });
     expect(add).toBeDisabled();
     expect(add).toHaveTextContent(/remove one first/i);
+    // A rotation briefly needs an eleventh row, so it is held too, with the same reason.
+    const rotate = screen.getByRole('button', { name: 'Rotate key for Device 0' });
+    expect(rotate).toBeDisabled();
+    expect(rotate).toHaveAttribute('title', 'Ten is the limit; remove one first');
+    expect(screen.getAllByRole('button', { name: /^Rotate key for/ }).every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
+  });
+
+  it('rotates a key: posts a create with the same name, shows the new key, and revokes the old device only on Done', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount();
+    await user.click(await screen.findByRole('button', { name: 'Rotate key for Watch' }));
+
+    const shown = await screen.findByRole('status');
+    expect(shown).toHaveTextContent('The new key for Watch');
+    expect(shown).toHaveTextContent(deviceCreated.key);
+    expect(shown).toHaveTextContent(/old key keeps working until you tap Done/i);
+    // One create, with the old device's name, and no revoke yet: the device
+    // still has a working key while the new one is being pasted in.
+    expect(calls.filter((call) => call.method === 'POST')).toEqual([{ method: 'POST', path: '/v1/devices', body: { name: 'Watch' } }]);
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+    await waitFor(async () => {
+      expect(await deviceRows()).toHaveLength(3);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => {
+      expect(calls).toContainEqual({ method: 'DELETE', path: '/v1/devices/dev_0' });
+    });
+    expect(calls.filter((call) => call.method !== 'GET').map((call) => call.method)).toEqual(['POST', 'DELETE']);
+    expect(screen.queryByRole('status')).toBeNull();
+    await waitFor(async () => {
+      expect(await deviceRows()).toHaveLength(2);
+    });
+    const card = screen.getByRole('region', { name: 'Devices & shortcuts' });
+    expect(card).not.toHaveTextContent('ck_');
+  });
+
+  it('a failed create rotates nothing', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount(listed, {
+      create: () =>
+        json({ type: 'about:blank', title: 'Service Unavailable', status: 503, detail: 'try later' }, 503),
+    });
+    await user.click(await screen.findByRole('button', { name: 'Rotate key for Watch' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('try later');
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+    expect(await deviceRows()).toHaveLength(2);
   });
 
   it('mints a key once: the name is posted, the key is shown with its warning, Done hides it for good', async () => {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -164,7 +165,8 @@ func TestCaptureCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCapture: %v", err)
 	}
-	if got != stored {
+	// Not ==: the row carries a map (StageAt), so the struct is not comparable.
+	if !reflect.DeepEqual(got, stored) {
 		t.Fatalf("got capture %+v, want %+v", got, stored)
 	}
 }

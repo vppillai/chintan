@@ -15,6 +15,18 @@ type Device struct {
 	Name       string  `json:"name"`
 	CreatedAt  string  `json:"created_at"`
 	LastUsedAt *string `json:"last_used_at"`
+	// UsageMonth is what the key has sent in the current UTC month, null
+	// when nothing has: a device that last sent in an earlier month reads as
+	// nothing this month, and a fresh one always does.
+	UsageMonth *DeviceUsage `json:"usage_month"`
+}
+
+// DeviceUsage is the OpenAPI DeviceUsage schema: accepted inbox requests
+// and their body bytes in Month (yyyy-mm).
+type DeviceUsage struct {
+	Requests int64  `json:"requests"`
+	Bytes    int64  `json:"bytes"`
+	Month    string `json:"month"`
 }
 
 // DeviceCreated is the OpenAPI DeviceCreated schema: the one response that
@@ -35,6 +47,11 @@ func deviceOf(d model.Device) Device {
 	if d.LastUsedAt != "" {
 		v := d.LastUsedAt
 		out.LastUsedAt = &v
+	}
+	// The service clears the counters of an earlier month before they get
+	// here, so a month on the row is the current one.
+	if d.Month != "" {
+		out.UsageMonth = &DeviceUsage{Requests: d.RequestsMonth, Bytes: d.BytesMonth, Month: d.Month}
 	}
 	return out
 }

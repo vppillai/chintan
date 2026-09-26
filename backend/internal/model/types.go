@@ -527,6 +527,34 @@ type CaptureIndex struct {
 	// client's claim). Zero on captures processed before 2026-09 and on ones
 	// the worker has not yet seen; GET /v1/usage sums it as storage.
 	AudioBytes int64 `json:"audio_bytes,omitempty"`
+
+	// RecordedAt is the sender's own claim of when the recording was made
+	// (RFC 3339 UTC), from X-Chintan-Recorded-At or the ring form's
+	// recordedAt part; empty when nothing was sent or the value was not
+	// usable. StageAt is when each status was first written, status → RFC
+	// 3339, stamped by every persist. Both are the timing record: they live
+	// in the record blob only, never on the wire (handler.captureOf leaves
+	// them out) and never in the app; the worker's CaptureQueueDelay and
+	// CaptureEndToEnd metrics and `chintanctl latency` are what read them.
+	RecordedAt string            `json:"recorded_at,omitempty"`
+	StageAt    map[string]string `json:"stage_at,omitempty"`
+}
+
+// StageEntered records at as the moment status was first written, and
+// leaves an earlier entry alone, so a retry that walks a stage again does
+// not move its time. The map is copied rather than written in place: the
+// memory store hands back the very struct it holds, and a write through a
+// shared map would change a stored row before its conditional write.
+func (c *CaptureIndex) StageEntered(status CaptureStatus, at string) {
+	if _, ok := c.StageAt[string(status)]; ok {
+		return
+	}
+	stages := make(map[string]string, len(c.StageAt)+1)
+	for k, v := range c.StageAt {
+		stages[k] = v
+	}
+	stages[string(status)] = at
+	c.StageAt = stages
 }
 
 // ---------------------------------------------------------------------------
@@ -555,6 +583,14 @@ type Device struct {
 	// bounds it.
 	RequestsDay     int64  `json:"requests_day,omitempty"`
 	RequestsDayDate string `json:"requests_day_date,omitempty"`
+	// RequestsMonth and BytesMonth count the key's accepted inbox requests
+	// and their body bytes in Month (UTC yyyy-mm); a new month starts them
+	// over. They ride the same write as the day counter, so they cost no
+	// extra request, and they are what the Devices card's "sent this month"
+	// reads. Requests, not recordings: a two-step capture is two of them.
+	RequestsMonth int64  `json:"requests_month,omitempty"`
+	BytesMonth    int64  `json:"bytes_month,omitempty"`
+	Month         string `json:"month,omitempty"`
 	// RevokedAt is set by DELETE /v1/devices/{id}. A revoked row keeps its
 	// hash but loses its GSI1 keys, so the key is unknown to the inbox from
 	// then on; the row itself expires RevokedDeviceRetention later.
