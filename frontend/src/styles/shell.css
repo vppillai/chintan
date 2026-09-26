@@ -158,7 +158,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Tab bar — Notes · Record · You, on every screen but the capture screen.
+   Tab bar — Home · PTT · You, on every screen but the capture screen.
 
    A grid row in normal flow, NOT a floating action button. Content above it
    can therefore never be overlaid: `.app` reserves the row.
