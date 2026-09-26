@@ -235,6 +235,15 @@ cd frontend && bunx playwright install chromium && bun run e2e -- --project=chro
 
 For a local backend, put the keys in the environment instead of SSM (`GROQ_API_KEY`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL`) in a `.env` that is never committed.
 
+**Evaluating a prompt change.** Every prompt the worker sends — routing, cleanup, checklist items, the whole-note views, Ask — is documented in [`docs/design/prompts.md`](docs/design/prompts.md), and every one has live cases in `backend/internal/provider/testdata/eval/fixtures.json`. The unit tests pin the wording; the live evaluation measures the behaviour against the real model, costs cents, and is skipped unless you ask for it:
+
+```bash
+cd backend && LIVE_LLM=1 LLM_API_KEY=… go test ./internal/provider -run TestLiveEval -v -count=3
+cd backend && LIVE_LLM=1 LLM_API_KEY=… go test ./internal/provider -run 'TestLiveEval/route' -v
+```
+
+`-count=3` because a prompt that passes once is not yet a prompt that passes; `LLM_BASE_URL` and `LLM_MODEL` default to the worker's. The key is read from the environment and never printed; the output is the fixture text and the model's reply, one line per case. Add a case by appending an object to `fixtures.json` — no Go needed; `TestEvalFixturesParse` runs in CI without a key and refuses a misspelt expectation. Run it once before a prompt change for a baseline and once after; a prompt PR records the pass in its description.
+
 **The e2e projects.** `frontend/playwright.config.ts` defines two: `chromium` runs every spec; `webkit` runs the auth, archive, playback, a11y, manifest and a reduced layout matrix with the service worker blocked, because Playwright's route interception does not see requests that pass through a worker outside Chromium; the worker's own behaviour is proven in `offline.spec.ts` on Chromium. `LAYOUT_SHOTS=1 bun run e2e -- layout` writes the ~280-image layout sweep to `frontend/e2e/__screenshots__/sweep/` (gitignored) for a human to page through.
 
 **The QA scripts.** `scripts/check-log-hygiene.sh` (no provider adapter logs a response body; includes a self-test), `scripts/check-vite-env.sh` (the `VITE_*` names the deploy exports are the ones the bundle reads), `frontend/scripts/check-tokens.mjs` (run by `bun run lint`; forbids literal colours and font sizes outside the design tokens), `scripts/list-instances.sh --format text` (every config resolves to a unique stack). `docs/qa/` holds the exploratory QA reports.
