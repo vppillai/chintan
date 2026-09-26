@@ -1841,6 +1841,56 @@
   font-weight: var(--font-weight-medium);
 }
 
+/*
+ * The Undo toast: the same shell row as the prompt above, for the same
+ * reason, and empty — so collapsed — whenever nothing has just been deleted.
+ * It slides up on the motion tokens, which reduced motion sets to a frame.
+ */
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  inline-size: calc(100% - 2 * var(--layout-gutter));
+  max-inline-size: var(--layout-card-max);
+  margin-block-end: var(--space-2);
+  margin-inline: auto;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background-color: var(--color-ink);
+  color: var(--color-ground);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  animation: toast-in var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+.toast:empty {
+  display: none;
+}
+
+.toast__action {
+  flex-shrink: 0;
+  min-block-size: var(--layout-touch-target-min);
+  min-inline-size: var(--layout-touch-target-min);
+  padding: var(--space-2) var(--space-4);
+  color: var(--color-ground);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-medium);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.toast__action:active {
+  background-color: var(--color-muted);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-2));
+  }
+}
+
 /* --------------------------------------------------------------------------
    Confirm dialog
    -------------------------------------------------------------------------- */
