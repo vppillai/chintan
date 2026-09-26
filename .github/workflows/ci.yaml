@@ -97,7 +97,9 @@ jobs:
       # — each says "Test seam." in its comment), so those lines are filtered
       # out; anything else it prints is production-dead and fails the job. A
       # function only tests call belongs in a _test.go file. grep -v exits 0
-      # when a line survives the filter, which is the failure.
+      # when a line survives the filter, which is the failure. x/tools
+      # v0.38.0 needs Go >= 1.24 and this step runs on the job's Go alone,
+      # so bump this pin and the go line in backend/go.mod together.
       - name: deadcode
         working-directory: backend
         run: |
