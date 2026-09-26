@@ -581,13 +581,9 @@ describe('doing something to several notes at once', () => {
     const row = await screen.findByRole('button', { name: /reading list/i });
 
     await onAFakeClock(async () => {
-
       fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 12, clientY: 12 });
-
       await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-
       fireEvent.pointerUp(row, { pointerType: 'touch' });
-
     });
     fireEvent.click(row);
 
@@ -607,13 +603,9 @@ describe('doing something to several notes at once', () => {
     expect(screen.queryByRole('checkbox')).toBeNull();
 
     await onAFakeClock(async () => {
-
       fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 12, clientY: 12 });
-
       await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-
       fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
-
     });
     fireEvent.click(row);
 

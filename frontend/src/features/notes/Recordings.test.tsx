@@ -287,13 +287,9 @@ describe('selecting several recordings', () => {
     const older = rows[1]!;
 
     await onAFakeClock(async () => {
-
       fireEvent.pointerDown(older, { pointerType: 'touch', clientX: 10, clientY: 10 });
-
       await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-
       fireEvent.pointerUp(older, { pointerType: 'touch' });
-
     });
 
     const bar = await screen.findByRole('toolbar', { name: 'Recording actions' });
@@ -312,13 +308,9 @@ describe('selecting several recordings', () => {
     const older = rows[1]!;
 
     await onAFakeClock(async () => {
-
       fireEvent.pointerDown(older, { pointerType: 'mouse', button: 0, clientX: 10, clientY: 10 });
-
       await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-
       fireEvent.pointerUp(older, { pointerType: 'mouse', button: 0 });
-
     });
 
     await screen.findByRole('toolbar', { name: 'Recording actions' });
@@ -331,15 +323,10 @@ describe('selecting several recordings', () => {
     const [row] = await screen.findAllByRole('button', { name: isSummary });
 
     await onAFakeClock(async () => {
-
       fireEvent.pointerDown(row!, { pointerType: 'touch', clientX: 10, clientY: 10 });
-
       fireEvent.pointerMove(row!, { pointerType: 'touch', clientX: 10, clientY: 40 });
-
       await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-
       fireEvent.pointerUp(row!, { pointerType: 'touch' });
-
     });
 
     expect(screen.queryByRole('toolbar')).toBeNull();
