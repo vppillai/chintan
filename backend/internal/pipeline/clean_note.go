@@ -170,7 +170,12 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
 
-	text, err := cleanup.NoteOutput(mode, cleaned.Text)
+	text, dropped, err := cleanup.NoteOutput(mode, cleaned.Text, body)
+	if dropped > 0 {
+		// Counts only: the dropped lines are the model's words about the note.
+		log.Warn("clean-note: dropped tasks whose words are not in the note", slog.Int("dropped", dropped))
+		obs.Count(ctx, "TasksItemsDropped", nil)
+	}
 	if err != nil {
 		log.Warn("clean-note: the model returned nothing usable")
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")

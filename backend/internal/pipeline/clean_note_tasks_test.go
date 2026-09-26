@@ -86,10 +86,13 @@ func TestTasksModeRefusesProseAndKeepsThePreviousList(t *testing.T) {
 }
 
 func TestTasksModeRefusesMoreThanFiveHundredItems(t *testing.T) {
+	// Every open item in the body's words and the body's done item among
+	// them, so the count is the only thing the check can refuse.
 	items := make([]string, 0, 501)
-	for i := 0; i < 501; i++ {
-		items = append(items, "- [ ] task")
+	for i := 0; i < 500; i++ {
+		items = append(items, "- [ ] roofer")
 	}
+	items = append(items, "- [x] passport")
 	llmFake := &fake.LLM{NoteResponse: strings.Join(items, "\n")}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedChecklist(t, h, nil)
@@ -100,12 +103,51 @@ func TestTasksModeRefusesMoreThanFiveHundredItems(t *testing.T) {
 		t.Errorf("501 items: error=%q body=%q, want the unusable verdict and no view", n.CleanedError, n.CleanedBody)
 	}
 
-	llmFake.NoteResponse = strings.Join(items[:500], "\n")
+	llmFake.NoteResponse = strings.Join(items[1:], "\n")
 	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	if n := getNote(t, h, "l1"); n.CleanedError != "" || strings.Count(n.CleanedBody, "\n") != 499 {
 		t.Errorf("500 items: error=%q lines=%d, want the list stored", n.CleanedError, strings.Count(n.CleanedBody, "\n")+1)
+	}
+}
+
+// A task whose words are not in the note is the model's, not the person's:
+// it is dropped and the split the model got right is stored (owner feedback
+// 2026-09-26, "- [x] Make a list." beside two correct splits).
+func TestTasksModeDropsATaskWhoseWordsAreNotInTheNote(t *testing.T) {
+	llmFake := &fake.LLM{NoteResponse: "- [ ] call the roofer\n- [ ] buy sealant\n- [ ] make a list\n- [x] passport"}
+	h := newHarness(t, harnessOpts{llm: llmFake})
+	seedChecklist(t, h, nil)
+	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	n := getNote(t, h, "l1")
+	if n.CleanedBody != "- [ ] call the roofer\n- [ ] buy sealant\n- [x] passport" || n.CleanedError != "" {
+		t.Errorf("stored view = %q (%q), want the invented task dropped and the rest kept", n.CleanedBody, n.CleanedError)
+	}
+}
+
+// An answer that loses, invents or rewords a tick is refused whole and the
+// previous view is kept: adoption writes the view over the body, and a lost
+// tick there is worse than an older view.
+func TestTasksModeRefusesAnAnswerThatChangesTheDoneItems(t *testing.T) {
+	for name, reply := range map[string]string{
+		"a tick lost":          "- [ ] call the roofer\n- [ ] buy sealant\n- [ ] passport",
+		"a tick invented":      "- [x] call the roofer\n- [ ] buy sealant\n- [x] passport",
+		"a done item reworded": "- [ ] call the roofer\n- [ ] buy sealant\n- [x] passport renewed",
+	} {
+		llmFake := &fake.LLM{NoteResponse: reply}
+		h := newHarness(t, harnessOpts{llm: llmFake})
+		seedChecklist(t, h, func(n *model.NoteIndex) {
+			n.CleanedBody, n.CleanedMode, n.CleanedAt = "- [ ] the old list", model.NoteCleanTasks, "2026-01-01T00:00:00.000000000Z"
+		})
+		if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
+			t.Fatalf("%s: Handle: %v", name, err)
+		}
+		if n := getNote(t, h, "l1"); n.CleanedError != cleanNoteUnusable || n.CleanedBody != "- [ ] the old list" {
+			t.Errorf("%s: error=%q body=%q, want the unusable verdict and the previous list", name, n.CleanedError, n.CleanedBody)
+		}
 	}
 }
 

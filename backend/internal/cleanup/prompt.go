@@ -134,6 +134,8 @@ Mode: tasks.
   item and "- [x] text" for a done one.
 - Rewrite each open item as granular, actionable tasks. Split an item that contains several
   actions into one task per action; an item that is already one action stays one task.
+- An item that is already one thing — a noun phrase like "chickpeas" or "two loaves of
+  bread" — stays exactly as written; do not add a verb to it.
 - Keep the person's words: fix what dictation garbled, drop filler and false starts, and
   change nothing else. Never invent a task and never merge two items into one.
 - Keep every done item ("- [x] …") verbatim and in its place.
@@ -182,45 +184,100 @@ const MaxChecklistItems = 500
 var checklistItemLine = regexp.MustCompile(`^- \[( |x)\] \S`)
 
 // ErrNotATaskList is what NoteOutput returns in tasks mode for an answer that
-// is not a task list: a line that is not an item, or more items than
-// MaxChecklistItems. The worker records it as "nothing usable", the same as an
-// empty answer, because a checklist view that is prose is no view at all.
+// is not a task list: a line that is not an item, more items than
+// MaxChecklistItems, or done items that are not the body's done items. The
+// worker records it as "nothing usable", the same as an empty answer, because
+// a checklist view that is prose is no view at all, and one that lost a tick
+// is worse than the view it would replace.
 var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list")
 
-// NoteOutput checks a completion for the cleaned view and returns the text to
-// store. A model that echoes the fence around its answer has still answered,
-// so a leading and trailing marker line are removed; one that returned only
-// the markers, or nothing, has not.
+// NoteOutput checks a completion for the cleaned view of body and returns the
+// text to store. A model that echoes the fence around its answer has still
+// answered, so a leading and trailing marker line are removed; one that
+// returned only the markers, or nothing, has not.
 //
 // In tasks mode the answer is a checklist body, so it is held to the format
 // every reader of one relies on: after trimming, every non-blank line is an
 // item line, and the stored text is exactly those lines with the blank ones
-// dropped, at most MaxChecklistItems of them.
-func NoteOutput(mode model.NoteCleanMode, raw string) (string, error) {
+// dropped, at most MaxChecklistItems of them. Two of the prompt's promises
+// are then checked against body rather than trusted, because adoption writes
+// this answer over the body (CleanedPanel "Use this list", the first tick):
+//
+//   - the "- [x]" lines are the body's "- [x]" lines, verbatim and in order,
+//     else the whole answer is refused — a lost or invented tick is worse than
+//     the previous view;
+//   - an open item whose words are not the body's words, in order, is
+//     dropped and counted in dropped — "- [x] Make a list." was the model
+//     inventing an antecedent for "it" (owner feedback 2026-09-26), and a
+//     shape check cannot see that. Dropping rather than refusing keeps the
+//     split the model got right.
+func NoteOutput(mode model.NoteCleanMode, raw, body string) (text string, dropped int, err error) {
 	out := strings.TrimSpace(raw)
 	out = strings.TrimSpace(strings.TrimPrefix(out, llm.FenceMarker))
 	out = strings.TrimSpace(strings.TrimSuffix(out, llm.FenceMarker))
 	if out == "" || strings.TrimSpace(strings.ReplaceAll(out, llm.FenceMarker, "")) == "" {
-		return "", ErrEmptyNoteOutput
+		return "", 0, ErrEmptyNoteOutput
 	}
 	if mode != model.NoteCleanTasks {
-		return out, nil
+		return out, 0, nil
 	}
-	var items []string
+	var items, done []string
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		if !checklistItemLine.MatchString(line) {
-			return "", ErrNotATaskList
+			return "", 0, ErrNotATaskList
+		}
+		if strings.HasPrefix(line, "- [x] ") {
+			done = append(done, line)
 		}
 		items = append(items, line)
 	}
 	if len(items) > MaxChecklistItems {
-		return "", fmt.Errorf("%w: %d items, limit %d", ErrNotATaskList, len(items), MaxChecklistItems)
+		return "", 0, fmt.Errorf("%w: %d items, limit %d", ErrNotATaskList, len(items), MaxChecklistItems)
 	}
-	return strings.Join(items, "\n"), nil
+	if !equalLines(done, doneItems(body)) {
+		return "", 0, fmt.Errorf("%w: the done items are not the body's", ErrNotATaskList)
+	}
+	kept := items[:0]
+	for _, item := range items {
+		if strings.HasPrefix(item, "- [ ] ") && !llm.VerifySubsequence(strings.TrimPrefix(item, "- [ ] "), body) {
+			dropped++
+			continue
+		}
+		kept = append(kept, item)
+	}
+	if len(kept) == 0 {
+		return "", dropped, ErrEmptyNoteOutput
+	}
+	return strings.Join(kept, "\n"), dropped, nil
+}
+
+// doneItems lists body's "- [x]" lines, trimmed, in order.
+func doneItems(body string) []string {
+	var done []string
+	for _, line := range strings.Split(body, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "- [x] ") {
+			done = append(done, line)
+		}
+	}
+	return done
+}
+
+// equalLines compares two lists of lines with their whitespace runs
+// collapsed, so a model that re-spaced a done item has still kept it.
+func equalLines(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.Join(strings.Fields(a[i]), " ") != strings.Join(strings.Fields(b[i]), " ") {
+			return false
+		}
+	}
+	return true
 }
 
 // NoteMaxTokens bounds the completion for a body of the given size: about
