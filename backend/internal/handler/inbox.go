@@ -41,10 +41,9 @@ const (
 // header is spoken for.
 const HeaderDeviceKey = "X-Device-Key"
 
-// formAudioDefaultType is the audio part's type when the form gives it none:
-// the Pebble Index ring's webhook, the form this route was taught for, sends
-// audio/mp4.
-const formAudioDefaultType = "audio/mp4"
+// msgAudioTypeRequired is the one-shot audio route's 400 for a recording
+// with no declared type, raw body and form part alike.
+const msgAudioTypeRequired = "Content-Type is required: the recording's audio type"
 
 // inboxCaptureRequest is the OpenAPI InboxCaptureCreate schema: CaptureCreate
 // plus a language for this recording.
@@ -178,7 +177,7 @@ func (rt *router) inboxAudio(w http.ResponseWriter, r *http.Request) {
 	}
 	contentType := r.Header.Get("Content-Type")
 	if strings.TrimSpace(contentType) == "" {
-		httperr.BadRequest(w, r, "Content-Type is required: the recording's audio type")
+		httperr.BadRequest(w, r, msgAudioTypeRequired)
 		return
 	}
 	req := service.CaptureRequest{
@@ -219,7 +218,9 @@ func (rt *router) inboxAudio(w http.ResponseWriter, r *http.Request) {
 // posts a form rather than a file. The Pebble Index ring's sends parts named
 // audio (audio/mp4), transcription (its own, when it managed one), recordedAt
 // and client. The audio part is ingested exactly as a raw body is, under the
-// part's own Content-Type. With no audio part but a transcription, the
+// part's own Content-Type — required, as the raw body's is: RFC 7578 makes
+// an untyped part text/plain, and the ring sends audio/mp4 explicitly. With
+// no audio part but a transcription, the
 // transcription is filed as /v1/inbox/text files text, so a ring set to send
 // only its transcription still makes a note. With both, the audio wins and
 // the ring's transcription is dropped: the pipeline transcribes with the
@@ -252,9 +253,9 @@ func (rt *router) inboxAudioForm(w http.ResponseWriter, r *http.Request, userID 
 		switch part.FormName() {
 		case "audio":
 			// The part's own type, not the request's, which is the form's.
-			req.ContentType = part.Header.Get("Content-Type")
-			if req.ContentType == "" {
-				req.ContentType = formAudioDefaultType
+			if req.ContentType = part.Header.Get("Content-Type"); req.ContentType == "" {
+				httperr.BadRequest(w, r, msgAudioTypeRequired)
+				return
 			}
 			if audio, err = io.ReadAll(part); err != nil {
 				unreadableForm(w, r, err)
@@ -269,7 +270,9 @@ func (rt *router) inboxAudioForm(w http.ResponseWriter, r *http.Request, userID 
 				unreadableForm(w, r, err)
 				return
 			}
-			transcription = string(raw)
+			// Invalid UTF-8 becomes U+FFFD, as the JSON route's decoder
+			// makes it, so both roads file the same text.
+			transcription = strings.ToValidUTF8(string(raw), "\uFFFD")
 		}
 		// Any other part is skipped: the next NextPart discards what is left
 		// of this one.

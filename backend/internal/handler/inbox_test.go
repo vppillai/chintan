@@ -393,8 +393,8 @@ func TestInboxAudioTakesTheRingsForm(t *testing.T) {
 		return accepted, stored
 	}
 
-	t.Run("audio, typed by default", func(t *testing.T) {
-		body, contentType := ringForm(t, audio, "", "")
+	t.Run("audio", func(t *testing.T) {
+		body, contentType := ringForm(t, audio, "audio/mp4", "")
 		accepted, stored := post(t, body, contentType,
 			[2]string{handler.HeaderInboxNoteID, note.ID}, [2]string{handler.HeaderInboxDurationMS, "4200"})
 		c := accepted.Capture
@@ -402,7 +402,7 @@ func TestInboxAudioTakesTheRingsForm(t *testing.T) {
 			t.Fatalf("capture on the wire = %+v", c)
 		}
 		if !strings.HasSuffix(stored.AudioKey, "/audio.m4a") || stored.RawKey != "" || stored.Source != model.DeviceSource(strings.TrimPrefix(c.Source, "device:")) {
-			t.Fatalf("stored capture = %+v; want the default audio/mp4 on the key and the device as source", stored)
+			t.Fatalf("stored capture = %+v; want audio/mp4 on the key and the device as source", stored)
 		}
 		object, err := h.objects.Get(context.Background(), stored.AudioKey)
 		if err != nil || string(object) != string(audio) {
@@ -441,6 +441,14 @@ func TestInboxAudioTakesTheRingsForm(t *testing.T) {
 			t.Fatalf("worker calls = %v, want one hand-off for the text", h.worker.calls)
 		}
 	})
+	t.Run("transcription with invalid UTF-8", func(t *testing.T) {
+		body, contentType := ringForm(t, nil, "", "caf\xff\xfe au lait")
+		_, stored := post(t, body, contentType)
+		raw, err := h.objects.Get(context.Background(), stored.RawKey)
+		if err != nil || string(raw) != "caf\uFFFD au lait" {
+			t.Fatalf("raw transcript = %q, %v; want the invalid run replaced with U+FFFD", raw, err)
+		}
+	})
 	t.Run("both: the audio wins", func(t *testing.T) {
 		before := len(h.worker.calls)
 		body, contentType := ringForm(t, audio, "audio/mp4", "the ring's own words")
@@ -455,10 +463,11 @@ func TestInboxAudioTakesTheRingsForm(t *testing.T) {
 	})
 
 	emptyForm, emptyType := ringForm(t, nil, "", "")
-	emptyAudio, emptyAudioType := ringForm(t, []byte{}, "", "")
+	emptyAudio, emptyAudioType := ringForm(t, []byte{}, "audio/mp4", "")
+	untyped, untypedType := ringForm(t, audio, "", "")
 	notAudio, notAudioType := ringForm(t, audio, "text/plain", "")
 	longText, longTextType := ringForm(t, nil, "", strings.Repeat("x", service.MaxInboxTextRunes+1))
-	overCap, overCapType := ringForm(t, make([]byte, service.MaxInboxAudioBytes+1), "", "")
+	overCap, overCapType := ringForm(t, make([]byte, service.MaxInboxAudioBytes+1), "audio/mp4", "")
 	for name, tc := range map[string]struct {
 		body        []byte
 		contentType string
@@ -467,6 +476,7 @@ func TestInboxAudioTakesTheRingsForm(t *testing.T) {
 	}{
 		"no usable part":   {emptyForm, emptyType, http.StatusBadRequest, "the form has no audio or transcription part"},
 		"an empty audio":   {emptyAudio, emptyAudioType, http.StatusBadRequest, "the form has no audio or transcription part"},
+		"untyped audio":    {untyped, untypedType, http.StatusBadRequest, "Content-Type is required: the recording's audio type"},
 		"not audio":        {notAudio, notAudioType, http.StatusBadRequest, "content_type must be one of audio/webm, audio/ogg, audio/mp4, audio/m4a, audio/mpeg, audio/wav, audio/x-wav"},
 		"too long a text":  {longText, longTextType, http.StatusBadRequest, ""},
 		"no boundary seen": {[]byte("not a form"), "multipart/form-data; boundary=x", http.StatusBadRequest, "the form has no audio or transcription part"},
