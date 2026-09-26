@@ -113,12 +113,18 @@ func (f *fakeDynamo) put(item map[string]types.AttributeValue) {
 	f.items[pk][sk] = item
 }
 
+// av renders the scalar types the store compares: strings, numbers and
+// booleans. Until 2026-09 a boolean rendered as "", so `idem_done = :notdone`
+// compared "" with "" and held whatever the row said; AbandonIdempotent's
+// guard on a completed record could not fail against this fake.
 func av(v types.AttributeValue) string {
 	switch t := v.(type) {
 	case *types.AttributeValueMemberS:
 		return t.Value
 	case *types.AttributeValueMemberN:
 		return t.Value
+	case *types.AttributeValueMemberBOOL:
+		return strconv.FormatBool(t.Value)
 	}
 	return ""
 }
