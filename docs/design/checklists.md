@@ -40,8 +40,7 @@ the **raw** transcript with the list's title beside it and answers
 script, quantities kept, the words addressed to the app left out ("add",
 "into it", "to my list", the list's own name), "X and Y" split into two. It
 runs in the `cleaning` status, under the cleanup op and deadline, and stores
-the items one per line at `clean_key`, so a retry does not call again and a
-verbatim checklist is untouched by it.
+the items one per line at `clean_key`, so a retry does not call again.
 
 Until 2026-09-26 the item was the cleaned transcript on one line, and which
 words those were depended on the router's span removal, which knows filing
@@ -58,14 +57,27 @@ Three outcomes besides items:
 - **No items** (`{"items":[]}`): the recording only told the app what to do
   — "create a shopping list". The capture is `no_content`, as an
   instruction-only recording is for a plain note; the note exists and gets
-  no item. An item equal to the list's title is dropped mechanically
-  (`ParseItems`), so the title can never become an item.
-- **Not a list** (no JSON object, no `items` array, more than 100 items): the
-  recording is appended as one item, the pre-2026-09-26 behaviour, and
+  no item.
+- **Not a list** (no JSON object, no `items` array, an empty completion, more
+  than 100 items): the recording is appended as one item with its line
+  breaks collapsed, the pre-2026-09-26 behaviour, and
   `ChecklistItemsDiscarded{Reason=unusable}` counts it. Dictation is never
   lost to a bad reply.
-- **Verbatim checklist**: no model call; the recording as spoken is one item
-  with its line breaks collapsed.
+- **Verbatim checklist**: no model call; the raw transcript — the recording
+  as spoken, on the routed path as on the targeted one, never the router's
+  span-cut text — is one item with its line breaks collapsed.
+
+The prompt is the only guard on what an item is. `ParseItems` checks the
+shape (a JSON object with an `items` array, at most 100, each at most 2,000
+runes) and nothing about the words: a subsequence check against the
+transcript would refuse the STT-garbling fix the prompt asks for, and a rule
+dropping an item equal to the title would silently lose "add batteries" to a
+list titled Batteries. An item the prompt should not have produced is visible
+in the list and one tap from gone; a dropped one is lost. So an invented item
+is caught only by the live evaluation (`provider.TestLiveChecklistItems`,
+run against the real model before a prompt change ships) —
+`ChecklistItemsExtracted{Outcome=items}` counts recordings, not whether their
+items were spoken.
 
 A request that is not an add — "remove milk from the list", "tick off the
 eggs", "actually make that two umbrellas" — is returned by the prompt as one
@@ -80,7 +92,15 @@ paragraph runs to the next marker, so `CutCaptureParagraph` finds exactly
 this recording's items: deleting or moving the recording removes them and
 nothing else — a typed item with no marker and an item the person has since
 ticked are untouched — and a moved recording lands in the target in
-chronological position, its items still ticked if they were. Transcribing a
+chronological position, its items still ticked if they were. That holds
+until the first save from the Items tab: `serialiseChecklist` writes the
+items with no blank line between recordings, so `CarryCaptureMarkers` finds
+no paragraph boundary to keep a marker at and carries every marker to the
+end, after which delete and move cut nothing (a tick is such a save). Not a
+checklist regression — a plain note's marker moves the same way once its
+paragraph is edited — but a checklist is edited far more often than it is
+dictated into, so in practice the per-recording delete works for a list that
+has only been spoken to. Transcribing a
 recording again replaces its items where they stand and carries the ticks
 line for line (`keepTick`); when the new transcription yields a different
 number of items no tick is carried, because no line can be said to be the

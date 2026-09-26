@@ -181,7 +181,19 @@ const MaxChecklistItems = 500
 
 // checklistItemLine is one stored checklist item, the shape the frontend
 // parses and the worker's append writes: "- [ ] " or "- [x] " and then text.
-var checklistItemLine = regexp.MustCompile(`^- \[( |x)\] \S`)
+// A typed "- [X] " is read as done too, as the frontend reads it
+// (checklist.ts ITEM); lowerTick writes it back as the worker's "[x]".
+var checklistItemLine = regexp.MustCompile(`^- \[( |x|X)\] \S`)
+
+// lowerTick is a trimmed item line with a typed "[X]" written as "[x]", so
+// the done-item comparison and the stored view see one spelling of done.
+func lowerTick(line string) string {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "- [X] ") {
+		return "- [x] " + line[len("- [X] "):]
+	}
+	return line
+}
 
 // ErrNotATaskList is what NoteOutput returns in tasks mode for an answer that
 // is not a task list: a line that is not an item, more items than
@@ -223,7 +235,7 @@ func NoteOutput(mode model.NoteCleanMode, raw, body string) (text string, droppe
 	}
 	var items, done []string
 	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
+		line = lowerTick(line)
 		if line == "" {
 			continue
 		}
@@ -259,7 +271,7 @@ func NoteOutput(mode model.NoteCleanMode, raw, body string) (text string, droppe
 func doneItems(body string) []string {
 	var done []string
 	for _, line := range strings.Split(body, "\n") {
-		if line = strings.TrimSpace(line); strings.HasPrefix(line, "- [x] ") {
+		if line = lowerTick(line); strings.HasPrefix(line, "- [x] ") {
 			done = append(done, line)
 		}
 	}

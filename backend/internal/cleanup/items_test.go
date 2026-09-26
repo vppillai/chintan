@@ -75,11 +75,11 @@ func TestParseItemsReadsTheReplyAndDropsWhatIsNotAnItem(t *testing.T) {
 		{"plain", `{"items":["Chickpeas","Green gram"]}`, []string{"Chickpeas", "Green gram"}},
 		{"fenced and chatty", "Here you go:\n```json\n{\"items\": [\"Umbrella\"]}\n```", []string{"Umbrella"}},
 		{"whitespace collapsed, empties dropped", `{"items":["  Two   loaves\nof bread ", "", "   "]}`, []string{"Two loaves of bread"}},
-		{"the list's own name is not an item", `{"items":["Shopping list","shopping  LIST","Milk"]}`, []string{"Milk"}},
+		{"an item that is the list's name is kept: visible beats lost", `{"items":["Batteries"]}`, []string{"Batteries"}},
 		{"nothing to add", `{"items":[]}`, []string{}},
 		{"a long item is cut, not split", `{"items":["` + long + `"]}`, []string{long[:cleanup.MaxChecklistItemRunes]}},
 	} {
-		got, err := cleanup.ParseItems(tc.raw, "Shopping list")
+		got, err := cleanup.ParseItems(tc.raw)
 		if err != nil {
 			t.Errorf("%s: ParseItems: %v", tc.name, err)
 			continue
@@ -100,7 +100,7 @@ func TestParseItemsReadsTheReplyAndDropsWhatIsNotAnItem(t *testing.T) {
 		"items not an array": `{"items":"Umbrella"}`,
 		"over the cap":       `{"items":[` + strings.Join(many, ",") + `]}`,
 	} {
-		if got, err := cleanup.ParseItems(raw, "Shopping list"); !errors.Is(err, cleanup.ErrNotAnItemList) {
+		if got, err := cleanup.ParseItems(raw); !errors.Is(err, cleanup.ErrNotAnItemList) {
 			t.Errorf("%s: ParseItems(%q) = %q, %v; want ErrNotAnItemList", name, raw, got, err)
 		}
 	}

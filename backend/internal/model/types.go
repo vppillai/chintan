@@ -230,7 +230,8 @@ type Settings struct {
 // NoteKindChecklist is the one non-default NoteIndex.Kind. A checklist body is
 // GitHub task-list syntax, one item per line: "- [ ] text" open, "- [x] text"
 // done; blank lines are ignored by every reader. The worker appends each
-// recording as one open item, and the cleaned view runs in NoteCleanTasks.
+// recording as the open items it named, one line each under the recording's
+// marker, and the cleaned view runs in NoteCleanTasks.
 const NoteKindChecklist = "checklist"
 
 // ValidNoteKind reports whether k is a stored note kind.

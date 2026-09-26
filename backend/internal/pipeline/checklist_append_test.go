@@ -152,8 +152,8 @@ func TestAnUnusableItemsReplyAppendsTheRecordingAsOneItem(t *testing.T) {
 	if capture.Status != model.StatusAppended {
 		t.Fatalf("capture = %s (%s), want appended", capture.Status, capture.Error)
 	}
-	if want := service.CaptureMarker("c_1") + "\n- [ ] add umbrella\n- [ ] to shopping list"; body != want {
-		t.Errorf("body = %q, want the recording's lines as items %q", body, want)
+	if want := service.CaptureMarker("c_1") + "\n- [ ] add umbrella to shopping list"; body != want {
+		t.Errorf("body = %q, want the recording as one item %q", body, want)
 	}
 }
 
@@ -174,6 +174,32 @@ func TestAVerbatimChecklistTakesTheRecordingAsOneItem(t *testing.T) {
 	}
 	if len(h.llm.ItemsCalls()) != 0 || h.llm.Calls() != 0 {
 		t.Errorf("a verbatim checklist called the model: items=%d cleanup=%d", len(h.llm.ItemsCalls()), h.llm.Calls())
+	}
+}
+
+// The owner's second capture, into a verbatim list: the router decides the
+// destination and its spans would cut the words down to "list"; the item is
+// the recording as spoken, because that is what verbatim promises, and no
+// model is called for it.
+func TestAVerbatimChecklistReachedByTheRouterTakesTheRawWords(t *testing.T) {
+	h := newHarness(t, harnessOpts{
+		stt: &fake.STT{Response: "Add umbrella\nto shopping list"},
+		llm: &fake.LLM{ItemsResponse: []string{"Umbrella"}},
+		router: &fake.Router{
+			Decision: provider.RouteDecision{Action: provider.RouteAppend, NoteID: "list1", Confidence: 1},
+			Spans:    []routing.Span{{StartWord: 0, EndWord: 4}},
+		},
+	})
+	seedChecklistCapture(t, h, "", func(n *model.NoteIndex) { n.Verbatim = true })
+	capture, body := runChecklistCapture(t, h)
+	if capture.Status != model.StatusAppended || capture.NoteID != "list1" {
+		t.Fatalf("capture = %s (%s) in %q, want appended into list1", capture.Status, capture.Error, capture.NoteID)
+	}
+	if want := service.CaptureMarker("c_1") + "\n- [ ] Add umbrella to shopping list"; body != want {
+		t.Errorf("body = %q, want the words as spoken %q", body, want)
+	}
+	if len(h.llm.ItemsCalls()) != 0 || h.llm.Calls() != 0 || h.router.CallCount() != 1 {
+		t.Errorf("calls: items=%d cleanup=%d router=%d; want the one routing call only", len(h.llm.ItemsCalls()), h.llm.Calls(), h.router.CallCount())
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,22 +90,31 @@ func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode,
 // Items asks for the checklist items in one recording. The completion is a
 // JSON object read back with the shared extractor and bounded by the input it
 // extracts from; the caller falls back to the recording as one item when the
-// reply is not a list.
+// reply is not a list. An empty completion is one such reply — the model
+// answered with nothing, which is not a list — rather than the provider
+// failure it is for cleanup, where empty text would be stored as the note.
 func (c *OpenAICleanup) Items(ctx context.Context, transcript, listTitle, language string) (ChecklistItems, error) {
 	systemPrompt, userPrompt, err := cleanup.ItemsPrompt(transcript, listTitle, language)
 	if err != nil {
 		return ChecklistItems{}, err
 	}
 	out, usage, err := c.complete(ctx, systemPrompt, userPrompt, cleanup.ItemsMaxTokens(transcript))
+	if errors.Is(err, errEmptyContent) {
+		return ChecklistItems{}, fmt.Errorf("%w: %v", cleanup.ErrNotAnItemList, err)
+	}
 	if err != nil {
 		return ChecklistItems{}, err
 	}
-	items, err := cleanup.ParseItems(out, listTitle)
+	items, err := cleanup.ParseItems(out)
 	if err != nil {
 		return ChecklistItems{Usage: usage}, err
 	}
 	return ChecklistItems{Items: items, Usage: usage}, nil
 }
+
+// errEmptyContent is a completion whose message content is empty after
+// trimming. Every caller but Items treats it as a failed call.
+var errEmptyContent = errors.New("provider: llm returned empty content")
 
 // Ask answers one question over the packed notes. Like Route the completion
 // is a JSON object and is read back with the shared extractor, so a model
@@ -191,7 +201,7 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 	}
 	out := strings.TrimSpace(parsed.Choices[0].Message.Content)
 	if out == "" {
-		return "", TokenUsage{}, fmt.Errorf("provider: llm returned empty content")
+		return "", TokenUsage{}, errEmptyContent
 	}
 	usage := TokenUsage{
 		InputTokens:  parsed.Usage.PromptTokens,

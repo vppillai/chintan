@@ -113,11 +113,17 @@ var ErrNotAnItemList = errors.New("cleanup: the model did not return a list of i
 
 // ParseItems reads the model's reply for ItemsPrompt and returns the items
 // to append: whitespace collapsed, empty ones dropped, each cut at
-// MaxChecklistItemRunes. An item that is the list's own name is dropped — the
-// prompt forbids it, and this is that rule made mechanical, because "create a
-// shopping list" must add nothing to Shopping list. An empty list is a valid
-// answer: the recording was nothing but an instruction.
-func ParseItems(raw, listTitle string) ([]string, error) {
+// MaxChecklistItemRunes. An empty list is a valid answer: the recording was
+// nothing but an instruction.
+//
+// Nothing here checks an item against the transcript or the title. A
+// subsequence check would refuse the garbling fix the prompt asks for, and a
+// rule dropping an item equal to the title would silently lose "add
+// batteries" to a list titled Batteries; an item the prompt should not have
+// produced is visible in the list and one tap away from gone, a dropped one
+// is lost. The prompt is the guard, and provider.TestLiveChecklistItems is
+// the check on the prompt.
+func ParseItems(raw string) ([]string, error) {
 	obj, err := llm.ExtractJSONObject(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotAnItemList, err)
@@ -131,14 +137,13 @@ func ParseItems(raw, listTitle string) ([]string, error) {
 	if len(*reply.Items) > MaxItemsPerRecording {
 		return nil, fmt.Errorf("%w: %d items, limit %d", ErrNotAnItemList, len(*reply.Items), MaxItemsPerRecording)
 	}
-	title := strings.Join(strings.Fields(listTitle), " ")
 	items := make([]string, 0, len(*reply.Items))
 	for _, item := range *reply.Items {
 		item = strings.Join(strings.Fields(item), " ")
 		if runes := []rune(item); len(runes) > MaxChecklistItemRunes {
 			item = strings.TrimSpace(string(runes[:MaxChecklistItemRunes]))
 		}
-		if item == "" || strings.EqualFold(item, title) {
+		if item == "" {
 			continue
 		}
 		items = append(items, item)
@@ -148,9 +153,14 @@ func ParseItems(raw, listTitle string) ([]string, error) {
 
 // ItemsMaxTokens bounds the completion for ItemsPrompt: the items are words
 // of the transcript inside a little JSON, so three times the input's tokens
-// covers a reply that returns every word with quoting around each item, and
-// a model that starts generating is cut off rather than paid for. The floor
-// keeps a five-word recording from being capped below one JSON object.
+// (at the usual four characters per token) covers a reply that returns every
+// word with quoting around each item, and a model that starts generating is
+// cut off rather than paid for. The floor keeps a five-word recording from
+// being capped below one JSON object.
 func ItemsMaxTokens(transcript string) int {
-	return 2 * NoteMaxTokens(transcript)
+	limit := 3 * (len(transcript)/4 + 1)
+	if limit < 512 {
+		limit = 512
+	}
+	return limit
 }

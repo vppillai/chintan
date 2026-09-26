@@ -486,14 +486,16 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 	switch {
 	case capture.CleanKey != "":
 		// Cleaned already; a retry resumes at the append.
-	case note.Kind == model.NoteKindChecklist && !note.Verbatim:
+	case note.Kind == model.NoteKindChecklist:
 		// A checklist takes items, not a cleaned paragraph, and the items
 		// come from the raw transcript: the extraction prompt handles the
 		// words addressed to the app itself, so neither the router's spans
 		// nor the instruction strip below is consulted — the item is not at
 		// the mercy of where a span ended ("Add umbrella to shopping list"
 		// routed as the item "list", owner feedback 2026-09-26). A verbatim
-		// checklist keeps the path below: the recording as spoken, one item.
+		// checklist takes the raw transcript itself as its one item, on the
+		// routed path as on the targeted one; the routed text would carry
+		// the same span damage.
 		if err := p.extractItems(ctx, tenantID, capture, note); err != nil {
 			return *capture, err
 		}
@@ -1250,6 +1252,12 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 // pre-2026-09-26 behaviour: the dictation is never lost to a bad reply, and
 // the fallback is counted so a prompt that has stopped working is visible.
 // A provider failure is handled as cleanup's is.
+//
+// A verbatim checklist makes no call: CleanKey points at the raw transcript,
+// as clean does for a verbatim note, and the append collapses it to one
+// item. Raw rather than routed, because "as spoken" is what verbatim
+// promises and the routed text is the transcript with the router's spans
+// cut out of it.
 func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) error {
 	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
 		return err
@@ -1261,6 +1269,13 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	transcript := string(rawBytes)
 	if strings.TrimSpace(transcript) == "" {
 		capture.Status = model.StatusNoContent
+		capture.Error = ""
+		return p.persist(ctx, capture)
+	}
+	if note.Verbatim {
+		obs.Count(ctx, "CaptureCleanupBypassed", map[string]string{"Stage": string(service.StatusCleaning)})
+		capture.CleanKey = capture.RawKey
+		capture.Status = model.StatusCleaned
 		capture.Error = ""
 		return p.persist(ctx, capture)
 	}
@@ -1305,7 +1320,7 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 			slog.String("capture_id", capture.ID),
 			slog.String("error", unusable.Error()))
 		obs.Count(ctx, "ChecklistItemsDiscarded", map[string]string{"Reason": "unusable"})
-		items = []string{transcript}
+		items = []string{strings.Join(strings.Fields(transcript), " ")}
 	case len(items) == 0:
 		// The speaker only told the app what to do.
 		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "none"})
@@ -1613,6 +1628,12 @@ func replaceCaptureParagraph(body, captureID, text string) string {
 // recording that now yields a different number of items carries nothing —
 // there is no saying which new line was which old one, and an open item the
 // person can tick again is better than a tick on the wrong item.
+//
+// ponytail: the carry is positional. A retranscription that keeps the count
+// but reorders or reshapes the items puts the tick on the line that holds
+// the old one's place, not its words; matching lines by their words would
+// need a similarity rule and this is a retranscription of a ticked list, so
+// the count check is the ceiling for now.
 func keepTick(old, text string) string {
 	oldLines, lines := strings.Split(old, "\n"), strings.Split(text, "\n")
 	if len(oldLines) != len(lines) {

@@ -74,8 +74,10 @@ func TestNoteOutputInTasksModeAcceptsOnlyATaskList(t *testing.T) {
 	refused("a heading before the list", "# Tasks\n- [ ] call the roofer")
 	refused("a plain bullet", "- call the roofer")
 	refused("an item with no text", "- [ ] ")
-	refused("a capital X", "- [X] passport")
 	refused("a numbered list", "1. call the roofer")
+	// A capital X is a tick, as the frontend reads it, and is stored as the
+	// worker's lowercase one.
+	ok("- [ ] call the roofer\n- [X] passport", "- [ ] call the roofer\n- [x] passport")
 
 	// The item cap: five hundred is stored, one more is refused. The body's
 	// done item has to be among them, and every open item has to be its words.
@@ -127,6 +129,12 @@ func TestNoteOutputInTasksModeKeepsTicksAndDropsInventedItems(t *testing.T) {
 		if got, _, err := cleanup.NoteOutput(model.NoteCleanTasks, raw, body); !errors.Is(err, cleanup.ErrNotATaskList) {
 			t.Errorf("%s: NoteOutput = %q, %v; want ErrNotATaskList", name, got, err)
 		}
+	}
+
+	// A tick typed as "[X]" is a tick: read as the body's done item, written
+	// back as the worker's "[x]".
+	if got, _, err := cleanup.NoteOutput(model.NoteCleanTasks, "- [ ] Chickpeas\n- [X] passport", "- [ ] chickpeas\n- [X] passport"); err != nil || got != "- [ ] Chickpeas\n- [x] passport" {
+		t.Errorf("NoteOutput(tasks, typed [X]) = %q, %v; want the tick kept as [x]", got, err)
 	}
 
 	// Every open item invented and nothing done: nothing usable.
