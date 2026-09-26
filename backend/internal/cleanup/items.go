@@ -117,8 +117,8 @@ var ErrNotAnItemList = errors.New("cleanup: the model did not return a list of i
 // rule dropping an item equal to the title would silently lose "add
 // batteries" to a list titled Batteries; an item the prompt should not have
 // produced is visible in the list and one tap away from gone, a dropped one
-// is lost. The prompt is the guard, and provider.TestLiveChecklistItems is
-// the check on the prompt.
+// is lost. The prompt is the guard, and provider.TestLiveEval/items is the
+// check on the prompt.
 func ParseItems(raw string) ([]string, error) {
 	obj, err := llm.ExtractJSONObject(raw)
 	if err != nil {
