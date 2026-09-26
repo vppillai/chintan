@@ -152,6 +152,8 @@ describe('the devices card on You', () => {
     expect(shown).toHaveTextContent('The new key for Watch');
     expect(shown).toHaveTextContent(deviceCreated.key);
     expect(shown).toHaveTextContent(/old key keeps working until you tap Done/i);
+    // The key on screen is the only copy; no row may rotate over it until Done.
+    expect(screen.getAllByRole('button', { name: /^Rotate key for/ }).every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
     // One create, with the old device's name, and no revoke yet: the device
     // still has a working key while the new one is being pasted in.
     expect(calls.filter((call) => call.method === 'POST')).toEqual([{ method: 'POST', path: '/v1/devices', body: { name: 'Watch' } }]);

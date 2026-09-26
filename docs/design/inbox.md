@@ -40,7 +40,12 @@ their body bytes, the month) come from three counters on the device row
 `PutDevice` as the day's counter and `last_used_at`, so they cost no extra
 write; a new month starts them over on the key's next request, and the
 service lists an earlier month's counters as null. "Sent" counts accepted
-requests, which is captures near enough: a two-step upload is two. `DELETE
+requests, which is captures near enough: a two-step upload is two. Bytes
+are the bodies the inbox itself read — a one-shot route's recording or
+text, but for the two-step route only the small JSON that opens the
+capture, since the PUT goes to the bucket and never through the inbox — so
+a device that uploads that way shows kilobytes a month, not the size of its
+recordings. `DELETE
 /v1/devices/{id}` revokes: `revoked_at` is set, the GSI1 keys are dropped so
 the lookup cannot see the row, and a TTL thirty days out lets DynamoDB drop
 it. Revoking a revoked device is 204 again. The Devices card's Rotate key is
@@ -158,11 +163,14 @@ The worker emits two metrics from them, `CaptureQueueDelay` (row written →
 worker picked it up) and `CaptureEndToEnd` (row written → appended), with a
 `Source` dimension of `app` or `device` — never the device id — and its
 "capture pipeline finished" line carries `queue_ms`, `source` and, when the
-sender said when it recorded, `device_lag_ms`. `chintanctl latency --month
-yyyy-mm` reads the rows back as per-hop percentiles (device lag, queue,
-transcribe, route, clean, append, total) by source, the device id included
-there. None of it reaches the wire, the app or About: `captureOf` leaves
-both fields out, and the wire test pins that.
+sender said when it recorded, `device_lag_ms`. Both metrics start at the
+row's `created_at`, so a capture retried days after it failed reports the
+whole wait, not the retry's own run, and one such retry can own a month's
+p95 by itself. `chintanctl latency --month yyyy-mm` reads the rows back as
+per-hop percentiles (device lag, queue, transcribe, route, clean, append,
+total) by source, the device id included there; its `queue` and `total`
+inflate on a retry the same way. None of it reaches the wire, the app or
+About: `captureOf` leaves both fields out, and the wire test pins that.
 
 ## Threat model, in one place
 

@@ -147,7 +147,7 @@ Any device or app that can make one HTTPS request with one header can drop a rec
 API=https://<api-id>.execute-api.us-west-2.amazonaws.com   # the stack's ApiEndpoint output — https://api.example.com behind a custom domain
 curl -sS "$API/v1/devices" -H "Authorization: Bearer $ID_TOKEN" \
   -H 'Content-Type: application/json' -d '{"name":"Kitchen watch"}'
-# → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"key":"ck_dev_…_…"}
+# → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"usage_month":null,"key":"ck_dev_…_…"}
 ```
 
 `GET /v1/devices` lists your devices (never the keys) with what each sent this month; `DELETE /v1/devices/{id}` revokes one, immediately. In the app, **Rotate key** mints a new key for the same device and revokes the old one when you tap Done; paste the new key into the device first. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).

@@ -46,7 +46,7 @@ func TestPipelineKeepsATimingRecordAndEmitsItsTwoMetrics(t *testing.T) {
 		if err != nil || final.Status != model.StatusAppended {
 			t.Fatalf("Run = %s, %v", final.Status, err)
 		}
-		assertStagesInOrder(t, final.StageAt, model.StatusTranscribing, model.StatusTranscribed, model.StatusCleaning, model.StatusAppending, model.StatusAppended)
+		assertStagesInOrder(t, final.StageAt, model.StatusTranscribing, model.StatusTranscribed, model.StatusCleaning, model.StatusAppending)
 		if _, ok := final.StageAt[string(model.StatusRouting)]; ok {
 			t.Errorf("a targeted capture was stamped as routing: %v", final.StageAt)
 		}
@@ -75,7 +75,7 @@ func TestPipelineKeepsATimingRecordAndEmitsItsTwoMetrics(t *testing.T) {
 		if err != nil || final.Status != model.StatusAppended {
 			t.Fatalf("Run = %s, %v", final.Status, err)
 		}
-		assertStagesInOrder(t, final.StageAt, model.StatusCleaning, model.StatusAppending, model.StatusAppended)
+		assertStagesInOrder(t, final.StageAt, model.StatusCleaning, model.StatusAppending)
 		if _, ok := final.StageAt[string(model.StatusTranscribing)]; ok {
 			t.Errorf("text was stamped as transcribing: %v", final.StageAt)
 		}
@@ -99,10 +99,15 @@ func TestPipelineKeepsATimingRecordAndEmitsItsTwoMetrics(t *testing.T) {
 }
 
 // assertStagesInOrder wants every stage stamped and the stamps not
-// decreasing along the pipeline's order. FormatTime's layout is fixed-width,
-// so a string comparison is a time comparison.
+// decreasing along the pipeline's order; FormatTime's layout is fixed-width,
+// so a string comparison is a time comparison. The appended stamp is only
+// wanted present: the store writes it with its own clock, not the harness's,
+// so its place in the order would be wall time against a pinned clock.
 func assertStagesInOrder(t *testing.T, stageAt map[string]string, order ...model.CaptureStatus) {
 	t.Helper()
+	if _, ok := stageAt[string(model.StatusAppended)]; !ok {
+		t.Fatalf("stage_at lacks appended: %v", stageAt)
+	}
 	prev := ""
 	for _, s := range order {
 		at, ok := stageAt[string(s)]

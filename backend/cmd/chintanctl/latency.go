@@ -35,8 +35,9 @@ type latencyGroup struct {
 	Captures int    `json:"captures"`
 	// Outcomes counts the captures that did not reach appended, by status.
 	Outcomes map[string]int `json:"outcomes"`
-	// Legacy counts rows from before the timing record (2026-09-26), which
-	// have appended_at and nothing per stage, so they contribute total only.
+	// Legacy counts rows from before the timing record (2026-09-26): an
+	// appended_at and nothing per stage, so they contribute total only. A
+	// row with neither is still waiting for the worker, not legacy.
 	Legacy int                    `json:"legacy"`
 	Hops   map[string]latencyStat `json:"hops"`
 
@@ -65,7 +66,7 @@ func (r *latencyResult) human(w *lineWriter) {
 		for _, n := range g.Outcomes {
 			appended -= n
 		}
-		line := fmt.Sprintf("  %s: %d captures, %d appended", g.Source, g.Captures, appended)
+		line := fmt.Sprintf("  %s: %s, %d appended", g.Source, plural(g.Captures, "capture"), appended)
 		if len(outcomes) > 0 {
 			line += ", " + strings.Join(outcomes, ", ")
 		}
@@ -82,6 +83,14 @@ func (r *latencyResult) human(w *lineWriter) {
 			w.printf("    %-12s %6d %9d %9d %9d\n", hop, s.Count, s.P50, s.P95, s.Max)
 		}
 	}
+}
+
+// plural is "1 capture", "2 captures".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func cmdLatency(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.Reader) error {
@@ -174,8 +183,9 @@ func runLatency(ctx context.Context, e *env, month string, explicitTenants []str
 // latencyHopsOf reduces one row to its hops in milliseconds. A hop whose two
 // stamps are not both on the row is left out rather than guessed: a text
 // capture has no transcribe hop, a targeted one no route hop, a failed one
-// no total. A row with no stage_at at all is from before the timing record
-// and gives total alone, from appended_at.
+// no total. A row with no stage_at at all but an appended_at is from before
+// the timing record and gives total alone; one with neither is still in the
+// queue, and is neither legacy nor measured.
 func latencyHopsOf(c model.CaptureIndex) (hops map[string]int64, legacy bool) {
 	created, err := model.ParseTime(c.CreatedAt)
 	if err != nil {
@@ -198,7 +208,7 @@ func latencyHopsOf(c model.CaptureIndex) (hops map[string]int64, legacy bool) {
 		if hasAppended {
 			hops["total"] = between(created, appended)
 		}
-		return hops, true
+		return hops, hasAppended
 	}
 	var first time.Time
 	for _, v := range c.StageAt {

@@ -225,7 +225,9 @@ export function DevicesCard() {
                   className="settings-status__action"
                   aria-label={`Rotate key for ${device.name}`}
                   title={full ? FULL_HINT : undefined}
-                  disabled={full || create.isPending || remove.isPending}
+                  // Held while a fresh key is on screen: rotating again would
+                  // discard it before it was copied.
+                  disabled={full || minted !== null || create.isPending || remove.isPending}
                   onClick={() => {
                     rotate(device);
                   }}

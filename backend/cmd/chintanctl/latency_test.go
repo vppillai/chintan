@@ -14,7 +14,8 @@ import (
 // The month's rows, reduced to hops and grouped by source: a device's
 // captures under its id with the device lag its recorded_at gives, the
 // app's under `app`, a row from before the timing record counted as legacy
-// with its total alone, a failed one counted as an outcome. Nothing is
+// with its total alone, a failed one counted as an outcome, one the worker
+// has not picked up yet counted as an outcome and not as legacy. Nothing is
 // written.
 func TestLatencyGroupsCapturesBySourceAndHop(t *testing.T) {
 	part := newFakePartition()
@@ -46,6 +47,9 @@ func TestLatencyGroupsCapturesBySourceAndHop(t *testing.T) {
 	})
 	put("c_legacy", model.CaptureIndex{Status: model.StatusAppended, CreatedAt: at(time.Hour), AppendedAt: base.Add(time.Hour + 30*time.Second).Unix()})
 	put("c_failed", model.CaptureIndex{Status: model.StatusFailed, CreatedAt: at(2 * time.Hour), StageAt: map[string]string{"transcribing": at(2*time.Hour + time.Second)}})
+	// Still in the queue: no stamp of any kind, so nothing to measure and
+	// nothing to call legacy.
+	put("c_waiting", model.CaptureIndex{Status: model.StatusUploaded, CreatedAt: at(3 * time.Hour)})
 	// Another month's row is not the month's.
 	put("c_august", model.CaptureIndex{Status: model.StatusAppended, CreatedAt: model.FormatTime(base.AddDate(0, -1, 0)), AppendedAt: base.AddDate(0, -1, 0).Unix() + 5})
 
@@ -59,7 +63,7 @@ func TestLatencyGroupsCapturesBySourceAndHop(t *testing.T) {
 		t.Fatalf("groups = %+v", res.Groups)
 	}
 	app, dev := res.Groups[0], res.Groups[1]
-	if app.Captures != 3 || app.Legacy != 1 || app.Outcomes["failed"] != 1 || len(app.Outcomes) != 1 {
+	if app.Captures != 4 || app.Legacy != 1 || app.Outcomes["failed"] != 1 || app.Outcomes["uploaded"] != 1 || len(app.Outcomes) != 2 {
 		t.Errorf("app = %+v", app)
 	}
 	if got := app.Hops["total"]; got != (latencyStat{Count: 2, P50: 16_000, P95: 30_000, Max: 30_000}) {
@@ -93,7 +97,7 @@ func TestLatencyGroupsCapturesBySourceAndHop(t *testing.T) {
 	if err := report(&out, false, res); err != nil {
 		t.Fatalf("report: %v", err)
 	}
-	for _, want := range []string{"latency dev (prod) for 2026-09", "app: 3 captures, 2 appended, failed 1, 1 legacy (total only)", "device:dev_x: 1 captures, 1 appended", "device_lag", "12000"} {
+	for _, want := range []string{"latency dev (prod) for 2026-09", "app: 4 captures, 2 appended, failed 1, uploaded 1, 1 legacy (total only)", "device:dev_x: 1 capture, 1 appended", "device_lag", "12000"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("human output lacks %q:\n%s", want, out.String())
 		}
