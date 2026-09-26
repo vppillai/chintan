@@ -5,7 +5,11 @@ then every other note under the day it was last touched, newest first, with a
 search field and a row of filter chips above. Rows act on themselves — swipe,
 the ⋮ menu, press-and-hold to select — so the screen knows nothing of archive
 or pin. This note is the frontend; `pins.md` is the backend of pinning. Code:
-`frontend/src/screens/NotesScreen.tsx`, `features/notes/groups.ts`
+`frontend/src/screens/NotesScreen.tsx` (the composition) with its parts under
+`screens/library/` — `useLibraryParams.ts` (the filters in the URL),
+`useLibrarySelection.tsx` (bulk select, its bar and confirms), `LibraryField.tsx`
+(the search/ask field and the chips), `LibraryList.tsx` (the rows, captions and
+empty states) — `features/notes/groups.ts`
 (`splitPinned`, `groupByDay`), `features/notes/PinnedGroup.tsx`,
 `components/NoteRow.tsx`, `components/SwipeRow.tsx` with
 `hooks/useSwipeActions.ts`, `hooks/useLongPress.ts`,
