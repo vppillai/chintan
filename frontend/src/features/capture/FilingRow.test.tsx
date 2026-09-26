@@ -1,5 +1,5 @@
 import { focusManager } from '@tanstack/react-query';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -606,6 +606,21 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     expect(screen.getByText('Timed out')).toBeInTheDocument();
     // Focus did not leave with the row: it is on the neighbour's own control.
     expect(document.activeElement?.closest('.filing-row')).toHaveTextContent('Timed out');
+  });
+
+  it('leaves focus where it was when the × was tapped rather than keyed', async () => {
+    // Safari does not focus a tapped or clicked button, so the active element
+    // is <body> throughout; `fireEvent.click` is that tap. The heading stands
+    // in for the library's: focusing it from here scrolled a reader who
+    // dismissed a mid-list receipt back to the top of Home.
+    render(<h1 className="library-heading" tabIndex={-1} />);
+    mount([filed]);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await waitFor(() => {
+      expect(screen.queryByText(/^Filed/)).toBeNull();
+    });
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('survives a reload, which is what the device store is for', () => {
