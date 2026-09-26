@@ -1,6 +1,22 @@
 package service
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// CaptureMarkerIDs lists the capture ids whose markers appear in body, in body
+// order: what the tests below compare a chronological insert against.
+// Production asks HasCaptureMarker about one id and never needs the list.
+func CaptureMarkerIDs(body string) []string {
+	matches := captureMarkerFind.FindAllString(body, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		id := strings.TrimSuffix(strings.TrimPrefix(m, captureMarkerPrefix), captureMarkerSuffix)
+		out = append(out, id)
+	}
+	return out
+}
 
 // The marker is what makes the worker's append exactly-once, so the two
 // properties below are load-bearing: stripping restores exactly the text the

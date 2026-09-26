@@ -68,12 +68,6 @@ func (a AttrValue) MarshalJSON() ([]byte, error) {
 // StringAttr builds a string attribute.
 func StringAttr(v string) AttrValue { return AttrValue{S: &v} }
 
-// NumberAttr builds a number attribute from an integer.
-func NumberAttr(v int64) AttrValue {
-	s := strconv.FormatInt(v, 10)
-	return AttrValue{N: &s}
-}
-
 // Item is one DynamoDB item, keyed by attribute name.
 type Item map[string]AttrValue
 

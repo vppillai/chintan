@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,14 @@ import (
 // TestProductionBinaryDoesNotLinkTestDoubles in internal/repository runs
 // `go list -deps ./cmd/...` and fails if internal/repository/memory or
 // internal/provider/fake is reachable from any main — including this one.
+
+// NumberAttr builds a number attribute from an integer. Production reads
+// numbers (Item.Num) and copies attributes verbatim; only the fixtures here
+// build one.
+func NumberAttr(v int64) AttrValue {
+	s := strconv.FormatInt(v, 10)
+	return AttrValue{N: &s}
+}
 
 // fakePartition is an in-memory Partition: pk -> sk -> item.
 type fakePartition struct {

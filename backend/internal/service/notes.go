@@ -597,7 +597,7 @@ func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex,
 
 	// The snippet (first ~500 chars) and the search text are the two
 	// derivations of the body the index row carries.
-	note.Snippet = generateSnippet(body)
+	note.Snippet = Snippet(body)
 	note.SearchText = SearchText(body)
 	// The cleaned view was generated from the body that just changed — unless
 	// the change was to adopt the view itself ("Use this list"): a body equal
@@ -790,7 +790,7 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 	return result, nil
 }
 
-// generateSnippet creates a snippet from a note body.
+// Snippet derives the list snippet from a note body.
 //
 // The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
 // writes invalid UTF-8 into DynamoDB and into the routing prompt.
@@ -798,7 +798,7 @@ func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (Ma
 // The worker's append markers are removed first: the snippet is shown in the
 // notes list and handed to the router as a summary of the note, and neither
 // wants an HTML comment in it.
-func generateSnippet(body string) string {
+func Snippet(body string) string {
 	const maxRunes = 500
 	body = StripCaptureMarkers(body)
 	runes := []rune(body)

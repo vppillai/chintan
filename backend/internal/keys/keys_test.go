@@ -46,13 +46,6 @@ func TestCapturePaths(t *testing.T) {
 	if clean != "tenants/u1/captures/c1/clean.txt" {
 		t.Fatalf("got %q", clean)
 	}
-	meta, err := keys.CaptureMeta("u1", "c1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta != "tenants/u1/captures/c1/meta.json" {
-		t.Fatalf("got %q", meta)
-	}
 }
 
 func TestRejectsEmptyOrSlashIDs(t *testing.T) {

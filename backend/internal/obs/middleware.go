@@ -52,14 +52,6 @@ func SetRoutePattern(ctx context.Context, pattern string) {
 	}
 }
 
-// RoutePattern returns the pattern recorded by SetRoutePattern, or "".
-func RoutePattern(ctx context.Context) string {
-	if l, ok := ctx.Value(routeLabelKey{}).(*routeLabel); ok {
-		return l.get()
-	}
-	return ""
-}
-
 // statusRecorder captures the status code for the access log without buffering
 // the body.
 type statusRecorder struct {

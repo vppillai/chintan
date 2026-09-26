@@ -190,15 +190,6 @@ func parseTask(raw json.RawMessage) (Invocation, bool) {
 	return inv, true
 }
 
-// parseCleanNoteTask reads a clean-note payload; ok is false for any other.
-func parseCleanNoteTask(raw json.RawMessage) (Invocation, bool) {
-	inv, ok := parseTask(raw)
-	if !ok || inv.Task != TaskCleanNote {
-		return Invocation{}, false
-	}
-	return inv, true
-}
-
 // correlationFor picks the id one capture's log lines are tied together by.
 //
 // The API's invocation carries the id it minted, so a retry is one greppable

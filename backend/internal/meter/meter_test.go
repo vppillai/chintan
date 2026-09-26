@@ -124,9 +124,6 @@ func TestResolveNamesTheRowACallWouldBePricedFrom(t *testing.T) {
 		if got := p.Resolve(tc.provider, tc.model); got != tc.want {
 			t.Errorf("Resolve(%q, %q) = %v, want %v", tc.provider, tc.model, got, tc.want)
 		}
-		if got := p.Resolves(tc.provider, tc.model); got != (tc.want != ResolvedNone) {
-			t.Errorf("Resolves(%q, %q) = %v, want %v", tc.provider, tc.model, got, tc.want != ResolvedNone)
-		}
 	}
 }
 
@@ -141,8 +138,8 @@ func TestResolveAgreesWithCostMicros(t *testing.T) {
 		{"groq", "whisper-large-v3-turbo"}, {"openai", "minimax-m3"}, {"openai", "other"}, {"nobody", "x"},
 	} {
 		priced := p.CostMicros(tc.provider, tc.model, UnitAudioSeconds, 1)+p.CostMicros(tc.provider, tc.model, UnitInputTokens, 1) > 0
-		if priced != p.Resolves(tc.provider, tc.model) {
-			t.Errorf("%s/%s: CostMicros prices it = %v but Resolves = %v", tc.provider, tc.model, priced, !priced)
+		if resolves := p.Resolve(tc.provider, tc.model) != ResolvedNone; priced != resolves {
+			t.Errorf("%s/%s: CostMicros prices it = %v but Resolve = %v", tc.provider, tc.model, priced, resolves)
 		}
 	}
 }

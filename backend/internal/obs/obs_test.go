@@ -174,14 +174,6 @@ func TestCorrelateLabelsUnmatchedRequestsWithoutThePath(t *testing.T) {
 	}
 }
 
-func TestRoutePatternIsInertWithoutCorrelate(t *testing.T) {
-	ctx := context.Background()
-	SetRoutePattern(ctx, "GET /v1/notes")
-	if got := RoutePattern(ctx); got != "" {
-		t.Errorf("RoutePattern = %q on a context Correlate never saw", got)
-	}
-}
-
 func TestRedactRevealsShapeNotContent(t *testing.T) {
 	secret := "the contractor said the flashing is the problem"
 	v := Redact(secret)

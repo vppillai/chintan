@@ -214,7 +214,7 @@ func RefreshNoteIndex(ctx context.Context, store repository.Store, objects repos
 		case !errors.Is(err, repository.ErrNotFound):
 			return model.NoteIndex{}, err
 		}
-		note.Snippet = generateSnippet(string(body))
+		note.Snippet = Snippet(string(body))
 		note.SearchText = SearchText(string(body))
 		if opts.Now != nil {
 			note.UpdatedAt = model.FormatTime(opts.Now())

@@ -75,7 +75,7 @@ type Breaker struct {
 // Option configures a Breaker.
 type Option func(*Breaker)
 
-// WithClock overrides the clock. For tests.
+// WithClock overrides the clock. Test seam.
 func WithClock(fn func() time.Time) Option {
 	return func(b *Breaker) { b.now = fn }
 }

@@ -70,10 +70,6 @@ func CaptureIsPending(s model.CaptureStatus) bool {
 	}
 }
 
-// Snippet re-derives a note's list snippet. Exported for the worker, which
-// refreshes the index after an append.
-func Snippet(body string) string { return generateSnippet(body) }
-
 // SanitizeTitle bounds a dictated title to one line. Exported for the worker,
 // which honours titles the router took from speech.
 func SanitizeTitle(title string) string { return sanitizeNoteTitle(title) }

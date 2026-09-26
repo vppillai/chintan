@@ -435,12 +435,12 @@ func TestInvokerSendsACleanNoteTaskTheWorkerAccepts(t *testing.T) {
 	if _, ok := sent["capture_id"]; ok {
 		t.Error("a clean-note payload names a capture")
 	}
-	task, ok := parseCleanNoteTask(client.in.Payload)
-	if !ok || task.NoteID != "n1" || task.TenantID != "user1" || task.Mode != "polished" || task.RequestedAt != "2026-09-05T12:00:00.000000000Z" {
+	task, ok := parseTask(client.in.Payload)
+	if !ok || task.Task != TaskCleanNote || task.NoteID != "n1" || task.TenantID != "user1" || task.Mode != "polished" || task.RequestedAt != "2026-09-05T12:00:00.000000000Z" {
 		t.Errorf("the worker does not read back what the invoker sent: %+v ok=%v", task, ok)
 	}
-	if _, isCapture := parseCleanNoteTask(json.RawMessage(`{"tenant_id":"u","capture_id":"c"}`)); isCapture {
-		t.Error("a capture invocation was read as a clean-note task")
+	if _, isTask := parseTask(json.RawMessage(`{"tenant_id":"u","capture_id":"c"}`)); isTask {
+		t.Error("a capture invocation was read as a task")
 	}
 }
 

@@ -37,7 +37,7 @@ var (
 	nowFn               = time.Now
 )
 
-// SetMetricOutput redirects EMF records. Intended for tests.
+// SetMetricOutput redirects EMF records. Test seam.
 func SetMetricOutput(w io.Writer) func() {
 	metricMu.Lock()
 	defer metricMu.Unlock()

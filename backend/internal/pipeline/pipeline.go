@@ -233,6 +233,8 @@ var errAppendClaimHeld = errors.New("pipeline: append claim held by an unfinishe
 // destination — is persisted in that state and returned with a nil error, so the
 // invocation is not retried to fail identically twice more before the DLQ. So
 // is a capture another delivery is already carrying.
+//
+// Test seam: production enters through RunUpload and Worker.Handle.
 func (p *Pipeline) Run(ctx context.Context, tenantID, captureID string) (model.CaptureIndex, error) {
 	return p.runCapture(ctx, CaptureRef{TenantID: tenantID, CaptureID: captureID})
 }

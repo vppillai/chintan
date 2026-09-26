@@ -110,17 +110,3 @@ func TestInternalServerErrorLogsTheErrorWithTheCorrelationID(t *testing.T) {
 		t.Errorf("response correlation_id = %q, want the logged one", p.CorrelationID)
 	}
 }
-
-func TestMethodNotAllowedSetsAllow(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPut, "/v1/notes", nil)
-	w := httptest.NewRecorder()
-
-	MethodNotAllowed(w, r, "GET, POST")
-
-	if got := w.Header().Get("Allow"); got != "GET, POST" {
-		t.Fatalf("Allow = %q, want the permitted methods", got)
-	}
-	if decode(t, w).Status != http.StatusMethodNotAllowed {
-		t.Error("status is not 405")
-	}
-}

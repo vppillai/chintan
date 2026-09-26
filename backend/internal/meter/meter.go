@@ -92,11 +92,6 @@ func (p PriceTable) Resolve(provider, model string) Resolution {
 	return ResolvedNone
 }
 
-// Resolves reports whether calls on provider and model would be priced at all.
-func (p PriceTable) Resolves(provider, model string) bool {
-	return p.Resolve(provider, model) != ResolvedNone
-}
-
 // row is the lookup CostMicros and Resolve share, so the two cannot disagree
 // about which row a call is priced from.
 func (p PriceTable) row(provider, model string) (map[Unit]float64, bool) {

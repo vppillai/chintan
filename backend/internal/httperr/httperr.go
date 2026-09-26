@@ -154,14 +154,6 @@ func NotFound(w http.ResponseWriter, r *http.Request, detail string) {
 	Write(w, r, New(http.StatusNotFound, detail))
 }
 
-// MethodNotAllowed writes 405 with the Allow header RFC 9110 requires.
-func MethodNotAllowed(w http.ResponseWriter, r *http.Request, allow string) {
-	if allow != "" {
-		w.Header().Set("Allow", allow)
-	}
-	Write(w, r, New(http.StatusMethodNotAllowed, "this resource does not support that method"))
-}
-
 // Conflict writes 409, carrying the current version when there is one.
 func Conflict(w http.ResponseWriter, r *http.Request, detail string, currentVersion *int64) {
 	p := New(http.StatusConflict, detail)

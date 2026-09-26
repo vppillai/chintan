@@ -363,9 +363,9 @@ type Packed struct {
 }
 
 // Packer accumulates excerpts against the prompt budget. The pipeline fetches
-// bodies one at a time, best note first, and stops when Remaining says the
-// budget is spent, so a tenant with a dozen long notes pays for the reads
-// that fit and not for the ones that would be thrown away.
+// bodies one at a time, best note first, and stops when Full says the budget
+// is spent, so a tenant with a dozen long notes pays for the reads that fit
+// and not for the ones that would be thrown away.
 type Packer struct {
 	terms     []string
 	remaining int
@@ -376,9 +376,6 @@ type Packer struct {
 func NewPacker(question string) *Packer {
 	return &Packer{terms: Tokenize(question), remaining: PackBudgetRunes}
 }
-
-// Remaining is the budget still unspent, in runes.
-func (p *Packer) Remaining() int { return p.remaining }
 
 // Full reports whether what is left is too little to hold a useful excerpt.
 func (p *Packer) Full() bool { return p.remaining < minUsefulExcerptRunes }

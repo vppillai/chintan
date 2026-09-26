@@ -383,9 +383,6 @@ func TestInvokerSendsAnAskTaskTheWorkerAccepts(t *testing.T) {
 	if !ok || task.Task != TaskAsk || task.AskID != "ask_1" {
 		t.Errorf("the worker does not read back what the invoker sent: %+v ok=%v", task, ok)
 	}
-	if _, isClean := parseCleanNoteTask(client.in.Payload); isClean {
-		t.Error("an ask payload was read as a clean-note task")
-	}
 }
 
 // clientAskPollWindow is how long the app polls an ask row before it tells the
