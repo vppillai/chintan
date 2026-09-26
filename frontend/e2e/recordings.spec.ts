@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import { LONG_PRESS_MS } from '../src/hooks/useLongPress.ts';
+
 import { expect, test, type ApiState } from './fixtures.ts';
 
 /**
@@ -35,7 +37,7 @@ function twoRecordings(api: ApiState): void {
 async function longPress(page: Page, selector: string): Promise<void> {
   const target = page.locator(selector).first();
   await target.dispatchEvent('pointerdown', { pointerType: 'touch', clientX: 20, clientY: 20, isPrimary: true, bubbles: true });
-  await page.waitForTimeout(650);
+  await page.waitForTimeout(LONG_PRESS_MS + 100);
   await target.dispatchEvent('pointerup', { pointerType: 'touch', bubbles: true });
 }
 

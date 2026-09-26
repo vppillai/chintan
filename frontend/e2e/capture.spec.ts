@@ -1,5 +1,7 @@
 import type { Page } from '@playwright/test';
 
+import { HOLD_DELAY_MS, MIN_TALK_MS } from '../src/features/capture/holdTiming.ts';
+
 import { expect, test } from './fixtures.ts';
 
 /**
@@ -23,19 +25,19 @@ test('records, uploads, and hands off to the filing row', async ({ page, api }) 
   // The waveform is a real canvas being painted from AnalyserNode data.
   const canvas = page.locator('canvas.waveform');
   await expect(canvas).toBeVisible();
-  await page.waitForTimeout(1_200);
-  const painted = await canvas.evaluate((element) => {
-    const source = element as HTMLCanvasElement;
-    const context = source.getContext('2d');
-    if (!context || source.width === 0) return false;
-    const { data } = context.getImageData(0, 0, source.width, source.height);
-    // Any non-transparent pixel means bars were drawn.
-    for (let index = 3; index < data.length; index += 4) {
-      if ((data[index] ?? 0) > 0) return true;
-    }
-    return false;
-  });
-  expect(painted).toBe(true);
+  const painted = () =>
+    canvas.evaluate((element) => {
+      const source = element as HTMLCanvasElement;
+      const context = source.getContext('2d');
+      if (!context || source.width === 0) return false;
+      const { data } = context.getImageData(0, 0, source.width, source.height);
+      // Any non-transparent pixel means bars were drawn.
+      for (let index = 3; index < data.length; index += 4) {
+        if ((data[index] ?? 0) > 0) return true;
+      }
+      return false;
+    });
+  await expect.poll(painted, { message: 'the waveform painted' }).toBe(true);
 
   // The timer counts up with tabular numerals.
   await expect(page.locator('.capture__timer')).not.toHaveText('00:00');
@@ -127,7 +129,8 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
     await expect(page.locator('.capture__state')).toHaveText('Recording');
     await expect(page.locator('.capture__timer')).toHaveText('00:00');
 
-    await page.waitForTimeout(1_100);
+    // A second of audio, by the clock on screen.
+    await expect(page.locator('.capture__timer')).toHaveText('00:01');
     await page.getByRole('button', { name: 'Stop' }).click();
     await expect(page.getByText('Ready to send')).toBeVisible();
     await page.getByRole('button', { name: 'Send' }).click();
@@ -170,7 +173,7 @@ test('records into the note it was opened from, and the target can be changed be
   await page.getByRole('button', { name: 'Reading list' }).click();
   await expect(page.getByRole('button', { name: /into reading list/i })).toBeVisible();
 
-  await page.waitForTimeout(1_100);
+  await expect(page.locator('.capture__timer')).toHaveText('00:01');
   await page.getByRole('button', { name: 'Stop' }).click();
   await page.getByRole('button', { name: 'Send' }).click();
 
@@ -200,7 +203,7 @@ test('Send returns to the note, where the filing banner follows the recording in
   await page.goto('/notes/roof-repair');
   await page.getByRole('button', { name: /^PTT into this note/ }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
-  await page.waitForTimeout(1_100);
+  await expect(page.locator('.capture__timer')).toHaveText('00:01');
   await page.getByRole('button', { name: 'Stop' }).click();
 
   // Hold the create so the local upload is observable in the banner.
@@ -271,7 +274,8 @@ test('Send while recording stops the recorder, then uploads', async ({ page, api
   await page.goto('/notes/roof-repair');
   await page.getByRole('button', { name: /^PTT into this note/ }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
-  await page.waitForTimeout(1_100);
+  // A second of audio, so the create carries a length and a size.
+  await expect(page.locator('.capture__timer')).toHaveText('00:01');
 
   const create = page.waitForRequest(
     (request) => request.method() === 'POST' && request.url().endsWith('/api/v1/captures'),
@@ -318,9 +322,12 @@ async function holdTheMic(page: Page, name: RegExp, ms: number, slide = 0): Prom
   await page.mouse.up();
 }
 
+/** Long enough to be a hold (HOLD_DELAY_MS) with a message in it (MIN_TALK_MS), and a margin for the runner. */
+const A_MESSAGE_MS = HOLD_DELAY_MS + MIN_TALK_MS + 100;
+
 test('holding the mic on Home records in place and sends on release', async ({ page, api }) => {
   await page.goto('/');
-  await holdTheMic(page, /^PTT: tap to record/, 1_500);
+  await holdTheMic(page, /^PTT: tap to record/, A_MESSAGE_MS);
 
   // Sent, not opened: still Home, the card gone, the upload in the filing row.
   await expect(page).toHaveURL(/\/$/);
@@ -340,7 +347,7 @@ test('holding the mic on a note records into it, and the banner shows it filing'
   api,
 }) => {
   await page.goto('/notes/roof-repair');
-  await holdTheMic(page, /^PTT into this note/, 1_500);
+  await holdTheMic(page, /^PTT into this note/, A_MESSAGE_MS);
 
   await expect(page).toHaveURL(/\/notes\/roof-repair$/);
   await expect(page.getByRole('region', { name: 'Filing a recording' })).toBeVisible();
@@ -354,18 +361,19 @@ test('sliding away before release cancels, and a hold too short is discarded wit
 }) => {
   await page.goto('/');
 
-  await holdTheMic(page, /^PTT: tap to record/, 1_200, 160);
+  await holdTheMic(page, /^PTT: tap to record/, A_MESSAGE_MS, 160);
   await expect(page.locator('.hold-overlay')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$/);
 
+  // Held, but well short of a message.
   await holdTheMic(page, /^PTT: tap to record/, 50);
   await expect(page.locator('.hold-overlay--hint')).toHaveText('Too short — hold to talk');
   await expect(page).toHaveURL(/\/$/);
 
-  // Neither reached the server.
-  await page.waitForTimeout(1_000);
-  expect(api.captures).toHaveLength(0);
+  // Neither reached the server: a send would have put its upload in the
+  // filing row at once, and there is no row.
   await expect(page.getByRole('region', { name: /recordings being filed/i })).toHaveCount(0);
+  expect(api.captures).toHaveLength(0);
 });
 
 /**

@@ -22,6 +22,7 @@
  */
 
 import type {
+  AskWire,
   CaptureCreatedWire,
   CaptureWire,
   DeviceCreatedWire,
@@ -842,6 +843,165 @@ export const usageEmpty: UsageWire = {
     "notes": 0,
     "recordings": 0
   }
+};
+
+/** GET /v1/usage?month=2026-01 → 200 for a month with every op (transcribe, route, cleanup, clean_note, ask) across two providers, the month's API requests in total and per day, and what is stored: three recordings' lengths and bytes, one active note, the month's byte-days. */
+export const usageRich: UsageWire = {
+  "api": {
+    "requests": 21
+  },
+  "audio_seconds": 28.5,
+  "aws": {
+    "as_of": "2026-01-05T06:00:00Z",
+    "budget_micros": 10000000,
+    "month_micros": 2345678,
+    "share_basis": "provider_cost",
+    "share_micros": 117284
+  },
+  "calls": 5,
+  "cost_micros": 2721,
+  "days": [
+    {
+      "api_requests": 12,
+      "audio_seconds": 28.5,
+      "calls": 2,
+      "cost_micros": 951,
+      "date": "2026-01-03",
+      "input_tokens": 900,
+      "output_tokens": 300,
+      "storage_byte_days": 9000000
+    },
+    {
+      "api_requests": 9,
+      "calls": 3,
+      "cost_micros": 1770,
+      "date": "2026-01-04",
+      "input_tokens": 4900,
+      "output_tokens": 550,
+      "storage_byte_days": 9123456
+    }
+  ],
+  "input_tokens": 5800,
+  "month": "2026-01",
+  "ops": {
+    "ask": {
+      "calls": 1,
+      "cost_micros": 1100,
+      "input_tokens": 3000,
+      "output_tokens": 250
+    },
+    "clean_note": {
+      "calls": 1,
+      "cost_micros": 250,
+      "input_tokens": 700,
+      "output_tokens": 200
+    },
+    "cleanup": {
+      "calls": 1,
+      "cost_micros": 640,
+      "input_tokens": 900,
+      "output_tokens": 300
+    },
+    "route": {
+      "calls": 1,
+      "cost_micros": 420,
+      "input_tokens": 1200,
+      "output_tokens": 100
+    },
+    "transcribe": {
+      "audio_seconds": 28.5,
+      "calls": 1,
+      "cost_micros": 311
+    }
+  },
+  "output_tokens": 850,
+  "providers": {
+    "groq": {
+      "audio_seconds": 28.5,
+      "calls": 1,
+      "cost_micros": 311
+    },
+    "openai": {
+      "calls": 4,
+      "cost_micros": 2410,
+      "input_tokens": 5800,
+      "output_tokens": 850
+    }
+  },
+  "storage": {
+    "approximate": false,
+    "audio_bytes": 9123456,
+    "audio_seconds": 1391.2,
+    "byte_days": 18123456,
+    "note_days": 23,
+    "notes": 1,
+    "recordings": 3
+  }
+};
+
+/** POST /v1/ask → 202. The row as first written: pending, nothing answered yet; every member present so the client polling GET /v1/ask/{askId} never has to guess. */
+export const askPending: AskWire = {
+  "answer": null,
+  "answered_at": null,
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "error": null,
+  "grounded": false,
+  "id": "fixture-id",
+  "notes_considered": 0,
+  "question": "what did I decide about the roof?",
+  "sources": [],
+  "status": "pending"
+};
+
+/** GET /v1/ask/{askId} → 200 once the worker has answered from the notes. Sources are only notes the model was given AND cited, most relevant first; the answer carries the light Markdown the cleaned view uses. */
+export const askAnswered: AskWire = {
+  "answer": "You decided to get two quotes before the rain and to have the **ridge tiles** on the south slope reset.\n\n- The tiler can start on the fourteenth.\n- The gutter leak goes to the roofer.",
+  "answered_at": "2026-01-01T00:00:04.000000000Z",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "error": null,
+  "grounded": true,
+  "id": "fixture-id",
+  "notes_considered": 12,
+  "question": "what did I decide about the roof?",
+  "sources": [
+    {
+      "note_id": "fixture-note-id",
+      "title": "Roof repair"
+    },
+    {
+      "note_id": "fixture-note-id",
+      "title": "Kitchen rebuild"
+    }
+  ],
+  "status": "answered"
+};
+
+/** GET /v1/ask/{askId} → 200 for a question the notes do not answer: answered, not failed, with grounded false and no sources. */
+export const askNotInNotes: AskWire = {
+  "answer": "Your notes do not say anything about a car.",
+  "answered_at": "2026-01-01T00:00:03.000000000Z",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "error": null,
+  "grounded": false,
+  "id": "fixture-id",
+  "notes_considered": 12,
+  "question": "what colour is my car?",
+  "sources": [],
+  "status": "answered"
+};
+
+/** GET /v1/ask/{askId} → 200 after the worker gave up. `error` is one of the fixed sentences, never provider text; answer is null and sources empty. */
+export const askFailed: AskWire = {
+  "answer": null,
+  "answered_at": "2026-01-01T00:00:30.000000000Z",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "error": "the answer could not be produced; try again",
+  "grounded": false,
+  "id": "fixture-id",
+  "notes_considered": 12,
+  "question": "what did I decide about the roof?",
+  "sources": [],
+  "status": "failed"
 };
 
 /** POST /v1/export → 202 */

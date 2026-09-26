@@ -1,4 +1,4 @@
-import { CLEAN_WORKER_MS, expect, noteAction, test } from './fixtures.ts';
+import { expect, noteAction, test } from './fixtures.ts';
 
 /**
  * The Cleaned tab: the worker's rewrite of the whole note, read-only, with
@@ -61,7 +61,6 @@ test('says when the note has moved on, and the mode switch regenerates in that m
 
   await page.getByRole('button', { name: 'Polished' }).click();
   await expect(page.getByRole('button', { name: /regenerating/i })).toBeDisabled();
-  await page.waitForTimeout(CLEAN_WORKER_MS);
   await expect(page.getByText(/generated just now · polished/i)).toBeVisible({ timeout: 10_000 });
   await expect(stale).toHaveCount(0);
   // The polished view is the note's prose, as a paragraph rather than a list.

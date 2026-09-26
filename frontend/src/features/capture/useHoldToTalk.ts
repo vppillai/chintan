@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { useApi } from '@/api/ApiProvider.tsx';
 
 import { hasBufferedAudio, isCaptureBusy, type CaptureModel } from './machine.ts';
+import { HOLD_NOTICE_MS, MIN_TALK_MS, SLIDE_AWAY_PX } from './holdTiming.ts';
 import { useCaptureStore } from './store.ts';
 
 /**
@@ -29,14 +30,9 @@ import { useCaptureStore } from './store.ts';
  * is plain DOM, so system Back still does what it did.
  */
 
-/** How long the tab-bar mic must be held before a press is a hold rather than a tap. */
-export const HOLD_DELAY_MS = 350;
-/** Fewer milliseconds of audio than this is a slip, not a message. */
-export const MIN_TALK_MS = 600;
-/** How far off the button the pointer may be before release means cancel. */
-export const SLIDE_AWAY_PX = 80;
-/** How long the too-short hint and the "Sent" confirmation stay up. */
-export const HOLD_NOTICE_MS = 1_500;
+// The timings live in `holdTiming.ts` so the e2e specs can import them; they
+// are still this hook's, and everything that reads them reads them from here.
+export { HOLD_DELAY_MS, HOLD_NOTICE_MS, MIN_TALK_MS, SLIDE_AWAY_PX } from './holdTiming.ts';
 /** Movement that turns an armed press into a scroll or a drag, as `useLongPress` draws it. */
 const ARM_TOLERANCE_PX = 10;
 

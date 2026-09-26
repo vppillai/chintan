@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
@@ -114,19 +114,28 @@ function panel() {
   return within(screen.getByRole('region', { name: 'Cleaned view' }));
 }
 
-/** The rendered view, once the poll has found it. */
+/** The rendered view, once the poll has found it: one tick of the clock, then the refetch lands. */
 async function view(): Promise<HTMLElement> {
-  return waitFor(
-    () => {
-      const body = document.querySelector<HTMLElement>('.cleaned__body');
-      if (!body) throw new Error('no cleaned view yet');
-      return body;
-    },
-    { timeout: CLEAN_POLL_MS * 3 },
-  );
+  await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+  return waitFor(() => {
+    const body = document.querySelector<HTMLElement>('.cleaned__body');
+    if (!body) throw new Error('no cleaned view yet');
+    return body;
+  });
 }
 
+/*
+ * The poll runs on a fake clock that still moves with real time
+ * (`onAFakeClock`'s setting): the worker's 50 ms write and the panel's
+ * CLEAN_POLL_MS tick fire when a test advances the clock, not two real
+ * seconds later. This file took eleven seconds on the real clock.
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -158,7 +167,7 @@ describe('the Cleaned tab', () => {
     expect(screen.getByText(/generated just now · structured/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled();
     expect(panel().queryByRole('status')).toBeNull();
-  }, 10_000);
+  });
 
   it('says when the note has changed since, and Regenerate now brings it up to date', async () => {
     const user = userEvent.setup();
@@ -172,15 +181,13 @@ describe('the Cleaned tab', () => {
     expect(api.cleans).toEqual([{ mode: 'structured' }]);
     expect(screen.getByRole('button', { name: 'Regenerating…' })).toBeDisabled();
 
-    await waitFor(
-      () => {
-        expect(screen.queryByText(/the note changed since/i)).toBeNull();
-        expect(screen.getByText(/generated just now/i)).toBeInTheDocument();
-      },
-      { timeout: CLEAN_POLL_MS * 3 },
-    );
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(screen.queryByText(/the note changed since/i)).toBeNull();
+      expect(screen.getByText(/generated just now/i)).toBeInTheDocument();
+    });
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled();
-  }, 10_000);
+  });
 
   it('switches mode by regenerating in it, and records the choice on the note', async () => {
     const user = userEvent.setup();
@@ -201,9 +208,10 @@ describe('the Cleaned tab', () => {
     );
     expect(api.patches[0]).not.toHaveProperty('auto_clean');
 
-    expect(await screen.findByText(/generated just now · polished/i, {}, { timeout: CLEAN_POLL_MS * 3 })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    expect(await screen.findByText(/generated just now · polished/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Polished' })).toHaveAttribute('aria-pressed', 'true');
-  }, 10_000);
+  });
 
   it('the toggle writes auto_clean through the note’s PATCH, once, and stays as set', async () => {
     const user = userEvent.setup();
@@ -241,14 +249,13 @@ describe('the Cleaned tab', () => {
     await screen.findByText(/generated 3 minutes ago/i);
 
     await user.click(screen.getByRole('button', { name: 'Regenerate' }));
-    expect(await screen.findByRole('alert', {}, { timeout: CLEAN_POLL_MS * 3 })).toHaveTextContent(
-      'The provider refused the request.',
-    );
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    expect(await screen.findByRole('alert')).toHaveTextContent('The provider refused the request.');
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeEnabled();
     const gets = api.gets;
-    await act(() => new Promise((resolve) => setTimeout(resolve, CLEAN_POLL_MS + 200)));
+    await act(() => vi.advanceTimersByTimeAsync(CLEAN_POLL_MS + 200));
     expect(api.gets).toBe(gets);
-  }, 10_000);
+  });
 
   it('offers the view in Share only when there is one', async () => {
     const user = userEvent.setup();

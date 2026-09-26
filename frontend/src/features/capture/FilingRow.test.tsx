@@ -710,7 +710,8 @@ describe('receipts are one row per note, behind the rows that still need somethi
       ),
     );
 
-    await screen.findAllByRole('button', { name: /open the note/i });
+    // The titles arrive from the device's cache a beat after the rows do.
+    await screen.findByText(/Note 3/);
     const visible = document.querySelectorAll('.filing > .filing-row--receipt');
     expect(visible).toHaveLength(FILED_ROWS_MAX);
     expect(Array.from(visible, (row) => row.textContent)).toEqual([

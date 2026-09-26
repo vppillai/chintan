@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
-import { usageRich as USAGE } from '@/api/__fixtures__/pending.ts';
+import { usageRich as USAGE } from '@/api/__fixtures__/responses.ts';
 import type { SettingsWire, UsageWire } from '@/api/schema.ts';
 import { config } from '@/config/env.ts';
 import { TEST_TOKENS, TestProviders, testApiContext } from '@/test/providers.tsx';

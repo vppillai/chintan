@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LONG_PRESS_MS, useLongPress } from './useLongPress.ts';
 
@@ -19,7 +19,17 @@ function Row({ onLongPress, onTap }: { onLongPress: () => void; onTap: () => voi
   );
 }
 
-const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+/** Moves the fake clock on by `ms`, firing what was due, inside `act`. */
+const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+
+// The hold is a timer; the tests advance a fake clock past it rather than sleeping.
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('useLongPress', () => {
   it('fires after the hold, swallows the click that follows, and ticks the haptics', async () => {

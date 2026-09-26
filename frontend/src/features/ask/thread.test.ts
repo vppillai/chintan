@@ -4,7 +4,8 @@ import process from 'node:process';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/pending.ts';
+import { askAnswered, askFailed, askNotInNotes, askPending } from '@/api/__fixtures__/responses.ts';
+import type { AskWire } from '@/api/schema.ts';
 import { ASK_POLL_TIMEOUT_MS } from '@/api/queries.ts';
 
 import {
@@ -35,8 +36,22 @@ import {
   type AskTurn,
 } from './thread.ts';
 
-function answered(question: string, answer: string, sources = askAnswered.sources): AskTurn {
-  return applyRow(newTurn(question, question), { ...askAnswered, question, answer, sources });
+/**
+ * The generated row, with its sources told apart. The contract generator
+ * writes every `note_id` as one stand-in (`fixture-note-id`), and the panel
+ * and the saved note dedupe sources by id — so the two are given the ids the
+ * fixture would carry if the stabiliser numbered them.
+ */
+const ANSWERED: AskWire = {
+  ...askAnswered,
+  sources: askAnswered.sources.map((source, index) => ({
+    ...source,
+    note_id: index === 0 ? source.note_id : `${source.note_id}-${String(index + 1)}`,
+  })),
+};
+
+function answered(question: string, answer: string, sources = ANSWERED.sources): AskTurn {
+  return applyRow(newTurn(question, question), { ...ANSWERED, question, answer, sources });
 }
 
 /**
@@ -78,14 +93,14 @@ describe('a turn takes the server’s row', () => {
     expect(isBusy(turn)).toBe(true);
 
     const pending = applyRow(turn, askPending);
-    expect(pending).toMatchObject({ status: 'pending', askId: 'fixture-ask-id', answer: null });
+    expect(pending).toMatchObject({ status: 'pending', askId: askPending.id, answer: null });
     expect(isBusy(pending)).toBe(true);
 
-    const done = applyRow(pending, askAnswered);
+    const done = applyRow(pending, ANSWERED);
     expect(done).toMatchObject({
       status: 'answered',
       grounded: true,
-      answer: askAnswered.answer,
+      answer: ANSWERED.answer,
       error: null,
     });
     expect(done.sources.map((source) => source.title)).toEqual(['Roof repair', 'Kitchen rebuild']);
@@ -196,7 +211,7 @@ describe('Try again on a question the client gave up on', () => {
     expect(canResume(failTurn(pending, LOST_MESSAGE), now + 90_000)).toBe(true);
 
     const resumed = resumeTurn(timedOut, now + 90_000);
-    expect(resumed).toMatchObject({ status: 'pending', error: null, since: now + 90_000, askId: 'fixture-ask-id' });
+    expect(resumed).toMatchObject({ status: 'pending', error: null, since: now + 90_000, askId: askPending.id });
     expect(resumed.sentAt).toBe(now);
   });
 
@@ -220,7 +235,7 @@ describe('what a source chip says', () => {
   const dated = (dates: Record<string, string>) => (noteId: string) => dates[noteId] ?? null;
 
   it('is the title alone while titles are distinct', () => {
-    expect(sourceLabels(askAnswered.sources, dated({}))).toEqual(['Roof repair', 'Kitchen rebuild']);
+    expect(sourceLabels(ANSWERED.sources, dated({}))).toEqual(['Roof repair', 'Kitchen rebuild']);
   });
 
   it('adds the note’s date where two sources share a title, and numbers the ones it has no date for', () => {

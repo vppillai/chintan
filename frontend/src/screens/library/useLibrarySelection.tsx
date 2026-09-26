@@ -12,9 +12,9 @@ import type { SelectOptions } from '@/components/NoteRow.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { showDeleted } from '@/components/Toast.tsx';
 
-/** A bulk Delete forever of more than this many notes is a hold, not a tap. */
-export const HOLD_TO_DELETE_ABOVE = 10;
-export const HOLD_TO_DELETE_MS = 1000;
+import { HOLD_TO_DELETE_ABOVE, HOLD_TO_DELETE_MS } from './holdToDelete.ts';
+
+export { HOLD_TO_DELETE_ABOVE, HOLD_TO_DELETE_MS } from './holdToDelete.ts';
 
 export type LibrarySelection = ReturnType<typeof useLibrarySelection>;
 

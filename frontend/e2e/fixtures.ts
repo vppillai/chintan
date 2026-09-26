@@ -1,11 +1,34 @@
 import { test as base, type Page, type Route } from '@playwright/test';
 
+import type {
+  CaptureCreatedWire,
+  CaptureWire,
+  NoteCleanQueuedWire,
+  NoteCleanedWire,
+  NoteDetailWire,
+  NotePurgeResponseWire,
+  NoteWire,
+  Page as PageWire,
+  PresignedDownloadWire,
+  ProblemWire,
+  RecordingUrlsWire,
+  SearchHitWire,
+  SettingsWire,
+  TagWire,
+  UsageWire,
+} from '../src/api/schema.ts';
+
 /**
  * A stub of the Chintan API, driven by route interception.
  *
  * Every response here matches `docs/api/openapi.yaml` — envelopes, problem+json,
  * the capture lifecycle. That is the point of the specs: they assert the
  * frontend honours the contract, and they stay runnable with no AWS.
+ *
+ * The rows are typed against `src/api/schema.ts` and every body the stub
+ * emits is checked with `satisfies` at its `json(...)` call: a wire field
+ * renamed on one side fails `bun run typecheck` here, rather than passing
+ * the e2e suite against a shape the app no longer reads.
  */
 
 export interface ApiState {
@@ -30,7 +53,7 @@ export interface ApiState {
   /** The hosted UI, as exercised by the sign-in and sign-out specs. */
   auth: AuthState;
   /** What `PUT /v1/settings` last stored, as `GET` returns it. */
-  settings: Record<string, unknown>;
+  settings: SettingsWire;
 }
 
 /**
@@ -58,40 +81,18 @@ export interface AuthState {
   passkeySession: boolean;
 }
 
-interface NoteRecord {
-  id: string;
-  title: string;
-  body: string;
-  snippet?: string;
-  tags?: string[];
-  aliases?: string[];
-  updated_at: string;
-  version: number;
-  archived: boolean;
-  /** RFC3339, set by the server when a note is archived. */
-  purge_after?: string | null;
-  /** `auto`, an ISO-639-1 code, or absent to inherit `default_language`. */
-  language?: string;
+/**
+ * A note as the stub stores it: the detail shape, with the captures as the
+ * stub's own rows. The list route strips nothing — a list row is a superset
+ * of `NoteWire`, which is all the app reads from it.
+ */
+interface NoteRecord extends NoteDetailWire {
   captures?: CaptureRecord[];
-  /** The worker's rewrite of the whole note, or nothing yet. */
-  cleaned?: CleanedRecord | null;
-  auto_clean?: boolean;
-  cleaned_mode?: CleanMode;
-  /** Prose or a task list; absent is prose, as the server maps its stored `""`. */
-  kind?: 'note' | 'checklist';
-  /** Kept at the top of Home; `pin_rank` is its place there (2026-09-24, B). */
-  pinned?: boolean;
-  pin_rank?: number | null;
 }
 
-type CleanMode = 'polished' | 'structured' | 'tasks';
+type CleanMode = NoteCleanedWire['mode'];
 
-interface CleanedRecord {
-  body: string;
-  mode: CleanMode;
-  generated_at: string;
-  stale: boolean;
-}
+type CleanedRecord = NoteCleanedWire;
 
 /**
  * What the worker would write for a note: the structured rewrite is the
@@ -127,20 +128,8 @@ function cleanedFor(note: NoteRecord, mode: CleanMode): CleanedRecord {
 /** How long the stub's "worker" takes to write the view after a 202. */
 export const CLEAN_WORKER_MS = 400;
 
-interface CaptureRecord {
-  id: string;
-  status: string;
-  created_at: string;
-  version: number;
-  note_id?: string | null;
-  error?: string | null;
-  duration_ms?: number;
-  has_peaks?: boolean;
-  has_segments?: boolean;
-  /** What the router proposed. Exactly one of the two is ever set. */
-  suggested_note_id?: string | null;
-  suggested_title?: string | null;
-}
+/** A capture as the stub stores it: the wire row, mutated in place as the specs move it along. */
+type CaptureRecord = CaptureWire;
 
 export function freshState(): ApiState {
   return {
@@ -345,7 +334,7 @@ function redirect(route: Route, location: string): Promise<void> {
   });
 }
 
-function problem(route: Route, status: number, extra: Record<string, unknown> = {}) {
+function problem(route: Route, status: number, extra: Partial<ProblemWire> = {}) {
   return route.fulfill({
     status,
     contentType: 'application/problem+json',
@@ -356,7 +345,7 @@ function problem(route: Route, status: number, extra: Record<string, unknown> = 
       status,
       correlation_id: 'e2e-correlation',
       ...extra,
-    }),
+    } satisfies ProblemWire),
   });
 }
 
@@ -460,7 +449,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       await json(
         route,
         {
-          capture: state.captures.at(-1),
+          capture: created,
           upload: {
             url: `${url.origin}/upload/${id}`,
             expires_at: new Date(Date.now() + 900_000).toISOString(),
@@ -470,7 +459,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
             url: `${url.origin}/upload/${id}-peaks`,
             expires_at: new Date(Date.now() + 900_000).toISOString(),
           },
-        },
+        } satisfies CaptureCreatedWire,
         201,
       );
       return;
@@ -482,7 +471,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         status === 'pending'
           ? state.captures.filter((capture) => capture.status !== 'appended')
           : state.captures;
-      await json(route, { items });
+      await json(route, { items } satisfies PageWire<CaptureWire>);
       return;
     }
 
@@ -532,7 +521,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       await json(route, {
         url: `${ARTIFACT_ORIGIN}/artifact/${downloadMatch[1]}/${kind}`,
         expires_at: new Date(Date.now() + 900_000).toISOString(),
-      });
+      } satisfies PresignedDownloadWire);
       return;
     }
 
@@ -620,7 +609,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           url: `${ARTIFACT_ORIGIN}/artifact/${capture.id}/audio`,
           expires_at: new Date(Date.now() + 900_000).toISOString(),
         }));
-      await json(route, { items });
+      await json(route, { items } satisfies RecordingUrlsWire);
       return;
     }
 
@@ -652,7 +641,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
             pin_rank: note.pinned ? (note.pin_rank ?? 0) : null,
           }))
           .map((note) => (corpus ? { ...note, search_text: note.body.toLowerCase() } : note)),
-      });
+      } satisfies PageWire<NoteWire>);
       return;
     }
 
@@ -674,7 +663,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       notes.forEach((note, index) => {
         if (note) note.pin_rank = index * 1000;
       });
-      await json(route, { items: notes });
+      await json(route, { items: notes.filter((note) => note !== undefined) } satisfies PageWire<NoteWire>);
       return;
     }
 
@@ -699,7 +688,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
      */
     if (path === '/v1/notes/purge' && method === 'POST') {
       const body = request.postDataJSON() as { note_ids: string[] };
-      const results = body.note_ids.map((id) => {
+      const results = body.note_ids.map((id): NotePurgeResponseWire['results'][number] => {
         const note = state.notes[id];
         if (!note) return { note_id: id, status: 'not_found' };
         if (!note.archived) {
@@ -709,7 +698,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         delete state.notes[id];
         return { note_id: id, status: 'purged' };
       });
-      await json(route, { results });
+      await json(route, { results } satisfies NotePurgeResponseWire);
       return;
     }
 
@@ -746,7 +735,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       setTimeout(() => {
         note.cleaned = cleanedFor(note, mode);
       }, CLEAN_WORKER_MS);
-      await json(route, { status: 'queued' }, 202);
+      await json(route, { status: 'queued', mode } satisfies NoteCleanQueuedWire, 202);
       return;
     }
 
@@ -764,7 +753,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           kind: note.kind ?? 'note',
           cleaned: note.cleaned ?? null,
           auto_clean: note.auto_clean ?? false,
-        });
+        } satisfies NoteDetailWire);
         return;
       }
       if (method === 'DELETE') {
@@ -834,13 +823,15 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       const items = Object.values(state.notes)
         .filter((note) => !note.archived)
         .filter((note) => `${note.title} ${note.body}`.toLowerCase().includes(q))
-        .map((note) => ({
-          note_id: note.id,
-          title: note.title,
-          excerpt: note.snippet ?? '',
-          matched_in: ['title'],
-        }));
-      await json(route, { items });
+        .map(
+          (note): SearchHitWire => ({
+            note_id: note.id,
+            title: note.title,
+            excerpt: note.snippet ?? '',
+            matched_in: ['title'],
+          }),
+        );
+      await json(route, { items } satisfies PageWire<SearchHitWire>);
       return;
     }
 
@@ -869,7 +860,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
           as_of: new Date(now.getTime() - 3 * 60 * 60 * 1000).toISOString(),
           budget_micros: 10_000_000,
         },
-      });
+      } satisfies UsageWire);
       return;
     }
 
@@ -877,14 +868,11 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
     if (path === '/v1/settings') {
       if (method === 'PUT') {
         // Returns what was stored, as the contract says; the cap is read-only.
-        const body = (request.postDataJSON() ?? {}) as Record<string, unknown>;
-        state.settings = {
-          ...state.settings,
-          ...body,
-          daily_spend_cap_micros: state.settings['daily_spend_cap_micros'],
-        };
+        const { daily_spend_cap_micros: _readOnly, ...body } = (request.postDataJSON() ??
+          {}) as Partial<SettingsWire>;
+        state.settings = { ...state.settings, ...body };
       }
-      await json(route, state.settings);
+      await json(route, state.settings satisfies SettingsWire);
       return;
     }
     if (path === '/v1/tags') {
@@ -896,7 +884,7 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       }
       await json(route, {
         items: Array.from(counts, ([name, count]) => ({ name, count })),
-      });
+      } satisfies PageWire<TagWire>);
       return;
     }
 

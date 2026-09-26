@@ -55,8 +55,8 @@ for (const theme of THEMES) {
 
       await page.goto(route);
       await expect(page.locator('main')).toBeVisible();
-      // Let async content settle so the scan sees the real screen.
-      await page.waitForTimeout(700);
+      // Let the screen's requests land so the scan sees the real screen.
+      await page.waitForLoadState('networkidle');
       await expectNoSeriousViolations(page);
     });
   }

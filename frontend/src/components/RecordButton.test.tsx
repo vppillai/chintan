@@ -6,7 +6,6 @@ import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
 import { HOLD_DELAY_MS, HOLD_NOTICE_MS, MIN_TALK_MS } from '@/features/capture/useHoldToTalk.ts';
-import { onAFakeClock } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { RecordButton } from './RecordButton.tsx';
@@ -118,7 +117,8 @@ function mount(noteId: string | null = null, path = '/') {
   );
 }
 
-const wait = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)));
+/** Moves the fake clock on by `ms`, firing what was due, inside `act`. */
+const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 const down = { pointerId: 1, pointerType: 'touch', button: 0, clientX: 100, clientY: 700 };
 const state = () => useCaptureStore.getState().model.state;
@@ -137,6 +137,21 @@ const pageHidden = (hidden: boolean) => {
     document.dispatchEvent(new Event('visibilitychange'));
   });
 };
+
+/*
+ * Every gesture on a fake clock that still moves with real time (the
+ * setting `onAFakeClock` used per test): whether a press was a tap or a
+ * hold is read from `Date.now()` against HOLD_DELAY_MS and MIN_TALK_MS, so a
+ * stall on a shared runner must not decide it — and `wait` advances the
+ * clock rather than sleeping, which is what took this file seconds.
+ */
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   micRequests = 0;
@@ -165,14 +180,12 @@ describe('the record button, held', () => {
   it('still opens the capture screen on a tap, without touching the microphone', async () => {
     mount();
     const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
-    await onAFakeClock(() => {
-      fireEvent.pointerDown(mic, down);
-      act(() => {
-        vi.advanceTimersByTime(50);
-      });
-      fireEvent.pointerUp(mic, down);
-      fireEvent.click(mic);
+    fireEvent.pointerDown(mic, down);
+    act(() => {
+      vi.advanceTimersByTime(50);
     });
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
     expect(where()).toBe('/capture');
     expect(micRequests).toBe(0);
     expect(state()).toBe('idle');
@@ -221,21 +234,19 @@ describe('the record button, held', () => {
     expect(region).toHaveTextContent('');
 
     // Too short: the microphone opened, but there is no message in 100 ms.
-    await onAFakeClock(async () => {
-      fireEvent.pointerDown(mic, down);
-      await wait(HOLD_DELAY_MS + 100);
-      expect(state()).toBe('recording');
-      expect(status()).toBe(region);
-      expect(region).toHaveTextContent('Release to send · slide away to cancel');
-      act(() => {
-        vi.advanceTimersByTime(100);
-      });
-      fireEvent.pointerUp(mic, down);
-      fireEvent.click(mic);
-      expect(overlay()).toHaveTextContent('Too short — hold to talk');
-      expect(status()).toBe(region);
-      expect(region).toHaveTextContent('Too short — hold to talk');
+    fireEvent.pointerDown(mic, down);
+    await wait(HOLD_DELAY_MS + 100);
+    expect(state()).toBe('recording');
+    expect(status()).toBe(region);
+    expect(region).toHaveTextContent('Release to send · slide away to cancel');
+    act(() => {
+      vi.advanceTimersByTime(100);
     });
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    expect(overlay()).toHaveTextContent('Too short — hold to talk');
+    expect(status()).toBe(region);
+    expect(region).toHaveTextContent('Too short — hold to talk');
     await waitFor(() => {
       expect(state()).toBe('idle');
     });
@@ -301,26 +312,24 @@ describe('the record button, held', () => {
     // one hidden inside MIN_TALK_MS is a slip.
     mount();
     const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
-    await onAFakeClock(async () => {
-      fireEvent.pointerDown(mic, down);
-      act(() => {
-        vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
-      });
-      await waitFor(() => {
-        expect(state()).toBe('recording');
-      });
-
-      pageHidden(true);
-      expect(overlay()).toHaveTextContent('Too short — hold to talk');
-      await waitFor(() => {
-        expect(state()).toBe('idle');
-      });
-      pageHidden(false);
-
-      // Back on the page, the finger lifts: not a send, and not a tap either.
-      fireEvent.pointerUp(mic, down);
-      fireEvent.click(mic);
+    fireEvent.pointerDown(mic, down);
+    act(() => {
+      vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
     });
+    await waitFor(() => {
+      expect(state()).toBe('recording');
+    });
+
+    pageHidden(true);
+    expect(overlay()).toHaveTextContent('Too short — hold to talk');
+    await waitFor(() => {
+      expect(state()).toBe('idle');
+    });
+    pageHidden(false);
+
+    // Back on the page, the finger lifts: not a send, and not a tap either.
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
     expect(creates).toBe(0);
     expect(where()).toBe('/');
   });
@@ -330,29 +339,27 @@ describe('the record button, held', () => {
     // words before it are the message, as when only the track ends.
     mount('roof-repair');
     const mic = screen.getByRole('button', { name: /^PTT into this note/ });
-    await onAFakeClock(async () => {
-      fireEvent.pointerDown(mic, down);
-      act(() => {
-        vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
-      });
-      await waitFor(() => {
-        expect(state()).toBe('recording');
-      });
-      act(() => {
-        vi.advanceTimersByTime(MIN_TALK_MS + 100);
-      });
-      act(() => {
-        recorder.emitChunk(10);
-      });
-
-      pageHidden(true);
-      await waitFor(() => {
-        expect(state()).toBe('uploaded');
-      });
-      pageHidden(false);
-      fireEvent.pointerUp(mic, down);
-      fireEvent.click(mic);
+    fireEvent.pointerDown(mic, down);
+    act(() => {
+      vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
     });
+    await waitFor(() => {
+      expect(state()).toBe('recording');
+    });
+    act(() => {
+      vi.advanceTimersByTime(MIN_TALK_MS + 100);
+    });
+    act(() => {
+      recorder.emitChunk(10);
+    });
+
+    pageHidden(true);
+    await waitFor(() => {
+      expect(state()).toBe('uploaded');
+    });
+    pageHidden(false);
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
     expect(recorder.state).toBe('inactive');
     expect(creates).toBe(1);
     expect(where()).toBe('/');
@@ -367,33 +374,31 @@ describe('the record button, held', () => {
     mount();
     const mic = screen.getByRole('button', { name: /^PTT: tap to record/ });
 
-    await onAFakeClock(() => {
-      // Held: a word rather than a dead button, and the release is not a tap.
-      fireEvent.pointerDown(mic, down);
-      act(() => {
-        vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
-      });
-      expect(micRequests).toBe(0);
-      expect(state()).toBe('uploading');
-      expect(overlay()).toHaveTextContent('Still sending the last one…');
-      fireEvent.pointerUp(mic, down);
-      fireEvent.click(mic);
-      expect(where()).toBe('/');
-      // The notice outlives the release that would otherwise have cleared its timer.
-      act(() => {
-        vi.advanceTimersByTime(HOLD_NOTICE_MS + 50);
-      });
-      expect(overlay()).toBeNull();
-
-      // Tapped: the capture screen, where the upload is shown with its bar.
-      fireEvent.pointerDown(mic, down);
-      act(() => {
-        vi.advanceTimersByTime(50);
-      });
-      fireEvent.pointerUp(mic, down);
-      fireEvent.click(mic);
-      expect(where()).toBe('/capture');
+    // Held: a word rather than a dead button, and the release is not a tap.
+    fireEvent.pointerDown(mic, down);
+    act(() => {
+      vi.advanceTimersByTime(HOLD_DELAY_MS + 50);
     });
+    expect(micRequests).toBe(0);
+    expect(state()).toBe('uploading');
+    expect(overlay()).toHaveTextContent('Still sending the last one…');
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    expect(where()).toBe('/');
+    // The notice outlives the release that would otherwise have cleared its timer.
+    act(() => {
+      vi.advanceTimersByTime(HOLD_NOTICE_MS + 50);
+    });
+    expect(overlay()).toBeNull();
+
+    // Tapped: the capture screen, where the upload is shown with its bar.
+    fireEvent.pointerDown(mic, down);
+    act(() => {
+      vi.advanceTimersByTime(50);
+    });
+    fireEvent.pointerUp(mic, down);
+    fireEvent.click(mic);
+    expect(where()).toBe('/capture');
   });
 
   it('only taps on /talk, where the screen\'s own button is the hold', async () => {

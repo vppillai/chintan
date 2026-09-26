@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { onlineManager } from '@tanstack/react-query';
 
@@ -286,8 +286,16 @@ describe('what was just saved is what the app shows next', () => {
 });
 
 describe('a note whose recording is still filing keeps asking', () => {
-  // Waits through two real poll ticks (CAPTURE_POLL_FAST_MS each); the default
-  // 5 s budget is enough on a laptop and not on the CI runner.
+  // The poll on a fake clock that still moves with real time: the test
+  // advances CAPTURE_POLL_FAST_MS and the refetch lands, rather than waiting
+  // through two real ticks (five seconds, and a flake on the CI runner).
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('shows the appended text once the pipeline writes it, without leaving the screen', async () => {
     /*
      * QA D7: "Record into this", then open the note while the filing row still
@@ -321,21 +329,19 @@ describe('a note whose recording is still filing keeps asking', () => {
       });
     });
 
-    await waitFor(
-      () => {
-        expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue(
-          'Only paragraph.\n\nThe gutter is leaking again.',
-        );
-      },
-      { timeout: CAPTURE_POLL_FAST_MS * 3 },
-    );
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveValue(
+        'Only paragraph.\n\nThe gutter is leaking again.',
+      );
+    });
     expect(api.gets).toBeGreaterThan(1);
     // Settled: nothing left to ask about, so the polling stops.
-    await new Promise((resolve) => setTimeout(resolve, CAPTURE_POLL_FAST_MS + 200));
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 200);
     const after = api.gets;
-    await new Promise((resolve) => setTimeout(resolve, CAPTURE_POLL_FAST_MS + 200));
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 200);
     expect(api.gets).toBe(after);
-  }, 20_000);
+  });
 });
 
 describe('the note screen is shaped for reading', () => {
