@@ -46,9 +46,11 @@ type LLM interface {
 	// prompt names it so the model keeps the script it was given.
 	Cleanup(ctx context.Context, mode model.CleanupMode, raw, language string) (Cleaned, error)
 	// CleanNote rewrites a whole note body (append markers already stripped)
-	// as one document in the given mode. The caller bounds the body and
+	// as one document in the given mode. language is the note row's Language
+	// ("" or "auto" when it asks for none), which the prompt names so the
+	// model keeps the script it was given. The caller bounds the body and
 	// checks the answer with cleanup.NoteOutput.
-	CleanNote(ctx context.Context, mode model.NoteCleanMode, body string) (Cleaned, error)
+	CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language string) (Cleaned, error)
 	// Items turns one raw transcript into the items to add to the checklist
 	// titled listTitle (cleanup.ItemsPrompt). It replaces Cleanup for a
 	// recording filed into a checklist: the transcript is the raw one, the

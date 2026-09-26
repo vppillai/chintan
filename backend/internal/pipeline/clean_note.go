@@ -145,7 +145,9 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		// releases on the outer context, which outlives this one.
 		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanNoteTimeout)
 		defer cancel()
-		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body)
+		// The note's own language, as the row asks for it; the prompt names
+		// it so a Malayalam note is not "corrected" into another script.
+		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body, note.Language)
 		if err != nil {
 			return breaker.Result{}, err
 		}

@@ -90,20 +90,16 @@ const (
 ` + llm.DataRule + `
 - Return only the rewritten note, in Markdown, with no preamble or commentary.`
 
-	noteStructuredSystemPrompt = `You rewrite dictated personal notes as well-organised documents.
-
-Mode: structured.
-- Rewrite the note as a well-organised document in Markdown.
-- Group related points under short headings.
-- Use lists for enumerations; keep everything else as prose.
+	// The two document modes are one template: a sentence naming the
+	// document the mode asks for, then the shared rules. Only that sentence
+	// differs, so only it is the mode's to word.
+	noteStructuredSystemPrompt = `You rewrite a dictated personal note as a well-organised Markdown document: related points
+under short headings, lists for enumerations, prose otherwise.
 ` + noteSharedRules
 
-	notePolishedSystemPrompt = `You rewrite dictated personal notes as clean written prose.
-
-Mode: polished.
-- Rewrite the note as coherent prose only: no headings and no lists.
-- Light touch on wording: fix what dictation garbled and smooth the flow, but preserve the
-  author's phrasing and vocabulary where it already reads well.
+	notePolishedSystemPrompt = `You rewrite a dictated personal note as coherent prose only, no headings and no lists, with a
+light touch: fix what dictation garbled and smooth the flow, and keep the author's phrasing
+and vocabulary where it already reads well.
 ` + noteSharedRules
 )
 
@@ -130,10 +126,13 @@ Mode: tasks.
   no prose, no blank lines and no commentary.`
 
 // NotePrompt is the system and user prompt for the whole-note cleaned view.
-// An unknown mode is refused rather than mapped to a default: the caller
-// chose the mode on the user's behalf and a silent substitution would store a
-// document in a mode the note does not claim.
-func NotePrompt(mode model.NoteCleanMode, body string) (system, user string, err error) {
+// language is the note's own Language: the ISO-639-1 code it asks to be
+// transcribed in, named up front exactly as UserPrompt names a transcript's,
+// or "" / model.LanguageAuto, which claim nothing. An unknown mode is refused
+// rather than mapped to a default: the caller chose the mode on the user's
+// behalf and a silent substitution would store a document in a mode the note
+// does not claim.
+func NotePrompt(mode model.NoteCleanMode, body, language string) (system, user string, err error) {
 	if strings.TrimSpace(body) == "" {
 		return "", "", fmt.Errorf("cleanup: note body is required")
 	}
@@ -147,8 +146,12 @@ func NotePrompt(mode model.NoteCleanMode, body string) (system, user string, err
 	default:
 		return "", "", fmt.Errorf("cleanup: unknown note clean mode %q", mode)
 	}
-	user = "The note is between the marker lines.\n" + llm.Fence(body)
-	return system, user, nil
+	var b strings.Builder
+	if language != "" && language != model.LanguageAuto {
+		b.WriteString("The note is in " + LanguageLabel(language) + ".\n")
+	}
+	b.WriteString("The note is between the marker lines.\n" + llm.Fence(body))
+	return system, b.String(), nil
 }
 
 // ErrEmptyNoteOutput is what NoteOutput returns when the model produced
