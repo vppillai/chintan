@@ -83,6 +83,11 @@
   position: absolute;
   inset-block: 0;
   inset-inline-start: 0;
+  /* Above the row. The grip comes before the row in the DOM so that Tab runs
+     grip → row → ⋮ (review 2026-09-24, R4-13), and the row's wrap is
+     positioned too, so without this the row would paint over the grip and
+     take every mouse press meant for it. */
+  z-index: 1;
   display: grid;
   place-items: center;
   inline-size: var(--layout-touch-target-min);

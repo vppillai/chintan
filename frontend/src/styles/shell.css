@@ -469,8 +469,12 @@
 }
 
 /* The touch target around the checkbox, pulled into the row's padding so the
-   24 px box sits where the 20 px one did. */
+   drawn box sits where the native one did. Positioned, because the real
+   control (`.checklist__box`, checklist.css) is stretched invisibly over it
+   and the mark (`.checklist__mark`) is what shows — the app's one box, not
+   the browser's (review 2026-09-24, R4-12). */
 .note-row__check {
+  position: relative;
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -478,13 +482,6 @@
   block-size: var(--layout-touch-target-min);
   margin-block-start: calc(-1 * var(--space-2));
   margin-inline-start: calc(-1 * var(--space-2));
-}
-
-.note-row__checkbox {
-  inline-size: 1.5rem;
-  block-size: 1.5rem;
-  margin: 0;
-  accent-color: var(--color-ink);
 }
 
 .note-row--selectable[data-selected] {

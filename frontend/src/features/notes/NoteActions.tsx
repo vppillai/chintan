@@ -19,6 +19,7 @@ import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { languageName } from '@/features/settings/languages.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 
 import { CheckMark } from './ChecklistEditor.tsx';
 import { checklistToProse, proseToChecklist } from './checklist.ts';
@@ -92,9 +93,12 @@ export function NoteMenu({
   const restore = useRestoreNote();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
+  // A pin made offline would pause until the network returned and then fire
+  // with a version the cache may no longer hold (review 2026-09-24, R4-11).
+  const online = useOnline();
   const [confirming, setConfirming] = useState<'archive' | 'purge' | null>(null);
 
-  const busy = archive.isPending || restore.isPending || purge.isPending;
+  const busy = archive.isPending || restore.isPending || purge.isPending || pin.isPending;
   const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
 
   const items: OverflowMenuItem[] = [
@@ -105,7 +109,7 @@ export function NoteMenu({
       : [
           {
             label: note.pinned ? 'Unpin' : 'Pin',
-            disabled: busy,
+            disabled: busy || !online,
             onSelect: () => {
               pin.mutate({ note, pinned: !note.pinned });
             },

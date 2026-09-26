@@ -270,13 +270,37 @@ function restoreNoteLists(queryClient: QueryClient, lists: NoteLists | undefined
 /**
  * `PATCH /v1/notes/{id} {pinned}`. The row's version rides along because the
  * endpoint requires one; the server may relax that for a pin-only PATCH.
+ *
+ * The answer is written back before the lists are refetched. Every pin bumps
+ * the note's version, so until the refetch lands the cached row is one behind
+ * the server, and "Pin, reopen ⋮, Unpin" — an ordinary mis-tap correction —
+ * sent that stale version and was refused 409, leaving the note pinned with
+ * no message (review 2026-09-24, R4-3). The rows keep the rank the server
+ * chose, too, rather than the one guessed below.
  */
 export function usePinNote() {
   const api = useApi();
   const queryClient = useQueryClient();
+  // Both pin fields are optional on the row type (rows cached before pins
+  // existed carry neither), so an absent `pinned` reads as not pinned and an
+  // absent rank as none; the server always sends both.
+  const fromServer = (saved: NoteWire) => ({
+    pinned: saved.pinned ?? false,
+    pin_rank: saved.pin_rank ?? null,
+    version: saved.version,
+    updated_at: saved.updated_at,
+  });
   return useMutation({
     mutationFn: ({ note, pinned }: { note: Pick<NoteWire, 'id' | 'version'>; pinned: boolean }) =>
       api.updateNote(note.id, { version: note.version, pinned }),
+    onSuccess: (saved, { note }) => {
+      patchNoteLists(queryClient, (row) =>
+        row.id === note.id ? { ...row, ...fromServer(saved) } : row,
+      );
+      queryClient.setQueryData<NoteDetailWire>(queryKeys.note(note.id), (current) =>
+        current ? { ...current, ...fromServer(saved) } : current,
+      );
+    },
     onMutate: async ({ note, pinned }) => {
       const lists = await snapshotNoteLists(queryClient);
       // A new pin lands after every pin already there, as the server ranks it.

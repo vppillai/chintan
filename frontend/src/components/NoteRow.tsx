@@ -17,9 +17,11 @@ import {
   progressOf,
   snippetIsCut,
 } from '@/features/notes/checklist.ts';
+import { CheckMark } from '@/features/notes/ChecklistEditor.tsx';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
 import { useLongPress } from '@/hooks/useLongPress.ts';
+import { useOnline } from '@/hooks/useOnline.ts';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
 import { Icon } from './Icon.tsx';
@@ -49,6 +51,14 @@ export interface NoteRowProps {
    */
   holdToSelect?: boolean;
   /**
+   * A pinned row's gesture-free way to move one step (`PinnedGroup`), as
+   * "Move up" and "Move down" in the ⋮: on a phone nothing announces the
+   * hold-then-drag, and a switch or a screen reader cannot drag at all (WCAG
+   * 2.5.7; review 2026-09-24, R4-4). Absent at the group's ends.
+   */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  /**
    * A search hit: the excerpt around the match stands in for the snippet, and
    * the matched term is marked in it. Absent on the plain library.
    */
@@ -77,8 +87,9 @@ export interface NoteRowProps {
  * the row's ⋮ menu. The menu sits at the row's right: revealed on hover and
  * on focus for a pointer that can hover, always there at low emphasis under
  * a finger, where nothing can hover. It holds Pin (or Unpin), Archive (or
- * Restore), Delete and Select, so every action the swipe tray offers is a
- * click away on the desktop too. The checkbox that slid in at the row's left
+ * Restore), Delete and Select — and, on a pinned row, Move up and Move down —
+ * so every action the swipe tray offers is a click away on the desktop too,
+ * and the pinned order can be changed without a drag. The checkbox that slid in at the row's left
  * edge on hover is gone; the "Select" button that sat in the header before it
  * went for the same reason.
  *
@@ -103,11 +114,17 @@ export function NoteRow({
   selected = false,
   onToggleSelect,
   holdToSelect = true,
+  onMoveUp,
+  onMoveDown,
   excerpt,
   highlight,
 }: NoteRowProps) {
   const navigate = useNavigate();
   const titleId = useId();
+  // A pin made offline would sit paused until the network returned and then
+  // fire with whatever version the cache held; the row does not move meanwhile,
+  // so the tap looks lost (review 2026-09-24, R4-11). The pin waits for the network.
+  const online = useOnline();
   const longPress = useLongPress(
     onToggleSelect && holdToSelect && !selectable
       ? () => {
@@ -131,7 +148,7 @@ export function NoteRow({
     focusCheckbox.current = false;
     checkboxRef.current?.focus();
   }, [selectable]);
-  const busy = archive.isPending || restore.isPending || purge.isPending;
+  const busy = archive.isPending || restore.isPending || purge.isPending || pin.isPending;
   const failure = archive.error ?? restore.error ?? purge.error ?? pin.error;
 
   const tags = note.tags ?? [];
@@ -209,15 +226,17 @@ export function NoteRow({
         }}
       >
         {/*
-          A 24 px box inside a 44 px one: the control itself meets the WCAG
-          2.5.8 minimum (it was 20 px), and the wrapper is the thumb's target.
-          The whole row is the label, so a tap anywhere toggles it regardless.
+          The app's drawn box (`CheckMark`, F1), not the browser's: the real
+          control is stretched invisibly over the 44 px wrapper, so it is the
+          thumb's target and meets WCAG 2.5.8 itself, and the mark beside the
+          words is what a finger sees. The whole row is the label, so a tap
+          anywhere toggles it regardless.
         */}
         <span className="note-row__check">
           <input
             ref={checkboxRef}
             type="checkbox"
-            className="note-row__checkbox"
+            className="checklist__box"
             checked={selected}
             onClick={(event) => {
               // `onChange` carries no modifier keys; the click does.
@@ -227,6 +246,7 @@ export function NoteRow({
               /* Handled on click, above, where Shift is known. */
             }}
           />
+          <CheckMark />
         </span>
         <span className="note-row__body">{body}</span>
       </label>
@@ -249,7 +269,8 @@ export function NoteRow({
         { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: remove },
       ]
     : [
-        { id: 'pin', label: pinLabel, icon: 'pin', onSelect: togglePin },
+        // The tray has no disabled state, so offline the pin is simply not offered.
+        ...(online ? [{ id: 'pin', label: pinLabel, icon: 'pin' as const, onSelect: togglePin }] : []),
         { id: 'archive', label: 'Archive', icon: 'archive', onSelect: () => archive.mutate(note.id) },
         { id: 'delete', label: 'Delete', icon: 'trash', destructive: true, onSelect: remove },
       ];
@@ -257,7 +278,7 @@ export function NoteRow({
     ...(note.archived
       ? [{ label: 'Restore', disabled: busy, onSelect: () => restore.mutate(note.id) }]
       : [
-          { label: pinLabel, disabled: busy, onSelect: togglePin },
+          { label: pinLabel, disabled: busy || !online, onSelect: togglePin },
           { label: 'Archive', disabled: busy, onSelect: () => archive.mutate(note.id) },
         ]),
     { label: 'Delete', destructive: true, disabled: busy, onSelect: remove },
@@ -272,6 +293,8 @@ export function NoteRow({
           },
         ]
       : []),
+    ...(onMoveUp ? [{ label: 'Move up', disabled: !online, onSelect: onMoveUp }] : []),
+    ...(onMoveDown ? [{ label: 'Move down', disabled: !online, onSelect: onMoveDown }] : []),
   ];
 
   return (

@@ -713,6 +713,9 @@ export function NotesScreen() {
             <PinnedGroup
               notes={pinned}
               selectable={selecting}
+              // Under a tag or Checklists chip the group is a subset of the
+              // pinned notes, and re-ranking a subset from 0 scrambles the rest.
+              reorderable={!tag && !kind}
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
             />
