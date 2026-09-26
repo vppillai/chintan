@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -551,6 +553,106 @@ func TestMoveCaptureIntoANewNote(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A move into a new note that fails is compensated: the note has a fresh id
+// on every call and a 5xx is not replayed under its Idempotency-Key, so each
+// retry would otherwise leave one more empty note behind "nothing changed".
+// Nothing in the new note — every ErrMoveIncomplete — and it is removed; the
+// paragraph in it, and it stays as the only copy of the text, logged by id.
+func TestMoveCaptureIntoANewNoteCompensatesAFailure(t *testing.T) {
+	cases := map[string]struct {
+		broken func(h *editHarness, source model.NoteIndex) *CaptureService
+		want   error // nil means any error but ErrMoveIncomplete
+		kept   bool
+	}{
+		"before the cut": {
+			broken: func(h *editHarness, source model.NoteIndex) *CaptureService {
+				return NewCaptureService(h.store, failingPutIfMatch{Objects: h.objects, key: source.S3MarkdownKey}).WithNoteCreator(h.notes)
+			},
+			want: ErrMoveIncomplete,
+		},
+		"after the insert": {
+			broken: func(h *editHarness, _ model.NoteIndex) *CaptureService {
+				return NewCaptureService(failingPutCapture{Store: h.store, id: "c_1"}, h.objects).WithNoteCreator(h.notes)
+			},
+			kept: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newEditHarness(t)
+			original := CaptureMarker("c_1") + "\nDictated.\n\n" + CaptureMarker("c_2") + "\nStays."
+			source := h.note("u1", "Source", original)
+			h.appended("u1", source.ID, "c_1", t1000)
+			h.appended("u1", source.ID, "c_2", t1100)
+
+			var logged bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+			_, err := tc.broken(h, source).MoveCaptureToNewNote(h.ctx, "u1", "c_1", "Groceries")
+			slog.SetDefault(prev)
+			if err == nil {
+				t.Fatal("MoveCaptureToNewNote succeeded with the fault in place")
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("MoveCaptureToNewNote = %v, want %v", err, tc.want)
+			}
+			if tc.want == nil && errors.Is(err, ErrMoveIncomplete) {
+				t.Fatalf("MoveCaptureToNewNote = %v; the text moved, so this is not a rollback", err)
+			}
+			c, _ := h.store.GetCapture(h.ctx, "u1", "c_1")
+			if c.NoteID != source.ID {
+				t.Errorf("capture points at %q after a failed move, want the source", c.NoteID)
+			}
+
+			notes, _, err := h.store.DrainNotes(h.ctx, "u1", repository.DrainOptions{})
+			if err != nil {
+				t.Fatalf("DrainNotes: %v", err)
+			}
+			var created []model.NoteIndex
+			for _, n := range notes {
+				if n.ID != source.ID {
+					created = append(created, n)
+				}
+			}
+			if !tc.kept {
+				if len(created) != 0 {
+					t.Fatalf("a rolled-back move left %d note(s) behind; a retry would add another", len(created))
+				}
+				if got := h.body(source); got != original {
+					t.Fatalf("source after rollback = %q, want %q", got, original)
+				}
+				return
+			}
+			if len(created) != 1 {
+				t.Fatalf("%d new note(s) after the paragraph landed, want the one that holds it", len(created))
+			}
+			if got, want := h.body(created[0]), CaptureMarker("c_1")+"\nDictated."; got != want {
+				t.Errorf("kept note body = %q, want %q", got, want)
+			}
+			if got, want := h.body(source), CaptureMarker("c_2")+"\nStays."; got != want {
+				t.Errorf("source body = %q, want %q", got, want)
+			}
+			if !strings.Contains(logged.String(), created[0].ID) {
+				t.Errorf("the kept note's id is not in the log:\n%s", logged.String())
+			}
+		})
+	}
+}
+
+// failingPutCapture fails the row write for one capture and is the memory
+// store otherwise: the fault that hits a move after both bodies are written.
+type failingPutCapture struct {
+	repository.Store
+	id string
+}
+
+func (f failingPutCapture) PutCapture(ctx context.Context, c model.CaptureIndex) (model.CaptureIndex, error) {
+	if c.ID == f.id {
+		return model.CaptureIndex{}, errors.New("dynamodb: 500 InternalServerError")
+	}
+	return f.Store.PutCapture(ctx, c)
 }
 
 // Another tenant's capture id, and another tenant's note as the target, are

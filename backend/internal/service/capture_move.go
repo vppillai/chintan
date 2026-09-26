@@ -73,6 +73,12 @@ func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, tar
 // paragraph is the new note's first. The capture is checked before the note is
 // made, so a refusal leaves no empty note behind; and a capture cannot already
 // be in a note that did not exist, so there is no no-op answer.
+//
+// A move that fails is compensated (discardUnusedNote), because the note has
+// a fresh id on every call and a 5xx answer is not replayed under its
+// Idempotency-Key: the client repeats the request, and each attempt would
+// otherwise leave one more empty note with the title behind an answer that
+// says nothing changed.
 func (s *CaptureService) MoveCaptureToNewNote(ctx context.Context, userID, captureID, title string) (*model.CaptureIndex, error) {
 	current, err := s.movableCapture(ctx, userID, captureID)
 	if err != nil {
@@ -85,7 +91,42 @@ func (s *CaptureService) MoveCaptureToNewNote(ctx context.Context, userID, captu
 	if err != nil {
 		return nil, fmt.Errorf("failed to create note: %w", err)
 	}
-	return s.moveInto(ctx, userID, current, note)
+	moved, err := s.moveInto(ctx, userID, current, note)
+	if err != nil {
+		s.discardUnusedNote(ctx, userID, captureID, note, err)
+		return nil, err
+	}
+	return moved, nil
+}
+
+// discardUnusedNote is the compensation for a move into a note made for it
+// that failed. The note's body decides, read back rather than inferred from
+// where the move stopped, since a write that reported a fault may still have
+// landed. Empty — true of every ErrMoveIncomplete, whose failures come before
+// the insert or undo it — means nothing reached the note, so it is removed
+// and "nothing changed" is true again. Non-empty means the paragraph is in it
+// and out of the source, so the note is the only copy of the text and stays;
+// it is logged by id (ids are not user content) for the operator, because a
+// repeat of the request cannot find it and moves the capture into a second,
+// empty note.
+func (s *CaptureService) discardUnusedNote(ctx context.Context, userID, captureID string, note model.NoteIndex, cause error) {
+	log := obs.Log(ctx).With(
+		slog.String("capture_id", captureID),
+		slog.String("note_id", note.ID),
+		slog.String("error", cause.Error()))
+	body, err := s.objects.Get(ctx, note.S3MarkdownKey)
+	switch {
+	case err != nil && !errors.Is(err, repository.ErrNotFound):
+		log.Error("capture move into a new note failed and the note could not be read; it is kept",
+			slog.String("read_error", err.Error()))
+	case len(body) > 0:
+		log.Error("capture move into a new note failed after the paragraph landed; the note is kept")
+	default:
+		if err := s.notes.DiscardNote(ctx, userID, note); err != nil {
+			log.Error("capture move into a new note failed and the empty note could not be removed",
+				slog.String("discard_error", err.Error()))
+		}
+	}
 }
 
 // movableCapture is the capture a move starts from: one the caller owns, with

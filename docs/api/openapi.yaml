@@ -854,8 +854,15 @@ paths:
         paragraph; the answer is the 200 below and the capture's `note_id`
         is the new note's id — `GET /v1/notes/{note_id}` opens it. The
         capture is checked before the note is made, so a refusal (404, 409)
-        leaves no empty note behind; only a move that fails after the cut
-        (the 503 below) can, and it is then an ordinary empty note.
+        leaves no empty note behind, and neither does the 503 below: the note
+        is made before the move, and a move that fails with nothing written
+        into it — every rolled-back failure — removes it again, so a repeat of
+        the request makes one fresh note, not one per attempt. A move that
+        fails after the text is in the new note (a 500) keeps that note, since
+        it holds the only copy of the text, and the capture still names its
+        old note; a repeat moves the capture into a second new note, and the
+        first is an ordinary note to delete or merge by hand. Its id is in the
+        server log.
 
         The two note bodies are written one after the other, each under an
         ETag condition. If the second write fails the first is undone and the
@@ -1294,6 +1301,7 @@ components:
         The operation failed part-way and was rolled back, so nothing changed
         and the same request can be repeated. The body's `type` is
         `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable`
+        — a move into a `new_note_title` has also removed the note it made —
         and a `Retry-After` header is set; a 503 without that type means the
         instance is not configured for the operation, which repeating will
         not fix.

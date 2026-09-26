@@ -102,6 +102,13 @@ func (f *noteCreator) CreateNote(ctx context.Context, userID, title string, alia
 	return stored, nil
 }
 
+// DiscardNote is the compensation the capture service runs after a failed
+// move into a new note; the worker never takes that path, so the row simply
+// goes.
+func (f *noteCreator) DiscardNote(ctx context.Context, userID string, note model.NoteIndex) error {
+	return f.store.DeleteNote(ctx, userID, note.ID)
+}
+
 func (f *noteCreator) createdTitles() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -866,6 +866,27 @@ func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string
 	return s.store.DeleteNote(ctx, userID, noteID)
 }
 
+// DiscardNote removes a note nothing references — one CreateNote made for a
+// move whose write into it never landed. The body and the metadata go first
+// and the index row last, as in hardDeleteNote, so a failure leaves the note
+// visible and deletable rather than as objects nobody can reach.
+//
+// It deliberately runs none of hardDeleteNote's capture cascade. That cascade
+// deletes every capture row filed against the note together with its audio
+// and transcripts, and the caller cannot prove that no row points here: a
+// re-point that reported a fault may still have landed. A note left behind by
+// mistake costs two empty objects; a cascade that guessed wrong costs a
+// recording.
+func (s *NotesService) DiscardNote(ctx context.Context, userID string, note model.NoteIndex) error {
+	if err := s.deleteObject(ctx, note.S3MarkdownKey); err != nil {
+		return fmt.Errorf("failed to delete the note body: %w", err)
+	}
+	if err := s.deleteObject(ctx, note.S3MetaKey); err != nil {
+		return fmt.Errorf("failed to delete the note meta: %w", err)
+	}
+	return s.store.DeleteNote(ctx, userID, note.ID)
+}
+
 // unindexedCaptures is the tenant's captures the note index cannot see (see
 // PurgeNoteArtifacts), read once and shared by every note of one batch. A nil
 // *unindexedCaptures means "read them now", which a single delete does.
