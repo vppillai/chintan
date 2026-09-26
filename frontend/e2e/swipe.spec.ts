@@ -78,7 +78,7 @@ test('a sideways drag opens exactly one tray, to the tray width, and is not a ta
   await expect(first).toHaveAttribute('data-open');
   await expect(page.locator('.swipe[data-open]')).toHaveCount(1);
   expect(await swipeX(first)).toBe(`-${String(await trayWidth(first))}px`);
-  await expect(first.getByRole('button', { name: 'Archive' })).toBeVisible();
+  await expect(first.getByRole('button', { name: 'Pin' })).toBeVisible();
   await expect(first.getByRole('button', { name: 'Delete' })).toBeVisible();
   // The finger lifting fires a click on the row underneath; it must not open the note.
   await expect(page).toHaveURL(/\/$/);

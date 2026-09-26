@@ -478,7 +478,8 @@ for (const theme of THEMES) {
 }
 
 /**
- * The update prompt is the app's only toast. It used to be `position: fixed`
+ * The update prompt was the app's only toast (the Undo toast is the same shell
+ * row now, `.toast`). It used to be `position: fixed`
  * against the bottom of the viewport with a z-index above the tab bar, which put
  * it squarely on top of the record button — the one control the product exists
  * to offer.

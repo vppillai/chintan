@@ -192,7 +192,7 @@ test.describe('on a phone', () => {
 
     const tray = page.getByRole('group', { name: 'Actions for Roof repair' });
     await expect(tray).toBeVisible();
-    await expect(tray.getByRole('button')).toHaveText(['Pin', 'Archive', 'Delete']);
+    await expect(tray.getByRole('button')).toHaveText(['Pin', 'Delete']);
     await tray.getByRole('button', { name: 'Pin' }).click();
     await expect.poll(() => api.notes['roof-repair']?.pinned).toBe(true);
     await expect(page.getByRole('region', { name: 'Pinned' })).toBeVisible();

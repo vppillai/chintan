@@ -9,7 +9,8 @@ or pin. This note is the frontend; `pins.md` is the backend of pinning. Code:
 (`splitPinned`, `groupByDay`), `features/notes/PinnedGroup.tsx`,
 `components/NoteRow.tsx`, `components/SwipeRow.tsx` with
 `hooks/useSwipeActions.ts`, `hooks/useLongPress.ts`,
-`components/SelectionBar.tsx`, `usePinNote` and `useReorderPins`
+`components/SelectionBar.tsx`, `components/Toast.tsx`,
+`components/ConfirmDialog.tsx`, `usePinNote` and `useReorderPins`
 (`api/queries.ts`), `offline/useNotesCache.ts`, the drawn checkbox
 (`features/notes/ChecklistEditor.tsx` `Check` / `CheckMark`,
 `styles/checklist.css`).
@@ -69,19 +70,42 @@ cancels it, which is also how a scroll or a swipe that begins on a row never
 selects it — or pick Select from the row's ⋮. Once selecting, every row is a
 `<label>` round a real checkbox: click toggles, Shift-click selects the range
 from the last toggled row in on-screen order, Escape or Cancel leaves, and the
-sticky bar above the tab bar carries Archive (or Restore) and Delete forever
-behind a typed "delete". The click that follows the long press is consumed,
-so the row it just selected is neither deselected nor opened.
+sticky bar above the tab bar carries Delete on Home, and Restore and Delete
+forever in the archive. The click that follows the long press is consumed, so
+the row it just selected is neither deselected nor opened.
 
-Every row has a ⋮ at its right — Pin or Unpin · Archive · Delete · Select, and
-in the archive Restore · Delete · Select. Under a fine pointer it is revealed
+Every row has a ⋮ at its right — Pin or Unpin · Delete · Select, and in the
+archive Restore · Delete forever · Select. Under a fine pointer it is revealed
 on hover and on focus-within; under a finger it is always there at the meta
 colour, 44 px. Swipe stays touch-only: with a fine pointer the tray is not
 offered, since a mouse drag would fight text selection. The tray is Pin ·
-Archive · Delete in the library and Restore · Delete in the archive, the same
+Delete in the library and Restore · Delete forever in the archive, the same
 words as the menu with Delete at the edge of both; one row is open at a time
 app-wide, a tap elsewhere or a scroll closes it, and a pointer held still for
 the long-press duration is not a swipe. Nothing is only a swipe away.
+
+## Deleting
+
+No typed word anywhere (owner, 2026-09-26: "when I delete, I have to type
+delete. I don't like that UX"). Delete on Home — the row's ⋮, the swipe tray,
+the note header's ⋮ and the selection bar — is the archive (`useArchiveNote`,
+`useBulkArchiveNotes`): it happens on the tap with no dialog, and a toast in
+the shell (`components/Toast.tsx`, a row above the tab bar like the update
+prompt, never over the record button) says "Deleted · kept in Archive for 30
+days" with an Undo button for six seconds. Undo is the restore mutation; the
+toast is a polite live region that is always mounted, and the button is a
+real one, so a keyboard reaches it. There is no separate Archive item: the
+Archive is where deleted notes wait, thirty days, until the sweep purges them
+or Restore brings them back. The Archived chip and view keep their names.
+
+Delete forever, in the archive only — row, header and bar — is a plain
+`ConfirmDialog`: the sentence names the note and what goes with it, one
+destructive button, Cancel with focus. For a bulk Delete forever of more than
+ten notes (`HOLD_TO_DELETE_ABOVE`) the button reads "Hold to delete N notes"
+and has to be held for a second (`holdMs`): a finger, a mouse button, or Space
+or Enter held on the keyboard; the fill across it shows the second passing and
+appears whole under reduced motion. Deleting a recording (`Recordings.tsx`) is
+a plain confirm too. The `requireText` typed gate is gone from `ConfirmDialog`.
 
 ## The chips
 
@@ -138,6 +162,7 @@ that is in flight with the round-4 fixes.
 Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 `NotesScreen.pins.test.tsx`, `NotesScreen.checklist.test.tsx`,
 `components/NoteRow.test.tsx`, `NoteRow.checklist.test.tsx`, `SwipeRow.test.tsx`,
+`components/Toast.test.tsx`, `components/ConfirmDialog.test.tsx`,
 `hooks/useLongPress.test.tsx`, `offline/useNotesCache.test.tsx`,
 `offline/notesCache.test.ts`, `features/notes/ChecklistEditor.test.tsx`; end to
 end, `frontend/e2e/pins.spec.ts` (the group, the grip drag, the phone's hold
