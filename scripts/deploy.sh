@@ -708,17 +708,30 @@ fi
 # ---------------------------------------------------------------------------
 
 if [ "$SMOKE" = "1" ] && is_apply; then
-    endpoint="$(stack_output "$STACK" ApiEndpoint)"
-    [ -n "$endpoint" ] && [ "$endpoint" != "None" ] || die "no ApiEndpoint output on $STACK"
-    info "smoke: GET ${endpoint}/v1/health"
-    curl -fsS --max-time 20 "${endpoint}/v1/health" >&2
+    # The execute-api URL, not ApiEndpoint: it exists the moment the stack
+    # does and proves the Lambda before anything about DNS has to be true.
+    gateway="$(stack_output "$STACK" ApiGatewayEndpoint)"
+    [ -n "$gateway" ] && [ "$gateway" != "None" ] || die "no ApiGatewayEndpoint output on $STACK"
+    info "smoke: GET ${gateway}/v1/health"
+    curl -fsS --max-time 20 "${gateway}/v1/health" >&2
     log ""
     # /health/ready round-trips DynamoDB and S3 under the Lambda's own role. The
     # liveness probe alone passed a multi-day outage in which the API could not
     # read an index it had just been deployed against (gsi2, since removed; see
     # the index note on the Lambda role in the template).
-    info "smoke: GET ${endpoint}/v1/health/ready"
-    curl -fsS --max-time 20 "${endpoint}/v1/health/ready" >&2
+    info "smoke: GET ${gateway}/v1/health/ready"
+    curl -fsS --max-time 20 "${gateway}/v1/health/ready" >&2
     log ""
+    # The custom domain, when there is one: certificate, mapping and DNS in a
+    # single request. A record created minutes ago may not have propagated, so
+    # curl retries for about a minute; the failure then names the record to
+    # check, and re-running the workflow re-runs exactly this.
+    endpoint="$(stack_output "$STACK" ApiEndpoint)"
+    if [ -n "$endpoint" ] && [ "$endpoint" != "None" ] && [ "$endpoint" != "$gateway" ]; then
+        info "smoke: GET ${endpoint}/v1/health (custom domain)"
+        curl -fsS --max-time 20 --retry 6 --retry-delay 10 --retry-all-errors "${endpoint}/v1/health" >&2 ||
+            die "the API does not answer on ${endpoint}. CNAME ${endpoint#https://} to $(stack_output "$STACK" ApiDomainTarget) (the ApiDomainTarget output), wait for it to resolve, then re-run the workflow"
+        log ""
+    fi
     ok "smoke passed for $STACK"
 fi
