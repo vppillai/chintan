@@ -492,6 +492,17 @@ for (const theme of THEMES) {
     await page.goto('/');
     await expect(page.locator('.tab-bar')).toBeVisible();
 
+    // The Undo toast's live region is in the same row, and has to be in the
+    // accessibility tree before it has anything to say — `display: none`
+    // would take it out, and a region shown together with its text is the
+    // one that is not announced. Displayed, then, but with no footprint.
+    const toast = await page.locator('.toast').evaluate((el) => ({
+      display: getComputedStyle(el).display,
+      height: el.getBoundingClientRect().height,
+    }));
+    expect(toast.display).not.toBe('none');
+    expect(toast.height).toBe(0);
+
     // The real prompt only appears when a waiting service worker exists, which
     // no test can conjure reliably. The markup is what is under test, so it is
     // mounted directly where the shell mounts it.

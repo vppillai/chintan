@@ -70,6 +70,15 @@ test('Delete on a row archives it, and Undo is reached from the keyboard', async
   expect(api.notes['roof-repair']?.archived).toBe(true);
 
   await tabTo(page, 'Undo');
+  // The ring has to be seen on the ink card: the global ring is ink too.
+  const ring = await page.getByRole('button', { name: 'Undo' }).evaluate((el) => ({
+    style: getComputedStyle(el).outlineStyle,
+    outline: getComputedStyle(el).outlineColor,
+    card: getComputedStyle(el.closest('.toast__card')!).backgroundColor,
+  }));
+  expect(ring.style).not.toBe('none');
+  expect(ring.outline).not.toBe(ring.card);
+
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
   expect(api.notes['roof-repair']?.archived).toBe(false);

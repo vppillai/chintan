@@ -1843,18 +1843,26 @@
 
 /*
  * The Undo toast: the same shell row as the prompt above, for the same
- * reason, and empty — so collapsed — whenever nothing has just been deleted.
- * It slides up on the motion tokens, which reduced motion sets to a frame.
+ * reason. The outer `.toast` is the live region and is always displayed —
+ * `display: none` takes a `role="status"` node out of the accessibility tree,
+ * and a region that reappears together with its text is the case that is
+ * frequently not announced (VoiceOver especially). So the region itself has
+ * no footprint, and the card — ground, padding, shadow, the slide-up on the
+ * motion tokens, which reduced motion sets to a frame — is an inner element
+ * that exists only while there is something to say.
  */
 .toast {
+  inline-size: calc(100% - 2 * var(--layout-gutter));
+  max-inline-size: var(--layout-card-max);
+  margin-inline: auto;
+}
+
+.toast__card {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  inline-size: calc(100% - 2 * var(--layout-gutter));
-  max-inline-size: var(--layout-card-max);
   margin-block-end: var(--space-2);
-  margin-inline: auto;
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
   background-color: var(--color-ink);
   color: var(--color-ground);
@@ -1862,10 +1870,6 @@
   box-shadow: var(--shadow-lg);
   font-size: var(--font-size-sm);
   animation: toast-in var(--motion-duration-base) var(--motion-ease-decelerate);
-}
-
-.toast:empty {
-  display: none;
 }
 
 .toast__action {
@@ -1878,6 +1882,11 @@
   font-weight: var(--font-weight-medium);
   text-decoration: underline;
   text-underline-offset: 0.2em;
+}
+
+/* The global ring is ink, and so is the card: on it the ring has to be ground. */
+.toast__action:focus-visible {
+  outline-color: var(--color-ground);
 }
 
 .toast__action:active {
