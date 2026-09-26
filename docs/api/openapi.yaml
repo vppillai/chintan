@@ -1275,7 +1275,7 @@ components:
         PATCH /v1/notes/{noteId} with a `body` produces that reason.
       headers:
         Retry-After:
-          description: Present only with `reason: append_in_progress`.
+          description: 'Present only with `reason: append_in_progress`.'
           schema: { type: integer }
       content:
         application/problem+json:
