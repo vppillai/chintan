@@ -28,6 +28,7 @@ import type {
   CleanQueuedWire,
   CleanRequestWire,
   DeviceCreateWire,
+  DeviceCreatedWire,
   DeviceWire,
   ExportJobWire,
   NoteCreateWire,
@@ -373,7 +374,7 @@ export class ChintanApi {
    * nobody is shown. `NO_RETRY`: one attempt, and the card tells the person
    * to check the list when it cannot say whether that attempt landed.
    */
-  createDevice(body: DeviceCreateWire): Promise<DeviceWire> {
+  createDevice(body: DeviceCreateWire): Promise<DeviceCreatedWire> {
     return this.client.request('/v1/devices', { method: 'POST', body, retry: NO_RETRY });
   }
 

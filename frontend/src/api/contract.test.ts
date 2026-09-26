@@ -34,6 +34,7 @@ import {
   captureCreated,
   captureDownload,
   captureFailed,
+  devicesPage,
   exportJob,
   health,
   matchResponse,
@@ -110,6 +111,7 @@ describe('the paginated envelope', () => {
       tagsPage,
       searchPage,
       capturesPage,
+      devicesPage,
     })) {
       expect(Array.isArray(page), `${name} is a bare array, not an envelope`).toBe(false);
       expect(Array.isArray(page.items), `${name}.items is not an array`).toBe(true);

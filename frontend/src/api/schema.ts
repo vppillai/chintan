@@ -634,18 +634,24 @@ export interface UsageWire extends UsageTotalsWire {
    --------------------------------------------------------------------------- */
 
 /**
- * One device key. `key` is on the 201 of `POST /v1/devices` and nowhere else:
- * the server keeps a hash, so the app shows it once and can never show it
- * again. `GET /v1/devices` lists the rest. The fields beyond `id` and `name`
- * are optional here only until the backend that sends them lands, so the
- * generated fixtures keep compiling either side of that merge.
+ * One device, as `GET /v1/devices` lists it — never with its key, of which the
+ * server keeps only a hash. `last_used_at` is null until the device has sent
+ * something.
  */
 export interface DeviceWire {
   id: string;
   name: string;
-  created_at?: string;
-  last_used_at?: string | null;
-  key?: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+/**
+ * The 201 of `POST /v1/devices`: the device and the one showing of its key.
+ * Nothing else ever carries `key`, so the app shows it once and can never
+ * show it again.
+ */
+export interface DeviceCreatedWire extends DeviceWire {
+  key: string;
 }
 
 /** Body of `POST /v1/devices`. The name is at most 60 characters. */

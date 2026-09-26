@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 
 import { ApiError } from '@/api/problem.ts';
 import { useCreateDevice, useDeleteDevice, useDevices } from '@/api/queries.ts';
-import type { DeviceWire } from '@/api/schema.ts';
+import type { DeviceCreatedWire, DeviceWire } from '@/api/schema.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
@@ -82,7 +82,7 @@ export function DevicesCard() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   /** The device just created, whose key is on screen until Done. */
-  const [minted, setMinted] = useState<DeviceWire | null>(null);
+  const [minted, setMinted] = useState<DeviceCreatedWire | null>(null);
   /** The device Remove was tapped on, awaiting the confirmation. */
   const [removing, setRemoving] = useState<DeviceWire | null>(null);
   const keyRef = useRef<HTMLDivElement>(null);
@@ -196,7 +196,7 @@ export function DevicesCard() {
           <div className="device-key__actions">
             <CopyButton
               label="Copy key"
-              text={() => minted.key ?? ''}
+              text={() => minted.key}
               className="settings-status__action settings-status__action--primary"
             />
             <button

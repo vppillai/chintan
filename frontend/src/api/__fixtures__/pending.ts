@@ -16,7 +16,6 @@
 import type {
   AskWire,
   CaptureWire,
-  DeviceWire,
   NoteDetailWire,
   NoteWire,
   UsageWire,
@@ -183,37 +182,6 @@ export const usageRich: UsageWire = {
     share_basis: 'provider_cost',
     share_micros: 123456,
   },
-};
-
-/**
- * POST /v1/devices → 201 (2026-09-24 contract): the one response that carries
- * the key. `ck_<id>_<secret>`; the server stores its hash and never returns it
- * again.
- */
-export const deviceCreated: DeviceWire = {
-  created_at: '2026-01-01T00:00:00.000000000Z',
-  id: 'dev_fixture',
-  key: 'ck_dev_fixture_0123456789abcdef0123456789abcdef',
-  last_used_at: null,
-  name: 'Watch',
-};
-
-/** GET /v1/devices → 200: the same device once it has sent something, beside one that never has. No key, no hash. */
-export const devicesPage: { items: DeviceWire[] } = {
-  items: [
-    {
-      created_at: '2026-01-01T00:00:00.000000000Z',
-      id: 'dev_fixture',
-      last_used_at: '2026-01-03T08:15:00.000000000Z',
-      name: 'Watch',
-    },
-    {
-      created_at: '2026-01-02T00:00:00.000000000Z',
-      id: 'dev_fixture_2',
-      last_used_at: null,
-      name: 'Shortcut on the phone',
-    },
-  ],
 };
 
 /** A capture that arrived through the inbox as text: no audio, and it says which device sent it. */

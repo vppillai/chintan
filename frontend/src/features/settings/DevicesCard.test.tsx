@@ -2,12 +2,21 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { deviceCreated, devicesPage } from '@/api/__fixtures__/pending.ts';
+import { deviceCreated, devicesPage } from '@/api/__fixtures__/responses.ts';
 import { DEFAULT_TIMEOUT_MS } from '@/api/client.ts';
-import type { DeviceWire } from '@/api/schema.ts';
+import type { DeviceCreatedWire, DeviceWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { DevicesCard, MAX_DEVICES, UNCONFIRMED_TEXT, curlRecipe, inboxAudioUrl } from './DevicesCard.tsx';
+
+/**
+ * The generated list with its ids made distinct: the fixture generator
+ * collapses every id to one stand-in, and the fake server below removes by id.
+ */
+const listed: DeviceWire[] = devicesPage.items.map((device, index) => ({
+  ...device,
+  id: `dev_${String(index)}`,
+}));
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -23,7 +32,7 @@ function json(body: unknown, status = 200): Response {
  * row (without the key, as the real list answers), a DELETE that drops it.
  */
 function mount(
-  initial: readonly DeviceWire[] = devicesPage.items,
+  initial: readonly DeviceWire[] = listed,
   overrides: { create?: (init?: RequestInit) => Response | Promise<Response> } = {},
 ) {
   let items = [...initial];
@@ -39,13 +48,13 @@ function mount(
     if (url.pathname === '/v1/devices' && method === 'POST') {
       if (overrides.create) return overrides.create(init);
       const body = JSON.parse(String(init?.body)) as { name: string };
-      const created: DeviceWire = {
+      const created: DeviceCreatedWire = {
         ...deviceCreated,
         id: `dev_${String(items.length + 1)}`,
         name: body.name,
       };
-      const { key: _key, ...listed } = created;
-      items.push(listed);
+      const { key: _key, ...row } = created;
+      items.push(row);
       return json(created, 201);
     }
     const id = /\/v1\/devices\/([^/]+)$/.exec(url.pathname)?.[1];
@@ -118,7 +127,7 @@ describe('the devices card on You', () => {
 
     const shown = await screen.findByRole('status');
     expect(shown).toHaveTextContent('The key for Ring');
-    expect(shown).toHaveTextContent(deviceCreated.key ?? '');
+    expect(shown).toHaveTextContent(deviceCreated.key);
     expect(shown).toHaveTextContent(/will not be shown again/i);
     expect(within(shown).getByRole('button', { name: 'Copy key' })).toBeInTheDocument();
     // Focus lands on the box so the key is read out and the next Tab is Copy
@@ -150,7 +159,7 @@ describe('the devices card on You', () => {
 
   it('says why when the server refuses, in the server’s own words', async () => {
     const user = userEvent.setup();
-    mount(devicesPage.items, {
+    mount(listed, {
       create: () =>
         json(
           {
@@ -174,7 +183,7 @@ describe('the devices card on You', () => {
 
   it('sends a create once even when the server fails, since a retry would mint a key nobody sees (R4-5)', async () => {
     const user = userEvent.setup();
-    const { calls } = mount(devicesPage.items, {
+    const { calls } = mount(listed, {
       create: () =>
         json({ type: 'about:blank', title: 'Service Unavailable', status: 503, detail: 'try later' }, 503),
     });
@@ -190,7 +199,7 @@ describe('the devices card on You', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-      const { calls } = mount(devicesPage.items, {
+      const { calls } = mount(listed, {
         // Never answers; the client's own timer aborts it as a dead network would.
         create: (init) =>
           new Promise((_, reject) => {
@@ -234,7 +243,7 @@ describe('the devices card on You', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Remove it' }));
 
     await waitFor(() => {
-      expect(calls).toContainEqual({ method: 'DELETE', path: '/v1/devices/dev_fixture' });
+      expect(calls).toContainEqual({ method: 'DELETE', path: '/v1/devices/dev_0' });
     });
     await waitFor(async () => {
       expect(await deviceRows()).toHaveLength(1);
