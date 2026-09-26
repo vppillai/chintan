@@ -476,8 +476,6 @@ export function Recordings({
             : 'The recording and the paragraph it dictated are removed from this note, and the audio and transcript are destroyed. This cannot be undone.'
         }
         confirmLabel={pending && pending.ids.length > 1 ? 'Delete them' : 'Delete it'}
-        requireText="delete"
-        requireLabel='Type "delete" to confirm'
         destructive
         onCancel={() => {
           setPending(null);

@@ -2022,7 +2022,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   The typed confirmation, for the one action that cannot be undone
+   A text field inside a dialog: the move sheet's "Name the new note"
    -------------------------------------------------------------------------- */
 
 .dialog__gate {
@@ -2048,8 +2048,49 @@
   color: var(--color-ink);
 }
 
-/* A disabled confirm has to *look* disabled, or the gate reads as a broken
-   button rather than as a lock waiting to be opened. */
+/* --------------------------------------------------------------------------
+   Hold to confirm, for a bulk delete forever of many notes
+   -------------------------------------------------------------------------- */
+
+/*
+ * The fill grows across the button for the length of the hold (`--hold-ms`,
+ * set by the component), behind the label and above the button's own
+ * ground: within the button's stacking context a negative z-index child
+ * paints over the background and under the text. Letting go part-way clears
+ * `data-holding` and the fill snaps back. Under reduced motion the fill
+ * appears whole at once; the second's wait is the gate, the animation only
+ * shows it passing.
+ */
+.dialog__action--hold {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dialog__hold-fill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-color: var(--color-accent-strong);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.dialog__action--hold[data-holding] .dialog__hold-fill {
+  transform: scaleX(1);
+  transition: transform var(--hold-ms, 1s) linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog__action--hold[data-holding] .dialog__hold-fill {
+    transition: none;
+  }
+}
+
+/* A disabled confirm has to *look* disabled, or it reads as a broken button. */
 .dialog__action[disabled],
 .dialog__action--destructive[disabled] {
   background-color: var(--color-raised);
@@ -2822,8 +2863,8 @@
 }
 
 /* Delete wears the accent, as the confirm dialog's destructive control does:
-   the one consequential colour, on the one action here that ends in a
-   typed confirmation. */
+   the one consequential colour, on the one action here that takes something
+   away. */
 .swipe__action[data-destructive] {
   background-color: var(--color-accent);
   background-image: var(--gradient-lift);
@@ -2835,10 +2876,12 @@
   background-image: none;
 }
 
+/* Centred so "Delete forever" can break onto two lines in the tray's 72 px. */
 .swipe__action-label {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--letter-spacing-wide);
+  text-align: center;
 }
 
 /* The note row's tray takes the row's corners. */

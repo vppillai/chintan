@@ -15,7 +15,6 @@ import { Link, useSearchParams } from 'react-router';
 import {
   SERVER_SEARCH_DEBOUNCE_MS,
   useBulkArchiveNotes,
-  useBulkDeleteNotes,
   useBulkPurgeNotes,
   useBulkRestoreNotes,
   useNotes,
@@ -38,6 +37,7 @@ import { FilingRow } from '@/features/capture/FilingRow.tsx';
 import { ResumePrompt } from '@/features/capture/ResumePrompt.tsx';
 import { PinnedGroup } from '@/features/notes/PinnedGroup.tsx';
 import { describeToday, groupByDay, splitPinned } from '@/features/notes/groups.ts';
+import { showDeleted } from '@/features/notes/purge.ts';
 import { mergeResults, rankLocal, type MergedHit } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
@@ -46,6 +46,10 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 /** Below this the search field no longer fits the long placeholder beside its Ask glyph. */
 export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
+
+/** A bulk Delete forever of more than this many notes is a hold, not a tap. */
+export const HOLD_TO_DELETE_ABOVE = 10;
+export const HOLD_TO_DELETE_MS = 1000;
 
 /*
  * The Ask panel is a chunk of its own (round-3 T47): the thread, its markdown
@@ -77,12 +81,15 @@ const AskPanel = lazy(() =>
  * (`features/ask/thread.ts`).
  *
  * Bulk select carries over from the two screens this replaces. In the active
- * view the actions are Archive and Delete forever; in the archive, Restore and
- * Delete forever. Deleting is gated by a typed word in both, because it is the
- * one thing here that cannot be undone. Selection starts from a row — press
- * and hold it, with a finger or a mouse alike, or pick Select from its ⋮ (see
- * `NoteRow`) — and its bar sits above the tab bar, not at the end of the list
- * (backlog U2, Q6).
+ * view the one action is Delete — the archive, on the tap, with Undo in the
+ * toast, since the notes wait in the Archive for thirty days (owner,
+ * 2026-09-26: no typed word anywhere). In the archive the actions are Restore
+ * and Delete forever, the one thing here that cannot be undone: it asks once,
+ * plainly, and for more than ten notes the confirm is a press held for a
+ * second rather than a tap. Selection starts from a row — press and hold it,
+ * with a finger or a mouse alike, or pick Select from its ⋮ (see `NoteRow`) —
+ * and its bar sits above the tab bar, not at the end of the list (backlog U2,
+ * Q6).
  *
  * Pinned notes come first, in a group of their own above the days, in the
  * order the person dragged them into (`PinnedGroup`, 2026-09-24 B). The
@@ -201,15 +208,11 @@ export function NotesScreen() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** The last row toggled, for Shift-click to extend from. */
   const anchorRef = useRef<string | null>(null);
-  const [confirming, setConfirming] = useState<'archive' | 'delete' | 'restore' | 'purge' | null>(
-    null,
-  );
+  const [confirming, setConfirming] = useState<'restore' | 'purge' | null>(null);
   const bulkArchive = useBulkArchiveNotes();
-  const bulkDelete = useBulkDeleteNotes();
   const bulkRestore = useBulkRestoreNotes();
   const bulkPurge = useBulkPurgeNotes();
-  const bulkBusy =
-    bulkArchive.isPending || bulkDelete.isPending || bulkRestore.isPending || bulkPurge.isPending;
+  const bulkBusy = bulkArchive.isPending || bulkRestore.isPending || bulkPurge.isPending;
 
   const exitSelecting = (): void => {
     setSelecting(false);
@@ -796,67 +799,59 @@ export function NotesScreen() {
           onCancel={exitSelecting}
         >
           {view === 'active' ? (
+            /*
+              Delete on Home is the archive, on the tap: the notes wait in the
+              Archive for thirty days, and the toast offers Undo, which
+              restores the ones that went. This screen stays mounted through
+              the mutation, so the per-call `onSuccess` is safe here where a
+              row's is not (`NoteRow`).
+            */
             <button
               type="button"
-              className="selection-bar__action"
+              className="selection-bar__action selection-bar__action--destructive"
               disabled={selectedIds.size === 0 || bulkBusy}
               onClick={() => {
-                setConfirming('archive');
+                const ids = Array.from(selectedIds);
+                bulkArchive.mutate(ids, {
+                  onSuccess: (results) => {
+                    exitSelecting();
+                    const gone = ids.filter((_id, i) => results[i]?.status === 'fulfilled');
+                    if (gone.length === 0) return;
+                    showDeleted(gone.length, () => {
+                      bulkRestore.mutate(gone);
+                    });
+                  },
+                });
               }}
             >
-              {bulkArchive.isPending ? 'Archiving…' : 'Archive'}
+              {bulkArchive.isPending ? 'Deleting…' : 'Delete'}
             </button>
           ) : (
-            <button
-              type="button"
-              className="selection-bar__action"
-              disabled={selectedIds.size === 0 || bulkBusy}
-              onClick={() => {
-                setConfirming('restore');
-              }}
-            >
-              {bulkRestore.isPending ? 'Restoring…' : 'Restore'}
-            </button>
+            <>
+              <button
+                type="button"
+                className="selection-bar__action"
+                disabled={selectedIds.size === 0 || bulkBusy}
+                onClick={() => {
+                  setConfirming('restore');
+                }}
+              >
+                {bulkRestore.isPending ? 'Restoring…' : 'Restore'}
+              </button>
+              <button
+                type="button"
+                className="selection-bar__action selection-bar__action--destructive"
+                disabled={selectedIds.size === 0 || bulkBusy}
+                onClick={() => {
+                  setConfirming('purge');
+                }}
+              >
+                {bulkPurge.isPending ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </>
           )}
-          {/*
-            Delete without the detour through the archive. From the active list
-            it is the same two server operations — archive, then purge — behind
-            one typed confirmation, because "select all, delete" is what
-            emptying a library actually looks like, and making it two screens
-            did not make it safer, only slower. From the archive it is the
-            batch purge alone.
-          */}
-          <button
-            type="button"
-            className="selection-bar__action selection-bar__action--destructive"
-            disabled={selectedIds.size === 0 || bulkBusy}
-            onClick={() => {
-              setConfirming(view === 'active' ? 'delete' : 'purge');
-            }}
-          >
-            {bulkDelete.isPending || bulkPurge.isPending ? 'Deleting…' : 'Delete forever'}
-          </button>
         </SelectionBar>
       )}
-
-      <ConfirmDialog
-        open={confirming === 'archive'}
-        title={`Archive ${countLabel(selectedIds.size)}?`}
-        body={
-          one
-            ? 'It leaves your notes and moves to the archive, where you can restore it until it is deleted.'
-            : 'They leave your notes and move to the archive, where you can restore them until they are deleted.'
-        }
-        confirmLabel={one ? 'Archive it' : 'Archive them'}
-        destructive
-        onCancel={() => {
-          setConfirming(null);
-        }}
-        onConfirm={() => {
-          setConfirming(null);
-          bulkArchive.mutate(Array.from(selectedIds), { onSuccess: exitSelecting });
-        }}
-      />
 
       <ConfirmDialog
         open={confirming === 'restore'}
@@ -877,31 +872,35 @@ export function NotesScreen() {
       />
 
       {/*
-        Typing a fixed word rather than each note's own title — the single-note
-        purge's gate — because requiring every selected title typed in one
-        dialog does not scale past a couple of notes and would just get pasted
-        anyway; this is still a deliberate second step, not a bare "OK".
+        Emptying the archive. A plain confirm up to ten notes; past that the
+        button has to be held for a second (`holdMs`), because "select all,
+        delete forever" on a full archive is the one tap in the app whose
+        slip cannot be taken back, and a hold is a gesture no slip makes.
       */}
       <ConfirmDialog
-        open={confirming === 'delete' || confirming === 'purge'}
+        open={confirming === 'purge'}
         title={`Delete ${countLabel(selectedIds.size)} forever?`}
         body={`${
           one
             ? `${onlySelected ? `“${onlySelected.title}” and its` : 'Its'} recordings and transcripts are`
             : 'Their recordings and transcripts are'
         } destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
-        confirmLabel={one ? 'Delete it forever' : 'Delete them forever'}
-        requireText="delete"
-        requireLabel='Type "delete" to confirm'
+        confirmLabel={
+          selectedIds.size > HOLD_TO_DELETE_ABOVE
+            ? `Hold to delete ${String(selectedIds.size)} notes`
+            : one
+              ? 'Delete it forever'
+              : 'Delete them forever'
+        }
+        holdMs={selectedIds.size > HOLD_TO_DELETE_ABOVE ? HOLD_TO_DELETE_MS : undefined}
         destructive
         onCancel={() => {
           setConfirming(null);
         }}
         onConfirm={() => {
           const ids = Array.from(selectedIds);
-          const mutation = confirming === 'purge' ? bulkPurge : bulkDelete;
           setConfirming(null);
-          mutation.mutate(ids, { onSuccess: exitSelecting });
+          bulkPurge.mutate(ids, { onSuccess: exitSelecting });
         }}
       />
     </div>

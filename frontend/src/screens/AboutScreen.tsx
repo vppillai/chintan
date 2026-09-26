@@ -151,9 +151,10 @@ export function AboutScreen() {
           <p>
             Recordings are kept for as long as <em>Keep recordings for</em> on You said when they
             were made — indefinitely unless a limit was set. Changing it applies to recordings made
-            from then on; earlier recordings keep the retention they were uploaded with. An
-            archived note, with its recordings and transcripts, is deleted thirty days after you
-            archive it.
+            from then on; earlier recordings keep the retention they were uploaded with. Deleting a
+            note moves it to the Archive, where Undo or Restore brings it back; an archived note,
+            with its recordings and transcripts, is deleted thirty days after you archive it, or
+            when you choose Delete forever there.
           </p>
           <p>
             A daily spending cap on the transcription and cleanup providers protects against

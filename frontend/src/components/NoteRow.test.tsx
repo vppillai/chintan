@@ -8,13 +8,14 @@ import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx'
 import { setCanHover } from '@/test/setup.ts';
 
 import { NoteRow } from './NoteRow.tsx';
+import { Toast, dismissToast } from './Toast.tsx';
 
 /**
  * The swipe tray behind a note row: the right actions for the view the row
- * is in, pin and archive on the tap, the delete behind the same typed gate
- * the note's own action bar uses. The gesture itself is SwipeRow's test. And
- * the ⋮ at the row's right, which offers the same actions plus Select to a
- * pointer that cannot swipe (2026-09-24, C).
+ * is in — pin and Delete (the archive, with Undo in the toast) on the tap,
+ * Delete forever behind a plain confirm in the archive. The gesture itself is
+ * SwipeRow's test. And the ⋮ at the row's right, which offers the same
+ * actions plus Select to a pointer that cannot swipe (2026-09-24, C).
  */
 
 const ACTIVE: NoteWire = TEST_NOTES[0] as NoteWire;
@@ -42,6 +43,8 @@ function mount(note: NoteWire, { selectable = false } = {}) {
     <TestProviders api={testApiContext(fetchImpl)}>
       <MemoryRouter>
         <NoteRow note={note} selectable={selectable} onToggleSelect={onToggleSelect} />
+        {/* The shell's, in the app; here so the Undo the row offers can be pressed. */}
+        <Toast />
       </MemoryRouter>
     </TestProviders>,
   );
@@ -52,6 +55,7 @@ const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
 
 afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+  dismissToast();
 });
 
 function swipeOpen(): HTMLElement {
@@ -66,7 +70,7 @@ function swipeOpen(): HTMLElement {
 }
 
 describe('NoteRow swipe actions', () => {
-  it('offers Pin, Archive and Delete in the library', () => {
+  it('offers Pin and Delete in the library', () => {
     mount(ACTIVE);
     const tray = screen.getByRole('group', { hidden: true });
     expect(tray).toHaveAttribute('aria-label', 'Actions for Roof repair');
@@ -74,7 +78,7 @@ describe('NoteRow swipe actions', () => {
       within(tray)
         .getAllByRole('button', { hidden: true })
         .map((button) => button.textContent),
-    ).toEqual(['Pin', 'Archive', 'Delete']);
+    ).toEqual(['Pin', 'Delete']);
   });
 
   it('pins on the tap, and a pinned row offers Unpin and wears the glyph', async () => {
@@ -94,14 +98,14 @@ describe('NoteRow swipe actions', () => {
     expect(within(tray).getByRole('button', { name: 'Unpin', hidden: true })).toBeInTheDocument();
   });
 
-  it('offers Restore and Delete in the archive', () => {
+  it('offers Restore and Delete forever in the archive', () => {
     mount(ARCHIVED);
     const tray = screen.getByRole('group', { hidden: true });
     expect(
       within(tray)
         .getAllByRole('button', { hidden: true })
         .map((button) => button.textContent),
-    ).toEqual(['Restore', 'Delete']);
+    ).toEqual(['Restore', 'Delete forever']);
   });
 
   it('offers the same actions and Select behind the ⋮, for a pointer that cannot swipe', async () => {
@@ -115,7 +119,6 @@ describe('NoteRow swipe actions', () => {
     await user.click(more);
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Pin',
-      'Archive',
       'Delete',
       'Select',
     ]);
@@ -123,17 +126,18 @@ describe('NoteRow swipe actions', () => {
     expect(onToggleSelect).toHaveBeenCalledWith('roof-repair', { range: false });
 
     await user.click(screen.getByRole('button', { name: 'More' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Archive' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
     await waitFor(() => {
       expect(calls).toContain('DELETE /v1/notes/roof-repair');
     });
+    expect(screen.queryByRole('dialog')).toBeNull();
     unmount();
 
     mount(ARCHIVED);
     await user.click(screen.getByRole('button', { name: 'More' }));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Restore',
-      'Delete',
+      'Delete forever',
       'Select',
     ]);
   });
@@ -177,7 +181,7 @@ describe('NoteRow swipe actions', () => {
       within(tray)
         .getAllByRole('button', { hidden: true })
         .map((button) => button.textContent),
-    ).toEqual(['Archive', 'Delete']);
+    ).toEqual(['Delete']);
   });
 
   it('has no tray while bulk-select is on, nor for a pointer that can hover', () => {
@@ -190,16 +194,29 @@ describe('NoteRow swipe actions', () => {
     expect(screen.queryByRole('group', { hidden: true })).toBeNull();
   });
 
-  it('archives on the tap — it is reversible', async () => {
+  it('Delete archives on the tap, with no dialog, and offers Undo, which restores', async () => {
+    const user = userEvent.setup();
     const { calls } = mount(ACTIVE);
     const tray = swipeOpen();
 
-    fireEvent.click(within(tray).getByRole('button', { name: 'Archive' }));
+    fireEvent.click(within(tray).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
       expect(calls).toContain('DELETE /v1/notes/roof-repair');
     });
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(calls).not.toContain('DELETE /v1/notes/roof-repair/permanent');
+
+    // The toast says where the note went and for how long, and Undo brings it back.
+    const toast = screen.getByRole('status');
+    await waitFor(() => {
+      expect(toast).toHaveTextContent('Deleted · kept in Archive for 30 days');
+    });
+    await user.click(within(toast).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => {
+      expect(calls).toContain('POST /v1/notes/roof-repair/restore');
+    });
+    expect(toast).toBeEmptyDOMElement();
   });
 
   it('restores on the tap in the archive', async () => {
@@ -213,38 +230,17 @@ describe('NoteRow swipe actions', () => {
     });
   });
 
-  it('deletes only behind the typed word, archiving first from the library', async () => {
-    const user = userEvent.setup();
-    const { calls } = mount(ACTIVE);
-    const tray = swipeOpen();
-
-    fireEvent.click(within(tray).getByRole('button', { name: 'Delete' }));
-
-    const dialog = await screen.findByRole('dialog', { name: 'Delete this note forever?' });
-    const confirm = within(dialog).getByRole('button', { name: 'Delete forever' });
-    expect(confirm).toBeDisabled();
-    // The word, not the title — a dictated title is a chore on a phone keyboard.
-    expect(within(dialog).getByText(/“Roof repair”/)).toBeInTheDocument();
-    await user.type(within(dialog).getByLabelText('Type "delete" to confirm'), 'delete');
-    await user.click(confirm);
-
-    // The server refuses to purge an active note, so the row archives it first.
-    await waitFor(() => {
-      expect(calls).toContain('DELETE /v1/notes/roof-repair/permanent');
-    });
-    expect(calls.indexOf('DELETE /v1/notes/roof-repair')).toBeLessThan(
-      calls.indexOf('DELETE /v1/notes/roof-repair/permanent'),
-    );
-  });
-
-  it('deletes an archived note with the one call', async () => {
+  it('Delete forever in the archive asks once, plainly, and purges with the one call', async () => {
     const user = userEvent.setup();
     const { calls } = mount(ARCHIVED);
     const tray = swipeOpen();
 
-    fireEvent.click(within(tray).getByRole('button', { name: 'Delete' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.type(within(dialog).getByRole('textbox'), 'delete');
+    fireEvent.click(within(tray).getByRole('button', { name: 'Delete forever' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this note forever?' });
+    // It names what goes, and there is nothing to type; Cancel is under Enter.
+    expect(within(dialog).getByText(/“Roof repair”/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
     await user.click(within(dialog).getByRole('button', { name: 'Delete forever' }));
 
     await waitFor(() => {
@@ -255,10 +251,10 @@ describe('NoteRow swipe actions', () => {
 
   it('cancelling the dialog deletes nothing', async () => {
     const user = userEvent.setup();
-    const { calls } = mount(ACTIVE);
+    const { calls } = mount(ARCHIVED);
     const tray = swipeOpen();
 
-    fireEvent.click(within(tray).getByRole('button', { name: 'Delete' }));
+    fireEvent.click(within(tray).getByRole('button', { name: 'Delete forever' }));
     await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
 
     expect(screen.queryByRole('dialog')).toBeNull();

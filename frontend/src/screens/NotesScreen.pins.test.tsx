@@ -378,7 +378,6 @@ describe('pinned notes on Home', () => {
     await user.click(moreFor('One'));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Unpin',
-      'Archive',
       'Delete',
       'Select',
       'Move down',
@@ -500,7 +499,7 @@ describe('pinned notes on Home', () => {
     expect(screen.getByRole('button', { name: 'Move One' })).toBeDisabled();
     await user.click(moreFor('Three'));
     expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeDisabled();
-    expect(screen.getByRole('menuitem', { name: 'Archive' })).toBeEnabled();
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled();
     await user.keyboard('{Escape}');
     await user.click(moreFor('One'));
     expect(screen.getByRole('menuitem', { name: 'Unpin' })).toBeDisabled();

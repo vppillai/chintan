@@ -284,7 +284,7 @@ export class ChintanApi {
 
   /**
    * Deletes one recording and the paragraph it dictated. Irreversible — the
-   * typed confirmation is the client's — and 409 while the capture is still
+   * confirmation is the client's — and 409 while the capture is still
    * moving through the pipeline. `NO_RETRY` for the same reason as
    * `deleteNoteForever`: a retry after a lost 204 is answered 404, which would
    * report a deletion that succeeded as a failure.
