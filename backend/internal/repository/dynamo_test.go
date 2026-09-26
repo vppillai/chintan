@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1655,5 +1656,224 @@ func TestListNotesProjectsCleanedBodyOnlyWhenAsked(t *testing.T) {
 	}
 	if _, ok := raw.Item["cleaned_body"].(*types.AttributeValueMemberS); !ok {
 		t.Errorf("cleaned_body was not promoted to its own attribute: %v", raw.Item)
+	}
+}
+
+// ------------------------------------------------ status, abandon, asks
+
+func TestUpdateCaptureStatus(t *testing.T) {
+	cases := []struct {
+		name    string
+		seed    bool
+		status  model.CaptureStatus
+		errMsg  string
+		wantErr error
+	}{
+		{name: "writes the status and the error under a version bump", seed: true, status: model.StatusFailed, errMsg: "the speech provider is unavailable"},
+		{name: "clears an earlier error when the status moves on", seed: true, status: model.StatusAppended},
+		{name: "a missing capture is ErrNotFound", status: model.StatusFailed, wantErr: repository.ErrNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestStore(t)
+			ctx := context.Background()
+			if tc.seed {
+				if _, err := store.PutCapture(ctx, model.CaptureIndex{ID: "cap1", UserID: "tenant-a", Status: model.StatusCleaning, Error: "an earlier fault"}); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+
+			err := store.UpdateCaptureStatus(ctx, "tenant-a", "cap1", tc.status, tc.errMsg)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("UpdateCaptureStatus err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			got, err := store.GetCapture(ctx, "tenant-a", "cap1")
+			if err != nil {
+				t.Fatalf("GetCapture: %v", err)
+			}
+			if got.Status != tc.status || got.Error != tc.errMsg {
+				t.Fatalf("stored (status %q, error %q), want (%q, %q)", got.Status, got.Error, tc.status, tc.errMsg)
+			}
+			if got.Version != 2 {
+				t.Fatalf("version = %d after seed and update, want 2: the write must go through the versioned PutCapture so a concurrent writer is not overwritten", got.Version)
+			}
+		})
+	}
+}
+
+// A conflicting write between the read and the write is the one thing a
+// read-modify-write can get wrong, so it is pinned here: the version check
+// refuses, and nothing of the stale copy lands.
+func TestUpdateCaptureStatusLosesToAConcurrentWriter(t *testing.T) {
+	api := newFakeDynamo()
+	racer := &captureRacingDynamo{fakeDynamo: api}
+	store := repository.NewDynamoStore(racer, tableName)
+	racer.store = store
+	ctx := context.Background()
+	if _, err := store.PutCapture(ctx, model.CaptureIndex{ID: "cap1", UserID: "tenant-a", Status: model.StatusCleaning}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	racer.armed = true
+	err := store.UpdateCaptureStatus(ctx, "tenant-a", "cap1", model.StatusFailed, "late")
+	if !errors.Is(err, repository.ErrVersionConflict) {
+		t.Fatalf("err = %v, want ErrVersionConflict", err)
+	}
+	got, err := store.GetCapture(ctx, "tenant-a", "cap1")
+	if err != nil {
+		t.Fatalf("GetCapture: %v", err)
+	}
+	if got.Status != model.StatusAppended || got.Error != "" {
+		t.Fatalf("stored (status %q, error %q); the concurrent writer's appended row was overwritten", got.Status, got.Error)
+	}
+}
+
+// captureRacingDynamo slips another writer's PutCapture in between the
+// store's GetItem and its conditional PutItem, once armed.
+type captureRacingDynamo struct {
+	*fakeDynamo
+	store *repository.DynamoStore
+	armed bool
+}
+
+func (d *captureRacingDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+	out, err := d.fakeDynamo.GetItem(ctx, in, opts...)
+	if err != nil || !d.armed {
+		return out, err
+	}
+	d.armed = false
+	other, err := d.store.GetCapture(ctx, "tenant-a", "cap1")
+	if err != nil {
+		return nil, err
+	}
+	other.Status = model.StatusAppended
+	if _, err := d.store.PutCapture(ctx, other); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func TestAbandonIdempotent(t *testing.T) {
+	cases := []struct {
+		name          string
+		arrange       func(t *testing.T, store *repository.DynamoStore)
+		wantReplay    bool
+		wantFirstCall bool
+	}{
+		{
+			name: "releases a claim so the retry runs the work instead of waiting on it",
+			arrange: func(t *testing.T, store *repository.DynamoStore) {
+				if _, err := store.BeginIdempotent(context.Background(), "tenant-a", "key-1", "fp-1"); err != nil {
+					t.Fatalf("BeginIdempotent: %v", err)
+				}
+			},
+			wantFirstCall: true,
+		},
+		{
+			name: "leaves a completed record alone: the replay is still owed",
+			arrange: func(t *testing.T, store *repository.DynamoStore) {
+				ctx := context.Background()
+				if _, err := store.BeginIdempotent(ctx, "tenant-a", "key-1", "fp-1"); err != nil {
+					t.Fatalf("BeginIdempotent: %v", err)
+				}
+				if err := store.CompleteIdempotent(ctx, "tenant-a", "key-1", 201, "application/json", []byte(`{"id":"note_1"}`)); err != nil {
+					t.Fatalf("CompleteIdempotent: %v", err)
+				}
+			},
+			wantReplay: true,
+		},
+		{
+			name:          "a key nobody claimed is nothing to release",
+			arrange:       func(*testing.T, *repository.DynamoStore) {},
+			wantFirstCall: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestStore(t)
+			ctx := context.Background()
+			tc.arrange(t, store)
+
+			if err := store.AbandonIdempotent(ctx, "tenant-a", "key-1"); err != nil {
+				t.Fatalf("AbandonIdempotent: %v", err)
+			}
+
+			rec, err := store.BeginIdempotent(ctx, "tenant-a", "key-1", "fp-1")
+			switch {
+			case err != nil:
+				t.Fatalf("BeginIdempotent after abandon: %v", err)
+			case tc.wantReplay && (rec == nil || rec.Status != 201):
+				t.Fatalf("BeginIdempotent returned %+v, want the completed 201 record replayed", rec)
+			case tc.wantFirstCall && rec != nil:
+				t.Fatalf("BeginIdempotent returned %+v, want nil so the retry performs the work", rec)
+			}
+		})
+	}
+}
+
+func TestPutAskGetAskRoundTrip(t *testing.T) {
+	store, api := newTestStore(t)
+	ctx := context.Background()
+	expires := time.Now().Add(model.AskTTL).Unix()
+	ask := model.Ask{
+		ID: "ask_1", UserID: "tenant-a", Status: model.AskAnswered,
+		Question:        "what did I say about the roof?",
+		History:         []model.AskTurn{{Question: "earlier", Answer: "nothing"}},
+		Answer:          "You said the gutter leaks.",
+		Grounded:        true,
+		Sources:         []model.AskSource{{NoteID: "note_1", Title: "House"}},
+		NotesConsidered: 3,
+		CreatedAt:       "2026-09-26T10:00:00Z",
+		AnsweredAt:      "2026-09-26T10:00:04Z",
+		ExpiresAt:       expires,
+	}
+
+	if err := store.PutAsk(ctx, "tenant-a", ask); err != nil {
+		t.Fatalf("PutAsk: %v", err)
+	}
+	got, err := store.GetAsk(ctx, "tenant-a", "ask_1")
+	if err != nil {
+		t.Fatalf("GetAsk: %v", err)
+	}
+	if !reflect.DeepEqual(got, ask) {
+		t.Fatalf("GetAsk = %+v, want %+v", got, ask)
+	}
+
+	// The row's only lifecycle is its TTL, so the attribute DynamoDB expires
+	// on must carry ExpiresAt; a row without it lives forever.
+	item := api.items["USER#tenant-a"]["ASK#ask_1"]
+	if item == nil {
+		t.Fatal("no ASK#ask_1 row under USER#tenant-a")
+	}
+	if ttl := av(item["ttl"]); ttl != strconv.FormatInt(expires, 10) {
+		t.Fatalf("ttl attribute = %q, want %d", ttl, expires)
+	}
+}
+
+func TestGetAskOfAMissingRowIsErrNotFound(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	if err := store.PutAsk(ctx, "tenant-a", model.Ask{ID: "ask_1", ExpiresAt: 1}); err != nil {
+		t.Fatalf("PutAsk: %v", err)
+	}
+
+	for name, tenant := range map[string]string{"never asked": "tenant-a", "another tenant's ask": "tenant-b"} {
+		id := "ask_1"
+		if name == "never asked" {
+			id = "ask_2"
+		}
+		if _, err := store.GetAsk(ctx, tenant, id); !errors.Is(err, repository.ErrNotFound) {
+			t.Fatalf("%s: GetAsk err = %v, want ErrNotFound", name, err)
+		}
+	}
+}
+
+func TestPutAskRefusesARowWithoutAnID(t *testing.T) {
+	store, _ := newTestStore(t)
+	if err := store.PutAsk(context.Background(), "tenant-a", model.Ask{}); err == nil {
+		t.Fatal("PutAsk accepted an ask with no id; the row would have an empty sort key")
 	}
 }

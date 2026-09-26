@@ -25,17 +25,35 @@ const (
 	ProcessedTagValue = "true"
 )
 
+// S3API is the slice of the S3 client the adapter calls, named so a test can
+// stand an in-memory bucket in for it (s3fake_test.go) and prove the If-Match
+// contract against something other than the memory store, which implements
+// the semantics this adapter is supposed to have. DynamoAPI is the same seam
+// for the table.
+type S3API interface {
+	GetObject(ctx context.Context, in *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	PutObject(ctx context.Context, in *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	HeadObject(ctx context.Context, in *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	GetObjectTagging(ctx context.Context, in *s3.GetObjectTaggingInput, opts ...func(*s3.Options)) (*s3.GetObjectTaggingOutput, error)
+	PutObjectTagging(ctx context.Context, in *s3.PutObjectTaggingInput, opts ...func(*s3.Options)) (*s3.PutObjectTaggingOutput, error)
+}
+
 // S3Objects implements the Objects interface using AWS S3.
 type S3Objects struct {
-	client *s3.Client
-	bucket string
+	client S3API
+	// presign signs URLs, which only the concrete client can do; it is built
+	// once here rather than per call.
+	presign *s3.PresignClient
+	bucket  string
 }
 
 // NewS3Objects creates a new S3-backed object store.
 func NewS3Objects(client *s3.Client, bucket string) *S3Objects {
 	return &S3Objects{
-		client: client,
-		bucket: bucket,
+		client:  client,
+		presign: s3.NewPresignClient(client),
+		bucket:  bucket,
 	}
 }
 
@@ -268,9 +286,7 @@ func (o *S3Objects) PresignPut(ctx context.Context, key string, contentType stri
 		return "", err
 	}
 
-	presignClient := s3.NewPresignClient(o.client)
-
-	result, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
+	result, err := o.presign.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(o.bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(contentType),
@@ -289,9 +305,7 @@ func (o *S3Objects) PresignGet(ctx context.Context, key string, ttl time.Duratio
 		return "", err
 	}
 
-	presignClient := s3.NewPresignClient(o.client)
-
-	result, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+	result, err := o.presign.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(o.bucket),
 		Key:    aws.String(key),
 	}, func(opts *s3.PresignOptions) {

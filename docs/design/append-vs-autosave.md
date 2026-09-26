@@ -2,10 +2,14 @@
 
 The worker appends a recording's paragraph to a note body that the person may
 be typing into at the same moment. This note is the protocol that keeps both
-edits, and why each part of it is there. Code: `Pipeline.append` and
-`refreshNoteIndex` (`backend/internal/pipeline/append.go`),
-`NotesService.UpdateNote` (`backend/internal/service/notes.go`),
-`Store.StampNoteAppend` / `ClearNoteAppend` (`backend/internal/repository`).
+edits, and why each part of it is there. Code: `Pipeline.append`
+(`backend/internal/pipeline/append.go`), `NotesService.UpdateNote`
+(`backend/internal/service/notes.go`), `Store.StampNoteAppend` /
+`ClearNoteAppend` (`backend/internal/repository`). The conditional body write
+and the index refresh are `service.RewriteNoteBody` and
+`service.RefreshNoteIndex` (`backend/internal/service/capture_edit.go`): one
+loop each, shared with the delete and move paths, and the pipeline calls them
+with its own edit and `RefreshOptions`.
 
 ## The two writers
 
@@ -64,8 +68,9 @@ race made deterministic.
    other's stamp for up to `appendStampWait` before stamping over it, so the
    row's one stamp always names the write in flight; only a holder that died
    mid-append is ever stamped over.
-2. **Clear after indexing.** `refreshNoteIndex` clears the two attributes in
-   the same `PutNote` that publishes the paragraph's snippet and search text,
+2. **Clear after indexing.** `RefreshNoteIndex` (`ClearAppendStampFor`) clears
+   the two attributes in the same `PutNote` that publishes the paragraph's
+   snippet and search text,
    so the row's version is once more a witness of the body. An append that
    hands its claim back without writing clears the stamp with
    `ClearNoteAppend`, conditional on the stamp still naming it.
@@ -84,6 +89,13 @@ race made deterministic.
    first that ordering fails the version check instead. The object key is
    derived from the ids (`keys.NoteMarkdown`) so it is known before the row is
    read; a row naming another key falls back to reading after.
+
+The adapter's half of the ETag contract — the tag `GetWithETag` hands out is
+the one `PutIfMatch` must send back, a stale one is `ErrPreconditionFailed`
+with the body untouched, `""` is If-None-Match: * — is proven in
+`backend/internal/repository/s3_test.go` against an in-memory bucket that
+answers as S3 does (`s3fake_test.go`); `memory.Objects` implements those
+semantics by construction and cannot test them.
 
 ## The wire
 
