@@ -15,10 +15,11 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
  *
  * The capture screen is a round trip per recording. This screen is a
  * walkie-talkie: hold, speak, release, and it is on its way while the button
- * is already ready for the next one — the manifest's "Hold to talk" shortcut
- * lands here. Where each recording goes is the pill above the button, and
- * `?note=` seeds it as it does the capture screen's. On a keyboard the Space
- * bar is the button.
+ * is already ready for the next one — the manifest's "PTT" shortcut lands
+ * here. PTT is the name (owner feedback 2026-09-26); the button's accessible
+ * name spells the gesture out for a screen reader. Where each recording goes
+ * is the pill above the button, and `?note=` seeds it as it does the capture
+ * screen's. On a keyboard the Space bar is the button.
  *
  * What it shows is the store's truth, as everywhere: the level and the clock
  * only while the microphone is live, "Sending…" after a release until the
@@ -93,13 +94,15 @@ export function TalkScreen() {
     };
   }, [press, release, cancel, holding]);
 
+  const label = buttonLabel(hold.phase, hold.away, model);
+
   // A refused microphone, and the other failures the upload row does not carry.
   const failure =
     model.state === 'failed' && model.failure && !uploadRow ? model.failure.message : null;
 
   return (
     <div className="talk" data-phase={hold.phase}>
-      <h1 className="visually-hidden">Hold to talk</h1>
+      <h1 className="visually-hidden">PTT</h1>
 
       <TargetChooser noteId={target} onChoose={setTarget} disabled={holding} />
 
@@ -128,14 +131,15 @@ export function TalkScreen() {
         className="talk__button"
         data-holding={holding || undefined}
         data-away={hold.away || undefined}
+        aria-label={holding ? label : 'PTT: hold to talk, release to send'}
         {...hold.handlers}
         onClick={() => {
           // A press is a hold from the first frame; the click is its echo.
           hold.consumeClick();
         }}
       >
-        <Icon name="mic" size={56} />
-        <span className="talk__label">{buttonLabel(hold.phase, hold.away, model)}</span>
+        <Icon name="mic" size={56} strokeWidth={2.5} />
+        <span className="talk__label">{label}</span>
       </button>
 
       <p className="talk__status" role="status" aria-live="polite">
@@ -159,7 +163,7 @@ export function TalkScreen() {
 }
 
 function buttonLabel(phase: HoldPhase, away: boolean, model: CaptureModel): string {
-  if (phase !== 'holding') return 'Hold to talk';
+  if (phase !== 'holding') return 'PTT';
   if (away) return 'Release to cancel';
   if (model.state === 'requesting') return 'Starting the microphone…';
   return 'Release to send';

@@ -198,7 +198,7 @@ test('Back from a note returns to the library, not out of the app', async ({ pag
 
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: 'Notes' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^record$/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^PTT: tap to record/ })).toBeVisible();
 });
 
 test('a deep link seeds the library beneath it, so Back stays in the app', async ({ page }) => {

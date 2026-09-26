@@ -7,7 +7,6 @@ import { queryKeys } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
-import { config } from '@/config/env.ts';
 import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
 import { useAuthGate } from '@/features/auth/useAuth.ts';
 import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
@@ -19,6 +18,7 @@ import { RecordingIndicator } from './RecordingIndicator.tsx';
 import { StatusRegion } from './StatusRegion.tsx';
 import { TabBar } from './TabBar.tsx';
 import { Toast } from './Toast.tsx';
+import { Wordmark } from './Wordmark.tsx';
 
 /** Which of the app's surfaces a URL is. Drives layout and announcements. */
 export type Screen = 'library' | 'note' | 'you' | 'usage' | 'about' | 'capture' | 'talk' | 'other';
@@ -42,7 +42,7 @@ const SCREEN_TITLES: Record<Screen, string> = {
   usage: 'Usage',
   about: 'About',
   capture: 'Recording',
-  talk: 'Hold to talk',
+  talk: 'PTT',
   other: 'Screen',
 };
 
@@ -107,7 +107,7 @@ export function AppShell() {
     return (
       <div className="app" data-screen="signed-out" data-signed-out="true">
         <header className="app__banner">
-          <span className="app__wordmark">{config.appName}</span>
+          <Wordmark />
         </header>
         <main id="main" ref={mainRef} tabIndex={-1} className="app__main" aria-label="Sign in">
           <SignedOutScreen {...auth} />
@@ -131,7 +131,7 @@ export function AppShell() {
           grid's first row; `home.css` collapses it while it is empty.
         */}
         <header className="app__banner">
-          {screen !== 'library' && <span className="app__wordmark">{config.appName}</span>}
+          {screen !== 'library' && <Wordmark />}
           <OfflineBanner />
         </header>
 

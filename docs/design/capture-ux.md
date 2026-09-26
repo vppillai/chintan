@@ -2,8 +2,8 @@
 
 Opening `/capture` starts recording; the screen is full-screen, its controls
 are round discs with a word under each, and Send stops and sends in one tap.
-The same machinery is reached two shorter ways: holding the tab-bar mic
-records in place and sends on release, and `/talk` is one giant hold button
+The same machinery is reached two shorter ways: holding the tab-bar PTT disc
+records in place and sends on release, and `/talk` is one giant PTT button
 for thoughts one after another. This note is the frontend; what happens to the
 recording once it is uploaded is the pipeline's and unchanged. Code: the
 machine and store (`frontend/src/features/capture/machine.ts`, `store.ts`),
@@ -76,11 +76,14 @@ parameter: once every exit went to the note, `sent` decided nothing. And the
 banner reuses the whole `FilingItem`, not only `FilingStages`, so a failure is
 met with exactly the library's controls.
 
-## Hold to talk
+## PTT (hold to talk)
 
-`useHoldToTalk` is the gesture, shared by the tab-bar mic (`holdDelayMs` 350:
-a press has to be told from a tap) and `/talk` (0: a press is a hold at once).
-Phases: idle → armed → holding → hint | sent | busy. The rules, with the
+`useHoldToTalk` is the gesture, shared by the tab-bar PTT disc (`holdDelayMs`
+350: a press has to be told from a tap) and `/talk` (0: a press is a hold at
+once). PTT is the name the app gives both — on the disc under its glyph, the
+`/talk` heading, the You row and the manifest shortcut (owner feedback
+2026-09-26); "hold to talk" is the instruction beneath the name, and the
+buttons' `aria-label`s spell it out for a screen reader. Phases: idle → armed → holding → hint | sent | busy. The rules, with the
 constants that pin them:
 
 - Armed for `HOLD_DELAY_MS` (350 ms). Moving more than 10 px while armed is a
@@ -116,7 +119,7 @@ that the lock screen took the keyup and the microphone stayed open until the
 cap. The upload's own row is drawn under the disc while sending or failed,
 since nothing else on the screen would show it; the shell's indicator hides
 on `/talk` and Home while uploading for the same reason. The manifest offers
-"Hold to talk" (`/talk`, "Hold, speak, release to send") beside "Record a
+"PTT" (`/talk`, "Hold to talk, release to send") beside "Record a
 thought". Beyond the contract, the code adds the busy notice, the stand-down
 rules and the blur cancel; the hint on `/talk` reads "Too short — hold to
 talk".

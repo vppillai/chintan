@@ -7,8 +7,10 @@ import { HOLD_DELAY_MS, useHoldToTalk } from '@/features/capture/useHoldToTalk.t
 import { Icon } from './Icon.tsx';
 
 /**
- * The record target, seated in the middle of the tab bar on every screen — in
- * flow, not floating, so it can never overlay a note row.
+ * The record target — PTT, and the disc says so under its glyph (owner
+ * feedback 2026-09-26) — seated in the middle of the tab bar on every screen:
+ * in flow, not floating, so it can never overlay a note row. The label is
+ * `aria-hidden` because the button's `aria-label` spells the gesture out.
  *
  * It is the only element in the app allowed to wear `--color-accent`.
  *
@@ -44,6 +46,13 @@ export function RecordButton({ noteId = null }: { noteId?: string | null }) {
         className="record-button"
         data-holding={holding || undefined}
         data-away={hold.away || undefined}
+        aria-label={
+          holding
+            ? 'Recording: release to send'
+            : into
+              ? 'PTT into this note: tap to record, hold to talk'
+              : 'PTT: tap to record, hold to talk'
+        }
         {...(onTalk ? {} : hold.handlers)}
         onClick={() => {
           // The click that ends a hold is the release, not a tap.
@@ -51,13 +60,9 @@ export function RecordButton({ noteId = null }: { noteId?: string | null }) {
           void navigate(into ? ROUTES.captureInto(noteId) : ROUTES.capture);
         }}
       >
-        <Icon name="mic" size={30} className="record-button__icon" />
-        <span className="visually-hidden">
-          {holding
-            ? 'Recording — release to send'
-            : into
-              ? 'Record into this note'
-              : 'Record'}
+        <Icon name="mic" size={24} strokeWidth={2.25} className="record-button__icon" />
+        <span className="record-button__label" aria-hidden="true">
+          PTT
         </span>
       </button>
       <HoldOverlay phase={hold.phase} away={hold.away} />
