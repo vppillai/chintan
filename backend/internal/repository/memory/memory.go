@@ -659,9 +659,11 @@ func (s *Store) CompleteCaptureAppend(ctx context.Context, tenantID, captureID, 
 	if c.AppendedAt > 0 {
 		return c, nil
 	}
+	now := time.Now()
 	c.Status = model.StatusAppended
 	c.Error = ""
-	c.AppendedAt = time.Now().Unix()
+	c.AppendedAt = now.Unix()
+	c.StageEntered(model.StatusAppended, model.FormatTime(now))
 	c.Version++
 	s.captures[tenantID][captureID] = c
 	return c, nil

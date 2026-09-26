@@ -131,6 +131,10 @@ type CaptureRequest struct {
 	// Source is CaptureIndex.Source: "" for the app, model.DeviceSource(id)
 	// for a device's inbox request.
 	Source string
+	// RecordedAt is CaptureIndex.RecordedAt: the sender's claim of when the
+	// recording was made, already checked and formatted by the handler, or
+	// "" when there is none.
+	RecordedAt string
 }
 
 // Inbox bounds. The one-shot body is 4 MiB because the gateway hands a
@@ -276,6 +280,7 @@ func (s *CaptureService) newCaptureRow(ctx context.Context, userID string, req C
 		CreatedAt:         model.Now(),
 		RequestedLanguage: language,
 		Source:            req.Source,
+		RecordedAt:        req.RecordedAt,
 	}
 	if ext != "" {
 		capture.AudioKey, err = keys.CaptureAudio(userID, captureID, ext)

@@ -1679,10 +1679,14 @@ func (s *DynamoStore) CompleteCaptureAppend(ctx context.Context, tenantID, captu
 		return current, nil
 	}
 
+	now := time.Now()
 	done := current
 	done.Status = model.StatusAppended
 	done.Error = ""
-	done.AppendedAt = time.Now().Unix()
+	done.AppendedAt = now.Unix()
+	// The one status the pipeline's persist does not write, so the timing
+	// record's last entry is stamped here.
+	done.StageEntered(model.StatusAppended, model.FormatTime(now))
 	done.Version = current.Version + 1
 
 	item, err := captureItemAttrs(done)
@@ -1923,6 +1927,9 @@ func deviceItemAttrs(tenantID string, d model.Device) map[string]types.Attribute
 		"last_used_at":      strAttr(d.LastUsedAt),
 		"requests_day":      numAttr(d.RequestsDay),
 		"requests_day_date": strAttr(d.RequestsDayDate),
+		"requests_month":    numAttr(d.RequestsMonth),
+		"bytes_month":       numAttr(d.BytesMonth),
+		"month":             strAttr(d.Month),
 		"revoked_at":        strAttr(d.RevokedAt),
 		"version":           numAttr(d.Version),
 	}
@@ -1945,6 +1952,9 @@ func deviceFromItem(tenantID string, m map[string]types.AttributeValue) model.De
 		LastUsedAt:      readString(m, "last_used_at"),
 		RequestsDay:     readInt(m, "requests_day"),
 		RequestsDayDate: readString(m, "requests_day_date"),
+		RequestsMonth:   readInt(m, "requests_month"),
+		BytesMonth:      readInt(m, "bytes_month"),
+		Month:           readString(m, "month"),
 		RevokedAt:       readString(m, "revoked_at"),
 		Version:         readInt(m, "version"),
 	}
