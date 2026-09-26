@@ -29,8 +29,9 @@ import (
 // runes can be eighty thousand bytes, plus the envelope.
 const MaxInboxTextRequestBytes = 128 << 10
 
-// Headers a one-shot audio POST carries beside its body, for a client that
-// can set headers but cannot build JSON.
+// Headers a one-shot POST carries beside its body, for a client that can
+// set headers but cannot build JSON. X-Chintan-Note-Id is read on both
+// one-shot routes; the other two only mean something for a recording.
 const (
 	HeaderInboxNoteID     = "X-Chintan-Note-Id"
 	HeaderInboxLanguage   = "X-Chintan-Language"
@@ -319,9 +320,17 @@ func (rt *router) acceptInboxAudio(w http.ResponseWriter, r *http.Request, userI
 }
 
 // acceptInboxText is the tail /v1/inbox/text and a form's transcription
-// share: the bounds, the spend cap, the row, the text object, the worker
-// hand-off, the 202.
+// share: the target note, the bounds, the spend cap, the row, the text
+// object, the worker hand-off, the 202. The note comes from the body's
+// note_id when it has one, else from X-Chintan-Note-Id — the header is for
+// a client that can set headers but cannot build the JSON, so the body,
+// which a sender had to construct on purpose, wins when both are sent.
+// The service's tenant-scoped GetNote turns another tenant's id, or none,
+// into the same 404 the audio route gives.
 func (rt *router) acceptInboxText(w http.ResponseWriter, r *http.Request, userID string, req service.CaptureRequest, text string) {
+	if req.NoteID == "" {
+		req.NoteID = strings.TrimSpace(r.Header.Get(HeaderInboxNoteID))
+	}
 	text = strings.TrimSpace(text)
 	if text == "" {
 		httperr.BadRequest(w, r, "text is required")
