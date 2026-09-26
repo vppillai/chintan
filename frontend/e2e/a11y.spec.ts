@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright';
+import type { Page } from '@playwright/test';
 
-import { expect, test } from './fixtures.ts';
+import { expect, seedChecklist, test } from './fixtures.ts';
 
 /**
  * Accessibility, in both themes.
@@ -22,6 +23,29 @@ const ROUTES = [
 ] as const;
 const THEMES = ['ink', 'nocturne'] as const;
 
+/** The axe sweep of the screen as it stands, failing on anything critical or serious. */
+async function expectNoSeriousViolations(page: Page): Promise<void> {
+  const results = await new AxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+
+  const serious = results.violations.filter(
+    (violation) => violation.impact === 'critical' || violation.impact === 'serious',
+  );
+
+  expect(
+    serious,
+    serious
+      .map(
+        (violation) =>
+          `${violation.id} (${violation.impact}): ${violation.nodes
+            .map((node) => node.target.join(' '))
+            .join(', ')}`,
+      )
+      .join('\n'),
+  ).toEqual([]);
+}
+
 for (const theme of THEMES) {
   for (const route of ROUTES) {
     test(`${route} has no critical axe violations in ${theme}`, async ({ page }) => {
@@ -33,28 +57,30 @@ for (const theme of THEMES) {
       await expect(page.locator('main')).toBeVisible();
       // Let async content settle so the scan sees the real screen.
       await page.waitForTimeout(700);
-
-      const results = await new AxeBuilder({ page })
-        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-        .analyze();
-
-      const serious = results.violations.filter(
-        (violation) => violation.impact === 'critical' || violation.impact === 'serious',
-      );
-
-      expect(
-        serious,
-        serious
-          .map(
-            (violation) =>
-              `${violation.id} (${violation.impact}): ${violation.nodes
-                .map((node) => node.target.join(' '))
-                .join(', ')}`,
-          )
-          .join('\n'),
-      ).toEqual([]);
+      await expectNoSeriousViolations(page);
     });
   }
+
+  /*
+   * The Items tab with a grip's menu open: the grip is a drag handle that is
+   * also the row's menu button, the Done heading is a disclosure with two
+   * text buttons beside it — the controls the checklist reorder work added.
+   */
+  test(`the Items tab with a grip menu open has no critical axe violations in ${theme}`, async ({
+    page,
+    api,
+  }) => {
+    seedChecklist(api);
+    await page.addInitScript((value) => {
+      localStorage.setItem('chintan.theme', value);
+    }, theme);
+
+    await page.goto('/notes/shopping');
+    await expect(page.getByRole('heading', { name: 'Done (1)' })).toBeVisible();
+    await page.getByRole('button', { name: 'Move Milk' }).click();
+    await expect(page.getByRole('menu')).toBeVisible();
+    await expectNoSeriousViolations(page);
+  });
 }
 
 /**

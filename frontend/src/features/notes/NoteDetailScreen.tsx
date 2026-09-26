@@ -462,6 +462,7 @@ function NoteViews({
       <NotePanel noteId={note.id} tab={tab}>
         {tab === 'text' ? (
           <TextPanel
+            noteId={note.id}
             editor={editor}
             checklist={checklist}
             lang={lang}
@@ -520,12 +521,15 @@ function NotePanel({
  * a word in a long list can still be found.
  */
 function TextPanel({
+  noteId,
   editor,
   checklist,
   lang,
   find,
   onDismissFind,
 }: {
+  /** For the Items tab's Done disclosure, remembered per note. */
+  noteId: string;
   editor: NoteEditor;
   checklist: boolean;
   lang: string | undefined;
@@ -598,7 +602,7 @@ function TextPanel({
     );
   }
 
-  if (checklist) return <ChecklistEditor editor={editor} />;
+  if (checklist) return <ChecklistEditor editor={editor} noteId={noteId} />;
 
   return (
     <>

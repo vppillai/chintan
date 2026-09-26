@@ -1121,6 +1121,27 @@ export const test = base.extend<{ api: ApiState }>({
 export { expect } from '@playwright/test';
 
 /**
+ * A checklist note beside the two plain ones: one open item, one done, one
+ * open — enough for the Items tab's grouping, its grip and its Done section.
+ * Not in `freshState`, because every Home assertion counts the notes there.
+ */
+export function seedChecklist(api: ApiState): void {
+  api.notes['shopping'] = {
+    id: 'shopping',
+    kind: 'checklist',
+    title: 'Shopping',
+    body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter',
+    snippet: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread and butter',
+    tags: ['house'],
+    aliases: [],
+    updated_at: '2026-08-07T08:00:00.000Z',
+    version: 1,
+    archived: false,
+    captures: [],
+  };
+}
+
+/**
  * The note's actions — Details, Share, Pin, Delete, Restore, Delete forever —
  * are items of the ⋮ menu in the note screen's header (review 2026-09-21, T6).
  */

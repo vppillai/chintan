@@ -2,11 +2,13 @@
    Checklist notes — the Items tab, the Split up list, the row's progress
    -------------------------------------------------------------------------- */
 
-/* The same card the body textarea is: a recess in the page, holding rows. */
+/* The same card the body textarea is: a recess in the page, holding rows. The
+   inline padding is the smallest step because the grip column stands at the
+   card's edge, and its 44 px is what moves the boxes in from where they were. */
 .checklist-editor {
   display: grid;
   gap: var(--space-4);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-1);
   background-color: var(--color-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
@@ -205,9 +207,148 @@ textarea.checklist__text {
   cursor: default;
 }
 
+/* --------------------------------------------------------------------------
+   The grip — one control for the order: a drag, the arrow keys, a tap for
+   the row's menu
+   -------------------------------------------------------------------------- */
+
+/* Before the box, at the card's edge, the 44 px the row is tall: the
+   tertiary ink until a pointer or the keyboard is on it. A finger on it drags
+   and never scrolls (`touch-action`), which is what a handle is for. */
+.checklist__grip {
+  display: grid;
+  place-items: center;
+  inline-size: var(--layout-touch-target-min);
+  block-size: var(--layout-touch-target-min);
+  border-radius: var(--radius-md);
+  color: var(--color-faint);
+  cursor: grab;
+  touch-action: none;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.checklist__grip:hover,
+.checklist__grip:focus-visible,
+.checklist__grip[aria-expanded='true'],
+.checklist__row[data-dragging] .checklist__grip {
+  color: var(--color-ink);
+}
+
+/* Done rows and the add row have no grip — their order is the body's and
+   nothing shows it — but keep its column, so every box stands in one line. */
+.checklist__grip-space {
+  flex: none;
+  inline-size: var(--layout-touch-target-min);
+}
+
+/* The grip's menu opens from the card's left edge, not the ⋮'s right. */
+.checklist__row .overflow-menu {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+}
+
+/* While a row is lifted the list is a surface being dragged over, not text. */
+.checklist[data-dragging] {
+  cursor: grabbing;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.checklist[data-dragging] .checklist__grip {
+  cursor: grabbing;
+}
+
+/* The lifted row: a step up, the way a card lifts under the pointer, above
+   its neighbours while it moves between them. The edge is an outline, not a
+   border, so nothing beside it shifts by a pixel. */
+.checklist__row[data-dragging] {
+  position: relative;
+  z-index: var(--z-content);
+  background-color: var(--color-raised-2);
+  border-radius: var(--radius-md);
+  outline: 1px solid var(--color-line-strong);
+  box-shadow: var(--shadow-md);
+  transform: scale(1.01);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checklist__row[data-dragging] {
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Done — a disclosure, with Uncheck all · Delete done on its right
+   -------------------------------------------------------------------------- */
+
 .checklist__done {
   display: grid;
   gap: var(--space-1);
+}
+
+.checklist__done-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* The heading is the eyebrow it was; the button inside it is what the
+   heading's own type styles would otherwise reach through and enlarge. */
+.checklist__done-title {
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.checklist__disclosure {
+  display: inline-flex;
+  gap: var(--space-2);
+  align-items: center;
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-faint);
+}
+
+.checklist__disclosure:hover,
+.checklist__disclosure:focus-visible {
+  color: var(--color-ink);
+}
+
+.checklist__disclosure:hover .eyebrow,
+.checklist__disclosure:focus-visible .eyebrow {
+  color: inherit;
+}
+
+/* The chevron points down at an open list and along at a closed one. */
+.checklist__chevron {
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.checklist__disclosure[aria-expanded='false'] .checklist__chevron {
+  transform: rotate(-90deg);
+}
+
+.checklist__done-actions {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-faint);
+}
+
+.checklist__done-action {
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-muted);
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.checklist__done-action:hover,
+.checklist__done-action:focus-visible {
+  color: var(--color-ink);
 }
 
 /* The Split up tab's list lives in the cleaned view's own card; a proposal
