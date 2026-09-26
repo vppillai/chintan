@@ -21,8 +21,8 @@ import { useLibraryParams } from './library/useLibraryParams.ts';
 import { LibrarySelectionBar, useLibrarySelection } from './library/useLibrarySelection.tsx';
 
 // The screen's parts live under `library/`; the tests keep importing these from here.
-export { NARROW_FIELD_QUERY, chipScrollBy } from './library/LibraryField.tsx';
-export { HOLD_TO_DELETE_ABOVE, HOLD_TO_DELETE_MS } from './library/useLibrarySelection.tsx';
+export { chipScrollBy } from './library/LibraryField.tsx';
+export { HOLD_TO_DELETE_MS } from './library/useLibrarySelection.tsx';
 
 /*
  * The Ask panel is a chunk of its own (round-3 T47): the thread, its markdown
@@ -254,7 +254,8 @@ export function NotesScreen() {
         indistinguishable from Home (QA 2026-09-21, finding 6).
       */}
       <header className="screen__header library-header">
-        <h1 className="library-heading">
+        {/* Focusable so a control that leaves the page — a receipt's × — can hand focus here. */}
+        <h1 className="library-heading" tabIndex={-1}>
           <span className="library-heading__title">
             <span>{view === 'archived' ? 'Archived' : 'Notes'}</span>
             {count !== undefined && (

@@ -604,6 +604,8 @@ describe('a row leaves when it is acted on, and stays gone', () => {
       expect(screen.queryByText(/^Filed/)).toBeNull();
     });
     expect(screen.getByText('Timed out')).toBeInTheDocument();
+    // Focus did not leave with the row: it is on the neighbour's own control.
+    expect(document.activeElement?.closest('.filing-row')).toHaveTextContent('Timed out');
   });
 
   it('survives a reload, which is what the device store is for', () => {

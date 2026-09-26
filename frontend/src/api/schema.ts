@@ -337,6 +337,24 @@ export function isTerminalStatus(status: CaptureStatus): boolean {
   return TERMINAL_CAPTURE_STATUSES.includes(status);
 }
 
+/**
+ * How long a capture can sit in a non-terminal status before the row stops
+ * trusting the pipeline and offers a way out (`filing/model.ts`'s `isStuck`),
+ * and the point past which the poll asks once a minute
+ * (`queries/captures.ts`). Both measure from `last_progress_at`, else
+ * `created_at`.
+ *
+ * A capture only reaches this state if the upload event that should have
+ * driven the worker never arrived, or the worker died mid-stage without
+ * writing a `failed` status — both silent by design elsewhere in the stack
+ * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
+ * this). Without a client-side timeout the row polls forever showing a stage
+ * strip that will never move, with no error and no Retry. Here, beside the
+ * statuses, because it is a fact about the wire's lifecycle rather than a
+ * hook's: the pure model must not import the query layer to read it.
+ */
+export const STUCK_AFTER_MS = 10 * 60 * 1000;
+
 export interface CaptureWire {
   id: string;
   note_id?: string | null;

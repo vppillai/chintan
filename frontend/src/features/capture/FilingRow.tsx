@@ -82,10 +82,12 @@ export function FilingRow() {
    * twice.) A side effect belongs in the handler.
    */
   const dismiss = (captureId: string): void => {
+    focusPastDismissed();
     setDismissed(dismissCapture(captureId, dismissed));
   };
   /** Every capture of the group, in one state update, so one render removes the row. */
   const dismissGroup = (group: ReceiptGroup): void => {
+    focusPastDismissed();
     setDismissed(dismissCaptures(group.captureIds, dismissed));
   };
   const openGroup = (group: ReceiptGroup): void => {
@@ -214,6 +216,24 @@ export function FilingRow() {
       )}
     </section>
   );
+}
+
+/**
+ * Moves focus off a row about to leave: a × pressed from the keyboard used
+ * to take focus with it to `<body>`, and the next Tab started from the top
+ * of the page. The row the control sits in is the focused control's; focus
+ * goes to the neighbouring row's own control — its × or Dismiss, or the
+ * folded receipts' summary — else, when this was the last row, to the
+ * library's heading, which `NotesScreen` makes focusable for the purpose.
+ * Read before the state update, while the row is still in the document.
+ */
+function focusPastDismissed(): void {
+  const row = document.activeElement?.closest<HTMLElement>('.filing-row') ?? null;
+  const neighbour = row?.nextElementSibling ?? row?.previousElementSibling ?? null;
+  const target =
+    neighbour?.querySelector<HTMLElement>('.filing-row__dismiss, .filing-row__action, summary') ??
+    document.querySelector<HTMLElement>('.library-heading');
+  target?.focus();
 }
 
 /** The row for an upload this device is still making. See `useLocalUpload`. */

@@ -94,6 +94,19 @@ describe('a capture that never left "uploaded" is not a permanent dead end', () 
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 
+  it('measures from the last progress the server reports, not from the start', async () => {
+    // Uploaded long ago, but the pipeline moved it a moment ago: still filing.
+    mount([
+      capture({
+        status: 'transcribing',
+        created_at: STUCK_CREATED_AT,
+        last_progress_at: new Date().toISOString(),
+      }),
+    ]);
+    await screen.findByText('Filing your recording');
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
   it('offers Retry only once the server will accept it: fifteen minutes, twenty while appending', async () => {
     /*
      * The row said "still not done" and offered Retry at ten minutes; the
