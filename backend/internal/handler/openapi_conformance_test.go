@@ -773,8 +773,23 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes"), h.deviceKey(t), [2]string{"Content-Type", "audio/mpeg"}).Code
 		},
 		"POST /v1/inbox/audio -> 400": func(t *testing.T) int {
+			// Three roads to it: a raw body that is not audio, a form with
+			// neither part the route reads, and a form whose audio is not
+			// audio. The first that is not a 400 is the answer.
 			h := newHarness(t)
-			return h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("not audio"), h.deviceKey(t), [2]string{"Content-Type", "text/plain"}).Code
+			key := h.deviceKey(t)
+			emptyForm, emptyType := ringForm(t, nil, "", "")
+			notAudio, notAudioType := ringForm(t, []byte("not audio"), "text/plain", "")
+			for _, code := range []int{
+				h.do(t, http.MethodPost, "/v1/inbox/audio", "", []byte("not audio"), key, [2]string{"Content-Type", "text/plain"}).Code,
+				h.do(t, http.MethodPost, "/v1/inbox/audio", "", emptyForm, key, [2]string{"Content-Type", emptyType}).Code,
+				h.do(t, http.MethodPost, "/v1/inbox/audio", "", notAudio, key, [2]string{"Content-Type", notAudioType}).Code,
+			} {
+				if code != http.StatusBadRequest {
+					return code
+				}
+			}
+			return http.StatusBadRequest
 		},
 		"POST /v1/inbox/audio -> 401": send(http.MethodPost, "/v1/inbox/audio", "", []byte("audio bytes")),
 		"POST /v1/inbox/audio -> 404": func(t *testing.T) int {
