@@ -28,8 +28,8 @@ var (
 	ErrCaptureInFlight = errors.New("capture is still being processed")
 )
 
-// maxBodyEditAttempts bounds the ETag-conditional retry on a note body. Five is
-// the worker's figure for the same loop (pipeline.maxAppendAttempts): a lost
+// maxBodyEditAttempts bounds the ETag-conditional retry on a note body, for
+// the editor's paths and the worker's append alike (RewriteNoteBody): a lost
 // race is re-read and re-applied, and losing five in a row on one note is not
 // contention, it is something wrong.
 const maxBodyEditAttempts = 5
@@ -74,7 +74,7 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 		case err != nil:
 			return fmt.Errorf("failed to get note: %w", err)
 		default:
-			cut, err := rewriteNoteBody(ctx, s.objects, note.S3MarkdownKey, func(body string) (string, bool) {
+			cut, err := RewriteNoteBody(ctx, s.objects, note.S3MarkdownKey, func(body string) (string, bool) {
 				rest, _, found := CutCaptureParagraph(body, captureID)
 				return rest, found
 			})
@@ -82,7 +82,7 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 				return fmt.Errorf("failed to remove the paragraph from the note: %w", err)
 			}
 			if cut {
-				refreshed, err := refreshNoteIndex(ctx, s.store, s.objects, userID, note.ID)
+				refreshed, err := RefreshNoteIndex(ctx, s.store, s.objects, userID, note.ID, RefreshOptions{})
 				if err != nil {
 					return fmt.Errorf("failed to refresh the note index: %w", err)
 				}
@@ -115,11 +115,16 @@ func (s *CaptureService) DeleteCapture(ctx context.Context, userID, captureID st
 	return nil
 }
 
-// rewriteNoteBody applies edit to the body stored at key under an ETag
+// RewriteNoteBody applies edit to the body stored at key under an ETag
 // condition, re-reading and re-applying on a lost race. edit returns the new
 // body and whether there is anything to write; a body it declines to change
 // is not written and written is false. A missing object is an empty body.
-func rewriteNoteBody(ctx context.Context, objects repository.Objects, key string, edit func(body string) (string, bool)) (written bool, err error) {
+//
+// It is the one conditional body-rewrite loop: the delete and move paths here
+// and the worker's append (pipeline.appendToNote) all go through it, so the
+// retry bound and the backoff are decided once and a fix to the protocol lands
+// on every writer.
+func RewriteNoteBody(ctx context.Context, objects repository.Objects, key string, edit func(body string) (string, bool)) (written bool, err error) {
 	var lastErr error
 	for attempt := 0; attempt < maxBodyEditAttempts; attempt++ {
 		existing, etag, err := objects.GetWithETag(ctx, key)
@@ -153,28 +158,73 @@ func rewriteNoteBody(ctx context.Context, objects repository.Objects, key string
 	return false, fmt.Errorf("note body changed under %d attempts: %w", maxBodyEditAttempts, lastErr)
 }
 
-// refreshNoteIndex re-derives the index fields that follow the body — snippet,
+// RefreshOptions are what the worker's refresh after an append needs beyond
+// the editor's: a clock it can pin, the stamp it is clearing, and a body it
+// will not guess at. The zero value is the editor's refresh.
+type RefreshOptions struct {
+	// Now supplies the touch time; nil is the wall clock.
+	Now func() time.Time
+	// ClearAppendStampFor names the capture whose append stamp the refresh
+	// clears, in the same PutNote that publishes the paragraph's snippet and
+	// search text, so the row's version is once more a witness of the body
+	// and editor saves may resume. Only that capture's own stamp is cleared:
+	// two captures appending to one note stamp in turn, and the second's body
+	// write may still be in flight when the first refreshes. Empty clears
+	// nothing.
+	ClearAppendStampFor string
+	// RequireBody makes a body that cannot be read an error rather than an
+	// empty body. The editor's paths index a missing body as empty because a
+	// note whose paragraph was just cut may have none left; the worker has
+	// just written a paragraph, so a read that fails is a fault, not an empty
+	// note. Until 2026-09 the worker guessed instead — one S3 5xx at this
+	// moment rewrote the note's search text and snippet to the paragraph
+	// alone, the capture was marked appended, nothing retried, and search,
+	// the offline corpus and Ask lost the rest of the note until the next
+	// body write. Failing the invocation lets the retry find the marker in
+	// the body and finish from here, so nothing is written twice.
+	RequireBody bool
+	// Attempts bounds the version-conflict retry; 0 is maxIndexRefreshAttempts.
+	Attempts int
+}
+
+// RefreshNoteIndex re-derives the index fields that follow the body — snippet,
 // search text, touch time, and the cleaned view's stale flag — from the body
 // now in object storage, under the note's version. The body is authoritative,
 // so a version conflict is answered by re-reading rather than by overwriting
-// whoever won. It is the API-side twin of the worker's refresh after an
-// append, and returns the note as stored so the caller can act on what it
-// carries (auto_clean).
-func refreshNoteIndex(ctx context.Context, store repository.Store, objects repository.Objects, userID, noteID string) (model.NoteIndex, error) {
+// whoever won. It is the one re-indexer: the editor's paths call it with the
+// zero RefreshOptions, the worker (pipeline.finishAppend) with its extras. It
+// returns the note as stored so the caller can act on what it carries
+// (auto_clean).
+func RefreshNoteIndex(ctx context.Context, store repository.Store, objects repository.Objects, userID, noteID string, opts RefreshOptions) (model.NoteIndex, error) {
+	attempts := opts.Attempts
+	if attempts == 0 {
+		attempts = maxIndexRefreshAttempts
+	}
 	var lastErr error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
+	for attempt := 0; attempt < attempts; attempt++ {
 		note, err := store.GetNote(ctx, userID, noteID)
 		if err != nil {
 			return model.NoteIndex{}, err
 		}
 		body, err := objects.Get(ctx, note.S3MarkdownKey)
-		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		switch {
+		case err == nil:
+		case opts.RequireBody:
+			return model.NoteIndex{}, fmt.Errorf("read note body: %w", err)
+		case !errors.Is(err, repository.ErrNotFound):
 			return model.NoteIndex{}, err
 		}
 		note.Snippet = generateSnippet(string(body))
 		note.SearchText = SearchText(string(body))
-		note.UpdatedAt = model.Now()
+		if opts.Now != nil {
+			note.UpdatedAt = model.FormatTime(opts.Now())
+		} else {
+			note.UpdatedAt = model.Now()
+		}
 		MarkCleanedStale(&note)
+		if opts.ClearAppendStampFor != "" && note.AppendingCapture == opts.ClearAppendStampFor {
+			note.AppendingCapture, note.AppendingAt = "", ""
+		}
 
 		stored, err := store.PutNote(ctx, userID, note)
 		if err == nil {
