@@ -37,6 +37,25 @@
     "path": "/v1/usage?month=2026-01"
   },
   {
+    "name": "ask",
+    "method": "POST",
+    "path": "/v1/ask",
+    "body": {
+      "question": "what did I decide about the roof?",
+      "history": [
+        {
+          "question": "what leaks?",
+          "answer": "The gutter on the south side."
+        }
+      ]
+    }
+  },
+  {
+    "name": "getAsk",
+    "method": "GET",
+    "path": "/v1/ask/contract-ask"
+  },
+  {
     "name": "listNotes",
     "method": "GET",
     "path": "/v1/notes"
@@ -99,6 +118,26 @@
     }
   },
   {
+    "name": "pinNote",
+    "method": "PATCH",
+    "path": "/v1/notes/contract-note",
+    "body": {
+      "version": 1,
+      "pinned": true
+    }
+  },
+  {
+    "name": "reorderPins",
+    "method": "POST",
+    "path": "/v1/notes/pins",
+    "body": {
+      "ids": [
+        "contract-note-2",
+        "contract-note"
+      ]
+    }
+  },
+  {
     "name": "cleanNote",
     "method": "POST",
     "path": "/v1/notes/contract-note/clean"
@@ -125,6 +164,16 @@
     "name": "deleteNoteForever",
     "method": "DELETE",
     "path": "/v1/notes/contract-archived-note/permanent"
+  },
+  {
+    "name": "purgeNotesBatch",
+    "method": "POST",
+    "path": "/v1/notes/purge",
+    "body": {
+      "note_ids": [
+        "contract-archived-note"
+      ]
+    }
   },
   {
     "name": "recordingUrls",
@@ -225,6 +274,14 @@
     }
   },
   {
+    "name": "moveCaptureToNewNote",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/move",
+    "body": {
+      "new_note_title": "A brand new note"
+    }
+  },
+  {
     "name": "deleteCapture",
     "method": "DELETE",
     "path": "/v1/captures/contract-capture"
@@ -255,6 +312,20 @@
     "path": "/v1/captures/contract-capture/download?kind=peaks"
   },
   {
+    "name": "retranscribeCapture",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/retranscribe",
+    "body": {
+      "language": "ml"
+    }
+  },
+  {
+    "name": "retranscribeCaptureDefault",
+    "method": "POST",
+    "path": "/v1/captures/contract-capture/retranscribe",
+    "body": {}
+  },
+  {
     "name": "startExport",
     "method": "POST",
     "path": "/v1/export"
@@ -263,5 +334,23 @@
     "name": "getExport",
     "method": "GET",
     "path": "/v1/export/contract-export"
+  },
+  {
+    "name": "createDevice",
+    "method": "POST",
+    "path": "/v1/devices",
+    "body": {
+      "name": "Contract device"
+    }
+  },
+  {
+    "name": "listDevices",
+    "method": "GET",
+    "path": "/v1/devices"
+  },
+  {
+    "name": "deleteDevice",
+    "method": "DELETE",
+    "path": "/v1/devices/contract-device"
   }
 ]

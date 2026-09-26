@@ -24,6 +24,8 @@
 import type {
   CaptureCreatedWire,
   CaptureWire,
+  DeviceCreatedWire,
+  DeviceWire,
   ExportJobWire,
   MatchResponseWire,
   NoteCleanQueuedWire,
@@ -849,6 +851,33 @@ export const exportJob: ExportJobWire = {
   "id": "fixture-id",
   "status": "ready",
   "url": "https://example.invalid/presigned"
+};
+
+/** POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). */
+export const deviceCreated: DeviceCreatedWire = {
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "id": "fixture-id",
+  "key": "ck_fixture-id_0123456789abcdef0123456789abcdef0123456789abcdef",
+  "last_used_at": null,
+  "name": "Shortcut on the phone"
+};
+
+/** GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at set) and one that has not (null). No cursor. */
+export const devicesPage: Page<DeviceWire> = {
+  "items": [
+    {
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "last_used_at": "2026-01-01T00:00:00.000000000Z",
+      "name": "Watch"
+    },
+    {
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "id": "fixture-id",
+      "last_used_at": null,
+      "name": "Shortcut on the phone"
+    }
+  ]
 };
 
 /** GET /v1/notes/{noteId} → 404 */

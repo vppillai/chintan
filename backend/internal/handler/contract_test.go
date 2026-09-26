@@ -438,6 +438,26 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("exportJob", "ExportJobWire", "POST /v1/export → 202",
 		h.do(t, http.MethodPost, "/v1/export", contractUser, nil))
 
+	// ---- devices
+	h = newHarness(t)
+	// One device seeded as if it had sent something, so the list carries a
+	// last_used_at beside the null of the device the POST below creates. Only
+	// an inbox request sets last_used_at through the API, and the creation
+	// instant is put before the harness clock so the seeded device lists first.
+	if _, err := h.store.PutDevice(context.Background(), contractUser, model.Device{
+		ID: "dev_contract_watch", Name: "Watch",
+		CreatedAt:  model.FormatTime(harnessNow.AddDate(0, 0, -3)),
+		LastUsedAt: model.FormatTime(harnessNow.Add(-time.Hour)),
+	}); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	add("deviceCreated", "DeviceCreatedWire",
+		"POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5).",
+		h.do(t, http.MethodPost, "/v1/devices", contractUser, map[string]any{"name": "Shortcut on the phone"}))
+	add("devicesPage", "Page<DeviceWire>",
+		"GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at set) and one that has not (null). No cursor.",
+		h.do(t, http.MethodGet, "/v1/devices", contractUser, nil))
+
 	// ---- problem documents
 	h = newHarness(t)
 	add("problemNotFound", "ProblemWire", "GET /v1/notes/{noteId} → 404",
@@ -525,6 +545,9 @@ var volatileStrings = map[string]string{
 	"last_progress_at": contractTime,
 	"purge_after":      contractTime,
 	"generated_at":     contractTime,
+	"last_used_at":     contractTime,
+	// A device key is ck_<id>_<24 random bytes as hex>; the stand-in keeps the shape.
+	"key": "ck_fixture-id_0123456789abcdef0123456789abcdef0123456789abcdef",
 }
 
 // volatileNumbers is the same idea for measured values.
@@ -642,7 +665,7 @@ func renderContractFixtures(t *testing.T, fixtures []contractFixture) string {
 // neededSchemaTypes is the sorted set of schema.ts names the annotations use.
 func neededSchemaTypes(fixtures []contractFixture) []string {
 	known := map[string]bool{
-		"CaptureCreatedWire": true, "CaptureWire": true, "ExportJobWire": true,
+		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
 		"NotePurgeResponseWire": true,
 		"Page":                  true, "PresignedDownloadWire": true, "ProblemWire": true,
@@ -880,8 +903,12 @@ func seededContractHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	ctx := context.Background()
 
+	// Both active notes are pinned: POST /v1/notes/pins refuses an id that is
+	// not a pinned, active note of the caller's, and that refusal is a 400
+	// the replay would read as a shape problem.
 	if _, err := h.store.PutNote(ctx, contractUser, model.NoteIndex{
 		ID: "contract-note", Title: "Contract note", UpdatedAt: model.Now(), CreatedAt: model.Now(),
+		PinnedAt: contractTime, PinRank: 0,
 	}); err != nil {
 		t.Fatalf("seed note: %v", err)
 	}
@@ -901,6 +928,7 @@ func seededContractHarness(t *testing.T) *harness {
 	// requests to carry.
 	if _, err := h.store.PutNote(ctx, contractUser, model.NoteIndex{
 		ID: "contract-note-2", Title: "Second contract note", UpdatedAt: model.Now(), CreatedAt: model.Now(),
+		PinnedAt: contractTime, PinRank: model.PinRankStep,
 	}); err != nil {
 		t.Fatalf("seed second note: %v", err)
 	}
@@ -919,6 +947,20 @@ func seededContractHarness(t *testing.T) *harness {
 		CleanKey:    "tenants/user1/captures/contract-capture/clean.txt",
 	}); err != nil {
 		t.Fatalf("seed capture: %v", err)
+	}
+	// The device the recorder revokes and the ask it polls, so each request
+	// reaches its handler instead of stopping at "no such id".
+	if _, err := h.store.PutDevice(ctx, contractUser, model.Device{
+		ID: "contract-device", Name: "Contract device", CreatedAt: model.FormatTime(harnessNow),
+	}); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	if err := h.store.PutAsk(ctx, contractUser, model.Ask{
+		ID: "contract-ask", UserID: contractUser, Status: model.AskPending,
+		Question: "what did I decide about the roof?", Sources: []model.AskSource{},
+		CreatedAt: model.FormatTime(harnessNow),
+	}); err != nil {
+		t.Fatalf("seed ask: %v", err)
 	}
 	return h
 }
