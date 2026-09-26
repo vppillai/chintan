@@ -13,6 +13,9 @@
 //     commentary can pass it.
 //   - ExtractJSONObject pulls the one JSON object out of a reply that may be
 //     wrapped in a markdown fence or prose, so a chatty model still parses.
+//
+// rules.go holds the three rule sentences every system prompt composes:
+// DataRule, LanguageRule and NoInventionRule.
 package llm
 
 import (

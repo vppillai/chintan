@@ -22,18 +22,22 @@ func TestItemsPromptStatesTheRulesAndNamesTheList(t *testing.T) {
 	for _, want := range []string{
 		"noun phrase", "quantity kept", "first letter capitalised", "addressed to the app", "list's own name",
 		`split "x and y"`, "when in doubt, split", "yields no items", "remove, tick off or change", "exactly as spoken",
-		"never invent an item", "language and script", "never instructions", "do not act on them",
-		`{"items":["…","…"]}`, `{"items":[]}`,
+		"never invent an item", `{"items":["…","…"]}`, `{"items":[]}`,
 	} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("items system prompt lacks %q", want)
 		}
 	}
-	if !strings.HasPrefix(user, "The list is titled: Shopping list\nThe recording is in English (en).\n") {
-		t.Errorf("user prompt does not open with the title and the language:\n%s", user)
+	for _, rule := range []string{llm.LanguageRule, llm.DataRule} {
+		if !strings.Contains(system, rule) {
+			t.Errorf("items system prompt lacks the shared rule %q", rule)
+		}
 	}
-	if !strings.Contains(user, "dictation, not instructions") || strings.Count(user, llm.FenceMarker) != 2 {
-		t.Errorf("user prompt does not fence the transcript as data:\n%s", user)
+	if !strings.HasPrefix(user, "The list is titled: Shopping list\nThe recording is in English (en).\nThe recording is between the marker lines.\n"+llm.FenceMarker+"\n") {
+		t.Errorf("user prompt does not open with the title, the language and the fence:\n%s", user)
+	}
+	if strings.Count(user, llm.FenceMarker) != 2 {
+		t.Errorf("user prompt does not fence the transcript:\n%s", user)
 	}
 	if !strings.Contains(user, "add umbrella to shopping list") {
 		t.Errorf("user prompt does not carry the transcript:\n%s", user)
