@@ -1,3 +1,7 @@
+// Package model holds the stored shapes — notes, captures, devices, asks,
+// settings — and the enumerations and time layout every other package agrees
+// on. The design docs under docs/design/ (pins.md, checklists.md, inbox.md)
+// say what each field means; this package says only what it is.
 package model
 
 import (
