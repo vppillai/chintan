@@ -156,6 +156,12 @@ type Config struct {
 	TranscribeTimeout time.Duration
 	CleanupTimeout    time.Duration
 	CleanNoteTimeout  time.Duration
+	// AppendStampWait bounds how long an append waits for another capture's
+	// fresh stamp on the same note to clear; AppendStampPoll is how often it
+	// re-reads the row while waiting. Zero means the defaults beside
+	// stampNoteAppend; tests shorten the poll.
+	AppendStampWait time.Duration
+	AppendStampPoll time.Duration
 
 	Now func() time.Time
 }
@@ -201,6 +207,12 @@ func New(cfg Config) (*Pipeline, error) {
 	}
 	if cfg.CleanNoteTimeout <= 0 {
 		cfg.CleanNoteTimeout = defaultCleanNoteTimeout
+	}
+	if cfg.AppendStampWait <= 0 {
+		cfg.AppendStampWait = defaultAppendStampWait
+	}
+	if cfg.AppendStampPoll <= 0 {
+		cfg.AppendStampPoll = defaultAppendStampPoll
 	}
 	now := cfg.Now
 	if now == nil {

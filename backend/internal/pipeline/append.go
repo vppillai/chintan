@@ -143,33 +143,38 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 	return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
 }
 
-// appendStampWait bounds how long one append waits for another capture's
-// stamp on the same note to clear before stamping over it. The row holds one
+// defaultAppendStampWait bounds how long one append waits for another
+// capture's stamp on the same note to clear before stamping over it. The row holds one
 // stamp, so two appends to one note in flight together would leave the first
 // unprotected once the second's refresh cleared it; waiting for the first to
 // finish keeps one append in flight per note. Ten seconds is two orders of
 // magnitude above the stamp-to-refresh span (one S3 GET and PUT, one GetItem,
 // one S3 GET, one PutItem), so only a holder that died mid-append is ever
 // stamped over, and it is not waited on for its whole twenty-minute lease.
-const appendStampWait = 10 * time.Second
+// Config.AppendStampWait overrides it.
+const defaultAppendStampWait = 10 * time.Second
 
 // stampNoteAppend writes the append stamp under the row's current version,
 // re-reading on a lost race the way every other writer of this row does, and
 // waiting first for another capture's fresh stamp on the same note to clear.
 func (p *Pipeline) stampNoteAppend(ctx context.Context, tenantID, noteID, captureID string) error {
-	giveUpWaiting := time.Now().Add(appendStampWait)
+	// On the pipeline's clock, like the stamp it writes and the age check in
+	// anotherAppendInFlight, so a test with a fixed clock sees one consistent
+	// time and the wait ends when the other stamp clears, not when the wall
+	// clock says so.
+	giveUpWaiting := p.now().Add(p.cfg.AppendStampWait)
 	conflicts := 0
 	for {
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, noteID)
 		if err != nil {
 			return err
 		}
-		if p.anotherAppendInFlight(note, captureID) && time.Now().Before(giveUpWaiting) {
+		if p.anotherAppendInFlight(note, captureID) && p.now().Before(giveUpWaiting) {
 			// Another capture's paragraph is going into this body right now.
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(appendStampPoll):
+			case <-time.After(p.cfg.AppendStampPoll):
 			}
 			continue
 		}
@@ -198,11 +203,12 @@ func (p *Pipeline) anotherAppendInFlight(note model.NoteIndex, captureID string)
 	if err != nil {
 		return false
 	}
-	return p.now().Sub(at) < appendStampWait
+	return p.now().Sub(at) < p.cfg.AppendStampWait
 }
 
-// appendStampPoll is how often a waiting append re-reads the row.
-const appendStampPoll = 200 * time.Millisecond
+// defaultAppendStampPoll is how often a waiting append re-reads the row.
+// Config.AppendStampPoll overrides it.
+const defaultAppendStampPoll = 200 * time.Millisecond
 
 // finishAppend is the bookkeeping after the text is durably in the note body:
 // the index refresh and the completion of the claim. Both are safe to repeat,

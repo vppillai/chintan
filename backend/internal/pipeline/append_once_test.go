@@ -188,6 +188,10 @@ func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 // Two deliveries racing against one note. Run under -race.
 func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
+	// The harness clock is fixed, so a delivery that finds the other's stamp
+	// waits until it clears and not until a wall-clock deadline; a short poll
+	// keeps that wait to milliseconds under -count=50.
+	f.h.pipeline.cfg.AppendStampPoll = 50 * time.Millisecond
 	ctx := context.Background()
 
 	var wg sync.WaitGroup

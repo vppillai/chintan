@@ -176,8 +176,9 @@ func NewNotesService(store repository.Store, objects repository.Objects) *NotesS
 	}
 }
 
-// WithClock replaces the clock RequestClean stamps requests with; tests use it
-// to age a request past the worker's window.
+// WithClock replaces the clock the service stamps rows with (updated_at,
+// pinned_at, clean requests). Test seam: tests use it to age a request past
+// the worker's window, or to move an update a second past its create.
 func (s *NotesService) WithClock(now func() time.Time) *NotesService {
 	s.now = now
 	return s
@@ -225,7 +226,7 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 		aliases = []string{}
 	}
 
-	now := model.Now()
+	now := model.FormatTime(s.now())
 	note := model.NoteIndex{
 		ID:            noteID,
 		Title:         title,
@@ -559,7 +560,7 @@ func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note
 		updates.Body != nil || updates.Verbatim != nil || updates.Language != nil ||
 		updates.AutoClean != nil || updates.CleanMode != nil || updates.Kind != nil
 	if touched {
-		note.UpdatedAt = model.Now()
+		note.UpdatedAt = model.FormatTime(s.now())
 	}
 	return touched, nil
 }
