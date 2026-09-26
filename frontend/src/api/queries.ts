@@ -730,19 +730,43 @@ export const FILED_RECEIPT_MS = 24 * 60 * 60 * 1000;
 const CAPTURE_LIST_LIMIT = 20;
 
 /**
+ * How long a capture can sit in a non-terminal status before the row stops
+ * trusting the pipeline and offers a way out (`filing/model.ts`'s `isStuck`),
+ * and the point past which the poll asks once a minute.
+ *
+ * A capture only reaches this state if the upload event that should have
+ * driven the worker never arrived, or the worker died mid-stage without
+ * writing a `failed` status — both silent by design elsewhere in the stack
+ * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
+ * this). Without a client-side timeout the row polls forever showing a stage
+ * strip that will never move, with no error and no Retry.
+ */
+export const STUCK_AFTER_MS = 10 * 60 * 1000;
+
+/**
  * How often to ask while something is still moving through the pipeline.
  *
- * Two cadences. A capture's first half-minute is when it is most likely to
- * flip — the median pipeline is ~4 s with a target note and 4–9 s when routed
- * (docs/ops/log-review-2026-09-04.md, section 3) — and a fixed 4 s poll adds
- * a median 2 s of pure waiting on top of that. So a young capture is asked
- * after every 1.5 s, and once nothing in flight is younger than thirty seconds
- * the poll relaxes to 4 s: a capture that old is waiting on a provider, and
- * asking more often would only spend the user's battery watching it not move.
+ * A ladder, keyed on how long ago anything moving last made progress. A
+ * capture's first half-minute is when it is most likely to flip — on prod the
+ * pipeline finishes in p50 1.9 s, p90 4.0 s (n=189 over seven days,
+ * 2026-09-26) — and a fixed 4 s poll added a median 2 s of pure waiting on
+ * top of that, which is what the owner felt as "even tiny recordings take a
+ * while". So a young capture is asked after every 1.5 s. Past that the poll
+ * relaxes to 4 s: a capture that old is waiting on a provider. Two minutes
+ * after the last progress it backs off to 15 s, and once the capture counts
+ * as stuck (`STUCK_AFTER_MS`) to once a minute — it used to stay at 4 s for
+ * ever, so one capture stuck for hours kept an open Home at nine hundred
+ * requests an hour. It never stops while anything is non-terminal: the row's
+ * Retry appears at fifteen minutes (`retryAccepted`, read at render), and the
+ * poll's re-render is what makes it appear on time.
  */
 export const CAPTURE_POLL_FAST_MS = 1_500;
 export const CAPTURE_POLL_FAST_WINDOW_MS = 30_000;
 export const CAPTURE_POLL_INTERVAL_MS = 4_000;
+export const CAPTURE_POLL_SLOW_MS = 15_000;
+export const CAPTURE_POLL_STUCK_MS = 60_000;
+/** Quiet for this long since the last progress, and the poll relaxes to `CAPTURE_POLL_SLOW_MS`. */
+const CAPTURE_POLL_QUIET_MS = 2 * 60 * 1000;
 
 /**
  * The next poll delay for a set of captures, or `false` when nothing is
@@ -755,7 +779,15 @@ export function capturePollInterval(
   const moving = items.filter((capture) => !isTerminalStatus(capture.status));
   if (moving.length === 0) return false;
   const young = moving.some((capture) => within(capture.created_at, CAPTURE_POLL_FAST_WINDOW_MS, now));
-  return young ? CAPTURE_POLL_FAST_MS : CAPTURE_POLL_INTERVAL_MS;
+  if (young) return CAPTURE_POLL_FAST_MS;
+  // The youngest progress decides: one capture still moving keeps the poll
+  // brisk however long another has been stuck beside it.
+  const since = Math.max(
+    ...moving.map((capture) => Date.parse(capture.last_progress_at ?? capture.created_at)),
+  );
+  const quiet = now - since;
+  if (!Number.isFinite(quiet) || quiet < CAPTURE_POLL_QUIET_MS) return CAPTURE_POLL_INTERVAL_MS;
+  return quiet < STUCK_AFTER_MS ? CAPTURE_POLL_SLOW_MS : CAPTURE_POLL_STUCK_MS;
 }
 
 function within(iso: string | null | undefined, windowMs: number, now: number): boolean {
@@ -807,12 +839,11 @@ export function isFilingRelevant(capture: CaptureWire, now: number = Date.now())
  * comes to ~120 invocations for a two-minute pipeline, while the user is most
  * likely driving on cellular. The newest twenty captures contain
  * everything those filters would have returned that is worth showing (see
- * `isFilingRelevant`), so the filtering happens here. Focus refetch is off
- * for this query alone: while anything is moving the interval already asks,
- * and once nothing is, a focus has nothing new to learn. Always stale, though:
- * the library is remounted every time the user comes back to it — including
+ * `isFilingRelevant`), so the filtering happens here. Always stale: the
+ * library is remounted every time the user comes back to it — including
  * from the capture screen, six hundred milliseconds after a Send — and that
- * mount is the one moment a fresh answer is owed.
+ * mount is one moment a fresh answer is owed. Coming to the foreground is the
+ * other, whatever the interval is doing (see the option below).
  */
 export function usePendingCaptures(enabled = true) {
   const api = useApi();
@@ -835,7 +866,19 @@ export function usePendingCaptures(enabled = true) {
     },
     enabled,
     refetchInterval: (query) => capturePollInterval(query.state.data?.items ?? []),
-    refetchOnWindowFocus: false,
+    /*
+     * Focus is the one moment a capture a device made while the app was in
+     * the background is owed a look. The interval covers the foreground case
+     * for captures this client started, and stops when nothing is moving —
+     * which is exactly the state a Home left in a pocket is in while a ring
+     * files three recordings into three notes. This was `false`, from before
+     * the inbox, on the reasoning that a focus had nothing new to learn; the
+     * owner saw those filings only "once you refresh, pull to refresh".
+     * `'always'` rather than `true` so a `staleTime` set elsewhere can never
+     * quietly turn it off again. TanStack pauses the interval while the
+     * document is hidden, so the background costs nothing.
+     */
+    refetchOnWindowFocus: 'always',
     staleTime: 0,
   });
 }

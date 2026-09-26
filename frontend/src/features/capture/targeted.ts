@@ -6,7 +6,10 @@
  * through to the finished row (N3). The library's filing row listed it as
  * well, so ten recordings into one note left Home a wall of "Filed · Open the
  * note · Dismiss" receipts for things the user had watched land somewhere
- * else. Home shows only captures the router had to place.
+ * else. Home shows only captures the person did not watch land: everything
+ * the router placed, and everything a device sent, whoever chose the note —
+ * a ring's recording aimed at a note by `X-Chintan-Note-Id` is `targeted`
+ * on the wire, but nobody was on that note's Recordings tab to see it arrive.
  *
  * The server says which is which (`CaptureWire.targeted`). This set is the
  * fallback while backends that predate the field are in service: the uploader
@@ -56,10 +59,15 @@ export function rememberTargeted(captureId: string): void {
   write(next);
 }
 
-/** Whether the library's filing row should leave this capture to its note. */
+/**
+ * Whether the library's filing row should leave this capture to its note.
+ * Never for a device's capture: `targeted` says a note was chosen, not that
+ * anyone watched the recording land there.
+ */
 export function isTargeted(
-  capture: { id: string; targeted?: boolean },
+  capture: { id: string; targeted?: boolean; source?: string | null },
   remembered: ReadonlySet<string>,
 ): boolean {
+  if ((capture.source ?? '').startsWith('device:')) return false;
   return capture.targeted === true || remembered.has(capture.id);
 }

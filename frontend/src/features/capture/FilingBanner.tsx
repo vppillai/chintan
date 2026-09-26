@@ -48,9 +48,6 @@ export function FilingBanner({
         capture && (
           <FilingItem
             capture={capture}
-            // Never taken: an appended capture is not a candidate, and the
-            // receipt that opens the note is the appended row's alone.
-            onOpen={() => {}}
             onRetry={() => retry.mutate(capture.id)}
             retrying={retry.isPending && retry.variables === capture.id}
             retryError={

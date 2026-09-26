@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router';
+import { MemoryRouter, Route, Routes, useParams } from 'react-router';
 import { vi } from 'vitest';
 
 import type { CaptureWire } from '@/api/schema.ts';
@@ -36,12 +36,23 @@ export function json(body: unknown, status = 200): Response {
   });
 }
 
+/** Where a receipt's "Open the note" lands, so a test can read the route it chose. */
+function NoteScreenProbe() {
+  const { id } = useParams();
+  return <p>note screen: {id}</p>;
+}
+
 /**
  * Serves the capture list, and records every request for assertions. `retry`
  * is what `POST /v1/captures/{id}/retry` answers, when a test needs it to
- * refuse.
+ * refuse. `items` is served by reference, so a test can add to it and ask
+ * again. With `noteRoute` the row sits on `/` and `/notes/:id` is a probe
+ * naming the note, since a `MemoryRouter` with nothing else has nowhere to go.
  */
-export function mount(items: CaptureWire[], { retry }: { retry?: Response } = {}) {
+export function mount(
+  items: CaptureWire[],
+  { retry, noteRoute = false }: { retry?: Response; noteRoute?: boolean } = {},
+) {
   const calls: { url: string; method: string }[] = [];
 
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
@@ -89,8 +100,15 @@ export function mount(items: CaptureWire[], { retry }: { retry?: Response } = {}
 
   const view = render(
     <TestProviders api={testApiContext(fetchImpl)}>
-      <MemoryRouter>
-        <FilingRow />
+      <MemoryRouter initialEntries={['/']}>
+        {noteRoute ? (
+          <Routes>
+            <Route path="/" element={<FilingRow />} />
+            <Route path="/notes/:id" element={<NoteScreenProbe />} />
+          </Routes>
+        ) : (
+          <FilingRow />
+        )}
       </MemoryRouter>
     </TestProviders>,
   );
