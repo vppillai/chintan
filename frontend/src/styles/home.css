@@ -3,7 +3,7 @@
  * T17 and T20).
  *
  * Home lost the shell's banner row and its Search | Ask segment: the wordmark
- * sits small at the heading row's right, Ask is a glyph inside the field, the
+ * leads the heading row instead, Ask is a glyph inside the field, the
  * passkey nudge is one row, and the archive is a row at the list's end when
  * its chip has nothing to count. You put every card's footnote behind a
  * native <details> and moved Usage behind one row. The rules here override
@@ -34,39 +34,40 @@
   padding: var(--space-2) var(--space-4);
 }
 
-/* "Notes · 50+" on the left; the wordmark, small, at the right with the day
-   beneath it — the three places the same name used to be said are one. */
+/* One row: the brand leads in the shell's lockup (`.wordmark`, shell.css),
+   "Notes · 50+" is its quiet right end. The h1 is first in the DOM for the
+   screen reader and the route tests; `order` puts the brand first for the
+   eye (owner feedback 2026-09-26: the name was a faint small-caps footnote
+   to its own screen). */
 .library-header {
   flex-wrap: nowrap;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .library-heading {
   inline-size: auto;
 }
 
-/* Shrinkable, so the caps date wraps onto two lines on a 320 px phone rather
-   than pushing the row 3 px past the gutter (the layout sweep's fence); the
-   heading beside it keeps its width. */
+/* Shrinkable, so a long name wraps on a 320 px phone rather than pushing the
+   row past the gutter (the layout sweep's fence); the count keeps its width. */
 .library-brand {
-  display: grid;
+  order: -1;
   flex: 0 1 auto;
   min-inline-size: 0;
-  justify-items: end;
-  gap: var(--space-1);
-  padding-block-start: var(--space-1);
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-caps);
-  text-transform: uppercase;
-  text-align: end;
-  color: var(--color-faint);
 }
 
-.library-brand__wordmark {
-  font-family: var(--font-serif);
+.library .library-heading__title {
+  font-family: var(--font-sans);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-normal);
+  color: var(--color-muted);
+}
+
+.library .library-heading__separator,
+.library .library-heading__count {
+  font-size: var(--font-size-sm);
+  color: var(--color-muted);
 }
 
 /* The field spans the row; Ask is a glyph inside its trailing edge, pressed
