@@ -10,7 +10,10 @@ machine and store (`frontend/src/features/capture/machine.ts`, `store.ts`),
 the screen (`CaptureScreen.tsx`), the gesture (`useHoldToTalk.ts`,
 `HoldOverlay.tsx`, `components/RecordButton.tsx`, `components/TabBar.tsx`),
 `/talk` (`features/talk/TalkScreen.tsx`), the note's filing banner
-(`FilingBanner.tsx`, `FilingRow.tsx`, `features/notes/NoteDetailScreen.tsx`),
+(`FilingBanner.tsx`, `features/notes/NoteDetailScreen.tsx`), the library's
+filing row (`FilingRow.tsx`, with its parts under `filing/`: `model.ts` for
+what a row says, `FilingItem.tsx` for one capture's row, `TargetPrompt.tsx`
+for "which note?", `useLocalUpload.ts` for this device's own upload),
 the shell's indicator (`components/RecordingIndicator.tsx`), the manifest
 (`frontend/manifest.config.ts`).
 
@@ -121,6 +124,51 @@ thought". Beyond the contract, the code adds the busy notice, the stand-down
 rules and the blur cancel; the hint on `/talk` reads "Too short — hold to
 talk".
 
+## Receipts on Home
+
+The top of the library is where a recording's filing is watched and where
+its landing is confirmed. `FilingRow` draws four tiers, in this order: this
+device's own upload (`useLocalUpload`, `LocalUploadItem`); rows still moving
+(the four stage segments); rows that need the person — failed, capped,
+asking "which note?", stuck past ten minutes — never grouped and never
+hidden; then the receipts, one row per note the rest landed in, newest
+landing first: "Filed into “Roof repair”", or "3 filed into “Kitchen
+rebuild”" with how long ago the last one landed where a moving row shows the
+recording's length (the note's Recordings tab has the lengths). The first
+three notes are rows; the fourth onward fold behind a native `<details>`
+whose summary reads "and 4 more filed into 2 notes", so nothing is
+unreachable and the busiest note is never the invisible one — with one card
+per capture and a three-card cap, live on prod with 4 + 2 + 1 filings, the
+two Kitchen-rebuild receipts showed twice while all four Shopping-list
+receipts were the hidden ones. Grouping is `groupReceipts` in
+`filing/model.ts`; the receipt is a branch of `FilingItem` rather than a
+component of its own, and its React key is the group's newest capture id, so
+the row that was just moving keeps its DOM node and its `role="status"` live
+region announces the landing (a fresh node would mount silent).
+
+Opening a receipt — the chevron, or the row, which the chevron's `::after`
+stretches over — refreshes the note, dismisses every capture in the group
+and navigates to it; the × dismisses without navigating. Dismissal is per
+device (`dismissed.ts`, `localStorage`, the newest two hundred ids), because
+`appended` rows stay in `GET /v1/captures` by contract and there is no
+server-side "seen". A receipt expires on its own after a day
+(`FILED_RECEIPT_MS`, `isFilingRelevant`): long enough for the walk home,
+short enough that a second device does not meet receipts from weeks ago.
+
+Home shows every capture the person did not watch land: everything the
+router placed, and everything a device sent, whoever chose the note
+(`isTargeted`, `targeted.ts`). A recording this app made *into* a note is
+that note's to show — it was watched arriving on the Recordings tab — but a
+ring's recording aimed at a note by `X-Chintan-Note-Id` is `targeted` on the
+wire with nobody watching, so it gets a receipt like any routed one.
+
+The poll behind all of this (`usePendingCaptures`) asks every 1.5 s for a
+capture's first half-minute, 4 s while it is progressing, 15 s after two
+quiet minutes, once a minute once it counts as stuck, and again whenever the
+app comes to the foreground. How an open app might learn of a device's
+capture without any gesture at all — and why that answer is Web Push — is
+`docs/design/async-updates.md`.
+
 ## A widget or a hardware button
 
 A web app cannot put a widget on an Android home screen or bind a hardware
@@ -131,7 +179,9 @@ for either. Queued as Decision 5 in `docs/reviews/2026-09-21/morning-queue.md`;
 nothing is built until the owner says which.
 
 Tests: `machine.test.ts`, `store.test.ts` (stop-and-send), `CaptureScreen.test.tsx`,
-`FilingBanner.test.tsx`, `FilingRow.test.tsx`, `features/talk/TalkScreen.test.tsx`,
+`FilingBanner.test.tsx`, `FilingRow.test.tsx` (the tiers, the receipts, the poll's
+ladder and focus refetch), `filing/model.test.ts`, `filing/FilingItem.test.tsx`,
+`filing/TargetPrompt.test.tsx`, `features/talk/TalkScreen.test.tsx`,
 `components/RecordButton.test.tsx`, `RecordingIndicator.test.tsx`, `TabBar.test.tsx`;
 end to end, `frontend/e2e/capture.spec.ts` (Send while recording, the return
 and the banner, the hold on Home and on a note, slide-away and the short hold,

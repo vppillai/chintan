@@ -3,7 +3,8 @@ import { useState } from 'react';
 import { isFilingRelevant, useRetryCapture } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 
-import { FilingItem, LocalUploadItem, retryMessage } from './FilingRow.tsx';
+import { LocalUploadItem, retryMessage } from './FilingRow.tsx';
+import { FilingItem } from './filing/FilingItem.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
 import type { CaptureModel } from './machine.ts';
 
@@ -47,9 +48,6 @@ export function FilingBanner({
         capture && (
           <FilingItem
             capture={capture}
-            // Never taken: an appended capture is not a candidate, and the
-            // receipt that opens the note is the appended row's alone.
-            onOpen={() => {}}
             onRetry={() => retry.mutate(capture.id)}
             retrying={retry.isPending && retry.variables === capture.id}
             retryError={

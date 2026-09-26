@@ -3,33 +3,36 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
-import { ApiError } from '@/api/problem.ts';
-import {
-  queryKeys,
-  refreshAppendedNote,
-  useNotes,
-  useRetryCapture,
-  useSetCaptureTarget,
-  usePendingCaptures,
-} from '@/api/queries.ts';
-import {
-  isTerminalStatus,
-  type CaptureStatus,
-  type CaptureTargetWire,
-  type CaptureWire,
-} from '@/api/schema.ts';
+import { refreshAppendedNote, useRetryCapture, usePendingCaptures } from '@/api/queries.ts';
+import { isTerminalStatus } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
-import { Icon } from '@/components/Icon.tsx';
 import { formatDurationShort } from '@/features/notes/groups.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, loadDismissed } from './dismissed.ts';
+import { FilingItem } from './filing/FilingItem.tsx';
+import {
+  FILED_ROWS_MAX,
+  groupReceipts,
+  isStuck,
+  retryMessage,
+  type ReceiptGroup,
+} from './filing/model.ts';
+import { useLocalUpload } from './filing/useLocalUpload.ts';
 import { canRetryUpload, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
 import { isTargeted, loadTargeted } from './targeted.ts';
 import { awaitsConnection } from './useResendOnReconnect.ts';
+
+// The row's parts live under `filing/`; the screens that draw a part of the
+// row on their own — a note's Recordings tab, `/talk`, the note screen — keep
+// importing them from here.
+export { FilingStages } from './filing/FilingItem.tsx';
+export { FILED_ROWS_MAX, retryMessage } from './filing/model.ts';
+export { TargetPrompt } from './filing/TargetPrompt.tsx';
+export { useLocalUpload } from './filing/useLocalUpload.ts';
 
 /**
  * A recording being filed, as a row at the top of the library.
@@ -41,220 +44,18 @@ import { awaitsConnection } from './useResendOnReconnect.ts';
  * in the shell over every screen, because a recording on its way into the
  * library belongs at the top of the library.
  *
- * Four segments — uploaded, transcribing, filing, saving — and no percentage,
- * because the client cannot know how long transcription will take and a bar
- * that sits at 100% reads as broken.
- */
-
-interface Stage {
-  label: string;
-  /** The statuses this segment is lit for. */
-  statuses: readonly CaptureStatus[];
-}
-
-const STAGES: readonly Stage[] = [
-  // "Upload", not "Uploaded": the strip suffixes " in progress" and
-  // " complete" for a screen reader, and "Uploaded in progress" was nonsense.
-  { label: 'Upload', statuses: ['uploaded'] },
-  { label: 'Transcribing', statuses: ['transcribing'] },
-  // Routing and cleaning are one segment to the user: "working out where this
-  // goes and what it says" is one step, however many the pipeline takes.
-  { label: 'Filing', statuses: ['routing', 'cleaning'] },
-  { label: 'Saving', statuses: ['appending'] },
-];
-
-function stageIndex(status: CaptureStatus): number {
-  const index = STAGES.findIndex((stage) => stage.statuses.includes(status));
-  return index === -1 ? STAGES.length : index;
-}
-
-/**
- * How long a capture can sit in a non-terminal status before the row stops
- * trusting the pipeline and offers a way out.
+ * Four tiers, in this order: this device's own upload, rows still moving,
+ * rows that need the person (failed, capped, asking for a note, stuck — never
+ * grouped, never folded), then one receipt per note the rest landed in,
+ * newest landing first, the fourth note onward folded behind a summary. A
+ * ring's day of thirteen recordings into one note is one line, and the
+ * busiest note is never the hidden one — with one card per capture and a
+ * three-card cap it was exactly that.
  *
- * A capture only reaches this state if the upload event that should have
- * driven the worker never arrived, or the worker died mid-stage without
- * writing a `failed` status — both silent by design elsewhere in the stack
- * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
- * this). Without a client-side timeout the row polls forever showing a stage
- * strip that will never move, with no error and no Retry.
+ * What a row says, and the four stage segments, are `filing/model.ts`; one
+ * row is `filing/FilingItem.tsx`; this device's own upload is
+ * `filing/useLocalUpload.ts` and `LocalUploadItem` below.
  */
-const STUCK_AFTER_MS = 10 * 60 * 1000;
-
-function isStuck(capture: CaptureWire): boolean {
-  if (isTerminalStatus(capture.status)) return false;
-  const createdAt = Date.parse(capture.created_at);
-  if (Number.isNaN(createdAt)) return false;
-  return Date.now() - createdAt > STUCK_AFTER_MS;
-}
-
-/**
- * When the server will accept a Retry of a capture that is still moving.
- *
- * `RetryCapture` refuses an in-flight capture until no worker can still be
- * on it: fifteen minutes since the row was last written (the worker's
- * timeout), or the twenty-minute append lease while `appending`. The row
- * offered Retry at ten minutes, so for five to ten minutes every tap came
- * back "still in flight". The copy keeps `STUCK_AFTER_MS`; the button waits
- * for this.
- *
- * The server measures from `last_progress_at`, which every stage hand-off
- * re-stamps, and the API does not put that field on the wire yet — so until
- * it does, the row measures from `created_at`: exact for a capture that never
- * moved, early by however long it did move for one that reached transcribing
- * before it stalled, and the tap inside that gap is answered by the 409's
- * own sentence. Read when carried, so the gap closes the day it is sent.
- */
-const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
-const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
-
-function retryAccepted(capture: CaptureWire): boolean {
-  if (isTerminalStatus(capture.status)) return false;
-  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
-  if (Number.isNaN(since)) return false;
-  const after =
-    capture.status === 'appending' ? RETRY_ACCEPTED_APPENDING_MS : RETRY_ACCEPTED_AFTER_MS;
-  return Date.now() - since > after;
-}
-
-function describe(capture: CaptureWire, stuck: boolean, noteTitle?: string): string {
-  switch (capture.status) {
-    case 'appended':
-      // Two receipts stacked were indistinguishable: the note is on the
-      // capture, and its title is on the device whenever the library has
-      // listed it. "Filed" alone only when it is not.
-      return noteTitle ? `Filed into “${noteTitle}”` : 'Filed';
-    case 'needs_target':
-      return 'Which note should this go in?';
-    case 'no_content':
-      return 'Nothing to save from that recording';
-    case 'spend_capped':
-      return 'Daily spending cap reached';
-    case 'failed':
-      return capture.error ?? 'That capture did not finish';
-    default:
-      if (stuck) return 'Still not done — something may have gone wrong';
-      return 'Filing your recording';
-  }
-}
-
-/**
- * How long a landed upload's local row waits for the server's row to replace
- * it before giving up its place. The poll is asked for at once, so normally
- * this is a few hundred milliseconds; the bound is for a connection that died
- * between the PUT landing and the poll, where the row would otherwise sit at
- * "Uploaded" for ever.
- */
-const HANDOFF_GRACE_MS = 10_000;
-
-/**
- * The upload in progress, read from the capture store rather than the server.
- *
- * Send hands off at once, so for the seconds between the tap and
- * `POST /v1/captures` returning there is no server row to show — and the
- * server never knows about the PUT at all until the object lands. This row
- * covers that gap: "Uploading… 40%" from the store's own progress, then
- * "Uploaded" until the server's row arrives, which replaces it and releases
- * the machine. A failed upload stays here with Retry and Discard, because the
- * bytes are still on this device and only this device can act.
- *
- * Two readers. A note's Recordings tab passes its own id and sees only an
- * upload aimed at it, with the note's own captures as the server rows that
- * take over. The library's filing row passes `homeOnly` and sees only an
- * upload aimed at nothing — one aimed at a note is already on that note's
- * Recordings tab, which is where Send went — while still doing the hand-over
- * for either, since whichever screen is mounted is the one that can. They are
- * never on screen together.
- */
-export function useLocalUpload(
-  serverItems: readonly CaptureWire[],
-  noteId?: string,
-  options: { homeOnly?: boolean } = {},
-): CaptureModel | null {
-  const model = useCaptureStore((state) => state.model);
-  const reset = useCaptureStore((state) => state.reset);
-  const queryClient = useQueryClient();
-
-  const uploading = model.state === 'uploading';
-  const landed = model.state === 'uploaded';
-  const failed =
-    model.state === 'failed' &&
-    (model.failure?.kind === 'upload-failed' || model.failure?.kind === 'spend-capped');
-  const serverHasIt =
-    landed &&
-    model.serverCaptureId !== null &&
-    serverItems.some((capture) => capture.id === model.serverCaptureId);
-  const target = model.noteId;
-
-  useEffect(() => {
-    if (!landed) return;
-    // The server has the audio: ask for its row now rather than at the poll's
-    // next tick, and the device's list of unsent recordings is one shorter.
-    void queryClient.invalidateQueries({ queryKey: queryKeys.pendingCaptures() });
-    void queryClient.invalidateQueries({ queryKey: UNSENT_CAPTURES_KEY });
-    // The note it went into has a new recording; its own poll takes over from
-    // there, since the new row is non-terminal.
-    if (target) void queryClient.invalidateQueries({ queryKey: queryKeys.note(target) });
-  }, [landed, target, queryClient]);
-
-  useEffect(() => {
-    if (!landed) return;
-    if (serverHasIt) {
-      // The server's row is on screen; the machine has nothing left to say.
-      reset();
-      return;
-    }
-    const timer = setTimeout(reset, HANDOFF_GRACE_MS);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [landed, serverHasIt, reset]);
-
-  if (noteId !== undefined && target !== noteId) return null;
-  /*
-   * A failed upload is shown on Home whatever it was aimed at. The note's
-   * Recordings tab is where a moving one belongs, but nobody is on that tab
-   * after a spend cap or an expired link has bounced them, and ResumePrompt
-   * leaves the machine's own recording out — so a recording that exists on
-   * this device alone had no handle anywhere until a reload.
-   */
-  if (options.homeOnly && target !== null && !failed) return null;
-  if (uploading || failed || (landed && !serverHasIt)) return model;
-  return null;
-}
-
-/**
- * How many "Filed" receipts are shown at once.
- *
- * A receipt stays for a day or until the user acts on it (`isFilingRelevant`),
- * and on a device that has dismissed none — a second phone, cleared storage,
- * the QA account after a day of recordings — that is every capture appended
- * in the last day among the newest twenty: the QA pass saw nineteen
- * full-height cards above the first note. Three is enough to say "your last
- * recordings landed, here they are"; the rest are counted. Rows that still
- * need something — moving, failed, asking for a target — are never hidden
- * behind the cap.
- */
-export const FILED_ROWS_MAX = 3;
-
-/**
- * The rows to draw, and how many receipts were left out. Order is kept — the
- * server's, newest first — so the receipts shown are the most recent and the
- * hidden ones are older. Pure, so the cap is testable without a poll.
- */
-export function capFiledRows(
-  captures: readonly CaptureWire[],
-  max: number = FILED_ROWS_MAX,
-): { visible: CaptureWire[]; filedHidden: number } {
-  let filed = 0;
-  const visible = captures.filter((capture) => {
-    if (capture.status !== 'appended') return true;
-    filed += 1;
-    return filed <= max;
-  });
-  return { visible, filedHidden: Math.max(0, filed - max) };
-}
-
 export function FilingRow() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -282,6 +83,21 @@ export function FilingRow() {
   const dismiss = (captureId: string): void => {
     setDismissed(dismissCapture(captureId, dismissed));
   };
+  /** Every capture of the group, in one state update, so one render removes the row. */
+  const dismissGroup = (group: ReceiptGroup): void => {
+    setDismissed(group.captureIds.reduce((set, id) => dismissCapture(id, set), dismissed));
+  };
+  const openGroup = (group: ReceiptGroup): void => {
+    // The row says the note has just been written to, so the copy the app
+    // holds is by definition older than what the user is about to read. The
+    // poll usually caught the transition already; this is for when it did
+    // not (a poll that first saw the capture appended).
+    refreshAppendedNote(queryClient, group.noteId);
+    // Opening the note is acting on the row: it has been read, and the
+    // library the user comes back to should not offer it again.
+    dismissGroup(group);
+    void navigate(ROUTES.note(group.noteId));
+  };
 
   /*
    * Captures a person aimed at a note are that note's to show (contract §3):
@@ -307,45 +123,80 @@ export function FilingRow() {
     [cached.data],
   );
 
+  // The tiers. A stuck capture is non-terminal but needs the person, so it
+  // sits with the failed ones rather than among the rows still moving.
+  const moving = captures.filter((capture) => !isTerminalStatus(capture.status) && !isStuck(capture));
+  const needsYou = captures.filter(
+    (capture) =>
+      (isTerminalStatus(capture.status) && capture.status !== 'appended') || isStuck(capture),
+  );
+  const groups = groupReceipts(captures);
+  const shown = groups.slice(0, FILED_ROWS_MAX);
+  const folded = groups.slice(FILED_ROWS_MAX);
+  const foldedCaptures = folded.reduce((sum, group) => sum + group.captureIds.length, 0);
+
+  // The receipts say how long ago the last recording landed. A minute is the
+  // grain `describeAgo` speaks in, and the tick runs only while there is a
+  // receipt to read it.
+  const [now, setNow] = useState(Date.now);
+  const hasGroups = groups.length > 0;
+  useEffect(() => {
+    if (!hasGroups) return;
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => {
+      clearInterval(timer);
+    };
+  }, [hasGroups]);
+
   if (captures.length === 0 && !local) return null;
 
-  // Everything that still needs something is shown; the receipts are capped.
-  const { visible, filedHidden } = capFiledRows(captures);
+  const receipt = (group: ReceiptGroup) => (
+    <FilingItem
+      key={group.newestId}
+      receipt={group}
+      noteTitle={titles.get(group.noteId)}
+      now={now}
+      onOpen={() => {
+        openGroup(group);
+      }}
+      onDismiss={() => {
+        dismissGroup(group);
+      }}
+    />
+  );
 
   return (
     <section className="filing" aria-label="Recordings being filed">
       {local && <LocalUploadItem model={local} />}
-      {visible.map((capture) => (
-        <FilingItem
-          key={capture.id}
-          capture={capture}
-          noteTitle={capture.note_id ? titles.get(capture.note_id) : undefined}
-          onOpen={() => {
-            if (!capture.note_id) return;
-            // The row says the note has just been written to, so the copy the
-            // app holds is by definition older than what the user is about to
-            // read. The poll usually caught the transition already; this is
-            // for when it did not (a poll that first saw the capture appended).
-            refreshAppendedNote(queryClient, capture.note_id);
-            // Opening the note is acting on the row: it has been read, and the
-            // library the user comes back to should not offer it again.
-            dismiss(capture.id);
-            void navigate(ROUTES.note(capture.note_id));
-          }}
-          onRetry={() => retry.mutate(capture.id)}
-          retrying={retry.isPending && retry.variables === capture.id}
-          retryError={
-            retry.isError && retry.variables === capture.id ? retryMessage(retry.error) : null
-          }
-          onDismiss={() => {
-            dismiss(capture.id);
-          }}
-        />
-      ))}
-      {filedHidden > 0 && (
-        <p className="filing__more" role="status">
-          <span className="numeric">{filedHidden}</span> more filed
-        </p>
+      {/*
+        One array, so a capture keeps its key — and its DOM node, and the live
+        region that announces the landing — as it passes from moving to
+        receipt: React finds a key only among siblings of the same array.
+      */}
+      {[...moving, ...needsYou, ...shown].map((row) =>
+        'captureIds' in row ? (
+          receipt(row)
+        ) : (
+          <FilingItem
+            key={row.id}
+            capture={row}
+            onRetry={() => retry.mutate(row.id)}
+            retrying={retry.isPending && retry.variables === row.id}
+            retryError={retry.isError && retry.variables === row.id ? retryMessage(retry.error) : null}
+            onDismiss={() => {
+              dismiss(row.id);
+            }}
+          />
+        ),
+      )}
+      {folded.length > 0 && (
+        <details className="filing__more">
+          <summary>
+            and <span className="numeric">{foldedCaptures}</span> more filed into {folded.length}{' '}
+            {folded.length === 1 ? 'note' : 'notes'}
+          </summary>
+          {folded.map(receipt)}
+        </details>
       )}
     </section>
   );
@@ -432,435 +283,5 @@ export function LocalUploadItem({ model }: { model: CaptureModel }) {
         </div>
       )}
     </article>
-  );
-}
-
-/**
- * What a Retry that the server refused says under the row. The problem's
- * `detail` is one of the backend's fixed sentences — "that recording has
- * already been filed", "an identical request is still in flight" — and is
- * written for a person; anything else is the client's own sentence.
- */
-export function retryMessage(error: unknown): string {
-  return error instanceof ApiError ? error.userMessage : 'The retry did not go through. Try again.';
-}
-
-export interface FilingItemProps {
-  capture: CaptureWire;
-  /** The title of `capture.note_id`, when the device has it. */
-  noteTitle?: string | undefined;
-  onOpen: () => void;
-  onRetry: () => void;
-  retrying: boolean;
-  /** Why the last Retry on this row failed, or `null`. Silent failure is not an option here. */
-  retryError: string | null;
-  onDismiss: () => void;
-}
-
-/**
- * One capture's row. The library's filing row lists these; the note screen's
- * `FilingBanner` draws one for the recording on its way into the open note,
- * so a failure is met with the same Retry and Dismiss wherever it is read.
- */
-export function FilingItem({
-  capture,
-  noteTitle,
-  onOpen,
-  onRetry,
-  retrying,
-  retryError,
-  onDismiss,
-}: FilingItemProps) {
-  const failed = capture.status === 'failed' || capture.status === 'spend_capped';
-  const stuck = isStuck(capture);
-  // A stuck capture gets the same way out a failed one does: retrying is safe
-  // (the backend resumes from whichever artifact already exists) and dismissing
-  // stops the row sitting at the top of the library forever. Retry itself
-  // waits until the server will take it — see `retryAccepted`.
-  const actionable = failed || stuck;
-  const retryable = failed || retryAccepted(capture);
-  const done = capture.status === 'appended';
-  const needsTarget = capture.status === 'needs_target';
-  const stage = STAGES[stageIndex(capture.status)];
-  const duration =
-    typeof capture.duration_ms === 'number' && capture.duration_ms > 0
-      ? formatDurationShort(capture.duration_ms)
-      : null;
-
-  if (done && capture.note_id) {
-    /*
-     * A receipt is one control. The row itself opens the note — with a
-     * chevron, as every row that leads somewhere has — and the × dismisses
-     * it; the "Open the note" pill under a bare "Filed" was a second thing to
-     * find on a row whose whole point is the note.
-     *
-     * The title stays where every row keeps it — first in the head, outside
-     * the button — so the `<p role="status">` a moving row rendered is the
-     * same node once the poll flips it to appended. A live region announces a
-     * change to its text, not the text it mounted with: when the receipt was
-     * its own subtree React swapped the node and the landing went unspoken.
-     * The button is the chevron, named by the title and its own hidden words,
-     * and its ::after stretches over the row (capture.css).
-     */
-    const titleId = `filing-title-${capture.id}`;
-    return (
-      <article className="filing-row filing-row--receipt" data-status={capture.status}>
-        <div className="filing-row__head">
-          <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
-            {describe(capture, stuck, noteTitle)}
-          </p>
-          {duration && <span className="filing-row__duration numeric">{duration}</span>}
-        </div>
-        <button
-          type="button"
-          className="filing-row__receipt"
-          aria-labelledby={`${titleId} ${titleId}-open`}
-          onClick={onOpen}
-        >
-          <Icon name="chevron-right" size={18} />
-          <span id={`${titleId}-open`} className="visually-hidden">
-            Open the note
-          </span>
-        </button>
-        <button
-          type="button"
-          className="filing-row__dismiss"
-          aria-label="Dismiss"
-          onClick={onDismiss}
-        >
-          <Icon name="close" size={18} />
-        </button>
-      </article>
-    );
-  }
-
-  /*
-   * The stage strip is for a capture that is still moving. It used to render
-   * for every status the explicit branches did not name, which meant
-   * `needs_target` and `no_content` showed every stage *complete* while the
-   * capture had in fact stopped and was waiting for the user.
-   */
-  const running = !isTerminalStatus(capture.status);
-
-  return (
-    <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
-      <div className="filing-row__head">
-        <p className="filing-row__title" role="status" aria-live="polite">
-          {describe(capture, stuck, noteTitle)}
-          {running && stage && !stuck && (
-            <span className="visually-hidden">{` — ${stage.label}`}</span>
-          )}
-        </p>
-        {duration && <span className="filing-row__duration numeric">{duration}</span>}
-      </div>
-
-      {running && <FilingStages capture={capture} />}
-
-      {(done || actionable || capture.status === 'no_content') && (
-        <div className="filing-row__actions">
-          {/*
-            A real Retry, wired to POST /v1/captures/{id}/retry, so a failed
-            capture is never a dead end with a toast. Also offered once a
-            non-terminal capture has sat long enough that the server will
-            start a fresh run — RetryCapture resumes from whichever artifact
-            already exists, so it is safe to call on a capture that never
-            actually failed, only stalled.
-          */}
-          {retryable && (
-            <button
-              type="button"
-              className="filing-row__action"
-              onClick={onRetry}
-              disabled={retrying}
-            >
-              <span>{retrying ? 'Retrying…' : 'Retry'}</span>
-            </button>
-          )}
-
-          {/*
-            Terminal statuses need a way off the screen. `done` is included
-            too: a "Filed" row stays until the user acts on it, and polling
-            stops the moment nothing left is non-terminal — so once the last
-            capture appends, nothing else will ever refetch this away. Dismiss
-            or Open (which also dismisses) is how it leaves.
-          */}
-          <button type="button" className="filing-row__action" onClick={onDismiss}>
-            <span>Dismiss</span>
-          </button>
-        </div>
-      )}
-
-      {retryError && (
-        <p className="filing-row__error" role="alert">
-          {retryError}
-        </p>
-      )}
-
-      {/*
-        The row asks "Which note should this go in?" and must render a way to
-        answer it. `useSetCaptureTarget` wrapped the contract's target endpoint
-        and was once called from nowhere, so the capture — and the thought in
-        it — was stuck permanently.
-
-        Mounted only for `needs_target`, which is what keeps the notes list off
-        the wire for a capture that is merely still transcribing.
-      */}
-      {needsTarget && <TargetPrompt capture={capture} />}
-    </article>
-  );
-}
-
-/**
- * The four stage segments and the name of the current one, for a capture that
- * is still moving. The library's filing row draws it under the title; a note's
- * recording row draws the same strip while its recording is being filed, so
- * a recording made into a note shows the same progress wherever it is read
- * from and turns into an ordinary row when it lands.
- */
-export function FilingStages({ capture }: { capture: CaptureWire }) {
-  const current = stageIndex(capture.status);
-  const stage = STAGES[current];
-  return (
-    <>
-      <ol className="filing-row__stages" aria-label="Filing progress">
-        {STAGES.map((step, index) => (
-          <li
-            key={step.label}
-            className="filing-row__stage"
-            data-state={index < current ? 'done' : index === current ? 'active' : 'todo'}
-          >
-            <span className="visually-hidden">
-              {step.label}
-              {index < current ? ' complete' : index === current ? ' in progress' : ' pending'}
-            </span>
-          </li>
-        ))}
-      </ol>
-      {stage && (
-        <p className="filing-row__status" aria-hidden="true">
-          {stage.label}
-        </p>
-      )}
-    </>
-  );
-}
-
-/**
- * Answers "which note should this go in?", leading with the router's answer.
- *
- * The pipeline pays for an LLM call to decide this and stores the result on the
- * capture, so the prompt leads with that answer. Offering an unranked list of
- * every note the user has, or a bare `Add to "<note>"`, would hide that
- * anything had been computed at all.
- *
- * Exactly one of the two fields is ever set. `suggested_note_id` names an
- * existing note the router was confident enough to propose but not confident
- * enough to append to unasked; `suggested_title` is what it would call a new
- * note when it found no plausible destination.
- *
- * Exported for the note screen's recording rows, which offer the same answer
- * for a capture read from inside a note.
- */
-export function TargetPrompt({ capture }: { capture: CaptureWire }) {
-  const setTarget = useSetCaptureTarget();
-  const { data } = useNotes({ state: 'active' });
-  /** The user asked to see the library instead of the router's answer. */
-  const [browsing, setBrowsing] = useState(false);
-  /** The library is open on the path where there was no answer to lead with. */
-  const [picking, setPicking] = useState(false);
-
-  const notes = data?.pages.flatMap((page) => page.items) ?? [];
-
-  /*
-   * Resolved against the loaded library rather than fetched on its own. The
-   * router can name a note beyond the first page, and there is no honest
-   * `Add to ""` — so an unresolvable suggestion falls back to the plain picker
-   * rather than to a button with a hole in it.
-   */
-  const suggestedNote = capture.suggested_note_id
-    ? notes.find((note) => note.id === capture.suggested_note_id)
-    : undefined;
-  const suggestedTitle = capture.suggested_title?.trim() ?? '';
-
-  const suggestion: { label: string; target: CaptureTargetWire } | null = suggestedNote
-    ? { label: `Add to “${suggestedNote.title}”`, target: { note_id: suggestedNote.id } }
-    : suggestedTitle
-      ? { label: `Start “${suggestedTitle}”`, target: { new_note_title: suggestedTitle } }
-      : null;
-
-  const choose = (target: CaptureTargetWire): void => {
-    setTarget.mutate({ captureId: capture.id, target });
-  };
-
-  if (suggestion && !browsing) {
-    return (
-      <div className="filing-row__actions">
-        <button
-          type="button"
-          className="filing-row__action filing-row__action--primary"
-          disabled={setTarget.isPending}
-          onClick={() => {
-            choose(suggestion.target);
-          }}
-        >
-          <span>{setTarget.isPending ? 'Filing…' : suggestion.label}</span>
-        </button>
-
-        {/* Disagreeing has to be one tap, or the suggestion becomes a trap. */}
-        <button
-          type="button"
-          className="filing-row__action"
-          disabled={setTarget.isPending}
-          onClick={() => {
-            setBrowsing(true);
-          }}
-        >
-          <span>Choose another note</span>
-        </button>
-
-        {setTarget.isError && (
-          <p className="target-picker__error" role="alert">
-            That did not go through. Try again.
-          </p>
-        )}
-      </div>
-    );
-  }
-
-  const open = browsing || picking;
-
-  return (
-    <>
-      {/*
-        With no suggestion the library stays behind a tap, as it has: a list of
-        every note the user owns is not something to unfold in the middle of
-        the library unprompted.
-      */}
-      {!browsing && (
-        <div className="filing-row__actions">
-          <button
-            type="button"
-            className="filing-row__action"
-            aria-expanded={picking}
-            onClick={() => {
-              setPicking((wasOpen) => !wasOpen);
-            }}
-          >
-            <span>{picking ? 'Cancel' : 'Choose a note'}</span>
-          </button>
-        </div>
-      )}
-
-      {open && (
-        <BrowsePicker
-          captureId={capture.id}
-          notes={notes}
-          onChoose={choose}
-          pending={setTarget.isPending}
-          failed={setTarget.isError}
-          /* Only offered when there is something to go back to. */
-          onBack={
-            suggestion
-              ? () => {
-                  setBrowsing(false);
-                }
-              : null
-          }
-        />
-      )}
-    </>
-  );
-}
-
-/**
- * The whole library, plus a field for a note that does not exist yet.
- *
- * Both spellings the contract accepts are offered — an existing note, or a new
- * one by title — because the router asks this question precisely when it could
- * not tell whether the thought belonged to something the user already has.
- */
-function BrowsePicker({
-  captureId,
-  notes,
-  onChoose,
-  pending,
-  failed,
-  onBack,
-}: {
-  captureId: string;
-  notes: readonly { id: string; title: string }[];
-  onChoose: (target: CaptureTargetWire) => void;
-  pending: boolean;
-  failed: boolean;
-  onBack: (() => void) | null;
-}) {
-  const [title, setTitle] = useState('');
-
-  return (
-    <div className="target-picker">
-      {onBack && (
-        <button
-          type="button"
-          className="target-picker__back"
-          disabled={pending}
-          onClick={onBack}
-        >
-          Back to the suggestion
-        </button>
-      )}
-
-      <ul className="target-picker__list" role="list">
-        {notes.map((note) => (
-          <li key={note.id}>
-            <button
-              type="button"
-              className="target-picker__option"
-              disabled={pending}
-              onClick={() => {
-                onChoose({ note_id: note.id });
-              }}
-            >
-              {note.title}
-            </button>
-          </li>
-        ))}
-      </ul>
-
-      <form
-        className="target-picker__new"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const trimmed = title.trim();
-          if (!trimmed) return;
-          onChoose({ new_note_title: trimmed });
-        }}
-      >
-        <label className="visually-hidden" htmlFor={`new-note-${captureId}`}>
-          New note title
-        </label>
-        <input
-          id={`new-note-${captureId}`}
-          className="target-picker__input"
-          value={title}
-          placeholder="Or start a new note"
-          onChange={(event) => {
-            setTitle(event.target.value);
-          }}
-        />
-        <button
-          type="submit"
-          className="target-picker__option"
-          disabled={pending || title.trim().length === 0}
-        >
-          Create
-        </button>
-      </form>
-
-      {failed && (
-        <p className="target-picker__error" role="alert">
-          That did not go through. Try again.
-        </p>
-      )}
-    </div>
   );
 }

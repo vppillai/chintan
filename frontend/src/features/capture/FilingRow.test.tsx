@@ -1,3 +1,4 @@
+import { focusManager } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Link, MemoryRouter, Route, Routes } from 'react-router';
@@ -7,6 +8,8 @@ import {
   CAPTURE_POLL_FAST_MS,
   CAPTURE_POLL_FAST_WINDOW_MS,
   CAPTURE_POLL_INTERVAL_MS,
+  CAPTURE_POLL_SLOW_MS,
+  CAPTURE_POLL_STUCK_MS,
   capturePollInterval,
   isFilingRelevant,
   newlyAppendedNoteIds,
@@ -15,103 +18,31 @@ import {
 } from '@/api/queries.ts';
 import type { CaptureWire } from '@/api/schema.ts';
 import { cacheNoteList } from '@/offline/notesCache.ts';
+import { capture, json, mount } from '@/test/filing.tsx';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
 import { FILED_ROWS_MAX, FilingRow } from './FilingRow.tsx';
 import { DISMISSED_KEY, DISMISSED_LIMIT, dismissCapture, loadDismissed } from './dismissed.ts';
 import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
-import { TARGETED_KEY, TARGETED_LIMIT, loadTargeted, rememberTargeted } from './targeted.ts';
+import {
+  TARGETED_KEY,
+  TARGETED_LIMIT,
+  isTargeted,
+  loadTargeted,
+  rememberTargeted,
+} from './targeted.ts';
+
+/** A note row as the device's copy of the library holds it, so a receipt can name it. */
+function note(id: string, title: string) {
+  return { id, title, updated_at: '2026-08-06T09:14:00.000Z', version: 1, archived: false };
+}
 
 beforeEach(() => {
   // Dismissals are kept on the device; each test starts with none.
   localStorage.clear();
   useCaptureStore.setState({ model: INITIAL_CAPTURE });
 });
-
-function capture(overrides: Partial<CaptureWire> = {}): CaptureWire {
-  return {
-    id: 'srv-1',
-    status: 'transcribing',
-    // Recent by default so a plain in-progress fixture never trips the
-    // stuck-capture timeout below. Tests for that behaviour set an old
-    // `created_at` explicitly.
-    created_at: new Date().toISOString(),
-    version: 1,
-    ...overrides,
-  };
-}
-
-const STUCK_CREATED_AT = '2026-08-07T10:00:00.000Z';
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-/**
- * Serves the capture list, and records every request for assertions. `retry`
- * is what `POST /v1/captures/{id}/retry` answers, when a test needs it to
- * refuse.
- */
-function mount(items: CaptureWire[], { retry }: { retry?: Response } = {}) {
-  const calls: { url: string; method: string }[] = [];
-
-  const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-    const url = String(input);
-    const method = init?.method ?? 'GET';
-    calls.push({ url, method });
-
-    if (url.includes('/v1/captures/') && url.endsWith('/retry')) {
-      return retry ?? json(capture({ status: 'transcribing' }));
-    }
-    if (url.includes('/v1/captures/') && url.endsWith('/target')) {
-      return json(capture({ status: 'appending' }));
-    }
-    if (url.endsWith('/v1/captures') && method === 'POST') {
-      return json(
-        {
-          capture: capture({ id: 'srv-new', status: 'uploaded' }),
-          upload: {
-            url: 'https://s3.test/audio',
-            expires_at: new Date(Date.now() + 60_000).toISOString(),
-            max_bytes: 1_000_000,
-          },
-        },
-        201,
-      );
-    }
-    if (url.includes('/v1/captures')) {
-      return json({ items });
-    }
-    if (url.includes('/v1/notes')) {
-      return json({
-        items: [
-          {
-            id: 'roof-repair',
-            title: 'Roof repair',
-            updated_at: '2026-08-06T09:14:00.000Z',
-            version: 3,
-            archived: false,
-          },
-        ],
-      });
-    }
-    return json({});
-  });
-
-  const view = render(
-    <TestProviders api={testApiContext(fetchImpl)}>
-      <MemoryRouter>
-        <FilingRow />
-      </MemoryRouter>
-    </TestProviders>,
-  );
-
-  return { view, calls, fetchImpl };
-}
 
 describe('the upload this device is still making has a row of its own', () => {
   /*
@@ -336,337 +267,6 @@ describe('the filing row is server state, not a JavaScript variable', () => {
     expect(await screen.findByText(/daily spending cap/i)).toBeInTheDocument();
   });
 });
-
-describe('a failed capture has a Retry that is actually wired', () => {
-  it('calls POST /v1/captures/{id}/retry', async () => {
-    // The client method has to be reachable from the UI; a Retry that nothing
-    // calls leaves a failed capture as a dead end with a toast.
-    const user = userEvent.setup();
-    const { calls } = mount([capture({ id: 'srv-9', status: 'failed', error: 'Timed out' })]);
-
-    await user.click(await screen.findByRole('button', { name: 'Retry' }));
-
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-9/retry'),
-        ),
-      ).toBe(true);
-    });
-  });
-
-  it('says why a Retry the server refused did nothing, under the row', async () => {
-    // Review S14: the row's Retry had an `onSuccess` and nothing for failure,
-    // so a 409 — the capture is terminal, or an identical retry is still in
-    // flight — left the button re-enabled and the user none the wiser.
-    const user = userEvent.setup();
-    mount([capture({ id: 'srv-9', status: 'failed', error: 'Timed out' })], {
-      retry: json(
-        {
-          type: 'about:blank',
-          title: 'Conflict',
-          status: 409,
-          detail: 'That recording has already been filed.',
-        },
-        409,
-      ),
-    });
-
-    await user.click(await screen.findByRole('button', { name: 'Retry' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'That recording has already been filed.',
-    );
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
-  });
-
-  it('offers no Retry while the capture is still progressing', async () => {
-    mount([capture({ status: 'transcribing' })]);
-    await screen.findByText('Filing your recording');
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-  });
-
-  it('offers the note once the capture has been filed', async () => {
-    mount([
-      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
-    ]);
-    expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
-  });
-
-  it('says which note it was filed into, and the whole receipt opens it', async () => {
-    /*
-     * Two receipts stacked read "Filed" and "Filed". The note is on the
-     * capture and its title is on the device whenever the library has listed
-     * it, so the receipt names it — and is itself the control, with a
-     * chevron, rather than carrying an "Open the note" pill under a bare word.
-     */
-    await cacheNoteList([
-      {
-        id: 'roof-repair',
-        title: 'Roof repair',
-        updated_at: '2026-08-06T09:14:00.000Z',
-        version: 3,
-        archived: false,
-      },
-    ]);
-    const user = userEvent.setup();
-    mount([
-      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
-    ]);
-
-    const receipt = await screen.findByRole('button', { name: /filed into “roof repair”/i });
-    expect(receipt).toHaveAccessibleName(/open the note/i);
-    expect(screen.queryByText('Filed')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
-
-    // Opening is acting on the receipt: it leaves with the navigation.
-    await user.click(receipt);
-    await waitFor(() => {
-      expect(screen.queryByText(/^Filed/)).toBeNull();
-    });
-  });
-});
-
-describe('a capture that never left "uploaded" is not a permanent dead end', () => {
-  // If the S3 upload event that should drive the worker never arrives — a
-  // cancelled upload, a lost event — the capture sits at whatever non-terminal
-  // status it last reached forever, `failed` is never set, and the row polled
-  // silently with no error and no Retry. `chintanctl reconcile` calls this
-  // finding `stuck_capture`; the row recognises it live instead of only being
-  // detectable from an operator's terminal.
-  it('offers Retry once a non-terminal capture has sat past the stuck threshold', async () => {
-    mount([capture({ id: 'srv-stuck', status: 'uploaded', created_at: STUCK_CREATED_AT })]);
-
-    expect(
-      await screen.findByText(/still not done.*something may have gone wrong/i),
-    ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
-  });
-
-  it('still calls POST /v1/captures/{id}/retry from the stuck state', async () => {
-    const user = userEvent.setup();
-    const { calls } = mount([
-      capture({ id: 'srv-stuck-2', status: 'transcribing', created_at: STUCK_CREATED_AT }),
-    ]);
-
-    await user.click(await screen.findByRole('button', { name: 'Retry' }));
-
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-stuck-2/retry'),
-        ),
-      ).toBe(true);
-    });
-  });
-
-  it('does not treat a recent capture the same way', async () => {
-    mount([capture({ status: 'uploaded' })]);
-    await screen.findByText('Filing your recording');
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-  });
-
-  it('offers Retry only once the server will accept it: fifteen minutes, twenty while appending', async () => {
-    /*
-     * The row said "still not done" and offered Retry at ten minutes; the
-     * server refuses a retry of an in-flight capture until no worker can
-     * still be on it — fifteen minutes since it last wrote the row, or the
-     * twenty-minute append lease — so every tap in between was answered
-     * "still in flight". The copy stays at ten; the button waits.
-     */
-    const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
-    mount([
-      capture({ id: 'twelve', status: 'transcribing', created_at: ago(12) }),
-      capture({ id: 'sixteen', status: 'transcribing', created_at: ago(16) }),
-      capture({ id: 'appending-sixteen', status: 'appending', created_at: ago(16) }),
-      capture({ id: 'appending-twenty-one', status: 'appending', created_at: ago(21) }),
-      // The server measures from the row's last write, not its creation. No
-      // backend sends `last_progress_at` yet, so `sixteen` above is offered
-      // Retry whether or not it moved; when the field is carried, a capture
-      // that made progress twelve minutes ago is not, however old its row.
-      capture({
-        id: 'progressed',
-        status: 'transcribing',
-        created_at: ago(16),
-        last_progress_at: ago(12),
-      }),
-      capture({
-        id: 'stalled',
-        status: 'transcribing',
-        created_at: ago(30),
-        last_progress_at: ago(16),
-      }),
-    ]);
-
-    expect(await screen.findAllByText(/still not done/i)).toHaveLength(6);
-    const rows = document.querySelectorAll<HTMLElement>('.filing-row');
-    const retryIn = (row: HTMLElement | undefined) =>
-      row ? within(row).queryByRole('button', { name: 'Retry' }) !== null : null;
-    expect(retryIn(rows[0])).toBe(false);
-    expect(retryIn(rows[1])).toBe(true);
-    expect(retryIn(rows[2])).toBe(false);
-    expect(retryIn(rows[3])).toBe(true);
-    expect(retryIn(rows[4])).toBe(false);
-    expect(retryIn(rows[5])).toBe(true);
-    // Dismiss is still the way off the screen for every one of them.
-    expect(screen.getAllByRole('button', { name: 'Dismiss' })).toHaveLength(6);
-  });
-});
-
-describe('a terminal capture is something the user can act on', () => {
-  it('lets the user answer "which note should this go in?"', async () => {
-    /*
-     * The card asked the question, marked every pipeline stage complete, and
-     * rendered zero buttons. `useSetCaptureTarget` wrapped the contract's target
-     * endpoint and was called from nowhere in the app, and the schema lists
-     * `needs_target` as terminal pending user action — so the capture, and the
-     * thought in it, was stuck permanently.
-     */
-    const user = userEvent.setup();
-    const { calls } = mount([capture({ id: 'srv-7', status: 'needs_target' })]);
-
-    await screen.findByText(/which note should this go in/i);
-    await user.click(screen.getByRole('button', { name: /choose a note/i }));
-
-    await user.click(await screen.findByRole('button', { name: 'Roof repair' }));
-
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-7/target'),
-        ),
-      ).toBe(true);
-    });
-  });
-
-  it('can file the recording into a brand new note', async () => {
-    const user = userEvent.setup();
-    const { calls, fetchImpl } = mount([capture({ id: 'srv-8', status: 'needs_target' })]);
-
-    await user.click(await screen.findByRole('button', { name: /choose a note/i }));
-    await user.type(await screen.findByLabelText(/new note title/i), 'Loft insulation');
-    await user.click(screen.getByRole('button', { name: 'Create' }));
-
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-8/target'),
-        ),
-      ).toBe(true);
-    });
-
-    const target = fetchImpl.mock.calls.find(
-      ([input]) => String(input).endsWith('/v1/captures/srv-8/target'),
-    );
-    expect(JSON.parse(String(target?.[1]?.body))).toEqual({ new_note_title: 'Loft insulation' });
-  });
-
-  it('does not mark every stage complete for a capture that stopped', async () => {
-    // Four filled segments over "Which note should this go in?" says the
-    // pipeline finished. It did not — it is waiting for the user.
-    mount([capture({ status: 'needs_target' })]);
-    await screen.findByText(/which note should this go in/i);
-    expect(screen.queryByRole('list', { name: /filing progress/i })).toBeNull();
-  });
-
-  it('lets an unactionable capture be dismissed', async () => {
-    // `no_content` has no retry, no target, and nothing to open, so without a
-    // dismiss the row sat at the top of the library indefinitely.
-    const user = userEvent.setup();
-    mount([capture({ id: 'srv-quiet', status: 'no_content' })]);
-
-    await screen.findByText(/nothing to save from that recording/i);
-    await user.click(screen.getByRole('button', { name: 'Dismiss' }));
-
-    await waitFor(() => {
-      expect(screen.queryByText(/nothing to save from that recording/i)).toBeNull();
-    });
-  });
-});
-
-/**
- * The routing suggestion the pipeline pays an LLM call for.
- *
- * `SuggestedNoteID` and `SuggestedTitle` are computed, stored and returned by
- * the API, so the "where should this go?" prompt must lead with what the router
- * thought rather than an unranked list of every note the user has.
- */
-describe('the row says where it thinks the recording goes', () => {
-  it('leads with the note the router proposed', async () => {
-    const user = userEvent.setup();
-    const { calls, fetchImpl } = mount([
-      capture({ id: 'srv-9', status: 'needs_target', suggested_note_id: 'roof-repair' }),
-    ]);
-
-    const add = await screen.findByRole('button', { name: /add to .*roof repair/i });
-
-    // The unranked list is not the first thing on screen any more.
-    expect(screen.queryByRole('button', { name: 'Roof repair' })).toBeNull();
-
-    await user.click(add);
-
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) => call.method === 'POST' && call.url.endsWith('/v1/captures/srv-9/target'),
-        ),
-      ).toBe(true);
-    });
-
-    const target = fetchImpl.mock.calls.find(([input]) =>
-      String(input).endsWith('/v1/captures/srv-9/target'),
-    );
-    expect(JSON.parse(String(target?.[1]?.body))).toEqual({ note_id: 'roof-repair' });
-  });
-
-  it('leads with the title it would give a new note', async () => {
-    const user = userEvent.setup();
-    const { fetchImpl } = mount([
-      capture({ id: 'srv-10', status: 'needs_target', suggested_title: 'Kitchen rebuild' }),
-    ]);
-
-    await user.click(await screen.findByRole('button', { name: /start .*kitchen rebuild/i }));
-
-    await waitFor(() => {
-      expect(
-        fetchImpl.mock.calls.some(([input]) =>
-          String(input).endsWith('/v1/captures/srv-10/target'),
-        ),
-      ).toBe(true);
-    });
-
-    const target = fetchImpl.mock.calls.find(([input]) =>
-      String(input).endsWith('/v1/captures/srv-10/target'),
-    );
-    expect(JSON.parse(String(target?.[1]?.body))).toEqual({
-      new_note_title: 'Kitchen rebuild',
-    });
-  });
-
-  it('still lets the user disagree with it', async () => {
-    const user = userEvent.setup();
-    mount([capture({ id: 'srv-11', status: 'needs_target', suggested_title: 'Kitchen rebuild' })]);
-
-    await user.click(await screen.findByRole('button', { name: /choose another note/i }));
-
-    // The full library, and the new-note field, exactly as before.
-    expect(await screen.findByRole('button', { name: 'Roof repair' })).toBeInTheDocument();
-    expect(screen.getByLabelText(/new note title/i)).toBeInTheDocument();
-  });
-
-  it('falls back to the plain picker when the suggested note is not loaded', async () => {
-    // The router can name a note beyond the first page of the library. Offering
-    // `Add to ""` would be worse than offering the list.
-    mount([
-      capture({ id: 'srv-12', status: 'needs_target', suggested_note_id: 'page-two-note' }),
-    ]);
-
-    expect(await screen.findByRole('button', { name: /choose a note/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /add to/i })).toBeNull();
-  });
-});
-
 /**
  * One list, filtered here, has to carry everything the four server-side
  * filters used to: the moving captures, the stopped-and-actionable ones, and
@@ -725,6 +325,91 @@ describe('how often the one poll asks', () => {
       false,
     );
     expect(capturePollInterval([], NOW)).toBe(false);
+  });
+
+  it('backs off to 15 s two minutes after the last progress', () => {
+    expect(
+      capturePollInterval(
+        [
+          capture({
+            status: 'transcribing',
+            created_at: seconds(3 * 60),
+            last_progress_at: seconds(150),
+          }),
+        ],
+        NOW,
+      ),
+    ).toBe(CAPTURE_POLL_SLOW_MS);
+  });
+
+  it('polls once a minute for a capture stuck past ten minutes, and never stops', () => {
+    /*
+     * It stayed at 4 s for ever: one capture stuck for hours kept an open
+     * Home at nine hundred requests an hour. Never `false`, though — the
+     * row's Retry appears at fifteen minutes, read at render, and the
+     * poll's re-render is what makes it appear on time.
+     */
+    expect(
+      capturePollInterval([capture({ status: 'uploaded', created_at: seconds(11 * 60) })], NOW),
+    ).toBe(CAPTURE_POLL_STUCK_MS);
+  });
+
+  it('measures from last_progress_at when the server sends it', () => {
+    expect(
+      capturePollInterval(
+        [capture({ status: 'cleaning', created_at: seconds(5 * 60), last_progress_at: seconds(20) })],
+        NOW,
+      ),
+    ).toBe(CAPTURE_POLL_INTERVAL_MS);
+  });
+
+  it('the youngest moving capture decides', () => {
+    expect(
+      capturePollInterval(
+        [
+          capture({ id: 'stuck', status: 'uploaded', created_at: seconds(11 * 60) }),
+          capture({ id: 'new', status: 'uploaded', created_at: seconds(10) }),
+        ],
+        NOW,
+      ),
+    ).toBe(CAPTURE_POLL_FAST_MS);
+  });
+
+  it('asks again when the app returns to the foreground', async () => {
+    /*
+     * A ring files three recordings while the phone is in a pocket. Nothing
+     * is moving, so the interval is off, and the notes list refetches on
+     * focus (the client default) while this query opted out — Home showed
+     * the notes moved to the top of Today and no receipt until a pull. The
+     * owner: "appears once you refresh".
+     */
+    const items = [
+      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
+    ];
+    const { calls } = mount(items);
+    await screen.findByText(/^Filed/);
+    const polls = () => calls.filter((call) => call.url.includes('/v1/captures?')).length;
+    expect(polls()).toBe(1);
+
+    items.push(
+      capture({
+        id: 'srv-ring',
+        status: 'appended',
+        note_id: 'kitchen',
+        appended_at: new Date().toISOString(),
+        targeted: true,
+        source: 'device:dev_1',
+      }),
+    );
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+
+    await waitFor(() => {
+      expect(polls()).toBe(2);
+    });
+    expect(await screen.findAllByRole('button', { name: /open the note/i })).toHaveLength(2);
   });
 });
 
@@ -909,46 +594,16 @@ describe('a row leaves when it is acted on, and stays gone', () => {
     const user = userEvent.setup();
     mount([filed, capture({ id: 'srv-other', status: 'failed', error: 'Timed out' })]);
 
-    // Two rows, two Dismiss buttons: the first belongs to the filed row, which
-    // the list renders first because the fixture does.
-    const [first] = await screen.findAllByRole('button', { name: 'Dismiss' });
-    await user.click(first as HTMLElement);
+    // Two rows, two Dismiss buttons; the receipt's is its ×. (The failed row
+    // is drawn first whatever the server's order — see the tiers.)
+    const receipt = await screen.findByRole('button', { name: /open the note/i });
+    await user.click(
+      within(receipt.closest('article') as HTMLElement).getByRole('button', { name: 'Dismiss' }),
+    );
     await waitFor(() => {
       expect(screen.queryByText(/^Filed/)).toBeNull();
     });
     expect(screen.getByText('Timed out')).toBeInTheDocument();
-  });
-
-  it('shows the three newest receipts and counts the rest, never hiding a row that needs something', async () => {
-    /*
-     * On a device that has dismissed nothing, every appended capture among the
-     * newest twenty is a full-height card: the QA account showed nineteen of
-     * them above the first note.
-     */
-    const user = userEvent.setup();
-    const appended = Array.from({ length: 5 }, (_, index) =>
-      capture({
-        id: `srv-filed-${index}`,
-        status: 'appended',
-        note_id: 'roof-repair',
-        appended_at: new Date(Date.now() - index * 60_000).toISOString(),
-      }),
-    );
-    mount([capture({ id: 'srv-moving', status: 'transcribing' }), ...appended]);
-
-    expect(await screen.findAllByRole('button', { name: /open the note/i })).toHaveLength(
-      FILED_ROWS_MAX,
-    );
-    expect(screen.getByText('Filing your recording')).toBeInTheDocument();
-    expect(screen.getByText(/more filed/)).toHaveTextContent('2 more filed');
-
-    // Acting on one of the three lets the next oldest through.
-    const [first] = screen.getAllByRole('button', { name: 'Dismiss' });
-    await user.click(first as HTMLElement);
-    await waitFor(() => {
-      expect(screen.getByText(/more filed/)).toHaveTextContent('1 more filed');
-    });
-    expect(screen.getAllByRole('button', { name: /open the note/i })).toHaveLength(FILED_ROWS_MAX);
   });
 
   it('survives a reload, which is what the device store is for', () => {
@@ -973,6 +628,147 @@ describe('a row leaves when it is acted on, and stays gone', () => {
   it('treats unreadable storage as nothing dismissed rather than failing', () => {
     localStorage.setItem(DISMISSED_KEY, '{not json');
     expect(loadDismissed().size).toBe(0);
+  });
+});
+
+/**
+ * One receipt per note, not one per capture. Live on prod with 4 + 2 + 1
+ * filings the two Kitchen-rebuild receipts showed twice while all four
+ * Shopping-list receipts were the hidden ones behind "4 more filed"; the
+ * owner filed thirteen ring recordings into one note in a day.
+ */
+describe('receipts are one row per note, behind the rows that still need something', () => {
+  const now = () => new Date().toISOString();
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
+  it('offers the note once the capture has been filed', async () => {
+    mount([
+      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
+    ]);
+    expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
+  });
+
+  it('says which note it was filed into, and the whole receipt opens it', async () => {
+    /*
+     * Two receipts stacked read "Filed" and "Filed". The note is on the
+     * capture and its title is on the device whenever the library has listed
+     * it, so the receipt names it — and is itself the control, with a
+     * chevron, rather than carrying an "Open the note" pill under a bare word.
+     */
+    await cacheNoteList([
+      {
+        id: 'roof-repair',
+        title: 'Roof repair',
+        updated_at: '2026-08-06T09:14:00.000Z',
+        version: 3,
+        archived: false,
+      },
+    ]);
+    const user = userEvent.setup();
+    mount([
+      capture({ status: 'appended', note_id: 'roof-repair', appended_at: new Date().toISOString() }),
+    ]);
+
+    const receipt = await screen.findByRole('button', { name: /filed into “roof repair”/i });
+    expect(receipt).toHaveAccessibleName(/open the note/i);
+    expect(screen.queryByText('Filed')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+
+    // Opening is acting on the receipt: it leaves with the navigation.
+    await user.click(receipt);
+    await waitFor(() => {
+      expect(screen.queryByText(/^Filed/)).toBeNull();
+    });
+  });
+
+  it('three captures into one note are one receipt reading "3 filed into “Roof repair”"; opening it dismisses all three', async () => {
+    await cacheNoteList([note('roof-repair', 'Roof repair')]);
+    const user = userEvent.setup();
+    mount(
+      ['a', 'b', 'c'].map((id) =>
+        capture({ id, status: 'appended', note_id: 'roof-repair', appended_at: now() }),
+      ),
+      { noteRoute: true },
+    );
+
+    const receipt = await screen.findByRole('button', { name: /open the note/i });
+    expect(document.querySelectorAll('.filing-row--receipt')).toHaveLength(1);
+    expect(screen.getByRole('status')).toHaveTextContent('3 filed into “Roof repair”');
+    expect(screen.getByText('just now')).toBeInTheDocument();
+
+    await user.click(receipt);
+    expect(await screen.findByText('note screen: roof-repair')).toBeInTheDocument();
+    expect(Array.from(loadDismissed()).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('groups are newest-landing first and beyond the third sit behind "and N more filed into M notes"', async () => {
+    await cacheNoteList([1, 2, 3, 4, 5].map((n) => note(`n${n}`, `Note ${n}`)));
+    // Served oldest first, so the order on screen is the landing's, not the server's.
+    mount(
+      [5, 4, 3, 2, 1].map((n) =>
+        capture({ id: `c${n}`, status: 'appended', note_id: `n${n}`, appended_at: minutesAgo(n) }),
+      ),
+    );
+
+    await screen.findAllByRole('button', { name: /open the note/i });
+    const visible = document.querySelectorAll('.filing > .filing-row--receipt');
+    expect(visible).toHaveLength(FILED_ROWS_MAX);
+    expect(Array.from(visible, (row) => row.textContent)).toEqual([
+      expect.stringContaining('Note 1'),
+      expect.stringContaining('Note 2'),
+      expect.stringContaining('Note 3'),
+    ]);
+
+    const more = document.querySelector('details.filing__more');
+    expect(more).not.toBeNull();
+    expect(more?.querySelector('summary')).toHaveTextContent('and 2 more filed into 2 notes');
+    expect(more?.querySelectorAll('.filing-row--receipt')).toHaveLength(2);
+    // A native disclosure: the folded rows are on the page, reachable at zero state.
+    expect(within(more as HTMLElement).getAllByRole('button', { name: /open the note/i })).toHaveLength(2);
+  });
+
+  it('rows are drawn moving → needs you → filed regardless of server order', async () => {
+    mount([
+      capture({ id: 'done', status: 'appended', note_id: 'roof-repair', appended_at: now() }),
+      capture({ id: 'broke', status: 'failed', error: 'Timed out' }),
+      capture({ id: 'going', status: 'transcribing' }),
+    ]);
+
+    await screen.findByText('Timed out');
+    expect(
+      Array.from(document.querySelectorAll('.filing-row'), (row) => row.getAttribute('data-status')),
+    ).toEqual(['transcribing', 'failed', 'appended']);
+  });
+
+  it('the group × dismisses every capture in it and no other', async () => {
+    await cacheNoteList([note('roof-repair', 'Roof repair'), note('kitchen', 'Kitchen rebuild')]);
+    const user = userEvent.setup();
+    mount([
+      capture({ id: 'k2', status: 'appended', note_id: 'kitchen', appended_at: now() }),
+      capture({ id: 'k1', status: 'appended', note_id: 'kitchen', appended_at: minutesAgo(1) }),
+      capture({ id: 'r1', status: 'appended', note_id: 'roof-repair', appended_at: minutesAgo(2) }),
+    ]);
+
+    const kitchen = await screen.findByRole('button', { name: /filed into “kitchen rebuild”/i });
+    await user.click(within(kitchen.closest('article') as HTMLElement).getByRole('button', { name: 'Dismiss' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /kitchen rebuild/i })).toBeNull();
+    });
+    expect(screen.getByRole('button', { name: /filed into “roof repair”/i })).toBeInTheDocument();
+    expect(Array.from(loadDismissed()).sort()).toEqual(['k1', 'k2']);
+  });
+
+  it('needs_target and failed rows are never grouped or hidden', async () => {
+    mount([
+      ...[1, 2, 3, 4].map((n) => capture({ id: `ask-${n}`, status: 'needs_target' })),
+      capture({ id: 'broke', status: 'failed', error: 'Timed out' }),
+    ]);
+
+    expect(await screen.findAllByText(/which note should this go in/i)).toHaveLength(4);
+    expect(document.querySelectorAll('.filing-row')).toHaveLength(5);
+    expect(document.querySelector('details')).toBeNull();
+    expect(document.querySelector('.filing-row--receipt')).toBeNull();
   });
 });
 
@@ -1145,6 +941,44 @@ describe('a recording made into a note is the note\'s to show, not the library\'
 
     expect(await screen.findByText('Filing your recording')).toBeInTheDocument();
     expect(document.querySelectorAll('.filing-row')).toHaveLength(1);
+  });
+
+  it('shows a capture a device sent into a note, since nobody watched it land', async () => {
+    /*
+     * `X-Chintan-Note-Id` on the inbox makes the capture `targeted` on the
+     * wire — a note was chosen — but no person was on that note's Recordings
+     * tab to see a ring's recording arrive. The moment the ring's recipe
+     * gained the header, every receipt would have disappeared.
+     */
+    mount([
+      capture({
+        id: 'srv-ring',
+        status: 'appended',
+        note_id: 'roof-repair',
+        targeted: true,
+        source: 'device:dev_1',
+        appended_at: new Date().toISOString(),
+      }),
+    ]);
+    expect(await screen.findByRole('button', { name: /open the note/i })).toBeInTheDocument();
+  });
+
+  it('still leaves a recording this device made into a note to that note', async () => {
+    mount([
+      capture({ id: 'srv-app', status: 'appended', note_id: 'roof-repair', targeted: true, source: 'app' }),
+      capture({ id: 'srv-legacy', status: 'appended', note_id: 'roof-repair', targeted: true }),
+    ]);
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: /recordings being filed/i })).toBeNull();
+    });
+  });
+
+  it('isTargeted answers no for a device, whatever the flag or the memory says', () => {
+    const remembered = new Set(['srv-ring']);
+    expect(isTargeted({ id: 'srv-ring', targeted: true, source: 'device:dev_1' }, remembered)).toBe(false);
+    expect(isTargeted({ id: 'srv-app', targeted: true, source: 'app' }, new Set())).toBe(true);
+    expect(isTargeted({ id: 'srv-legacy', targeted: true }, new Set())).toBe(true);
+    expect(isTargeted({ id: 'srv-routed', targeted: false, source: 'app' }, new Set())).toBe(false);
   });
 
   it('renders nothing at all when every capture is a note\'s', async () => {

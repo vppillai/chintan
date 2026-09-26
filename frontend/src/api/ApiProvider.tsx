@@ -22,8 +22,9 @@ export function createQueryClient(): QueryClient {
         retry: false,
         staleTime: 30_000,
         // A note edited on another device should be visible the moment the
-        // app returns to the foreground. The capture list opts out of this
-        // (`usePendingCaptures`): it polls on its own while anything moves.
+        // app returns to the foreground. The capture list goes further
+        // (`usePendingCaptures`: `'always'`), since a device may have filed
+        // a recording while the app was in the background.
         refetchOnWindowFocus: true,
         refetchOnReconnect: true,
       },

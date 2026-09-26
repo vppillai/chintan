@@ -318,6 +318,31 @@
   color: var(--color-muted);
 }
 
+/*
+ * The receipts past the third note fold behind a native <details>, so the
+ * busiest note is never the invisible one. The summary is a real control at
+ * the row's height; open, the block lays its rows out as the section does.
+ * The rest of the filing block (.filing, .filing-row, .filing__more's type)
+ * lives in shell.css until wave 2 re-homes it here.
+ */
+.filing__more {
+  padding-inline: 0;
+}
+
+.filing__more > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-4);
+  cursor: pointer;
+}
+
+.filing__more[open] {
+  display: grid;
+  gap: var(--space-2);
+}
+
 /* --------------------------------------------------------------------------
    Filing banner — the note screen's copy of the row, for a recording still
    on its way into the open note (owner feedback 2026-09-24)
