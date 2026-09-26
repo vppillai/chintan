@@ -20,9 +20,8 @@ import { LibraryList, noteForHit } from './library/LibraryList.tsx';
 import { useLibraryParams } from './library/useLibraryParams.ts';
 import { LibrarySelectionBar, useLibrarySelection } from './library/useLibrarySelection.tsx';
 
-// The screen's parts live under `library/`; the tests keep importing these from here.
+// The screen's parts live under `library/`; the tests keep importing this from here.
 export { chipScrollBy } from './library/LibraryField.tsx';
-export { HOLD_TO_DELETE_MS } from './library/useLibrarySelection.tsx';
 
 /*
  * The Ask panel is a chunk of its own (round-3 T47): the thread, its markdown
