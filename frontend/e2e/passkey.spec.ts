@@ -77,7 +77,7 @@ test('an ended managed-login session is explained, and a fresh sign-in offered',
 
   // "Sign in again" is the real authorization-code flow, landing back signed in.
   await page.getByRole('button', { name: /sign in again/i }).click();
-  await expect(page.getByRole('button', { name: /^record$/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /^PTT: tap to record/ })).toBeVisible({ timeout: 15_000 });
   expect(api.auth.authorize).toHaveLength(1);
   expect(api.auth.token).toHaveLength(1);
 });

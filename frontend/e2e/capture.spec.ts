@@ -14,7 +14,7 @@ import { expect, test } from './fixtures.ts';
 test('records, uploads, and hands off to the filing row', async ({ page, api }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: /^record$/i }).click();
+  await page.getByRole('button', { name: /^PTT: tap to record/ }).click();
   await expect(page).toHaveURL(/\/capture$/);
 
   // The claim the machine has to earn: not "Recording" until the stream is live.
@@ -120,7 +120,7 @@ test('records twice in one page load, without a reload', async ({ page, api }) =
   await page.goto('/');
 
   for (const attempt of [1, 2]) {
-    await page.getByRole('button', { name: /^record$/i }).click();
+    await page.getByRole('button', { name: /^PTT: tap to record/ }).click();
     await expect(page).toHaveURL(/\/capture$/);
 
     // Never "Sent", and never the previous recording's clock.
@@ -155,7 +155,7 @@ test('records into the note it was opened from, and the target can be changed be
   api,
 }) => {
   await page.goto('/notes/roof-repair');
-  await page.getByRole('button', { name: /record into this/i }).click();
+  await page.getByRole('button', { name: /^PTT into this note/ }).click();
   await expect(page).toHaveURL(/\/capture\?note=roof-repair$/);
   await expect(page.locator('.capture__state')).toHaveText('Recording');
 
@@ -196,7 +196,7 @@ test('Send returns to the note, where the filing banner follows the recording in
   api,
 }) => {
   await page.goto('/notes/roof-repair');
-  await page.getByRole('button', { name: /record into this/i }).click();
+  await page.getByRole('button', { name: /^PTT into this note/ }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
   await page.waitForTimeout(1_100);
   await page.getByRole('button', { name: 'Stop' }).click();
@@ -225,7 +225,7 @@ test('Send returns to the note, where the filing banner follows the recording in
   // Counted on the Recordings tab as well: the row is there too.
   await expect(page.getByRole('tab', { name: 'Recordings (2)' })).toBeVisible();
   // The mic still records into this note, to keep adding.
-  await expect(page.getByRole('button', { name: /record into this/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^PTT into this note/ })).toBeVisible();
 
   releaseCreate();
   await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
@@ -267,7 +267,7 @@ test('Send returns to the note, where the filing banner follows the recording in
  */
 test('Send while recording stops the recorder, then uploads', async ({ page, api }) => {
   await page.goto('/notes/roof-repair');
-  await page.getByRole('button', { name: /record into this/i }).click();
+  await page.getByRole('button', { name: /^PTT into this note/ }).click();
   await expect(page.locator('.capture__state')).toHaveText('Recording');
   await page.waitForTimeout(1_100);
 
@@ -318,7 +318,7 @@ async function holdTheMic(page: Page, name: RegExp, ms: number, slide = 0): Prom
 
 test('holding the mic on Home records in place and sends on release', async ({ page, api }) => {
   await page.goto('/');
-  await holdTheMic(page, /^record$/i, 1_500);
+  await holdTheMic(page, /^PTT: tap to record/, 1_500);
 
   // Sent, not opened: still Home, the card gone, the upload in the filing row.
   await expect(page).toHaveURL(/\/$/);
@@ -338,7 +338,7 @@ test('holding the mic on a note records into it, and the banner shows it filing'
   api,
 }) => {
   await page.goto('/notes/roof-repair');
-  await holdTheMic(page, /record into this/i, 1_500);
+  await holdTheMic(page, /^PTT into this note/, 1_500);
 
   await expect(page).toHaveURL(/\/notes\/roof-repair$/);
   await expect(page.getByRole('region', { name: 'Filing a recording' })).toBeVisible();
@@ -352,11 +352,11 @@ test('sliding away before release cancels, and a hold too short is discarded wit
 }) => {
   await page.goto('/');
 
-  await holdTheMic(page, /^record$/i, 1_200, 160);
+  await holdTheMic(page, /^PTT: tap to record/, 1_200, 160);
   await expect(page.locator('.hold-overlay')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$/);
 
-  await holdTheMic(page, /^record$/i, 50);
+  await holdTheMic(page, /^PTT: tap to record/, 50);
   await expect(page.locator('.hold-overlay--hint')).toHaveText('Too short — hold to talk');
   await expect(page).toHaveURL(/\/$/);
 
