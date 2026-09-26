@@ -19,9 +19,9 @@ import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 
 import type { NoteDetailWire, NoteWire } from '@/api/schema.ts';
 
-export const DB_NAME = 'chintan';
+const DB_NAME = 'chintan';
 /** 2 added `notes`. The upgrade is additive; no capture data is touched. */
-export const DB_VERSION = 2;
+const DB_VERSION = 2;
 
 /**
  * What the queue can hold: a note PATCH, and nothing else.

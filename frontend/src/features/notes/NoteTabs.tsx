@@ -18,10 +18,10 @@ import { useSearchParams } from 'react-router';
  * document; the other two are a reading of it and its sources.
  */
 
-export const NOTE_TABS = ['text', 'cleaned', 'recordings'] as const;
+const NOTE_TABS = ['text', 'cleaned', 'recordings'] as const;
 export type NoteTab = (typeof NOTE_TABS)[number];
 
-export const NOTE_TAB_PARAM = 'tab';
+const NOTE_TAB_PARAM = 'tab';
 
 /** Where the last-used tab for a note is kept for the rest of the session. */
 export function noteTabStorageKey(noteId: string): string {
@@ -55,7 +55,7 @@ function remember(noteId: string, tab: NoteTab): void {
  * explicit request — then the one this session last used for the note, then
  * Text. Pure, so the precedence is testable without a router.
  */
-export function initialNoteTab(fromUrl: string | null, remembered: NoteTab | null): NoteTab {
+function initialNoteTab(fromUrl: string | null, remembered: NoteTab | null): NoteTab {
   if (isNoteTab(fromUrl)) return fromUrl;
   return remembered ?? 'text';
 }

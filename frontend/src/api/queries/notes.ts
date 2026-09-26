@@ -536,8 +536,3 @@ export function useSearch(q: string, { enabled = true }: { enabled?: boolean } =
     staleTime: 30_000,
   });
 }
-
-export function useTags() {
-  const api = useApi();
-  return useQuery({ queryKey: queryKeys.tags(), queryFn: () => api.listTags() });
-}

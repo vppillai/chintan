@@ -56,7 +56,7 @@ const APP_STORAGE_PREFIX = 'chintan.';
 const PERSONAL_LOCAL_KEYS: readonly string[] = [COST_NOTE_KEY, DISMISSED_KEY, TARGETED_KEY];
 
 /** Storage denied or absent (a test without a window) is simply nothing to clear. */
-export function clearPersonalStorage(): void {
+function clearPersonalStorage(): void {
   try {
     const keys: string[] = [];
     for (let i = 0; i < sessionStorage.length; i += 1) {

@@ -35,6 +35,3 @@ function matchNow(query: string): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   return window.matchMedia(query).matches;
 }
-
-/** A primary pointer that can rest over things: a mouse or trackpad, not a finger. */
-export const HOVER_QUERY = '(hover: hover)';

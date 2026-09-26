@@ -14,7 +14,7 @@ import { formatMegabytes } from './usage.ts';
 
 /** The server's own limits (`docs/design/inbox.md`); said here so the row can say why it is disabled. */
 export const MAX_DEVICES = 10;
-export const DEVICE_NAME_MAX = 60;
+const DEVICE_NAME_MAX = 60;
 /** Why Add and Rotate are held at the limit: a rotation briefly needs an eleventh row. */
 const FULL_HINT = 'Ten is the limit; remove one first';
 
@@ -39,7 +39,7 @@ export function inboxAudioUrl(apiUrl: string = config.apiUrl): string {
   return `${apiUrl}/v1/inbox/audio`;
 }
 
-export function inboxTextUrl(apiUrl: string = config.apiUrl): string {
+function inboxTextUrl(apiUrl: string = config.apiUrl): string {
   return `${apiUrl}/v1/inbox/text`;
 }
 

@@ -14,7 +14,7 @@ export interface WakeLockHandle {
   release(): Promise<void>;
 }
 
-export function isWakeLockSupported(): boolean {
+function isWakeLockSupported(): boolean {
   return typeof navigator !== 'undefined' && 'wakeLock' in navigator;
 }
 

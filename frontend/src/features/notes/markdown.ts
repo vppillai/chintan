@@ -116,7 +116,7 @@ export function parseBlocks(source: string): Block[] {
 /** `**strong**`, `*em*` / `_em_` and `` `code` ``, as elements. Everything else is text. */
 const INLINE = /(\*\*[^*\n]+?\*\*|`[^`\n]+?`|\*[^*\s][^*\n]*?\*|_[^_\s][^_\n]*?_)/g;
 
-export function renderInline(text: string): ReactNode {
+function renderInline(text: string): ReactNode {
   const parts = text.split(INLINE);
   if (parts.length === 1) return text;
   return parts.map((part, index) => {
@@ -134,7 +134,7 @@ export function renderInline(text: string): ReactNode {
 }
 
 /** `text` with its inline marks unwrapped: `**strong**`, `*em*` / `_em_`, `` `code` `` become their words. */
-export function plainInline(text: string): string {
+function plainInline(text: string): string {
   return text
     .split(INLINE)
     .map((part) => {

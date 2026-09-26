@@ -208,7 +208,7 @@ export function dayBars(usage: UsageWire, now: Date = new Date()): DayBar[] {
  * The pipeline stages in the order a recording meets them, then the two
  * calls a person asks for by hand: the whole-note rewrite and a question.
  */
-export const OPS: readonly { key: string; label: string }[] = [
+const OPS: readonly { key: string; label: string }[] = [
   { key: 'transcribe', label: 'Transcribe' },
   { key: 'route', label: 'Route' },
   { key: 'cleanup', label: 'Clean up' },

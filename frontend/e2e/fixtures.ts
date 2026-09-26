@@ -126,7 +126,7 @@ function cleanedFor(note: NoteRecord, mode: CleanMode): CleanedRecord {
 }
 
 /** How long the stub's "worker" takes to write the view after a 202. */
-export const CLEAN_WORKER_MS = 400;
+const CLEAN_WORKER_MS = 400;
 
 /** A capture as the stub stores it: the wire row, mutated in place as the specs move it along. */
 type CaptureRecord = CaptureWire;
@@ -255,7 +255,7 @@ const SEGMENTS = {
 };
 
 /** Must match `VITE_COGNITO_DOMAIN` in `playwright.config.ts`. */
-export const COGNITO_ORIGIN = 'https://cognito.e2e.test';
+const COGNITO_ORIGIN = 'https://cognito.e2e.test';
 
 /**
  * Where the presigned artifact URLs point: another origin, as the S3 bucket is.

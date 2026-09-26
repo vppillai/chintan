@@ -27,7 +27,7 @@ export interface RetryPolicy {
   maxDelayMs: number;
 }
 
-export const DEFAULT_RETRY: RetryPolicy = {
+const DEFAULT_RETRY: RetryPolicy = {
   maxRetries: 3,
   baseDelayMs: 400,
   maxDelayMs: 8_000,

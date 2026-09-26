@@ -23,7 +23,7 @@ import { createState, createVerifier, challengeFor } from './pkce.ts';
 import { clearPending, hasPendingFlow, rememberPending, takePending } from './pending.ts';
 
 /** True while a token set is held. Re-renders when it is set or cleared. */
-export function useAuthenticated(): boolean {
+function useAuthenticated(): boolean {
   const session: Session = useSession();
   return useSyncExternalStore(
     useCallback((onChange) => session.subscribe(onChange), [session]),

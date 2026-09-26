@@ -15,12 +15,12 @@ import { queryKeys } from './keys.ts';
  * and there is nothing to gain from asking faster than it can change. After a
  * minute the panel gives up and says so.
  */
-export const ASK_POLL_FAST_MS = 1_000;
-export const ASK_POLL_FAST_WINDOW_MS = 10_000;
-export const ASK_POLL_SLOW_MS = 2_000;
+const ASK_POLL_FAST_MS = 1_000;
+const ASK_POLL_FAST_WINDOW_MS = 10_000;
+const ASK_POLL_SLOW_MS = 2_000;
 export const ASK_POLL_TIMEOUT_MS = 60_000;
 
-export function isAskSettled(ask: AskWire | undefined): boolean {
+function isAskSettled(ask: AskWire | undefined): boolean {
   return ask !== undefined && ask.status !== 'pending';
 }
 

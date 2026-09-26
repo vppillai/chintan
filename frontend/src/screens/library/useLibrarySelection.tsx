@@ -14,7 +14,7 @@ import { showDeleted } from '@/components/Toast.tsx';
 
 import { HOLD_TO_DELETE_ABOVE, HOLD_TO_DELETE_MS } from './holdToDelete.ts';
 
-export { HOLD_TO_DELETE_ABOVE, HOLD_TO_DELETE_MS } from './holdToDelete.ts';
+export { HOLD_TO_DELETE_MS } from './holdToDelete.ts';
 
 export type LibrarySelection = ReturnType<typeof useLibrarySelection>;
 

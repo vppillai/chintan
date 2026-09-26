@@ -33,7 +33,6 @@ vi.mock('@/config/env.ts', () => ({
     appName: 'Chintan',
     appDescription: 'Speak a thought. It files itself.',
   },
-  isConfigured: () => true,
 }));
 
 /** Cognito's `/oauth2/revoke` answers an empty 200. */

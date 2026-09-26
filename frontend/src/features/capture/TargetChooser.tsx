@@ -229,7 +229,7 @@ export function optionMeta(note: NoteWire): string {
  * pipeline): the note's own language, else the tenant default, else English.
  * Said in the language's own script, since the person it is for reads that.
  */
-export function transcriptionLanguage(
+function transcriptionLanguage(
   noteId: string | null,
   note: NoteWire | null | undefined,
   settings: SettingsWire | undefined,

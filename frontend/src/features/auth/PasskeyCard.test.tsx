@@ -26,7 +26,6 @@ vi.mock('@/config/env.ts', () => ({
     appName: 'Chintan',
     appDescription: 'Speak a thought. It files itself.',
   },
-  isConfigured: () => true,
   LOCAL_VERSION: 'local build',
 }));
 

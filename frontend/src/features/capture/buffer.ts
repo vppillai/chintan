@@ -22,7 +22,7 @@ function chunkKey(localId: string, index: number): string {
  * builds this app has to run on, so FileReader is the fallback rather than the
  * exception.
  */
-export function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer();
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -78,7 +78,7 @@ export async function readCaptureRecord(localId: string): Promise<StoredCapture 
   return db.get('captures', localId);
 }
 
-export async function listCaptureRecords(): Promise<StoredCapture[]> {
+async function listCaptureRecords(): Promise<StoredCapture[]> {
   const db = await openChintanDB();
   return db.getAll('captures');
 }

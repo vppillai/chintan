@@ -289,8 +289,3 @@ export const useCaptureStore = create<CaptureStore>((set, get) => {
     },
   };
 });
-
-/** Selector for the shell's recording indicator: what the machine is doing. */
-export function selectCaptureModel(state: CaptureStore): CaptureModel {
-  return state.model;
-}

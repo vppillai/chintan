@@ -307,7 +307,7 @@ const DISTINGUISHING_WORDS = 3;
  * or no such position exists (two identical snippets, or one a prefix of
  * another), when the caller falls back to numbering.
  */
-export function distinguishingWords(snippets: readonly (string | null)[]): string[] | null {
+function distinguishingWords(snippets: readonly (string | null)[]): string[] | null {
   const words = snippets.map((snippet) => (snippet ?? '').split(/\s+/).filter(Boolean));
   if (words.some((list) => list.length === 0)) return null;
   const longest = Math.max(...words.map((list) => list.length));

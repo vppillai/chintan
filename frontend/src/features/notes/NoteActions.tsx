@@ -480,7 +480,7 @@ function ChecklistSwitch({
  * path; a title trimmed to nothing (all punctuation, or empty) still needs a
  * name a save dialog can show.
  */
-export function filenameFor(title: string): string {
+function filenameFor(title: string): string {
   const cleaned = title.trim().replace(/[/\\:*?"<>|]/g, '').trim();
   return (cleaned || 'note').slice(0, 120);
 }

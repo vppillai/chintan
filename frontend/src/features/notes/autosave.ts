@@ -150,10 +150,6 @@ export type EditorEvent =
   | { type: 'rebase'; version: number }
   | { type: 'reset'; draft: NoteDraft; version: number };
 
-export function emptyDraft(): NoteDraft {
-  return { title: '', body: '', aliases: [], tags: [] };
-}
-
 export function initialEditor(draft: NoteDraft, version: number): EditorModel {
   return {
     draft,
@@ -260,7 +256,7 @@ export function withAddition(body: string, addition: string): string {
   return `${body}${separator}${addition}`;
 }
 
-export function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
+function draftsEqual(a: NoteDraft, b: NoteDraft): boolean {
   return (
     a.title === b.title &&
     a.body === b.body &&

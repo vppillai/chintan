@@ -35,6 +35,7 @@ import type {
   NoteDetailWire,
   NoteListQuery,
   NotePinsWire,
+  NotePurgeRequestWire,
   NotePurgeResponseWire,
   NoteUpdateWire,
   NoteWire,
@@ -201,7 +202,7 @@ export class ChintanApi {
   purgeNotesBatch(noteIds: string[]): Promise<NotePurgeResponseWire> {
     return this.client.request('/v1/notes/purge', {
       method: 'POST',
-      body: { note_ids: noteIds },
+      body: { note_ids: noteIds } satisfies NotePurgeRequestWire,
       retry: NO_RETRY,
     });
   }

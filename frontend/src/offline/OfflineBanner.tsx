@@ -58,7 +58,7 @@ function useHasCachedNotes(): boolean {
  * the device's own copy is a bare array. All three live under the `notes` key
  * prefix precisely so this one lookup sees every one of them.
  */
-export function hasCachedNotes(client: QueryClient): boolean {
+function hasCachedNotes(client: QueryClient): boolean {
   return client
     .getQueryCache()
     .findAll({ queryKey: ['notes'] })

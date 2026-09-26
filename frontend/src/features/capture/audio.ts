@@ -11,12 +11,12 @@
 import type { CaptureContentType } from '@/api/schema.ts';
 
 /** What Whisper-class models actually consume. */
-export const TARGET_SAMPLE_RATE = 16_000;
-export const TARGET_CHANNELS = 1;
+const TARGET_SAMPLE_RATE = 16_000;
+const TARGET_CHANNELS = 1;
 /** Opus at 24 kbps is transparent for speech and is ~3.6 MB for 20 minutes. */
 export const TARGET_BITS_PER_SECOND = 24_000;
 
-export const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   channelCount: TARGET_CHANNELS,
   sampleRate: TARGET_SAMPLE_RATE,
   echoCancellation: true,

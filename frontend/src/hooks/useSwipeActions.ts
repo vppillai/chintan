@@ -43,7 +43,7 @@ import { LONG_PRESS_MS } from './useLongPress.ts';
  * one click.
  */
 
-export const SWIPE_SLOP_PX = 10;
+const SWIPE_SLOP_PX = 10;
 /** How far past the tray's width the row can be pulled. */
 export const SWIPE_RUBBER_PX = 24;
 const RUBBER_FACTOR = 0.35;
