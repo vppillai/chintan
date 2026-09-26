@@ -154,7 +154,7 @@
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--letter-spacing-caps);
   text-transform: uppercase;
-  line-height: 1;
+  line-height: var(--line-height-tight);
 }
 
 /* --------------------------------------------------------------------------
@@ -299,9 +299,9 @@
 }
 
 /*
- * The library's heading: "NOTES · 12" as a small-caps line, the day beneath
- * it in the notes' serif. The wordmark lives in the banner; the screen says
- * where — or rather when — you are.
+ * The library's heading row. These are the base shapes; home.css overrides
+ * them for the row the brand leads (round-3 T17 and R5-BR-H1): the wordmark
+ * first, "Notes · N" quiet at the row's end, and no date line.
  */
 .library-header {
   padding-block-end: var(--space-3);
@@ -311,19 +311,6 @@
   display: grid;
   gap: var(--space-1);
   inline-size: 100%;
-}
-
-/* The day. Second in the markup, so the heading reads "Notes" first, and
-   placed above the title here: what the eye meets first is where it is, in
-   the small caps of a section label, not the biggest text on the screen. */
-.library-heading__eyebrow {
-  order: -1;
-  font-family: var(--font-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-caps);
-  text-transform: uppercase;
-  color: var(--color-faint);
 }
 
 /* "Notes", in the notes' own serif, with the count beside it. */
