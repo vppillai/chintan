@@ -577,6 +577,36 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"GET /v1/devices → 200, oldest first and never a key: one perpetual device that has sent something (last_used_at, last_used_from as a neighbourhood, and usage_month set; expires_at null) and one thirty-day device that has not (those three null, expires_at set). No cursor.",
 		h.do(t, http.MethodGet, "/v1/devices", contractUser, nil))
 
+	// ---- web push
+	h = newHarness(t)
+	add("pushKey", "PushKeyWire",
+		"GET /v1/push/key → 200: the VAPID public key the browser subscribes with. 404 `notifications are not configured on this instance` when the owner has not put the pair in SSM (problemPushNotConfigured).",
+		h.do(t, http.MethodGet, "/v1/push/key", contractUser, nil))
+	// One subscription seeded as the worker leaves it after a send, so the
+	// list carries a last_success_at beside the null of the one the POST
+	// below creates. Created before the harness clock so it lists first.
+	if err := h.store.PutPushSubscription(context.Background(), contractUser, model.PushSubscription{
+		ID: service.PushSubscriptionID("https://fcm.googleapis.com/fcm/send/contract"), Endpoint: "https://fcm.googleapis.com/fcm/send/contract",
+		P256DH: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM", Auth: "tBHItJI5svbpez7KI4CCXg",
+		Label: "Chrome on Android", CreatedAt: model.FormatTime(harnessNow.AddDate(0, 0, -3)),
+		LastSuccessAt: model.FormatTime(harnessNow.Add(-time.Hour)),
+	}); err != nil {
+		t.Fatalf("seed push subscription: %v", err)
+	}
+	add("pushSubscriptionCreated", "PushSubscriptionWire",
+		"POST /v1/push/subscriptions → 201. The body was the browser's PushSubscription.toJSON() plus a label; the answer names the push service's host and never the endpoint or the keys. last_success_at is null until the worker has sent something.",
+		h.do(t, http.MethodPost, "/v1/push/subscriptions", contractUser, map[string]any{
+			"endpoint": "https://web.push.apple.com/send/contract", "expirationTime": nil,
+			"keys":  map[string]any{"p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM", "auth": "tBHItJI5svbpez7KI4CCXg"},
+			"label": "Safari on iPhone",
+		}))
+	add("pushSubscriptionsPage", "Page<PushSubscriptionWire>",
+		"GET /v1/push/subscriptions → 200, oldest first: one the worker has sent to (last_success_at set) and one it has not (null). No cursor.",
+		h.do(t, http.MethodGet, "/v1/push/subscriptions", contractUser, nil))
+	add("problemPushNotConfigured", "ProblemWire",
+		"GET /v1/push/key → 404 on an instance without a VAPID pair. The Notifications card reads this status as \"not set up here yet\" and explains the owner's step.",
+		newHarness(t, withoutPushKey()).do(t, http.MethodGet, "/v1/push/key", contractUser, nil))
+
 	// ---- problem documents
 	h = newHarness(t)
 	add("problemNotFound", "ProblemWire", "GET /v1/notes/{noteId} → 404",
@@ -665,6 +695,7 @@ var volatileStrings = map[string]string{
 	"purge_after":      contractTime,
 	"generated_at":     contractTime,
 	"last_used_at":     contractTime,
+	"last_success_at":  contractTime,
 	// A device key is ck_<id>_<24 random bytes as hex>; the stand-in keeps the shape.
 	"key": "ck_fixture-id_0123456789abcdef0123456789abcdef0123456789abcdef",
 }
@@ -786,6 +817,7 @@ func neededSchemaTypes(fixtures []contractFixture) []string {
 	known := map[string]bool{
 		"AskWire":            true,
 		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
+		"PushKeyWire": true, "PushSubscriptionWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
 		"NotePurgeResponseWire": true,
 		"Page":                  true, "PresignedDownloadWire": true, "ProblemWire": true,

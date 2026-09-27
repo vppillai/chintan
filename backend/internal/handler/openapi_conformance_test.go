@@ -400,6 +400,7 @@ func concretePath(p string) string {
 		"{exportId}", "sample-export",
 		"{askId}", "sample-ask",
 		"{deviceId}", "sample-device",
+		"{subscriptionId}", "0123456789abcdef",
 	)
 	return r.Replace(p)
 }
@@ -739,6 +740,36 @@ func statusScenarios() map[string]scenario {
 		},
 		"DELETE /v1/devices/{deviceId} -> 401": send(http.MethodDelete, "/v1/devices/dev_x", "", nil),
 		"DELETE /v1/devices/{deviceId} -> 404": send(http.MethodDelete, "/v1/devices/dev_missing", "user1", nil),
+
+		// ---- web push
+		"GET /v1/push/key -> 200": get("/v1/push/key", "user1"),
+		"GET /v1/push/key -> 401": get("/v1/push/key", ""),
+		"GET /v1/push/key -> 404": func(t *testing.T) int {
+			return newHarness(t, withoutPushKey()).do(t, http.MethodGet, "/v1/push/key", "user1", nil).Code
+		},
+		"GET /v1/push/subscriptions -> 200":  get("/v1/push/subscriptions", "user1"),
+		"GET /v1/push/subscriptions -> 401":  get("/v1/push/subscriptions", ""),
+		"POST /v1/push/subscriptions -> 201": send(http.MethodPost, "/v1/push/subscriptions", "user1", browserSubscription(1)),
+		"POST /v1/push/subscriptions -> 400": send(http.MethodPost, "/v1/push/subscriptions", "user1", map[string]any{"endpoint": "http://insecure"}),
+		"POST /v1/push/subscriptions -> 401": send(http.MethodPost, "/v1/push/subscriptions", "", browserSubscription(1)),
+		"POST /v1/push/subscriptions -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			for i := 0; i < model.MaxPushSubscriptionsPerTenant; i++ {
+				h.do(t, http.MethodPost, "/v1/push/subscriptions", "user1", browserSubscription(i))
+			}
+			return h.do(t, http.MethodPost, "/v1/push/subscriptions", "user1", browserSubscription(99)).Code
+		},
+		"POST /v1/push/subscriptions -> 413": send(http.MethodPost, "/v1/push/subscriptions", "user1",
+			[]byte(`{"endpoint":"https://`+strings.Repeat("x", handler.MaxSmallRequestBytes)+`"}`)),
+		"DELETE /v1/push/subscriptions/{subscriptionId} -> 204": func(t *testing.T) int {
+			h := newHarness(t)
+			w := h.do(t, http.MethodPost, "/v1/push/subscriptions", "user1", browserSubscription(1))
+			var created handler.PushSubscription
+			decodeInto(t, w, &created)
+			return h.do(t, http.MethodDelete, "/v1/push/subscriptions/"+created.ID, "user1", nil).Code
+		},
+		"DELETE /v1/push/subscriptions/{subscriptionId} -> 401": send(http.MethodDelete, "/v1/push/subscriptions/0123456789abcdef", "", nil),
+		"DELETE /v1/push/subscriptions/{subscriptionId} -> 404": send(http.MethodDelete, "/v1/push/subscriptions/0123456789abcdef", "user1", nil),
 
 		// ---- the inbox. No user on the request: the device key is the
 		// identity, and the harness passes it as the header a device would.

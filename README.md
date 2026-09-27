@@ -127,6 +127,18 @@ The sign-in page keeps its `amazoncognito.com` address, deliberately. A Cognito 
 
 Two things to know. The custom domain deploys only through the `chintan-cfn-deploy` service role (`CFN_DEPLOY_ROLE_ARN`, set by `setup.sh`): the CI role's permissions boundary lists no ACM or Route 53, on purpose. And `scripts/bootstrap.sh`, the hand-run recovery deploy, takes `--site-base https://app.example.com` for a custom-domain instance, because `--origin` alone spells the Pages form of the callback URL.
 
+### Notifications
+
+Web Push — a note on the phone when a recording files, even with the app closed — is built and dormant until the instance has a VAPID key pair (`docs/design/push.md`). Make one and put it in SSM, per instance, beside the provider keys:
+
+```bash
+scripts/vapid-keys.sh --instance dev        # prints the two commands below with fresh keys; writes nothing itself
+aws ssm put-parameter --region us-west-2 --type SecureString --overwrite --name /chintan/dev/vapid_private_key --value=...   # the worker signs with it
+aws ssm put-parameter --region us-west-2 --type SecureString --overwrite --name /chintan/dev/vapid_public_key  --value=...   # the API hands it to the browser
+```
+
+Both Lambdas read the parameters at cold start, so the switch on **You → Notifications** appears once they have restarted with the keys there (the next deploy does it). Without them the API answers `GET /v1/push/key` 404 and the card says notifications are not set up on this instance. On iOS the app must be installed to the Home Screen (16.4 or later); the card says so where that is the case.
+
 ### User preferences
 
 Per-user preferences — theme, cleanup mode, audio retention and the default transcription language — are settings in the app (**You**), stored per user, not instance configuration; they are the fields of `GET /v1/settings`, which also reports the instance's `daily_spend_cap_micros` read-only.

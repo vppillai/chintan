@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	lambdasvc "github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/awslabs/aws-lambda-go-api-proxy/httpadapter"
 
 	"github.com/vppillai/chintan/backend/internal/auth"
@@ -29,6 +30,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/pipeline"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
+	"github.com/vppillai/chintan/backend/internal/ssmparam"
 	"github.com/vppillai/chintan/backend/internal/upload"
 	"github.com/vppillai/chintan/backend/internal/usage"
 )
@@ -131,6 +133,15 @@ func init() {
 	// month and day rows the worker's breaker writes provider spend to.
 	usageStore := usage.NewDynamo(dynamoClient, tableName)
 
+	// The VAPID public key GET /v1/push/key hands the browser, when the owner
+	// has made the pair (docs/design/push.md). The one parameter this binary
+	// reads, and optional: without it the route answers 404 and the app's
+	// Notifications card explains the step.
+	vapidPublic, err := ssmparam.Optional(ctx, ssm.NewFromConfig(cfg), "VAPID_PUBLIC_KEY_PATH")
+	if err != nil {
+		log.Fatalf("Failed to read the VAPID public key: %v", err)
+	}
+
 	// The first request on a fresh container paid about 270 ms inside the
 	// handler — the JWKS fetch and the DynamoDB connection both opened there,
 	// not in init — and Home fans out five GETs, so an idle launch paid it on
@@ -139,7 +150,10 @@ func init() {
 	// is the readiness probe itself: one GetItem on its sentinel partition and
 	// one S3 GetObject, which also opens the S3 client the first note open
 	// and every presign would otherwise pay for. A failure is logged, not
-	// fatal: the first request then pays what it always did.
+	// fatal: the first request then pays what it always did. The VAPID read
+	// above is a third round-trip on every cold start — a ParameterNotFound
+	// on a dormant instance — that is not in the 270 ms and has not been
+	// measured; measure it once the keys exist.
 	readiness := service.NewReadinessService(store, objects)
 	warmCtx, cancelWarm := context.WithTimeout(ctx, warmTimeout)
 	defer cancelWarm()
@@ -174,6 +188,8 @@ func init() {
 		Storage:        service.NewStorageService(store),
 		Ask:            askService,
 		Devices:        service.NewDeviceService(store),
+		Push:           service.NewPushService(store),
+		PushPublicKey:  vapidPublic,
 		Store:          store,
 		Verifier:       verifier,
 		AllowedOrigin:  allowedOrigin,

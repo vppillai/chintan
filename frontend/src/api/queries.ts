@@ -12,3 +12,4 @@ export * from './queries/settings.ts';
 export * from './queries/ask.ts';
 export * from './queries/captures.ts';
 export * from './queries/devices.ts';
+export * from './queries/push.ts';

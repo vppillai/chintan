@@ -103,6 +103,10 @@ func deviceSK(deviceID string) string {
 	return "DEVICE#" + deviceID
 }
 
+func pushSubscriptionSK(id string) string {
+	return "PUSHSUB#" + id
+}
+
 // deviceKeyGSI1PK is the GSI1 partition a live device key is found under. The
 // index is sparse: a revoked row carries no gsi1 keys, so the lookup cannot
 // see it.
@@ -2067,6 +2071,139 @@ func (s *DynamoStore) LookupDeviceKey(ctx context.Context, keyID string) (model.
 	raw := out.Items[0]
 	tenantID := trimPrefix(readString(raw, "pk"), "USER#")
 	return s.GetDevice(ctx, tenantID, trimPrefix(readString(raw, "sk"), "DEVICE#"))
+}
+
+// ---------------------------------------------------------- push subscriptions
+
+// pushSubscriptionItemAttrs is a push subscription row: every field a named
+// attribute, like a device's, and no blob.
+func pushSubscriptionItemAttrs(tenantID string, sub model.PushSubscription) map[string]types.AttributeValue {
+	return map[string]types.AttributeValue{
+		"pk":              strAttr(userPK(tenantID)),
+		"sk":              strAttr(pushSubscriptionSK(sub.ID)),
+		"type":            strAttr("push_subscription"),
+		"push_id":         strAttr(sub.ID),
+		"endpoint":        strAttr(sub.Endpoint),
+		"p256dh":          strAttr(sub.P256DH),
+		"auth":            strAttr(sub.Auth),
+		"label":           strAttr(sub.Label),
+		"created_at":      strAttr(sub.CreatedAt),
+		"last_success_at": strAttr(sub.LastSuccessAt),
+		"failures":        numAttr(sub.Failures),
+	}
+}
+
+func pushSubscriptionFromItem(tenantID string, m map[string]types.AttributeValue) model.PushSubscription {
+	return model.PushSubscription{
+		ID:            readString(m, "push_id"),
+		TenantID:      tenantID,
+		Endpoint:      readString(m, "endpoint"),
+		P256DH:        readString(m, "p256dh"),
+		Auth:          readString(m, "auth"),
+		Label:         readString(m, "label"),
+		CreatedAt:     readString(m, "created_at"),
+		LastSuccessAt: readString(m, "last_success_at"),
+		Failures:      readInt(m, "failures"),
+	}
+}
+
+func (s *DynamoStore) PutPushSubscription(ctx context.Context, tenantID string, sub model.PushSubscription) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if sub.ID == "" {
+		return errors.New("repository: push subscription without an id")
+	}
+	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.tableName),
+		Item:      pushSubscriptionItemAttrs(tenantID, sub),
+	})
+	if err != nil {
+		return fmt.Errorf("dynamo put push subscription: %w", err)
+	}
+	return nil
+}
+
+func (s *DynamoStore) ListPushSubscriptions(ctx context.Context, tenantID string) ([]model.PushSubscription, error) {
+	var start map[string]types.AttributeValue
+	out := []model.PushSubscription{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		res, err := s.client.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.tableName),
+			KeyConditionExpression: aws.String("pk = :pk AND begins_with(sk, :sk_prefix)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":        strAttr(userPK(tenantID)),
+				":sk_prefix": strAttr("PUSHSUB#"),
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dynamo query push subscriptions: %w", err)
+		}
+		for _, raw := range res.Items {
+			out = append(out, pushSubscriptionFromItem(tenantID, raw))
+		}
+		start = res.LastEvaluatedKey
+		if len(start) == 0 {
+			break
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt < out[j].CreatedAt })
+	return out, nil
+}
+
+// UpdatePushSubscriptionResult is one conditional UpdateItem on the two
+// counters; a row the person removed meanwhile is left removed.
+func (s *DynamoStore) UpdatePushSubscriptionResult(ctx context.Context, tenantID, id, lastSuccessAt string, failures int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(pushSubscriptionSK(id)),
+		},
+		UpdateExpression:    aws.String("SET last_success_at = :t, failures = :f"),
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":t": strAttr(lastSuccessAt),
+			":f": numAttr(failures),
+		},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("dynamo update push subscription result: %w", err)
+	}
+	return nil
+}
+
+// DeletePushSubscription is conditional on the row existing, so the API can
+// answer 404 for an id the tenant never had rather than 204 for nothing.
+func (s *DynamoStore) DeletePushSubscription(ctx context.Context, tenantID, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(pushSubscriptionSK(id)),
+		},
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("dynamo delete push subscription: %w", err)
+	}
+	return nil
 }
 
 func (s *DynamoStore) PutAsk(ctx context.Context, tenantID string, a model.Ask) error {

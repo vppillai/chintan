@@ -57,6 +57,7 @@ tags:
   - name: usage
   - name: ask
   - name: devices
+  - name: push
   - name: inbox
   - name: export
 
@@ -714,6 +715,95 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/push/key:
+    get:
+      tags: [push]
+      summary: The VAPID public key
+      description: |
+        The key a browser subscribes with
+        (`pushManager.subscribe({applicationServerKey})`). 404
+        `notifications are not configured on this instance` until the
+        owner has put the pair in SSM (`scripts/vapid-keys.sh`); the
+        Notifications card on You reads that status as "not set up here
+        yet". See `docs/design/push.md`.
+      responses:
+        '200':
+          description: The public key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushKey' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: No VAPID key pair on this instance.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/push/subscriptions:
+    get:
+      tags: [push]
+      summary: List push subscriptions
+      description: |
+        The caller's browser subscriptions, oldest first: the push
+        service's host, the browser's label, when made, when the worker
+        last got a message through and how many sends since have failed.
+        Never the endpoint or the keys — anyone holding them could send
+        to that browser.
+      responses:
+        '200':
+          description: The subscriptions, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushSubscriptionPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [push]
+      summary: Subscribe this browser
+      description: |
+        The body is the browser's own `PushSubscription.toJSON()` —
+        `endpoint`, `expirationTime` and `keys` — plus a `label` for the
+        list. Idempotent on the endpoint: the same endpoint again rewrites
+        the keys and keeps the row, so a browser that re-subscribes on
+        every start holds one row. At most ten per tenant (409 `you already
+        have ten notification subscriptions; remove one first`). The id is
+        the first sixteen hex characters of the endpoint's SHA-256, which
+        the browser can compute itself to find or remove its own row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushSubscribe' }
+      responses:
+        '201':
+          description: The subscription as the list shows it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushSubscription' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Ten subscriptions already.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+
+  /v1/push/subscriptions/{subscriptionId}:
+    parameters:
+      - $ref: '#/components/parameters/PushSubscriptionId'
+    delete:
+      tags: [push]
+      summary: Remove a push subscription
+      description: |
+        The worker stops sending to it at once. A subscription that is not
+        the caller's is 404. The worker also removes a row on its own when
+        the push service answers 404 or 410 for it.
+      responses:
+        '204':
+          description: Removed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/captures:
     get:
       tags: [captures]
@@ -1301,6 +1391,11 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+    PushSubscriptionId:
+      name: subscriptionId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[0-9a-f]{16}$' }
     InboxNoteId:
       name: X-Chintan-Note-Id
       in: header
@@ -2382,6 +2477,60 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/Device' }
+
+    PushKey:
+      type: object
+      required: [public_key]
+      properties:
+        public_key:
+          type: string
+          description: The VAPID public key, a P-256 point in base64url, as `applicationServerKey` takes it.
+
+    PushSubscribe:
+      type: object
+      required: [endpoint, keys]
+      description: |
+        `PushSubscription.toJSON()` as the browser produces it, with the
+        app's label for the list. `expirationTime` is accepted because the
+        browser sends it; nothing reads it.
+      properties:
+        endpoint: { type: string, format: uri, maxLength: 2048, description: An https URL at the browser's push service. }
+        expirationTime: { type: [number, 'null'] }
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh: { type: string, maxLength: 256, description: The browser's P-256 public key, base64url. }
+            auth: { type: string, maxLength: 256, description: The browser's authentication secret, base64url. }
+        label:
+          type: string
+          maxLength: 60
+          description: What the browser calls itself ("Safari on iPhone"); cut to sixty characters, never refused.
+
+    PushSubscription:
+      type: object
+      required: [id, endpoint_host, label, created_at, last_success_at, failures]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{16}$', description: The first sixteen hex characters of the endpoint's SHA-256. }
+        endpoint_host: { type: string, description: The push service's host, which says whose browser this is; never the endpoint itself. }
+        label: { type: string }
+        created_at: { type: string, format: date-time }
+        last_success_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the push service last accepted a message for this subscription; null until it has.
+        failures:
+          type: integer
+          description: Sends the push service refused since the last it accepted. A 404 or 410 removes the row instead of counting.
+
+    PushSubscriptionPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PushSubscription' }
 
     AskRequest:
       type: object

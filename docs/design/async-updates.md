@@ -1,11 +1,13 @@
 # How the app learns that a recording landed
 
 Status: the poll and the focus refetch are implemented (2026-09-26, round 5,
-R5-RC-3); Web Push is proposed and awaits owner decision R5-RC-D1/D2. Code
-today: `usePendingCaptures` and `capturePollInterval`
+R5-RC-3); Web Push was approved (R5-RC-D1/D2) and built on 2026-09-27,
+dormant until the owner puts a VAPID key pair in SSM — `docs/design/push.md`
+is now its design note, and the section below is the proposal as it was
+written. Code today: `usePendingCaptures` and `capturePollInterval`
 (`frontend/src/api/queries/captures.ts`), the library's receipts (`FilingRow.tsx`,
 `docs/design/capture-ux.md` "Receipts on Home"), the note screen's own poll
-(`useNote`, the same function). Nothing in this note changes the wire.
+(`useNote`, the same function).
 
 A recording is appended by the worker, not by the client that is watching.
 The app that made it has a row to watch; the app that did not — a phone in a
@@ -87,10 +89,14 @@ conditional GET itself, cutting 9.7 KB to ~300 B on an unchanged answer — but
 the gateway and the Lambda still run, and with the ladder the poll is ~80
 requests a day. Add when a tenant's bytes matter.
 
-## Web Push, as it would be built
+## Web Push, as it was proposed
 
-Status: proposed; awaiting owner decision R5-RC-D1 (build it) and R5-RC-D2
-(where the permission is asked). The worker already knows the moment an
+Status: approved (R5-RC-D1, R5-RC-D2) and built; `docs/design/push.md`
+describes what shipped, which differs from this sketch in the small: `POST`
+(idempotent on the endpoint) rather than `PUT`, the key at `/v1/push/key`,
+the row under `PUSHSUB#`, both halves of the pair in SSM, `notify` hooked
+once at the end of `runCapture` rather than in three stages, and a list
+route so the card can count devices. The worker already knows the moment an
 append completes; a VAPID push is one HTTPS POST from that hook to the
 browser's push service, which is free. It adds one row kind, three small
 routes, one Go dependency, a service-worker handler and one card on You — no

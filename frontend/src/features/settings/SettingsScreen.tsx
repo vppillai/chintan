@@ -14,6 +14,7 @@ import { useTheme } from '@/theme/useTheme.ts';
 
 import { DevicesCard } from './DevicesCard.tsx';
 import { ExportCard } from './ExportCard.tsx';
+import { NotificationsCard } from './NotificationsCard.tsx';
 import { RowLink, Segmented, SettingsCard, SettingsRow } from './SettingsCard.tsx';
 import { VersionFootnote } from './VersionFootnote.tsx';
 import { AUTO_LANGUAGE, languageName } from './languages.ts';
@@ -59,8 +60,8 @@ const SAVED_TICK_MS = 2_500;
  * You.
  *
  * The account first, then the cards: how a recording becomes text, how the
- * app looks, passkeys, the devices that may record into it, your data, and
- * where the app comes from. Each card is
+ * app looks, passkeys, notifications, the devices that may record into it,
+ * your data, and where the app comes from. Each card is
  * a title, one line on what it is for, its controls as rows, and one sentence
  * of footnote with the rest behind More — so the screen is a list of shapes
  * to scan rather than a column of prose with a control every few hundred
@@ -304,6 +305,9 @@ export function SettingsScreen() {
 
       {/* ---- Passkeys ------------------------------------------------------ */}
       <PasskeyCard />
+
+      {/* ---- Notifications: the switch that asks the browser's permission --- */}
+      <NotificationsCard />
 
       {/* ---- Devices & shortcuts: keys for the inbox ----------------------- */}
       <DevicesCard />

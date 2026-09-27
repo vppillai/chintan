@@ -331,6 +331,23 @@ type Store interface {
 	// moment after the revoke), and the caller refuses it by revoked_at.
 	LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error)
 
+	// PutPushSubscription writes a push subscription row (sk PUSHSUB#<id>)
+	// whole, replacing what is there. No version: the API upserts the row by
+	// endpoint, and a lost race between two subscribes costs nothing.
+	PutPushSubscription(ctx context.Context, tenantID string, s model.PushSubscription) error
+	// UpdatePushSubscriptionResult writes the worker's two send counters on
+	// an existing row, or ErrNotFound when the row is gone. Conditional so a
+	// send that raced the person turning the switch off does not put the
+	// row back: a whole-row Put after the DELETE would re-enrol the browser
+	// until the push service's next 410 pruned it again.
+	UpdatePushSubscriptionResult(ctx context.Context, tenantID, id, lastSuccessAt string, failures int64) error
+	// ListPushSubscriptions returns every push subscription of the tenant,
+	// oldest first. At most ten, so there is no page.
+	ListPushSubscriptions(ctx context.Context, tenantID string) ([]model.PushSubscription, error)
+	// DeletePushSubscription removes one row, or ErrNotFound when the
+	// tenant has no such subscription.
+	DeletePushSubscription(ctx context.Context, tenantID, id string) error
+
 	// PutAsk writes a question row (sk ASK#<id>) whole, replacing what is
 	// there, with the TTL a.ExpiresAt names. There is no version: the API
 	// writes the row once, pending, and only the worker writes it again, so

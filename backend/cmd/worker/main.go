@@ -55,8 +55,10 @@ import (
 	"github.com/vppillai/chintan/backend/internal/pipeline"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/purge"
+	"github.com/vppillai/chintan/backend/internal/push"
 	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
+	"github.com/vppillai/chintan/backend/internal/ssmparam"
 	"github.com/vppillai/chintan/backend/internal/storagesnap"
 	"github.com/vppillai/chintan/backend/internal/usage"
 )
@@ -168,6 +170,30 @@ func setup() {
 		cleanInvoker = pipeline.NewInvoker(lambdasvc.NewFromConfig(cfg), arn)
 	}
 
+	// Web Push is dormant until the owner puts the VAPID pair in SSM
+	// (scripts/vapid-keys.sh, docs/design/push.md). Both halves are optional
+	// reads: an instance without them starts, files recordings and sends
+	// nothing, and says so once here rather than on every capture.
+	vapidPublic, err := ssmparam.Optional(ctx, ssmClient, "VAPID_PUBLIC_KEY_PATH")
+	if err != nil {
+		log.Fatalf("failed to read the VAPID public key: %v", err)
+	}
+	vapidPrivate, err := ssmparam.Optional(ctx, ssmClient, "VAPID_PRIVATE_KEY_PATH")
+	if err != nil {
+		log.Fatalf("failed to read the VAPID private key: %v", err)
+	}
+	var pusher pipeline.Pusher
+	if vapidPublic != "" && vapidPrivate != "" {
+		sender, err := push.New(vapidPublic, vapidPrivate, envOr("VAPID_SUBJECT", "https://github.com/vppillai/chintan"))
+		if err != nil {
+			log.Fatalf("failed to build the web push sender: %v", err)
+		}
+		pusher = sender
+	} else {
+		slog.Info("web push is not configured; no notification is sent when a recording files",
+			slog.String("hint", "put vapid_public_key and vapid_private_key under /chintan/<instance>/ in SSM; scripts/vapid-keys.sh prints the commands"))
+	}
+
 	p, err := pipeline.New(pipeline.Config{
 		Store:        store,
 		Objects:      objects,
@@ -177,6 +203,7 @@ func setup() {
 		Notes:        notes,
 		Breaker:      spend,
 		CleanInvoker: cleanInvoker,
+		Pusher:       pusher,
 		STTProvider:  "groq",
 		STTModel:     stt.Model(),
 		LLMProvider:  "openai",

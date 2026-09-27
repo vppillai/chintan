@@ -864,6 +864,18 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       return;
     }
 
+    // ---- Web Push ------------------------------------------------------
+    // The instance under test has no VAPID pair, as a fresh deploy does not
+    // until the owner makes one: the key is the contract's 404 and the
+    // Notifications card says so.
+    if (path === '/v1/push/key') {
+      await problem(route, 404, {
+        title: 'Not found',
+        detail: 'notifications are not configured on this instance',
+      });
+      return;
+    }
+
     // ---- Settings and tags ---------------------------------------------
     if (path === '/v1/settings') {
       if (method === 'PUT') {

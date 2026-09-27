@@ -40,6 +40,8 @@
 
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from 'workbox-precaching';
 
+import { ROUTES } from './app/routes.ts';
+
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: { url: string; revision: string | null }[];
 };
@@ -104,6 +106,101 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
   if ((event.data as { type?: string } | null)?.type === 'SKIP_WAITING') {
     void self.skipWaiting();
   }
+});
+
+/* ------------------------------------------------------------------------
+   Web Push (docs/design/push.md)
+   ------------------------------------------------------------------------ */
+
+/**
+ * What the worker sends after a capture is appended, parks at needs_target
+ * or fails: which capture, which note, and the note's title. Never the
+ * text — this may be read from a lock screen.
+ */
+interface PushPayload {
+  type: 'appended' | 'needs_target' | 'failed';
+  capture_id: string;
+  note_id?: string;
+  title?: string;
+}
+
+/** The title when the payload names no note, and the body for each outcome. */
+const PUSH_TITLES: Record<PushPayload['type'], string> = {
+  appended: 'Filed',
+  needs_target: 'Needs a note',
+  failed: 'Did not finish',
+};
+const PUSH_BODIES: Record<PushPayload['type'], string> = {
+  appended: 'A recording was filed.',
+  needs_target: 'A recording is waiting for you to choose its note.',
+  failed: 'A recording could not be filed. Open the app to try again.',
+};
+
+function readPushPayload(data: PushMessageData | null): PushPayload | null {
+  try {
+    const payload = data?.json() as PushPayload | undefined;
+    return payload && payload.type in PUSH_TITLES ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the notification opens: the note, or Home for a capture without one. Under the scope, like every URL here. */
+function pushTarget(payload: PushPayload): string {
+  if (!payload.note_id) return self.registration.scope;
+  return new URL(ROUTES.note(payload.note_id).slice(1), self.registration.scope).href;
+}
+
+self.addEventListener('push', (event: PushEvent) => {
+  const payload = readPushPayload(event.data);
+  if (!payload) return;
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      // Every open window learns first, so a Home in view shows the receipt
+      // the way it shows every other filing (`usePushWakeup`).
+      for (const client of windows) {
+        client.postMessage({ type: 'CAPTURES_CHANGED', note_id: payload.note_id ?? null });
+      }
+      // A focused window is already looking at it, and a notification on
+      // top would be noise. Chrome lets a push pass without one only in
+      // this case; iOS shows one regardless, which is accepted.
+      if (windows.some((client) => client.focused)) return;
+      // The tag is the note, so a ring day's fourth filing into "Shopping
+      // list" replaces the third in the shade rather than stacking under it
+      // — the same grouping Home does.
+      await self.registration.showNotification(payload.title || PUSH_TITLES[payload.type], {
+        body: PUSH_BODIES[payload.type],
+        tag: payload.note_id ?? payload.capture_id,
+        icon: new URL('icon-192.png', self.registration.scope).href,
+        data: { url: pushTarget(payload) },
+      });
+    })(),
+  );
+});
+
+self.addEventListener('notificationclick', (event: NotificationEvent) => {
+  event.notification.close();
+  const url = (event.notification.data as { url?: string } | null)?.url ?? self.registration.scope;
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const open = windows[0];
+      if (open) {
+        // `navigate` rejects for a window this worker does not control (the
+        // match included uncontrolled ones on purpose, so a tab mid-install
+        // is still found); a new window is the fallback, not a dead tap.
+        try {
+          await open.focus();
+          await open.navigate(url);
+          return;
+        } catch {
+          /* fall through to a new window */
+        }
+      }
+      await self.clients.openWindow(url);
+    })(),
+  );
 });
 
 /**
