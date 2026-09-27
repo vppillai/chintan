@@ -38,7 +38,7 @@ constants.
 
 | Prompt | Purpose | System / user prompt | Reply and parser | Completion cap |
 |---|---|---|---|---|
-| Routing | Which note a dictated capture belongs to, and which words were spoken to the app | `routing.SystemPrompt`, `routing.UserPrompt(transcript, candidates, language)` (`backend/internal/routing/prompt.go`) | `{"action","note"\|"title","confidence","instruction_spans"}` → `parseRouteDecision` (`provider/openai_router.go`) | 200 tokens |
+| Routing | Which note a dictated capture belongs to, what kind a new one is, and which words were spoken to the app | `routing.SystemPrompt`, `routing.UserPrompt(transcript, candidates, language)` (`backend/internal/routing/prompt.go`) | `{"action","note"\|"title","kind","confidence","instruction_spans"}` → `parseRouteDecision` (`provider/openai_router.go`) | 200 tokens |
 | Cleanup | Clean one transcript faithfully as it is appended | `cleanup.SystemPrompt()`, `cleanup.UserPrompt` (`backend/internal/cleanup/prompt.go`) | the cleaned text | none (as long as the recording) |
 | Checklist items | The items one recording adds to a checklist | `cleanup.ItemsPrompt` (`backend/internal/cleanup/items.go`) | `{"items":[…]}` → `cleanup.ParseItems` | 3× the input, floor 512 |
 | Whole-note, structured / polished | The Cleaned tab: the whole body as one document | `cleanup.NotePrompt(mode, body, language)` (`cleanup/prompt.go`) | Markdown → `cleanup.NoteOutput` | 1.5× the input, floor 256 |
@@ -60,17 +60,22 @@ target note as the only candidate, for a capture recorded into a note whose
 transcript contains a filing or naming cue (`routing.MentionsInstruction`,
 `routing/spans.go`; no cue, no call).
 
-**Sent.** The system prompt (987 tokens; 1,433 until 2026-09-27): the two
-kinds of app instruction (filing, naming), the reply shape, then three
-sections — *Destination* (append only when a listed note was clearly asked
-for by its title or one of its other names; a spoken title that is a listed
-note's title or other name is an append to it, which is the rule
-`pipeline.preferExistingTitle` enforces after the reply, and which the old
-prompt stated the other way round, so 13 % of routes were corrected after the
-fact; confidence), *Spans* (positions read off the numbering, the shorter
-span in doubt, the name/content boundary) and *Titles* (as spoken, however
-short; invented only when none was spoken; the speaker's script) — and the
-same five worked examples. The user prompt: the language line when the
+**Sent.** The system prompt (987 tokens measured before the kind rule of
+2026-09-27, which adds roughly 150 at four characters a token; 1,433 until
+2026-09-27): the two kinds of app instruction (filing, naming), the reply
+shape, then four sections — *Destination* (append only when a listed note
+was clearly asked for by its title or one of its other names; a spoken title
+that is a listed note's title or other name is an append to it, which is the
+rule `pipeline.preferExistingTitle` enforces after the reply, and which the
+old prompt stated the other way round, so 13 % of routes were corrected after
+the fact; confidence), *Spans* (positions read off the numbering, the shorter
+span in doubt, the name/content boundary), *Titles* (as spoken, however
+short; invented only when none was spoken; the speaker's script) and *Kind*,
+for `new` only (`checklist` when the speaker names a list — shopping list,
+groceries, to-do, packing list, "add X to the Y list" — or dictates things
+to tick off one by one; otherwise, and in doubt, `note`) — and six worked
+examples, the sixth "add milk to my groceries list" with no Groceries note
+listed. The user prompt: the language line when the
 capture's language is known (`cleanupLanguage`); `Existing notes:` — one
 numbered line per candidate, `3 | Roof repair | also: gutters, roof, house`,
 the aliases and then the tags after `also:` (either spoken is a request for
@@ -93,8 +98,9 @@ hold "okay so this goes in the roof repair note", which no cue in
 `routing.instructionCues` matches.
 
 **Reply.** `action` is `append` with `note`, the 1-based number of the
-candidate's line, or `new` with a `title`; `confidence` 0–1;
-`instruction_spans` as `{start_word, end_word}` pairs. `parseRouteDecision`
+candidate's line, or `new` with a `title` and a `kind` (`note` or
+`checklist`); `confidence` 0–1; `instruction_spans` as `{start_word,
+end_word}` pairs. `parseRouteDecision`
 maps the number back to the id (`listedNoteID`) and still accepts a `note_id`
 string when it is one of the listed ids, so a model answering in the
 pre-2026-09-27 shape is not refused. The note content is never in the reply:
@@ -104,7 +110,9 @@ construction.
 
 **Guards after the reply** (`Route` and `routedContent`): a number off the
 list, a fraction, or an id that was not offered is "unknown note id" and
-refused; no `instruction_spans` field at all, spans
+refused; a `kind` that is not exactly `checklist` is a plain note, and a
+`kind` on an append is ignored, since the note already has one
+(`RouteDecision.Checklist`); no `instruction_spans` field at all, spans
 that do not fit the transcript, a fractional or missing position, or spans
 removing more than 24 words in total (`routing.MaxInstructionWords`) each
 discard the spans and keep every word; spans that leave no content are
@@ -114,9 +122,13 @@ title; the derived content is re-checked as a sub-sequence of the transcript
 (`llm.VerifySubsequence`); the title is one line of at most 120 runes;
 confidence is clamped. Then the pipeline: a `new` decision whose title names
 an active candidate, by title, alias or tag, becomes an append to it
-(`preferExistingTitle`); a decode or unknown-id error is retried
-(`routeWithRetries`), and a routing failure files the capture as
-`needs_target` rather than losing it.
+(`preferExistingTitle`); a `new` checklist is created as one, `Kind` written
+on the row in the same `PutNote` as the language, so the same run extracts
+its items rather than cleaning the sentence into a plain note — the owner's
+"add milk to the shopping list" with no such list had become the item "Add
+milk to the shopping list." (`docs/design/checklists.md`, "A new list"); a
+decode or unknown-id error is retried (`routeWithRetries`), and a routing
+failure files the capture as `needs_target` rather than losing it.
 
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`,
 `RouterTitleMatchedExistingNote` (11 of 86 routes in the week measured under
@@ -265,8 +277,11 @@ the PR. The fixtures deliberately include phrasings outside
 T9 Hindi case, Malayalam filing and dictation, mixed-script words, three tag
 phrasings ("file this under house"), the two owner sentences of 2026-09-26
 ("create a shopping list and add chickpeas and green gram into it", "Add
-umbrella to shopping list") and an injection attempt per prompt, so a rewrite
-is measured on what the cue list and the unit tests cannot see.
+umbrella to shopping list"), the owner sentence of 2026-09-27 ("add milk to
+the shopping list": an append when the list is listed, and as "add milk to
+my groceries list" a new note whose `kind` must be `checklist`, with the
+items case yielding "Milk" either way) and an injection attempt per prompt,
+so a rewrite is measured on what the cue list and the unit tests cannot see.
 
 The 2026-09-27 rewrite (round-5 prompts PR B) shipped without that baseline:
 the owner approved measuring it on production instead, since the agent that

@@ -86,6 +86,32 @@ the targeted path's instruction strip, are not applied to a checklist's
 content, because the extraction handles those words itself and the item is
 no longer at the mercy of where a span ended.
 
+### A new list
+
+A recording on Home that names a list no note holds — "add milk to the
+shopping list" before any Shopping list exists — used to end as a plain note
+holding the cleaned sentence `Add milk to the shopping list.`: the router
+created every new note plain (`CreateNote(ctx, tenantID, title, nil)`), so
+the pipeline ran the prose cleanup, and when the owner converted the note the
+sentence became its one item (owner feedback 2026-09-27, capture of 05:42Z).
+The router's `new` decision now carries a `kind` — `checklist` when the
+speaker names a list (shopping list, groceries, to-do, packing list, "add X
+to the Y list") or dictates things to tick off one by one; `note` otherwise
+and in doubt (`routing.SystemPrompt`, "Kind") — and `Pipeline.route` writes
+it on the new row before the capture points at the note, in the same
+`PutNote` as the language, so `run()` takes the `extractItems` branch for
+that same recording and the body is `- [ ] Milk`. The parse is strict
+(`RouteDecision.Checklist`): exactly `checklist` makes one, anything else is
+a plain note, because a plain note the person can convert while a checklist
+they did not ask for has already turned their prose into items.
+
+An append never carries a kind. When the router files a list-shaped sentence
+into an existing plain note — "add eggs to my kitchen note" — the note stays
+what it is and the sentence is cleaned into it; converting is the person's
+call, and nothing guesses it. A capture parked at `needs_target` (routing
+unconfigured, or a routing fault) loses the kind too: the person names the
+note and it is created plain.
+
 Three outcomes besides items:
 
 - **No items** (`{"items":[]}`): the recording only told the app what to do
