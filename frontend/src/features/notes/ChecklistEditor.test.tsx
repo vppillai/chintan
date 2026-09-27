@@ -267,11 +267,15 @@ describe('reordering by the grip', () => {
       'Move down',
       'Move to top',
       'Move to bottom',
+      'Make a sub-item',
+      'Move up a level',
       'Delete',
     ]);
-    // The top row cannot move up.
+    // The top row cannot move up, and the first item can never be a sub-item.
     expect(within(menu).getByRole('menuitem', { name: 'Move up' })).toBeDisabled();
     expect(within(menu).getByRole('menuitem', { name: 'Move to top' })).toBeDisabled();
+    expect(within(menu).getByRole('menuitem', { name: 'Make a sub-item' })).toBeDisabled();
+    expect(within(menu).getByRole('menuitem', { name: 'Move up a level' })).toBeDisabled();
 
     await user.click(within(menu).getByRole('menuitem', { name: 'Move down' }));
     expect(body()).toBe('- [x] Eggs\n- [ ] Bread\n- [ ] Milk');
@@ -357,6 +361,136 @@ describe('reordering by the grip', () => {
     expect(list).not.toHaveAttribute('data-dragging');
     fireEvent.pointerUp(list, { ...mouse, clientX: 10, clientY: 40 });
     expect(log.bodies).toEqual([]);
+  });
+});
+
+describe('one level of sub-items', () => {
+  const PARTY = '- [ ] Party\n- [ ] Plates\n- [x] Eggs\n- [ ] Bread';
+
+  it('Tab in a field makes the item a sub-item of the one above, Shift+Tab brings it up; both save at once', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount(PARTY);
+    const plates = screen.getByRole('textbox', { name: 'Item 2' });
+    await user.click(plates);
+
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n- [x] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(1);
+    // The same field, still focused, now named for what it is, and its row set in.
+    expect(plates).toHaveFocus();
+    expect(plates).toHaveAccessibleName('Sub-item 2');
+    expect(plates.closest('li')).toHaveAttribute('data-depth', '1');
+    expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
+
+    // Already one level in: Tab can nest no deeper, so it is the browser's
+    // Tab and focus leaves the field rather than sticking in it.
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n- [x] Eggs\n- [ ] Bread');
+    expect(plates).not.toHaveFocus();
+
+    await user.click(plates);
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(body()).toBe(PARTY);
+    expect(plates).toHaveFocus();
+    expect(plates).toHaveAccessibleName('Item 2');
+    expect(plates.closest('li')).not.toHaveAttribute('data-depth');
+    expect(screen.getByText('Moved up a level')).toHaveAttribute('role', 'status');
+    // The Tab that left the field blurred it, which saves too; the un-nest saved again.
+    expect(log.saves).toBe(3);
+
+    // At the top level Shift+Tab is the browser's too.
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    expect(body()).toBe(PARTY);
+    expect(plates).not.toHaveFocus();
+  });
+
+  it('the first item can never be a sub-item', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount(PARTY);
+    await user.click(screen.getByRole('textbox', { name: 'Item 1' }));
+    await user.keyboard('{Tab}');
+    expect(body()).toBe(PARTY);
+    // Nothing written: the Tab was the browser's, and focus left the field.
+    expect(log.bodies).toEqual([]);
+    expect(screen.getByRole('textbox', { name: 'Item 1' })).not.toHaveFocus();
+  });
+
+  it('nests under the row shown above, not the body’s previous line when that one is done', async () => {
+    const user = userEvent.setup();
+    const { body } = mount(LIST);
+    // Milk and Bread are the open rows; Eggs sits in Done between them in the body.
+    const bread = screen.getByRole('textbox', { name: 'Item 2' });
+    await user.click(bread);
+    await user.keyboard('{Tab}');
+    expect(body()).toBe('- [ ] Milk\n  - [ ] Bread\n- [x] Eggs');
+    // The row's line moved up past Eggs's, so its field is a fresh element; focus followed.
+    expect(screen.getByRole('textbox', { name: 'Sub-item 2' })).toHaveFocus();
+    expect(screen.getByRole('textbox', { name: 'Sub-item 2' })).toHaveValue('Bread');
+  });
+
+  it('the grip’s menu nests and un-nests the row and keeps the keyboard on its grip', async () => {
+    const user = userEvent.setup();
+    const { body } = mount(PARTY);
+    const grip = screen.getByRole('button', { name: 'Move Plates' });
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    let menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: 'Move up a level' })).toBeDisabled();
+    await user.click(within(menu).getByRole('menuitem', { name: 'Make a sub-item' }));
+    expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n- [x] Eggs\n- [ ] Bread');
+    expect(screen.getByRole('button', { name: 'Move Plates' })).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'Move Plates' }));
+    menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: 'Make a sub-item' })).toBeDisabled();
+    await user.click(within(menu).getByRole('menuitem', { name: 'Move up a level' }));
+    expect(body()).toBe(PARTY);
+  });
+
+  it('ticking a parent ticks its sub-items and the block is held, then moves to Done together', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [ ] Party\n  - [ ] Plates\n  - [ ] Cups\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Party' }));
+    expect(body()).toBe('- [x] Party\n  - [x] Plates\n  - [x] Cups\n- [ ] Bread');
+    expect(log.saves).toBe(1);
+    // For the beat, all three stay in the open list, ticked and struck.
+    const open = within(items());
+    expect(open.getByRole('checkbox', { name: 'Plates' })).toBeChecked();
+    expect(open.getByRole('checkbox', { name: 'Cups' }).closest('li')).toHaveClass('checklist__row--done');
+    expect(screen.queryByRole('region', { name: /^Done/ })).toBeNull();
+    // Then the block moves as one, its depth kept.
+    const done = within(await screen.findByRole('region', { name: /^Done/ }));
+    expect(done.getAllByRole('checkbox')).toHaveLength(3);
+    expect(done.getByRole('checkbox', { name: 'Party' }).closest('li')).not.toHaveAttribute('data-depth');
+    expect(done.getByRole('checkbox', { name: 'Plates' }).closest('li')).toHaveAttribute('data-depth', '1');
+    expect(done.getByRole('checkbox', { name: 'Cups' }).closest('li')).toHaveAttribute('data-depth', '1');
+    expect(open.queryByRole('checkbox', { name: 'Party' })).toBeNull();
+
+    // Reopening a sub-item reopens its parent with it; the other stays done.
+    await user.click(done.getByRole('checkbox', { name: 'Plates' }));
+    expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n  - [x] Cups\n- [ ] Bread');
+    expect(await open.findByRole('checkbox', { name: 'Party' })).not.toBeChecked();
+    expect(open.getByRole('checkbox', { name: 'Plates' })).not.toBeChecked();
+    expect(within(doneSection()).getByRole('checkbox', { name: 'Cups' })).toBeChecked();
+  });
+
+  it('a parent moves down past its own sub-items as a block, and a block that ends the list cannot move down', async () => {
+    const user = userEvent.setup();
+    const { body } = mount('- [ ] Party\n  - [ ] Plates\n- [ ] Bread');
+    const grip = screen.getByRole('button', { name: 'Move Party' });
+    grip.focus();
+    await user.keyboard('{ArrowDown}');
+    expect(body()).toBe('- [ ] Bread\n- [ ] Party\n  - [ ] Plates');
+    // Focus follows the parent, which now stands second.
+    expect(screen.getByRole('button', { name: 'Move Party' })).toHaveFocus();
+    expect(openValues()).toEqual(['Bread', 'Party', 'Plates', '']);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Party' }), { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: 'Move down' })).toBeDisabled();
+    expect(within(menu).getByRole('menuitem', { name: 'Move to bottom' })).toBeDisabled();
+    expect(within(menu).getByRole('menuitem', { name: 'Move up' })).toBeEnabled();
   });
 });
 

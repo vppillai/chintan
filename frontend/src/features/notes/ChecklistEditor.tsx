@@ -16,14 +16,18 @@ import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
 
 import {
+  blockOf,
+  canNest,
   insertItemAfter,
   moveItem,
+  nestUnder,
   parseChecklist,
   removeDone,
   removeItem,
   setItemText,
   toggleItem,
   uncheckAll,
+  unnest,
   type ChecklistItem,
 } from './checklist.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
@@ -51,6 +55,24 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * a recording landing by refetch — drops the row, since the slots it was
  * moving between are gone. Done rows have no grip: their order is the
  * body's, and nothing shows it.
+ *
+ * One level of sub-items (2026-09-27, CL-D1): a row at depth 1 is set in by
+ * one spacing step (`data-depth`, checklist.css) with the same drawn box.
+ * Tab in a row's field makes it a sub-item of the open row shown above it
+ * (`nestUnder` — the row a person sees, not the body's previous line, which
+ * may be a done one sitting in Done) and Shift+Tab brings it up a level
+ * (`unnest`), as Keep does; the grip's menu carries the same two as "Make a
+ * sub-item" / "Move up a level" for the finger and for anyone who does not
+ * know the keys. Tab that can change nothing — the first row, a row already
+ * a sub-item — is left to the browser, so the list is never a keyboard
+ * trap. Ticking a parent ticks its sub-items and the whole block
+ * is held for the beat and moves to Done together; reopening a sub-item
+ * reopens its parent with it (`toggleItem`). A parent's block moves as one
+ * from the grip: Move down steps past its own children, and a block that
+ * ends the list cannot move down. A row dropped on a sub-item's slot
+ * becomes a sub-item, one dropped on a top-level slot comes out
+ * (`moveItem`). Done rows keep their depth, so a finished parent reads as
+ * a block there too.
  *
  * Done is a disclosure, remembered per note for the session
  * (`sessionStorage`, open by default, the NoteTabs pattern), with Uncheck
@@ -86,7 +108,7 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
    * regroups at once, because a line inserted or removed above the held
    * row would move its index onto another item.
    */
-  const [held, setHeld] = useState<number | null>(null);
+  const [held, setHeld] = useState<readonly number[] | null>(null);
   useEffect(() => {
     if (held === null) return;
     const timer = setTimeout(() => {
@@ -129,7 +151,7 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
     field.setSelectionRange(field.value.length, field.value.length);
   });
 
-  const write = (next: string, focus?: number, hold: number | null = null): void => {
+  const write = (next: string, focus?: number, hold: readonly number[] | null = null): void => {
     editor.edit({ body: next });
     if (focus !== undefined) focusAfterWrite.current = focus;
     setHeld(hold);
@@ -137,9 +159,41 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
   const save = (): void => void editor.saveNow();
 
   const toggle = (index: number, item: ChecklistItem): void => {
-    write(toggleItem(body, index), undefined, index);
+    const next = toggleItem(body, index);
+    // Every row the tick flipped is held with the one tapped — a parent's
+    // sub-items, a reopened sub-item's parent — so a block moves to Done, or
+    // back, together. Indices match line for line: a tick adds no line.
+    const after = parseChecklist(next);
+    const flipped = items.flatMap((was, i) => (was.done === after[i]?.done ? [] : [i]));
+    write(next, undefined, flipped);
     setAnnouncement(item.done ? 'Reopened' : 'Marked done');
     save();
+  };
+
+  /**
+   * Nests the open row at `position` under the one above it (`by` 1) or
+   * brings it up a level (-1): one write, saved at once, or false when
+   * there is nowhere to go. Nesting may move the row's lines past done ones
+   * in the body, so its field is focused again by its new index when that
+   * changed it; its open position never changes.
+   */
+  const nest = (position: number, by: 1 | -1): boolean => {
+    const entry = open[position];
+    const above = open[position - 1];
+    if (!entry) return false;
+    let next: string;
+    if (by > 0) {
+      if (!above || !canNest(items, entry.index, above.index)) return false;
+      next = nestUnder(body, entry.index, above.index);
+    } else {
+      if (entry.item.depth === 0) return false;
+      next = unnest(body, entry.index);
+    }
+    const after = parseChecklist(next).flatMap((item, i) => (item.done ? [] : [i]))[position];
+    write(next, after !== undefined && after !== entry.index ? after : undefined);
+    setAnnouncement(by > 0 ? 'Made a sub-item' : 'Moved up a level');
+    save();
+    return true;
   };
 
   const remove = (index: number, focus?: number): void => {
@@ -154,21 +208,35 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
     setAdding('');
   };
 
-  // The held row is grouped by what it was, not by what it now is.
+  // The held rows are grouped by what they were, not by what they now are.
   const entries = items.map((item, index) => ({ item, index }));
-  const open = entries.filter(({ item, index }) => (index === held ? item.done : !item.done));
-  const done = entries.filter(({ item, index }) => (index === held ? !item.done : item.done));
+  const isHeld = (index: number): boolean => held?.includes(index) ?? false;
+  const open = entries.filter(({ item, index }) => (isHeld(index) ? item.done : !item.done));
+  const done = entries.filter(({ item, index }) => (isHeld(index) ? !item.done : item.done));
+
+  /** The open-list positions of the block at body index `index`: the row and its open sub-items. */
+  const openBlock = (index: number): number[] => {
+    const block = blockOf(items, index);
+    return open.flatMap((entry, position) => (block.includes(entry.index) ? [position] : []));
+  };
 
   /**
-   * Puts the open item at body index `index` in the slot of the open item at
-   * `position`: one body write, saved at once. `focusGrip` keeps the keyboard
-   * on the moved row after the render.
+   * Puts the open item at body index `index` — with its sub-items — in the
+   * slot of the open item at `position`: one body write, saved at once. A
+   * step down from a parent would land on its own first child, so the
+   * target moves past the block to the first row outside it. `focusGrip`
+   * keeps the keyboard on the moved row after the render.
    */
   const moveOpen = (index: number, position: number, focusGrip: boolean): void => {
-    const target = open[position];
+    const block = openBlock(index);
+    const current = block[0] ?? -1;
+    let at = position;
+    while (at > current && block.includes(at)) at += 1;
+    const target = open[at];
     if (!target || target.index === index) return;
     write(moveItem(body, index, target.index));
-    if (focusGrip) focusGripAfterWrite.current = position;
+    // Moving down, the block's own rows have left the list above the slot.
+    if (focusGrip) focusGripAfterWrite.current = at > current ? at - (block.length - 1) : at;
     save();
   };
 
@@ -201,7 +269,13 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
       })
     : open;
 
-  const onItemKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number): void => {
+  const onItemKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number, position: number): void => {
+    if (event.key === 'Tab') {
+      // Keep's keys: Tab nests, Shift+Tab un-nests. When neither can change
+      // anything the key keeps its meaning and focus moves on.
+      if (nest(position, event.shiftKey ? -1 : 1)) event.preventDefault();
+      return;
+    }
     if (event.key === 'Enter') {
       event.preventDefault();
       // The new item sits right under this one, in the body and on screen.
@@ -224,16 +298,33 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
     moveOpen(index, position + (event.key === 'ArrowUp' ? -1 : 1), true);
   };
 
-  /** The grip's menu: the no-drag path to every place a row can go, then the row's delete. */
-  const gripMenu = (index: number, position: number): OverflowMenuItem[] => {
+  /** The grip's menu: the no-drag path to every place a row can go, its level, then the row's delete. */
+  const gripMenu = (index: number, position: number, item: ChecklistItem): OverflowMenuItem[] => {
     const first = position === 0;
-    const last = position === open.length - 1;
+    const above = open[position - 1];
+    // Nothing below the block to move past: a parent whose sub-items end the list is last too.
+    const last = open.slice(position + 1).every((entry) => blockOf(items, index).includes(entry.index));
     return [
       { label: 'Move up', disabled: first, onSelect: () => moveOpen(index, position - 1, true) },
       { label: 'Move down', disabled: last, onSelect: () => moveOpen(index, position + 1, true) },
       { label: 'Move to top', disabled: first, onSelect: () => moveOpen(index, 0, true) },
       { label: 'Move to bottom', disabled: last, onSelect: () => moveOpen(index, open.length - 1, true) },
-      // Phase 2 (owner decision CL-D1): "Make a sub-item" / "Move out" go here.
+      {
+        label: 'Make a sub-item',
+        disabled: !above || !canNest(items, index, above.index),
+        onSelect: () => {
+          nest(position, 1);
+          focusGripAfterWrite.current = position;
+        },
+      },
+      {
+        label: 'Move up a level',
+        disabled: item.depth === 0,
+        onSelect: () => {
+          nest(position, -1);
+          focusGripAfterWrite.current = position;
+        },
+      },
       {
         label: 'Delete',
         destructive: true,
@@ -282,7 +373,7 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
       {open.length > 0 && (
         <p id={hintId} className="visually-hidden">
           To reorder, drag a handle, or focus it and press the up and down arrow keys; tap it for
-          more.
+          more. In an item, Tab makes it a sub-item and Shift+Tab moves it up a level.
         </p>
       )}
       <ul
@@ -299,13 +390,14 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
             <li
               key={index}
               className={rowClass(item)}
+              data-depth={item.depth || undefined}
               data-drag-id={id}
               data-dragging={drag.draggingId === id || undefined}
             >
               <OverflowMenu
                 label={`Move ${item.text || 'item'}`}
                 describedBy={hintId}
-                items={gripMenu(index, position)}
+                items={gripMenu(index, position, item)}
                 trigger={(props) => (
                   <button
                     {...props}
@@ -338,13 +430,13 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
                   else inputs.current.delete(index);
                 }}
                 value={item.text}
-                aria-label={`Item ${String(position + 1)}`}
+                aria-label={`${item.depth > 0 ? 'Sub-item' : 'Item'} ${String(position + 1)}`}
                 enterKeyHint="next"
                 onChange={(event) => {
                   write(setItemText(body, index, event.target.value));
                 }}
                 onKeyDown={(event) => {
-                  onItemKeyDown(event, index);
+                  onItemKeyDown(event, index, position);
                 }}
                 onBlur={save}
               />
@@ -407,7 +499,7 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
           </div>
           <ul id={doneListId} className="checklist" role="list" hidden={!doneOpen}>
             {done.map(({ item, index }) => (
-              <li key={index} className={rowClass(item)}>
+              <li key={index} className={rowClass(item)} data-depth={item.depth || undefined}>
                 <span className="checklist__grip-space" aria-hidden="true" />
                 <Check
                   checked={item.done}

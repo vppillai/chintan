@@ -243,6 +243,8 @@ test.describe('reordering by the grip', () => {
       'Move down',
       'Move to top',
       'Move to bottom',
+      'Make a sub-item',
+      'Move up a level',
       'Delete',
     ]);
     // The bottom row cannot move down.
@@ -288,6 +290,70 @@ test.describe('reordering by the grip', () => {
       await expect(page.getByText('1 of 3 done')).toBeVisible();
     });
   });
+});
+
+test('Tab in an item makes it a sub-item, set in by one step and kept across a reload; Shift+Tab brings it up', async ({
+  page,
+  api,
+}) => {
+  seedShopping(api);
+  await page.goto('/notes/shopping');
+  const items = page.getByRole('list', { name: 'Items' });
+  await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+  const milkRow = items.locator('li').nth(0);
+  const breadRow = items.locator('li').nth(1);
+  const before = (await breadRow.locator('.checklist__grip').boundingBox())!;
+
+  await items.getByRole('textbox', { name: 'Item 2' }).focus();
+  await page.keyboard.press('Tab');
+  // One write, saved at once: two spaces of indent, under the row shown
+  // above — Milk — with the done Eggs line, which showed nowhere, below.
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n  - [ ] Bread and butter\n- [x] Eggs');
+  // The field keeps focus and is named for what it is now.
+  await expect(items.getByRole('textbox', { name: 'Sub-item 2' })).toBeFocused();
+  // Set in by one step from where it stood; the row above did not move.
+  const after = (await breadRow.locator('.checklist__grip').boundingBox())!;
+  expect(after.x - before.x).toBeGreaterThanOrEqual(20);
+  expect((await milkRow.locator('.checklist__grip').boundingBox())!.x).toBe(before.x);
+
+  // The body is what is reloaded, and the indent is read back from it.
+  await page.reload();
+  await expect(page.getByRole('list', { name: 'Items' }).getByRole('textbox', { name: 'Sub-item 2' })).toHaveValue(
+    'Bread and butter',
+  );
+  await expect(page.getByRole('list', { name: 'Items' }).locator('li').nth(1)).toHaveAttribute('data-depth', '1');
+
+  // Shift+Tab brings it back up in place; the first item can never go in.
+  await page.getByRole('textbox', { name: 'Sub-item 2' }).focus();
+  await page.keyboard.press('Shift+Tab');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread and butter\n- [x] Eggs');
+  await expect(page.getByRole('textbox', { name: 'Item 2' })).toBeFocused();
+  await page.getByRole('textbox', { name: 'Item 1' }).focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('textbox', { name: 'Item 1' })).not.toBeFocused();
+  expect(api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread and butter\n- [x] Eggs');
+
+  // The grip's menu is the path for a finger: Make a sub-item, then Move up a level.
+  await page.getByRole('button', { name: 'Move Bread and butter' }).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByRole('menuitem', { name: 'Move up a level' })).toBeDisabled();
+  await menu.getByRole('menuitem', { name: 'Make a sub-item' }).click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n  - [ ] Bread and butter\n- [x] Eggs');
+  await page.getByRole('button', { name: 'Move Bread and butter' }).click();
+  await expect(page.getByRole('menu').getByRole('menuitem', { name: 'Make a sub-item' })).toBeDisabled();
+  await page.getByRole('menu').getByRole('menuitem', { name: 'Move up a level' }).click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread and butter\n- [x] Eggs');
+
+  // Ticking a parent ticks its sub-items and the block moves to Done as one.
+  await page.getByRole('textbox', { name: 'Item 2' }).focus();
+  await page.keyboard.press('Tab');
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n  - [ ] Bread and butter\n- [x] Eggs');
+  await items.getByRole('checkbox', { name: 'Milk' }).click();
+  await expect.poll(() => api.notes['shopping']?.body).toBe('- [x] Milk\n  - [x] Bread and butter\n- [x] Eggs');
+  await expect(page.getByRole('heading', { name: 'Done (3)' })).toBeVisible();
+  await expect(page.getByText('3 of 3 done')).toBeVisible();
+  const doneList = page.getByRole('region', { name: 'Done (3)' }).getByRole('list');
+  await expect(doneList.locator('li').nth(1)).toHaveAttribute('data-depth', '1');
 });
 
 test('Done is a disclosure remembered for the session; Delete done is undone from the keyboard; Uncheck all reopens in place', async ({
