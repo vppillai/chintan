@@ -361,5 +361,34 @@
     "name": "deleteDevice",
     "method": "DELETE",
     "path": "/v1/devices/contract-device"
+  },
+  {
+    "name": "getPushKey",
+    "method": "GET",
+    "path": "/v1/push/key"
+  },
+  {
+    "name": "listPushSubscriptions",
+    "method": "GET",
+    "path": "/v1/push/subscriptions"
+  },
+  {
+    "name": "createPushSubscription",
+    "method": "POST",
+    "path": "/v1/push/subscriptions",
+    "body": {
+      "endpoint": "https://web.push.apple.com/send/contract",
+      "expirationTime": null,
+      "keys": {
+        "p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+        "auth": "tBHItJI5svbpez7KI4CCXg"
+      },
+      "label": "Safari on iPhone"
+    }
+  },
+  {
+    "name": "deletePushSubscription",
+    "method": "DELETE",
+    "path": "/v1/push/subscriptions/0123456789abcdef"
   }
 ]

@@ -56,6 +56,13 @@ type Deps struct {
 	// Devices issues and revokes device keys (/v1/devices) and authenticates
 	// the inbox routes with them.
 	Devices *service.DeviceService
+	// Push keeps the browser subscriptions the worker notifies when a
+	// recording files (/v1/push/subscriptions).
+	Push *service.PushService
+	// PushPublicKey is the instance's VAPID public key, from SSM; empty on an
+	// instance whose owner has not made the pair, when GET /v1/push/key
+	// answers 404 and the app says notifications are not set up.
+	PushPublicKey string
 
 	// Store backs idempotent replay. It is the raw store rather than a service
 	// because idempotency is a property of the request, not of any one domain.

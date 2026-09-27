@@ -39,6 +39,8 @@ const DEVICE_ID = 'contract-device';
 const ASK_ID = 'contract-ask';
 /** Not seeded: the Go replay accepts a 404 for an id it does not hold, and the route is what is checked. */
 const EXPORT_ID = 'contract-export';
+/** Sixteen hex characters, as the route's pattern wants; not seeded, like the export. */
+const PUSH_SUBSCRIPTION_ID = '0123456789abcdef';
 
 /**
  * Stands in for a continuation token.
@@ -253,6 +255,23 @@ describe('the requests the frontend actually sends', () => {
     );
     await call('listDevices', () => api.listDevices());
     await call('deleteDevice', () => api.deleteDevice(DEVICE_ID));
+
+    /* ---- web push ----------------------------------------------------- */
+    await call('getPushKey', () => api.getPushKey());
+    await call('listPushSubscriptions', () => api.listPushSubscriptions());
+    // The browser's own PushSubscription.toJSON(), expirationTime and all.
+    await call('createPushSubscription', () =>
+      api.createPushSubscription({
+        endpoint: 'https://web.push.apple.com/send/contract',
+        expirationTime: null,
+        keys: {
+          p256dh: 'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM',
+          auth: 'tBHItJI5svbpez7KI4CCXg',
+        },
+        label: 'Safari on iPhone',
+      }),
+    );
+    await call('deletePushSubscription', () => api.deletePushSubscription(PUSH_SUBSCRIPTION_ID));
 
     /* ---- what the recording itself has to be true of ------------------- */
 

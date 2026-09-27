@@ -52,7 +52,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, service.ErrCaptureAudioExpired):
 		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
 	case errors.Is(err, service.ErrPinLimit),
-		errors.Is(err, service.ErrDeviceLimit):
+		errors.Is(err, service.ErrDeviceLimit),
+		errors.Is(err, service.ErrPushSubscriptionLimit):
 		httperr.Conflict(w, r, err.Error(), nil)
 
 	// ---- client mistakes -------------------------------------------------
@@ -82,6 +83,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrDeviceNameRequired),
 		errors.Is(err, service.ErrDeviceNameTooLong),
 		errors.Is(err, service.ErrDeviceExpiryOutOfRange),
+		errors.Is(err, service.ErrPushEndpointInvalid),
+		errors.Is(err, service.ErrPushKeysRequired),
 		errors.Is(err, service.ErrAskQuestionRequired),
 		errors.Is(err, service.ErrAskQuestionTooLong),
 		errors.Is(err, service.ErrAskHistoryTooLong),

@@ -65,6 +65,15 @@ func (rt *router) routes() {
 	rt.handle("POST "+p+"/devices", rt.createDevice)
 	rt.handle("DELETE "+p+"/devices/{deviceId}", rt.revokeDevice)
 
+	// Web Push: the browser subscriptions the worker notifies when a
+	// recording files, and the VAPID public key they are made with. The key
+	// answers 404 on an instance without one, which is how the app learns
+	// notifications are not set up (docs/design/push.md).
+	rt.handle("GET "+p+"/push/key", rt.getPushKey)
+	rt.handle("GET "+p+"/push/subscriptions", rt.listPushSubscriptions)
+	rt.handle("POST "+p+"/push/subscriptions", rt.createPushSubscription)
+	rt.handle("DELETE "+p+"/push/subscriptions/{subscriptionId}", rt.deletePushSubscription)
+
 	// Captures. POST /v1/captures is synchronous and fast: it writes the row and
 	// returns presigned PUTs. Nothing slow happens on a request path bounded by
 	// the gateway's fixed 30-second integration ceiling.

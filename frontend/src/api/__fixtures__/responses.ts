@@ -36,6 +36,8 @@ import type {
   Page,
   PresignedDownloadWire,
   ProblemWire,
+  PushKeyWire,
+  PushSubscriptionWire,
   ReadinessWire,
   RecordingUrlsWire,
   SearchHitWire,
@@ -1051,6 +1053,53 @@ export const devicesPage: Page<DeviceWire> = {
       "usage_month": null
     }
   ]
+};
+
+/** GET /v1/push/key → 200: the VAPID public key the browser subscribes with. 404 `notifications are not configured on this instance` when the owner has not put the pair in SSM (problemPushNotConfigured). */
+export const pushKey: PushKeyWire = {
+  "public_key": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM"
+};
+
+/** POST /v1/push/subscriptions → 201. The body was the browser's PushSubscription.toJSON() plus a label; the answer names the push service's host and never the endpoint or the keys. last_success_at is null until the worker has sent something. */
+export const pushSubscriptionCreated: PushSubscriptionWire = {
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "endpoint_host": "web.push.apple.com",
+  "failures": 0,
+  "id": "fixture-id",
+  "label": "Safari on iPhone",
+  "last_success_at": null
+};
+
+/** GET /v1/push/subscriptions → 200, oldest first: one the worker has sent to (last_success_at set) and one it has not (null). No cursor. */
+export const pushSubscriptionsPage: Page<PushSubscriptionWire> = {
+  "items": [
+    {
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "endpoint_host": "fcm.googleapis.com",
+      "failures": 0,
+      "id": "fixture-id",
+      "label": "Chrome on Android",
+      "last_success_at": "2026-01-01T00:00:00.000000000Z"
+    },
+    {
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "endpoint_host": "web.push.apple.com",
+      "failures": 0,
+      "id": "fixture-id",
+      "label": "Safari on iPhone",
+      "last_success_at": null
+    }
+  ]
+};
+
+/** GET /v1/push/key → 404 on an instance without a VAPID pair. The Notifications card reads this status as "not set up here yet" and explains the owner's step. */
+export const problemPushNotConfigured: ProblemWire = {
+  "correlation_id": "00000000-0000-4000-8000-000000000000",
+  "detail": "notifications are not configured on this instance",
+  "instance": "/v1/fixture",
+  "status": 404,
+  "title": "Not Found",
+  "type": "about:blank"
 };
 
 /** GET /v1/notes/{noteId} → 404 */

@@ -331,6 +331,18 @@ type Store interface {
 	// moment after the revoke), and the caller refuses it by revoked_at.
 	LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error)
 
+	// PutPushSubscription writes a push subscription row (sk PUSHSUB#<id>)
+	// whole, replacing what is there. No version: the API upserts the row by
+	// endpoint and the worker rewrites its send counters, and a lost race
+	// between the two costs at most one counter.
+	PutPushSubscription(ctx context.Context, tenantID string, s model.PushSubscription) error
+	// ListPushSubscriptions returns every push subscription of the tenant,
+	// oldest first. At most ten, so there is no page.
+	ListPushSubscriptions(ctx context.Context, tenantID string) ([]model.PushSubscription, error)
+	// DeletePushSubscription removes one row, or ErrNotFound when the
+	// tenant has no such subscription.
+	DeletePushSubscription(ctx context.Context, tenantID, id string) error
+
 	// PutAsk writes a question row (sk ASK#<id>) whole, replacing what is
 	// there, with the TTL a.ExpiresAt names. There is no version: the API
 	// writes the row once, pending, and only the worker writes it again, so

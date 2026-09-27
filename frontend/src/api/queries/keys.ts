@@ -21,6 +21,8 @@ export const queryKeys = {
   usage: (month: string | undefined) => ['usage', month ?? 'current'] as const,
   ask: (askId: string) => ['ask', askId] as const,
   devices: () => ['devices'] as const,
+  pushKey: () => ['push', 'key'] as const,
+  pushSubscriptions: () => ['push', 'subscriptions'] as const,
 };
 
 /** The offline search corpus (`useSearchCorpus`); outside the `['notes']` prefix on purpose. */

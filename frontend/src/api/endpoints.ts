@@ -43,6 +43,9 @@ import type {
   PageQuery,
   PresignedDownloadWire,
   PresignedUploadWire,
+  PushKeyWire,
+  PushSubscribeWire,
+  PushSubscriptionWire,
   ReadinessWire,
   RecordingUrlsWire,
   SearchHitWire,
@@ -386,6 +389,32 @@ export class ChintanApi {
   /** Revokes the key at once; anything still sending with it gets 401. */
   deleteDevice(deviceId: string): Promise<void> {
     return this.client.request(`/v1/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /* ---- Web Push ------------------------------------------------------- */
+
+  /**
+   * The VAPID public key this browser subscribes with. 404 means the owner
+   * has not put the pair in SSM yet; `usePushKey` reads that as "not set
+   * up here", not as a failure.
+   */
+  getPushKey(): Promise<PushKeyWire> {
+    return this.client.request('/v1/push/key', { retry: NO_RETRY });
+  }
+
+  listPushSubscriptions(): Promise<{ items: PushSubscriptionWire[] }> {
+    return this.client.request('/v1/push/subscriptions');
+  }
+
+  /** Idempotent on the endpoint, so a re-subscribe after a browser restart is the same row. */
+  createPushSubscription(body: PushSubscribeWire): Promise<PushSubscriptionWire> {
+    return this.client.request('/v1/push/subscriptions', { method: 'POST', body });
+  }
+
+  deletePushSubscription(subscriptionId: string): Promise<void> {
+    return this.client.request(`/v1/push/subscriptions/${encodeURIComponent(subscriptionId)}`, {
       method: 'DELETE',
     });
   }

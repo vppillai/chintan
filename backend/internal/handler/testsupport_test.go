@@ -44,6 +44,17 @@ type harnessOption func(*handler.Deps, *harness)
 // clock; handler.Deps carries none to pin.
 var harnessNow = time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
 
+// harnessVAPIDPublicKey stands in for the instance's VAPID public key: a
+// P-256 point in base64url, the shape a browser subscribes with.
+const harnessVAPIDPublicKey = "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM"
+
+// withoutPushKey is an instance whose owner has not put a VAPID pair in SSM.
+func withoutPushKey() harnessOption {
+	return func(d *handler.Deps, _ *harness) {
+		d.PushPublicKey = ""
+	}
+}
+
 // withBrokenStore makes every settings read fail, so readiness reports degraded.
 func withBrokenStore() harnessOption {
 	return func(d *handler.Deps, h *harness) {
@@ -137,6 +148,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Storage:       service.NewStorageService(h.store),
 		Ask:           service.NewAskService(h.store, h.worker),
 		Devices:       service.NewDeviceService(h.store).WithClock(func() time.Time { return harnessNow }),
+		Push:          service.NewPushService(h.store).WithClock(func() time.Time { return harnessNow }),
+		PushPublicKey: harnessVAPIDPublicKey,
 		Store:         h.store,
 		AllowedOrigin: "http://localhost:3000",
 	}

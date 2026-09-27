@@ -649,6 +649,46 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// Web Push subscriptions (docs/design/push.md)
+// ---------------------------------------------------------------------------
+
+// PushSubscription is one browser's subscription to the worker's "a
+// recording filed" notifications: the endpoint the browser's push service
+// handed out and the two keys the payload is encrypted to, as
+// `PushSubscription.toJSON()` gives them. Stored like a device row (sk
+// PUSHSUB#<id>) and, like a device, ten per tenant. The row is written whole:
+// the API upserts it by endpoint and the worker rewrites the send counters,
+// and neither can lose anything worth a version to the other.
+type PushSubscription struct {
+	// ID is the first sixteen hex characters of the endpoint's SHA-256, so a
+	// browser that subscribes twice with the same endpoint writes one row
+	// and can name it without a lookup.
+	ID       string `json:"id"`
+	TenantID string `json:"tenant_id"`
+	Endpoint string `json:"endpoint"`
+	P256DH   string `json:"p256dh"`
+	Auth     string `json:"auth"`
+	// Label is what the browser called itself ("Safari on iPhone"), for the
+	// Notifications card's list; never an identity.
+	Label     string `json:"label"`
+	CreatedAt string `json:"created_at"`
+	// LastSuccessAt is when the push service last accepted a message for
+	// this subscription; Failures counts the sends since that it refused,
+	// for the card and the operator. A 404 or 410 deletes the row instead.
+	LastSuccessAt string `json:"last_success_at,omitempty"`
+	Failures      int64  `json:"failures,omitempty"`
+}
+
+// Push subscription bounds. Ten is the device limit for the same reason; the
+// endpoint and key caps are several times what any push service issues.
+const (
+	MaxPushSubscriptionsPerTenant = 10
+	MaxPushEndpointBytes          = 2048
+	MaxPushKeyBytes               = 256
+	MaxPushLabelRunes             = 60
+)
+
+// ---------------------------------------------------------------------------
 // Ask (backlog D5)
 // ---------------------------------------------------------------------------
 

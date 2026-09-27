@@ -43,8 +43,10 @@ import {
   notesPage,
   problemConflict,
   problemNotFound,
+  problemPushNotConfigured,
   problemSpendCapped,
   problemValidation,
+  pushSubscriptionsPage,
   ready,
   readyDegraded,
   searchPage,
@@ -447,4 +449,21 @@ describe('the remaining shapes the app reads', () => {
     expect(captureDownload.expires_at).toBeTruthy();
   });
 
+  it('reads push subscriptions without their secrets, and the 404 that means "not set up"', async () => {
+    // Both `last_success_at` shapes are in the page, and the type would
+    // accept absence; the card reads null as "never sent to".
+    expect(pushSubscriptionsPage.items).toHaveLength(2);
+    for (const item of pushSubscriptionsPage.items) {
+      expect(item).toHaveProperty('last_success_at');
+      expect(item).not.toHaveProperty('endpoint');
+      expect(item).not.toHaveProperty('p256dh');
+      expect(item.id).toMatch(/^[0-9a-f]{16}$|^fixture-id$/);
+    }
+    // `usePushKey` turns exactly this status into "not configured".
+    const error = await problemFromResponse(
+      asResponse(problemPushNotConfigured, 404, 'application/problem+json'),
+    );
+    expect(error.status).toBe(404);
+    expect(error.detail).toBe('notifications are not configured on this instance');
+  });
 });

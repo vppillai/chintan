@@ -695,6 +695,44 @@ export interface DeviceCreateWire {
 }
 
 /* ---------------------------------------------------------------------------
+   Web Push — the browser subscriptions the worker notifies when a recording
+   files (docs/design/push.md)
+   --------------------------------------------------------------------------- */
+
+/** `GET /v1/push/key`: the VAPID public key, as `applicationServerKey` takes it. 404 on an instance without one. */
+export interface PushKeyWire {
+  public_key: string;
+}
+
+/**
+ * Body of `POST /v1/push/subscriptions`: the browser's own
+ * `PushSubscription.toJSON()` — `endpoint`, `expirationTime`, `keys` — plus
+ * what this browser calls itself, for the list.
+ */
+export interface PushSubscribeWire {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: { p256dh: string; auth: string };
+  label?: string;
+}
+
+/**
+ * One subscription as the list shows it: the push service's host, never the
+ * endpoint or the keys. `id` is the first sixteen hex characters of the
+ * endpoint's SHA-256, which this browser computes for its own
+ * (`pushSubscriptionId`). `last_success_at` is null until the worker has got
+ * a message through.
+ */
+export interface PushSubscriptionWire {
+  id: string;
+  endpoint_host: string;
+  label: string;
+  created_at: string;
+  last_success_at: string | null;
+  failures: number;
+}
+
+/* ---------------------------------------------------------------------------
    Export and auth
    --------------------------------------------------------------------------- */
 
