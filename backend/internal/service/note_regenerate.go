@@ -102,11 +102,17 @@ func RegenerableCaptures(ctx context.Context, store repository.Store, objects re
 	if note.Verbatim {
 		return nil, nil
 	}
-	raw, err := objects.Get(ctx, note.S3MarkdownKey)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return nil, fmt.Errorf("failed to read the note body: %w", err)
+	var body string
+	if note.Kind != model.NoteKindChecklist {
+		// A checklist's items are found by their words, not under the
+		// marker, so its body says nothing about which recordings qualify
+		// and is not read.
+		raw, err := objects.Get(ctx, note.S3MarkdownKey)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("failed to read the note body: %w", err)
+		}
+		body = string(raw)
 	}
-	body := string(raw)
 
 	var out []model.CaptureIndex
 	for _, c := range listed {
