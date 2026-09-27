@@ -49,13 +49,19 @@ item is top level by construction, and `extractItems` and the `tasks` prompt
 know nothing of depth; the editor gives a new item the depth of the item it
 follows, nests and un-nests on request ("Sub-items" below), and a moved item
 takes the depth of the slot it lands in and carries its sub-items with it
-(`blockOf`, `moveItem`). The backend is indent-blind, in three places, and
+(`blockOf`, `moveItem`). The backend is indent-blind, in four places, and
 stays so: `keepTick` (`pipeline/append.go`) carries a tick only from a line
 that begins `- [x] `, which every worker-written line does; `lowerTick` and
 `checklistItemLine` (`cleanup/prompt.go`) trim a line before reading it, so a
 `tasks` answer over a nested body is checked and stored flat — adopting the
-view drops the indent, never a tick; and the row's "3 of 7 done" counts every
-item whatever its depth, as Keep's count does. Export and the search text see
+view drops the indent, never a tick; `replaceChecklistItems`
+(`pipeline/append.go`, `regenerate.md`) finds a recording's earlier items by
+their words whatever their indent and writes the new block at the top level,
+so a regeneration or a retranscription brings an item the person had nested
+back to the top and a typed sub-item that followed a removed parent nests
+under the line now above it (the parser clamps an orphan, so nothing breaks);
+and the row's "3 of 7 done" counts every item whatever its depth, as Keep's
+count does. Export and the search text see
 the raw lines, indent and all, which is Markdown.
 
 ## The append rule

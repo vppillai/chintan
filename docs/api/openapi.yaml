@@ -415,8 +415,10 @@ paths:
         while any is moving, and a second request while one is still moving —
         this regeneration, or a recording being filed — is 409. The spend cap
         applies: the run is one cleanup call per recording, priced as any
-        other, so a capped instance is told before anything is reset. At most
-        200 recordings per request.
+        other, plus one whole-note call over the entire body when the note
+        keeps a cleaned view (larger than any single recording's call; made
+        only when a recording landed), so a capped instance is told before
+        anything is reset. At most 200 recordings per request.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
