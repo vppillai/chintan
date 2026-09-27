@@ -141,16 +141,16 @@ Each note carries its own transcription `language` (absent, it inherits the user
 
 Any device or app that can make one HTTPS request with one header can drop a recording or a line of text into your notes — a watch, a ring's phone app, a desk recorder, an iOS Shortcut — and it is filed exactly as a recording made in the app: transcribed, routed, cleaned, appended. It authenticates with a **device key**, not your sign-in, so it can add to your notes and never read them, and you can revoke it on its own. `docs/design/inbox.md` has the design and the threat model; how the open app learns that a device's recording landed — the poll, the focus refetch, and the Web Push proposal — is `docs/design/async-updates.md`.
 
-**Issue a key.** In the app: **You → Devices & shortcuts → Add a device** shows the key once. Headless: `POST /v1/devices {"name": "Kitchen watch"}` with your session token; the key `ck_…` is in that response and nowhere else (only its hash is stored), so copy it then.
+**Issue a key.** In the app: **You → Devices & shortcuts → Add a device** shows the key once; **Expires after** (Never, the default; 30 days; 90 days; 1 year) is for a key you hand to a one-off script — the ring you use daily should not stop on a date you forgot. Headless: `POST /v1/devices {"name": "Kitchen watch"}` with your session token, plus `"expires_in_days": 30` (1–365) for an expiring key; the key `ck_…` is in that response and nowhere else (only its hash is stored), so copy it then.
 
 ```bash
 API=https://<api-id>.execute-api.us-west-2.amazonaws.com   # the stack's ApiEndpoint output — https://api.example.com behind a custom domain
 curl -sS "$API/v1/devices" -H "Authorization: Bearer $ID_TOKEN" \
   -H 'Content-Type: application/json' -d '{"name":"Kitchen watch"}'
-# → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"usage_month":null,"key":"ck_dev_…_…"}
+# → {"id":"dev_…","name":"Kitchen watch","created_at":"…","last_used_at":null,"last_used_from":null,"expires_at":null,"usage_month":null,"key":"ck_dev_…_…"}
 ```
 
-`GET /v1/devices` lists your devices (never the keys) with what each sent this month; `DELETE /v1/devices/{id}` revokes one, immediately. In the app, **Rotate key** mints a new key for the same device and revokes the old one when you tap Done; paste the new key into the device first. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
+`GET /v1/devices` lists your devices (never the keys) with what each sent this month, when it last sent and from which neighbourhood — `last_used_from` is the IPv4 /24 as `203.0.113.x` or the IPv6 /48 as `2001:db8:1::x`, enough to tell your phone's carrier from a stranger; the full address is never stored and is in no export — and when each expires, if it does. An expired key is refused exactly as a revoked one (the same 401; `Reason=expired` in the `InboxKeyRefused` metric) and its row stays listed, marked **Expired**, until you remove it. `DELETE /v1/devices/{id}` revokes one, immediately. In the app, **Rotate key** mints a new key for the same device and revokes the old one when you tap Done; paste the new key into the device first. Ten devices, two hundred requests per device per day, 4 MiB per one-shot recording (about nine minutes at the iOS Shortcut's *Normal* quality; the gateway's limit, not the pipeline's — a longer recording goes through the two-step `/v1/inbox/captures` route, whose PUT goes straight to the bucket).
 
 **curl.** Three ways in, each `Authorization: Bearer ck_…` (the bare `ck_…`, or `X-Device-Key: ck_…`, is the same key):
 
