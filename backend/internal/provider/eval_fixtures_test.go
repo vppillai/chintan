@@ -9,14 +9,13 @@ import (
 	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/ask"
-	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
 // TestEvalFixturesParse is the offline half: the file decodes with unknown
 // keys refused, every case carries at least one expectation, and every name a
-// case uses — a destination or source title, a Unicode script, a cleanup
-// mode — is one the file or the runtime knows.
+// case uses — a destination or source title, a Unicode script — is one the
+// file or the runtime knows.
 func TestEvalFixturesParse(t *testing.T) {
 	fx := loadEvalFixtures(t)
 	_, candidate := fx.candidates()
@@ -30,9 +29,6 @@ func TestEvalFixturesParse(t *testing.T) {
 		checkScriptName(t, "route", i, tc.TitleScript)
 	}
 	for i, tc := range fx.Cleanup.Cases {
-		if m := model.CleanupMode(tc.Mode); m != model.CleanupFaithful && m != model.CleanupPolished {
-			t.Errorf("cleanup case %d: mode %q is not a cleanup mode", i+1, tc.Mode)
-		}
 		checkScriptName(t, "cleanup", i, tc.Script)
 	}
 	for i, tc := range fx.Items.Cases {
@@ -54,7 +50,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	}
 
 	// Every case has to assert something, or it only spends money.
-	inputs := map[string]bool{"transcript": true, "language": true, "mode": true, "raw": true, "body": true, "question": true, "_note": true}
+	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "question": true, "_note": true}
 	raw, err := os.ReadFile(evalFixturesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +59,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	if err := json.Unmarshal(raw, &sections); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"route", "cleanup", "items", "tasks", "ask"} {
+	for _, name := range []string{"route", "cleanup", "items", "ask"} {
 		var sec struct {
 			Cases []map[string]json.RawMessage `json:"cases"`
 		}
@@ -99,6 +95,7 @@ type evalFixtures struct {
 		Candidates []struct {
 			Title   string   `json:"title"`
 			Aliases []string `json:"aliases"`
+			Tags    []string `json:"tags"`
 		} `json:"candidates"`
 		Cases []routeCase `json:"cases"`
 	} `json:"route"`
@@ -109,9 +106,6 @@ type evalFixtures struct {
 		ListTitle string      `json:"list_title"`
 		Cases     []itemsCase `json:"cases"`
 	} `json:"items"`
-	Tasks struct {
-		Cases []tasksCase `json:"cases"`
-	} `json:"tasks"`
 	Ask struct {
 		Notes []struct {
 			Title   string `json:"title"`
@@ -141,7 +135,6 @@ type routeCase struct {
 }
 
 type cleanupCase struct {
-	Mode          string   `json:"mode"`
 	Language      string   `json:"language"`
 	Raw           string   `json:"raw"`
 	Comment       string   `json:"_note"`
@@ -162,14 +155,6 @@ type itemsCase struct {
 	ContainsAny []string `json:"contains_any"`
 	ExcludesAny []string `json:"excludes_any"`
 	Script      string   `json:"script"`
-}
-
-type tasksCase struct {
-	Body          string   `json:"body"`
-	Comment       string   `json:"_note"`
-	Want          []string `json:"want"`
-	WantUnchanged bool     `json:"want_unchanged"`
-	Count         *int     `json:"count"`
 }
 
 type askCase struct {
@@ -207,7 +192,7 @@ func (fx evalFixtures) candidates() ([]routing.Candidate, map[string]string) {
 	candidates := make([]routing.Candidate, 0, len(fx.Route.Candidates))
 	for i, c := range fx.Route.Candidates {
 		idOf[c.Title] = evalID(i)
-		candidates = append(candidates, routing.Candidate{NoteID: evalID(i), Title: c.Title, Aliases: c.Aliases})
+		candidates = append(candidates, routing.Candidate{NoteID: evalID(i), Title: c.Title, Aliases: c.Aliases, Tags: c.Tags})
 	}
 	return candidates, idOf
 }
