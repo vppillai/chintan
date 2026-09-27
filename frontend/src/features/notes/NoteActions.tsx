@@ -22,6 +22,7 @@ import { LanguageSelect } from '@/components/LanguageSelect.tsx';
 import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { TagEditor } from '@/components/TagEditor.tsx';
 import { showDeleted } from '@/components/Toast.tsx';
+import { isStuck } from '@/features/capture/filing/model.ts';
 import { languageName } from '@/features/settings/languages.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
@@ -46,11 +47,13 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * landed, which is the server's own rule (`service.RegenerableCaptures`) as
  * far as this side can see it: a verbatim note has nothing from a prompt, and
  * a paragraph the person rewrote by hand is left alone by the worker and not
- * counted in its 202. The item is off while a recording is still moving —
- * this regeneration or a new recording — since the server would refuse, and
- * offline, since nothing here can be queued. Progress is the filing strip
- * under the meta line: the captures go back to `transcribed` and the note's
- * poll follows them until the last lands.
+ * counted in its 202 — and a 202 that counted nothing says so under the
+ * menu, where an error would. The item is off while a recording is still
+ * moving — this regeneration or a new recording — since the server would
+ * refuse, and offline, since nothing here can be queued; a recording that has
+ * sat stuck (`isStuck`, the server's own rule) does not count as moving.
+ * Progress is the filing strip under the meta line: the captures go back to
+ * `transcribed` and the note's poll follows them until the last lands.
  *
  * They were a sticky bar at the foot with a fourth, primary "Record into
  * this". On a phone that bar wrapped to two rows (96 px) and sat 30 px above
@@ -116,7 +119,17 @@ export function NoteMenu({
   const online = useOnline();
   const [confirming, setConfirming] = useState<'delete' | 'purge' | 'regenerate' | null>(null);
   const regenerable = regenerableCount(note);
-  const regenerating = (note.captures ?? []).some((capture) => !isTerminalStatus(capture.status));
+  // A capture that has sat past the stuck bound is one the server no longer
+  // counts as in flight (CaptureStuck) and would take a new request; it must
+  // not hold the item at "Regenerating…" for good.
+  const regenerating = (note.captures ?? []).some(
+    (capture) => !isTerminalStatus(capture.status) && !isStuck(capture),
+  );
+  // The dialog counts the landed recordings; the server also skips a
+  // paragraph rewritten by hand, so its 202 can say zero where the dialog
+  // said one — and a zero with no line under the menu looks like nothing
+  // happened.
+  const nothingToRegenerate = regenerate.isSuccess && regenerate.data.captures === 0;
 
   const busy =
     archive.isPending ||
@@ -204,6 +217,11 @@ export function NoteMenu({
       {failure && (
         <p className="note-actions__error note-menu__error" role="alert">
           {failure instanceof ApiError ? failure.userMessage : 'That did not go through.'}
+        </p>
+      )}
+      {!failure && nothingToRegenerate && (
+        <p className="note-actions__error note-menu__error" role="status">
+          Nothing to regenerate: every paragraph is in your own words now.
         </p>
       )}
 

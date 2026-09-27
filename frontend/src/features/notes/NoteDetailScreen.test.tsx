@@ -769,6 +769,45 @@ describe('regenerating a note from its recordings', () => {
     await user.click(screen.getByRole('button', { name: 'Note actions' }));
     expect(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' })).toBeDisabled();
   });
+
+  it('says so under the menu when the server finds nothing to regenerate', async () => {
+    const user = userEvent.setup();
+    const api = server([{ ...ROOF, captures: [FILED] }]);
+    // The dialog counts the landed recordings; the server also skips a
+    // paragraph rewritten by hand, so its count can be zero where the dialog
+    // said one.
+    const fetchImpl: typeof fetch = async (input, init) =>
+      init?.method === 'POST' && String(input).endsWith('/regenerate')
+        ? json({ status: 'queued', captures: 0 }, 202)
+        : api.fetchImpl(input, init);
+    mount(fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Regenerate' }));
+    expect(
+      await screen.findByText('Nothing to regenerate: every paragraph is in your own words now.'),
+    ).toBeInTheDocument();
+  });
+
+  it('offers a fresh regeneration when a recording has sat stuck rather than reading it as still moving', async () => {
+    const user = userEvent.setup();
+    const stuck: CaptureWire = {
+      ...FILED,
+      id: 'cap-stuck',
+      status: 'cleaning',
+      last_progress_at: '2026-08-06T09:10:00.000Z',
+    };
+    const api = server([{ ...ROOF, captures: [FILED, stuck] }]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' })).toBeEnabled();
+  });
 });
 
 /**
