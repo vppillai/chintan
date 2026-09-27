@@ -81,6 +81,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, service.ErrPinBatchSize),
 		errors.Is(err, service.ErrDeviceNameRequired),
 		errors.Is(err, service.ErrDeviceNameTooLong),
+		errors.Is(err, service.ErrDeviceExpiryOutOfRange),
 		errors.Is(err, service.ErrAskQuestionRequired),
 		errors.Is(err, service.ErrAskQuestionTooLong),
 		errors.Is(err, service.ErrAskHistoryTooLong),

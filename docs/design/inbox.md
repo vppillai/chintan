@@ -32,14 +32,38 @@ read for the row's keys, one `GetItem` for the row (the index projects a
 capture's attributes, not a device's, and a device row is smaller than an
 index rebuild). Ten live devices per tenant.
 
-`GET /v1/devices` lists id, name, when issued, when last used and what the
-key sent this month — never the key or its hash; a key that is lost is
-revoked and a new one issued. The month's figures (`usage_month`: requests,
-their body bytes, the month) come from three counters on the device row
-(`requests_month`, `bytes_month`, `month`) that the check writes in the same
-`PutDevice` as the day's counter and `last_used_at`, so they cost no extra
-write; a new month starts them over on the key's next request, and the
-service lists an earlier month's counters as null. "Sent" counts accepted
+`expires_in_days` (1–365, optional) on the POST sets `expires_at` on the row
+once, from the creation instant, and it never moves. The check refuses a
+key past it with the same fixed 401 as a revoked one and counts it as
+`expired` — after the secret has matched, so the reason means the device's
+own key past its date, not a guess at one. The row stays listed, and counts
+against the ten, so the Devices card can say "Expires in 12 days" or
+"Expired" and offer Remove. There is no default: the ring you use daily
+stays perpetual, and a key handed to a one-off script gets thirty days
+(WH-A, round 5).
+
+`GET /v1/devices` lists id, name, when issued, when last used and from
+where, when it expires, and what the key sent this month — never the key or
+its hash; a key that is lost is revoked and a new one issued. The month's
+figures (`usage_month`: requests, their body bytes, the month) come from
+three counters on the device row (`requests_month`, `bytes_month`, `month`)
+that the check writes in the same `PutDevice` as the day's counter,
+`last_used_at` and `last_used_from`, so they cost no extra write; a new
+month starts them over on the key's next request, and the service lists an
+earlier month's counters as null.
+
+`last_used_from` is the *neighbourhood* the last accepted request came from,
+overwritten each time and never a history: the gateway's
+`requestContext.http.sourceIp`, which `httpadapter.V2` copies bare into
+`r.RemoteAddr`, reduced by `service.neighbourhood` to the IPv4 /24 written
+as `203.0.113.x` or the IPv6 /48 written as `2001:db8:1::x` before anything
+is stored (an IPv4-in-IPv6 address is unmapped first; what does not parse
+stores nothing). Deliberately coarse: a /24 tells your phone's carrier from
+a stranger on the card — "Last used 2 h ago from 203.0.113.x" — and keeps a
+precise address out of the table, the wire and the logs. The full address
+is read in that one function and nowhere else, and device rows are in no
+export: the export job reads notes, captures and recordings, never
+`DEVICE#` rows (WH-B, round 5). "Sent" counts accepted
 requests, which is captures near enough: a two-step upload is two. Bytes
 are the bodies the inbox itself read — a one-shot route's recording or
 text, but for the two-step route only the small JSON that opens the
@@ -66,8 +90,8 @@ business on the inbox). Three spellings, one credential
 only thing checked, and the refusal never says which spelling failed. The
 key is parsed, the id looked up through the index, and the presented key's hash compared
 with the stored one by `crypto/subtle.ConstantTimeCompare`. Malformed,
-unknown, revoked and wrong-secret all answer the same fixed 401 `unknown
-device key`; nothing in the wording or the timing says which. The key reaches
+unknown, revoked, expired and wrong-secret all answer the same fixed 401
+`unknown device key`; nothing in the wording or the timing says which. The key reaches
 `Authenticate` and nothing else — not the context, not a log line; a capture
 records `source: device:<id>` and log lines name the id.
 
@@ -197,7 +221,7 @@ About: `captureOf` leaves both fields out, and the wire test pins that.
   of the API with a WAF rate rule per source address is the path.
 - Below the gateway's threshold, refusals are still visible from the Lambda
   side: every refused key counts one `InboxKeyRefused` with a `Reason` of
-  `malformed`, `unknown`, `revoked`, `wrong_secret` or `daily_limit` (plus
+  `malformed`, `unknown`, `revoked`, `expired`, `wrong_secret` or `daily_limit` (plus
   the dimensionless rollup the alarm reads), and a WARN `device key refused`
   names the device id and the reason once the id parsed — a malformed key
   logs nothing, so a probe cannot write bytes of its choosing into the log.

@@ -103,6 +103,23 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 		t.Fatalf("detail = %q", p["detail"])
 	}
 
+	// Expired: the same 401 as unknown, counted as expired underneath. The
+	// row is put past its date by hand, since the router's clock is pinned.
+	expiring := h.createDevice(t, "user1", "Script")
+	expiredRow, err := h.store.GetDevice(context.Background(), "user1", expiring.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredRow.ExpiresAt = model.FormatTime(harnessNow.Add(-time.Minute))
+	if _, err := h.store.PutDevice(context.Background(), "user1", expiredRow); err != nil {
+		t.Fatal(err)
+	}
+	w = h.do(t, http.MethodPost, "/v1/inbox/text", "", text, [2]string{"Authorization", "Bearer " + expiring.Key})
+	if w.Code != http.StatusUnauthorized || problemOf(t, w)["detail"] != "unknown device key" {
+		t.Fatalf("expired key: status = %d body = %s", w.Code, w.Body.String())
+	}
+	wantReasons["expired"]++
+
 	// Revoked: unknown from then on, whatever the counter says.
 	if w := h.do(t, http.MethodDelete, "/v1/devices/"+created.ID, "user1", nil); w.Code != http.StatusNoContent {
 		t.Fatalf("revoke: %d", w.Code)
@@ -140,10 +157,10 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	// The WARN names the device id and the reason, once per refusal whose id
 	// parsed: the malformed ones say nothing, so a probe writes nothing.
 	refusedLines := strings.Count(logs.String(), `"device key refused"`)
-	if wantLines := wantReasons["wrong_secret"] + wantReasons["unknown"] + wantReasons["revoked"] + wantReasons["daily_limit"]; refusedLines != wantLines {
+	if wantLines := wantReasons["wrong_secret"] + wantReasons["unknown"] + wantReasons["revoked"] + wantReasons["expired"] + wantReasons["daily_limit"]; refusedLines != wantLines {
 		t.Errorf("%d 'device key refused' lines, want %d:\n%s", refusedLines, wantLines, logs.String())
 	}
-	for _, want := range []string{`"device_id":"` + created.ID + `"`, `"reason":"wrong_secret"`, `"reason":"daily_limit"`, `"reason":"unknown"`, `"reason":"revoked"`} {
+	for _, want := range []string{`"device_id":"` + created.ID + `"`, `"reason":"wrong_secret"`, `"reason":"daily_limit"`, `"reason":"unknown"`, `"reason":"revoked"`, `"reason":"expired"`} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("the log lacks %s:\n%s", want, logs.String())
 		}

@@ -582,6 +582,16 @@ type Device struct {
 	// written with the request counter and is empty until the first use.
 	CreatedAt  string `json:"created_at"`
 	LastUsedAt string `json:"last_used_at,omitempty"`
+	// LastUsedFrom is the neighbourhood the key was last accepted from — the
+	// IPv4 /24 as 203.0.113.x or the IPv6 /48 as 2001:db8:1::x — written
+	// with LastUsedAt and overwritten each time. Deliberately coarse: it is
+	// enough to tell the phone's carrier from a stranger on the card, and the
+	// row never holds a full address (WH-B, docs/design/inbox.md).
+	LastUsedFrom string `json:"last_used_from,omitempty"`
+	// ExpiresAt is the instant after which Authenticate refuses the key as
+	// expired; empty means the key never expires. Set once at creation from
+	// expires_in_days and never moved (WH-A).
+	ExpiresAt string `json:"expires_at,omitempty"`
 	// RequestsDay counts the key's inbox requests on RequestsDayDate (a UTC
 	// calendar day); the day rolling over resets it. DeviceDailyRequestLimit
 	// bounds it.
@@ -608,6 +618,17 @@ type Device struct {
 // Revoked reports whether the key has been revoked.
 func (d Device) Revoked() bool { return d.RevokedAt != "" }
 
+// Expired reports whether the key's expiry, if it has one, is at or before
+// now. A row whose expires_at does not parse is treated as expired: a key
+// whose end cannot be read must not go on working.
+func (d Device) Expired(now time.Time) bool {
+	if d.ExpiresAt == "" {
+		return false
+	}
+	at, err := ParseTime(d.ExpiresAt)
+	return err != nil || !at.After(now)
+}
+
 // DeviceSource is CaptureIndex.Source for a capture a device made.
 func DeviceSource(deviceID string) string { return "device:" + deviceID }
 
@@ -618,6 +639,10 @@ const (
 	MaxDevicesPerTenant     = 10
 	MaxDeviceNameRunes      = 60
 	DeviceDailyRequestLimit = 200
+	// MaxDeviceExpiryDays bounds POST /v1/devices' optional expires_in_days;
+	// a key handed to a one-off script gets thirty days, the ring's stays
+	// perpetual by leaving it out.
+	MaxDeviceExpiryDays = 365
 	// RevokedDeviceRetention is how long a revoked row stays for the record
 	// before DynamoDB TTL drops it.
 	RevokedDeviceRetention = 30 * 24 * time.Hour

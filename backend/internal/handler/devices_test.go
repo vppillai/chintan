@@ -28,8 +28,8 @@ func TestDeviceKeyIsShownOnceAndNeverListed(t *testing.T) {
 	if !strings.HasPrefix(created.Key, "ck_"+created.ID+"_") {
 		t.Fatalf("key %q does not carry the device id %q", created.Key, created.ID)
 	}
-	if created.LastUsedAt != nil || created.UsageMonth != nil {
-		t.Fatalf("a fresh device has been used: %+v", created)
+	if created.LastUsedAt != nil || created.LastUsedFrom != nil || created.UsageMonth != nil || created.ExpiresAt != nil {
+		t.Fatalf("a fresh device has been used, or expires: %+v", created)
 	}
 
 	w := h.do(t, http.MethodGet, "/v1/devices", "user1", nil)
@@ -97,5 +97,44 @@ func TestDeviceListShowsWhatTheKeySentThisMonth(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"usage_month":null`) {
 		t.Fatalf("the idle device's usage is not null on the wire: %s", w.Body.String())
+	}
+	// Where from: httptest's requests come from 192.0.2.1:1234, and the list
+	// says the neighbourhood, never the address (WH-B).
+	if from := byID[used.ID].LastUsedFrom; from == nil || *from != "192.0.2.x" {
+		t.Fatalf("used device's last_used_from = %v, want 192.0.2.x", from)
+	}
+	if byID[idle.ID].LastUsedFrom != nil || !strings.Contains(w.Body.String(), `"last_used_from":null`) {
+		t.Fatalf("the idle device has a last_used_from: %s", w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "192.0.2.1") {
+		t.Fatalf("the full address is on the wire: %s", w.Body.String())
+	}
+}
+
+// expires_in_days is optional, 1–365, and becomes expires_at on the device;
+// out of range is a 400 in the fixed sentence (WH-A).
+func TestDeviceExpiryIsOptionalAndBounded(t *testing.T) {
+	h := newHarness(t)
+	w := h.do(t, http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Script", "expires_in_days": 30})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("thirty days: status = %d body = %s", w.Code, w.Body.String())
+	}
+	var created handler.DeviceCreated
+	decodeInto(t, w, &created)
+	if want := harnessNow.AddDate(0, 0, 30).UTC().Format("2006-01-02T15:04:05.000000000Z"); created.ExpiresAt == nil || *created.ExpiresAt != want {
+		t.Fatalf("expires_at = %v, want %s", created.ExpiresAt, want)
+	}
+	for _, days := range []any{0, 366, -7} {
+		w := h.do(t, http.MethodPost, "/v1/devices", "user1", map[string]any{"name": "Script", "expires_in_days": days})
+		if w.Code != http.StatusBadRequest || problemOf(t, w)["detail"] != "expires_in_days must be between 1 and 365" {
+			t.Fatalf("expires_in_days %v: status = %d body = %s", days, w.Code, w.Body.String())
+		}
+	}
+	// The list carries the date, so the card can count down to it.
+	w = h.do(t, http.MethodGet, "/v1/devices", "user1", nil)
+	var page handler.Page[handler.Device]
+	decodeInto(t, w, &page)
+	if len(page.Items) != 1 || page.Items[0].ExpiresAt == nil || *page.Items[0].ExpiresAt != *created.ExpiresAt {
+		t.Fatalf("list = %+v", page.Items)
 	}
 }

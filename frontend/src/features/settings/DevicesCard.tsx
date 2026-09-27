@@ -17,21 +17,62 @@ export const MAX_DEVICES = 10;
 const DEVICE_NAME_MAX = 60;
 /** Why Add and Rotate are held at the limit: a rotation briefly needs an eleventh row. */
 const FULL_HINT = 'Ten is the limit; remove one first';
+const DAY_MS = 86_400_000;
+
+/**
+ * The "Expires after" choices. Never is the default: the ring you use daily
+ * should not stop working on a date you forgot; a key handed to a one-off
+ * script gets thirty days (WH-A).
+ */
+const EXPIRY_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: '', label: 'Never' },
+  { value: '30', label: '30 days' },
+  { value: '90', label: '90 days' },
+  { value: '365', label: '1 year' },
+];
+
+/** True once the key's date has passed; a device without one never expires. */
+export function isExpired(device: DeviceWire, now: number = Date.now()): boolean {
+  if (!device.expires_at) return false;
+  const at = Date.parse(device.expires_at);
+  return !Number.isNaN(at) && at <= now;
+}
+
+/**
+ * "Expires in N days" counting up to the date, so a key that ends tomorrow
+ * morning has one day left; "Expired" past it; nothing for a perpetual key.
+ */
+function expiryText(device: DeviceWire, now: number): string {
+  if (!device.expires_at) return '';
+  const at = Date.parse(device.expires_at);
+  if (Number.isNaN(at)) return '';
+  if (at <= now) return 'Expired';
+  const days = Math.ceil((at - now) / DAY_MS);
+  return `Expires in ${String(days)} ${days === 1 ? 'day' : 'days'}`;
+}
 
 /**
  * The row's second line: what the key sent this month and when last, once it
  * has sent something this month; when it was added and whether it was ever
  * used, otherwise. "Sent" counts requests, which is captures near enough — a
- * two-step upload is two of them.
+ * two-step upload is two of them. "From 203.0.113.x" is the neighbourhood the
+ * last request came from — enough to tell your phone's carrier from a
+ * stranger, and all the server keeps (WH-B). The expiry, when there is one,
+ * closes the line.
  */
-export function deviceHint(device: DeviceWire): string {
+export function deviceHint(device: DeviceWire, now: number = Date.now()): string {
+  const from = device.last_used_from ? ` from ${device.last_used_from}` : '';
+  const lastUsed = device.last_used_at ? `Last used ${describeAgo(device.last_used_at, now)}${from}` : '';
+  let base: string;
   if (device.usage_month) {
     const { requests, bytes } = device.usage_month;
-    const last = device.last_used_at ? ` · Last used ${describeAgo(device.last_used_at)}` : '';
-    return `${String(requests)} sent this month · ${formatMegabytes(bytes)}${last}`;
+    base = `${String(requests)} sent this month · ${formatMegabytes(bytes)}${lastUsed ? ` · ${lastUsed}` : ''}`;
+  } else {
+    const added = device.created_at ? `Added ${formatRowTime(device.created_at, now)} · ` : '';
+    base = `${added}${lastUsed || 'Never used'}`;
   }
-  const added = device.created_at ? `Added ${formatRowTime(device.created_at)} · ` : '';
-  return `${added}${device.last_used_at ? `Last used ${describeAgo(device.last_used_at)}` : 'Never used'}`;
+  const expiry = expiryText(device, now);
+  return expiry ? `${base} · ${expiry}` : base;
 }
 
 /** The one-shot inbox: POST the audio bytes, one header, done. */
@@ -102,9 +143,12 @@ export function DevicesCard() {
   const create = useCreateDevice();
   const remove = useDeleteDevice();
   const nameId = useId();
+  const expiryId = useId();
 
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
+  /** The "Expires after" choice, as the option's value: '' is Never. */
+  const [expiresIn, setExpiresIn] = useState('');
   /** The device just created, whose key is on screen until Done. */
   const [minted, setMinted] = useState<DeviceCreatedWire | null>(null);
   /** The device whose key `minted` replaces, revoked on Done; null for a plain Add. */
@@ -128,12 +172,13 @@ export function DevicesCard() {
     const trimmed = name.trim();
     if (!trimmed) return;
     create.mutate(
-      { name: trimmed },
+      { name: trimmed, ...(expiresIn ? { expires_in_days: Number(expiresIn) } : {}) },
       {
         onSuccess: (device) => {
           setMinted(device);
           setAdding(false);
           setName('');
+          setExpiresIn('');
         },
         // "Check the list" is only honest if the list is current: a create
         // that timed out may have minted a row this device never saw.
@@ -147,6 +192,7 @@ export function DevicesCard() {
   const cancelAdding = (): void => {
     setAdding(false);
     setName('');
+    setExpiresIn('');
     create.reset();
   };
 
@@ -217,7 +263,9 @@ export function DevicesCard() {
             <li key={device.id} className="you-row">
               <span className="you-row__label">
                 <span className="you-row__label-text">{device.name}</span>
-                <span className="you-row__hint">{deviceHint(device)}</span>
+                <span className={`you-row__hint${isExpired(device) ? ' you-row__hint--expired' : ''}`}>
+                  {deviceHint(device)}
+                </span>
               </span>
               <div className="you-row__control">
                 <button
@@ -303,6 +351,25 @@ export function DevicesCard() {
                 setName(event.target.value);
               }}
             />
+            <label className="device-form__label" htmlFor={expiryId}>
+              Expires after
+            </label>
+            <select
+              id={expiryId}
+              className="settings-select"
+              value={expiresIn}
+              onChange={(event) => {
+                setExpiresIn(event.target.value);
+              }}
+            >
+              {EXPIRY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="device-form__row">
             <button
               type="submit"
               className="settings-status__action settings-status__action--primary"

@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"regexp"
 	"strings"
 	"time"
@@ -23,6 +25,10 @@ var (
 	ErrDeviceNameRequired = errors.New("name is required")
 	ErrDeviceNameTooLong  = errors.New("name is longer than 60 characters")
 	ErrDeviceLimit        = errors.New("you already have ten devices; remove one first")
+	// ErrDeviceExpiryOutOfRange is POST /v1/devices' answer to an
+	// expires_in_days outside 1–MaxDeviceExpiryDays; leaving it out is the
+	// way to ask for a key that never expires.
+	ErrDeviceExpiryOutOfRange = errors.New("expires_in_days must be between 1 and 365")
 	// ErrDeviceKeyUnknown is the inbox's one answer to a key it cannot use:
 	// malformed, never issued, or revoked. It does not say which.
 	ErrDeviceKeyUnknown = errors.New("unknown device key")
@@ -36,7 +42,7 @@ var (
 // answered with — ErrDeviceKeyUnknown or ErrDeviceDailyLimit — so the
 // handler's errors.Is mapping and the sentence on the wire are exactly what
 // they were; a probing client still learns nothing. Reason is one of
-// malformed, unknown, revoked, wrong_secret or daily_limit. DeviceID is set
+// malformed, unknown, revoked, expired, wrong_secret or daily_limit. DeviceID is set
 // once the id parsed and empty for a malformed key, so nothing a probe sends
 // can reach a log line through it.
 type DeviceRefusal struct {
@@ -139,14 +145,20 @@ func (s *DeviceService) WithClock(now func() time.Time) *DeviceService {
 }
 
 // CreateDevice issues a key. The key is returned once, here, and only its
-// hash is stored.
-func (s *DeviceService) CreateDevice(ctx context.Context, userID, name string) (model.Device, string, error) {
+// hash is stored. expiresInDays, when given, is 1–MaxDeviceExpiryDays and
+// sets the instant after which Authenticate refuses the key; nil is a key
+// that never expires, which is the default because the ring you use daily
+// should not stop working on a date you forgot (WH-A).
+func (s *DeviceService) CreateDevice(ctx context.Context, userID, name string, expiresInDays *int) (model.Device, string, error) {
 	name = strings.Join(strings.Fields(name), " ")
 	if name == "" {
 		return model.Device{}, "", ErrDeviceNameRequired
 	}
 	if len([]rune(name)) > model.MaxDeviceNameRunes {
 		return model.Device{}, "", ErrDeviceNameTooLong
+	}
+	if expiresInDays != nil && (*expiresInDays < 1 || *expiresInDays > model.MaxDeviceExpiryDays) {
+		return model.Device{}, "", ErrDeviceExpiryOutOfRange
 	}
 	live, err := s.ListDevices(ctx, userID)
 	if err != nil {
@@ -159,13 +171,18 @@ func (s *DeviceService) CreateDevice(ctx context.Context, userID, name string) (
 	if err != nil {
 		return model.Device{}, "", err
 	}
-	stored, err := s.store.PutDevice(ctx, userID, model.Device{
+	now := s.now()
+	device := model.Device{
 		ID:        id,
 		TenantID:  userID,
 		Name:      name,
 		KeyHash:   hashDeviceKey(key),
-		CreatedAt: model.FormatTime(s.now()),
-	})
+		CreatedAt: model.FormatTime(now),
+	}
+	if expiresInDays != nil {
+		device.ExpiresAt = model.FormatTime(now.AddDate(0, 0, *expiresInDays))
+	}
+	stored, err := s.store.PutDevice(ctx, userID, device)
 	if err != nil {
 		return model.Device{}, "", fmt.Errorf("failed to store device: %w", err)
 	}
@@ -232,10 +249,16 @@ func (s *DeviceService) RevokeDevice(ctx context.Context, userID, deviceID strin
 // Authenticate resolves a presented key to its device and counts the
 // request — and its body's bodyBytes, when the caller knows them — against
 // the key's day and month. Every failure to use the key — malformed,
-// unknown, revoked, wrong secret — is ErrDeviceKeyUnknown; a key at its
-// daily limit is ErrDeviceDailyLimit, refused before anything is written,
-// so a key hammered past the limit costs one read per request and no write.
-// Each is wrapped in a DeviceRefusal that says which, for the metric.
+// unknown, revoked, expired, wrong secret — is ErrDeviceKeyUnknown; a key
+// at its daily limit is ErrDeviceDailyLimit, refused before anything is
+// written, so a key hammered past the limit costs one read per request and
+// no write. Each is wrapped in a DeviceRefusal that says which, for the
+// metric. An expired key is checked after the secret, so "expired" means
+// the device's own key past its date, not a guess at one.
+//
+// remoteAddr is the request's source address as net/http presents it — the
+// bare IP the Lambda adapter copies from the gateway's sourceIp, or ip:port
+// from a plain server — and only its neighbourhood is stored (WH-B).
 //
 // A revoked key reads as revoked while the index still carries its entry —
 // the moment after the revoke, before GSI1 has caught up — and as unknown
@@ -248,7 +271,7 @@ func (s *DeviceService) RevokeDevice(ctx context.Context, userID, deviceID strin
 // write loses, the row is read again, and the revoke is seen. Two requests
 // from one device at the same moment lose to each other the same way and
 // try again; a burst that loses every attempt is a fault, not a refusal.
-func (s *DeviceService) Authenticate(ctx context.Context, rawKey string, bodyBytes int64) (model.Device, error) {
+func (s *DeviceService) Authenticate(ctx context.Context, rawKey, remoteAddr string, bodyBytes int64) (model.Device, error) {
 	id, ok := parseDeviceKey(rawKey)
 	if !ok {
 		return model.Device{}, refuseDevice("malformed", "", ErrDeviceKeyUnknown)
@@ -269,6 +292,9 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string, bodyByt
 		}
 
 		now := s.now().UTC()
+		if d.Expired(now) {
+			return model.Device{}, refuseDevice("expired", id, ErrDeviceKeyUnknown)
+		}
 		day := now.Format("2006-01-02")
 		if d.RequestsDayDate != day {
 			d.RequestsDayDate, d.RequestsDay = day, 0
@@ -287,6 +313,7 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string, bodyByt
 			d.BytesMonth += bodyBytes
 		}
 		d.LastUsedAt = model.FormatTime(now)
+		d.LastUsedFrom = neighbourhood(remoteAddr)
 		stored, err := s.store.PutDevice(ctx, d.TenantID, d)
 		if errors.Is(err, repository.ErrVersionConflict) {
 			continue
@@ -297,4 +324,32 @@ func (s *DeviceService) Authenticate(ctx context.Context, rawKey string, bodyByt
 		return stored, nil
 	}
 	return model.Device{}, fmt.Errorf("device usage write lost %d races in a row", deviceWriteAttempts)
+}
+
+// neighbourhood reduces a source address to the coarse block the Devices
+// card shows as "from 203.0.113.x": the /24 of an IPv4 address written with
+// its last octet as x, the /48 of an IPv6 address written as its prefix and
+// ::x. It takes the address bare or as ip:port, unmaps an IPv4-in-IPv6
+// address first, and answers "" for anything it cannot parse, so nothing a
+// proxy or a test puts in RemoteAddr reaches the row as-is. The full address
+// is never stored anywhere; this is the one place it is read (WH-B).
+func neighbourhood(remoteAddr string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	addr, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil {
+		return ""
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		b := addr.As4()
+		return fmt.Sprintf("%d.%d.%d.x", b[0], b[1], b[2])
+	}
+	prefix, err := addr.Prefix(48)
+	if err != nil {
+		return ""
+	}
+	return prefix.Addr().String() + "x"
 }

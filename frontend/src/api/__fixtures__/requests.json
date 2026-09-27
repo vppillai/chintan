@@ -344,6 +344,15 @@
     }
   },
   {
+    "name": "createDeviceExpiring",
+    "method": "POST",
+    "path": "/v1/devices",
+    "body": {
+      "name": "Contract device",
+      "expires_in_days": 30
+    }
+  },
+  {
     "name": "listDevices",
     "method": "GET",
     "path": "/v1/devices"

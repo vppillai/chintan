@@ -672,6 +672,10 @@ export interface DeviceWire {
   name: string;
   created_at: string;
   last_used_at: string | null;
+  /** The neighbourhood of the last accepted request, `203.0.113.x` or `2001:db8:1::x`; never a full address (WH-B). */
+  last_used_from: string | null;
+  /** When the key stops working; null for one that never does. An expired device stays listed (WH-A). */
+  expires_at: string | null;
   usage_month: { requests: number; bytes: number; month: string } | null;
 }
 
@@ -684,9 +688,10 @@ export interface DeviceCreatedWire extends DeviceWire {
   key: string;
 }
 
-/** Body of `POST /v1/devices`. The name is at most 60 characters. */
+/** Body of `POST /v1/devices`. The name is at most 60 characters; `expires_in_days` is 1–365, left out for a key that never expires. */
 export interface DeviceCreateWire {
   name: string;
+  expires_in_days?: number;
 }
 
 /* ---------------------------------------------------------------------------
