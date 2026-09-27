@@ -118,8 +118,12 @@ constants that pin them:
   surfaces in one viewport recording to different places would be two answers
   to one question.
 
-`/talk` is the walkie-talkie: hold, speak, release, "Sent · filing" for 1.5 s,
-ready for the next; `?note=` seeds the pill. The disc is `min(100%, 26rem,
+`/talk` is the walkie-talkie, and its disc wears one: the `ptt` glyph in
+`Icon.tsx` — body, antenna, grille and the side key that is push-to-talk —
+while the tab-bar disc keeps the microphone, because its tap still opens the
+recorder and the two discs share the viewport here (R5-BR-P3). Hold, speak,
+release, "Sent · filing" for 1.5 s, ready for the next; `?note=` seeds the
+pill. The disc is `min(100%, 26rem,
 55svh)` wide. Space held from the page is the button; Escape mid-hold and the
 window losing focus cancel, as `pointercancel` does for a finger — without
 that the lock screen took the keyup and the microphone stayed open until the

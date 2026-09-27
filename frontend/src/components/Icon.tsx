@@ -24,6 +24,7 @@ export type IconName =
   | 'home'
   | 'you'
   | 'mic'
+  | 'ptt'
   | 'play'
   | 'stop'
   | 'back'
@@ -63,6 +64,12 @@ export const PATHS: Record<IconName, string> = {
   home: 'M4 11.5 12 4.5l8 7M5.5 10.2V20h13V10.2M10 20v-5h4v5',
   you: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM4 21a8 8 0 0 1 16 0',
   mic: 'M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3',
+  // A walkie-talkie: body, antenna, grille, and beside it the side key that
+  // *is* push-to-talk. The `/talk` disc wears it (R5-BR-P3): that screen does
+  // nothing but hold-to-talk, and a second microphone told the wrong story
+  // next to the tab bar's, whose tap still opens the recorder and so keeps
+  // the mic. Design record: `docs/design/branding/ptt-glyph.svg`.
+  ptt: 'M9.5 6h5A1.5 1.5 0 0 1 16 7.5v12a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 8 19.5v-12A1.5 1.5 0 0 1 9.5 6zM10.5 6V2.5M10.5 10h3M18.5 10.5v4',
   // Playback, not recording — a triangle rather than the microphone glyph,
   // which NoteDetailScreen's audio player borrowed from the record button and
   // which read as "record" on a control that only ever plays back audio that

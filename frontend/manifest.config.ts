@@ -86,7 +86,14 @@ export function chintanManifest(base: string, identity: AppIdentity) {
     // Unlocked on purpose: a car mount is landscape, and the stated use case is
     // hands-free. v1 pinned portrait-primary.
     orientation: 'any' as const,
+    /*
+     * The Bindu C (R5-BR-L1): `public/icon.svg` is the artwork and the PNGs
+     * are `scripts/make-icons.mjs`'s renders of it. The SVG is listed first
+     * so a browser that takes a vector (Chromium) draws it crisp at any size;
+     * the PNGs are for the rest, and `maskable` for Android's adaptive shape.
+     */
     icons: [
+      { src: at('icon.svg'), sizes: 'any', type: 'image/svg+xml' },
       { src: at('icon-192.png'), sizes: '192x192', type: 'image/png' },
       { src: at('icon-512.png'), sizes: '512x512', type: 'image/png' },
       {

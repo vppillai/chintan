@@ -61,7 +61,7 @@ describe('the manifest at a sub-path deploy', () => {
   it('still works at the root, where the bug was invisible', () => {
     const manifest = chintanManifest('/', IDENTITY);
     expect(manifest.start_url).toBe('/');
-    expect(manifest.icons[0]?.src).toBe('/icon-192.png');
+    expect(manifest.icons[0]?.src).toBe('/icon.svg');
   });
 
   it('does not depend on the base carrying a trailing slash', () => {
@@ -99,9 +99,10 @@ describe('the manifest at a sub-path deploy', () => {
   });
 
   it('names icons the build actually ships', () => {
-    // The four in `public/`. A manifest may declare only what exists: an icon
+    // The five in `public/`. A manifest may declare only what exists: an icon
     // that 404s is how an installed app ends up with a blank home-screen tile.
     expect(chintanManifest(BASE, IDENTITY).icons.map((icon) => icon.src)).toEqual([
+      '/chintan/dev/icon.svg',
       '/chintan/dev/icon-192.png',
       '/chintan/dev/icon-512.png',
       '/chintan/dev/icon-maskable-192.png',

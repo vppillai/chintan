@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PATHS } from '@/components/Icon.tsx';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
@@ -405,6 +406,9 @@ describe('the record button, held', () => {
     mount(null, '/talk');
     // The name matches the behaviour: no "hold to talk" where there is no hold.
     const mic = screen.getByRole('button', { name: /^PTT: tap to record$/ });
+    // And the glyph matches the tap: the microphone stays here, beside the
+    // screen's own walkie-talkie disc (R5-BR-P3).
+    expect(mic.querySelector('svg path')).toHaveAttribute('d', PATHS.mic);
     fireEvent.pointerDown(mic, down);
     await wait(HOLD_DELAY_MS + 100);
     expect(micRequests).toBe(0);

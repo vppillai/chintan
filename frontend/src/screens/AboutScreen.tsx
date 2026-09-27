@@ -2,6 +2,7 @@ import { Link } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
 import { Icon, type IconName } from '@/components/Icon.tsx';
+import { Mark } from '@/components/Wordmark.tsx';
 import { config } from '@/config/env.ts';
 import { describeVersion } from '@/features/settings/VersionFootnote.tsx';
 
@@ -65,6 +66,7 @@ export function AboutScreen() {
       </header>
 
       <div className="about__hero">
+        <Mark size={72} />
         <h1 className="about__title">{config.appName}</h1>
         <p className="about__lede">{config.appDescription}</p>
         <p className="about__intro">

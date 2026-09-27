@@ -1,3 +1,4 @@
+import { Mark } from '@/components/Wordmark.tsx';
 import { config } from '@/config/env.ts';
 
 import type { AuthGateState } from './useAuth.ts';
@@ -26,6 +27,8 @@ export function SignedOutScreen({ phase, error, signIn, configured }: AuthGateSt
 
   return (
     <div className="signed-out">
+      {/* The mark above the name (R5-BR-L1): the one screen a stranger meets first. */}
+      <Mark size={72} />
       <h1 className="signed-out__title">{config.appName}</h1>
       <p className="signed-out__hint">{config.appDescription}</p>
 
