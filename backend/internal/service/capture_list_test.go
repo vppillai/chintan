@@ -10,6 +10,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -17,9 +18,9 @@ import (
 // reaches a pipeline state the API alone cannot produce. Every note a capture
 // names gets a row too: a filed capture whose note is gone is dropped from the
 // list on purpose, and a test about something else must not trip over that.
-func captureFixture(t *testing.T, captures ...model.CaptureIndex) (*memory.Store, *CaptureService) {
+func captureFixture(t *testing.T, captures ...model.CaptureIndex) (*repository.DynamoStore, *CaptureService) {
 	t.Helper()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	ctx := context.Background()
 	for _, c := range captures {
 		if _, err := store.PutCapture(ctx, c); err != nil {
@@ -384,7 +385,7 @@ func TestWalkCursorRejectsAForeignOrMalformedToken(t *testing.T) {
 
 func TestListCapturesSurfacesAStoreFailure(t *testing.T) {
 	boom := errors.New("dynamodb: dial tcp: connection refused")
-	svc := NewCaptureService(captureListErrStore{Store: memory.NewStore(), err: boom}, memory.NewObjects())
+	svc := NewCaptureService(captureListErrStore{Store: dynamofake.NewStore(), err: boom}, memory.NewObjects())
 
 	if _, err := svc.ListCaptures(context.Background(), "user1", CaptureFilterAll, repository.ListOptions{}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the store's failure rather than an empty capture list", err)

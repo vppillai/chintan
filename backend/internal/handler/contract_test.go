@@ -17,6 +17,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/meter"
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 	"github.com/vppillai/chintan/backend/internal/usage"
@@ -876,7 +877,7 @@ func backendCaptureContentTypes() []string {
 	}
 	accepted := []string{}
 	for _, candidate := range candidates {
-		svc := service.NewCaptureService(memory.NewStore(), memory.NewObjects())
+		svc := service.NewCaptureService(dynamofake.NewStore(), memory.NewObjects())
 		if _, err := svc.BeginCapture(context.Background(), contractUser, service.CaptureRequest{
 			ContentType: candidate,
 		}); err == nil {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -14,7 +15,7 @@ import (
 // prompt for later recordings, so a title is kept to one bounded line.
 func TestCreateNoteBoundsTitle(t *testing.T) {
 	ctx := context.Background()
-	notesService := service.NewNotesService(memory.NewStore(), memory.NewObjects())
+	notesService := service.NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 
 	tests := []struct {
 		name  string
@@ -65,7 +66,7 @@ func TestCreateNoteBoundsTitle(t *testing.T) {
 
 func TestCreateNoteRejectsTitleWithNoText(t *testing.T) {
 	ctx := context.Background()
-	notesService := service.NewNotesService(memory.NewStore(), memory.NewObjects())
+	notesService := service.NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 
 	for _, title := range []string{"", "   ", "\n\t\v"} {
 		if _, err := notesService.CreateNote(ctx, "u1", title, nil); !errors.Is(err, service.ErrEmptyNoteTitle) {
@@ -76,7 +77,7 @@ func TestCreateNoteRejectsTitleWithNoText(t *testing.T) {
 
 func TestUpdateNoteBoundsTitle(t *testing.T) {
 	ctx := context.Background()
-	notesService := service.NewNotesService(memory.NewStore(), memory.NewObjects())
+	notesService := service.NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 
 	note, err := notesService.CreateNote(ctx, "u1", "Roof repair", nil)
 	if err != nil {

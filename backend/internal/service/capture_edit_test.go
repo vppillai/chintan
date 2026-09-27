@@ -11,6 +11,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -21,7 +22,7 @@ import (
 type editHarness struct {
 	t        *testing.T
 	ctx      context.Context
-	store    *memory.Store
+	store    *repository.DynamoStore
 	objects  *memory.Objects
 	notes    *NotesService
 	captures *CaptureService
@@ -29,7 +30,7 @@ type editHarness struct {
 
 func newEditHarness(t *testing.T) *editHarness {
 	t.Helper()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := NewNotesService(store, objects)
 	return &editHarness{

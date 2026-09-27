@@ -18,6 +18,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -25,7 +26,7 @@ import (
 // harness is a whole API over in-memory storage.
 type harness struct {
 	router   http.Handler
-	store    *memory.Store
+	store    *repository.DynamoStore
 	objects  *memory.Objects
 	notes    *service.NotesService
 	captures *service.CaptureService
@@ -48,6 +49,32 @@ func withBrokenStore() harnessOption {
 	return func(d *handler.Deps, h *harness) {
 		d.Readiness = service.NewReadinessService(brokenStore{h.store}, h.objects)
 	}
+}
+
+// withLaggingDeviceIndex authenticates device keys through a store in which
+// GSI1 has not yet caught up with a revoke: a key the index no longer carries
+// is looked up on the row itself, so the row is handed over as it is,
+// revoked_at and all, the way the real index answers for the moment after the
+// revoke. It is how a test reaches the "revoked" refusal rather than "unknown".
+func withLaggingDeviceIndex(tenantID string) harnessOption {
+	return func(d *handler.Deps, h *harness) {
+		d.Devices = service.NewDeviceService(laggingDeviceIndex{Store: h.store, tenantID: tenantID}).
+			WithClock(func() time.Time { return harnessNow })
+	}
+}
+
+type laggingDeviceIndex struct {
+	repository.Store
+	tenantID string
+}
+
+func (s laggingDeviceIndex) LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error) {
+	d, err := s.Store.LookupDeviceKey(ctx, keyID)
+	if !errors.Is(err, repository.ErrNotFound) {
+		return d, err
+	}
+	// The device id is the key id, so the row is one read away.
+	return s.Store.GetDevice(ctx, s.tenantID, keyID)
 }
 
 // withBrokenObjects makes deletes fail, so a purge cascade cannot complete.
@@ -84,7 +111,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	t.Helper()
 
 	h := &harness{
-		store:   memory.NewStore(),
+		store:   dynamofake.NewStore(),
 		objects: memory.NewObjects(),
 		worker:  &recordingInvoker{},
 		spend:   &fakeSpend{},

@@ -7,6 +7,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -73,7 +74,7 @@ func TestAWholeRowWriteThatCrossesACleanTapCarriesTheStamp(t *testing.T) {
 	for _, tc := range wholeRowWrites {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			base := memory.NewStore()
+			base := dynamofake.NewStore()
 			objects := memory.NewObjects()
 			note, err := NewNotesService(base, objects).CreateNote(ctx, "u", "Roof", nil)
 			if err != nil {
@@ -121,7 +122,7 @@ func TestAWholeRowWriteThatLosesToAnotherWriteReportsTheStoredVersion(t *testing
 	for _, tc := range wholeRowWrites {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			base := memory.NewStore()
+			base := dynamofake.NewStore()
 			objects := memory.NewObjects()
 			note, err := NewNotesService(base, objects).CreateNote(ctx, "u", "Roof", nil)
 			if err != nil {

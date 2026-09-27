@@ -25,7 +25,7 @@ const (
 // leaves behind: the text is cleaned and ready, and the append has not
 // happened.
 type appendFixture struct {
-	store   *memory.Store
+	store   *repository.DynamoStore
 	objects repository.Objects
 	h       *harness
 }

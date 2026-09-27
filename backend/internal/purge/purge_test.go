@@ -10,6 +10,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -18,7 +19,7 @@ const testTenant = "user1"
 
 // fixture is a real NotesService over in-memory storage.
 type fixture struct {
-	store   *memory.Store
+	store   *repository.DynamoStore
 	objects *memory.Objects
 	notes   *service.NotesService
 	sweeper *Sweeper
@@ -27,7 +28,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 	sweeper, err := New(store, notes)
@@ -204,7 +205,7 @@ func (o *failingObjects) Delete(ctx context.Context, key string) error {
 // row — the row is the only record of what to delete — and must be reported,
 // because the error is what makes Lambda retry and, failing that, alarm.
 func TestAFailedPurgeIsReportedAndKeepsItsRowForTheNextSweep(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := &failingObjects{Objects: memory.NewObjects()}
 	notes := service.NewNotesService(store, objects)
 	sweeper, err := New(store, notes)
@@ -235,7 +236,7 @@ func TestAFailedPurgeIsReportedAndKeepsItsRowForTheNextSweep(t *testing.T) {
 }
 
 func TestNewRefusesAnIncompleteSweeper(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	notes := service.NewNotesService(store, memory.NewObjects())
 	if _, err := New(nil, notes); err == nil {
 		t.Error("New accepted a nil store")

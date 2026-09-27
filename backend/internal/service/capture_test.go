@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/upload"
 )
@@ -60,7 +61,7 @@ func (w *stubInvoker) InvokeAsk(_ context.Context, tenantID, askID string) error
 }
 
 func TestCaptureService_BeginCapture(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	svc := NewCaptureService(store, objects)
 
@@ -99,7 +100,7 @@ func TestCaptureService_BeginCapture(t *testing.T) {
 // instead.
 func TestBeginCaptureRequiresTheRetentionTagOnTheAudioUpload(t *testing.T) {
 	presigner := &recordingPresigner{}
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects()).WithUploads(presigner)
+	svc := NewCaptureService(dynamofake.NewStore(), memory.NewObjects()).WithUploads(presigner)
 
 	created, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{
 		ContentType: "audio/webm",
@@ -139,7 +140,7 @@ func TestBeginCaptureRequiresTheRetentionTagOnTheAudioUpload(t *testing.T) {
 }
 
 func TestBeginCaptureRejectsUnsupportedAudio(t *testing.T) {
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
+	svc := NewCaptureService(dynamofake.NewStore(), memory.NewObjects())
 
 	_, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{ContentType: "application/pdf"})
 	if !errors.Is(err, ErrUnsupportedContentType) {
@@ -148,7 +149,7 @@ func TestBeginCaptureRejectsUnsupportedAudio(t *testing.T) {
 }
 
 func TestBeginCaptureRejectsAnOversizeUpload(t *testing.T) {
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
+	svc := NewCaptureService(dynamofake.NewStore(), memory.NewObjects())
 
 	_, err := svc.BeginCapture(context.Background(), "user1", CaptureRequest{
 		ContentType: "audio/webm",
@@ -162,7 +163,7 @@ func TestBeginCaptureRejectsAnOversizeUpload(t *testing.T) {
 // The extension decides whether the bucket ever tells the worker the object
 // exists: the notification filters are a fixed list of suffixes.
 func TestBeginCaptureWritesAKeyTheBucketNotifiesOn(t *testing.T) {
-	svc := NewCaptureService(memory.NewStore(), memory.NewObjects())
+	svc := NewCaptureService(dynamofake.NewStore(), memory.NewObjects())
 
 	for contentType, wantSuffix := range map[string]string{
 		"audio/webm;codecs=opus": "/audio.webm",
@@ -184,7 +185,7 @@ func TestBeginCaptureWritesAKeyTheBucketNotifiesOn(t *testing.T) {
 // Retry hands the capture back to the worker. Running the whole pipeline inline
 // turns a gateway timeout into duplicated note content.
 func TestRetryCaptureInvokesTheWorkerRatherThanRunningTheWorkInline(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	worker := &stubInvoker{}
 	svc := NewCaptureService(store, objects).WithInvoker(worker)
@@ -213,7 +214,7 @@ func TestRetryCaptureInvokesTheWorkerRatherThanRunningTheWorkInline(t *testing.T
 }
 
 func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	worker := &stubInvoker{}
 	svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker)
 
@@ -236,7 +237,7 @@ func TestRetryCaptureRefusesAFinishedCapture(t *testing.T) {
 // beats quietly running the pipeline on the request path, which is the defect
 // this phase removes.
 func TestRetryCaptureFailsLoudlyWithNoWorker(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	svc := NewCaptureService(store, memory.NewObjects())
 
 	ctx := context.Background()
@@ -252,7 +253,7 @@ func TestRetryCaptureFailsLoudlyWithNoWorker(t *testing.T) {
 }
 
 func TestGetDownloadURLServesTimestampsAndPeaks(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	svc := NewCaptureService(store, objects)
 
@@ -300,7 +301,7 @@ func TestTheUploadCarriesTheTenantsOwnRetention(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			store := memory.NewStore()
+			store := dynamofake.NewStore()
 			presigner := &recordingPresigner{}
 			svc := NewCaptureService(store, memory.NewObjects()).WithUploads(presigner)
 
@@ -384,7 +385,7 @@ func TestRetryCaptureRefusesAnInFlightCaptureUntilNoWorkerCanBeAlive(t *testing.
 		}, ErrCaptureTerminal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := memory.NewStore()
+			store := dynamofake.NewStore()
 			worker := &stubInvoker{}
 			svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker).WithClock(func() time.Time { return now })
 			c := tc.capture
@@ -453,7 +454,7 @@ func TestRetranscribeCaptureResetsAFinishedCaptureAndHandsItToTheWorker(t *testi
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			store, objects := memory.NewStore(), memory.NewObjects()
+			store, objects := dynamofake.NewStore(), memory.NewObjects()
 			worker := &stubInvoker{}
 			svc := NewCaptureService(store, objects).WithInvoker(worker).WithClock(func() time.Time { return now })
 			note := model.NoteIndex{ID: "n1", Title: "Destination", UpdatedAt: model.Now(), S3MarkdownKey: "tenants/user1/notes/n1/note.md"}
@@ -550,7 +551,7 @@ func TestSetCaptureTargetRefusesAnInFlightCapture(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			store := memory.NewStore()
+			store := dynamofake.NewStore()
 			worker := &stubInvoker{}
 			svc := NewCaptureService(store, memory.NewObjects()).WithInvoker(worker).WithClock(func() time.Time { return now })
 			if _, err := store.PutNote(ctx, "user1", model.NoteIndex{ID: "n1", Title: "Chosen", UpdatedAt: model.Now(), S3MarkdownKey: "tenants/user1/notes/n1/note.md"}); err != nil {

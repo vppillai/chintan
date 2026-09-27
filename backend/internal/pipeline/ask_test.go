@@ -11,6 +11,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -397,7 +398,7 @@ const clientAskPollWindow = 60 * time.Second
 // again" bills the question twice. Twenty seconds is the allowance for
 // everything that is not the model.
 func TestAskAttemptBudgetFitsInsideTheClientsPollWindow(t *testing.T) {
-	p, err := New(Config{Store: memory.NewStore(), Objects: memory.NewObjects(), STT: &fake.STT{}, LLM: &fake.LLM{}, Router: &fake.Router{},
+	p, err := New(Config{Store: dynamofake.NewStore(), Objects: memory.NewObjects(), STT: &fake.STT{}, LLM: &fake.LLM{}, Router: &fake.Router{},
 		Breaker: newBreaker(0), STTProvider: "groq", STTModel: "whisper-large-v3-turbo", LLMProvider: "openai", LLMModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)

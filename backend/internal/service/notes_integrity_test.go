@@ -11,6 +11,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -20,7 +21,7 @@ import (
 // into the routing prompt.
 func TestSnippetTruncationDoesNotCorruptMultiByteText(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 
@@ -64,7 +65,7 @@ func TestSnippetTruncationDoesNotCorruptMultiByteText(t *testing.T) {
 
 func TestShortBodyIsNotTruncated(t *testing.T) {
 	ctx := context.Background()
-	notes := service.NewNotesService(memory.NewStore(), memory.NewObjects())
+	notes := service.NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 	note, err := notes.CreateNote(ctx, "user1", "Short", nil)
 	if err != nil {
 		t.Fatalf("CreateNote: %v", err)
@@ -98,7 +99,7 @@ func (o *failingDeleteObjects) Delete(ctx context.Context, key string) error {
 // at it.
 func TestPermanentDeleteFailsLoudlyAndLeavesTheNoteForRetry(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := &failingDeleteObjects{
 		Objects: memory.NewObjects(),
 		refuse:  "tenants/user1/captures/c1/audio.webm",
@@ -144,7 +145,7 @@ func TestPermanentDeleteFailsLoudlyAndLeavesTheNoteForRetry(t *testing.T) {
 // other half of the unpaginated-query defect: a truncated list leaves orphans.
 func TestPermanentDeleteCascadesBeyondOnePage(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 
@@ -193,7 +194,7 @@ func TestPermanentDeleteCascadesBeyondOnePage(t *testing.T) {
 // in one page.
 func TestMatchNotesSeesBeyondOnePage(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	notes := service.NewNotesService(store, memory.NewObjects())
 
 	const total = int(repository.MaxListLimit) + 5
@@ -222,7 +223,7 @@ func TestMatchNotesSeesBeyondOnePage(t *testing.T) {
 // derived key or a purge leaves it behind.
 func TestPermanentDeleteUnlinksPeaksTheCaptureNoLongerNames(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 

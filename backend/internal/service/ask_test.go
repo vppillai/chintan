@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -48,7 +49,7 @@ func TestValidateAskBoundsTheQuestionAndTheHistory(t *testing.T) {
 // Begin writes the row before the hand-off, and without a worker writes
 // nothing.
 func TestAskBeginWritesThePendingRowThenHandsOff(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	worker := &stubInvoker{}
 	svc := NewAskService(store, worker)
 	a, err := svc.Begin(context.Background(), "user1", "roof?", nil)
@@ -75,7 +76,7 @@ func TestAskBeginWritesThePendingRowThenHandsOff(t *testing.T) {
 
 // The destination's provenance is recorded where it is decided.
 func TestCaptureTargetSourceIsRecordedByWhoChose(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	worker := &stubInvoker{}
 	svc := NewCaptureService(store, objects).WithInvoker(worker)

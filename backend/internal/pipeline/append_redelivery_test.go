@@ -35,7 +35,7 @@ func TestAppendClaimLeaseOutlastsALiveWorker(t *testing.T) {
 
 // rewindAppendClaim ages the capture's claim by d, which is what the passage of
 // real time does between one Lambda attempt and the next.
-func rewindAppendClaim(t *testing.T, store *memory.Store, d time.Duration) {
+func rewindAppendClaim(t *testing.T, store *repository.DynamoStore, d time.Duration) {
 	t.Helper()
 	ctx := context.Background()
 	c, err := store.GetCapture(ctx, "user1", "capture1")

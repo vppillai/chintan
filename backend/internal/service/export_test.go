@@ -10,12 +10,13 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/upload"
 )
 
 type exportHarness struct {
-	store    *memory.Store
+	store    *repository.DynamoStore
 	objects  *memory.Objects
 	notes    *NotesService
 	captures *CaptureService
@@ -24,7 +25,7 @@ type exportHarness struct {
 
 func newExportHarness(t *testing.T) *exportHarness {
 	t.Helper()
-	h := &exportHarness{store: memory.NewStore(), objects: memory.NewObjects()}
+	h := &exportHarness{store: dynamofake.NewStore(), objects: memory.NewObjects()}
 	h.notes = NewNotesService(h.store, h.objects)
 	h.captures = NewCaptureService(h.store, h.objects)
 	h.export = NewExportService(h.notes, h.captures, NewSettingsService(h.store), h.objects)
@@ -331,7 +332,7 @@ func TestExportKeyRefusesATenantIDThatWouldEscapeItsPrefix(t *testing.T) {
 }
 
 func TestExportSurfacesAFailureToReadANoteBody(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	boom := errors.New("s3: AccessDenied on chintan-content-bucket")
 	notes := NewNotesService(store, objects)

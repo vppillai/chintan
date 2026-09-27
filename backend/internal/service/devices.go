@@ -238,8 +238,8 @@ func (s *DeviceService) RevokeDevice(ctx context.Context, userID, deviceID strin
 // Each is wrapped in a DeviceRefusal that says which, for the metric.
 //
 // A revoked key reads as revoked while the index still carries its entry —
-// the moment after the revoke on DynamoDB, always on the memory store — and
-// as unknown once the revoke has dropped the row's index keys and the
+// the moment after the revoke, before GSI1 has caught up — and as unknown
+// once the revoke has dropped the row's index keys and the
 // lookup no longer finds it, so a device still sending a key revoked long
 // ago shows up under unknown.
 //

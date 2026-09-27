@@ -39,7 +39,7 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	defer slog.SetDefault(previous)
 
-	h := newHarness(t)
+	h := newHarness(t, withLaggingDeviceIndex("user1"))
 	created := h.createDevice(t, "user1", "Watch")
 	key := [2]string{"Authorization", "Bearer " + created.Key}
 	text := map[string]any{"text": "buy milk"}
@@ -118,7 +118,7 @@ func TestInboxRefusesUnknownRevokedAndExhaustedKeys(t *testing.T) {
 	}
 
 	// One InboxKeyRefused per refusal, by reason. The revoked key counts as
-	// revoked: the memory store returns the row as the index does for the
+	// revoked: the harness's index still carries the row, as GSI1 does for the
 	// moment after a revoke, and Authenticate reads revoked_at.
 	wantReasons["daily_limit"]++
 	wantReasons["revoked"]++
