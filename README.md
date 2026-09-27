@@ -141,7 +141,7 @@ Both Lambdas read the parameters at cold start, so the switch on **You → Notif
 
 ### User preferences
 
-Per-user preferences — theme, cleanup mode, audio retention and the default transcription language — are settings in the app (**You**), stored per user, not instance configuration; they are the fields of `GET /v1/settings`, which also reports the instance's `daily_spend_cap_micros` read-only.
+Per-user preferences — theme, audio retention and the default transcription language — are settings in the app (**You**), stored per user, not instance configuration; they are the fields of `GET /v1/settings`, which also reports the instance's `daily_spend_cap_micros` read-only. Every recording is cleaned the same way — what was clearly misheard is fixed and the speaker's words are kept — since the per-user Faithful/Polished switch went on 2026-09-27; a rewrite belongs to the note's cleaned view below.
 
 ### Per-note behaviour
 

@@ -194,7 +194,7 @@ sliding its dash on: a transition on the motion tokens, so it plays on a tick
 and not on every render, and is one frame under reduced motion. Checked fills
 the box with ink and draws the tick in ground; the hidden control's focus ring
 lands on the mark. The same label shape — `.checklist__box`, then `CheckMark`
-— is the Items tab's rows, the Split up preview, the Details switches
+— is the Items tab's rows, the Details switches
 (Checklist, Word for word), the Cleaned tab's auto-refresh, and the
 bulk-select box on a note row (`NoteRow.tsx`), which is the same drawn
 `CheckMark`.
