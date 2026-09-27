@@ -265,6 +265,13 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("noteCleanQueued", "NoteCleanQueuedWire",
 		"POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error.",
 		h.do(t, http.MethodPost, "/v1/notes/"+cleanedNote.ID+"/clean", contractUser, map[string]any{"mode": "polished"}))
+	// Regeneration: a note with one appended recording whose transcript is
+	// stored, so the request resets it and answers with the count.
+	regenerable := h.createNote(t, contractUser, "Garden", nil)
+	h.seedRegenerable(t, contractUser, regenerable, "c_regenerable", "plant the bulbs in october")
+	add("noteRegenerateQueued", "NoteRegenerateQueuedWire",
+		"POST /v1/notes/{noteId}/regenerate → 202. captures is how many recordings the worker will clean again; the note's captures go back to transcribed until each lands, so the strip shows progress and GET /v1/notes/{noteId} polls on its own.",
+		h.do(t, http.MethodPost, "/v1/notes/"+regenerable.ID+"/regenerate", contractUser, nil))
 	add("noteCreated", "NoteWire", "POST /v1/notes → 201",
 		h.do(t, http.MethodPost, "/v1/notes", contractUser, map[string]any{"title": "A new thought"}))
 	add("tagsPage", "Page<TagWire>", "GET /v1/tags → 200, one entry per tag in use with its count",
@@ -819,8 +826,8 @@ func neededSchemaTypes(fixtures []contractFixture) []string {
 		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
 		"PushKeyWire": true, "PushSubscriptionWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
-		"NotePurgeResponseWire": true,
-		"Page":                  true, "PresignedDownloadWire": true, "ProblemWire": true,
+		"NotePurgeResponseWire": true, "NoteRegenerateQueuedWire": true,
+		"Page": true, "PresignedDownloadWire": true, "ProblemWire": true,
 		"ReadinessWire": true, "RecordingUrlsWire": true, "SearchHitWire": true, "SettingsWire": true,
 		"TagWire": true, "UsageWire": true,
 	}

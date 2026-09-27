@@ -32,6 +32,7 @@ import type {
   NoteCleanQueuedWire,
   NoteDetailWire,
   NotePurgeResponseWire,
+  NoteRegenerateQueuedWire,
   NoteWire,
   Page,
   PresignedDownloadWire,
@@ -383,6 +384,12 @@ export const noteDetailChecklistCleaned: NoteDetailWire = {
 /** POST /v1/notes/{noteId}/clean → 202. The worker regenerates the view asynchronously; poll GET /v1/notes/{noteId} for a newer generated_at or an error. */
 export const noteCleanQueued: NoteCleanQueuedWire = {
   "mode": "polished",
+  "status": "queued"
+};
+
+/** POST /v1/notes/{noteId}/regenerate → 202. captures is how many recordings the worker will clean again; the note's captures go back to transcribed until each lands, so the strip shows progress and GET /v1/notes/{noteId} polls on its own. */
+export const noteRegenerateQueued: NoteRegenerateQueuedWire = {
+  "captures": 1,
   "status": "queued"
 };
 

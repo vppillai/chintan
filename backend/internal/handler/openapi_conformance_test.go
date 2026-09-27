@@ -668,6 +668,30 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil).Code
 		},
 
+		"POST /v1/notes/{noteId}/regenerate -> 202": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Regenerable", nil)
+			h.seedRegenerable(t, "user1", note, "c_regen", "the gutter leaks")
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/regenerate", "user1", nil).Code
+		},
+		"POST /v1/notes/{noteId}/regenerate -> 401": send(http.MethodPost, "/v1/notes/x/regenerate", "", nil),
+		"POST /v1/notes/{noteId}/regenerate -> 404": send(http.MethodPost, "/v1/notes/missing/regenerate", "user1", nil),
+		"POST /v1/notes/{noteId}/regenerate -> 409": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Busy", nil)
+			h.putCapture(t, model.CaptureIndex{
+				ID: "c_moving", UserID: "user1", NoteID: note.ID, Status: model.StatusTranscribing,
+				CreatedAt: model.Now(), LastProgressAt: model.Now(),
+			})
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/regenerate", "user1", nil).Code
+		},
+		"POST /v1/notes/{noteId}/regenerate -> 429": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Capped", nil)
+			h.spend.capped = true
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/regenerate", "user1", nil).Code
+		},
+
 		// ---- tags and search
 		"GET /v1/tags -> 200":   get("/v1/tags", "user1"),
 		"GET /v1/tags -> 401":   get("/v1/tags", ""),

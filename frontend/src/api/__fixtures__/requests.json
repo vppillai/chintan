@@ -151,6 +151,11 @@
     }
   },
   {
+    "name": "regenerateNote",
+    "method": "POST",
+    "path": "/v1/notes/contract-note/regenerate"
+  },
+  {
     "name": "archiveNote",
     "method": "DELETE",
     "path": "/v1/notes/contract-note"

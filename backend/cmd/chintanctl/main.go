@@ -14,6 +14,7 @@
 //	chintanctl backfill-search-text --instance <name> [--tenant <id>] [--apply]
 //	chintanctl usage     --instance <name> [--month yyyy-mm] [--tenant <id>]
 //	chintanctl latency   --instance <name> [--month yyyy-mm] [--tenant <id>]
+//	chintanctl regenerate --instance <name> --tenant <id> (--note <id> | --all) [--apply] [--yes]
 //
 // Three conventions are load-bearing and shared with scripts/:
 //
@@ -63,6 +64,11 @@ Commands:
   latency    Per-hop pipeline timings for one month from the capture rows:
              device lag, queue, transcribe, route, clean, append, total,
              as count, p50, p95 and max by source (app or device). Read-only.
+  regenerate Clean every recording of a note — or of every note of a tenant —
+             again with the current prompts, without transcribing again, by
+             queueing the worker's regenerate-note task per note. Prints the
+             count of recordings and an estimated cost from the price table;
+             --apply queues it after a confirmation, --yes skips the prompt.
 
 Run "chintanctl <command> --help" for the flags of one command.
 `
@@ -139,6 +145,9 @@ type env struct {
 	Part   Partition
 	Blobs  Blobs
 	Target target
+	// Worker is set only by the command that queues work (regenerate) and
+	// only with --apply; every other command leaves it nil.
+	Worker Worker
 	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
@@ -176,6 +185,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, stdin io.
 		return cmdUsage(ctx, rest, stdout, stderr, stdin)
 	case "latency":
 		return cmdLatency(ctx, rest, stdout, stderr, stdin)
+	case "regenerate":
+		return cmdRegenerate(ctx, rest, stdout, stderr, stdin)
 	default:
 		_, _ = fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("unknown command %q", cmd)

@@ -397,11 +397,12 @@ func TestPurgeNotesStopsAtItsTimeBudgetAndReportsTheRestForRetry(t *testing.T) {
 	f := newPurgeFixture(t)
 	ctx := context.Background()
 	now := time.Date(2026, 9, 5, 16, 0, 0, 0, time.UTC)
-	// Each note's cascade deletes three objects (audio, body, meta); every
-	// delete costs four seconds of the clock, so the first note finishes at
-	// 12 s, the second is started (12 s < 20 s) and finishes at 24 s, and the
-	// third is never begun.
-	slow := &slowObjects{Objects: f.objects, advance: func() { now = now.Add(4 * time.Second) }}
+	// Each note's cascade deletes five objects (audio, the derived peaks and
+	// previous-items keys — asked for whether or not they exist — body,
+	// meta); every delete costs three seconds of the clock, so the first note
+	// finishes at 15 s, the second is started (15 s < 20 s) and finishes at
+	// 30 s, and the third is never begun.
+	slow := &slowObjects{Objects: f.objects, advance: func() { now = now.Add(3 * time.Second) }}
 	notes := NewNotesService(f.store, slow).WithClock(func() time.Time { return now })
 	ids := []string{f.archivedNote(t, "a").ID, f.archivedNote(t, "b").ID, f.archivedNote(t, "c").ID}
 

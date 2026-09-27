@@ -80,6 +80,20 @@ function server(initial: StoredNote[]) {
       notes.delete(permanent[1] ?? '');
       return new Response(null, { status: 204 });
     }
+    // Regenerate: the landed recordings go back to transcribed, as the
+    // server resets them, and the 202 says how many.
+    const regenerate = /\/v1\/notes\/([^/]+)\/regenerate$/.exec(url.pathname);
+    if (regenerate && method === 'POST') {
+      const note = notes.get(regenerate[1] ?? '');
+      if (!note) return json({ type: 'about:blank', title: 'Not found', status: 404 }, 404);
+      const landed = (note.captures ?? []).filter((capture) => capture.status === 'appended');
+      note.captures = (note.captures ?? []).map((capture) =>
+        capture.status === 'appended'
+          ? { ...capture, status: 'transcribed' as const, last_progress_at: new Date().toISOString() }
+          : capture,
+      );
+      return json({ status: 'queued', captures: landed.length }, 202);
+    }
 
     if (detail && method === 'GET') {
       gets += 1;
@@ -705,6 +719,94 @@ describe('deleting from the note screen', () => {
     await waitFor(() => {
       expect(router.state.location.search).toBe('?view=archived');
     });
+  });
+});
+
+/**
+ * Regenerate from recordings, through the header's ⋮ (`NoteMenu`): a plain
+ * confirm that names the count, one POST, and the filing strip while the
+ * recordings come back (owner, 2026-09-27).
+ */
+describe('regenerating a note from its recordings', () => {
+  it('opens a plain confirm naming the count, posts on Regenerate, and shows the strip while the recordings land', async () => {
+    const user = userEvent.setup();
+    const api = server([{ ...ROOF, captures: [FILED, { ...FILED, id: 'cap-older', created_at: '2026-08-05T09:10:00.000Z' }] }]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(dialog).toHaveTextContent(
+      'Re-does the AI cleanup of 2 recordings with the current settings; edits you made inside those paragraphs are replaced. Ticks are kept.',
+    );
+    expect(api.calls).not.toContain('POST /v1/notes/roof-repair/regenerate');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Regenerate' }));
+    await waitFor(() => {
+      expect(api.calls).toContain('POST /v1/notes/roof-repair/regenerate');
+    });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The refetch sees the recordings back at transcribed: the strip appears
+    // and the menu item stands down until they land.
+    expect(await screen.findByRole('region', { name: 'Filing a recording' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Regenerating…' })).toBeDisabled();
+  });
+
+  it('is off when no recording has landed in the note', async () => {
+    const user = userEvent.setup();
+    const api = server([ROOF]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' })).toBeDisabled();
+  });
+
+  it('says so under the menu when the server finds nothing to regenerate', async () => {
+    const user = userEvent.setup();
+    const api = server([{ ...ROOF, captures: [FILED] }]);
+    // The dialog counts the landed recordings; the server also skips a
+    // paragraph rewritten by hand, so its count can be zero where the dialog
+    // said one.
+    const fetchImpl: typeof fetch = async (input, init) =>
+      init?.method === 'POST' && String(input).endsWith('/regenerate')
+        ? json({ status: 'queued', captures: 0 }, 202)
+        : api.fetchImpl(input, init);
+    mount(fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Regenerate' }));
+    expect(
+      await screen.findByText('Nothing to regenerate: every paragraph is in your own words now.'),
+    ).toBeInTheDocument();
+  });
+
+  it('offers a fresh regeneration when a recording has sat stuck rather than reading it as still moving', async () => {
+    const user = userEvent.setup();
+    const stuck: CaptureWire = {
+      ...FILED,
+      id: 'cap-stuck',
+      status: 'cleaning',
+      last_progress_at: '2026-08-06T09:10:00.000Z',
+    };
+    const api = server([{ ...ROOF, captures: [FILED, stuck] }]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Roof repair');
+    });
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    expect(screen.getByRole('menuitem', { name: 'Regenerate from recordings…' })).toBeEnabled();
   });
 });
 

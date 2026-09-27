@@ -384,6 +384,62 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/SpendCapped' }
 
+  /v1/notes/{noteId}/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/NoteId'
+    post:
+      tags: [notes]
+      summary: Clean every recording of the note again with the current prompts
+      description: |
+        Re-runs the one pipeline stage that depends on a prompt over every
+        recording the note holds, from the transcript already stored, and
+        puts each recording's new words where its old ones stand. Nothing is
+        transcribed again — that is `POST /v1/captures/{captureId}/retranscribe`,
+        one recording at a time. For a plain note each recording's paragraph
+        is cleaned again from its transcript (the routed transcript, with the
+        words spoken to the app already removed, when it has one) and replaced
+        by its marker; text you edited inside that paragraph is replaced with
+        it, and a paragraph you rewrote into your own words — its marker no
+        longer holds it — is left alone and not counted. For a checklist each
+        recording's items are extracted again and swapped for the items it
+        produced last time, found by their words wherever ticking or
+        reordering moved them; a tick follows its item's words, and items you
+        typed stay. The whole-note cleaned view is regenerated afterwards when
+        the note has one. The title is not changed.
+
+        Answers 202 at once with how many recordings were handed to the
+        worker; zero means nothing in the note came from a prompt (a verbatim
+        note, a typed note) and nothing was queued. Each of those recordings
+        goes back to `transcribed` until the worker lands it, so the note's
+        `captures` show the progress, `GET /v1/notes/{noteId}` polls on its own
+        while any is moving, and a second request while one is still moving —
+        this regeneration, or a recording being filed — is 409. The spend cap
+        applies: the run is one cleanup call per recording, priced as any
+        other, plus one whole-note call over the entire body when the note
+        keeps a cleaned view (larger than any single recording's call; made
+        only when a recording landed), so a capped instance is told before
+        anything is reset. At most 200 recordings per request.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Queued. `captures` is how many recordings the worker will clean again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NoteRegenerateQueued' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            The note is archived; or a recording of it is still being filed,
+            or an earlier regeneration is still running (`this note is being
+            regenerated, or a recording is being filed into it; wait for it
+            to finish`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/SpendCapped' }
+
   /v1/notes/purge:
     post:
       tags: [notes]
@@ -1774,6 +1830,19 @@ components:
       properties:
         status: { type: string, enum: [queued] }
         mode: { type: string, enum: [polished, structured, tasks] }
+
+    NoteRegenerateQueued:
+      type: object
+      required: [status, captures]
+      properties:
+        status: { type: string, enum: [queued] }
+        captures:
+          type: integer
+          minimum: 0
+          description: |
+            How many of the note's recordings were handed to the worker to be
+            cleaned again. Zero means nothing was queued: no recording in the
+            note has words that came from a prompt.
 
     NoteDetail:
       allOf:

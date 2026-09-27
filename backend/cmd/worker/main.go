@@ -12,7 +12,9 @@
 // recording lands in the content bucket, the API when the user retries a
 // capture or picks its destination, the API or this function itself with
 // {"task":"clean-note"} for a note's whole-note cleaned view, the API with
-// {"task":"ask"} for a question over the tenant's notes, and three
+// {"task":"ask"} for a question over the tenant's notes, the API or
+// chintanctl with {"task":"regenerate-note"} to clean a note's recordings
+// again with the current prompts, and three
 // EventBridge rules: once a week with {"task":"sweep-expired"} and once a day
 // each with {"task":"aws-cost"} and {"task":"storage-snapshot"}. There is no
 // queue in between. A returned error
@@ -408,6 +410,12 @@ func Handler(ctx context.Context, raw json.RawMessage) error {
 		// A question over the tenant's notes, sent by the API for POST
 		// /v1/ask. Retrieval and the one model call run here; the API only
 		// wrote the row.
+		return worker.Handle(ctx, raw)
+
+	case inv.task == pipeline.TaskRegenerateNote:
+		// A note's recordings cleaned again with the current prompts, sent
+		// by the API for POST /v1/notes/{id}/regenerate and by chintanctl
+		// regenerate. One cleanup call per recording, then the cleaned view.
 		return worker.Handle(ctx, raw)
 
 	case inv.task != "":

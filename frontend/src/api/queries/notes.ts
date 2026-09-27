@@ -360,6 +360,24 @@ export function useCreateNote() {
   });
 }
 
+/**
+ * `POST /v1/notes/{id}/regenerate`: the note's recordings cleaned again with
+ * the current prompts. The detail is refetched on the 202 rather than patched:
+ * the captures have gone back to `transcribed` on the server, and reading them
+ * is what starts `useNote`'s poll and puts the filing strip on the screen
+ * until the last one lands.
+ */
+export function useRegenerateNote() {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (noteId: string) => api.regenerateNote(noteId),
+    onSuccess: (_queued, noteId) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(noteId) });
+    },
+  });
+}
+
 /* ---------------------------------------------------------------------------
    Removing a note: archive → restore, or archive → purge
 

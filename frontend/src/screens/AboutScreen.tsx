@@ -116,7 +116,9 @@ export function AboutScreen() {
           <p>
             Cleanup follows the note: <em>Faithful</em> fixes only what was clearly misheard,{' '}
             <em>Polished</em> tidies the wording as well, and a note marked verbatim is left
-            exactly as spoken.
+            exactly as spoken. When the cleanup itself improves, a note&rsquo;s menu offers{' '}
+            <em>Regenerate from recordings</em>: every recording in it is cleaned again from its
+            transcript with the current settings, without being transcribed again.
           </p>
           <p>
             Other devices can post recordings and text into your notes with a device key &mdash; a

@@ -81,6 +81,19 @@ func (i *Invoker) InvokeAsk(ctx context.Context, tenantID, askID string) error {
 	})
 }
 
+// InvokeRegenerateNote queues the regenerate-note task for one note, naming
+// the recordings the request path reset, the same way and with the same
+// retries.
+func (i *Invoker) InvokeRegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error {
+	return i.invoke(ctx, Invocation{
+		Task:          TaskRegenerateNote,
+		TenantID:      tenantID,
+		NoteID:        noteID,
+		CaptureIDs:    captureIDs,
+		CorrelationID: obs.CorrelationID(ctx),
+	})
+}
+
 func (i *Invoker) invoke(ctx context.Context, inv Invocation) error {
 	payload, err := json.Marshal(inv)
 	if err != nil {

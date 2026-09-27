@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -265,6 +266,14 @@ func (w *recordingInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID s
 
 func (w *recordingInvoker) InvokeAsk(_ context.Context, tenantID, askID string) error {
 	w.calls = append(w.calls, "ask/"+tenantID+"/"+askID)
+	return nil
+}
+
+func (w *recordingInvoker) InvokeRegenerateNote(_ context.Context, tenantID, noteID string, captureIDs []string) error {
+	if w.cleanErr != nil {
+		return w.cleanErr
+	}
+	w.calls = append(w.calls, "regenerate-note/"+tenantID+"/"+noteID+"/"+strings.Join(captureIDs, "+"))
 	return nil
 }
 

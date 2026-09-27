@@ -220,6 +220,9 @@ func (recordingInvoker) InvokeCleanNote(context.Context, string, string, model.N
 	return nil
 }
 func (recordingInvoker) InvokeAsk(context.Context, string, string) error { return nil }
+func (recordingInvoker) InvokeRegenerateNote(context.Context, string, string, []string) error {
+	return nil
+}
 
 // A cap rejection is a budget decision, not a fault: it gets its own status and
 // the provider is never contacted.

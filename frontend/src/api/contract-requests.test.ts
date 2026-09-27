@@ -187,6 +187,7 @@ describe('the requests the frontend actually sends', () => {
     await call('reorderPins', () => api.reorderPins({ ids: [NOTE_ID_2, NOTE_ID] }));
     await call('cleanNote', () => api.cleanNote(NOTE_ID));
     await call('cleanNoteMode', () => api.cleanNote(NOTE_ID, { mode: 'polished' }));
+    await call('regenerateNote', () => api.regenerateNote(NOTE_ID));
     await call('archiveNote', () => api.archiveNote(NOTE_ID));
     await call('restoreNote', () => api.restoreNote(ARCHIVED_NOTE_ID));
     await call('deleteNoteForever', () => api.deleteNoteForever(ARCHIVED_NOTE_ID));

@@ -37,6 +37,7 @@ import type {
   NotePinsWire,
   NotePurgeRequestWire,
   NotePurgeResponseWire,
+  NoteRegenerateQueuedWire,
   NoteUpdateWire,
   NoteWire,
   Page,
@@ -170,6 +171,20 @@ export class ChintanApi {
     return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/clean`, {
       method: 'POST',
       ...(body ? { body } : {}),
+      idempotencyKey,
+    });
+  }
+
+  /**
+   * Asks the worker to clean every recording of the note again with the
+   * current prompts, from the transcripts it already has, and put each back
+   * where it stands (`useRegenerateNote`). Answers 202 with the count; the
+   * captures go back to `transcribed` and the note's poll follows them. A
+   * second request while one is running is 409.
+   */
+  regenerateNote(noteId: string, idempotencyKey?: string): Promise<NoteRegenerateQueuedWire> {
+    return this.client.request(`/v1/notes/${encodeURIComponent(noteId)}/regenerate`, {
+      method: 'POST',
       idempotencyKey,
     });
   }

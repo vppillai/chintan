@@ -46,6 +46,9 @@ func (rt *router) routes() {
 	// The whole-note cleaned view. 202 and a worker invocation; the LLM pass
 	// never runs on the request path.
 	rt.handle("POST "+p+"/notes/{noteId}/clean", rt.cleanNote, idempotent())
+	// Every recording of the note cleaned again with the current prompts and
+	// put back where it stands. 202 and a worker invocation, like clean.
+	rt.handle("POST "+p+"/notes/{noteId}/regenerate", rt.regenerateNote, idempotent())
 
 	// Tags and search.
 	rt.handle("GET "+p+"/tags", rt.listTags)

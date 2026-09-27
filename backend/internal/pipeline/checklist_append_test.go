@@ -227,15 +227,18 @@ func TestChecklistItemsIsOneBoundedLinePerItem(t *testing.T) {
 	}
 }
 
-// Ticks are carried line for line when a recording's items are written again;
-// a different number of items carries nothing, because no line can be said to
-// be the one that was ticked.
+// Ticks are carried when a recording's items are written again: to the line
+// with the same words first (case aside), and line for line only when no
+// words match and the count holds; a different number of other words carries
+// nothing, because no line can be said to be the one that was ticked
+// (regenerate_test.go pins the words-first cases).
 func TestKeepTickCarriesTicksLineForLine(t *testing.T) {
 	for _, tc := range []struct{ name, old, text, want string }{
 		{"one item", "- [x] milk", "- [ ] Milk", "- [x] Milk"},
 		{"the second of three", "- [ ] a\n- [x] b\n- [ ] c", "- [ ] A\n- [ ] B\n- [ ] C", "- [ ] A\n- [x] B\n- [ ] C"},
 		{"all ticked", "- [x] a\n- [x] b", "- [ ] A\n- [ ] B", "- [x] A\n- [x] B"},
-		{"count differs", "- [x] a\n- [x] b", "- [ ] A\n- [ ] B\n- [ ] C", "- [ ] A\n- [ ] B\n- [ ] C"},
+		{"count differs, same words", "- [x] a\n- [x] b", "- [ ] A\n- [ ] B\n- [ ] C", "- [x] A\n- [x] B\n- [ ] C"},
+		{"count differs, other words", "- [x] a\n- [x] b", "- [ ] x\n- [ ] y\n- [ ] z", "- [ ] x\n- [ ] y\n- [ ] z"},
 		{"plain paragraph", "First take.", "Second take.", "Second take."},
 		{"nothing before", "", "- [ ] A", "- [ ] A"},
 	} {

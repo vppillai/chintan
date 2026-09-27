@@ -109,6 +109,10 @@ func (w directInvoker) InvokeAsk(ctx context.Context, tenantID, askID string) er
 	return w.p.Ask(ctx, tenantID, askID)
 }
 
+func (w directInvoker) InvokeRegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error {
+	return w.p.RegenerateNote(ctx, tenantID, noteID, captureIDs)
+}
+
 func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 	f := newRoutingFixture(t,
 		"add this to my roof repair note the gutter is also leaking",
