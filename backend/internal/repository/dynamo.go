@@ -1180,17 +1180,21 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		"duration_ms":       numAttr(c.DurationMS),
 		"mode":              strAttr(string(c.Mode)),
 		"error":             strAttr(c.Error),
-		// Top-level for the same reason as the keys: the by-note page reads it
-		// back with one BatchGetItem (hydrateCaptureSources) instead of
-		// decoding every row's blob.
-		"source":       strAttr(c.Source),
-		"audio_key":    strAttr(c.AudioKey),
-		"raw_key":      strAttr(c.RawKey),
-		"routed_key":   strAttr(c.RoutedKey),
-		"clean_key":    strAttr(c.CleanKey),
-		"segments_key": strAttr(c.SegmentsKey),
-		"peaks_key":    strAttr(c.PeaksKey),
-		"data":         strAttr(string(blob)),
+		// Top-level for the same reason as the keys: the by-note page reads
+		// them back with one BatchGetItem (hydrateUnprojectedCaptureFields)
+		// instead of decoding every row's blob. last_progress_at is what the
+		// app's poll cadence and stuck rule run on; without it a regeneration
+		// of a note older than ten minutes read as stuck from its first second
+		// (QA 2026-09-27, F1).
+		"source":           strAttr(c.Source),
+		"last_progress_at": strAttr(c.LastProgressAt),
+		"audio_key":        strAttr(c.AudioKey),
+		"raw_key":          strAttr(c.RawKey),
+		"routed_key":       strAttr(c.RoutedKey),
+		"clean_key":        strAttr(c.CleanKey),
+		"segments_key":     strAttr(c.SegmentsKey),
+		"peaks_key":        strAttr(c.PeaksKey),
+		"data":             strAttr(string(blob)),
 	}
 	// Indexed even when NoteID is empty. A capture awaiting disambiguation has
 	// no destination note, and leaving it out of the index entirely is what made
@@ -1234,6 +1238,9 @@ func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, err
 	}
 	if _, ok := m["source"]; ok {
 		c.Source = readString(m, "source")
+	}
+	if _, ok := m["last_progress_at"]; ok {
+		c.LastProgressAt = readString(m, "last_progress_at")
 	}
 	if _, ok := m["error"]; ok {
 		c.Error = readString(m, "error")
@@ -1370,7 +1377,7 @@ func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID s
 		c.UserID = tenantID
 		captures = append(captures, c)
 	}
-	if err := s.hydrateCaptureSources(ctx, tenantID, captures); err != nil {
+	if err := s.hydrateUnprojectedCaptureFields(ctx, tenantID, captures); err != nil {
 		return Page[model.CaptureIndex]{}, err
 	}
 
@@ -1381,16 +1388,18 @@ func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID s
 	return Page[model.CaptureIndex]{Items: captures, Cursor: cursor}, nil
 }
 
-// hydrateCaptureSources overlays each capture's source, which gsi1 does not
-// project, so a note's page can say which device sent a recording (the
-// capture read on its own always could). One BatchGetItem per page, keyed
-// off the projected ids; a row from before the attribute was promoted has
-// nothing to say and keeps what its blob said.
+// hydrateUnprojectedCaptureFields overlays the fields gsi1 does not project
+// but a note's page needs: source, so the page can say which device sent a
+// recording, and last_progress_at, so the app's poll cadence and stuck rule
+// follow the pipeline rather than created_at (the capture read on its own
+// always had both). One BatchGetItem per page, keyed off the projected ids; a
+// row from before an attribute was promoted has nothing to say for it and
+// keeps what the index gave.
 //
 // ponytail: a second read per by-note page. CloudFormation cannot change a
-// live index's projection, so `source` joins gsi1's NonKeyAttributes when the
+// live index's projection, so these join gsi1's NonKeyAttributes when the
 // index is next rebuilt by hand; this function goes then.
-func (s *DynamoStore) hydrateCaptureSources(ctx context.Context, tenantID string, captures []model.CaptureIndex) error {
+func (s *DynamoStore) hydrateUnprojectedCaptureFields(ctx context.Context, tenantID string, captures []model.CaptureIndex) error {
 	if len(captures) == 0 {
 		return nil
 	}
@@ -1404,9 +1413,9 @@ func (s *DynamoStore) hydrateCaptureSources(ctx context.Context, tenantID string
 		})
 	}
 	// SOURCE is a DynamoDB reserved word, hence the placeholder.
-	items, err := s.batchGet(ctx, keys, "sk, #source", map[string]string{"#source": "source"})
+	items, err := s.batchGet(ctx, keys, "sk, #source, last_progress_at", map[string]string{"#source": "source"})
 	if err != nil {
-		return fmt.Errorf("dynamo hydrate capture sources: %w", err)
+		return fmt.Errorf("dynamo hydrate capture fields: %w", err)
 	}
 	for _, item := range items {
 		i, ok := byID[trimPrefix(readString(item, "sk"), "CAPTURE#")]
@@ -1415,6 +1424,9 @@ func (s *DynamoStore) hydrateCaptureSources(ctx context.Context, tenantID string
 		}
 		if _, has := item["source"]; has {
 			captures[i].Source = readString(item, "source")
+		}
+		if _, has := item["last_progress_at"]; has {
+			captures[i].LastProgressAt = readString(item, "last_progress_at")
 		}
 	}
 	return nil
