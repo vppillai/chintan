@@ -99,6 +99,9 @@ export function RecordingRow({
     queryKey: ['capture-artifacts', capture.id, capture.version],
     queryFn: () =>
       loadCaptureArtifacts(api, capture.id, {
+        // Words sent through the inbox never had audio; asking is a 404 by
+        // contract. Absent (a literal from before the field) keeps the ask.
+        hasAudio: capture.has_audio ?? true,
         hasPeaks: capture.has_peaks ?? false,
         hasSegments: capture.has_segments ?? false,
       }),

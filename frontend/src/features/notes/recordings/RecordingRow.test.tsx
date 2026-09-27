@@ -409,6 +409,8 @@ describe('a capture that a device sent', () => {
     // Words never had timestamps for cleanup to lose, so the panel does not say so.
     expect(row).not.toHaveTextContent(/no reliable timestamps/i);
     expect(row).toHaveTextContent('From Watch');
+    // And nothing asked the server for audio that is a 404 by contract.
+    expect(api.calls.some((call) => call.path.includes('kind=audio'))).toBe(false);
 
     // Nothing to download or transcribe again; the words themselves copy.
     await user.click(within(row).getByRole('button', { name: /more for recording from/i }));
