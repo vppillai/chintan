@@ -76,7 +76,7 @@ func TestDeviceRowsRoundTripAndTheKeyIndexIsSparse(t *testing.T) {
 	if _, err := store.LookupDeviceKey(ctx, "dev_0001"); !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("revoked key found: %v", err)
 	}
-	row := api.items["USER#tenant-a"]["DEVICE#dev_0001"]
+	row := api.Item("USER#tenant-a", "DEVICE#dev_0001")
 	if _, indexed := row["gsi1pk"]; indexed {
 		t.Fatal("a revoked row still carries its index key")
 	}

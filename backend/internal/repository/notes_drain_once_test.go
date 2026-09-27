@@ -35,10 +35,10 @@ func TestDrainNotesReadsThePartitionOnceWhereDrainPagesReadsItPerPage(t *testing
 	seedNotesWithSearchText(t, store, "tenant-a", total)
 	// Four rows per Query, so one read of the partition is ten Queries and the
 	// two approaches are told apart by their counts.
-	api.pageSize = 4
+	api.PageSize = 4
 	const queriesPerDrain = (total + 3) / 4
 
-	api.queries = nil
+	api.Queries = nil
 	paged, err := repository.DrainPages(ctx, 0, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
 		opts.Limit = 10
 		return store.ListNotes(ctx, "tenant-a", opts)
@@ -46,12 +46,12 @@ func TestDrainNotesReadsThePartitionOnceWhereDrainPagesReadsItPerPage(t *testing
 	if err != nil {
 		t.Fatalf("DrainPages: %v", err)
 	}
-	pagedQueries := len(api.queries)
+	pagedQueries := len(api.Queries)
 	if pagedQueries != 4*queriesPerDrain {
 		t.Fatalf("DrainPages over four pages issued %d queries, want %d — the premise of this test is that it re-drains per page", pagedQueries, 4*queriesPerDrain)
 	}
 
-	api.queries, api.batchGets = nil, nil
+	api.Queries, api.BatchGets = nil, nil
 	drained, truncated, err := store.DrainNotes(ctx, "tenant-a", repository.DrainOptions{IncludeSearchText: true})
 	if err != nil {
 		t.Fatalf("DrainNotes: %v", err)
@@ -59,10 +59,10 @@ func TestDrainNotesReadsThePartitionOnceWhereDrainPagesReadsItPerPage(t *testing
 	if truncated {
 		t.Fatal("a drain of 37 notes reported the ceiling")
 	}
-	if got := len(api.queries); got != queriesPerDrain {
+	if got := len(api.Queries); got != queriesPerDrain {
 		t.Fatalf("DrainNotes issued %d queries, want %d: one read of the partition", got, queriesPerDrain)
 	}
-	if len(api.batchGets) != 0 {
+	if len(api.BatchGets) != 0 {
 		t.Fatalf("DrainNotes hydrated with BatchGetItem; the drain itself should carry the field for every row")
 	}
 	if len(drained) != len(paged) {
@@ -106,9 +106,9 @@ func TestListNotesWithSearchTextHydratesOnlyThePage(t *testing.T) {
 	ctx := context.Background()
 	const total = 230
 	seedNotesWithSearchText(t, store, "tenant-a", total)
-	api.unprocessedEvery = 2
+	api.UnprocessedEvery = 2
 
-	api.queries, api.batchGets = nil, nil
+	api.Queries, api.BatchGets = nil, nil
 	page, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: repository.MaxListLimit, IncludeSearchText: true})
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
@@ -116,13 +116,13 @@ func TestListNotesWithSearchTextHydratesOnlyThePage(t *testing.T) {
 	if len(page.Items) != int(repository.MaxListLimit) || page.Cursor == "" {
 		t.Fatalf("page = %d items, cursor %q", len(page.Items), page.Cursor)
 	}
-	for _, q := range api.queries {
+	for _, q := range api.Queries {
 		if strings.Contains(*q.ProjectionExpression, "search_text") {
 			t.Fatalf("the drain projected search_text for the whole partition: %q", *q.ProjectionExpression)
 		}
 	}
 	requested := 0
-	for _, b := range api.batchGets {
+	for _, b := range api.BatchGets {
 		keys := len(b.RequestItems[tableName].Keys)
 		if keys > 100 {
 			t.Fatalf("a BatchGetItem carried %d keys; DynamoDB accepts 100", keys)
@@ -131,8 +131,8 @@ func TestListNotesWithSearchTextHydratesOnlyThePage(t *testing.T) {
 	}
 	// 200 keys in two batches of 100, plus the re-asks for the keys the fake
 	// left unprocessed.
-	if requested < int(repository.MaxListLimit) || len(api.batchGets) < 3 {
-		t.Fatalf("hydration asked for %d keys in %d calls; want the page's 200 with the unprocessed ones asked again", requested, len(api.batchGets))
+	if requested < int(repository.MaxListLimit) || len(api.BatchGets) < 3 {
+		t.Fatalf("hydration asked for %d keys in %d calls; want the page's 200 with the unprocessed ones asked again", requested, len(api.BatchGets))
 	}
 	for _, n := range page.Items {
 		if !strings.HasPrefix(n.SearchText, "search text of note") {
@@ -141,7 +141,7 @@ func TestListNotesWithSearchTextHydratesOnlyThePage(t *testing.T) {
 	}
 
 	// The last page hydrates only what is on it.
-	api.batchGets = nil
+	api.BatchGets = nil
 	last, err := store.ListNotes(ctx, "tenant-a", repository.ListOptions{Limit: repository.MaxListLimit, IncludeSearchText: true, Cursor: page.Cursor})
 	if err != nil {
 		t.Fatalf("ListNotes(page 2): %v", err)
@@ -150,7 +150,7 @@ func TestListNotesWithSearchTextHydratesOnlyThePage(t *testing.T) {
 		t.Fatalf("last page = %d items, want %d", len(last.Items), total-int(repository.MaxListLimit))
 	}
 	requested = 0
-	for _, b := range api.batchGets {
+	for _, b := range api.BatchGets {
 		requested += len(b.RequestItems[tableName].Keys)
 	}
 	if requested > len(last.Items)+1 {

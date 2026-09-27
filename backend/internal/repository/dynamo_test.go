@@ -15,6 +15,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 )
 
 // These exercise the behaviour that actually loses data: pagination, cursors,
@@ -23,9 +24,9 @@ import (
 
 const tableName = "chintan-test"
 
-func newTestStore(t *testing.T) (*repository.DynamoStore, *fakeDynamo) {
+func newTestStore(t *testing.T) (*repository.DynamoStore, *dynamofake.Fake) {
 	t.Helper()
-	api := newFakeDynamo()
+	api := dynamofake.New()
 	return repository.NewDynamoStore(api, tableName), api
 }
 
@@ -52,7 +53,7 @@ func TestListNotesPagesThroughEveryItem(t *testing.T) {
 	seedNotes(t, store, "tenant-a", total)
 
 	// Force the store to follow LastEvaluatedKey: no single Query can answer.
-	api.pageSize = 4
+	api.PageSize = 4
 
 	seen := map[string]bool{}
 	opts := repository.ListOptions{Limit: 10}
@@ -180,7 +181,7 @@ func TestListNotesRejectsGarbageCursor(t *testing.T) {
 func TestListNotesDoesNotTransferTheDataBlob(t *testing.T) {
 	store, api := newTestStore(t)
 	seedNotes(t, store, "tenant-a", 1)
-	api.queries = nil
+	api.Queries = nil
 
 	page, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
 	if err != nil {
@@ -190,10 +191,10 @@ func TestListNotesDoesNotTransferTheDataBlob(t *testing.T) {
 		t.Fatalf("list did not reconstruct the note from projected attributes: %+v", page.Items)
 	}
 
-	if len(api.queries) == 0 {
+	if len(api.Queries) == 0 {
 		t.Fatal("the list issued no query")
 	}
-	q := api.queries[0]
+	q := api.Queries[0]
 	if q.IndexName != nil {
 		t.Fatalf("the note list queried index %q; there is no notes index any more", *q.IndexName)
 	}
@@ -313,7 +314,7 @@ func TestExpiredNotesFindsEveryPastDueArchivedNoteAcrossTenants(t *testing.T) {
 	}
 
 	// Several pages, so the scan has to follow LastEvaluatedKey.
-	api.pageSize = 2
+	api.PageSize = 2
 	expired, err := store.ExpiredNotes(ctx, now.Unix())
 	if err != nil {
 		t.Fatalf("ExpiredNotes: %v", err)
@@ -329,8 +330,8 @@ func TestExpiredNotesFindsEveryPastDueArchivedNoteAcrossTenants(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expired = %v, want %v", got, want)
 	}
-	if api.scans < 2 {
-		t.Fatalf("the scan took %d round trip(s) with a page size of 2; it is not following LastEvaluatedKey", api.scans)
+	if api.Scans < 2 {
+		t.Fatalf("the scan took %d round trip(s) with a page size of 2; it is not following LastEvaluatedKey", api.Scans)
 	}
 }
 
@@ -476,7 +477,7 @@ func TestListCapturesByNoteQueriesGSI1(t *testing.T) {
 		t.Fatalf("PutCapture(other): %v", err)
 	}
 
-	api.queries = nil
+	api.Queries = nil
 	page, err := store.ListCapturesByNote(ctx, "tenant-a", "n1", repository.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListCapturesByNote: %v", err)
@@ -489,7 +490,7 @@ func TestListCapturesByNoteQueriesGSI1(t *testing.T) {
 		t.Fatalf("order = %v, want newest first", captureIDs(page.Items))
 	}
 
-	q := api.queries[0]
+	q := api.Queries[0]
 	if q.IndexName == nil || *q.IndexName != "gsi1" {
 		t.Fatalf("query did not use gsi1: IndexName=%v — a partition scan is the defect being fixed", q.IndexName)
 	}
@@ -524,7 +525,7 @@ func TestListCapturesByNoteDoesNotHydratePerItem(t *testing.T) {
 		}
 	}
 
-	api.gets = 0
+	api.Gets = 0
 	page, err := store.ListCapturesByNote(ctx, "tenant-a", "n1", repository.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListCapturesByNote: %v", err)
@@ -532,8 +533,8 @@ func TestListCapturesByNoteDoesNotHydratePerItem(t *testing.T) {
 	if len(page.Items) != 5 {
 		t.Fatalf("got %d captures, want 5", len(page.Items))
 	}
-	if api.gets != 0 {
-		t.Fatalf("list issued %d GetItem calls; the index projection should answer without them", api.gets)
+	if api.Gets != 0 {
+		t.Fatalf("list issued %d GetItem calls; the index projection should answer without them", api.Gets)
 	}
 }
 
@@ -594,12 +595,12 @@ func TestListedCaptureCarriesEveryArtefactKeyTheCascadeDeleteNeeds(t *testing.T)
 // A capture whose index entry predates capture_id still has to come back whole,
 // because a cascade delete that saw it without its S3 keys would skip them.
 func TestListCapturesByNoteReadsPrePromotionIndexEntriesWhole(t *testing.T) {
-	api := newFakeDynamo()
+	api := dynamofake.New()
 	store := repository.NewDynamoStore(api, tableName)
 
 	legacy := `{"id":"c_legacy","note_id":"n1","user_id":"tenant-a","status":"appended",` +
 		`"audio_key":"tenants/tenant-a/captures/c_legacy/audio.webm","created_at":"2026-08-01T00:00:00Z"}`
-	api.put(map[string]types.AttributeValue{
+	api.Put(map[string]types.AttributeValue{
 		"pk":     &types.AttributeValueMemberS{Value: "USER#tenant-a"},
 		"sk":     &types.AttributeValueMemberS{Value: "CAPTURE#c_legacy"},
 		"type":   &types.AttributeValueMemberS{Value: "capture"},
@@ -773,8 +774,8 @@ func TestIdempotencyKeysAreTenantScoped(t *testing.T) {
 // ConditionalCheckFailed. The attempt token is what stops that from locking the
 // original caller out of its own key for the whole TTL.
 func TestIdempotencyOwnRetryIsNotTreatedAsADuplicate(t *testing.T) {
-	api := newFakeDynamo()
-	retrier := &putRetryingDynamo{fakeDynamo: api}
+	api := dynamofake.New()
+	retrier := &putRetryingDynamo{Fake: api}
 	store := repository.NewDynamoStore(retrier, tableName)
 
 	rec, err := store.BeginIdempotent(context.Background(), "tenant-a", "key-1", "fp-1")
@@ -792,18 +793,18 @@ func TestIdempotencyOwnRetryIsNotTreatedAsADuplicate(t *testing.T) {
 // putRetryingDynamo commits the first PutItem twice, mimicking an SDK retry
 // whose first response was lost.
 type putRetryingDynamo struct {
-	*fakeDynamo
+	*dynamofake.Fake
 	retried bool
 }
 
 func (d *putRetryingDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
-	out, err := d.fakeDynamo.PutItem(ctx, in, opts...)
+	out, err := d.Fake.PutItem(ctx, in, opts...)
 	if err != nil || d.retried {
 		return out, err
 	}
 	d.retried = true
 	// Same request again: the item now exists, so the condition fails.
-	return d.fakeDynamo.PutItem(ctx, in, opts...)
+	return d.Fake.PutItem(ctx, in, opts...)
 }
 
 // TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted: a note written
@@ -813,11 +814,11 @@ func (d *putRetryingDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInp
 // point of ordering in Go rather than through an index that only holds items
 // carrying its key attributes.
 func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
-	api := newFakeDynamo()
+	api := dynamofake.New()
 	store := repository.NewDynamoStore(api, tableName)
 
 	legacy := `{"id":"note_legacy","title":"Written by v1","aliases":["old"],"updated_at":"2026-08-01T00:00:00Z","s3_markdown_key":"tenants/tenant-a/notes/note_legacy/note.md"}`
-	api.put(map[string]types.AttributeValue{
+	api.Put(map[string]types.AttributeValue{
 		"pk":   &types.AttributeValueMemberS{Value: "USER#tenant-a"},
 		"sk":   &types.AttributeValueMemberS{Value: "NOTE#note_legacy"},
 		"type": &types.AttributeValueMemberS{Value: "note"},
@@ -843,9 +844,9 @@ func TestListNotesReadsItemsWrittenBeforeAttributesWerePromoted(t *testing.T) {
 // error at runtime, it returns an empty field. Widening it later is not an
 // update — the index is deleted and rebuilt.
 func TestGSI1ProjectionCoversWhatTheCaptureListReads(t *testing.T) {
-	projected := indexNonKeyAttributes("gsi1")
+	projected := dynamofake.IndexNonKeyAttributes("gsi1")
 	if len(projected) == 0 {
-		t.Fatalf("could not read the gsi1 projection from %s; the drift check is not running", templatePath)
+		t.Fatalf("could not read the gsi1 projection from %s; the drift check is not running", dynamofake.TemplatePath)
 	}
 
 	// Every attribute ListCapturesByNote builds a capture out of.
@@ -940,70 +941,66 @@ func noteFieldDiffs(want, got model.NoteIndex) []string {
 // dictation", so losing it silently sends content through cleanup the user
 // explicitly excluded.
 func TestNoteRoundTripPreservesEveryField(t *testing.T) {
-	eachStore(t, func(t *testing.T) {
-		store := newStore()
-		ctx := context.Background()
-		want := populatedNote(t)
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	want := populatedNote(t)
 
-		stored, err := store.PutNote(ctx, "tenant-a", want)
-		if err != nil {
-			t.Fatalf("PutNote: %v", err)
-		}
-		want.Version = 1
-		if diffs := noteFieldDiffs(want, stored); len(diffs) > 0 {
-			t.Errorf("PutNote returned a different note:\n\t%s", strings.Join(diffs, "\n\t"))
-		}
+	stored, err := store.PutNote(ctx, "tenant-a", want)
+	if err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	want.Version = 1
+	if diffs := noteFieldDiffs(want, stored); len(diffs) > 0 {
+		t.Errorf("PutNote returned a different note:\n\t%s", strings.Join(diffs, "\n\t"))
+	}
 
-		got, err := store.GetNote(ctx, "tenant-a", want.ID)
-		if err != nil {
-			t.Fatalf("GetNote: %v", err)
-		}
-		if diffs := noteFieldDiffs(want, got); len(diffs) > 0 {
-			t.Fatalf("GetNote lost fields on the round trip:\n\t%s", strings.Join(diffs, "\n\t"))
-		}
-	})
+	got, err := store.GetNote(ctx, "tenant-a", want.ID)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if diffs := noteFieldDiffs(want, got); len(diffs) > 0 {
+		t.Fatalf("GetNote lost fields on the round trip:\n\t%s", strings.Join(diffs, "\n\t"))
+	}
 }
 
 // A listed note has to carry every field too. The list reads a projection
 // rather than the record blob, so a field missing from the projection is a
 // field the list renders as empty.
 func TestListedNoteCarriesEveryField(t *testing.T) {
-	eachStore(t, func(t *testing.T) {
-		store := newStore()
-		ctx := context.Background()
-		want := populatedNote(t)
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	want := populatedNote(t)
 
-		if _, err := store.PutNote(ctx, "tenant-a", want); err != nil {
-			t.Fatalf("PutNote: %v", err)
-		}
-		want.Version = 1
+	if _, err := store.PutNote(ctx, "tenant-a", want); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	want.Version = 1
 
-		// populatedNote sets DeletedAt, so the note is archived. SearchText and
-		// CleanedBody are the two fields a list carries only on request (32 KB
-		// and 200 KB per note respectively), so the list asks for both here and
-		// the plain list is checked to omit exactly those two and nothing else.
-		page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{IncludeSearchText: true, IncludeCleanedBody: true})
-		if err != nil {
-			t.Fatalf("ListArchivedNotes: %v", err)
-		}
-		if len(page.Items) != 1 {
-			t.Fatalf("archived list = %v, want the one note just written", ids(page.Items))
-		}
-		if diffs := noteFieldDiffs(want, page.Items[0]); len(diffs) > 0 {
-			t.Fatalf("the listed note lost fields:\n\t%s", strings.Join(diffs, "\n\t"))
-		}
+	// populatedNote sets DeletedAt, so the note is archived. SearchText and
+	// CleanedBody are the two fields a list carries only on request (32 KB
+	// and 200 KB per note respectively), so the list asks for both here and
+	// the plain list is checked to omit exactly those two and nothing else.
+	page, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{IncludeSearchText: true, IncludeCleanedBody: true})
+	if err != nil {
+		t.Fatalf("ListArchivedNotes: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("archived list = %v, want the one note just written", ids(page.Items))
+	}
+	if diffs := noteFieldDiffs(want, page.Items[0]); len(diffs) > 0 {
+		t.Fatalf("the listed note lost fields:\n\t%s", strings.Join(diffs, "\n\t"))
+	}
 
-		plain, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{})
-		if err != nil {
-			t.Fatalf("ListArchivedNotes (plain): %v", err)
-		}
-		withoutOptIns := want
-		withoutOptIns.SearchText = ""
-		withoutOptIns.CleanedBody = ""
-		if diffs := noteFieldDiffs(withoutOptIns, plain.Items[0]); len(diffs) > 0 {
-			t.Fatalf("the plain list differs from the full one in more than search_text and cleaned_body:\n\t%s", strings.Join(diffs, "\n\t"))
-		}
-	})
+	plain, err := store.ListArchivedNotes(ctx, "tenant-a", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListArchivedNotes (plain): %v", err)
+	}
+	withoutOptIns := want
+	withoutOptIns.SearchText = ""
+	withoutOptIns.CleanedBody = ""
+	if diffs := noteFieldDiffs(withoutOptIns, plain.Items[0]); len(diffs) > 0 {
+		t.Fatalf("the plain list differs from the full one in more than search_text and cleaned_body:\n\t%s", strings.Join(diffs, "\n\t"))
+	}
 }
 
 // An update has to preserve what the previous read did not surface. This is the
@@ -1011,36 +1008,34 @@ func TestListedNoteCarriesEveryField(t *testing.T) {
 // read a note, write it back, and the fields the read blanked are now blanked in
 // storage as well.
 func TestUpdatingANoteDoesNotErasePreviouslyStoredFields(t *testing.T) {
-	eachStore(t, func(t *testing.T) {
-		store := newStore()
-		ctx := context.Background()
-		want := populatedNote(t)
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	want := populatedNote(t)
 
-		if _, err := store.PutNote(ctx, "tenant-a", want); err != nil {
-			t.Fatalf("PutNote: %v", err)
-		}
-		want.Version = 1
+	if _, err := store.PutNote(ctx, "tenant-a", want); err != nil {
+		t.Fatalf("PutNote: %v", err)
+	}
+	want.Version = 1
 
-		// The read-modify-write every caller performs.
-		read, err := store.GetNote(ctx, "tenant-a", want.ID)
-		if err != nil {
-			t.Fatalf("GetNote: %v", err)
-		}
-		read.Title = "Retitled"
-		if _, err := store.PutNote(ctx, "tenant-a", read); err != nil {
-			t.Fatalf("PutNote(update): %v", err)
-		}
+	// The read-modify-write every caller performs.
+	read, err := store.GetNote(ctx, "tenant-a", want.ID)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	read.Title = "Retitled"
+	if _, err := store.PutNote(ctx, "tenant-a", read); err != nil {
+		t.Fatalf("PutNote(update): %v", err)
+	}
 
-		got, err := store.GetNote(ctx, "tenant-a", want.ID)
-		if err != nil {
-			t.Fatalf("GetNote(after update): %v", err)
-		}
-		want.Title = "Retitled"
-		want.Version = 2
-		if diffs := noteFieldDiffs(want, got); len(diffs) > 0 {
-			t.Fatalf("an unrelated update erased stored fields:\n\t%s", strings.Join(diffs, "\n\t"))
-		}
-	})
+	got, err := store.GetNote(ctx, "tenant-a", want.ID)
+	if err != nil {
+		t.Fatalf("GetNote(after update): %v", err)
+	}
+	want.Title = "Retitled"
+	want.Version = 2
+	if diffs := noteFieldDiffs(want, got); len(diffs) > 0 {
+		t.Fatalf("an unrelated update erased stored fields:\n\t%s", strings.Join(diffs, "\n\t"))
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,78 +1172,6 @@ func TestEveryWriteIsAnItemDynamoDBWouldAccept(t *testing.T) {
 		}
 		if err := store.DeleteNote(ctx, "tenant-a", "note_1"); err != nil {
 			t.Fatalf("DeleteNote: %v", err)
-		}
-	})
-}
-
-// TestTheFakeRefusesTheShapesTheServiceRefuses is the check on the check. A
-// validator nobody has watched reject anything is a validator nobody should
-// trust — and this one exists precisely because the previous fake accepted
-// everything.
-func TestTheFakeRefusesTheShapesTheServiceRefuses(t *testing.T) {
-	bad := map[string]types.AttributeValue{
-		"a nil binary":                 &types.AttributeValueMemberB{Value: nil},
-		"an empty binary":              &types.AttributeValueMemberB{Value: []byte{}},
-		"a nil attribute":              nil,
-		"an empty number":              &types.AttributeValueMemberN{Value: ""},
-		"an empty string set":          &types.AttributeValueMemberSS{Value: []string{}},
-		"a nil binary inside a list":   &types.AttributeValueMemberL{Value: []types.AttributeValue{&types.AttributeValueMemberB{}}},
-		"a nil binary inside a map":    &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"x": &types.AttributeValueMemberB{}}},
-		"a member type nobody defined": &types.UnknownUnionMember{Tag: "Q"},
-	}
-
-	for name, value := range bad {
-		t.Run(name, func(t *testing.T) {
-			api := newFakeDynamo()
-			_, err := api.PutItem(context.Background(), &dynamodb.PutItemInput{
-				TableName: &tableNameValue,
-				Item: map[string]types.AttributeValue{
-					"pk":    &types.AttributeValueMemberS{Value: "USER#tenant-a"},
-					"sk":    &types.AttributeValueMemberS{Value: "THING#1"},
-					"thing": value,
-				},
-			})
-			if err == nil {
-				t.Fatal("the fake accepted an attribute DynamoDB refuses")
-			}
-			if !strings.Contains(err.Error(), "ValidationException") {
-				t.Errorf("error = %v, want a ValidationException", err)
-			}
-		})
-	}
-
-	t.Run("an empty key attribute", func(t *testing.T) {
-		api := newFakeDynamo()
-		_, err := api.PutItem(context.Background(), &dynamodb.PutItemInput{
-			TableName: &tableNameValue,
-			Item: map[string]types.AttributeValue{
-				"pk": &types.AttributeValueMemberS{Value: ""},
-				"sk": &types.AttributeValueMemberS{Value: "THING#1"},
-			},
-		})
-		if err == nil {
-			t.Fatal("the fake accepted an empty partition key")
-		}
-	})
-
-	// The legal shapes must still be legal, or the validator would fail every
-	// write and prove nothing.
-	t.Run("shapes the service accepts", func(t *testing.T) {
-		api := newFakeDynamo()
-		if _, err := api.PutItem(context.Background(), &dynamodb.PutItemInput{
-			TableName: &tableNameValue,
-			Item: map[string]types.AttributeValue{
-				"pk":            &types.AttributeValueMemberS{Value: "USER#tenant-a"},
-				"sk":            &types.AttributeValueMemberS{Value: "THING#1"},
-				"an empty text": &types.AttributeValueMemberS{Value: ""},
-				"an empty list": &types.AttributeValueMemberL{Value: nil},
-				"an empty map":  &types.AttributeValueMemberM{Value: nil},
-				"a null":        &types.AttributeValueMemberNULL{Value: true},
-				"a bool":        &types.AttributeValueMemberBOOL{Value: false},
-				"some bytes":    &types.AttributeValueMemberB{Value: []byte{0}},
-			},
-		}); err != nil {
-			t.Fatalf("the fake refused a legal item: %v", err)
 		}
 	})
 }
@@ -1508,13 +1431,13 @@ func TestListNotesProjectsSearchTextOnlyWhenAsked(t *testing.T) {
 
 	projectionOf := func(t *testing.T) string {
 		t.Helper()
-		if len(api.queries) == 0 {
+		if len(api.Queries) == 0 {
 			t.Fatal("the list issued no query")
 		}
-		return *api.queries[len(api.queries)-1].ProjectionExpression
+		return *api.Queries[len(api.Queries)-1].ProjectionExpression
 	}
 
-	api.queries = nil
+	api.Queries = nil
 	plain, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
@@ -1531,7 +1454,7 @@ func TestListNotesProjectsSearchTextOnlyWhenAsked(t *testing.T) {
 	// the partition once per page, and 32 KB per note for every note to
 	// serve two hundred of them was the cost that made the offline corpus's
 	// pages quadratic (S5).
-	api.queries, api.batchGets = nil, nil
+	api.Queries, api.BatchGets = nil, nil
 	with, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{IncludeSearchText: true})
 	if err != nil {
 		t.Fatalf("ListNotes(include): %v", err)
@@ -1539,8 +1462,8 @@ func TestListNotesProjectsSearchTextOnlyWhenAsked(t *testing.T) {
 	if strings.Contains(projectionOf(t), "search_text") {
 		t.Errorf("the list projected search_text onto the partition drain: %q", projectionOf(t))
 	}
-	if len(api.batchGets) != 1 || !strings.Contains(*api.batchGets[0].RequestItems[tableName].ProjectionExpression, "search_text") {
-		t.Errorf("the list did not fetch search_text for the page with one BatchGetItem: %+v", api.batchGets)
+	if len(api.BatchGets) != 1 || !strings.Contains(*api.BatchGets[0].RequestItems[tableName].ProjectionExpression, "search_text") {
+		t.Errorf("the list did not fetch search_text for the page with one BatchGetItem: %+v", api.BatchGets)
 	}
 	if with.Items[0].SearchText != "the gutter is leaking" {
 		t.Errorf("search text = %q, want the stored value", with.Items[0].SearchText)
@@ -1591,13 +1514,13 @@ func TestListNotesProjectsCleanedBodyOnlyWhenAsked(t *testing.T) {
 
 	projectionOf := func(t *testing.T) string {
 		t.Helper()
-		if len(api.queries) == 0 {
+		if len(api.Queries) == 0 {
 			t.Fatal("the list issued no query")
 		}
-		return *api.queries[len(api.queries)-1].ProjectionExpression
+		return *api.Queries[len(api.Queries)-1].ProjectionExpression
 	}
 
-	api.queries = nil
+	api.Queries = nil
 	plain, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{})
 	if err != nil {
 		t.Fatalf("ListNotes: %v", err)
@@ -1616,7 +1539,7 @@ func TestListNotesProjectsCleanedBodyOnlyWhenAsked(t *testing.T) {
 
 	// As for search_text: fetched for the page by BatchGetItem, not
 	// projected onto the drain.
-	api.queries, api.batchGets = nil, nil
+	api.Queries, api.BatchGets = nil, nil
 	with, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{IncludeCleanedBody: true})
 	if err != nil {
 		t.Fatalf("ListNotes(include): %v", err)
@@ -1624,8 +1547,8 @@ func TestListNotesProjectsCleanedBodyOnlyWhenAsked(t *testing.T) {
 	if strings.Contains(projectionOf(t), "cleaned_body") {
 		t.Errorf("the list projected cleaned_body onto the partition drain: %q", projectionOf(t))
 	}
-	if len(api.batchGets) != 1 || !strings.Contains(*api.batchGets[0].RequestItems[tableName].ProjectionExpression, "cleaned_body") {
-		t.Errorf("the list did not fetch cleaned_body for the page with one BatchGetItem: %+v", api.batchGets)
+	if len(api.BatchGets) != 1 || !strings.Contains(*api.BatchGets[0].RequestItems[tableName].ProjectionExpression, "cleaned_body") {
+		t.Errorf("the list did not fetch cleaned_body for the page with one BatchGetItem: %+v", api.BatchGets)
 	}
 	if with.Items[0].CleanedBody != "# Roof\n\nThe gutter is leaking." {
 		t.Errorf("cleaned body = %q, want the stored value", with.Items[0].CleanedBody)
@@ -1708,8 +1631,8 @@ func TestUpdateCaptureStatus(t *testing.T) {
 // read-modify-write can get wrong, so it is pinned here: the version check
 // refuses, and nothing of the stale copy lands.
 func TestUpdateCaptureStatusLosesToAConcurrentWriter(t *testing.T) {
-	api := newFakeDynamo()
-	racer := &captureRacingDynamo{fakeDynamo: api}
+	api := dynamofake.New()
+	racer := &captureRacingDynamo{Fake: api}
 	store := repository.NewDynamoStore(racer, tableName)
 	racer.store = store
 	ctx := context.Background()
@@ -1734,13 +1657,13 @@ func TestUpdateCaptureStatusLosesToAConcurrentWriter(t *testing.T) {
 // captureRacingDynamo slips another writer's PutCapture in between the
 // store's GetItem and its conditional PutItem, once armed.
 type captureRacingDynamo struct {
-	*fakeDynamo
+	*dynamofake.Fake
 	store *repository.DynamoStore
 	armed bool
 }
 
 func (d *captureRacingDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
-	out, err := d.fakeDynamo.GetItem(ctx, in, opts...)
+	out, err := d.Fake.GetItem(ctx, in, opts...)
 	if err != nil || !d.armed {
 		return out, err
 	}
@@ -1844,11 +1767,11 @@ func TestPutAskGetAskRoundTrip(t *testing.T) {
 
 	// The row's only lifecycle is its TTL, so the attribute DynamoDB expires
 	// on must carry ExpiresAt; a row without it lives forever.
-	item := api.items["USER#tenant-a"]["ASK#ask_1"]
+	item := api.Item("USER#tenant-a", "ASK#ask_1")
 	if item == nil {
 		t.Fatal("no ASK#ask_1 row under USER#tenant-a")
 	}
-	if ttl := av(item["ttl"]); ttl != strconv.FormatInt(expires, 10) {
+	if ttl := dynamofake.Scalar(item["ttl"]); ttl != strconv.FormatInt(expires, 10) {
 		t.Fatalf("ttl attribute = %q, want %d", ttl, expires)
 	}
 }
