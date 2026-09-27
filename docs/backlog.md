@@ -468,3 +468,9 @@ Performance (cold, Fast 3G + 4× CPU): library interactive ~2.95 s, `/capture` ~
 | CH-O1 | Owner decision: split the `pipeline` package, or only its file | **queued** (owner) | `docs/reviews/2026-09-26/round-5-proposals.md` §2.22 (recommends the file only; #111 did that, so this closes as "file" unless you say otherwise). |
 | CH-O2 | Owner decision: one repository test double (`fakeDynamo`) instead of two (`memory.Store` is 1,046 lines) | **queued** (owner) | `docs/reviews/2026-09-26/round-5-proposals.md` §2.23 (recommends yes, after wave 2, as its own PR). |
 | CH-O3 | Owner decision: 7.3 MB of 2026-09-04 QA screenshots in git | **queued** (owner) | `docs/reviews/2026-09-26/round-5-proposals.md` §2.24 (recommends delete; bundle with the CH-2 deletion pattern). |
+
+## Round 5 decisions — 2026-09-27
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| CH-O3 | 159 PNGs (7.2 MB) under `docs/qa/2026-09-04/` showed the pre-#75 UI and cost every clone the download; nothing linked to an individual file | **done** (option a, docs-only) | `git rm` of every PNG including `old-build/`; `report.md`'s scripts-and-artefacts line says the shots were removed on 2026-09-27 and live in git history before the merge (`git log --diff-filter=D -- docs/qa/2026-09-04/`), and the Evidence filenames stay as identifiers. The same PR prunes `docs/reviews/2026-09-26/r5/` to the chosen-option renders — bindu sheet (both themes), header B (360 ink/nocturne, 1280, sign-in), disc-ptt (both themes), the checklist sheet, receipts A and the two Web Push renders (RC-D1/RC-D2 approved) — and deletes header A, the current-state shots, disc-mic-label, badges B and checklist frames A/C (both are frames of the sheet); `round-5-proposals.md` marks each as "render removed after the decision". The rejected logo directions' renders (wave, drop) were never in the repo, only in the scratchpad. |
