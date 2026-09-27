@@ -221,7 +221,7 @@ func TestSystemPromptAsksForTheKindOfANewNote(t *testing.T) {
 		`Kind, for "new" only`,
 		`"add X to the Y list"`,
 		`In doubt, "note".`,
-		`{"action":"new","title":"Groceries","kind":"checklist","confidence":1,`,
+		`{"action":"new","title":"Groceries list","kind":"checklist","confidence":1,`,
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("system prompt missing %q", want)

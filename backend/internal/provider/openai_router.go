@@ -30,9 +30,11 @@ const (
 	// parse and takes the pipeline's fallback instead of billing a page of output.
 	routeMaxTokens = 200
 	// routeKindChecklist is the one `kind` value in a routing reply that
-	// makes a new note a checklist. Any other value — "note", a misspelling,
-	// nothing — is a plain note: a checklist the speaker did not ask for
-	// turns their prose into items, a plain note they can convert.
+	// makes a new note a checklist, read without regard to case or
+	// surrounding space so a model that writes "Checklist" does not hand the
+	// owner the sentence-as-item bug back. Any other value — "note", a
+	// misspelling, nothing — is a plain note: a checklist the speaker did not
+	// ask for turns their prose into items, a plain note they can convert.
 	routeKindChecklist = "checklist"
 )
 
@@ -154,8 +156,8 @@ func sanitizeTitle(title string) string {
 // pre-2026-09-27 shape is not refused. Anything else — a number off the list,
 // a fraction, an id that was not offered — is "unknown note id", which the
 // pipeline answers with its own fallback rather than trusting. A new note's
-// `kind` is read strictly: exactly "checklist" makes one, and it is ignored
-// on an append, whose note already has a kind.
+// `kind` is read strictly: "checklist" in any case makes one, nothing else
+// does, and it is ignored on an append, whose note already has a kind.
 func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecision, routeReply, error) {
 	jsonText, err := llm.ExtractJSONObject(raw)
 	if err != nil {
@@ -191,7 +193,7 @@ func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecisi
 			return RouteDecision{}, routeReply{}, err
 		}
 	case RouteNew:
-		decision.Checklist = parsed.Kind == routeKindChecklist
+		decision.Checklist = strings.EqualFold(strings.TrimSpace(parsed.Kind), routeKindChecklist)
 	default:
 		return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router returned unknown action %q", decision.Action)
 	}

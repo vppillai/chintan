@@ -101,16 +101,20 @@ and in doubt (`routing.SystemPrompt`, "Kind") — and `Pipeline.route` writes
 it on the new row before the capture points at the note, in the same
 `PutNote` as the language, so `run()` takes the `extractItems` branch for
 that same recording and the body is `- [ ] Milk`. The parse is strict
-(`RouteDecision.Checklist`): exactly `checklist` makes one, anything else is
-a plain note, because a plain note the person can convert while a checklist
-they did not ask for has already turned their prose into items.
+(`RouteDecision.Checklist`): `checklist` in any case makes one, anything
+else is a plain note, because a plain note the person can convert while a
+checklist they did not ask for has already turned their prose into items.
+`RouterNewNoteKind{Kind}` counts what the model answers in production.
 
 An append never carries a kind. When the router files a list-shaped sentence
 into an existing plain note — "add eggs to my kitchen note" — the note stays
 what it is and the sentence is cleaned into it; converting is the person's
-call, and nothing guesses it. A capture parked at `needs_target` (routing
-unconfigured, or a routing fault) loses the kind too: the person names the
-note and it is created plain.
+call, and nothing guesses it. A routing fault loses the kind too: the
+worker keeps the dictation as a plain note titled from its first words
+(`route.go`, the `decideTarget` error branch). So does a capture parked at
+`needs_target` — the router's unsure append, or a worker with no note
+creator, which production never runs — where the person picks the note or
+names one, created plain.
 
 Three outcomes besides items:
 
@@ -288,8 +292,8 @@ together on release; a parent dropped one slot down stands on its own
 sub-item's slot, which the draft can show but nothing can mean, and it goes
 back where it was rather than past the next row as the menu's step would
 (a drag is placed by eye, and a jump past what the eye placed it on is the
-surprise). Split up (`extractItems`, the `tasks` prompt) appends and proposes
-at depth 0 as before; export and the search text are unchanged. A third
+surprise). `extractItems` appends at depth 0 as before; export and the
+search text are unchanged. A third
 level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
 
 Done items keep their line where it stands; the Done section is the view's

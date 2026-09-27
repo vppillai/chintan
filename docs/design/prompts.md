@@ -128,12 +128,16 @@ its items rather than cleaning the sentence into a plain note — the owner's
 "add milk to the shopping list" with no such list had become the item "Add
 milk to the shopping list." (`docs/design/checklists.md`, "A new list"); a
 decode or unknown-id error is retried (`routeWithRetries`), and a routing
-failure files the capture as `needs_target` rather than losing it.
+failure keeps the dictation as a plain note titled from its first words
+rather than losing it (`needs_target` is the router's unsure append, where
+the person chooses).
 
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`,
 `RouterTitleMatchedExistingNote` (11 of 86 routes in the week measured under
 the old prompt, which told the model the opposite of what the code then does;
 the count should fall to near zero under the new one),
+`RouterNewNoteKind{Kind=note|checklist}` (how often the model answers
+`checklist` for a new note, without a battery run),
 `RouterRetried{Reason}`, `RouterTimedOut{Attempt}`,
 `TargetedInstructionCheck{Outcome=no_cue|removed|nothing_removed|failed}`.
 

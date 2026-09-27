@@ -181,6 +181,13 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
 	}
 	touched := false
+	// One count per new note says how often the model answers "checklist"
+	// in production, which the eval battery only samples.
+	kind := "note"
+	if decision.Checklist {
+		kind = model.NoteKindChecklist
+	}
+	obs.Count(ctx, "RouterNewNoteKind", map[string]string{"Kind": kind})
 	if decision.Checklist {
 		// The router heard a list — "add milk to the shopping list" with no
 		// such note — so the note is a checklist before the capture points

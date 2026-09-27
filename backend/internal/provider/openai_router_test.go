@@ -107,6 +107,14 @@ func TestParseRouteDecision(t *testing.T) {
 			wantChecklist: true,
 		},
 		{
+			name:          "the kind's case and padding do not matter",
+			raw:           `{"action":"new","title":"Groceries","kind":" Checklist ","confidence":1,"instruction_spans":[]}`,
+			wantAction:    RouteNew,
+			wantConf:      1,
+			wantSpans:     []routing.Span{},
+			wantChecklist: true,
+		},
+		{
 			// Strict: only the one word makes a checklist; a near miss is a
 			// plain note the person can convert.
 			name:       "an unknown kind is a plain note",

@@ -84,8 +84,8 @@ Examples, transcript then reply:
   {"action":"append","note":<the number listed for Roof repair>,"confidence":1,"instruction_spans":[{"start_word":4,"end_word":10}]}
 - "0:remind 1:me 2:to 3:book 4:the 5:dentist 6:on 7:tuesday"
   {"action":"new","title":"Dentist appointment","kind":"note","confidence":1,"instruction_spans":[]}
-- "0:add 1:milk 2:to 3:my 4:groceries 5:list", with no note named Groceries listed
-  {"action":"new","title":"Groceries","kind":"checklist","confidence":1,"instruction_spans":[{"start_word":0,"end_word":1},{"start_word":2,"end_word":6}]}`
+- "0:add 1:milk 2:to 3:my 4:groceries 5:list", with no Groceries list among the notes
+  {"action":"new","title":"Groceries list","kind":"checklist","confidence":1,"instruction_spans":[{"start_word":0,"end_word":1},{"start_word":2,"end_word":6}]}`
 
 // SystemPrompt returns the routing system prompt.
 func SystemPrompt() string {
