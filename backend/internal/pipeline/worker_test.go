@@ -16,6 +16,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -495,7 +496,7 @@ func (s statusLambda) Invoke(context.Context, *lambda.InvokeInput, ...func(*lamb
 // a paid API is reachable unmetered.
 func TestPipelineRefusesToStartWithoutABreaker(t *testing.T) {
 	_, err := New(Config{
-		Store:   memory.NewStore(),
+		Store:   dynamofake.NewStore(),
 		Objects: memory.NewObjects(),
 		STT:     &fake.STT{},
 		LLM:     &fake.LLM{},

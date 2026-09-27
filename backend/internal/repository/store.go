@@ -328,8 +328,7 @@ type Store interface {
 	// tenant, through the sparse GSI1 keys — the inbox's one read that does
 	// not start from a tenant. An unknown id is ErrNotFound. A revoked row
 	// is returned as it is while the index still carries its entry (the
-	// moment after the revoke; always, in the memory store), and the caller
-	// refuses it by revoked_at.
+	// moment after the revoke), and the caller refuses it by revoked_at.
 	LookupDeviceKey(ctx context.Context, keyID string) (model.Device, error)
 
 	// PutAsk writes a question row (sk ASK#<id>) whole, replacing what is

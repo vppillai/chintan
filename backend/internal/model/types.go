@@ -546,9 +546,9 @@ type CaptureIndex struct {
 
 // StageEntered records at as the moment status was first written, and
 // leaves an earlier entry alone, so a retry that walks a stage again does
-// not move its time. The map is copied rather than written in place: the
-// memory store hands back the very struct it holds, and a write through a
-// shared map would change a stored row before its conditional write.
+// not move its time. The map is copied rather than written in place: a
+// store that hands back the very struct it holds would see a write through
+// a shared map change a stored row before its conditional write.
 func (c *CaptureIndex) StageEntered(status CaptureStatus, at string) {
 	if _, ok := c.StageAt[string(status)]; ok {
 		return

@@ -9,6 +9,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -60,7 +61,7 @@ func TestATruncatedNotesListIsCounted(t *testing.T) {
 			restore := obs.SetMetricOutput(&metrics)
 			defer restore()
 
-			svc := NewNotesService(truncatedListStore{memory.NewStore()}, memory.NewObjects())
+			svc := NewNotesService(truncatedListStore{dynamofake.NewStore()}, memory.NewObjects())
 			if err := tc.list(svc); err != nil {
 				t.Fatalf("list: %v", err)
 			}
@@ -71,7 +72,7 @@ func TestATruncatedNotesListIsCounted(t *testing.T) {
 			}
 
 			metrics.Reset()
-			plain := NewNotesService(memory.NewStore(), memory.NewObjects())
+			plain := NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 			if err := tc.list(plain); err != nil {
 				t.Fatalf("list: %v", err)
 			}

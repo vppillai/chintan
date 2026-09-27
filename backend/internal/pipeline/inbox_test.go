@@ -8,7 +8,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
-	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
 // A recording the inbox wrote as MP3 or WAV reaches the speech provider with
@@ -49,7 +49,7 @@ func TestInboxAudioContainersReachTheProviderWithTheirOwnType(t *testing.T) {
 }
 
 // seedNote puts an empty note in place for an append to land in.
-func seedNote(t *testing.T, store *memory.Store, objects interface {
+func seedNote(t *testing.T, store *repository.DynamoStore, objects interface {
 	Put(context.Context, string, []byte, string) error
 }, noteID string) {
 	t.Helper()

@@ -12,12 +12,13 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 func TestNotesService(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -270,7 +271,7 @@ func (o *appendRacingObjects) PutIfMatch(ctx context.Context, key string, body [
 // reports a conflict: the user is told to re-read text that no longer exists.
 func TestUpdateNoteDoesNotDestroyAVoiceAppendThatLandsMidSave(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 
@@ -314,7 +315,7 @@ func TestUpdateNoteDoesNotDestroyAVoiceAppendThatLandsMidSave(t *testing.T) {
 // catch the race, not to make ordinary editing fail.
 func TestUpdateNoteStillWritesTheBodyWhenNothingRaces(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 
@@ -389,7 +390,7 @@ func TestUpdateNoteReportsAnObjectStoreFaultAsAFaultNotAConflict(t *testing.T) {
 	for name, failRead := range map[string]bool{"reading the body": true, "writing the body": false} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			store := memory.NewStore()
+			store := dynamofake.NewStore()
 			objects := memory.NewObjects()
 			notes := service.NewNotesService(store, objects)
 
@@ -423,7 +424,7 @@ var noteIDShape = regexp.MustCompile(`^note_([0-9a-f]{16})_([0-9a-f]{16})$`)
 // just made. Capture and export ids already carry crypto/rand bytes.
 func TestCreateNoteIDCarriesRandomnessNotJustTheWallClock(t *testing.T) {
 	ctx := context.Background()
-	notes := service.NewNotesService(memory.NewStore(), memory.NewObjects())
+	notes := service.NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 
 	const runs = 200
 	ids := make(map[string]struct{}, runs)
@@ -470,7 +471,7 @@ func TestCreateNoteIDCarriesRandomnessNotJustTheWallClock(t *testing.T) {
 // stay fixed-width and lexicographically ordered.
 func TestCreateNoteIDsSortInCreationOrder(t *testing.T) {
 	ctx := context.Background()
-	notes := service.NewNotesService(memory.NewStore(), memory.NewObjects())
+	notes := service.NewNotesService(dynamofake.NewStore(), memory.NewObjects())
 
 	var previous string
 	for i := range 25 {
@@ -523,7 +524,7 @@ func (s *appendBetweenReads) GetNote(ctx context.Context, tenantID, noteID strin
 
 func TestUpdateNoteReadsTheBodyBeforeTheRowSoTheVersionIsTheLaterWitness(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := service.NewNotesService(store, objects)
 
@@ -572,7 +573,7 @@ func TestUpdateNoteReadsTheBodyBeforeTheRowSoTheVersionIsTheLaterWitness(t *test
 // claim lease was abandoned and is ignored.
 func TestUpdateNoteRefusesABodyWriteWhileAnAppendIsStamped(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	notes := service.NewNotesService(store, objects).WithClock(func() time.Time { return now })

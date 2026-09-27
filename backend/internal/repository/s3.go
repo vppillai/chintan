@@ -27,7 +27,7 @@ const (
 
 // S3API is the slice of the S3 client the adapter calls, named so a test can
 // stand an in-memory bucket in for it (s3fake_test.go) and prove the If-Match
-// contract against something other than the memory store, which implements
+// contract against something other than memory.Objects, which implements
 // the semantics this adapter is supposed to have. DynamoAPI is the same seam
 // for the table.
 type S3API interface {

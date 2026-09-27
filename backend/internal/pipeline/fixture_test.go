@@ -12,6 +12,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -75,7 +76,7 @@ func (c *testClock) Advance(d time.Duration) {
 // noteCreator stands in for service.NotesService.
 type noteCreator struct {
 	mu     sync.Mutex
-	store  *memory.Store
+	store  *repository.DynamoStore
 	seq    int
 	titles []string
 }
@@ -117,7 +118,7 @@ func (f *noteCreator) createdTitles() []string {
 
 // harness is a whole pipeline over in-memory storage and fake providers.
 type harness struct {
-	store    *memory.Store
+	store    *repository.DynamoStore
 	objects  repository.Objects
 	stt      *fake.STT
 	llm      *fake.LLM
@@ -151,7 +152,7 @@ type harnessOpts struct {
 func newHarness(t *testing.T, opts harnessOpts) *harness {
 	t.Helper()
 
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := opts.objects
 	if objects == nil {
 		objects = memory.NewObjects()
@@ -239,7 +240,7 @@ func newHarnessWrapping(t *testing.T, objects repository.Objects, wrap func(repo
 	return h
 }
 
-func mustGetNote(t *testing.T, store *memory.Store, userID, noteID string) model.NoteIndex {
+func mustGetNote(t *testing.T, store *repository.DynamoStore, userID, noteID string) model.NoteIndex {
 	t.Helper()
 	note, err := store.GetNote(context.Background(), userID, noteID)
 	if err != nil {

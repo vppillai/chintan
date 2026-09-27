@@ -777,9 +777,7 @@ const maxPinRank = 999_999_999_999
 // the rest most recently touched first; the id breaks every remaining tie so
 // the order is total and a cursor unambiguous. Larger sorts earlier, so the
 // pinned tier leads with '1' and its rank is written inverted. It is exported
-// because the in-memory store must order the way this one does — every
-// service and handler test runs against that store, and a double that put
-// the pinned notes elsewhere would pass tests production fails.
+// so the repository tests can assert the order on the key itself.
 func NoteOrderKey(n model.NoteIndex) string {
 	if n.PinnedAt == "" {
 		return "0" + noteTouchedSortKey(n.UpdatedAt) + "\x00" + n.ID
@@ -1193,7 +1191,8 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 	// Indexed even when NoteID is empty. A capture awaiting disambiguation has
 	// no destination note, and leaving it out of the index entirely is what made
 	// ListCapturesByNote(tenant, "") — which the export walk relies on — return
-	// nothing on DynamoDB while returning everything on the in-memory store.
+	// nothing on DynamoDB while the in-memory store of the time returned
+	// everything.
 	item["gsi1pk"] = strAttr(noteCapturesGSI1PK(c.UserID, c.NoteID))
 	item["gsi1sk"] = strAttr(captureGSI1SK(c.CreatedAt))
 	return item, nil

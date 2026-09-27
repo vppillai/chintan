@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -227,7 +228,7 @@ func TestRequestCleanChecksTheNoteAndInvokesTheWorker(t *testing.T) {
 }
 
 func TestRequestCleanWithoutAWorkerSaysSo(t *testing.T) {
-	store, objects := memory.NewStore(), memory.NewObjects()
+	store, objects := dynamofake.NewStore(), memory.NewObjects()
 	notes := NewNotesService(store, objects)
 	n, err := notes.CreateNote(context.Background(), "u", "Roof", nil)
 	if err != nil {

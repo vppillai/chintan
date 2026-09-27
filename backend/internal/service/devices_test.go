@@ -9,7 +9,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
-	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 )
 
 func TestDeviceKeyShapeAndHashing(t *testing.T) {
@@ -52,7 +52,7 @@ func TestDeviceKeyShapeAndHashing(t *testing.T) {
 
 func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	at := time.Date(2026, 9, 24, 23, 59, 0, 0, time.UTC)
 	svc := NewDeviceService(store).WithClock(func() time.Time { return at })
 
@@ -202,15 +202,21 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 		t.Fatalf("first request of October: %+v, %v", got, err)
 	}
 
-	// Revoked: unknown on the wire from then on and revoked underneath (the
-	// memory store returns the row, as the index does for the moment after a
-	// revoke); revoking again is not an error.
+	// Revoked: unknown on the wire from then on. The revoke drops the row's
+	// index keys, so the lookup no longer finds it; for the moment in which
+	// GSI1 still carries the entry, the row reads as revoked underneath.
+	// Revoking again is not an error.
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
 		t.Fatal(err)
 	}
-	var revoked *DeviceRefusal
-	if _, err := svc.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &revoked) || revoked.Reason != "revoked" || revoked.DeviceID != device.ID {
-		t.Fatalf("revoked key: %v (refusal %+v)", err, revoked)
+	var refusal *DeviceRefusal
+	if _, err := svc.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &refusal) || refusal.Reason != "unknown" {
+		t.Fatalf("revoked key once the index dropped it: %v (refusal %+v)", err, refusal)
+	}
+	lagging := NewDeviceService(indexLagStore{Store: store, tenantID: "u1", deviceID: device.ID}).WithClock(func() time.Time { return at })
+	refusal = nil
+	if _, err := lagging.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &refusal) || refusal.Reason != "revoked" || refusal.DeviceID != device.ID {
+		t.Fatalf("revoked key while the index still carries it: %v (refusal %+v)", err, refusal)
 	}
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
 		t.Fatalf("second revoke: %v", err)
@@ -218,6 +224,18 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if err := svc.RevokeDevice(ctx, "u2", device.ID); err == nil {
 		t.Fatal("another tenant revoked the device")
 	}
+}
+
+// indexLagStore is the moment after a revoke in which GSI1 still carries the
+// key's entry: the lookup finds the row and hands it over as it is, revoked_at
+// and all, the way the real index does until the write has propagated.
+type indexLagStore struct {
+	repository.Store
+	tenantID, deviceID string
+}
+
+func (s indexLagStore) LookupDeviceKey(ctx context.Context, _ string) (model.Device, error) {
+	return s.GetDevice(ctx, s.tenantID, s.deviceID)
 }
 
 // racingRevokeStore is a store in which, between RevokeDevice's read and
@@ -245,7 +263,7 @@ func (s *racingRevokeStore) GetDevice(ctx context.Context, tenantID, deviceID st
 // key stops working, and the counter write it raced with is kept.
 func TestRevokeDeviceOutlivesACounterWriteItRacedWith(t *testing.T) {
 	ctx := context.Background()
-	mem := memory.NewStore()
+	mem := dynamofake.NewStore()
 	device, key, err := NewDeviceService(mem).CreateDevice(ctx, "u1", "Watch")
 	if err != nil {
 		t.Fatal(err)

@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
 func TestBeginCaptureRejectsArchivedNote(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	svc := NewCaptureService(store, objects)
 
@@ -35,7 +36,7 @@ func TestBeginCaptureRejectsArchivedNote(t *testing.T) {
 }
 
 func TestSetCaptureTargetRejectsArchivedNote(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	svc := NewCaptureService(store, objects).WithInvoker(&stubInvoker{})
 

@@ -1,9 +1,20 @@
-package repository_test
+// Package dynamofake is the one repository test double: an in-process
+// DynamoDB that the real DynamoStore runs over in every test package, so a
+// service, pipeline or handler test meets the store's actual condition, filter
+// and projection expressions rather than a second hand-written Store.
+//
+// It is a separate package so it is never linked into the API binary: nothing
+// under cmd/ imports it, and TestProductionBinaryDoesNotLinkTestDoubles asserts
+// that stays true. A double living in the production package beside the real
+// DynamoDB client would be one wiring mistake away from serving production.
+package dynamofake
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,9 +24,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/smithy-go"
+
+	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
-// fakeDynamo is a small in-process DynamoDB good enough to exercise the parts
+// Fake is a small in-process DynamoDB good enough to exercise the parts
 // of the API DynamoStore actually depends on: partition/sort key ordering,
 // ExclusiveStartKey and Limit, LastEvaluatedKey, FilterExpression,
 // ProjectionExpression, ScanIndexForward, GSI1, and conditional writes.
@@ -23,7 +36,11 @@ import (
 // It evaluates condition and filter expressions for real rather than pattern
 // matching on the expression string, so a store that emits the wrong condition
 // fails here instead of passing and then losing data in production.
-type fakeDynamo struct {
+//
+// The exported fields are test knobs and counters. They are read and set by
+// the test that owns the Fake between calls, never concurrently with the store,
+// so they sit outside the mutex.
+type Fake struct {
 	mu sync.Mutex
 	// items keyed by pk then sk
 	items map[string]map[string]map[string]types.AttributeValue
@@ -31,7 +48,7 @@ type fakeDynamo struct {
 	// pageSize, when non-zero, caps how many items one Query returns
 	// regardless of Limit, standing in for the 1MB response cap. It is how the
 	// tests prove the store follows LastEvaluatedKey.
-	pageSize int
+	PageSize int
 
 	// projected holds each index's INCLUDE projection, read from the
 	// CloudFormation template and keyed by index name. An index query returns
@@ -41,34 +58,43 @@ type fakeDynamo struct {
 	// index.
 	projected map[string]map[string]bool
 
-	queries   []*dynamodb.QueryInput
-	batchGets []*dynamodb.BatchGetItemInput
-	gets      int
-	scans     int
+	Queries   []*dynamodb.QueryInput
+	BatchGets []*dynamodb.BatchGetItemInput
+	Gets      int
+	Scans     int
 	// unprocessedEvery, when non-zero, makes every nth BatchGetItem leave its
 	// last key unprocessed, standing in for the 16 MB response cap so the
 	// tests prove the store asks again.
-	unprocessedEvery int
+	UnprocessedEvery int
 }
 
-func newFakeDynamo() *fakeDynamo {
-	return &fakeDynamo{
+// New returns an empty table with gsi1 projected as the template deploys it.
+func New() *Fake {
+	return &Fake{
 		items: make(map[string]map[string]map[string]types.AttributeValue),
 		projected: map[string]map[string]bool{
-			"gsi1": indexNonKeyAttributes("gsi1"),
+			"gsi1": IndexNonKeyAttributes("gsi1"),
 		},
 	}
 }
 
-// indexNonKeyAttributes parses one index's NonKeyAttributes out of
+// NewStore is the real DynamoStore over a fresh Fake: what every test outside
+// internal/repository uses in place of a hand-written in-memory Store. A test
+// that needs the Fake's knobs builds the pair itself with New and
+// repository.NewDynamoStore.
+func NewStore() *repository.DynamoStore {
+	return repository.NewDynamoStore(New(), "chintan-test")
+}
+
+// IndexNonKeyAttributes parses one index's NonKeyAttributes out of
 // infrastructure/template.yaml, so the tests are pinned to the index that will
 // actually be deployed rather than to a copy that can drift away from it.
 //
 // It walks from the named IndexName to that index's own NonKeyAttributes block
 // rather than taking the first block in the file, so a second index would get
 // its own projection rather than silently inheriting gsi1's.
-func indexNonKeyAttributes(index string) map[string]bool {
-	raw, err := os.ReadFile(templatePath)
+func IndexNonKeyAttributes(index string) map[string]bool {
+	raw, err := os.ReadFile(TemplatePath)
 	if err != nil {
 		return nil // template unavailable; projection is not enforced
 	}
@@ -102,22 +128,58 @@ func indexNonKeyAttributes(index string) map[string]bool {
 	return out
 }
 
-const templatePath = "../../../infrastructure/template.yaml"
+// TemplatePath is infrastructure/template.yaml, found from this source file
+// rather than the working directory, because `go test` runs each package in
+// its own directory and this fake is used from several.
+var TemplatePath = func() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "infrastructure", "template.yaml")
+}()
 
-func (f *fakeDynamo) put(item map[string]types.AttributeValue) {
-	pk := av(item["pk"])
-	sk := av(item["sk"])
+// Put stores a raw item as it would sit in the table, bypassing the store: it
+// is how a test lays down a row shaped by code that no longer exists, such as
+// a capture written before the index keys were promoted.
+func (f *Fake) Put(item map[string]types.AttributeValue) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.put(item)
+}
+
+func (f *Fake) put(item map[string]types.AttributeValue) {
+	pk := Scalar(item["pk"])
+	sk := Scalar(item["sk"])
 	if f.items[pk] == nil {
 		f.items[pk] = make(map[string]map[string]types.AttributeValue)
 	}
 	f.items[pk][sk] = item
 }
 
-// av renders the scalar types the store compares: strings, numbers and
+// Item returns a copy of one raw row, or nil, so a test can assert on the
+// attributes the store wrote rather than on what it reads back.
+func (f *Fake) Item(pk, sk string) map[string]types.AttributeValue {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return cloneItem(f.items[pk][sk])
+}
+
+// Strip removes attributes from one stored row, turning a row the store just
+// wrote into one an older version of the code wrote. Dropping gsi1pk from a
+// capture is how a test reproduces the August 2026 rows that are invisible to
+// the note index and reachable only from the base table.
+func (f *Fake) Strip(pk, sk string, attrs ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	item := f.items[pk][sk]
+	for _, a := range attrs {
+		delete(item, a)
+	}
+}
+
+// Scalar renders the scalar types the store compares: strings, numbers and
 // booleans. Until 2026-09 a boolean rendered as "", so `idem_done = :notdone`
 // compared "" with "" and held whatever the row said; AbandonIdempotent's
 // guard on a completed record could not fail against this fake.
-func av(v types.AttributeValue) string {
+func Scalar(v types.AttributeValue) string {
 	switch t := v.(type) {
 	case *types.AttributeValueMemberS:
 		return t.Value
@@ -129,21 +191,21 @@ func av(v types.AttributeValue) string {
 	return ""
 }
 
-func (f *fakeDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
+func (f *Fake) GetItem(ctx context.Context, in *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := validateItem(in.Key); err != nil {
 		return nil, err
 	}
-	f.gets++
-	item := f.items[av(in.Key["pk"])][av(in.Key["sk"])]
+	f.Gets++
+	item := f.items[Scalar(in.Key["pk"])][Scalar(in.Key["sk"])]
 	if item == nil {
 		return &dynamodb.GetItemOutput{}, nil
 	}
 	return &dynamodb.GetItemOutput{Item: cloneItem(item)}, nil
 }
 
-func (f *fakeDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+func (f *Fake) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := validateItem(in.Item); err != nil {
@@ -152,7 +214,7 @@ func (f *fakeDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ .
 	if err := validateValues(in.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
-	pk, sk := av(in.Item["pk"]), av(in.Item["sk"])
+	pk, sk := Scalar(in.Item["pk"]), Scalar(in.Item["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
 		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues)
@@ -171,7 +233,7 @@ func (f *fakeDynamo) PutItem(ctx context.Context, in *dynamodb.PutItemInput, _ .
 	return &dynamodb.PutItemOutput{}, nil
 }
 
-func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+func (f *Fake) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := validateItem(in.Key); err != nil {
@@ -180,7 +242,7 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 	if err := validateValues(in.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
-	pk, sk := av(in.Key["pk"]), av(in.Key["sk"])
+	pk, sk := Scalar(in.Key["pk"]), Scalar(in.Key["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
 		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues)
@@ -203,11 +265,11 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 		for _, assign := range strings.Split(strings.TrimPrefix(expr, "SET "), ",") {
 			name, valRef, ok := strings.Cut(assign, "=")
 			if !ok {
-				return nil, fmt.Errorf("fakeDynamo: unsupported update %q", assign)
+				return nil, fmt.Errorf("Fake: unsupported update %q", assign)
 			}
 			v, ok := in.ExpressionAttributeValues[strings.TrimSpace(valRef)]
 			if !ok {
-				return nil, fmt.Errorf("fakeDynamo: unknown value %q", valRef)
+				return nil, fmt.Errorf("Fake: unknown value %q", valRef)
 			}
 			updated[strings.TrimSpace(name)] = v
 		}
@@ -216,7 +278,7 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 			delete(updated, strings.TrimSpace(name))
 		}
 	default:
-		return nil, fmt.Errorf("fakeDynamo: unsupported update expression %q", expr)
+		return nil, fmt.Errorf("Fake: unsupported update expression %q", expr)
 	}
 	f.put(updated)
 	out := &dynamodb.UpdateItemOutput{}
@@ -228,10 +290,10 @@ func (f *fakeDynamo) UpdateItem(ctx context.Context, in *dynamodb.UpdateItemInpu
 
 // BatchGetItem answers each key from the table, projected as asked, in no
 // particular order, and enforces DynamoDB's hundred-key ceiling.
-func (f *fakeDynamo) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
+func (f *Fake) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.batchGets = append(f.batchGets, in)
+	f.BatchGets = append(f.BatchGets, in)
 	out := &dynamodb.BatchGetItemOutput{
 		Responses:       map[string][]map[string]types.AttributeValue{},
 		UnprocessedKeys: map[string]types.KeysAndAttributes{},
@@ -241,7 +303,7 @@ func (f *fakeDynamo) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItem
 			return nil, validationError("BatchGetItem: %d keys for %s; DynamoDB accepts 1 to 100", len(req.Keys), table)
 		}
 		keys := req.Keys
-		if f.unprocessedEvery > 0 && len(f.batchGets)%f.unprocessedEvery == 0 && len(keys) > 1 {
+		if f.UnprocessedEvery > 0 && len(f.BatchGets)%f.UnprocessedEvery == 0 && len(keys) > 1 {
 			out.UnprocessedKeys[table] = types.KeysAndAttributes{Keys: keys[len(keys)-1:], ProjectionExpression: req.ProjectionExpression}
 			keys = keys[:len(keys)-1]
 		}
@@ -249,7 +311,7 @@ func (f *fakeDynamo) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItem
 			if err := validateItem(key); err != nil {
 				return nil, err
 			}
-			item := f.items[av(key["pk"])][av(key["sk"])]
+			item := f.items[Scalar(key["pk"])][Scalar(key["sk"])]
 			if item == nil {
 				continue
 			}
@@ -259,7 +321,7 @@ func (f *fakeDynamo) BatchGetItem(ctx context.Context, in *dynamodb.BatchGetItem
 	return out, nil
 }
 
-func (f *fakeDynamo) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+func (f *Fake) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := validateItem(in.Key); err != nil {
@@ -268,7 +330,7 @@ func (f *fakeDynamo) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInpu
 	if err := validateValues(in.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
-	pk, sk := av(in.Key["pk"]), av(in.Key["sk"])
+	pk, sk := Scalar(in.Key["pk"]), Scalar(in.Key["sk"])
 	existing := f.items[pk][sk]
 	if in.ConditionExpression != nil {
 		ok, err := evalExpr(*in.ConditionExpression, existing, in.ExpressionAttributeValues)
@@ -283,37 +345,37 @@ func (f *fakeDynamo) DeleteItem(ctx context.Context, in *dynamodb.DeleteItemInpu
 	return &dynamodb.DeleteItemOutput{}, nil
 }
 
-func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+func (f *Fake) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := validateValues(in.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
-	f.queries = append(f.queries, in)
+	f.Queries = append(f.Queries, in)
 
 	pkAttr, skAttr := "pk", "sk"
 	if in.IndexName != nil {
 		pkAttr, skAttr = *in.IndexName+"pk", *in.IndexName+"sk"
 	}
 
-	wantPK := av(in.ExpressionAttributeValues[":pk"])
-	prefix := av(in.ExpressionAttributeValues[":sk_prefix"])
+	wantPK := Scalar(in.ExpressionAttributeValues[":pk"])
+	prefix := Scalar(in.ExpressionAttributeValues[":sk_prefix"])
 
 	// Gather candidates across the whole table; the index is logical here.
 	var candidates []map[string]types.AttributeValue
 	for _, partition := range f.items {
 		for _, item := range partition {
-			if av(item[pkAttr]) != wantPK {
+			if Scalar(item[pkAttr]) != wantPK {
 				continue
 			}
-			if prefix != "" && !strings.HasPrefix(av(item[skAttr]), prefix) {
+			if prefix != "" && !strings.HasPrefix(Scalar(item[skAttr]), prefix) {
 				continue
 			}
 			candidates = append(candidates, item)
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		return av(candidates[i][skAttr]) < av(candidates[j][skAttr])
+		return Scalar(candidates[i][skAttr]) < Scalar(candidates[j][skAttr])
 	})
 	if in.ScanIndexForward != nil && !*in.ScanIndexForward {
 		for i, j := 0, len(candidates)-1; i < j; i, j = i+1, j-1 {
@@ -322,9 +384,9 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 	}
 
 	if len(in.ExclusiveStartKey) > 0 {
-		startSK := av(in.ExclusiveStartKey[skAttr])
+		startSK := Scalar(in.ExclusiveStartKey[skAttr])
 		for i, item := range candidates {
-			if av(item[skAttr]) == startSK {
+			if Scalar(item[skAttr]) == startSK {
 				candidates = candidates[i+1:]
 				break
 			}
@@ -336,8 +398,8 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 	if in.Limit != nil && int(*in.Limit) < evaluate {
 		evaluate = int(*in.Limit)
 	}
-	if f.pageSize > 0 && f.pageSize < evaluate {
-		evaluate = f.pageSize
+	if f.PageSize > 0 && f.PageSize < evaluate {
+		evaluate = f.PageSize
 	}
 
 	out := &dynamodb.QueryOutput{}
@@ -376,13 +438,13 @@ func (f *fakeDynamo) Query(ctx context.Context, in *dynamodb.QueryInput, _ ...fu
 // Scan walks the whole table in (pk, sk) order, honouring FilterExpression,
 // ProjectionExpression, Limit, ExclusiveStartKey and the page cap, the way
 // Query does. Limit bounds items evaluated, before the filter.
-func (f *fakeDynamo) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error) {
+func (f *Fake) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := validateValues(in.ExpressionAttributeValues); err != nil {
 		return nil, err
 	}
-	f.scans++
+	f.Scans++
 
 	var candidates []map[string]types.AttributeValue
 	for _, partition := range f.items {
@@ -391,15 +453,15 @@ func (f *fakeDynamo) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		if av(candidates[i]["pk"]) != av(candidates[j]["pk"]) {
-			return av(candidates[i]["pk"]) < av(candidates[j]["pk"])
+		if Scalar(candidates[i]["pk"]) != Scalar(candidates[j]["pk"]) {
+			return Scalar(candidates[i]["pk"]) < Scalar(candidates[j]["pk"])
 		}
-		return av(candidates[i]["sk"]) < av(candidates[j]["sk"])
+		return Scalar(candidates[i]["sk"]) < Scalar(candidates[j]["sk"])
 	})
 	if len(in.ExclusiveStartKey) > 0 {
-		startPK, startSK := av(in.ExclusiveStartKey["pk"]), av(in.ExclusiveStartKey["sk"])
+		startPK, startSK := Scalar(in.ExclusiveStartKey["pk"]), Scalar(in.ExclusiveStartKey["sk"])
 		for i, item := range candidates {
-			if av(item["pk"]) == startPK && av(item["sk"]) == startSK {
+			if Scalar(item["pk"]) == startPK && Scalar(item["sk"]) == startSK {
 				candidates = candidates[i+1:]
 				break
 			}
@@ -410,8 +472,8 @@ func (f *fakeDynamo) Scan(ctx context.Context, in *dynamodb.ScanInput, _ ...func
 	if in.Limit != nil && int(*in.Limit) < evaluate {
 		evaluate = int(*in.Limit)
 	}
-	if f.pageSize > 0 && f.pageSize < evaluate {
-		evaluate = f.pageSize
+	if f.PageSize > 0 && f.PageSize < evaluate {
+		evaluate = f.PageSize
 	}
 
 	out := &dynamodb.ScanOutput{}
@@ -504,7 +566,7 @@ func evalExpr(expr string, item map[string]types.AttributeValue, values map[stri
 		return false, err
 	}
 	if p.pos != len(p.tokens) {
-		return false, fmt.Errorf("fakeDynamo: trailing tokens in %q", expr)
+		return false, fmt.Errorf("Fake: trailing tokens in %q", expr)
 	}
 	return got, nil
 }
@@ -593,7 +655,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 			return false, err
 		}
 		if p.next() != ")" {
-			return false, fmt.Errorf("fakeDynamo: unbalanced parentheses")
+			return false, fmt.Errorf("Fake: unbalanced parentheses")
 		}
 		return got, nil
 	}
@@ -602,7 +664,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 	switch tok {
 	case "attribute_exists", "attribute_not_exists", "begins_with":
 		if p.next() != "(" {
-			return false, fmt.Errorf("fakeDynamo: %s expects (", tok)
+			return false, fmt.Errorf("Fake: %s expects (", tok)
 		}
 		name := p.next()
 		var arg string
@@ -611,7 +673,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 			arg = p.next()
 		}
 		if p.next() != ")" {
-			return false, fmt.Errorf("fakeDynamo: %s expects )", tok)
+			return false, fmt.Errorf("Fake: %s expects )", tok)
 		}
 		_, present := p.item[name]
 		switch tok {
@@ -620,7 +682,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 		case "attribute_not_exists":
 			return !present, nil
 		default:
-			return strings.HasPrefix(av(p.item[name]), av(p.values[arg])), nil
+			return strings.HasPrefix(Scalar(p.item[name]), Scalar(p.values[arg])), nil
 		}
 	}
 
@@ -628,7 +690,7 @@ func (p *exprParser) parseTerm() (bool, error) {
 	valRef := p.next()
 	want, ok := p.values[valRef]
 	if !ok {
-		return false, fmt.Errorf("fakeDynamo: unknown value %q", valRef)
+		return false, fmt.Errorf("Fake: unknown value %q", valRef)
 	}
 	have, present := p.item[tok]
 	if !present {
@@ -637,24 +699,24 @@ func (p *exprParser) parseTerm() (bool, error) {
 	}
 	switch op {
 	case "=":
-		return av(have) == av(want), nil
+		return Scalar(have) == Scalar(want), nil
 	case "<>":
-		return av(have) != av(want), nil
+		return Scalar(have) != Scalar(want), nil
 	case "<", ">":
-		l, err1 := strconv.ParseFloat(av(have), 64)
-		r, err2 := strconv.ParseFloat(av(want), 64)
+		l, err1 := strconv.ParseFloat(Scalar(have), 64)
+		r, err2 := strconv.ParseFloat(Scalar(want), 64)
 		if err1 != nil || err2 != nil {
 			if op == "<" {
-				return av(have) < av(want), nil
+				return Scalar(have) < Scalar(want), nil
 			}
-			return av(have) > av(want), nil
+			return Scalar(have) > Scalar(want), nil
 		}
 		if op == "<" {
 			return l < r, nil
 		}
 		return l > r, nil
 	}
-	return false, fmt.Errorf("fakeDynamo: unsupported operator %q", op)
+	return false, fmt.Errorf("Fake: unsupported operator %q", op)
 }
 
 // ---------------------------------------------------------------------------

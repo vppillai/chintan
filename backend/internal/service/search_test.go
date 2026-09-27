@@ -12,6 +12,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -20,7 +21,7 @@ import (
 // whole of its input.
 func searchFixture(t *testing.T, notes ...model.NoteIndex) *SearchService {
 	t.Helper()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	for _, n := range notes {
 		if _, err := store.PutNote(context.Background(), "user1", n); err != nil {
 			t.Fatalf("PutNote(%s): %v", n.ID, err)
@@ -331,7 +332,7 @@ func TestSearchRanksATitleMatchAboveABodyMatch(t *testing.T) {
 }
 
 func TestSearchHonoursTheRequestedLimitAndPagesWithTheStoresCursor(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	ctx := context.Background()
 	// More notes than one store page holds, so the cursor is the store's own
 	// continuation token rather than something search invented.
@@ -380,7 +381,7 @@ func TestSearchHonoursTheRequestedLimitAndPagesWithTheStoresCursor(t *testing.T)
 // store is exhausted so the cursor is empty, and 70 notes the user can see in
 // their own list are unfindable by search forever.
 func TestSearchPagingToExhaustionReturnsEveryMatchExactlyOnce(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	ctx := context.Background()
 	const total = 120
 	for i := range total {
@@ -445,7 +446,7 @@ func TestSearchPagingToExhaustionReturnsEveryMatchExactlyOnce(t *testing.T) {
 // Paging has to be repeatable: the same corpus and the same cursors produce the
 // same pages, or a client that re-requests a page sees a different one.
 func TestSearchPagingIsDeterministicAcrossRuns(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	ctx := context.Background()
 	for i := range 120 {
 		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
@@ -524,7 +525,7 @@ func TestSearchCursorRejectsAMalformedToken(t *testing.T) {
 // deploy — in a client's in-flight request, or in a bookmark — still has to
 // resume rather than 400.
 func TestSearchAcceptsAStoreCursorIssuedBeforeThisEncodingExisted(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	ctx := context.Background()
 	for i := range 5 {
 		if _, err := store.PutNote(ctx, "user1", model.NoteIndex{
@@ -584,7 +585,7 @@ func TestSearchTermsLowercasesAndSplitsOnWhitespace(t *testing.T) {
 
 func TestSearchSurfacesAStoreFailure(t *testing.T) {
 	boom := errors.New("dynamodb: dial tcp: connection refused")
-	svc := NewSearchService(NewNotesService(listErrStore{Store: memory.NewStore(), err: boom}, memory.NewObjects()))
+	svc := NewSearchService(NewNotesService(listErrStore{Store: dynamofake.NewStore(), err: boom}, memory.NewObjects()))
 
 	if _, err := svc.Search(context.Background(), "user1", "roof", repository.ListOptions{}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the store's failure rather than an empty result set", err)
@@ -633,11 +634,11 @@ func TestSearchMatchesTheStoredSearchTextBeyondTheSnippet(t *testing.T) {
 	}
 }
 
-// Search must ask the store for the search text. The in-memory store, like the
-// DynamoDB projection, drops it unless asked — so a search that forgot would
-// silently degrade to snippet-only matching.
+// Search must ask the store for the search text. The list projection drops it
+// unless asked — so a search that forgot would silently degrade to
+// snippet-only matching.
 func TestSearchAsksTheStoreForSearchText(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	if _, err := store.PutNote(context.Background(), "user1", model.NoteIndex{
 		ID: "n1", Title: "Plain", SearchText: "a needle only the search text holds",
 	}); err != nil {

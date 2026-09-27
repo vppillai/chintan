@@ -7,6 +7,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -55,7 +56,7 @@ func TestReorderPinsRidesOutAVersionMove(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			store := memory.NewStore()
+			store := dynamofake.NewStore()
 			objects := memory.NewObjects()
 			plain := NewNotesService(store, objects)
 			ids := map[string]string{}

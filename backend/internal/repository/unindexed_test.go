@@ -31,7 +31,7 @@ func TestListUnindexedCapturesFindsWhatTheNoteIndexCannot(t *testing.T) {
 	store, api := newTestStore(t)
 	ctx := context.Background()
 
-	api.put(legacyCaptureItem("tenant-a", "c_legacy", "n1"))
+	api.Put(legacyCaptureItem("tenant-a", "c_legacy", "n1"))
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_modern", UserID: "tenant-a", NoteID: "n1", Status: model.StatusAppended,
 		CreatedAt: "2026-09-01T00:00:00.000000000Z",
@@ -39,7 +39,7 @@ func TestListUnindexedCapturesFindsWhatTheNoteIndexCannot(t *testing.T) {
 		t.Fatalf("PutCapture: %v", err)
 	}
 	// Another tenant's legacy row must not be found under this tenant.
-	api.put(legacyCaptureItem("tenant-b", "c_other", "n9"))
+	api.Put(legacyCaptureItem("tenant-b", "c_other", "n9"))
 
 	byNote, err := store.ListCapturesByNote(ctx, "tenant-a", "n1", repository.ListOptions{})
 	if err != nil {
@@ -69,7 +69,7 @@ func TestListUnindexedCapturesFindsWhatTheNoteIndexCannot(t *testing.T) {
 // legacy rows among them must not lose the ones past the first page.
 func TestListUnindexedCapturesFollowsEveryPage(t *testing.T) {
 	store, api := newTestStore(t)
-	api.pageSize = 3
+	api.PageSize = 3
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
@@ -80,8 +80,8 @@ func TestListUnindexedCapturesFollowsEveryPage(t *testing.T) {
 			t.Fatalf("PutCapture: %v", err)
 		}
 	}
-	api.put(legacyCaptureItem("tenant-a", "c_a_legacy", "n1"))
-	api.put(legacyCaptureItem("tenant-a", "c_z_legacy", "n1"))
+	api.Put(legacyCaptureItem("tenant-a", "c_a_legacy", "n1"))
+	api.Put(legacyCaptureItem("tenant-a", "c_z_legacy", "n1"))
 
 	unindexed, err := store.ListUnindexedCaptures(ctx, "tenant-a")
 	if err != nil {
@@ -117,7 +117,7 @@ func TestNoteExistsAnswersWithoutReadingTheNote(t *testing.T) {
 			t.Errorf("NoteExists(%s, %s) = %v, want %v", tc.tenant, tc.note, got, tc.want)
 		}
 	}
-	if api.gets != len(cases) {
-		t.Errorf("gets = %d, want one GetItem per question", api.gets)
+	if api.Gets != len(cases) {
+		t.Errorf("gets = %d, want one GetItem per question", api.Gets)
 	}
 }

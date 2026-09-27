@@ -9,6 +9,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
@@ -18,7 +19,7 @@ import (
 // capture.
 type routingFixture struct {
 	h       *harness
-	store   *memory.Store
+	store   *repository.DynamoStore
 	objects *memory.Objects
 	router  *fake.Router
 	userID  string

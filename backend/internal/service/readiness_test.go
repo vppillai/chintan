@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -15,7 +16,7 @@ import (
 // {"status":"ok"} stays green through a DynamoDB outage, which is a fine
 // liveness answer and a lie about readiness.
 func TestReadinessReportsOKWhenEveryDependencyAnswers(t *testing.T) {
-	svc := NewReadinessService(memory.NewStore(), memory.NewObjects())
+	svc := NewReadinessService(dynamofake.NewStore(), memory.NewObjects())
 
 	got := svc.Check(context.Background())
 
@@ -38,7 +39,7 @@ func TestReadinessReportsOKWhenEveryDependencyAnswers(t *testing.T) {
 // whether the service was reached, not whether the object was there.
 func TestReadinessCountsAMissingObjectAsAReachedDependency(t *testing.T) {
 	objects := memory.NewObjects()
-	svc := NewReadinessService(memory.NewStore(), objects)
+	svc := NewReadinessService(dynamofake.NewStore(), objects)
 
 	got := svc.Check(context.Background())
 
@@ -54,7 +55,7 @@ func TestReadinessCountsAMissingObjectAsAReachedDependency(t *testing.T) {
 // a store turns a healthy instance into a permanently degraded one.
 func TestReadinessCountsAWrappedNotFoundAsSuccess(t *testing.T) {
 	store := errSettingsStore{
-		Store: memory.NewStore(),
+		Store: dynamofake.NewStore(),
 		err:   errors.New("dynamodb: GetItem TENANT#__readiness__: " + repository.ErrNotFound.Error()),
 	}
 	// The string above is deliberately not a wrap; this is the control. The wrap
@@ -64,7 +65,7 @@ func TestReadinessCountsAWrappedNotFoundAsSuccess(t *testing.T) {
 	}
 
 	wrapped := errSettingsStore{
-		Store: memory.NewStore(),
+		Store: dynamofake.NewStore(),
 		err:   errors.Join(errors.New("dynamodb: GetItem TENANT#__readiness__"), repository.ErrNotFound),
 	}
 	got := NewReadinessService(wrapped, memory.NewObjects()).Check(context.Background())
@@ -81,7 +82,7 @@ func TestReadinessCountsAWrappedNotFoundAsSuccess(t *testing.T) {
 // instance that cannot serve it.
 func TestReadinessReportsDegradedWhenADependencyFails(t *testing.T) {
 	store := errSettingsStore{
-		Store: memory.NewStore(),
+		Store: dynamofake.NewStore(),
 		err:   errors.New("dynamodb: dial tcp: connection refused"),
 	}
 	svc := NewReadinessService(store, memory.NewObjects())
@@ -110,7 +111,7 @@ func TestReadinessReportsDegradedWhenObjectStorageFails(t *testing.T) {
 		Objects: memory.NewObjects(),
 		err:     errors.New("s3: AccessDenied on chintan-content-bucket"),
 	}
-	svc := NewReadinessService(memory.NewStore(), objects)
+	svc := NewReadinessService(dynamofake.NewStore(), objects)
 
 	got := svc.Check(context.Background())
 
@@ -127,7 +128,7 @@ func TestReadinessReportsDegradedWhenObjectStorageFails(t *testing.T) {
 // must not reach an unauthenticated readiness response.
 func TestReadinessDoesNotSerialiseTheProbeError(t *testing.T) {
 	store := errSettingsStore{
-		Store: memory.NewStore(),
+		Store: dynamofake.NewStore(),
 		err:   errors.New("dynamodb: dial tcp 10.0.3.14:8000: connection refused"),
 	}
 	got := NewReadinessService(store, memory.NewObjects()).Check(context.Background())
@@ -149,7 +150,7 @@ func TestReadinessDoesNotSerialiseTheProbeError(t *testing.T) {
 // partition.
 func TestReadinessProbesAReservedTenantPartition(t *testing.T) {
 	objects := &recordingObjects{Objects: memory.NewObjects()}
-	NewReadinessService(memory.NewStore(), objects).Check(context.Background())
+	NewReadinessService(dynamofake.NewStore(), objects).Check(context.Background())
 
 	if len(objects.reads) != 1 {
 		t.Fatalf("object reads = %v, want exactly one probe read", objects.reads)

@@ -9,22 +9,39 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-// purgeFixture is a notes service over in-memory storage with one archived note
-// carrying one capture, and every object both name.
+// purgeFixture is a notes service over the fake table and in-memory objects
+// with one archived note carrying one capture, and every object both name.
 type purgeFixture struct {
-	store   *memory.Store
+	table   *dynamofake.Fake
+	store   *repository.DynamoStore
 	objects *memory.Objects
 	notes   *NotesService
 }
 
 func newPurgeFixture(t *testing.T) *purgeFixture {
 	t.Helper()
-	store := memory.NewStore()
+	table := dynamofake.New()
+	store := repository.NewDynamoStore(table, "chintan-test")
 	objects := memory.NewObjects()
-	return &purgeFixture{store: store, objects: objects, notes: NewNotesService(store, objects)}
+	return &purgeFixture{table: table, store: store, objects: objects, notes: NewNotesService(store, objects)}
+}
+
+// putLegacyCapture stores a capture the way a row written before August 2026
+// sits on DynamoDB: readable by its key and by the base-table walk (GetCapture,
+// ListCaptures, ListUnindexedCaptures) but carrying no GSI1 keys, so
+// ListCapturesByNote never returns it. It is how a test lays down the shape
+// that "delete forever" left behind in production; nothing in the application
+// writes such a row.
+func (f *purgeFixture) putLegacyCapture(t *testing.T, c model.CaptureIndex) {
+	t.Helper()
+	if _, err := f.store.PutCapture(context.Background(), c); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	f.table.Strip("USER#"+c.UserID, "CAPTURE#"+c.ID, "gsi1pk", "gsi1sk")
 }
 
 // archivedNote creates a note, gives it a capture with an audio object, and
@@ -273,7 +290,7 @@ func TestPurgeUnlinksACaptureTheNoteIndexCannotSee(t *testing.T) {
 	archived := f.archivedNote(t, "a")
 
 	audio := "tenants/user1/captures/c_legacy/audio.webm"
-	f.store.PutLegacyCapture(model.CaptureIndex{
+	f.putLegacyCapture(t, model.CaptureIndex{
 		ID: "c_legacy", UserID: "user1", NoteID: archived.ID,
 		Status: model.StatusAppended, CreatedAt: "2026-08-07T09:00:00Z", AudioKey: audio,
 	})
@@ -299,7 +316,7 @@ func TestPurgeUnlinksACaptureTheNoteIndexCannotSee(t *testing.T) {
 	}
 	// And a legacy capture filed into a different note is left alone.
 	other := f.archivedNote(t, "b")
-	f.store.PutLegacyCapture(model.CaptureIndex{
+	f.putLegacyCapture(t, model.CaptureIndex{
 		ID: "c_other", UserID: "user1", NoteID: other.ID, Status: model.StatusAppended, CreatedAt: "2026-08-07T09:00:00Z",
 	})
 	if _, err := f.notes.PurgeNotes(ctx, "user1", []string{f.archivedNote(t, "c").ID}); err != nil {
@@ -332,7 +349,7 @@ func TestPurgeNotesListsTheUnindexedCapturesOncePerBatch(t *testing.T) {
 	ids := []string{f.archivedNote(t, "a").ID, f.archivedNote(t, "b").ID, f.archivedNote(t, "c").ID}
 	// One of them owns a capture only the base table can see.
 	legacyAudio := "tenants/user1/captures/c_legacy/audio.webm"
-	f.store.PutLegacyCapture(model.CaptureIndex{
+	f.putLegacyCapture(t, model.CaptureIndex{
 		ID: "c_legacy", UserID: "user1", NoteID: ids[1], Status: model.StatusAppended,
 		CreatedAt: model.Now(), AudioKey: legacyAudio,
 	})

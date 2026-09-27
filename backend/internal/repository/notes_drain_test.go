@@ -41,7 +41,7 @@ func TestListNotesSeesEveryNoteNotOnlyTheMostRecentlyCreated(t *testing.T) {
 	seedNotesOldestTouchedLast(t, store, "tenant-a", total)
 	// Stand in for the 1 MB response cap, so the drain has to follow
 	// LastEvaluatedKey across several queries to see everything.
-	api.pageSize = 128
+	api.PageSize = 128
 
 	page, err := store.ListNotes(context.Background(), "tenant-a", repository.ListOptions{Limit: 10})
 	if err != nil {

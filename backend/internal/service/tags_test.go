@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -14,7 +15,7 @@ import (
 // restore, purge and edit, and the first correction that is missed leaves a tag
 // in the picker that matches nothing.
 func TestListTagsCountsEveryActiveNoteThatCarriesTheTag(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	notes := NewNotesService(store, memory.NewObjects())
 	svc := NewTagsService(notes)
 	ctx := context.Background()
@@ -49,7 +50,7 @@ func TestListTagsCountsEveryActiveNoteThatCarriesTheTag(t *testing.T) {
 // An archived note is out of the picker. Counting its tags offers a filter that
 // returns nothing, which reads as a broken search rather than an empty archive.
 func TestListTagsIgnoresAnArchivedNotesTags(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	notes := NewNotesService(store, memory.NewObjects())
 	svc := NewTagsService(notes)
 	ctx := context.Background()
@@ -78,7 +79,7 @@ func TestListTagsIgnoresAnArchivedNotesTags(t *testing.T) {
 }
 
 func TestListTagsIsEmptyForATenantWithNoTaggedNotes(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	notes := NewNotesService(store, memory.NewObjects())
 	ctx := context.Background()
 
@@ -98,7 +99,7 @@ func TestListTagsIsEmptyForATenantWithNoTaggedNotes(t *testing.T) {
 // Tags are folded to a canonical form on the way in, so "Roof", "roof " and
 // "roof" are one tag to the picker as well as to the person who said them.
 func TestListTagsCountsTheCanonicalFormOfATag(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	notes := NewNotesService(store, memory.NewObjects())
 	ctx := context.Background()
 
@@ -120,7 +121,7 @@ func TestListTagsCountsTheCanonicalFormOfATag(t *testing.T) {
 
 func TestListTagsSurfacesAStoreFailure(t *testing.T) {
 	boom := errors.New("dynamodb: dial tcp: connection refused")
-	notes := NewNotesService(listErrStore{Store: memory.NewStore(), err: boom}, memory.NewObjects())
+	notes := NewNotesService(listErrStore{Store: dynamofake.NewStore(), err: boom}, memory.NewObjects())
 
 	if _, err := NewTagsService(notes).List(context.Background(), "user1"); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the store's failure rather than an empty tag list", err)

@@ -11,17 +11,18 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
-// editHarness is a notes service and a capture service over one memory store,
+// editHarness is a notes service and a capture service over one store,
 // plus the seeding a recording edit needs: a note whose body the worker has
 // appended to, with a marker ahead of each paragraph, and the capture rows
 // those markers name.
 type editHarness struct {
 	t        *testing.T
 	ctx      context.Context
-	store    *memory.Store
+	store    *repository.DynamoStore
 	objects  *memory.Objects
 	notes    *NotesService
 	captures *CaptureService
@@ -29,7 +30,7 @@ type editHarness struct {
 
 func newEditHarness(t *testing.T) *editHarness {
 	t.Helper()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notes := NewNotesService(store, objects)
 	return &editHarness{
@@ -305,7 +306,7 @@ func TestDeleteCaptureRetryFinishesAPartialDelete(t *testing.T) {
 	}
 }
 
-// failingDeletes fails Delete for one key and is the memory store otherwise.
+// failingDeletes fails Delete for one key and is memory.Objects otherwise.
 type failingDeletes struct {
 	repository.Objects
 	key string

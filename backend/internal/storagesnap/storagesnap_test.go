@@ -8,22 +8,24 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 	"github.com/vppillai/chintan/backend/internal/usage"
 )
 
 // fixture is the task over the in-memory usage rows and a real
-// StorageService on the in-memory store, with a fixed clock.
+// StorageService on the fake table, with a fixed clock.
 type fixture struct {
-	store *memory.Store
+	store *repository.DynamoStore
 	rows  *memory.Usage
 	snap  *Snapshotter
 }
 
 func newFixture(t *testing.T, now time.Time) *fixture {
 	t.Helper()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	rows := memory.NewUsage()
 	snap, err := New(rows, service.NewStorageService(store))
 	if err != nil {
@@ -195,7 +197,7 @@ func TestRunFinishesTheOthersAndReturnsTheFault(t *testing.T) {
 }
 
 func TestNewRequiresBothDependencies(t *testing.T) {
-	if _, err := New(nil, service.NewStorageService(memory.NewStore())); err == nil {
+	if _, err := New(nil, service.NewStorageService(dynamofake.NewStore())); err == nil {
 		t.Error("New accepted a nil store")
 	}
 	if _, err := New(memory.NewUsage(), nil); err == nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 )
 
@@ -24,7 +25,7 @@ func (downObjects) PutTagged(context.Context, string, []byte, string, map[string
 // written (text).
 func TestInboxIngestLeavesNoRowWhenTheObjectWriteFails(t *testing.T) {
 	ctx := context.Background()
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	svc := NewCaptureService(store, downObjects{memory.NewObjects()})
 	source := model.DeviceSource("dev_000000000001")
 	if _, err := svc.IngestAudio(ctx, "u1", CaptureRequest{ContentType: "audio/webm", Source: source}, []byte("bytes")); err == nil {

@@ -7,11 +7,11 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
-	"github.com/vppillai/chintan/backend/internal/repository/memory"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 )
 
 func TestGetSettingsReturnsDefaultsForAUserWhoHasNeverSavedAny(t *testing.T) {
-	svc := NewSettingsService(bareNotFoundStore{memory.NewStore()})
+	svc := NewSettingsService(bareNotFoundStore{dynamofake.NewStore()})
 
 	got, err := svc.GetSettings(context.Background(), "user1")
 	if err != nil {
@@ -26,7 +26,7 @@ func TestGetSettingsReturnsDefaultsForAUserWhoHasNeverSavedAny(t *testing.T) {
 // anywhere below this turns "no settings yet" — the state every new user is in
 // — into a 500 on their first request.
 func TestGetSettingsTreatsAWrappedNotFoundAsDefaults(t *testing.T) {
-	svc := NewSettingsService(wrappedNotFoundStore{memory.NewStore()})
+	svc := NewSettingsService(wrappedNotFoundStore{dynamofake.NewStore()})
 
 	got, err := svc.GetSettings(context.Background(), "user1")
 	if err != nil {
@@ -41,7 +41,7 @@ func TestGetSettingsTreatsAWrappedNotFoundAsDefaults(t *testing.T) {
 // serve a tenant somebody else's cleanup mode and retention during an outage.
 func TestGetSettingsPropagatesARealStoreFailure(t *testing.T) {
 	boom := errors.New("dynamodb: ProvisionedThroughputExceededException")
-	svc := NewSettingsService(errSettingsStore{Store: memory.NewStore(), err: boom})
+	svc := NewSettingsService(errSettingsStore{Store: dynamofake.NewStore(), err: boom})
 
 	got, err := svc.GetSettings(context.Background(), "user1")
 	if !errors.Is(err, boom) {
@@ -53,7 +53,7 @@ func TestGetSettingsPropagatesARealStoreFailure(t *testing.T) {
 }
 
 func TestUpdateSettingsRoundTripsThroughTheStore(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	svc := NewSettingsService(store)
 	ctx := context.Background()
 

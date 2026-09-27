@@ -7,12 +7,13 @@ import (
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
 func TestArchiveNoteHidesFromActiveList(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -82,7 +83,7 @@ func TestArchiveNoteHidesFromActiveList(t *testing.T) {
 }
 
 func TestRestoreNoteReturnsToActive(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -145,7 +146,7 @@ func TestRestoreNoteReturnsToActive(t *testing.T) {
 }
 
 func TestPermanentlyDeleteRequiresArchive(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -178,7 +179,7 @@ func TestPermanentlyDeleteRequiresArchive(t *testing.T) {
 }
 
 func TestPermanentlyDeleteCascadesCaptures(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -279,7 +280,7 @@ func TestPermanentlyDeleteCascadesCaptures(t *testing.T) {
 // user is that an expired note is invisible in both lists until the table
 // collects it.
 func TestExpiredArchivedNoteIsInvisibleInBothLists(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -338,7 +339,7 @@ func TestExpiredArchivedNoteIsInvisibleInBothLists(t *testing.T) {
 }
 
 func TestUpdateArchivedNoteRejected(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
@@ -367,7 +368,7 @@ func TestUpdateArchivedNoteRejected(t *testing.T) {
 }
 
 func TestMatchNotesSkipsArchived(t *testing.T) {
-	store := memory.NewStore()
+	store := dynamofake.NewStore()
 	objects := memory.NewObjects()
 	notesService := service.NewNotesService(store, objects)
 
