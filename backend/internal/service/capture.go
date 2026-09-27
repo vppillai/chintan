@@ -113,6 +113,11 @@ type Invoker interface {
 	// InvokeAsk asks the worker to answer the question stored under askID.
 	// See ask.go.
 	InvokeAsk(ctx context.Context, tenantID, askID string) error
+	// InvokeRegenerateNote asks the worker to regenerate noteID from the
+	// recordings named by captureIDs, which the request path has already
+	// reset (note_regenerate.go); with none named the worker chooses and
+	// resets them itself, which is the operator's road.
+	InvokeRegenerateNote(ctx context.Context, tenantID, noteID string, captureIDs []string) error
 }
 
 // CaptureRequest is what a client asks for when it begins a capture.

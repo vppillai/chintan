@@ -27,11 +27,12 @@ type Invocation struct {
 	Reason    string `json:"reason,omitempty"`
 	// Task names a job that is not a capture — the weekly expiry sweep's
 	// EventBridge rule sends {"task":"sweep-expired"}, the API and the
-	// pipeline itself send {"task":"clean-note"} (TaskCleanNote), and the API
-	// sends {"task":"ask"} (TaskAsk). cmd/worker dispatches on it: the sweep
-	// never reaches this package, the clean-note and ask tasks are handled by
-	// Worker.Handle, and any other task that reaches the capture path is
-	// refused rather than misread.
+	// pipeline itself send {"task":"clean-note"} (TaskCleanNote), the API
+	// sends {"task":"ask"} (TaskAsk), and the API and chintanctl send
+	// {"task":"regenerate-note"} (TaskRegenerateNote). cmd/worker dispatches
+	// on it: the sweep never reaches this package, the clean-note, ask and
+	// regenerate-note tasks are handled by Worker.Handle, and any other task
+	// that reaches the capture path is refused rather than misread.
 	Task string `json:"task,omitempty"`
 	// NoteID and Mode address a clean-note task: the note whose cleaned view
 	// is regenerated and the mode to write it in. RequestedAt is the stamp
@@ -47,6 +48,10 @@ type Invocation struct {
 	RequestedAt string `json:"requested_at,omitempty"`
 	// AskID addresses an ask task: the question row to answer.
 	AskID string `json:"ask_id,omitempty"`
+	// CaptureIDs are the recordings a regenerate-note task re-appends, as
+	// the API reset them (service.RequestRegenerate). Empty when an operator
+	// sent the task: the worker then chooses and resets them itself.
+	CaptureIDs []string `json:"capture_ids,omitempty"`
 	// CorrelationID is the id the API minted for the request, so the worker's
 	// log lines join the API's into one trace.
 	CorrelationID string `json:"correlation_id,omitempty"`
@@ -76,6 +81,8 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 			return w.handleCleanNote(ctx, task)
 		case TaskAsk:
 			return w.handleAsk(ctx, task)
+		case TaskRegenerateNote:
+			return w.handleRegenerateNote(ctx, task)
 		}
 		// Any other task falls through to the capture path, which refuses
 		// it by name.

@@ -14,6 +14,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -119,26 +120,43 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 // item. Raw rather than routed, because "as spoken" is what verbatim
 // promises and the routed text is the transcript with the router's spans
 // cut out of it.
-func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) error {
+//
+// previous is what the recording's clean artefact held before this call
+// overwrote it — the items it added the last time it was appended — or nil
+// on a first run. It is read here because this is the last moment it exists:
+// a recording transcribed or regenerated again is re-appended over its old
+// items, and a list that has been ticked or reordered holds those items
+// under nobody's marker, so the append finds them by their words
+// (replaceChecklistItems).
+func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) (previous []string, err error) {
 	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
-		return err
+		return nil, err
 	}
 	rawBytes, err := p.cfg.Objects.Get(ctx, capture.RawKey)
 	if err != nil {
-		return fmt.Errorf("pipeline: get raw text: %w", err)
+		return nil, fmt.Errorf("pipeline: get raw text: %w", err)
 	}
 	transcript := string(rawBytes)
+	cleanKey, err := keys.CaptureClean(tenantID, capture.ID)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: clean key: %w", err)
+	}
+	if before, err := p.cfg.Objects.Get(ctx, cleanKey); err == nil && len(before) > 0 {
+		previous = strings.Split(string(before), "\n")
+	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return nil, fmt.Errorf("pipeline: get previous items: %w", err)
+	}
 	if strings.TrimSpace(transcript) == "" {
 		capture.Status = model.StatusNoContent
 		capture.Error = ""
-		return p.persist(ctx, capture)
+		return previous, p.persist(ctx, capture)
 	}
 	if note.Verbatim {
 		obs.Count(ctx, "CaptureCleanupBypassed", map[string]string{"Stage": string(service.StatusCleaning)})
 		capture.CleanKey = capture.RawKey
 		capture.Status = model.StatusCleaned
 		capture.Error = ""
-		return p.persist(ctx, capture)
+		return previous, p.persist(ctx, capture)
 	}
 
 	var result provider.ChecklistItems
@@ -172,7 +190,7 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 		return breaker.Result{Usage: tokenUsage(out.Usage)}, nil
 	})
 	if err != nil {
-		return p.handleProviderError(ctx, capture, "cleanup", err)
+		return previous, p.handleProviderError(ctx, capture, "cleanup", err)
 	}
 	items := result.Items
 	switch {
@@ -187,22 +205,18 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "none"})
 		capture.Status = model.StatusNoContent
 		capture.Error = ""
-		return p.persist(ctx, capture)
+		return previous, p.persist(ctx, capture)
 	default:
 		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "items"})
 	}
 
-	cleanKey, err := keys.CaptureClean(tenantID, capture.ID)
-	if err != nil {
-		return fmt.Errorf("pipeline: clean key: %w", err)
-	}
 	if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(strings.Join(items, "\n")), "text/plain"); err != nil {
-		return fmt.Errorf("pipeline: store clean text: %w", err)
+		return previous, fmt.Errorf("pipeline: store clean text: %w", err)
 	}
 	capture.CleanKey = cleanKey
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
-	return p.persist(ctx, capture)
+	return previous, p.persist(ctx, capture)
 }
 
 // cleanupLanguage is the ISO-639-1 code the cleanup prompt names the

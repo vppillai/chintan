@@ -523,6 +523,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		}
 	}
 
+	var previousItems []string
 	switch {
 	case capture.CleanKey != "":
 		// Cleaned already; a retry resumes at the append.
@@ -536,12 +537,14 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		// checklist takes the raw transcript itself as its one item, on the
 		// routed path as on the targeted one; the routed text would carry
 		// the same span damage.
-		if err := p.extractItems(ctx, tenantID, capture, note); err != nil {
+		previous, err := p.extractItems(ctx, tenantID, capture, note)
+		if err != nil {
 			return *capture, err
 		}
 		if service.CaptureIsTerminal(capture.Status) {
-			return *capture, nil
+			return *capture, p.dropReplacedItems(ctx, tenantID, capture, note, previous)
 		}
+		previousItems = previous
 	default:
 		if capture.RoutedKey == "" {
 			// Recorded into a note, so routing — and with it the removal of
@@ -561,7 +564,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		}
 	}
 
-	return p.append(ctx, tenantID, capture, note)
+	return p.append(ctx, tenantID, capture, note, appendOptions{autoClean: true, previousItems: previousItems})
 }
 
 // wantsNoteLanguage reports whether the transcript at RawKey was made in a

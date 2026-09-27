@@ -52,6 +52,13 @@ func TestSniffDistinguishesTheThreeInvocations(t *testing.T) {
 			want: invocation{task: "clean-note"},
 		},
 		{
+			// The regenerate-note task, from the API with the ids it reset or
+			// from chintanctl with none.
+			name: "a regenerate-note task",
+			raw:  `{"task":"regenerate-note","tenant_id":"u","note_id":"n","capture_ids":["c1","c2"]}`,
+			want: invocation{task: "regenerate-note"},
+		},
+		{
 			// The API's payload names a capture directly and has no records at
 			// all; it goes to the pipeline worker with the S3 notifications.
 			name: "the API's invocation",

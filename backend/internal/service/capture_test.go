@@ -43,6 +43,8 @@ func (p *recordingPresigner) PresignPut(_ context.Context, key, contentType stri
 // stubInvoker records every hand-off to the worker and runs nothing.
 type stubInvoker struct {
 	calls []string
+	// regenerateErr, when set, fails every regenerate-note hand-off.
+	regenerateErr error
 }
 
 func (w *stubInvoker) InvokeCapture(_ context.Context, tenantID, captureID, reason string) error {
@@ -57,6 +59,14 @@ func (w *stubInvoker) InvokeCleanNote(_ context.Context, tenantID, noteID string
 
 func (w *stubInvoker) InvokeAsk(_ context.Context, tenantID, askID string) error {
 	w.calls = append(w.calls, "ask/"+tenantID+"/"+askID)
+	return nil
+}
+
+func (w *stubInvoker) InvokeRegenerateNote(_ context.Context, tenantID, noteID string, captureIDs []string) error {
+	if w.regenerateErr != nil {
+		return w.regenerateErr
+	}
+	w.calls = append(w.calls, "regenerate-note/"+tenantID+"/"+noteID+"/"+strings.Join(captureIDs, "+"))
 	return nil
 }
 

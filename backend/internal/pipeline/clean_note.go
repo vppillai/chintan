@@ -358,13 +358,21 @@ func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, no
 	if !note.AutoClean {
 		return
 	}
+	p.cleanNoteAfter(ctx, tenantID, note, "append")
+}
+
+// cleanNoteAfter is autoCleanAfterAppend's hand-off, for the two moments the
+// worker regenerates a view of its own accord: after an append to a note with
+// auto_clean, and after a regeneration of a note that has a view. trigger is
+// the NoteCleanRequested dimension.
+func (p *Pipeline) cleanNoteAfter(ctx context.Context, tenantID string, note model.NoteIndex, trigger string) {
 	mode := service.EffectiveCleanMode(note)
 	stamped, _, err := service.RecordCleanRequest(ctx, p.cfg.Store, tenantID, note, mode, p.now(), false)
 	if err != nil {
 		obs.Log(ctx).Error("could not record the auto-clean request; the cleaned view stays stale",
 			slog.String("note_id", note.ID),
 			slog.String("error", err.Error()))
-		obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": "append"})
+		obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": trigger})
 		return
 	}
 	if p.cfg.CleanInvoker != nil {
@@ -373,16 +381,17 @@ func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, no
 			obs.Log(ctx).Error("could not hand the note to the worker for auto-clean; the cleaned view stays stale",
 				slog.String("note_id", note.ID),
 				slog.String("error", err.Error()))
-			obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": "append"})
+			obs.Count(ctx, "NoteCleanInvokeFailures", map[string]string{"Trigger": trigger})
 			return
 		}
-		obs.Count(ctx, "NoteCleanRequested", map[string]string{"Mode": string(mode), "Trigger": "append"})
+		obs.Count(ctx, "NoteCleanRequested", map[string]string{"Mode": string(mode), "Trigger": trigger})
 		return
 	}
-	obs.Count(ctx, "NoteCleanRequested", map[string]string{"Mode": string(mode), "Trigger": "append"})
+	obs.Count(ctx, "NoteCleanRequested", map[string]string{"Mode": string(mode), "Trigger": trigger})
 	if err := p.CleanNote(ctx, tenantID, note.ID, mode, stamped.CleanedRequestedAt); err != nil {
-		obs.Log(ctx).Error("auto-clean after append did not finish; the cleaned view stays stale",
+		obs.Log(ctx).Error("auto-clean did not finish; the cleaned view stays stale",
 			slog.String("note_id", note.ID),
+			slog.String("trigger", trigger),
 			slog.String("error", err.Error()))
 	}
 }

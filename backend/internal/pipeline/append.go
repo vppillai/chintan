@@ -21,7 +21,23 @@ import (
 // Stage 4 — append
 // ---------------------------------------------------------------------------
 
-func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) (model.CaptureIndex, error) {
+// appendOptions is what differs between a capture's own run and a
+// regeneration of its note (regenerate.go).
+type appendOptions struct {
+	// autoClean regenerates the note's cleaned view after this append when the
+	// note asks for it. A capture's own run does; a regeneration passes
+	// false and cleans once, after its last capture, rather than once per
+	// capture with every run but the last superseded and billed.
+	autoClean bool
+	// previousItems are the checklist items this recording produced the last
+	// time it was appended — the lines of its clean artefact before the
+	// extraction overwrote it (extractItems) — so a re-append can find them
+	// in a list that has since been ticked or reordered. Nil for a plain
+	// note, a first append, or a retry that resumed past the extraction.
+	previousItems []string
+}
+
+func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, opts appendOptions) (model.CaptureIndex, error) {
 	if err := p.setStatus(ctx, capture, service.StatusAppending); err != nil {
 		return *capture, err
 	}
@@ -106,7 +122,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 			obs.Log(ctx).Info("append claim is held but the capture's paragraph is already in the note; finishing the interrupted attempt",
 				slog.String("note_id", note.ID))
 			obs.Count(ctx, "AppendResumedWithoutRewriting", map[string]string{"Stage": string(service.StatusAppending)})
-			return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
+			return p.finishAppend(ctx, tenantID, capture, note, token, opts.autoClean)
 		}
 		return current, fmt.Errorf("pipeline: append claim for this capture is still held by an "+
 			"unfinished attempt (claimed %s ago, lease %s): %w",
@@ -133,14 +149,14 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		return *capture, fmt.Errorf("pipeline: stamp note for append: %w", err)
 	}
 
-	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText); err != nil {
+	if err := p.appendToNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems); err != nil {
 		// Hand the claim back so a transient object-store failure does not park
 		// the capture until the claim lease expires.
 		p.releaseAppendClaim(ctx, capture)
 		return *capture, fmt.Errorf("pipeline: append to note: %w", err)
 	}
 
-	return p.finishAppend(ctx, tenantID, capture, note, cleanedText, token)
+	return p.finishAppend(ctx, tenantID, capture, note, token, opts.autoClean)
 }
 
 // defaultAppendStampWait bounds how long one append waits for another
@@ -214,7 +230,7 @@ const defaultAppendStampPoll = 200 * time.Millisecond
 // the index refresh and the completion of the claim. Both are safe to repeat,
 // which is what lets a retry that finds the marker already written finish an
 // attempt that died here.
-func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, cleanedText, token string) (model.CaptureIndex, error) {
+func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex, token string, autoClean bool) (model.CaptureIndex, error) {
 	// The worker's refresh is the editor's (service.RefreshNoteIndex) on the
 	// worker's clock, clearing this capture's stamp, and refusing to index a
 	// body it could not read — a paragraph was just written, so a failed read
@@ -237,7 +253,9 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 
 	// Only now, with the capture marked appended: the cleaned view follows the
 	// body, and the body is settled.
-	p.autoCleanAfterAppend(ctx, tenantID, refreshed)
+	if autoClean {
+		p.autoCleanAfterAppend(ctx, tenantID, refreshed)
+	}
 	return appended, nil
 }
 
@@ -300,28 +318,119 @@ func replaceCaptureParagraph(body, captureID, text string) string {
 	return service.InsertCaptureParagraph(rest, captureID, text, func(id string) bool { return id > captureID })
 }
 
-// keepTick returns text carrying old's ticks, line for line: a checklist
-// item the person ticked stays ticked when its words are written again. A
-// recording that now yields a different number of items carries nothing —
-// there is no saying which new line was which old one, and an open item the
-// person can tick again is better than a tick on the wrong item.
-//
-// ponytail: the carry is positional. A retranscription that keeps the count
-// but reorders or reshapes the items puts the tick on the line that holds
-// the old one's place, not its words; matching lines by their words would
-// need a similarity rule and this is a retranscription of a ticked list, so
-// the count check is the ceiling for now.
+// keepTick returns text carrying old's ticks: a checklist item the person
+// ticked stays ticked when its words are written again. A tick follows the
+// item's words — an item that comes back in another place, as a re-extraction
+// with the current prompt may order it, keeps it — and, when no words match
+// at all and the two have the same number of lines, it follows the line, as
+// it did before 2026-09-27, so a retranscription that reworded every item is
+// carried the way it always was. A recording that now yields other words in
+// another count carries nothing: there is no saying which new line was which
+// old one, and an open item the person can tick again is better than a tick
+// on the wrong item.
 func keepTick(old, text string) string {
 	oldLines, lines := strings.Split(old, "\n"), strings.Split(text, "\n")
-	if len(oldLines) != len(lines) {
-		return text
+	ticked := map[string]int{}
+	for _, line := range oldLines {
+		if t, ok := checklistLineText(line); ok && strings.HasPrefix(strings.TrimLeft(line, " \t"), "- [x] ") {
+			ticked[t]++
+		}
 	}
+	matched := false
 	for i, line := range lines {
-		if strings.HasPrefix(oldLines[i], "- [x] ") && strings.HasPrefix(line, "- [ ] ") {
-			lines[i] = "- [x] " + strings.TrimPrefix(line, "- [ ] ")
+		t, ok := checklistLineText(line)
+		if !ok || !strings.HasPrefix(line, "- [ ] ") || ticked[t] == 0 {
+			continue
+		}
+		ticked[t]--
+		lines[i] = "- [x] " + strings.TrimPrefix(line, "- [ ] ")
+		matched = true
+	}
+	if !matched && len(oldLines) == len(lines) {
+		for i, line := range lines {
+			if strings.HasPrefix(oldLines[i], "- [x] ") && strings.HasPrefix(line, "- [ ] ") {
+				lines[i] = "- [x] " + strings.TrimPrefix(line, "- [ ] ")
+			}
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// checklistLineText is the words of a task-list line, indent and box aside,
+// whitespace runs collapsed the way checklistItems writes them and case
+// folded, so a line the worker wrote, the same item after the editor's round
+// trip, and the same item as a newer prompt capitalises it all compare
+// equal. ok is false for a line that is not an item.
+func checklistLineText(line string) (text string, ok bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	switch {
+	case strings.HasPrefix(trimmed, "- [ ] "):
+		trimmed = trimmed[len("- [ ] "):]
+	case strings.HasPrefix(trimmed, "- [x] "):
+		trimmed = trimmed[len("- [x] "):]
+	default:
+		return "", false
+	}
+	return strings.ToLower(strings.Join(strings.Fields(trimmed), " ")), true
+}
+
+// replaceChecklistItems puts text — a recording's items, freshly extracted —
+// where the recording's previous items stand in a checklist body, ticks
+// carried by keepTick. Two shapes of body:
+//
+//   - The items are still under the recording's marker (a list only ever
+//     spoken to): the ordinary replacement by the marker, as a plain note's
+//     paragraph is replaced.
+//   - The marker is a trailer with nothing under it (the Items tab carries
+//     every marker to the end on each save, docs/design/checklists.md): the
+//     items live in the list under nobody's marker. They are found by their
+//     words, from previous — the lines of the recording's last clean
+//     artefact — each once, and the new lines take the place of the first of
+//     them; the rest of the list, typed items included, keeps its order. The
+//     marker is left where it is, because a marker put back above the new
+//     lines would claim every line down to the next marker, typed ones too,
+//     for the next delete, move or regeneration. When none of the old words
+//     are left the person deleted that recording's items, and putting them
+//     back would overrule that: the body is returned as it was.
+//
+// An empty text removes the recording's items and writes nothing in their
+// place: the recording, extracted again, named nothing to add.
+func replaceChecklistItems(body, captureID string, previous []string, text string) string {
+	_, old, found := service.CutCaptureParagraph(body, captureID)
+	if !found || strings.TrimSpace(old) != "" || len(previous) == 0 {
+		return replaceCaptureParagraph(body, captureID, text)
+	}
+	want := map[string]int{}
+	for _, item := range previous {
+		if t := strings.ToLower(strings.Join(strings.Fields(item), " ")); t != "" {
+			want[t]++
+		}
+	}
+	lines := strings.Split(body, "\n")
+	kept := make([]string, 0, len(lines))
+	var removed []string
+	at := -1
+	for _, line := range lines {
+		if t, ok := checklistLineText(line); ok && want[t] > 0 {
+			want[t]--
+			removed = append(removed, line)
+			if at < 0 {
+				at = len(kept)
+			}
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if at < 0 {
+		return body
+	}
+	out := make([]string, 0, len(kept)+len(lines))
+	out = append(out, kept[:at]...)
+	if text = keepTick(strings.Join(removed, "\n"), text); text != "" {
+		out = append(out, strings.Split(text, "\n")...)
+	}
+	out = append(out, kept[at:]...)
+	return strings.Join(out, "\n")
 }
 
 // checklistItems renders a recording's items — one per line of the cleaned
@@ -362,16 +471,23 @@ func checklistItems(text string) string {
 // under it is replaced where it stands, which for the same words is the same
 // body. That one rule covers a recording transcribed again and this capture's
 // own attempt that wrote the body, died, and was taken over after the lease.
-func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string) error {
+func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, previousItems []string) error {
 	_, err := service.RewriteNoteBody(ctx, p.cfg.Objects, noteKey, func(existing string) (string, bool) {
 		if service.HasCaptureMarker(existing, captureID) {
 			// A recording whose text is already in the note: transcribed
 			// again (service.RetranscribeCapture, or run's re-transcription
-			// after a retry from before the language was recorded), or this
+			// after a retry from before the language was recorded),
+			// regenerated with the current prompt (RegenerateNote), or this
 			// attempt's own earlier try that died after writing. The
 			// paragraph is replaced where it stands; appending would leave
-			// the wrong-script text beside the right one.
+			// the wrong-script text beside the right one. A checklist's
+			// items are found by their words when the marker no longer
+			// holds them.
 			obs.Count(ctx, "AppendReplacedParagraph", map[string]string{"Stage": string(service.StatusAppending)})
+			if previousItems != nil {
+				next := replaceChecklistItems(existing, captureID, previousItems, text)
+				return next, next != existing
+			}
 			return replaceCaptureParagraph(existing, captureID, text), true
 		}
 		paragraph := service.CaptureMarker(captureID) + "\n" + text
