@@ -247,6 +247,16 @@ describe('NoteRow swipe actions', () => {
     await user.keyboard('{Enter}');
     expect(screen.queryByRole('dialog')).toBeNull();
 
+    // From the ⋮, the everyday keyboard route: the menuitem that opened the
+    // dialog is gone with the menu, so Cancel has to land focus back on the
+    // ⋮ itself, not at the top of the document (WCAG 2.4.3).
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'More' })).toHaveFocus();
+
     expect(calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });

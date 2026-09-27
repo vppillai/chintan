@@ -645,7 +645,19 @@ describe('deleting from the note screen', () => {
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
     expect(api.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
 
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    // Cancel hands focus back to the ⋮ the menuitem came from, not the body.
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+    expect(api.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Delete “Roof repair”?' })).getByRole('button', {
+        name: 'Delete',
+      }),
+    );
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => {
       expect(api.calls).toContain('DELETE /v1/notes/roof-repair');

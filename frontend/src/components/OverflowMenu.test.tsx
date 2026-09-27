@@ -39,6 +39,9 @@ describe('OverflowMenu', () => {
     expect(remove).toHaveBeenCalledTimes(1);
     expect(move).not.toHaveBeenCalled();
     expect(screen.queryByRole('menu')).toBeNull();
+    // The pick unmounted the focused menuitem; focus is back on the trigger,
+    // not dropped to the body, for whatever the pick opens to restore to.
+    expect(trigger).toHaveFocus();
   });
 
   it('closes on a tap outside', async () => {

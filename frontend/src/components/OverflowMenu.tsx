@@ -70,9 +70,9 @@ export function OverflowMenu({
   describedBy?: string;
   items: readonly OverflowMenuItem[];
   /**
-   * The owner's handle on the trigger, when what an item opens should hand
-   * focus back to it on closing. Selecting an item unmounts the focused
-   * menuitem, so without this the owner has nothing to return to.
+   * The owner's handle on the trigger, when what an item opens elsewhere on
+   * the screen — the note's drawer — should hand focus back to it on closing
+   * later, in the owner's own effect.
    */
   triggerRef?: RefObject<HTMLButtonElement | null>;
   /** The owner's own control to open the menu from, in place of the ⋮; it spreads the props it is given. */
@@ -153,6 +153,16 @@ export function OverflowMenu({
               data-destructive={item.destructive || undefined}
               disabled={item.disabled}
               onClick={() => {
+                // Focus goes back to the trigger before the pick runs, as it
+                // does on Escape: the menuitem under the pointer unmounts with
+                // the menu, and a dialog the pick opens captures whatever is
+                // focused at that moment to restore on Cancel — the trigger,
+                // not the body. What moves focus on afterwards (the row's
+                // checkbox, the drawer's heading) does so in an effect, later.
+                (
+                  triggerRef.current ??
+                  rootRef.current?.querySelector<HTMLElement>('[aria-haspopup="menu"]')
+                )?.focus();
                 setOpen(false);
                 item.onSelect();
               }}

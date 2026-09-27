@@ -82,6 +82,15 @@ test('a sideways drag opens exactly one tray, to the tray width, and is not a ta
   await expect(first.getByRole('button', { name: 'Delete' })).toBeVisible();
   // The finger lifting fires a click on the row underneath; it must not open the note.
   await expect(page).toHaveURL(/\/$/);
+
+  // The tray's Delete is the slip the confirm exists for: it asks, and Escape backs out.
+  const before = await rows.count();
+  await first.getByRole('button', { name: 'Delete' }).click();
+  const dialog = page.getByRole('dialog', { name: /^Delete “.+”\?$/ });
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(rows).toHaveCount(before);
 });
 
 test('a drag down scrolls the library and opens nothing', async ({ page, api }) => {
