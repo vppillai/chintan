@@ -24,45 +24,32 @@ import (
 // raw transcript with the list's name beside it and answers with the items
 // to add, and with none when the recording only told the app what to do.
 
-const itemsSystemPrompt = `You turn one dictated recording into items for a checklist.
+// The rules the two owner captures need, the six acceptance examples, the
+// shared rules; 480 tokens against the 643 of the 2026-09-26 text, the same
+// rules and examples (round-5 prompts lens, PR-4). The one rule that was
+// unstated before is now explicit: a remove/tick/change request is returned
+// as spoken, which is why that example is lowercase while the capitalisation
+// rule applies to items.
+const itemsSystemPrompt = `You turn one dictated recording into items for the checklist named in the message.
 
-The recording was spoken to add things to the list named in the message. Return the things to
-add, as the speaker named them.
-- An item is a short noun phrase in the speaker's own words, with its quantity kept ("two
-  lemons", "500 g rice"). Write it as a list entry: first letter capitalised, no full stop.
-- Leave out every word addressed to the app: "add", "put", "into it", "to my list", "on the
-  shopping list", the list's own name. "Add umbrella to shopping list" is the one item
-  "Umbrella".
-- Leave out the words that only say the thing is wanted: "I need", "we're out of", "buy",
-  "get", "pick up". "I also need coriander" is the one item "Coriander". A task with an action
-  of its own ("call the plumber", "post the parcel by Friday") keeps its verb.
-- Split "X and Y" and "X, Y and Z" into one item each, unless the words plainly name one thing
-  ("salt and pepper" is two items; "fish and chips" is one). When in doubt, split.
-- Words that only tell the app what to do ("create a shopping list", "add these to my list",
-  "shopping list:") yield no item. A recording that is nothing but such words yields no items.
-- A request to remove, tick off or change an item is not an item to add: return the whole
-  request as one item, exactly as spoken, so the person sees it.
-- Fix obvious speech-to-text garbling; change nothing else. Never invent an item and never
-  make an item out of the list's name.
+- An item is a short noun phrase in the speaker's own words, quantity kept ("two lemons", "500 g rice"), first letter capitalised, no full stop.
+- Leave out the words spoken to the app or that only say the thing is wanted: "add", "put", "into it", "to my list", the list's own name, "I need", "we're out of", "buy", "get", "pick up". A task with an action of its own ("call the plumber", "post the parcel by Friday") keeps its verb.
+- Split "X and Y" and "X, Y and Z" into one item each unless the words plainly name one thing ("salt and pepper" is two; "fish and chips" is one). In doubt, split.
+- A recording that only tells the app what to do ("create a shopping list") yields no items.
+- A request to remove, tick off or change an item is not an item to add: return the whole request as one item, as spoken.
+- Fix obvious speech-to-text garbling; change nothing else. Never invent an item and never make an item of the list's name.
 ` + llm.LanguageRule + `
 ` + llm.DataRule + `
 
-Reply with ONLY a JSON object: {"items":["…","…"]}. No markdown fence, no commentary.
-{"items":[]} when there is nothing to add.
+Reply with ONLY {"items":["…","…"]}; {"items":[]} when there is nothing to add. No fence, no commentary.
 
-Examples, recording then reply (the list is titled "Shopping list"):
-- "create a shopping list and add chickpeas and green gram into it"
-  {"items":["Chickpeas","Green gram"]}
-- "Add umbrella to shopping list"
-  {"items":["Umbrella"]}
-- "put milk, eggs and two loaves of bread on the shopping list"
-  {"items":["Milk","Eggs","Two loaves of bread"]}
-- "shopping list: batteries, dish soap"
-  {"items":["Batteries","Dish soap"]}
-- "create a shopping list"
-  {"items":[]}
-- "remove milk from the list"
-  {"items":["remove milk from the list"]}`
+Examples (the list is "Shopping list"), recording then reply:
+- "create a shopping list and add chickpeas and green gram into it" → {"items":["Chickpeas","Green gram"]}
+- "Add umbrella to shopping list" → {"items":["Umbrella"]}
+- "put milk, eggs and two loaves of bread on the shopping list" → {"items":["Milk","Eggs","Two loaves of bread"]}
+- "shopping list: batteries, dish soap" → {"items":["Batteries","Dish soap"]}
+- "create a shopping list" → {"items":[]}
+- "remove milk from the list" → {"items":["remove milk from the list"]}`
 
 // ItemsPrompt is the system and user prompt that turns one recording into
 // checklist items for the list titled listTitle. language is the ISO-639-1
@@ -84,7 +71,7 @@ func ItemsPrompt(transcript, listTitle, language string) (system, user string, e
 	var b strings.Builder
 	b.WriteString("The list is titled: " + title + "\n")
 	if language != "" {
-		b.WriteString("The recording is in " + LanguageLabel(language) + ".\n")
+		b.WriteString("The recording is in " + llm.LanguageLabel(language) + ".\n")
 	}
 	b.WriteString("The recording is between the marker lines.\n" + llm.Fence(transcript))
 	return itemsSystemPrompt, b.String(), nil
