@@ -180,6 +180,18 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	if err != nil {
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
 	}
+	touched := false
+	if decision.Checklist {
+		// The router heard a list — "add milk to the shopping list" with no
+		// such note — so the note is a checklist before the capture points
+		// at it, and run() takes the extractItems branch for this same
+		// recording instead of cleaning the sentence into a plain note,
+		// which left the owner's first item reading "Add milk to the
+		// shopping list." (owner feedback 2026-09-27). Written on the row as
+		// the language is; nothing reads the meta mirror back.
+		note.Kind = model.NoteKindChecklist
+		touched = true
+	}
 	if capture.Language != "" && capture.Language != model.LanguageAuto {
 		// The note starts in the language its first recording was
 		// transcribed in, so a later change of the tenant's default does not
@@ -187,8 +199,11 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		// written: the note then follows the default, as a note a person
 		// creates does.
 		note.Language = capture.Language
+		touched = true
+	}
+	if touched {
 		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err != nil {
-			return fmt.Errorf("pipeline: set language on the new note: %w", err)
+			return fmt.Errorf("pipeline: set kind and language on the new note: %w", err)
 		}
 	}
 	capture.NoteID = note.ID
