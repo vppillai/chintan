@@ -1124,8 +1124,10 @@ export const notePurgeResults: NotePurgeResponseWire = {
 export const BACKEND_CAPTURE_STATUSES = [
   "uploaded",
   "transcribing",
+  "transcribed",
   "routing",
   "cleaning",
+  "cleaned",
   "appending",
   "appended",
   "needs_target",
@@ -1143,8 +1145,10 @@ export const BACKEND_CAPTURE_STATUSES = [
 export const BACKEND_PENDING_CAPTURE_STATUSES = [
   "uploaded",
   "transcribing",
+  "transcribed",
   "routing",
   "cleaning",
+  "cleaned",
   "appending"
 ] as const;
 

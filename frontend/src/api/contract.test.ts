@@ -82,8 +82,10 @@ function asResponse(body: unknown, status: number, contentType: string): Respons
 const EXPECTED_CAPTURE_STATUSES = [
   'uploaded',
   'transcribing',
+  'transcribed',
   'routing',
   'cleaning',
+  'cleaned',
   'appending',
   'appended',
   'needs_target',
