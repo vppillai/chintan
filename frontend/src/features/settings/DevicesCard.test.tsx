@@ -8,6 +8,7 @@ import type { DeviceCreatedWire, DeviceWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import {
+  CONNECT_DOCS_URL,
   DevicesCard,
   MAX_DEVICES,
   UNCONFIRMED_TEXT,
@@ -406,7 +407,31 @@ describe('the devices card on You', () => {
     expect(within(card).getByRole('button', { name: 'Copy command' })).toBeInTheDocument();
     expect(within(card).getAllByRole('button', { name: 'Copy address' })).toHaveLength(3);
     // Each recipe is a disclosure with its own chevron, not an underlined link (R4-29).
-    expect(card.querySelectorAll('details.recipe > summary > .recipe__chevron')).toHaveLength(4);
+    expect(card.querySelectorAll('details.recipe > summary > .recipe__chevron')).toHaveLength(5);
+  });
+
+  it('folds the raw addresses, the note-id header and the README link behind a fifth disclosure, closed until opened', async () => {
+    const user = userEvent.setup();
+    mount();
+    const card = await screen.findByRole('region', { name: 'Devices & shortcuts' });
+    // Nothing outside a fold names an address any more (owner, 2026-09-27:
+    // the paragraph under the recipes was a wall of URLs).
+    const outside = Array.from(card.querySelectorAll('.recipes > p'), (p) => p.textContent).join(' ');
+    expect(outside).not.toContain('/v1/inbox');
+    expect(outside).not.toContain('X-Chintan-Note-Id');
+
+    const other = within(card).getByText('Other apps, and filing into one note').closest('details') as HTMLDetailsElement;
+    expect(other.open).toBe(false);
+    expect(other).toHaveTextContent(/anything that can POST a file with one header/i);
+    expect(other).toHaveTextContent(inboxAudioUrl());
+    expect(other).toHaveTextContent(/add the header X-Chintan-Note-Id with the note’s id/);
+    const readme = within(other).getByRole('link', { name: /README on github\.com/ });
+    expect(readme).toHaveAttribute('href', CONNECT_DOCS_URL);
+    expect(readme).toHaveAttribute('target', '_blank');
+    expect(readme).toHaveAttribute('rel', 'noopener noreferrer');
+
+    await user.click(within(other).getByText('Other apps, and filing into one note'));
+    expect(other.open).toBe(true);
   });
 
   it('walks the Pebble Index ring’s webhook to the inbox: the address, the header, Recording (OF-RING)', async () => {
