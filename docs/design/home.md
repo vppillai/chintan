@@ -120,10 +120,10 @@ ask are you sure. Don't directly archive"): `components/DeleteConfirm.tsx`, one
 note and "Delete N notes?" from the bar, whose body says where the note goes —
 "It is kept in the Archive for 30 days, then gone for good." ("They are kept…"
 for several) — with one destructive Delete button, no field, and focus on
-Cancel, so Enter and Escape both back out with nothing gone. It archived on
-the tap between 2026-09-26 and 2026-09-27; a slip on the tray or the wrong
-menu item was sending notes to the Archive with only the toast in between.
-On the answer the archive runs and a toast in
+Cancel, so Enter and Escape both back out with nothing gone — and back to the
+control that asked, the ⋮ included (`OverflowMenu` hands focus to its trigger
+before a pick runs, so the dialog has it to restore). On the answer the archive
+runs and a toast in
 the shell (`components/Toast.tsx`, a row above the tab bar like the update
 prompt, never over the record button) says "Deleted · kept in Archive for 30
 days" with an Undo button for six seconds — the clock stops while a pointer
