@@ -342,6 +342,36 @@ func (rt *router) cleanNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, NoteCleanQueued{Status: "queued", Mode: string(mode)})
 }
 
+// regenerateNote resets every recording of the note whose words came from a
+// prompt and hands the note to the worker: 202 with the count, nothing run
+// inline (service.RequestRegenerate). The spend gate answers first, as it
+// does for cleanNote, since the run is one cleanup call per recording. A
+// note with nothing to regenerate answers 202 with zero and queues nothing.
+func (rt *router) regenerateNote(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserID(r.Context())
+	if !ok {
+		httperr.Unauthorized(w, r, "authentication required")
+		return
+	}
+	if rt.Spend != nil {
+		capped, err := rt.Spend.Capped(r.Context())
+		if err != nil {
+			fail(w, r, err)
+			return
+		}
+		if capped {
+			fail(w, r, service.ErrSpendCapped)
+			return
+		}
+	}
+	count, err := rt.Notes.RequestRegenerate(r.Context(), userID, r.PathValue("noteId"))
+	if err != nil {
+		fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, NoteRegenerateQueued{Status: "queued", Captures: count})
+}
+
 // reorderPins writes the Pinned group's order in one request: pin_rank
 // becomes each note's position in ids. 200 with the notes in that order.
 func (rt *router) reorderPins(w http.ResponseWriter, r *http.Request) {

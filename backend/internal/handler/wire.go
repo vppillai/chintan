@@ -133,6 +133,15 @@ type NoteCleanQueued struct {
 	Mode string `json:"mode"`
 }
 
+// NoteRegenerateQueued is the OpenAPI NoteRegenerateQueued schema, the 202
+// body of POST /v1/notes/{id}/regenerate.
+type NoteRegenerateQueued struct {
+	Status string `json:"status"`
+	// Captures is how many recordings were handed to the worker; zero means
+	// nothing in the note came from a prompt and nothing was queued.
+	Captures int `json:"captures"`
+}
+
 func noteOf(n model.NoteIndex) Note {
 	out := Note{
 		ID:        n.ID,

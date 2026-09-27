@@ -51,6 +51,8 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		httperr.Conflict(w, r, "the capture has no note yet; choose one with /target instead of moving it", nil)
 	case errors.Is(err, service.ErrCaptureAudioExpired):
 		httperr.Conflict(w, r, "the recording's audio has expired, so it cannot be transcribed again", nil)
+	case errors.Is(err, service.ErrRegenerateInFlight):
+		httperr.Conflict(w, r, err.Error(), nil)
 	case errors.Is(err, service.ErrPinLimit),
 		errors.Is(err, service.ErrDeviceLimit),
 		errors.Is(err, service.ErrPushSubscriptionLimit):
