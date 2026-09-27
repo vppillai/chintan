@@ -150,7 +150,10 @@ func init() {
 	// is the readiness probe itself: one GetItem on its sentinel partition and
 	// one S3 GetObject, which also opens the S3 client the first note open
 	// and every presign would otherwise pay for. A failure is logged, not
-	// fatal: the first request then pays what it always did.
+	// fatal: the first request then pays what it always did. The VAPID read
+	// above is a third round-trip on every cold start — a ParameterNotFound
+	// on a dormant instance — that is not in the 270 ms and has not been
+	// measured; measure it once the keys exist.
 	readiness := service.NewReadinessService(store, objects)
 	warmCtx, cancelWarm := context.WithTimeout(ctx, warmTimeout)
 	defer cancelWarm()

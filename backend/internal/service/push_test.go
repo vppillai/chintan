@@ -36,6 +36,12 @@ func TestPushSubscribeIsIdempotentOnTheEndpoint(t *testing.T) {
 	if first.ID != PushSubscriptionID(pushRequest(1).Endpoint) || len(first.ID) != 16 {
 		t.Fatalf("id = %q, want the endpoint's sixteen-hex digest", first.ID)
 	}
+	// The same literal is pinned in the app's NotificationsCard.test.tsx: the
+	// browser computes this id to find and remove its own row, so the two
+	// digests diverging must fail a test on both sides.
+	if got := PushSubscriptionID("https://push.example/a"); got != "378f13c84514cc9b" {
+		t.Fatalf("PushSubscriptionID = %q, want 378f13c84514cc9b (SHA-256 first sixteen hex)", got)
+	}
 	if first.Label != "Safari on iPhone" {
 		t.Fatalf("label = %q, want the browser's name with its spaces folded", first.Label)
 	}

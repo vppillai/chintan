@@ -133,8 +133,8 @@ Web Push — a note on the phone when a recording files, even with the app close
 
 ```bash
 scripts/vapid-keys.sh --instance dev        # prints the two commands below with fresh keys; writes nothing itself
-aws ssm put-parameter --type SecureString --name /chintan/dev/vapid_private_key --value=...   # the worker signs with it
-aws ssm put-parameter --type SecureString --name /chintan/dev/vapid_public_key  --value=...   # the API hands it to the browser
+aws ssm put-parameter --region us-west-2 --type SecureString --overwrite --name /chintan/dev/vapid_private_key --value=...   # the worker signs with it
+aws ssm put-parameter --region us-west-2 --type SecureString --overwrite --name /chintan/dev/vapid_public_key  --value=...   # the API hands it to the browser
 ```
 
 Both Lambdas read the parameters at cold start, so the switch on **You → Notifications** appears once they have restarted with the keys there (the next deploy does it). Without them the API answers `GET /v1/push/key` 404 and the card says notifications are not set up on this instance. On iOS the app must be installed to the Home Screen (16.4 or later); the card says so where that is the case.

@@ -62,7 +62,10 @@ func (s *PushService) WithClock(now func() time.Time) *PushService {
 
 // Subscribe stores a browser's subscription, idempotently on its endpoint:
 // the same endpoint again rewrites the keys and keeps the row's creation
-// time. A new endpoint past ten is refused, as an eleventh device is.
+// time. A new endpoint past ten is refused, as an eleventh device is. The
+// quota is a list followed by a put, the same shape as the devices', so two
+// concurrent POSTs with new endpoints can leave eleven rows: the limit
+// bounds a runaway client, not a race, and one row over costs nothing.
 func (s *PushService) Subscribe(ctx context.Context, userID string, req PushSubscribeRequest) (model.PushSubscription, error) {
 	endpoint := strings.TrimSpace(req.Endpoint)
 	u, err := url.Parse(endpoint)

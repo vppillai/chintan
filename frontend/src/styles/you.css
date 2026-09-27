@@ -367,11 +367,13 @@
   border-radius: var(--radius-full);
   background-color: var(--color-ground);
   box-shadow: var(--shadow-xs);
-  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+  transition: inset-inline-start var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
+/* The offset is logical like the rest of the block: a physical translateX
+   would slide the thumb off the track's end in a right-to-left page. */
 .switch[aria-checked='true'] .switch__thumb {
-  transform: translateX(1.25rem);
+  inset-inline-start: 1.4375rem;
 }
 
 .switch[disabled] .switch__track {

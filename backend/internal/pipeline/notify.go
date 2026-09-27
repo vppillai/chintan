@@ -34,7 +34,11 @@ type pushPayload struct {
 
 // The push service's two ways of saying a subscription is gone (RFC 8030
 // §7.3). Numeric because the package's tests already name an `http` of
-// their own.
+// their own. A rotated VAPID key is not one of them: the service then
+// answers 401 or 403 (RFC 8292 §4.2) for every row, which counts as a
+// failure below, and the person turns the switch off and on again
+// (docs/design/push.md, Keys). Pruning on 403 would also wipe every row
+// the first time a misconfigured subject or clock signed a bad token.
 const (
 	pushStatusNotFound = 404
 	pushStatusGone     = 410
@@ -122,8 +126,11 @@ func (p *Pipeline) notify(ctx context.Context, capture model.CaptureIndex) {
 				slog.Int64("failures", sub.Failures), slog.String("error", pushErrorText(err)))
 			obs.Count(ctx, "PushSendFailures", map[string]string{"Kind": kind})
 		}
-		if perr := p.cfg.Store.PutPushSubscription(ctx, capture.UserID, sub); perr != nil {
-			log.Warn("could not record the push result", slog.String("subscription_id", sub.ID), slog.String("error", perr.Error()))
+		// The counters only, and only on a row that still exists: the person
+		// may have turned the switch off between the list and this send, and
+		// a whole-row write would enrol the browser again.
+		if uerr := p.cfg.Store.UpdatePushSubscriptionResult(ctx, capture.UserID, sub.ID, sub.LastSuccessAt, sub.Failures); uerr != nil && !errors.Is(uerr, repository.ErrNotFound) {
+			log.Warn("could not record the push result", slog.String("subscription_id", sub.ID), slog.String("error", uerr.Error()))
 		}
 	}
 }

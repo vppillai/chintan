@@ -19,6 +19,9 @@ type recordingPusher struct {
 	statuses map[string]int
 	err      error
 	sent     []sentPush
+	// onSend runs during a send, where a test stands in for the person
+	// acting while the worker is mid-loop.
+	onSend func(sub model.PushSubscription)
 }
 
 type sentPush struct {
@@ -34,6 +37,9 @@ func (r *recordingPusher) Send(_ context.Context, sub model.PushSubscription, pa
 		return 0, err
 	}
 	r.sent = append(r.sent, sentPush{SubscriptionID: sub.ID, Payload: decoded})
+	if r.onSend != nil {
+		r.onSend(sub)
+	}
 	if r.err != nil {
 		return 0, r.err
 	}
@@ -133,6 +139,40 @@ func TestGoneSubscriptionIsPruned(t *testing.T) {
 	subs, _ := h.store.ListPushSubscriptions(ctx, "user1")
 	if len(subs) != 1 || subs[0].ID != "current" {
 		t.Fatalf("subscriptions after pruning = %+v, want only current", subs)
+	}
+}
+
+// A switch turned off while the worker is between its list and its send
+// stays off: the send's result is written to the row only if the row is
+// still there, never as a whole row that would enrol the browser again.
+func TestSendResultDoesNotRecreateARowRemovedMeanwhile(t *testing.T) {
+	h := newHarness(t, harnessOpts{
+		stt: &fake.STT{Result: &provider.Transcription{Text: "buy milk", Language: "en", Duration: 2}},
+		llm: &fake.LLM{Response: "Buy milk."},
+	})
+	ctx := context.Background()
+	pusher := &recordingPusher{onSend: func(sub model.PushSubscription) {
+		if err := h.store.DeletePushSubscription(ctx, "user1", sub.ID); err != nil {
+			t.Errorf("delete during send: %v", err)
+		}
+	}}
+	h.pipeline.cfg.Pusher = pusher
+	seedUploadedCapture(t, h, "note1")
+	capture, _ := h.store.GetCapture(ctx, "user1", "c_1")
+	capture.Source = model.DeviceSource("dev_ring")
+	if _, err := h.store.PutCapture(ctx, capture); err != nil {
+		t.Fatalf("PutCapture: %v", err)
+	}
+	seedPushSubscription(t, h, "phone")
+
+	if _, err := h.pipeline.Run(ctx, "user1", "c_1"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(pusher.sent) != 1 {
+		t.Fatalf("%d pushes sent, want one", len(pusher.sent))
+	}
+	if subs, _ := h.store.ListPushSubscriptions(ctx, "user1"); len(subs) != 0 {
+		t.Fatalf("a row removed during the send came back: %+v", subs)
 	}
 }
 

@@ -95,8 +95,12 @@ app's origin, the contact RFC 8292 requires in the signature.
 The owner's step is `scripts/vapid-keys.sh --instance <name>`, which
 generates the pair with openssl and prints the two `aws ssm put-parameter`
 commands to run; the script itself writes nothing to AWS. A new pair
-invalidates every subscription, which the card then re-subscribes on its
-next tap.
+invalidates every subscription, and the push service says so with 401 or
+403 (RFC 8292 §4.2), never 404 or 410, so the rows stay and their
+`failures` climb; the worker does not prune on 403, because a misconfigured
+subject or clock signs the same refusal for every row. The switch still
+reads on, and the person turns it off and on again: off removes the row and
+the browser's old-key subscription, on subscribes with the new key.
 
 ## The service worker
 

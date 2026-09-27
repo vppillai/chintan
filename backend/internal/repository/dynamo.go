@@ -2155,6 +2155,34 @@ func (s *DynamoStore) ListPushSubscriptions(ctx context.Context, tenantID string
 	return out, nil
 }
 
+// UpdatePushSubscriptionResult is one conditional UpdateItem on the two
+// counters; a row the person removed meanwhile is left removed.
+func (s *DynamoStore) UpdatePushSubscriptionResult(ctx context.Context, tenantID, id, lastSuccessAt string, failures int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"pk": strAttr(userPK(tenantID)),
+			"sk": strAttr(pushSubscriptionSK(id)),
+		},
+		UpdateExpression:    aws.String("SET last_success_at = :t, failures = :f"),
+		ConditionExpression: aws.String("attribute_exists(pk)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":t": strAttr(lastSuccessAt),
+			":f": numAttr(failures),
+		},
+	})
+	if err != nil {
+		if isConditionalCheckFailed(err) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("dynamo update push subscription result: %w", err)
+	}
+	return nil
+}
+
 // DeletePushSubscription is conditional on the row existing, so the API can
 // answer 404 for an id the tenant never had rather than 204 for nothing.
 func (s *DynamoStore) DeletePushSubscription(ctx context.Context, tenantID, id string) error {

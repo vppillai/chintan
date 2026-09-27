@@ -276,9 +276,11 @@ describe('the push helpers', () => {
 
   it('computes the id the server files an endpoint under', async () => {
     vi.stubGlobal('crypto', webcrypto);
-    // SHA-256("https://push.example/a") — the first sixteen hex characters.
+    // SHA-256("https://push.example/a") — the first sixteen hex characters,
+    // the same literal service/push_test.go pins for `PushSubscriptionID`:
+    // the two diverging would leave the switch unable to find its own row.
     const id = await pushSubscriptionId('https://push.example/a');
-    expect(id).toMatch(/^[0-9a-f]{16}$/);
+    expect(id).toBe('378f13c84514cc9b');
     expect(await pushSubscriptionId('https://push.example/b')).not.toBe(id);
   });
 });

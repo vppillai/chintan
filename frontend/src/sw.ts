@@ -187,9 +187,16 @@ self.addEventListener('notificationclick', (event: NotificationEvent) => {
       const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       const open = windows[0];
       if (open) {
-        await open.focus();
-        await open.navigate(url);
-        return;
+        // `navigate` rejects for a window this worker does not control (the
+        // match included uncontrolled ones on purpose, so a tab mid-install
+        // is still found); a new window is the fallback, not a dead tap.
+        try {
+          await open.focus();
+          await open.navigate(url);
+          return;
+        } catch {
+          /* fall through to a new window */
+        }
       }
       await self.clients.openWindow(url);
     })(),

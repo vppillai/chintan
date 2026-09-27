@@ -333,9 +333,14 @@ type Store interface {
 
 	// PutPushSubscription writes a push subscription row (sk PUSHSUB#<id>)
 	// whole, replacing what is there. No version: the API upserts the row by
-	// endpoint and the worker rewrites its send counters, and a lost race
-	// between the two costs at most one counter.
+	// endpoint, and a lost race between two subscribes costs nothing.
 	PutPushSubscription(ctx context.Context, tenantID string, s model.PushSubscription) error
+	// UpdatePushSubscriptionResult writes the worker's two send counters on
+	// an existing row, or ErrNotFound when the row is gone. Conditional so a
+	// send that raced the person turning the switch off does not put the
+	// row back: a whole-row Put after the DELETE would re-enrol the browser
+	// until the push service's next 410 pruned it again.
+	UpdatePushSubscriptionResult(ctx context.Context, tenantID, id, lastSuccessAt string, failures int64) error
 	// ListPushSubscriptions returns every push subscription of the tenant,
 	// oldest first. At most ten, so there is no page.
 	ListPushSubscriptions(ctx context.Context, tenantID string) ([]model.PushSubscription, error)
