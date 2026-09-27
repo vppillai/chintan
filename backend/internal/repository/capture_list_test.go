@@ -10,17 +10,17 @@ import (
 )
 
 // GET /v1/captures was assembled by walking the tenant's notes and asking for
-// each note's captures. That is correct on the in-memory store and wrong on
-// DynamoDB: a capture with no destination note has no note partition, so GSI1
+// each note's captures. That was correct on the in-memory store of the time
+// and wrong on DynamoDB: a capture with no destination note has no note partition, so GSI1
 // cannot see it, so the walk cannot see it.
 //
 // The captures it could not see are the ones the user most needs: `needs_target`
 // is the disambiguation flow, and pending captures back the progress card.
 // Recorded, durable, and unreachable from the UI is indistinguishable from lost.
 //
-// So every assertion below runs against both backends. A test that only ran
-// against the in-memory store would have passed against the broken walk, which
-// is exactly how this got through.
+// So every assertion below runs against the real store over the fake table. A
+// test that only ran against the in-memory store would have passed against the
+// broken walk, which is exactly how this got through.
 
 func TestListCapturesIncludesACaptureWithNoNote(t *testing.T) {
 	store, _ := newTestStore(t)

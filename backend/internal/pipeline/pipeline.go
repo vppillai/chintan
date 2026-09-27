@@ -49,7 +49,7 @@ const (
 	routeConfidenceThreshold = 0.75
 
 	// maxRouteCandidates bounds the note list handed to the router: the most
-	// recently touched fifty. Both stores list notes in that order over the
+	// recently touched fifty. The store lists notes in that order over the
 	// whole partition (repository.MaxNotesDrained), so the first page of the
 	// list IS the window; there is no separate pool to drain and cut.
 	maxRouteCandidates = 50

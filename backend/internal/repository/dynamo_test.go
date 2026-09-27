@@ -1042,10 +1042,6 @@ func TestUpdatingANoteDoesNotErasePreviouslyStoredFields(t *testing.T) {
 // Shapes DynamoDB refuses
 // ---------------------------------------------------------------------------
 
-// tableNameValue is tableName as an addressable copy, for the inputs below that
-// are built by hand rather than by the store.
-var tableNameValue = tableName
-
 // TestEveryWriteIsAnItemDynamoDBWouldAccept walks the store's write paths
 // through a fake that applies the service's own AttributeValue shape rules.
 //

@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// The in-memory store and the fake providers live in packages of their own, not
-// inside the production package where they would be one wiring mistake away
-// from being used for real. This asserts the property that makes that worth
+// The fake table, the in-memory objects and the fake providers live in packages
+// of their own, not inside the production package where they would be one
+// wiring mistake away from being used for real. This asserts the property that makes that worth
 // anything: the API binary does not link them.
 //
 // A Go binary contains exactly the packages reachable from main, so "not in the
@@ -25,6 +25,7 @@ func TestProductionBinaryDoesNotLinkTestDoubles(t *testing.T) {
 	}
 
 	forbidden := []string{
+		"github.com/vppillai/chintan/backend/internal/repository/dynamofake",
 		"github.com/vppillai/chintan/backend/internal/repository/memory",
 		"github.com/vppillai/chintan/backend/internal/provider/fake",
 	}

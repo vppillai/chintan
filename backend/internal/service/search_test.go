@@ -634,9 +634,9 @@ func TestSearchMatchesTheStoredSearchTextBeyondTheSnippet(t *testing.T) {
 	}
 }
 
-// Search must ask the store for the search text. The in-memory store, like the
-// DynamoDB projection, drops it unless asked — so a search that forgot would
-// silently degrade to snippet-only matching.
+// Search must ask the store for the search text. The list projection drops it
+// unless asked — so a search that forgot would silently degrade to
+// snippet-only matching.
 func TestSearchAsksTheStoreForSearchText(t *testing.T) {
 	store := dynamofake.NewStore()
 	if _, err := store.PutNote(context.Background(), "user1", model.NoteIndex{

@@ -44,8 +44,8 @@ a place on Home, and the note has left Home.
 `GET /v1/notes?state=active` orders on `repository.NoteOrderKey`: the pinned
 tier first, by `pin_rank` ascending with the more recently pinned note ahead on
 a tie, then the rest most recently touched first, the id breaking every
-remaining tie. Both stores sort on the same exported key, so the in-memory
-double every service test runs against orders as production does. The page
+remaining tie. Every service test runs the real store over the fake table
+(`repository/dynamofake`), so it orders as production does. The page
 cursor now carries that key as the position of the last note served (`pos`)
 rather than a touch instant; a cursor minted before the tier existed is read
 as an unpinned-tier position, so a client mid-list across the deploy is not

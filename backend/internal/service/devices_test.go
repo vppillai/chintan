@@ -235,7 +235,7 @@ type indexLagStore struct {
 }
 
 func (s indexLagStore) LookupDeviceKey(ctx context.Context, _ string) (model.Device, error) {
-	return s.Store.GetDevice(ctx, s.tenantID, s.deviceID)
+	return s.GetDevice(ctx, s.tenantID, s.deviceID)
 }
 
 // racingRevokeStore is a store in which, between RevokeDevice's read and

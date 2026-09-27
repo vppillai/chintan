@@ -91,8 +91,9 @@ jobs:
       - name: golangci-lint
         working-directory: backend
         run: golangci-lint run --timeout=5m ./...
-      # deadcode lists every function no main package reaches. Two packages
-      # are test doubles by design (repository/memory, provider/fake) and
+      # deadcode lists every function no main package reaches. Three packages
+      # are test doubles by design (repository/dynamofake, repository/memory,
+      # provider/fake) and
       # three names are test seams (WithClock, SetMetricOutput, Pipeline.Run
       # — each says "Test seam." in its comment), so those lines are filtered
       # out; anything else it prints is production-dead and fails the job. A
@@ -104,7 +105,7 @@ jobs:
         working-directory: backend
         run: |
           go run golang.org/x/tools/cmd/deadcode@v0.38.0 ./... > "$RUNNER_TEMP/deadcode.txt"
-          if grep -v -E 'internal/repository/memory|internal/provider/fake|WithClock|SetMetricOutput|Pipeline\.Run' "$RUNNER_TEMP/deadcode.txt"; then
+          if grep -v -E 'internal/repository/dynamofake|internal/repository/memory|internal/provider/fake|WithClock|SetMetricOutput|Pipeline\.Run' "$RUNNER_TEMP/deadcode.txt"; then
             echo "production-dead functions above: delete them or move them into a _test.go file"; exit 1
           fi
 

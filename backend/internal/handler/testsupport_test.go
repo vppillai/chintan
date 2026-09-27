@@ -74,7 +74,7 @@ func (s laggingDeviceIndex) LookupDeviceKey(ctx context.Context, keyID string) (
 		return d, err
 	}
 	// The device id is the key id, so the row is one read away.
-	return s.Store.GetDevice(ctx, s.tenantID, keyID)
+	return s.GetDevice(ctx, s.tenantID, keyID)
 }
 
 // withBrokenObjects makes deletes fail, so a purge cascade cannot complete.
@@ -295,7 +295,7 @@ func TestMain(m *testing.M) {
 }
 
 // conflictingNotePuts answers every PutNote with a version conflict while *on
-// is set, and is the memory store otherwise.
+// is set, and is the store otherwise.
 type conflictingNotePuts struct {
 	repository.Store
 	on *bool
@@ -309,7 +309,7 @@ func (c conflictingNotePuts) PutNote(ctx context.Context, tenantID string, n mod
 }
 
 // failingPutIfMatch fails the conditional write for the key *key names, and is
-// the memory store otherwise.
+// memory.Objects otherwise.
 type failingPutIfMatch struct {
 	repository.Objects
 	key *string

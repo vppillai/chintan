@@ -16,7 +16,7 @@ import (
 )
 
 // fixture is the task over the in-memory usage rows and a real
-// StorageService on the in-memory store, with a fixed clock.
+// StorageService on the fake table, with a fixed clock.
 type fixture struct {
 	store *repository.DynamoStore
 	rows  *memory.Usage
