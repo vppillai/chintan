@@ -164,7 +164,7 @@ export function LibraryList({
             No checklists yet. Open a note and turn it into one from Details.
           </p>
         ) : (
-          <p className="screen__empty">Tap PTT to record your first note, or hold it and talk.</p>
+          <p className="screen__empty">Tap Record to start your first note.</p>
         ))}
 
       {searching ? (
