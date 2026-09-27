@@ -266,7 +266,9 @@ func (s *ExportService) build(ctx context.Context, userID string) (exportDocumen
 		// Strip the worker's append markers as GET /v1/notes/{id} does: the
 		// export is the note as the user knows it, not the object as stored.
 		entry.Body = StripCaptureMarkers(string(body))
-		if note.CleanedBody != "" {
+		// A checklist's stored view, if any, is the deleted tasks mode's
+		// (2026-09-27) and is not the note's any more.
+		if note.CleanedBody != "" && note.Kind != model.NoteKindChecklist {
 			entry.Cleaned = &exportCleaned{
 				Body:        note.CleanedBody,
 				Mode:        string(EffectiveCleanMode(model.NoteIndex{CleanMode: note.CleanedMode})),

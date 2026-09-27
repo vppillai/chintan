@@ -58,7 +58,6 @@ func TestUpdateSettingsRoundTripsThroughTheStore(t *testing.T) {
 	ctx := context.Background()
 
 	want := model.Settings{
-		CleanupMode:   model.CleanupPolished,
 		RetentionDays: 30,
 		Theme:         model.ThemeNocturne,
 	}
@@ -87,10 +86,7 @@ func TestValidateSettingsReturnsWhatWillBeStoredNotWhatWasSent(t *testing.T) {
 		t.Fatalf("ValidateSettings: %v", err)
 	}
 	if got == sent {
-		t.Fatal("ValidateSettings returned the request unchanged; the empty cleanup mode and theme were coerced on the way to the store and the client is not being told")
-	}
-	if got.CleanupMode != model.CleanupFaithful {
-		t.Errorf("cleanup mode = %q, want %q for an empty request field", got.CleanupMode, model.CleanupFaithful)
+		t.Fatal("ValidateSettings returned the request unchanged; the empty theme was coerced on the way to the store and the client is not being told")
 	}
 	if got.Theme != model.ThemeInk {
 		t.Errorf("theme = %q, want %q for an empty request field", got.Theme, model.ThemeInk)
@@ -102,7 +98,6 @@ func TestValidateSettingsReturnsWhatWillBeStoredNotWhatWasSent(t *testing.T) {
 
 func TestValidateSettingsKeepsAValueTheCallerActuallyChose(t *testing.T) {
 	sent := model.Settings{
-		CleanupMode: model.CleanupPolished,
 		// The longest retention this system can enforce. It was
 		// model.MaxRetentionDays, which is the largest value the API ACCEPTS —
 		// a different thing, now that retention is stored as the tier that will
@@ -140,7 +135,6 @@ func TestValidateSettingsRejectsValuesOutsideTheDeclaredSets(t *testing.T) {
 		in   model.Settings
 		want error
 	}{
-		{"unknown cleanup mode", model.Settings{CleanupMode: model.CleanupMode("tidy")}, ErrInvalidCleanupMode},
 		{"unknown theme", model.Settings{Theme: model.Theme("purple")}, ErrInvalidTheme},
 		{"language that is a name", model.Settings{DefaultLanguage: "english"}, ErrInvalidLanguage},
 		{"language in upper case", model.Settings{DefaultLanguage: "EN"}, ErrInvalidLanguage},
@@ -165,9 +159,6 @@ func TestValidateSettingsRejectsValuesOutsideTheDeclaredSets(t *testing.T) {
 func TestNormalizeSettingsFillsTheFieldsAnOldRecordDoesNotCarry(t *testing.T) {
 	got := NormalizeSettings(model.Settings{RetentionDays: -5})
 
-	if got.CleanupMode != model.CleanupFaithful {
-		t.Errorf("cleanup mode = %q, want %q", got.CleanupMode, model.CleanupFaithful)
-	}
 	if got.Theme != model.ThemeInk {
 		t.Errorf("theme = %q, want %q", got.Theme, model.ThemeInk)
 	}
@@ -201,7 +192,6 @@ func TestValidateSettingsDefaultsAndAcceptsTranscriptionLanguages(t *testing.T) 
 
 func TestNormalizeSettingsLeavesACompleteRecordAlone(t *testing.T) {
 	want := model.Settings{
-		CleanupMode:     model.CleanupPolished,
 		RetentionDays:   7,
 		Theme:           model.ThemeNocturne,
 		DefaultLanguage: "auto",
@@ -235,7 +225,7 @@ func TestValidateSettingsStoresTheRetentionItCanActuallyEnforce(t *testing.T) {
 
 	for requested, want := range cases {
 		got, err := ValidateSettings(model.Settings{
-			CleanupMode: model.CleanupFaithful, Theme: model.ThemeInk, RetentionDays: requested,
+			Theme: model.ThemeInk, RetentionDays: requested,
 		})
 		if err != nil {
 			t.Fatalf("ValidateSettings(retention=%d): %v", requested, err)

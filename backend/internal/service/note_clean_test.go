@@ -364,7 +364,7 @@ func TestRecordCleanRequestMovesNeitherTheVersionNorTheCleanedView(t *testing.T)
 	}
 }
 
-// Adopting the cleaned view as the body — the Split up tab's "Use this list" —
+// Adopting the cleaned view as the body — as the former Split up tab did —
 // leaves the view current: the two are the same text, and a stale banner
 // would only offer to regenerate what is already there. Trailing whitespace
 // does not count; the editor leaves a newline the view does not have.

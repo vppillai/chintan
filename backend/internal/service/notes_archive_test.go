@@ -420,7 +420,6 @@ func createCaptureWithKeys(userID, noteID, audioKey, rawKey, cleanKey, routedKey
 		NoteID:    noteID,
 		UserID:    userID,
 		Status:    model.StatusAppended,
-		Mode:      model.CleanupFaithful,
 		AudioKey:  audioKey,
 		RawKey:    rawKey,
 		CleanKey:  cleanKey,

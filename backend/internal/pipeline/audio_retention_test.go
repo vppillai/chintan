@@ -76,7 +76,7 @@ func TestAudioIsTaggedProcessedOnceTranscriptionSucceeds(t *testing.T) {
 	}
 	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_ok", UserID: "user1", Status: model.StatusUploaded,
-		Mode: model.CleanupFaithful, AudioKey: audioKey, CreatedAt: model.Now(),
+		AudioKey: audioKey, CreatedAt: model.Now(),
 	}); err != nil {
 		t.Fatalf("seed capture: %v", err)
 	}

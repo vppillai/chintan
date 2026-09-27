@@ -33,17 +33,13 @@ func ParseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }
 
-type CleanupMode string
-
-const (
-	CleanupFaithful CleanupMode = "faithful"
-	CleanupPolished CleanupMode = "polished"
-)
-
-// NoteCleanMode is how the whole-note cleaned view is written. It is a
-// different axis from CleanupMode, which governs each recording's transcript
-// as it is appended: the cleaned view is one pass over the entire body after
-// the fact, and its modes describe a document, not a paragraph.
+// NoteCleanMode is how the whole-note cleaned view is written: one pass over
+// the entire body after the fact, and its modes describe a document, not a
+// paragraph. Each recording's transcript is cleaned as it is appended in one
+// fixed way (faithful, cleanup.SystemPrompt); until 2026-09-27 a per-tenant
+// CleanupMode chose between faithful and polished there, and stored settings
+// and capture rows still carry a cleanup_mode / mode field that readers now
+// drop (round-5 prompts lens, PR-D5).
 type NoteCleanMode string
 
 const (
@@ -53,21 +49,17 @@ const (
 	// NoteCleanStructured rewrites the body as an organised Markdown document:
 	// short headings, lists for enumerations, filler and repetition removed.
 	NoteCleanStructured NoteCleanMode = "structured"
-	// NoteCleanTasks rewrites a checklist as granular, actionable tasks: an
-	// item holding several actions becomes one item per action, done items are
-	// kept verbatim and in place, order is otherwise kept, nothing is invented
-	// or merged. It is the only mode a checklist cleans in and means nothing
-	// for a plain note (service.CheckCleanMode).
-	NoteCleanTasks NoteCleanMode = "tasks"
-	// DefaultNoteCleanMode is what a plain note cleans in until it says
-	// otherwise.
+	// DefaultNoteCleanMode is what a note cleans in until it says otherwise.
 	DefaultNoteCleanMode = NoteCleanStructured
 )
 
-// ValidNoteCleanMode reports whether m names a whole-note cleanup mode. Which
-// modes a given note may use is service.CheckCleanMode's question.
+// ValidNoteCleanMode reports whether m names a whole-note cleanup mode. A
+// "tasks" value on a row from before 2026-09-27 — the checklist mode that was
+// deleted with the Split up tab (PR-D4) — is not one, and readers treat it as
+// the default. Whether a given note may be cleaned at all is
+// service.CheckCleanMode's question.
 func ValidNoteCleanMode(m NoteCleanMode) bool {
-	return m == NoteCleanPolished || m == NoteCleanStructured || m == NoteCleanTasks
+	return m == NoteCleanPolished || m == NoteCleanStructured
 }
 
 // Bounds on the whole-note cleaned view. Both exist to keep the note row
@@ -215,8 +207,7 @@ func ValidLanguage(v string) bool {
 }
 
 type Settings struct {
-	CleanupMode   CleanupMode `json:"cleanup_mode"`
-	RetentionDays int         `json:"retention_days"` // 0 = indefinite
+	RetentionDays int `json:"retention_days"` // 0 = indefinite
 	// Theme is empty on records written before it existed; readers substitute
 	// ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
@@ -228,14 +219,16 @@ type Settings struct {
 	// readers substitute DefaultLanguage.
 	DefaultLanguage string `json:"default_language,omitempty"`
 	// There is no per-tenant spend cap. Records written before 2026-09 may
-	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
+	// carry a daily_spend_cap_micros field, and records written before
+	// 2026-09-27 a cleanup_mode ("faithful" or "polished"; per-capture cleanup
+	// is faithful for everyone now); encoding/json drops both on read.
 }
 
 // NoteKindChecklist is the one non-default NoteIndex.Kind. A checklist body is
 // GitHub task-list syntax, one item per line: "- [ ] text" open, "- [x] text"
 // done; blank lines are ignored by every reader. The worker appends each
 // recording as the open items it named, one line each under the recording's
-// marker, and the cleaned view runs in NoteCleanTasks.
+// marker. A checklist has no cleaned view (service.CheckCleanMode).
 const NoteKindChecklist = "checklist"
 
 // ValidNoteKind reports whether k is a stored note kind.
@@ -457,7 +450,6 @@ type CaptureIndex struct {
 	NoteID    string        `json:"note_id"`
 	UserID    string        `json:"user_id"`
 	Status    CaptureStatus `json:"status"`
-	Mode      CleanupMode   `json:"cleanup_mode"`
 	AudioKey  string        `json:"audio_key"`
 	RawKey    string        `json:"raw_key"`
 	RoutedKey string        `json:"routed_key,omitempty"`

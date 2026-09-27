@@ -435,7 +435,6 @@ func seedTenant(t *testing.T, part *fakePartition, blobs *fakeBlobs, tenantID st
 		NoteID:      "n1",
 		UserID:      tenantID,
 		Status:      model.StatusAppended,
-		Mode:        model.CleanupFaithful,
 		AudioKey:    "tenants/" + tenantID + "/captures/c1/audio.webm",
 		RawKey:      "tenants/" + tenantID + "/captures/c1/raw.txt",
 		CleanKey:    "tenants/" + tenantID + "/captures/c1/clean.txt",

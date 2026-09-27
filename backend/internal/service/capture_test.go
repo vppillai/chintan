@@ -317,7 +317,7 @@ func TestTheUploadCarriesTheTenantsOwnRetention(t *testing.T) {
 
 			if tc.saved != 0 {
 				if err := store.PutSettings(ctx, "user1", model.Settings{
-					CleanupMode: model.CleanupFaithful, RetentionDays: tc.saved,
+					RetentionDays: tc.saved,
 				}); err != nil {
 					t.Fatalf("PutSettings: %v", err)
 				}

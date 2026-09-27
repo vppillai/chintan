@@ -64,7 +64,7 @@ func seedUploadedCapture(t *testing.T, h *harness, noteID string) model.CaptureI
 	}
 	capture, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_1", UserID: "user1", NoteID: noteID, Status: model.StatusUploaded,
-		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
+		AudioKey:   "tenants/user1/captures/c_1/audio.webm",
 		DurationMS: 12_000, CreatedAt: model.Now(),
 	})
 	if err != nil {
@@ -287,7 +287,6 @@ func TestRetryResumesFromTheLastGoodStageWithoutRetranscribing(t *testing.T) {
 	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_1", UserID: "user1", NoteID: "note1", Status: model.StatusFailed,
 		Error:     "induced append failure",
-		Mode:      model.CleanupFaithful,
 		AudioKey:  "tenants/user1/captures/c_1/audio.webm",
 		RawKey:    "tenants/user1/captures/c_1/raw.txt",
 		CleanKey:  "tenants/user1/captures/c_1/clean.txt",

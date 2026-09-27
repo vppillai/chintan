@@ -57,7 +57,7 @@ func newRoutingFixture(t *testing.T, transcript string, decision provider.RouteD
 	// NoteID is deliberately empty: the destination comes from routing.
 	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_1", UserID: userID, Status: model.StatusUploaded,
-		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
+		AudioKey: "tenants/user1/captures/c_1/audio.webm",
 	}); err != nil {
 		t.Fatalf("PutCapture: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 	// A capture created against a note keeps that note; routing is skipped.
 	if _, err := f.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_2", UserID: f.userID, NoteID: "n1", Status: model.StatusUploaded,
-		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm",
+		AudioKey: "tenants/user1/captures/c_1/audio.webm",
 	}); err != nil {
 		t.Fatalf("PutCapture: %v", err)
 	}

@@ -22,8 +22,8 @@ import (
 // Stage 3 — clean
 // ---------------------------------------------------------------------------
 
-// clean rewrites the transcript in the capture's mode, or — for a verbatim
-// note — records the transcript itself as the cleaned text. README, the
+// clean rewrites the transcript faithfully, or — for a verbatim note —
+// records the transcript itself as the cleaned text. README, the
 // OpenAPI document and the About screen promised that a verbatim note
 // bypasses cleanup, and until 2026-09-21 nothing in the pipeline read the
 // switch: the verifier seeded a verbatim note and counted one paid cleanup
@@ -75,7 +75,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	}, func(ctx context.Context) (breaker.Result, error) {
 		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanupTimeout)
 		defer cancel()
-		out, err := p.cfg.LLM.Cleanup(stageCtx, capture.Mode, source, cleanupLanguage(*capture))
+		out, err := p.cfg.LLM.Cleanup(stageCtx, source, cleanupLanguage(*capture))
 		if err != nil {
 			return breaker.Result{}, err
 		}

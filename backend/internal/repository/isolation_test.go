@@ -47,7 +47,7 @@ func seededStore(t *testing.T) (repository.Store, context.Context) {
 	}); err != nil {
 		t.Fatalf("seed capture: %v", err)
 	}
-	if err := store.PutSettings(ctx, owner, model.Settings{CleanupMode: model.CleanupPolished}); err != nil {
+	if err := store.PutSettings(ctx, owner, model.Settings{Theme: model.ThemeNocturne}); err != nil {
 		t.Fatalf("seed settings: %v", err)
 	}
 	return store, ctx
@@ -127,7 +127,7 @@ func TestIntruderCannotReadAnotherTenantsSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
-	if got.CleanupMode == model.CleanupPolished {
+	if got.Theme == model.ThemeNocturne {
 		t.Fatal("intruder received the owner's settings instead of defaults")
 	}
 }

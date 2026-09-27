@@ -41,10 +41,11 @@ type Answer struct {
 
 // LLM interface for text cleanup/processing
 type LLM interface {
-	// Cleanup rewrites one transcript in mode. language is the ISO-639-1
-	// code the transcript is known to be in, or "" when nothing knows; the
-	// prompt names it so the model keeps the script it was given.
-	Cleanup(ctx context.Context, mode model.CleanupMode, raw, language string) (Cleaned, error)
+	// Cleanup rewrites one transcript faithfully (cleanup.SystemPrompt).
+	// language is the ISO-639-1 code the transcript is known to be in, or ""
+	// when nothing knows; the prompt names it so the model keeps the script
+	// it was given.
+	Cleanup(ctx context.Context, raw, language string) (Cleaned, error)
 	// CleanNote rewrites a whole note body (append markers already stripped)
 	// as one document in the given mode. language is the note row's Language
 	// ("" or "auto" when it asks for none), which the prompt names so the

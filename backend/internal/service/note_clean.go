@@ -37,24 +37,23 @@ import (
 // half of the capture service only ever invoke the worker asynchronously.
 
 // ErrInvalidNoteCleanMode rejects a mode a plain note cannot clean in: anything
-// outside polished and structured, tasks included.
+// outside polished and structured.
 var ErrInvalidNoteCleanMode = errors.New("cleaned_mode must be polished or structured")
 
-// ErrChecklistCleanMode rejects any mode but tasks for a checklist.
-var ErrChecklistCleanMode = errors.New("cleaned_mode must be tasks for a checklist")
+// ErrChecklistCleanMode rejects a clean of a checklist in any mode. Its items
+// are extracted per recording at capture time (cleanup.ItemsPrompt); the
+// whole-note tasks mode that split them again after the fact was deleted on
+// 2026-09-27 (round-5 prompts lens, PR-D4).
+var ErrChecklistCleanMode = errors.New("a checklist has no cleaned view")
 
 // CheckCleanMode reports whether mode may be stored for, or run over, n. A
-// checklist cleans in tasks and nothing else — the other modes would rewrite
-// its items as prose or a document — and tasks means nothing for a plain
-// note. Both PATCH cleaned_mode and POST …/clean answer these as 400.
+// checklist has no cleaned view; a plain note cleans in polished or
+// structured. Both PATCH cleaned_mode and POST …/clean answer these as 400.
 func CheckCleanMode(n model.NoteIndex, mode model.NoteCleanMode) error {
 	if n.Kind == model.NoteKindChecklist {
-		if mode != model.NoteCleanTasks {
-			return ErrChecklistCleanMode
-		}
-		return nil
+		return ErrChecklistCleanMode
 	}
-	if !model.ValidNoteCleanMode(mode) || mode == model.NoteCleanTasks {
+	if !model.ValidNoteCleanMode(mode) {
 		return ErrInvalidNoteCleanMode
 	}
 	return nil
@@ -69,16 +68,12 @@ func MarkCleanedStale(n *model.NoteIndex) {
 }
 
 // EffectiveCleanMode is the mode an automatic or unspecified clean of n runs
-// in: tasks for a checklist, whatever preference the note held before it
-// became one; otherwise the note's own, else the default. A stored tasks
-// preference on a plain note — left behind when a checklist was switched back
-// — is ignored rather than run, and comes back into force if the note becomes
-// a checklist again.
+// in: the note's own, else the default. A stored "tasks" preference — left
+// behind on a row from before 2026-09-27 — is not a mode any more and runs as
+// the default. Whether n may be cleaned at all is CheckCleanMode's answer;
+// this only names the mode.
 func EffectiveCleanMode(n model.NoteIndex) model.NoteCleanMode {
-	if n.Kind == model.NoteKindChecklist {
-		return model.NoteCleanTasks
-	}
-	if CheckCleanMode(n, n.CleanMode) == nil {
+	if model.ValidNoteCleanMode(n.CleanMode) {
 		return n.CleanMode
 	}
 	return model.DefaultNoteCleanMode
@@ -245,7 +240,9 @@ func ClearCleanRequest(ctx context.Context, store repository.Store, userID strin
 // note is the row as the body write left it, so the stamp goes under its
 // version.
 func autoCleanAfterBodyWrite(ctx context.Context, store repository.Store, worker Invoker, userID string, note model.NoteIndex) {
-	if !note.AutoClean || !NoteIsActive(note) {
+	// A checklist has no cleaned view, whatever auto_clean it kept from
+	// before it was one.
+	if !note.AutoClean || !NoteIsActive(note) || note.Kind == model.NoteKindChecklist {
 		return
 	}
 	if worker == nil {

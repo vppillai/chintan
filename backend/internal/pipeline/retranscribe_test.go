@@ -39,7 +39,7 @@ func seedAppendedInto(t *testing.T, h *harness, note model.NoteIndex, captureID,
 	}
 	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: captureID, UserID: "user1", NoteID: note.ID, Status: model.StatusAppended,
-		Mode: model.CleanupFaithful, AudioKey: audioKey, CreatedAt: model.Now(), AppendedAt: 1,
+		AudioKey: audioKey, CreatedAt: model.Now(), AppendedAt: 1,
 		AppendToken: "earlier", Language: "en",
 	}); err != nil {
 		t.Fatal(err)

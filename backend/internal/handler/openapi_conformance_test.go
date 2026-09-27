@@ -649,9 +649,11 @@ func statusScenarios() map[string]scenario {
 			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil).Code
 		},
 		"POST /v1/notes/{noteId}/clean -> 400": func(t *testing.T) int {
+			// A checklist has no cleaned view; a plain note refuses a mode
+			// that is not one ("tasks" since 2026-09-27) the same way.
 			h := newHarness(t)
-			note := h.createNote(t, "user1", "Cleanable", nil)
-			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", map[string]any{"mode": "faithful"}).Code
+			note := h.createNote(t, "user1", "Packing", map[string]any{"kind": "checklist", "body": "- [ ] passport"})
+			return h.do(t, http.MethodPost, "/v1/notes/"+note.ID+"/clean", "user1", nil).Code
 		},
 		"POST /v1/notes/{noteId}/clean -> 401": send(http.MethodPost, "/v1/notes/x/clean", "", nil),
 		"POST /v1/notes/{noteId}/clean -> 404": send(http.MethodPost, "/v1/notes/missing/clean", "user1", nil),

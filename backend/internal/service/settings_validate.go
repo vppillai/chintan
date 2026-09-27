@@ -8,8 +8,6 @@ import (
 )
 
 var (
-	// ErrInvalidCleanupMode rejects a cleanup mode outside the known set.
-	ErrInvalidCleanupMode = errors.New("cleanup_mode must be faithful or polished")
 	// ErrInvalidRetentionDays rejects a retention that is negative or absurd.
 	ErrInvalidRetentionDays = errors.New("retention_days must be between 0 and 3650")
 	// ErrInvalidTheme rejects an unknown theme.
@@ -28,15 +26,6 @@ var (
 // back looking accepted.
 func ValidateSettings(s model.Settings) (model.Settings, error) {
 	out := model.Settings{}
-
-	switch s.CleanupMode {
-	case "":
-		out.CleanupMode = model.CleanupFaithful
-	case model.CleanupFaithful, model.CleanupPolished:
-		out.CleanupMode = s.CleanupMode
-	default:
-		return model.Settings{}, fmt.Errorf("%w", ErrInvalidCleanupMode)
-	}
 
 	switch {
 	case s.RetentionDays < 0:
@@ -77,9 +66,6 @@ func ValidateSettings(s model.Settings) (model.Settings, error) {
 // NormalizeSettings fills in the fields an older record does not carry, so a
 // GET always answers the shape the contract declares.
 func NormalizeSettings(s model.Settings) model.Settings {
-	if s.CleanupMode == "" {
-		s.CleanupMode = model.CleanupFaithful
-	}
 	if s.Theme == "" {
 		s.Theme = model.ThemeInk
 	}

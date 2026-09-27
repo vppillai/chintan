@@ -100,9 +100,10 @@ type NoteCleaned struct {
 }
 
 // cleanedOf renders the view, or nil for a note that has never been cleaned
-// and never failed to be.
+// and never failed to be. A checklist has none: a view stored on one before
+// 2026-09-27 is the deleted tasks mode's and is not shown.
 func cleanedOf(n model.NoteIndex) *NoteCleaned {
-	if n.CleanedBody == "" && n.CleanedError == "" {
+	if n.Kind == model.NoteKindChecklist || (n.CleanedBody == "" && n.CleanedError == "") {
 		return nil
 	}
 	// The mode the view WAS generated in, read from the row; a view written
@@ -163,9 +164,9 @@ func noteOf(n model.NoteIndex) Note {
 		rank := n.PinRank
 		out.PinRank = &rank
 	}
-	// A checklist always says tasks; a plain note says its stored preference,
-	// which for a stale tasks preference is the default it actually runs in.
-	if n.Kind == model.NoteKindChecklist || model.ValidNoteCleanMode(n.CleanMode) {
+	// The stored preference when it is a mode; a stale "tasks" preference from
+	// before 2026-09-27 is absent, as a note that never chose reads.
+	if model.ValidNoteCleanMode(n.CleanMode) {
 		out.CleanedMode = string(service.EffectiveCleanMode(n))
 	}
 	if out.Aliases == nil {
@@ -455,7 +456,6 @@ type CaptureCreated struct {
 // show the ceiling that is actually enforced. There is no per-tenant cap: one
 // instance-wide counter is the whole enforcement.
 type Settings struct {
-	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
 	Theme               string `json:"theme"`
 	DefaultLanguage     string `json:"default_language"`
@@ -464,11 +464,13 @@ type Settings struct {
 
 // SettingsUpdate is the PUT /v1/settings request body.
 //
-// It accepts daily_spend_cap_micros and ignores it. decodeJSON refuses unknown
-// fields, so dropping it from the schema would turn every save from a client
-// built against the previous contract into a 400 — and the settings screen
-// still sends it. The response says what was stored, which is how the client
-// learns the value did not take.
+// It accepts daily_spend_cap_micros and cleanup_mode and ignores both.
+// decodeJSON refuses unknown fields, so dropping either from the schema would
+// turn every save from a client built against the previous contract into a
+// 400 — a settings screen cached before the deploy still sends them. The
+// response says what was stored, which is how the client learns the value did
+// not take: the cap is the instance's, and per-capture cleanup has been
+// faithful for everyone since 2026-09-27.
 type SettingsUpdate struct {
 	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
@@ -479,7 +481,6 @@ type SettingsUpdate struct {
 
 func (u SettingsUpdate) settings() model.Settings {
 	return model.Settings{
-		CleanupMode:     model.CleanupMode(u.CleanupMode),
 		RetentionDays:   u.RetentionDays,
 		Theme:           model.Theme(u.Theme),
 		DefaultLanguage: u.DefaultLanguage,
@@ -488,7 +489,6 @@ func (u SettingsUpdate) settings() model.Settings {
 
 func settingsOf(s model.Settings, spendCapMicros int64) Settings {
 	return Settings{
-		CleanupMode:         string(s.CleanupMode),
 		RetentionDays:       s.RetentionDays,
 		Theme:               string(s.Theme),
 		DefaultLanguage:     s.DefaultLanguage,

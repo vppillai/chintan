@@ -9,71 +9,29 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
-func TestSystemPromptDiffersByMode(t *testing.T) {
-	faithful := cleanup.SystemPrompt(model.CleanupFaithful)
-	polished := cleanup.SystemPrompt(model.CleanupPolished)
-
-	if faithful == "" || polished == "" {
-		t.Fatal("system prompts must not be empty")
+// One per-capture prompt since 2026-09-27: faithful, keeping the speaker's
+// wording, composed from the three shared rules.
+func TestSystemPromptIsFaithfulAndCarriesTheSharedRules(t *testing.T) {
+	prompt := cleanup.SystemPrompt()
+	lower := strings.ToLower(prompt)
+	for _, want := range []string{"mode: faithful", "keep the speaker's wording, phrasing and vocabulary", "return only the cleaned text"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("cleanup prompt lacks %q", want)
+		}
 	}
-	if faithful == polished {
-		t.Fatal("faithful and polished system prompts must differ")
+	if strings.Contains(lower, "polished") || strings.Contains(lower, "rephrase") {
+		t.Error("the per-capture prompt still offers a polished mode")
 	}
-}
-
-func TestSystemPromptFaithfulPreservesWording(t *testing.T) {
-	prompt := strings.ToLower(cleanup.SystemPrompt(model.CleanupFaithful))
-
-	if !strings.Contains(prompt, "preserve") {
-		t.Fatal("faithful prompt must instruct preserving wording")
-	}
-	if !strings.Contains(prompt, "wording") && !strings.Contains(prompt, "phrasing") {
-		t.Fatal("faithful prompt must mention wording or phrasing")
-	}
-}
-
-func TestSystemPromptPolishedAllowsRephrase(t *testing.T) {
-	prompt := strings.ToLower(cleanup.SystemPrompt(model.CleanupPolished))
-
-	if !strings.Contains(prompt, "rephrase") {
-		t.Fatal("polished prompt must allow rephrasing for clarity")
-	}
-	if !strings.Contains(prompt, "meaning") {
-		t.Fatal("polished prompt must preserve meaning")
-	}
-	if !strings.Contains(prompt, "technical") {
-		t.Fatal("polished prompt must preserve technical terms")
-	}
-}
-
-func TestSystemPromptForbidsInventingFacts(t *testing.T) {
-	for _, mode := range []model.CleanupMode{model.CleanupFaithful, model.CleanupPolished} {
-		if !strings.Contains(cleanup.SystemPrompt(mode), llm.NoInventionRule) {
-			t.Fatalf("%q prompt must carry the shared no-invention rule", mode)
+	for _, rule := range []string{llm.NoInventionRule, llm.LanguageRule, llm.DataRule} {
+		if !strings.Contains(prompt, rule) {
+			t.Errorf("cleanup prompt lacks the shared rule %q", rule)
 		}
 	}
 }
 
-// A transcript reaches this prompt from speech, and the router honours spoken titles,
-// so the cleanup rules must still treat the words as data — the one shared
-// wording of that rule, not a paraphrase of it.
-func TestSystemPromptTreatsTranscriptAsData(t *testing.T) {
-	for _, mode := range []model.CleanupMode{model.CleanupFaithful, model.CleanupPolished} {
-		if !strings.Contains(cleanup.SystemPrompt(mode), llm.DataRule) {
-			t.Errorf("%q prompt must carry the shared data rule", mode)
-		}
-	}
-}
-
-// Both per-capture prompts and the router carry the language rule the
-// whole-note prompt already had; the user prompt names the language when it
-// is known, and claims nothing when it is not (review 2026-09-21, T9).
-func TestSystemPromptKeepsTheTranscriptsLanguageAndScript(t *testing.T) {
-	for _, mode := range []model.CleanupMode{model.CleanupFaithful, model.CleanupPolished} {
-		if !strings.Contains(cleanup.SystemPrompt(mode), llm.LanguageRule) {
-			t.Errorf("%q prompt lacks the shared language rule", mode)
-		}
-	}
+// The user prompt names the language when it is known, and claims nothing
+// when it is not (review 2026-09-21, T9).
+func TestUserPromptNamesTheTranscriptsLanguageWhenKnown(t *testing.T) {
 	got, err := cleanup.UserPrompt("നന്ദി", "ml")
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +149,7 @@ func TestNotePromptNamesTheNotesLanguageWhenKnown(t *testing.T) {
 		{"", "The note is between the marker lines.\n"},
 		{model.LanguageAuto, "The note is between the marker lines.\n"},
 	} {
-		for _, mode := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished, model.NoteCleanTasks} {
+		for _, mode := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished} {
 			_, user, err := cleanup.NotePrompt(mode, "നന്ദി", tc.language)
 			if err != nil {
 				t.Fatalf("NotePrompt(%s, %q): %v", mode, tc.language, err)
@@ -228,25 +186,27 @@ func TestNotePromptRefusesAnEmptyBodyAndAnUnknownMode(t *testing.T) {
 	if _, _, err := cleanup.NotePrompt(model.NoteCleanStructured, "  \n", ""); err == nil {
 		t.Error("an empty body was accepted")
 	}
-	if _, _, err := cleanup.NotePrompt(model.NoteCleanMode("faithful"), "words", ""); err == nil {
-		t.Error("a per-capture mode was accepted as a note mode; it must be refused, not defaulted")
+	for _, mode := range []model.NoteCleanMode{"faithful", "tasks"} {
+		if _, _, err := cleanup.NotePrompt(mode, "words", ""); err == nil {
+			t.Errorf("%q was accepted as a note mode; it must be refused, not defaulted", mode)
+		}
 	}
 }
 
 func TestNoteOutputRejectsNothingAndStripsAnEchoedFence(t *testing.T) {
 	for _, raw := range []string{"", "   \n", llm.FenceMarker, llm.FenceMarker + "\n\n" + llm.FenceMarker} {
-		if _, _, err := cleanup.NoteOutput(model.NoteCleanStructured, raw, "roof"); err == nil {
+		if _, err := cleanup.NoteOutput(raw); err == nil {
 			t.Errorf("NoteOutput(%q) accepted nothing usable", raw)
 		}
 	}
-	got, _, err := cleanup.NoteOutput(model.NoteCleanStructured, llm.FenceMarker+"\n# Roof\n\n- call the roofer\n"+llm.FenceMarker, "roof")
+	got, err := cleanup.NoteOutput(llm.FenceMarker + "\n# Roof\n\n- call the roofer\n" + llm.FenceMarker)
 	if err != nil {
 		t.Fatalf("NoteOutput: %v", err)
 	}
 	if got != "# Roof\n\n- call the roofer" {
 		t.Errorf("NoteOutput = %q", got)
 	}
-	plain, _, err := cleanup.NoteOutput(model.NoteCleanStructured, "  # Roof\n", "roof")
+	plain, err := cleanup.NoteOutput("  # Roof\n")
 	if err != nil || plain != "# Roof" {
 		t.Errorf("NoteOutput(plain) = %q, %v", plain, err)
 	}
