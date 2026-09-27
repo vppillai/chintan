@@ -179,3 +179,23 @@ cd backend && export PATH=/usr/local/go/bin:$PATH
 export LLM_API_KEY=$(aws ssm get-parameter --with-decryption --region us-west-2 --name /chintan/dev/llm_api_key --query Parameter.Value --output text)
 LIVE_LLM=1 go test ./internal/provider -run TestLiveEval -v -count=3
 ```
+
+## 27 Sept — the round-5 decisions shipped, and the day's feedback
+
+You approved every round-5 recommendation; all of it is live except the prompt rewrite, which waits on one answer (below). Backend release v0.5.51, frontend 81ef9b6.
+
+**Shipped today** — #128 old QA screenshots and rejected renders removed · #129 the Bindu C mark in the header, sign-in and About, launcher icons and favicon from SVG, the walkie-talkie glyph on /talk · #130 one level of checklist sub-items (Tab / Shift+Tab, "Make sub-item" / "Move up a level", parents carry their children) · #131 one repository test double that honours the real index projection · #132 device keys with an optional expiry and "last used from 203.0.113.x" · #133 Web Push, dormant until the keys exist (see the step below) · #135 the Devices card's raw addresses and link behind a fifth fold, About pointing at it · #136 Delete asks first (plain confirm; Undo stays) · #137 PTT only on /talk; the tab-bar disc is Record again · #138 "Regenerate from recordings…" per note and `chintanctl regenerate --all --dry-run` · #139 dependency bump.
+
+**Live QA on prod**: `docs/reviews/2026-09-27/qa-decisions-live.md` (68/68: branding, nesting, keys, the dormant Notifications card) and `qa-feedback-live.md` (48/48: delete confirm, PTT scope, Devices fold). The regenerate check runs as this is written and is appended when done.
+
+**One step for you — switch notifications on** (the script writes nothing itself; it prints the two SSM commands):
+
+```
+cd ~/temp/chintan && git pull
+scripts/vapid-keys.sh --instance dev --region us-west-2
+# then run the two `aws ssm put-parameter` commands it prints
+```
+
+**One answer needed — the Split up tab.** You asked to edit items "in split view". The approved prompt decision (PR-D4) removes the Split up tab, because items are now extracted per recording and the Items tab is the editable list. The prompt-rewrite PR #134 (routing with tags over all notes, tightened item extraction, Faithful-only per-capture cleanup, and the fix that makes "add milk to the shopping list" create a checklist and file "Milk") is held as a draft until you say: (a) remove Split up as approved and edit in Items, or (b) keep Split up and make it editable.
+
+**Also from today's look** — the router created a new plain "Shopping list" when it found none, so "add milk to the shopping list" filed as a sentence; #134 carries the fix. Small items queued, no decision needed: the by-design 404 on `GET /v1/push/key` prints a console error on every You visit (make it a quiet "not configured" state); the concurrent-append test is timing-sensitive under `-race` in CI (the loser should concede rather than error); the Cognito sign-in page still embeds the old microphone icon bytes in the template; on a long hold of the tab-bar Record disc the release still counts as a tap in headless Chromium (real Android suppresses it; confirm on the phone).
