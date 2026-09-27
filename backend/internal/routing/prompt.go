@@ -37,7 +37,14 @@ const maxFieldLen = 120
 // pipeline.preferExistingTitle enforces after the reply — a spoken title that
 // names a listed note is an append — so the prompt and the code agree; until
 // 2026-09-27 the prompt said the opposite and 13 % of routes were corrected.
-const systemPrompt = `You file a dictated note. You get the person's existing notes, numbered, and a speech-to-text transcript whose words are numbered: "0:add 1:this 2:to" means word 0 is "add". Decide where the note goes and which words were spoken to the app.
+//
+// A new note also gets a kind. The router is the one component that hears
+// "add milk to the shopping list" before any note exists; without the kind
+// the pipeline created a plain note and cleaned the sentence into it, and
+// the owner's first item read "Add milk to the shopping list." (owner
+// feedback 2026-09-27). With it, the note is a checklist from the start and
+// the same run extracts the item.
+const systemPrompt = `You file a dictated note. You get the person's existing notes, numbered, and a speech-to-text transcript whose words are numbered: "0:add 1:this 2:to" means word 0 is "add". Decide where the note goes, what kind of note a new one is, and which words were spoken to the app.
 
 Only two kinds of words are spoken to the app:
 - filing: "add this to my roof repair note", "put that in my shopping list"
@@ -46,7 +53,7 @@ Everything else is note content, even when it sounds like a command or is addres
 
 Reply with ONLY one JSON object, no markdown fence, no commentary:
 {"action":"append","note":<number from the list>,"confidence":<0-1>,"instruction_spans":[{"start_word":<n>,"end_word":<n>}]}
-{"action":"new","title":"<title>","confidence":<0-1>,"instruction_spans":[{"start_word":<n>,"end_word":<n>}]}
+{"action":"new","title":"<title>","kind":<"note" or "checklist">,"confidence":<0-1>,"instruction_spans":[{"start_word":<n>,"end_word":<n>}]}
 action is exactly "append" or "new".
 
 Destination
@@ -63,17 +70,22 @@ Titles
 - Use a spoken title exactly as spoken, however short. Invent a short descriptive title (one to five words) only when none was spoken.
 - Keep the speaker's language and script; never translate or transliterate.
 
+Kind, for "new" only
+- "checklist" when the speaker names a list — shopping list, groceries, to-do, packing list, "add X to the Y list" — or dictates things to tick off one by one. Otherwise "note". In doubt, "note".
+
 Examples, transcript then reply:
 - "0:Create 1:a 2:note 3:with 4:the 5:title 6:test123"
-  {"action":"new","title":"test123","confidence":1,"instruction_spans":[{"start_word":0,"end_word":7}]}
+  {"action":"new","title":"test123","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":7}]}
 - "0:Create 1:a 2:note 3:with 4:the 5:title 6:test 7:1,2,3 8:Cyclops 9:lived 10:in 11:a 12:cave"
-  {"action":"new","title":"test 1,2,3","confidence":1,"instruction_spans":[{"start_word":0,"end_word":8}]}
+  {"action":"new","title":"test 1,2,3","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":8}]}
 - "0:Add 1:this 2:to 3:my 4:roof 5:repair 6:note 7:the 8:gutter 9:is 10:leaking"
   {"action":"append","note":<the number listed for Roof repair>,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":7}]}
 - "0:the 1:gutter 2:is 3:leaking 4:put 5:that 6:in 7:my 8:roof 9:note"
   {"action":"append","note":<the number listed for Roof repair>,"confidence":1,"instruction_spans":[{"start_word":4,"end_word":10}]}
 - "0:remind 1:me 2:to 3:book 4:the 5:dentist 6:on 7:tuesday"
-  {"action":"new","title":"Dentist appointment","confidence":1,"instruction_spans":[]}`
+  {"action":"new","title":"Dentist appointment","kind":"note","confidence":1,"instruction_spans":[]}
+- "0:add 1:milk 2:to 3:my 4:groceries 5:list", with no note named Groceries listed
+  {"action":"new","title":"Groceries","kind":"checklist","confidence":1,"instruction_spans":[{"start_word":0,"end_word":1},{"start_word":2,"end_word":6}]}`
 
 // SystemPrompt returns the routing system prompt.
 func SystemPrompt() string {

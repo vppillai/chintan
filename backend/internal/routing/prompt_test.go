@@ -52,8 +52,8 @@ func TestSystemPromptSplitsSpokenTitleFromContent(t *testing.T) {
 	for _, want := range []string{
 		"every word after it is content and stays outside the span",
 		"choose the shorter title and the shorter span",
-		`{"action":"new","title":"test 1,2,3","confidence":1,"instruction_spans":[{"start_word":0,"end_word":8}]}`,
-		`{"action":"new","title":"test123","confidence":1,"instruction_spans":[{"start_word":0,"end_word":7}]}`,
+		`{"action":"new","title":"test 1,2,3","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":8}]}`,
+		`{"action":"new","title":"test123","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":7}]}`,
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("system prompt missing %q", want)
@@ -207,6 +207,25 @@ func TestUserPromptNamesTheLanguageWhenKnown(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "The transcript is in Malayalam (ml).\nExisting notes:\n(none)\n") {
 		t.Errorf("user prompt does not open by naming the language:\n%s", got)
+	}
+}
+
+// A new note has a kind, so "add milk to the shopping list" with no such
+// list starts a checklist and the same run extracts the item; the rule is
+// for "new" only, since an existing note keeps the kind it has.
+func TestSystemPromptAsksForTheKindOfANewNote(t *testing.T) {
+	t.Parallel()
+	p := SystemPrompt()
+	for _, want := range []string{
+		`"kind":<"note" or "checklist">`,
+		`Kind, for "new" only`,
+		`"add X to the Y list"`,
+		`In doubt, "note".`,
+		`{"action":"new","title":"Groceries","kind":"checklist","confidence":1,`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("system prompt missing %q", want)
+		}
 	}
 }
 

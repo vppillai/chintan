@@ -24,6 +24,12 @@ type RouteDecision struct {
 	Title      string      `json:"title"`
 	Confidence float64     `json:"confidence"`
 	Content    string      `json:"content"`
+	// Checklist is the reply's `kind` for a RouteNew decision: true when the
+	// speaker named a list or dictated items to tick off, so the note the
+	// pipeline creates is a checklist and this same run extracts items
+	// instead of cleaning prose. It is always false for an append — an
+	// existing note keeps the kind it has (owner feedback 2026-09-27).
+	Checklist bool `json:"checklist"`
 
 	// Usage is what the routing call consumed. It is carried on the decision so
 	// the breaker can reconcile its reservation against the real cost without a

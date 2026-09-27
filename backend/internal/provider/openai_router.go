@@ -29,6 +29,11 @@ const (
 	// cap never shortens a real answer; it bounds a runaway one, which then fails to
 	// parse and takes the pipeline's fallback instead of billing a page of output.
 	routeMaxTokens = 200
+	// routeKindChecklist is the one `kind` value in a routing reply that
+	// makes a new note a checklist. Any other value — "note", a misspelling,
+	// nothing — is a plain note: a checklist the speaker did not ask for
+	// turns their prose into items, a plain note they can convert.
+	routeKindChecklist = "checklist"
 )
 
 // Route asks the LLM which note the transcript belongs to.
@@ -148,7 +153,9 @@ func sanitizeTitle(title string) string {
 // accepted when it is one of the listed ids, so a model that answers in the
 // pre-2026-09-27 shape is not refused. Anything else — a number off the list,
 // a fraction, an id that was not offered — is "unknown note id", which the
-// pipeline answers with its own fallback rather than trusting.
+// pipeline answers with its own fallback rather than trusting. A new note's
+// `kind` is read strictly: exactly "checklist" makes one, and it is ignored
+// on an append, whose note already has a kind.
 func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecision, routeReply, error) {
 	jsonText, err := llm.ExtractJSONObject(raw)
 	if err != nil {
@@ -160,6 +167,7 @@ func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecisi
 		Note       *float64    `json:"note"`
 		NoteID     string      `json:"note_id"`
 		Title      string      `json:"title"`
+		Kind       string      `json:"kind"`
 		Confidence float64     `json:"confidence"`
 		// Numbers rather than ints: a model that writes 7.0 has still answered.
 		Spans *[]struct {
@@ -183,6 +191,7 @@ func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecisi
 			return RouteDecision{}, routeReply{}, err
 		}
 	case RouteNew:
+		decision.Checklist = parsed.Kind == routeKindChecklist
 	default:
 		return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router returned unknown action %q", decision.Action)
 	}

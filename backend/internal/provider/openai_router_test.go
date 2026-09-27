@@ -18,13 +18,14 @@ func TestParseRouteDecision(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		raw        string
-		wantAction RouteAction
-		wantNoteID string
-		wantConf   float64
-		wantSpans  []routing.Span
-		wantErr    bool
+		name          string
+		raw           string
+		wantAction    RouteAction
+		wantNoteID    string
+		wantConf      float64
+		wantSpans     []routing.Span
+		wantChecklist bool
+		wantErr       bool
 	}{
 		{
 			name:       "append by the line number",
@@ -97,6 +98,31 @@ func TestParseRouteDecision(t *testing.T) {
 			wantConf:   1,
 			wantSpans:  []routing.Span{{StartWord: -1, EndWord: -1}},
 		},
+		{
+			name:          "a new checklist",
+			raw:           `{"action":"new","title":"Groceries","kind":"checklist","confidence":1,"instruction_spans":[]}`,
+			wantAction:    RouteNew,
+			wantConf:      1,
+			wantSpans:     []routing.Span{},
+			wantChecklist: true,
+		},
+		{
+			// Strict: only the one word makes a checklist; a near miss is a
+			// plain note the person can convert.
+			name:       "an unknown kind is a plain note",
+			raw:        `{"action":"new","title":"Groceries","kind":"list","confidence":1,"instruction_spans":[]}`,
+			wantAction: RouteNew,
+			wantConf:   1,
+			wantSpans:  []routing.Span{},
+		},
+		{
+			name:       "kind is ignored on an append",
+			raw:        `{"action":"append","note":2,"kind":"checklist","confidence":1,"instruction_spans":[]}`,
+			wantAction: RouteAppend,
+			wantNoteID: "n2",
+			wantConf:   1,
+			wantSpans:  []routing.Span{},
+		},
 		{name: "append without note id", raw: `{"action":"append","confidence":1,"instruction_spans":[]}`, wantErr: true},
 		{name: "unknown action", raw: `{"action":"delete","instruction_spans":[]}`, wantErr: true},
 		{name: "no json at all", raw: `I could not decide.`, wantErr: true},
@@ -125,6 +151,9 @@ func TestParseRouteDecision(t *testing.T) {
 			}
 			if got.Confidence != tt.wantConf {
 				t.Errorf("confidence = %v, want %v", got.Confidence, tt.wantConf)
+			}
+			if got.Checklist != tt.wantChecklist {
+				t.Errorf("checklist = %v, want %v", got.Checklist, tt.wantChecklist)
 			}
 			if reply.Spans == nil {
 				t.Fatal("spans field was given but parsed as absent")
