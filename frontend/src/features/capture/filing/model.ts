@@ -25,8 +25,14 @@ export const STAGES: readonly Stage[] = [
   { label: 'Transcribing', statuses: ['transcribing'] },
   // Routing and cleaning are one segment to the user: "working out where this
   // goes and what it says" is one step, however many the pipeline takes.
-  { label: 'Filing', statuses: ['routing', 'cleaning'] },
-  { label: 'Saving', statuses: ['appending'] },
+  // `transcribed` is in it too: the transcript is in and routing is next, and
+  // it is where an inbox text capture starts (nothing to upload or
+  // transcribe), so its strip picks up here rather than lighting every
+  // segment done with no label, which is what an unlisted status draws.
+  { label: 'Filing', statuses: ['transcribed', 'routing', 'cleaning'] },
+  // `cleaned` is the hand-off into the append, and where a retry resumes when
+  // the clean artifact already exists.
+  { label: 'Saving', statuses: ['cleaned', 'appending'] },
 ];
 
 export function stageIndex(status: CaptureStatus): number {

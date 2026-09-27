@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
+import { CAPTURE_STATUSES, isTerminalStatus } from '@/api/schema.ts';
 import { capture } from '@/test/filing.tsx';
 
-import { groupReceipts } from './model.ts';
+import { STAGES, groupReceipts, stageIndex } from './model.ts';
+
+describe('stageIndex', () => {
+  it('lights a segment for every status the pipeline can leave a capture in', () => {
+    // `transcribed` and `cleaned` are the hand-offs between stages, and the
+    // first is where an inbox text capture starts. Unknown to the strip they
+    // drew every segment done with no label (live QA 2026-09-26, finding 1).
+    for (const status of CAPTURE_STATUSES.filter((s) => !isTerminalStatus(s))) {
+      expect(stageIndex(status), status).toBeLessThan(STAGES.length);
+    }
+    expect(STAGES[stageIndex('transcribed')]?.label).toBe('Filing');
+    expect(STAGES[stageIndex('cleaned')]?.label).toBe('Saving');
+    // A finished capture is past the strip: every segment done is the truth.
+    expect(stageIndex('appended')).toBe(STAGES.length);
+  });
+});
 
 /**
  * One receipt per note. The row that draws the groups is tested through the

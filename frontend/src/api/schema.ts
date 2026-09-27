@@ -309,11 +309,20 @@ export interface TagWire {
    Captures
    --------------------------------------------------------------------------- */
 
+/**
+ * Every status the backend writes, in pipeline order. `transcribed` and
+ * `cleaned` are the hand-offs between stages — and `transcribed` is where an
+ * inbox text capture starts — so they are on the wire like the rest; a status
+ * missing here drew the filing strip as every segment done with no label
+ * (live QA 2026-09-26). `contract.test.ts` holds this list to the backend's.
+ */
 export const CAPTURE_STATUSES = [
   'uploaded',
   'transcribing',
+  'transcribed',
   'routing',
   'cleaning',
+  'cleaned',
   'appending',
   'appended',
   'needs_target',

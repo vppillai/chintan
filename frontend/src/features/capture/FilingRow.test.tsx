@@ -708,7 +708,11 @@ describe('receipts are one row per note, behind the rows that still need somethi
       { noteRoute: true },
     );
 
-    const receipt = await screen.findByRole('button', { name: /open the note/i });
+    // By the title, not just "open the note": the row is drawn before the
+    // title arrives from the device's cache, and the bare name matched first
+    // once in CI (run 36280801602, attempt 1: saw "3 filed").
+    const receipt = await screen.findByRole('button', { name: /filed into “roof repair”/i });
+    expect(receipt).toHaveAccessibleName(/open the note/i);
     expect(document.querySelectorAll('.filing-row--receipt')).toHaveLength(1);
     expect(screen.getByRole('status')).toHaveTextContent('3 filed into “Roof repair”');
     expect(screen.getByText('just now')).toBeInTheDocument();

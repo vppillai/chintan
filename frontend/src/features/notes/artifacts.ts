@@ -155,20 +155,28 @@ export interface CaptureArtifacts {
  * Peaks and segments are optional by contract: captures recorded before
  * segments and peaks were stored have neither, and `has_peaks` / `has_segments`
  * say so. A missing artifact downgrades to a plain player rather than failing
- * the screen — there is no backfill and there never will be.
+ * the screen — there is no backfill and there never will be. Audio is optional
+ * the same way: a capture that arrived as text (`has_audio: false`) never had
+ * any, and asking is a 404 in the console on every open.
  */
 export async function loadCaptureArtifacts(
   api: ChintanApi,
   captureId: string,
-  options: { hasPeaks?: boolean; hasSegments?: boolean; signal?: AbortSignal } = {},
+  options: {
+    hasAudio?: boolean;
+    hasPeaks?: boolean;
+    hasSegments?: boolean;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<CaptureArtifacts> {
-  const audio = await api
-    .downloadUrl(captureId, 'audio')
-    .catch((error: unknown) => {
-      // A purged recording (retention) is an expected 404, not a broken screen.
-      if (error instanceof ApiError && error.isNotFound) return null;
-      throw error;
-    });
+  const audio =
+    options.hasAudio === false
+      ? null
+      : await api.downloadUrl(captureId, 'audio').catch((error: unknown) => {
+          // A purged recording (retention) is an expected 404, not a broken screen.
+          if (error instanceof ApiError && error.isNotFound) return null;
+          throw error;
+        });
 
   const none: SegmentsDocument = { segments: [], language: null };
   const [peaks, transcript, cleanedText] = await Promise.all([

@@ -1871,8 +1871,10 @@ components:
       enum:
         - uploaded
         - transcribing
+        - transcribed
         - routing
         - cleaning
+        - cleaned
         - appending
         - appended
         - needs_target

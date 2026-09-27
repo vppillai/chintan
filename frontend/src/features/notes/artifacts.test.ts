@@ -213,6 +213,19 @@ describe('loadCaptureArtifacts fetches the cleaned transcript', () => {
     expect(artifacts.detectedLanguage).toBe('Tamil');
     expect(artifacts.segments).toHaveLength(1);
   });
+
+  it('does not ask for the audio of a capture that arrived as text', async () => {
+    // `has_audio: false` makes the download a 404 by contract, and every
+    // opened text row logged one to the console (live QA 2026-09-26, finding 2).
+    const stub = api({});
+    const artifacts = await loadCaptureArtifacts(stub, 'cap-4', {
+      hasAudio: false,
+      hasPeaks: false,
+      hasSegments: false,
+    });
+    expect(artifacts.audioUrl).toBeNull();
+    expect(stub.downloadUrl).not.toHaveBeenCalledWith('cap-4', 'audio');
+  });
 });
 
 describe('formatTime', () => {

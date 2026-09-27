@@ -836,8 +836,10 @@ func backendCaptureStatuses() []string {
 	return []string{
 		string(model.StatusUploaded),
 		string(model.StatusTranscribing),
+		string(model.StatusTranscribed),
 		string(model.StatusRouting),
 		string(model.StatusCleaning),
+		string(model.StatusCleaned),
 		string(model.StatusAppending),
 		string(model.StatusAppended),
 		string(model.StatusNeedsTarget),
@@ -886,10 +888,12 @@ func backendCaptureContentTypes() []string {
 
 // TestContractCaptureStatusListIsComplete guards the hand-written list above.
 //
-// model.StatusTranscribed and model.StatusCleaned are internal stages the API
-// reports as their -ing forms, so they are deliberately absent; everything else
-// must be present or the frontend is being told about an enum that is missing a
-// member.
+// Every constant in model is on the wire, the two hand-offs included: nothing
+// in this package maps StatusTranscribed or StatusCleaned to an -ing form
+// (inbox_test asserts "transcribed" on the wire — it is where POST
+// /v1/inbox/text starts a capture — and a retry resumes at "cleaned"). Until
+// 2026-09-26 this comment said the opposite and the list below omitted both,
+// so the frontend's strip drew every segment done for a capture in either.
 func TestContractCaptureStatusListIsComplete(t *testing.T) {
 	declared := map[string]bool{}
 	for _, s := range backendCaptureStatuses() {
@@ -898,8 +902,8 @@ func TestContractCaptureStatusListIsComplete(t *testing.T) {
 	for _, s := range []model.CaptureStatus{
 		model.StatusUploaded, model.StatusAppended, model.StatusFailed,
 		model.StatusNeedsTarget, model.StatusNoContent, model.StatusTranscribing,
-		model.StatusRouting, model.StatusCleaning, model.StatusAppending,
-		model.StatusSpendCapped,
+		model.StatusTranscribed, model.StatusRouting, model.StatusCleaning,
+		model.StatusCleaned, model.StatusAppending, model.StatusSpendCapped,
 	} {
 		if !declared[string(s)] {
 			t.Errorf("%q is a status this backend writes but the contract fixture does not export it, "+
