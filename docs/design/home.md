@@ -29,8 +29,15 @@ right end, sans at `sm`, muted. No date: the day is the group label beneath
 (owner feedback 2026-09-26 — the date line and `describeToday` went with it).
 The h1 stays first in the DOM and the brand is moved ahead of it by `order`
 (`home.css`), so a screen reader hears "Notes, 12" and the a11y sweep still
-finds a heading that starts with Notes. The lockup's mark slot is empty until
-the logo decision (R5-BR-L1).
+finds a heading that starts with Notes. The lockup leads with the mark: the
+Bindu C (R5-BR-L1), the serif C as an open ring with the bindu at its mouth,
+drawn in `Mark` (`components/Wordmark.tsx`) at 1 em in `currentColor`, so the
+ring's outer edge sits at the cap height and the mark follows the theme. The
+same `Mark` stands at 72 px above the name on the sign-in screen and on About.
+The launcher icon is the same ring with the bindu in the accent
+(`public/icon.svg`, rendered to the manifest's PNGs by `scripts/make-icons.mjs`;
+`public/favicon.svg` swaps to paper ink under a dark colour scheme). The design
+record, with the two directions not taken, is `docs/design/branding/`.
 
 ## Order and groups
 

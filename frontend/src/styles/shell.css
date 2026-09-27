@@ -65,7 +65,8 @@
  * in ink, leading the row — here on every screen but Home, and in the
  * library's own heading row there. It was a centred faint small-caps line,
  * which read as a footnote to its own app (owner feedback 2026-09-26). The
- * flex gap is the room for the mark once R5-BR-L1 lands.
+ * flex gap sits between the Bindu C mark and the name (R5-BR-L1); the mark
+ * sizes itself in ems, so nothing here names its box.
  */
 .wordmark {
   display: inline-flex;
