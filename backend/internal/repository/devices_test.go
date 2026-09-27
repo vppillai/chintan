@@ -44,6 +44,7 @@ func TestDeviceRowsRoundTripAndTheKeyIndexIsSparse(t *testing.T) {
 	// The counter write carries the version forward.
 	found.RequestsDay, found.RequestsDayDate, found.LastUsedAt = 1, "2026-09-24", "2026-09-24T09:00:00.000000000Z"
 	found.RequestsMonth, found.BytesMonth, found.Month = 1, 2048, "2026-09"
+	found.LastUsedFrom, found.ExpiresAt = "203.0.113.x", "2026-10-24T08:00:00.000000000Z"
 	counted, err := store.PutDevice(ctx, found.TenantID, found)
 	if err != nil || counted.Version != 2 {
 		t.Fatalf("count: %+v, %v", counted, err)
@@ -54,6 +55,9 @@ func TestDeviceRowsRoundTripAndTheKeyIndexIsSparse(t *testing.T) {
 	again, err := store.GetDevice(ctx, "tenant-a", "dev_0001")
 	if err != nil || again.RequestsDay != 1 || again.LastUsedAt == "" || again.RequestsMonth != 1 || again.BytesMonth != 2048 || again.Month != "2026-09" {
 		t.Fatalf("GetDevice = %+v, %v", again, err)
+	}
+	if again.LastUsedFrom != "203.0.113.x" || again.ExpiresAt != "2026-10-24T08:00:00.000000000Z" {
+		t.Fatalf("last_used_from / expires_at did not round-trip: %+v", again)
 	}
 
 	if _, err := store.PutDevice(ctx, "tenant-a", model.Device{ID: "dev_0002", Name: "Ring", CreatedAt: "2026-09-24T08:01:00.000000000Z"}); err != nil {

@@ -650,9 +650,11 @@ paths:
       tags: [devices]
       summary: List devices
       description: |
-        The caller's live device keys — name, when issued, when last used.
+        The caller's live device keys — name, when issued, when last used
+        and from which neighbourhood, and when each expires if it does.
         Never the key or its hash; a key that is lost is revoked and a new
-        one issued. Revoked devices are not listed.
+        one issued. Revoked devices are not listed; an expired one is, so
+        the card can say so and offer Remove.
       responses:
         '200':
           description: The live devices, oldest first.
@@ -671,8 +673,11 @@ paths:
         Clients must not retry this request: an attempt whose 201 was lost
         has still issued a key, and a retry issues a second one nobody
         will see. At most ten live devices (409 `you already have ten devices; remove
-        one first`). See `docs/design/inbox.md` and the README's "Connect a
-        device".
+        one first`). `expires_in_days` (1–365) makes a key that the inbox
+        refuses after that many days, with the same 401 as a revoked one;
+        left out, the key never expires (400 `expires_in_days must be
+        between 1 and 365` otherwise). See `docs/design/inbox.md` and the
+        README's "Connect a device".
       requestBody:
         required: true
         content:
@@ -1255,7 +1260,7 @@ components:
       description: |
         A device key from `POST /v1/devices`, for the `/v1/inbox/*` routes
         only. Stored as a SHA-256 hash and compared in constant time; a
-        revoked or unknown key is 401 `unknown device key`, and a key past
+        revoked, expired or unknown key is 401 `unknown device key`, and a key past
         two hundred requests in a UTC day is 429 `this device has reached
         today's limit` — fixed sentences, whichever the reason. Three
         spellings of the one credential are accepted: `Authorization: Bearer
@@ -2290,7 +2295,7 @@ components:
 
     Device:
       type: object
-      required: [id, name, created_at, last_used_at, usage_month]
+      required: [id, name, created_at, last_used_at, last_used_from, expires_at, usage_month]
       properties:
         id: { type: string }
         name: { type: string, maxLength: 60 }
@@ -2300,6 +2305,23 @@ components:
           format: date-time
           nullable: true
           description: When the inbox last accepted a request with this key; null until it has.
+        last_used_from:
+          type: string
+          nullable: true
+          description: |
+            The neighbourhood that request came from — the IPv4 /24 as
+            `203.0.113.x`, the IPv6 /48 as `2001:db8:1::x` — overwritten on
+            each accepted request; null until the first. Deliberately
+            coarse: the full address is never stored, and this field is
+            in no export.
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            When the key stops working, from `expires_in_days` at creation;
+            null for a key that never expires. Past it the inbox answers the
+            same 401 as for a revoked key, and the device stays listed.
         usage_month:
           nullable: true
           allOf:
@@ -2332,6 +2354,14 @@ components:
           minLength: 1
           maxLength: 60
           description: What to call the device; a recording from it says "From ⟨name⟩".
+        expires_in_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: |
+            Days until the key stops working. Leave it out for a key that
+            never expires — the default, for the device you use daily; a
+            key handed to a one-off script gets 30.
 
     DeviceCreated:
       allOf:

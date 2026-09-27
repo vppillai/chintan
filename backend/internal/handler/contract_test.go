@@ -563,6 +563,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		ID: "dev_contract_watch", Name: "Watch",
 		CreatedAt:     model.FormatTime(harnessNow.AddDate(0, 0, -3)),
 		LastUsedAt:    model.FormatTime(harnessNow.Add(-time.Hour)),
+		LastUsedFrom:  "203.0.113.x",
 		Month:         harnessNow.Format("2006-01"),
 		RequestsMonth: 1,
 		BytesMonth:    2048,
@@ -570,10 +571,10 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		t.Fatalf("seed device: %v", err)
 	}
 	add("deviceCreated", "DeviceCreatedWire",
-		"POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). `usage_month` is null: nothing has been sent.",
-		h.do(t, http.MethodPost, "/v1/devices", contractUser, map[string]any{"name": "Shortcut on the phone"}))
+		"POST /v1/devices → 201 with `expires_in_days: 30`, so `expires_at` is set (WH-A). The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). `usage_month`, `last_used_at` and `last_used_from` are null: nothing has been sent.",
+		h.do(t, http.MethodPost, "/v1/devices", contractUser, map[string]any{"name": "Shortcut on the phone", "expires_in_days": 30}))
 	add("devicesPage", "Page<DeviceWire>",
-		"GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at and usage_month set) and one that has not (both null). No cursor.",
+		"GET /v1/devices → 200, oldest first and never a key: one perpetual device that has sent something (last_used_at, last_used_from as a neighbourhood, and usage_month set; expires_at null) and one thirty-day device that has not (those three null, expires_at set). No cursor.",
 		h.do(t, http.MethodGet, "/v1/devices", contractUser, nil))
 
 	// ---- problem documents

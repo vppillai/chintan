@@ -1013,23 +1013,27 @@ export const exportJob: ExportJobWire = {
   "url": "https://example.invalid/presigned"
 };
 
-/** POST /v1/devices → 201. The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). `usage_month` is null: nothing has been sent. */
+/** POST /v1/devices → 201 with `expires_in_days: 30`, so `expires_at` is set (WH-A). The one response that carries `key`: the server keeps its hash and never sends it again, and the client must not retry the request (R4-5). `usage_month`, `last_used_at` and `last_used_from` are null: nothing has been sent. */
 export const deviceCreated: DeviceCreatedWire = {
   "created_at": "2026-01-01T00:00:00.000000000Z",
+  "expires_at": "2026-01-01T00:00:00.000000000Z",
   "id": "fixture-id",
   "key": "ck_fixture-id_0123456789abcdef0123456789abcdef0123456789abcdef",
   "last_used_at": null,
+  "last_used_from": null,
   "name": "Shortcut on the phone",
   "usage_month": null
 };
 
-/** GET /v1/devices → 200, oldest first and never a key: one device that has sent something (last_used_at and usage_month set) and one that has not (both null). No cursor. */
+/** GET /v1/devices → 200, oldest first and never a key: one perpetual device that has sent something (last_used_at, last_used_from as a neighbourhood, and usage_month set; expires_at null) and one thirty-day device that has not (those three null, expires_at set). No cursor. */
 export const devicesPage: Page<DeviceWire> = {
   "items": [
     {
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "expires_at": null,
       "id": "fixture-id",
       "last_used_at": "2026-01-01T00:00:00.000000000Z",
+      "last_used_from": "203.0.113.x",
       "name": "Watch",
       "usage_month": {
         "bytes": 2048,
@@ -1039,8 +1043,10 @@ export const devicesPage: Page<DeviceWire> = {
     },
     {
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "expires_at": "2026-01-01T00:00:00.000000000Z",
       "id": "fixture-id",
       "last_used_at": null,
+      "last_used_from": null,
       "name": "Shortcut on the phone",
       "usage_month": null
     }

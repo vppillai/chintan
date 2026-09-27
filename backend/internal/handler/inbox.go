@@ -92,8 +92,10 @@ func (rt *router) deviceAuthenticated(next http.Handler) http.Handler {
 		// No key at all takes the same road as a malformed one, so the
 		// refusal is counted the same way. ContentLength is -1 when the
 		// body's length is not known up front; the month's byte counter
-		// then goes without this request.
-		device, err := rt.Devices.Authenticate(r.Context(), deviceKeyOf(r), max(r.ContentLength, 0))
+		// then goes without this request. RemoteAddr is the gateway's
+		// requestContext.http.sourceIp, which httpadapter.V2 copies into
+		// it bare; the service keeps only its neighbourhood (WH-B).
+		device, err := rt.Devices.Authenticate(r.Context(), deviceKeyOf(r), r.RemoteAddr, max(r.ContentLength, 0))
 		if err != nil {
 			countRefusal(r.Context(), err)
 			fail(w, r, err)

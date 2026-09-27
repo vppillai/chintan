@@ -56,13 +56,13 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	at := time.Date(2026, 9, 24, 23, 59, 0, 0, time.UTC)
 	svc := NewDeviceService(store).WithClock(func() time.Time { return at })
 
-	if _, _, err := svc.CreateDevice(ctx, "u1", "  "); !errors.Is(err, ErrDeviceNameRequired) {
+	if _, _, err := svc.CreateDevice(ctx, "u1", "  ", nil); !errors.Is(err, ErrDeviceNameRequired) {
 		t.Fatalf("blank name: %v", err)
 	}
-	if _, _, err := svc.CreateDevice(ctx, "u1", strings.Repeat("x", model.MaxDeviceNameRunes+1)); !errors.Is(err, ErrDeviceNameTooLong) {
+	if _, _, err := svc.CreateDevice(ctx, "u1", strings.Repeat("x", model.MaxDeviceNameRunes+1), nil); !errors.Is(err, ErrDeviceNameTooLong) {
 		t.Fatalf("long name: %v", err)
 	}
-	device, key, err := svc.CreateDevice(ctx, "u1", "  Kitchen   watch ")
+	device, key, err := svc.CreateDevice(ctx, "u1", "  Kitchen   watch ", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,11 +79,11 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 
 	// The limit counts live devices only.
 	for i := 1; i < model.MaxDevicesPerTenant; i++ {
-		if _, _, err := svc.CreateDevice(ctx, "u1", "Extra"); err != nil {
+		if _, _, err := svc.CreateDevice(ctx, "u1", "Extra", nil); err != nil {
 			t.Fatalf("device %d: %v", i, err)
 		}
 	}
-	if _, _, err := svc.CreateDevice(ctx, "u1", "Eleventh"); !errors.Is(err, ErrDeviceLimit) {
+	if _, _, err := svc.CreateDevice(ctx, "u1", "Eleventh", nil); !errors.Is(err, ErrDeviceLimit) {
 		t.Fatalf("eleventh device: %v", err)
 	}
 	live, err := svc.ListDevices(ctx, "u1")
@@ -100,7 +100,7 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if err := svc.RevokeDevice(ctx, "u1", victim.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := svc.CreateDevice(ctx, "u1", "Room again"); err != nil {
+	if _, _, err := svc.CreateDevice(ctx, "u1", "Room again", nil); err != nil {
 		t.Fatalf("after a revoke the slot is free: %v", err)
 	}
 	live, _ = svc.ListDevices(ctx, "u1")
@@ -114,9 +114,13 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	// month; a wrong secret, an unknown id, a foreign tenant's guess at the
 	// id and a revoked key all read as unknown on the wire, and each says
 	// why underneath, for the metric.
-	got, err := svc.Authenticate(ctx, key, 100)
+	got, err := svc.Authenticate(ctx, key, "203.0.113.7:4321", 100)
 	if err != nil || got.ID != device.ID || got.TenantID != "u1" || got.RequestsDay != 1 || got.LastUsedAt == "" {
 		t.Fatalf("Authenticate = %+v, %v", got, err)
+	}
+	// Where from, as a neighbourhood: never the address itself.
+	if got.LastUsedFrom != "203.0.113.x" {
+		t.Fatalf("last_used_from = %q, want 203.0.113.x", got.LastUsedFrom)
 	}
 	if got.RequestsMonth != 1 || got.BytesMonth != 100 || got.Month != "2026-09" {
 		t.Fatalf("month counters after one request of 100 bytes = %+v", got)
@@ -132,7 +136,7 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 		"not a key": {Reason: "malformed"},
 		"":          {Reason: "malformed"},
 	} {
-		_, err := svc.Authenticate(ctx, bad, 5)
+		_, err := svc.Authenticate(ctx, bad, "203.0.113.7", 5)
 		if !errors.Is(err, ErrDeviceKeyUnknown) || err.Error() != ErrDeviceKeyUnknown.Error() {
 			t.Errorf("Authenticate(%q) = %v, want unknown", bad, err)
 		}
@@ -153,11 +157,11 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if _, err := store.PutDevice(ctx, "u1", stored); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := svc.Authenticate(ctx, key, 200); err != nil || got.RequestsDay != model.DeviceDailyRequestLimit || got.RequestsMonth != 2 || got.BytesMonth != 300 {
+	if got, err := svc.Authenticate(ctx, key, "203.0.113.7", 200); err != nil || got.RequestsDay != model.DeviceDailyRequestLimit || got.RequestsMonth != 2 || got.BytesMonth != 300 {
 		t.Fatalf("200th request: %+v, %v", got, err)
 	}
 	atLimit, _ := store.GetDevice(ctx, "u1", device.ID)
-	_, err = svc.Authenticate(ctx, key, 50)
+	_, err = svc.Authenticate(ctx, key, "203.0.113.7", 50)
 	if !errors.Is(err, ErrDeviceDailyLimit) {
 		t.Fatalf("201st request: %v, want the daily limit", err)
 	}
@@ -170,7 +174,7 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 		t.Fatalf("the refused request wrote the row: version %d → %d, requests_day %d, bytes_month %d", atLimit.Version, after.Version, after.RequestsDay, after.BytesMonth)
 	}
 	at = at.Add(2 * time.Minute) // past midnight UTC, same month
-	if got, err := svc.Authenticate(ctx, key, 0); err != nil || got.RequestsDay != 1 || got.RequestsDayDate != "2026-09-25" {
+	if got, err := svc.Authenticate(ctx, key, "203.0.113.7", 0); err != nil || got.RequestsDay != 1 || got.RequestsDayDate != "2026-09-25" {
 		t.Fatalf("first request of the next day: %+v, %v", got, err)
 	} else if got.RequestsMonth != 3 || got.BytesMonth != 300 || got.Month != "2026-09" {
 		t.Fatalf("month counters after 100, 200 and 0 bytes = %+v", got)
@@ -198,7 +202,7 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 	if d := listed(); d.Month != "" || d.RequestsMonth != 0 || d.BytesMonth != 0 {
 		t.Fatalf("listed in October before any request: %+v; want September's counters cleared", d)
 	}
-	if got, err := svc.Authenticate(ctx, key, 7); err != nil || got.RequestsMonth != 1 || got.BytesMonth != 7 || got.Month != "2026-10" {
+	if got, err := svc.Authenticate(ctx, key, "203.0.113.7", 7); err != nil || got.RequestsMonth != 1 || got.BytesMonth != 7 || got.Month != "2026-10" {
 		t.Fatalf("first request of October: %+v, %v", got, err)
 	}
 
@@ -210,12 +214,12 @@ func TestDeviceServiceIssuesListsRevokesAndCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	var refusal *DeviceRefusal
-	if _, err := svc.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &refusal) || refusal.Reason != "unknown" {
+	if _, err := svc.Authenticate(ctx, key, "203.0.113.7", 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &refusal) || refusal.Reason != "unknown" {
 		t.Fatalf("revoked key once the index dropped it: %v (refusal %+v)", err, refusal)
 	}
 	lagging := NewDeviceService(indexLagStore{Store: store, tenantID: "u1", deviceID: device.ID}).WithClock(func() time.Time { return at })
 	refusal = nil
-	if _, err := lagging.Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &refusal) || refusal.Reason != "revoked" || refusal.DeviceID != device.ID {
+	if _, err := lagging.Authenticate(ctx, key, "203.0.113.7", 0); !errors.Is(err, ErrDeviceKeyUnknown) || !errors.As(err, &refusal) || refusal.Reason != "revoked" || refusal.DeviceID != device.ID {
 		t.Fatalf("revoked key while the index still carries it: %v (refusal %+v)", err, refusal)
 	}
 	if err := svc.RevokeDevice(ctx, "u1", device.ID); err != nil {
@@ -264,7 +268,7 @@ func (s *racingRevokeStore) GetDevice(ctx context.Context, tenantID, deviceID st
 func TestRevokeDeviceOutlivesACounterWriteItRacedWith(t *testing.T) {
 	ctx := context.Background()
 	mem := dynamofake.NewStore()
-	device, key, err := NewDeviceService(mem).CreateDevice(ctx, "u1", "Watch")
+	device, key, err := NewDeviceService(mem).CreateDevice(ctx, "u1", "Watch", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +283,78 @@ func TestRevokeDeviceOutlivesACounterWriteItRacedWith(t *testing.T) {
 	if !racing.raced || !stored.Revoked() || stored.RequestsDay != 1 {
 		t.Fatalf("stored = %+v (raced %v); want revoked with the counter write kept", stored, racing.raced)
 	}
-	if _, err := NewDeviceService(mem).Authenticate(ctx, key, 0); !errors.Is(err, ErrDeviceKeyUnknown) {
+	if _, err := NewDeviceService(mem).Authenticate(ctx, key, "203.0.113.7", 0); !errors.Is(err, ErrDeviceKeyUnknown) {
 		t.Fatalf("revoked key: %v", err)
+	}
+}
+
+// An expiry is optional and bounded; past it the key reads as unknown on
+// the wire and expired underneath, and the device stays listed so the card
+// can say so (WH-A).
+func TestDeviceKeyExpiry(t *testing.T) {
+	ctx := context.Background()
+	store := dynamofake.NewStore()
+	at := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	svc := NewDeviceService(store).WithClock(func() time.Time { return at })
+
+	for _, days := range []int{0, -1, model.MaxDeviceExpiryDays + 1} {
+		if _, _, err := svc.CreateDevice(ctx, "u1", "Script", &days); !errors.Is(err, ErrDeviceExpiryOutOfRange) {
+			t.Fatalf("expires_in_days %d: %v, want out of range", days, err)
+		}
+	}
+	perpetual, perpetualKey, err := svc.CreateDevice(ctx, "u1", "Ring", nil)
+	if err != nil || perpetual.ExpiresAt != "" {
+		t.Fatalf("a key with no expiry: %+v, %v", perpetual, err)
+	}
+	thirty := 30
+	device, key, err := svc.CreateDevice(ctx, "u1", "Script", &thirty)
+	if err != nil || device.ExpiresAt != "2026-10-24T12:00:00.000000000Z" {
+		t.Fatalf("a thirty-day key: %+v, %v", device, err)
+	}
+	if _, err := svc.Authenticate(ctx, key, "203.0.113.7", 0); err != nil {
+		t.Fatalf("before expiry: %v", err)
+	}
+
+	at = time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC) // the instant itself is past
+	_, err = svc.Authenticate(ctx, key, "203.0.113.7", 0)
+	var ref *DeviceRefusal
+	if !errors.Is(err, ErrDeviceKeyUnknown) || err.Error() != ErrDeviceKeyUnknown.Error() || !errors.As(err, &ref) || ref.Reason != "expired" || ref.DeviceID != device.ID {
+		t.Fatalf("expired key: %v (refusal %+v)", err, ref)
+	}
+	if _, err := svc.Authenticate(ctx, perpetualKey, "203.0.113.7", 0); err != nil {
+		t.Fatalf("the perpetual key still works: %v", err)
+	}
+	// Still listed, with its date, so the card can say Expired and offer Remove.
+	live, err := svc.ListDevices(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed bool
+	for _, d := range live {
+		listed = listed || (d.ID == device.ID && d.ExpiresAt == device.ExpiresAt)
+	}
+	if !listed {
+		t.Fatalf("the expired device is not listed: %+v", live)
+	}
+}
+
+// The neighbourhood is the /24 or the /48, from a bare address or ip:port,
+// and nothing at all for what is not an address (WH-B).
+func TestNeighbourhoodIsCoarse(t *testing.T) {
+	for in, want := range map[string]string{
+		"203.0.113.7":               "203.0.113.x",
+		"203.0.113.7:4321":          "203.0.113.x",
+		"192.0.2.1:1234":            "192.0.2.x",
+		"::ffff:203.0.113.7":        "203.0.113.x",
+		"2001:db8:1:2:3:4:5:6":      "2001:db8:1::x",
+		"[2001:db8:1:2::6]:443":     "2001:db8:1::x",
+		"2001:db8::1":               "2001:db8::x",
+		"":                          "",
+		"not an address":            "",
+		"203.0.113.7, 198.51.100.1": "",
+	} {
+		if got := neighbourhood(in); got != want {
+			t.Errorf("neighbourhood(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

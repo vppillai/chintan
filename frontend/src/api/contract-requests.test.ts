@@ -248,6 +248,9 @@ describe('the requests the frontend actually sends', () => {
 
     /* ---- devices ------------------------------------------------------ */
     await call('createDevice', () => api.createDevice({ name: 'Contract device' }));
+    await call('createDeviceExpiring', () =>
+      api.createDevice({ name: 'Contract device', expires_in_days: 30 }),
+    );
     await call('listDevices', () => api.listDevices());
     await call('deleteDevice', () => api.deleteDevice(DEVICE_ID));
 
