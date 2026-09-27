@@ -205,7 +205,9 @@ sub-item of the open row shown above it, Shift+Tab brings it up a level; the
 grip's menu carries the same two as "Make a sub-item" and "Move up a level"
 for a finger and for anyone who does not know the keys, 44 px each and named
 for a screen reader, which also hears "Made a sub-item" / "Moved up a level"
-and the field's name change from "Item 2" to "Sub-item 2". A sub-item is set
+and the field's name change from "Item 2" to "Sub-item 2"; the keys are
+described on the field itself (`aria-describedby`), where they act, since a
+reader in the field never hears the grip's description. A sub-item is set
 in by one spacing step (`data-depth`, `--space-6`) with the same drawn box
 and grip after it; the indent alone says "part of the row above". The first
 open item can never be a sub-item — it has nothing to nest under — and a
@@ -235,18 +237,39 @@ parent with an open part is not done. Reopening a parent leaves its
 sub-items as they are (the choice CL-D2 asked to be stated): they were
 finished on their own terms, nothing about the parent says otherwise, and
 the person can tick the parent again once the reopened part is done — Keep's
-behaviour, and the one that never un-does work by implication. A sub-item
+behaviour, and the one that never un-does work by implication. The reopened
+parent then stands open in the list over sub-items that show only under
+Done, and ticking it again re-ticks lines already done, so nothing visible
+changes but the parent's own row: known, and kept, because the alternative
+reopens work nobody asked to reopen. A sub-item
 ticked on its own moves to Done alone and its parent stays open; nothing
 completes a parent by counting its children. Delete done takes a done
 parent's sub-items with it (`removeDone`); Uncheck all reopens every line.
+
+Enter at the end of a parent starts its first sub-item (`insertItemAfter`),
+as an outliner does: the new row appears right under the parent, where the
+eye is, and a top-level line there would have taken the parent's sub-items
+for its own — the body `Party`, `[ ]`, `  Plates`, `  Cups` reads as an
+empty parent over them. The other choice, a top-level row after the block,
+puts the new row under the last sub-item, away from where Enter was pressed.
+Deleting a parent — Backspace in its emptied field, the menu's Delete, the ×
+under Done — brings its sub-items up a level (`removeItem`) rather than
+leaving the parser to read the first of them as the parent of the rest: the
+job is gone, not its first part.
 
 Moving a parent from the grip moves its block: a drag carries the sub-items
 (`moveItem`), Move down and the down arrow step past the parent's own
 children to the first row outside the block, a block that ends the list
 cannot move down, and a row dropped on a sub-item's slot becomes one while a
-sub-item dropped on a top-level slot comes out. A drag's draft shows the
-lifted row alone while it is in the air and the block snaps together on
-release. Split up (`extractItems`, the `tasks` prompt) appends and proposes
+sub-item dropped on a top-level slot comes out. Neither the menu nor the
+arrow keys offer a level, so a move that changes the row's level is said:
+"Now a sub-item" / "Now a top-level item" on the status line. A drag's draft
+shows the lifted row alone while it is in the air and the block snaps
+together on release; a parent dropped one slot down stands on its own
+sub-item's slot, which the draft can show but nothing can mean, and it goes
+back where it was rather than past the next row as the menu's step would
+(a drag is placed by eye, and a jump past what the eye placed it on is the
+surprise). Split up (`extractItems`, the `tasks` prompt) appends and proposes
 at depth 0 as before; export and the search text are unchanged. A third
 level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
 
