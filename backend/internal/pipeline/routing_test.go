@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -535,5 +536,29 @@ func TestFallbackNoteTitleIsTheFirstWordsOfTheTranscript(t *testing.T) {
 		if got := fallbackNoteTitle(tc.content, now); got != tc.want {
 			t.Errorf("fallbackNoteTitle(%q) = %q, want %q", tc.content, got, tc.want)
 		}
+	}
+}
+
+// The window is bounded by size as well as by count: the ordered list is cut
+// where its lines would pass maxRouteCandidateTokens, keeping the most
+// recently touched notes at the front, and a short list is left whole.
+func TestWithinRouteBudgetCutsTheTailOfALongList(t *testing.T) {
+	t.Parallel()
+	short := []model.NoteIndex{{ID: "a", Title: "Roof repair"}, {ID: "b", Title: "Shopping list", Tags: []string{"house"}}}
+	if got := withinRouteBudget(short); len(got) != 2 {
+		t.Fatalf("a two-note list was cut to %d", len(got))
+	}
+	// Each line is about 3 + 400/4 = 103 tokens, so nineteen fit and the
+	// twentieth would pass 2,000.
+	long := make([]model.NoteIndex, 0, 30)
+	for i := 0; i < 30; i++ {
+		long = append(long, model.NoteIndex{ID: strconv.Itoa(i), Title: strings.Repeat("x", 400)})
+	}
+	got := withinRouteBudget(long)
+	if len(got) != 19 || got[0].ID != "0" || got[18].ID != "18" {
+		t.Fatalf("cut to %d notes (first %q, last %q), want the leading 19", len(got), got[0].ID, got[len(got)-1].ID)
+	}
+	if estimateCandidateTokens([]routing.Candidate{routeCandidate(long[0])}) > maxRouteCandidateTokens {
+		t.Error("one ordinary candidate alone must fit the budget")
 	}
 }

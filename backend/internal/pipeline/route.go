@@ -256,7 +256,7 @@ func routeCandidate(n model.NoteIndex) routing.Candidate {
 func withinRouteBudget(active []model.NoteIndex) []model.NoteIndex {
 	total := 0.0
 	for i, n := range active {
-		total += estimateCandidateTokens([]routing.Candidate{routeCandidate(n)})
+		total += candidateTokens(routeCandidate(n))
 		if total > maxRouteCandidateTokens {
 			return active[:i]
 		}
@@ -434,22 +434,28 @@ func routeRetryReason(err error) (string, bool) {
 // replaces it with what the provider reports.
 const routeOutputTokensEstimate = 64
 
-// estimateCandidateTokens is the pre-call guess at the candidate block: the
-// usual four characters a token over every name, plus three tokens a line for
-// the ordinal and the separators (measured 2026-09-26: "12 | Roof repair" is 7
-// tokens).
+// estimateCandidateTokens is the pre-call guess at the candidate block, the
+// sum of its lines.
 func estimateCandidateTokens(candidates []routing.Candidate) float64 {
-	total := 0
+	total := 1.0
 	for _, c := range candidates {
-		total += len(c.Title)
-		for _, a := range c.Aliases {
-			total += len(a)
-		}
-		for _, t := range c.Tags {
-			total += len(t)
-		}
+		total += candidateTokens(c)
 	}
-	return float64(total)/4 + 3*float64(len(candidates)) + 1
+	return total
+}
+
+// candidateTokens is one candidate's line: the usual four characters a token
+// over every name, plus three tokens for the ordinal and the separators
+// (measured 2026-09-26: "12 | Roof repair" is 7 tokens).
+func candidateTokens(c routing.Candidate) float64 {
+	chars := len(c.Title)
+	for _, a := range c.Aliases {
+		chars += len(a)
+	}
+	for _, t := range c.Tags {
+		chars += len(t)
+	}
+	return float64(chars)/4 + 3
 }
 
 // fallbackNoteTitle names a note the router could not title: the first words
