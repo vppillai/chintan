@@ -28,8 +28,13 @@ type regenerateNote struct {
 	// skipped — so this and the cost beside it are upper bounds.
 	Captures        int   `json:"captures"`
 	TranscriptBytes int64 `json:"transcript_bytes"`
-	CostMicros      int64 `json:"cost_micros"`
-	Queued          bool  `json:"queued"`
+	// CleanedView says the note keeps a whole-note cleaned view, which the
+	// worker regenerates once after the last recording lands: one more
+	// call, over the whole body, priced into CostMicros from BodyBytes.
+	CleanedView bool  `json:"cleaned_view"`
+	BodyBytes   int64 `json:"body_bytes,omitempty"`
+	CostMicros  int64 `json:"cost_micros"`
+	Queued      bool  `json:"queued"`
 }
 
 type regenerateTenant struct {
@@ -62,8 +67,10 @@ func (r *regenerateResult) human(w *lineWriter) {
 		}
 	}
 	w.printf("  %d note(s), %s, about %s in cleanup calls\n", r.Notes, plural(r.Captures, "recording"), dollars(r.CostMicros))
-	w.printf("  The estimate is the worker's own reservation per call — transcript bytes/4 tokens in and the same out — and an upper\n")
-	w.printf("  bound: the worker skips a plain note's paragraph that was rewritten by hand, and counts what it actually ran.\n")
+	w.printf("  The estimate is the worker's own reservation per call — transcript bytes/4 tokens in and the same out, plus one\n")
+	w.printf("  whole-note call over the body of each note that keeps a cleaned view — and an upper bound: the worker skips a\n")
+	w.printf("  plain note's paragraph that was rewritten by hand, cleans the view only when a recording landed, and counts what\n")
+	w.printf("  it actually ran.\n")
 }
 
 type regenerateOptions struct {
@@ -131,7 +138,7 @@ func runRegenerate(ctx context.Context, e *env, tenants []string, o regenerateOp
 		if err != nil {
 			return nil, err
 		}
-		sizes, err := transcriptSizes(ctx, e.Blobs, tenant)
+		sizes, err := listObjectSizes(ctx, e.Blobs, tenant)
 		if err != nil {
 			return nil, err
 		}
@@ -159,6 +166,11 @@ func runRegenerate(ctx context.Context, e *env, tenants []string, o regenerateOp
 			return nil, err
 		}
 	}
+	// ponytail: one Event invocation per note, all at once, so a tenant
+	// with many notes runs them concurrently and a provider 429 burst leaves
+	// `failed` rows for the strip's Retry; the worker's own retry handles a
+	// fault, not a provider verdict. A pause between notes, or a cap on the
+	// notes per run, when a tenant that large exists.
 	for ti := range res.Tenants {
 		t := &res.Tenants[ti]
 		for ni := range t.Notes {
@@ -179,20 +191,29 @@ func runRegenerate(ctx context.Context, e *env, tenants []string, o regenerateOp
 	return res, nil
 }
 
-// transcriptSizes is the size of every recording's raw transcript in the
-// bucket, by capture id, from one delimited listing: the estimate needs the
-// bytes and nothing else about the text.
-func transcriptSizes(ctx context.Context, blobs Blobs, tenantID string) (map[string]int64, error) {
-	sizes := map[string]int64{}
-	err := blobs.List(ctx, tenantPrefix(tenantID)+"captures/", func(info ObjectInfo) error {
+// objectSizes is the size of every recording's raw transcript and of every
+// note's body in the bucket, by capture id and by note id, from one listing
+// of the tenant's prefix: the estimate needs the bytes and nothing else
+// about the text.
+type objectSizes struct {
+	transcripts map[string]int64
+	bodies      map[string]int64
+}
+
+func listObjectSizes(ctx context.Context, blobs Blobs, tenantID string) (objectSizes, error) {
+	sizes := objectSizes{transcripts: map[string]int64{}, bodies: map[string]int64{}}
+	err := blobs.List(ctx, tenantPrefix(tenantID), func(info ObjectInfo) error {
 		ref := parseObjectKey(info.Key)
-		if ref.Group == "captures" && ref.File == "raw.txt" {
-			sizes[ref.EntityID] = info.Size
+		switch {
+		case ref.Group == "captures" && ref.File == "raw.txt":
+			sizes.transcripts[ref.EntityID] = info.Size
+		case ref.Group == "notes" && ref.File == "note.md":
+			sizes.bodies[ref.EntityID] = info.Size
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("list transcripts for tenant %s: %w", tenantID, err)
+		return sizes, fmt.Errorf("list objects for tenant %s: %w", tenantID, err)
 	}
 	return sizes, nil
 }
@@ -201,8 +222,17 @@ func transcriptSizes(ctx context.Context, blobs Blobs, tenantID string) (map[str
 // index: the selected active notes that are not verbatim, and in each the
 // appended recordings with a transcript. Each recording is priced as the
 // worker reserves for its cleanup call — bytes/4 tokens in, the same out
-// (pipeline.estimateTokens), on the LLM model — from meter.DefaultPrices.
-func planRegenerate(idx *tenantIndex, sizes map[string]int64, o regenerateOptions) (regenerateTenant, error) {
+// (pipeline.estimateTokens), on the LLM model — from meter.DefaultPrices; a
+// note that keeps a cleaned view adds the one whole-note call the worker
+// makes after its last recording lands, priced the same way over the body.
+func planRegenerate(idx *tenantIndex, sizes objectSizes, o regenerateOptions) (regenerateTenant, error) {
+	price := func(bytes int64) int64 {
+		tokens := float64(bytes)/4 + 1
+		return meter.DefaultPrices.Cost("openai", o.model, meter.Quantities{
+			meter.UnitInputTokens:  tokens,
+			meter.UnitOutputTokens: tokens,
+		})
+	}
 	plan := regenerateTenant{TenantID: idx.TenantID}
 	var noteIDs []string
 	if o.noteID != "" {
@@ -235,17 +265,18 @@ func planRegenerate(idx *tenantIndex, sizes map[string]int64, o regenerateOption
 					continue
 				}
 				entry.Captures++
-				entry.TranscriptBytes += sizes[cid]
-				tokens := float64(sizes[cid])/4 + 1
-				entry.CostMicros += meter.DefaultPrices.Cost("openai", o.model, meter.Quantities{
-					meter.UnitInputTokens:  tokens,
-					meter.UnitOutputTokens: tokens,
-				})
+				entry.TranscriptBytes += sizes.transcripts[cid]
+				entry.CostMicros += price(sizes.transcripts[cid])
 			}
 		}
 		if entry.Captures == 0 && o.all {
 			// Nothing to say about a note nothing would touch.
 			continue
+		}
+		if entry.Captures > 0 && n.CleanedBody != "" {
+			entry.CleanedView = true
+			entry.BodyBytes = sizes.bodies[id]
+			entry.CostMicros += price(entry.BodyBytes)
 		}
 		plan.Notes = append(plan.Notes, entry)
 		plan.Captures += entry.Captures

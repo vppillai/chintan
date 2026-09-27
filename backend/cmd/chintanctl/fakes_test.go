@@ -372,6 +372,10 @@ func noteItem(tenantID string, n model.NoteIndex) Item {
 	if len(n.Tags) > 0 {
 		it["tags"] = AttrValue{SS: n.Tags}
 	}
+	if n.CleanedBody != "" {
+		// Promoted, never in the blob (json:"-"), as the repository writes it.
+		it["cleaned_body"] = StringAttr(n.CleanedBody)
+	}
 	return it
 }
 

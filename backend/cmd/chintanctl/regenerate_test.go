@@ -11,14 +11,16 @@ import (
 	"github.com/vppillai/chintan/backend/internal/pipeline"
 )
 
-// seedRegenerateTenant lays down a tenant with three notes: a plain note with
-// two appended recordings and one that failed, a verbatim note with one, and
-// an archived note with one; every appended recording has a raw transcript in
-// the bucket.
+// seedRegenerateTenant lays down a tenant with four notes: a plain note that
+// keeps a cleaned view, with two appended recordings and one that failed, a
+// checklist with one, a verbatim note with one, and an archived note with
+// one; every appended recording has a raw transcript in the bucket, and the
+// plain note a body.
 func seedRegenerateTenant(t *testing.T, part *fakePartition, blobs *fakeBlobs, tenant string) {
 	t.Helper()
+	blobs.seed(t, "tenants/"+tenant+"/notes/plain/note.md", strings.Repeat("body ", 200), "text/markdown")
 	notes := []model.NoteIndex{
-		{ID: "plain", Title: "Roof", UpdatedAt: "2026-01-01T09:00:00.000000000Z", S3MarkdownKey: "tenants/" + tenant + "/notes/plain/note.md", S3MetaKey: "tenants/" + tenant + "/notes/plain/meta.json"},
+		{ID: "plain", Title: "Roof", UpdatedAt: "2026-01-01T09:00:00.000000000Z", S3MarkdownKey: "tenants/" + tenant + "/notes/plain/note.md", S3MetaKey: "tenants/" + tenant + "/notes/plain/meta.json", CleanedBody: "# Roof"},
 		{ID: "list", Title: "Shopping", Kind: model.NoteKindChecklist, UpdatedAt: "2026-01-01T09:00:00.000000000Z", S3MarkdownKey: "tenants/" + tenant + "/notes/list/note.md", S3MetaKey: "tenants/" + tenant + "/notes/list/meta.json"},
 		{ID: "verbatim", Title: "Quote", Verbatim: true, UpdatedAt: "2026-01-01T09:00:00.000000000Z", S3MarkdownKey: "tenants/" + tenant + "/notes/verbatim/note.md", S3MetaKey: "tenants/" + tenant + "/notes/verbatim/meta.json"},
 		{ID: "gone", Title: "Archived", DeletedAt: "2026-01-02T09:00:00.000000000Z", UpdatedAt: "2026-01-01T09:00:00.000000000Z", S3MarkdownKey: "tenants/" + tenant + "/notes/gone/note.md", S3MetaKey: "tenants/" + tenant + "/notes/gone/meta.json"},
@@ -73,11 +75,17 @@ func TestRegeneratePlansFromTheRowsAndPricesFromTheTable(t *testing.T) {
 		t.Errorf("notes = %+v", byID)
 	}
 	// c1's transcript is 400 bytes: 101 tokens in, 101 out, at MiniMax's
-	// $0.30 / $1.20 per million.
-	tokens := float64(400)/4 + 1
-	want := meter.DefaultPrices.Cost("openai", "MiniMax-M3", meter.Quantities{meter.UnitInputTokens: tokens, meter.UnitOutputTokens: tokens})
-	if want == 0 || byID["plain"].CostMicros <= want || byID["plain"].TranscriptBytes != 600 {
-		t.Errorf("plain note cost = %d over %d bytes; want more than one recording's %d over 600 bytes", byID["plain"].CostMicros, byID["plain"].TranscriptBytes, want)
+	// $0.30 / $1.20 per million; c2's is 200; the 1,000-byte body is the
+	// whole-note call the note's cleaned view costs on top.
+	perBytes := func(n int64) int64 {
+		tokens := float64(n)/4 + 1
+		return meter.DefaultPrices.Cost("openai", "MiniMax-M3", meter.Quantities{meter.UnitInputTokens: tokens, meter.UnitOutputTokens: tokens})
+	}
+	if want := perBytes(400) + perBytes(200) + perBytes(1000); want == 0 || byID["plain"].CostMicros != want || byID["plain"].TranscriptBytes != 600 || !byID["plain"].CleanedView || byID["plain"].BodyBytes != 1000 {
+		t.Errorf("plain note = %+v; want two recordings over 600 bytes and the whole-note call over 1000, %d in all", byID["plain"], want)
+	}
+	if byID["list"].CleanedView || byID["list"].CostMicros != perBytes(13) {
+		t.Errorf("list = %+v; want one recording's call and no whole-note call", byID["list"])
 	}
 	if len(worker.payloads) != 0 {
 		t.Errorf("a dry run queued %v", worker.payloads)
