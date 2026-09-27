@@ -19,7 +19,7 @@ const STEPS: readonly { icon: IconName; title: string; detail: string }[] = [
   {
     icon: 'mic',
     title: 'Record',
-    detail: 'Tap PTT and speak, or hold it and release to send. The audio uploads as you go.',
+    detail: 'Tap Record and speak. The audio uploads as you go.',
   },
   { icon: 'transcribe', title: 'Transcribe', detail: 'Speech becomes text, in the language you set.' },
   { icon: 'route', title: 'Route', detail: 'The router works out which note this belongs to.' },
@@ -70,8 +70,8 @@ export function AboutScreen() {
         <h1 className="about__title">{config.appName}</h1>
         <p className="about__lede">{config.appDescription}</p>
         <p className="about__intro">
-          Tap PTT and talk — or hold it and let go to send — while walking, driving,
-          washing up. {config.appName} transcribes
+          Tap Record and talk while walking, driving, washing up — or open PTT from You or
+          the home-screen shortcut and hold to talk. {config.appName} transcribes
           the recording, works out which of your notes it belongs to, tidies the words into text
           you would have typed, and appends it to that note. The recording stays beneath the note
           as its source, so you can always hear what you actually said.
@@ -107,9 +107,9 @@ export function AboutScreen() {
           <p>
             Say where it goes — &ldquo;add this to the roof note&rdquo; — and the router matches
             that against your notes&rsquo; titles, their other names and their tags. Or choose the
-            note first: open it, and the microphone reads <em>Into this note</em> — tap to open the
-            recorder, or hold to talk; or pick the note on the recording screen. Either files
-            straight there with no guessing. When the router is not sure, the
+            note first: open it, and the record disc reads <em>Into this note</em>; or pick the
+            note on the recording screen or above the PTT button. Either files straight there
+            with no guessing. When the router is not sure, the
             recording waits at the top of your notes with its best guess until you pick a note or
             start a new one.
           </p>

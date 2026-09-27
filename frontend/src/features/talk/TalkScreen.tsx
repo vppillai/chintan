@@ -16,8 +16,10 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
  * The capture screen is a round trip per recording. This screen is a
  * walkie-talkie: hold, speak, release, and it is on its way while the button
  * is already ready for the next one — the manifest's "PTT" shortcut lands
- * here. PTT is the name (owner feedback 2026-09-26); the button's accessible
- * name spells the gesture out for a screen reader. Where each recording goes
+ * here, and the PTT row on You. PTT is the name (owner feedback 2026-09-26),
+ * and this screen is the only place the app holds to talk: the tab-bar disc
+ * only taps (owner feedback 2026-09-27). The button's accessible name spells
+ * the gesture out for a screen reader. Where each recording goes
  * is the pill above the button, and `?note=` seeds it as it does the capture
  * screen's. On a keyboard the Space bar is the button.
  *
@@ -32,7 +34,7 @@ import { useReducedMotion } from '@/hooks/useReducedMotion.ts';
 export function TalkScreen() {
   const [params] = useSearchParams();
   const [target, setTarget] = useState<string | null>(params.get('note'));
-  const hold = useHoldToTalk({ noteId: target, holdDelayMs: 0 });
+  const hold = useHoldToTalk({ noteId: target });
   const model = useCaptureStore((state) => state.model);
   const amplitudes = useCaptureStore((state) => state.amplitudes);
   const reducedMotion = useReducedMotion();
@@ -133,10 +135,6 @@ export function TalkScreen() {
         data-away={hold.away || undefined}
         aria-label={holding ? label : 'PTT: hold to talk, release to send'}
         {...hold.handlers}
-        onClick={() => {
-          // A press is a hold from the first frame; the click is its echo.
-          hold.consumeClick();
-        }}
       >
         <Icon name="ptt" size={56} strokeWidth={2.5} />
         <span className="talk__label">{label}</span>

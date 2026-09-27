@@ -35,7 +35,7 @@ const TABS: readonly Tab[] = [
 ];
 
 /**
- * The bottom tab bar: Home · PTT · You.
+ * The bottom tab bar: Home · Record · You.
  *
  * The record button is centred *in the bar* and is a grid child like the two
  * tabs — not a floating action button. A FAB overlays the last note row in the
@@ -45,9 +45,9 @@ const TABS: readonly Tab[] = [
  * Tabs are links, not buttons: each is a navigation to a real URL, which is
  * what makes Back work without any state of its own.
  *
- * While a note is open the mic records into it: the URL and whether the note
- * is archived are the two facts the bar needs, and reading them here keeps
- * the note screen out of the shell.
+ * While a note is open the disc records into it: the URL and whether the
+ * note is archived are the two facts the bar needs, and reading them here
+ * keeps the note screen out of the shell.
  */
 export function TabBar() {
   const { pathname } = useLocation();

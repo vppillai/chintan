@@ -2,13 +2,15 @@
 
 Opening `/capture` starts recording; the screen is full-screen, its controls
 are round discs with a word under each, and Send stops and sends in one tap.
-The same machinery is reached two shorter ways: holding the tab-bar PTT disc
-records in place and sends on release, and `/talk` is one giant PTT button
-for thoughts one after another. This note is the frontend; what happens to the
-recording once it is uploaded is the pipeline's and unchanged. Code: the
-machine and store (`frontend/src/features/capture/machine.ts`, `store.ts`),
-the screen (`CaptureScreen.tsx`), the gesture (`useHoldToTalk.ts`,
-`HoldOverlay.tsx`, `components/RecordButton.tsx`, `components/TabBar.tsx`),
+The same machinery is reached one shorter way: `/talk` is one giant PTT
+button for thoughts one after another — hold, speak, release. The tab-bar
+disc (`components/RecordButton.tsx`, `components/TabBar.tsx`) is a plain
+Record control that opens `/capture`; it held to talk from #85 until the
+owner asked for push-to-talk on the widget only (feedback 2026-09-27). This
+note is the frontend; what happens to the recording once it is uploaded is
+the pipeline's and unchanged. Code: the machine and store
+(`frontend/src/features/capture/machine.ts`, `store.ts`), the screen
+(`CaptureScreen.tsx`), the gesture (`useHoldToTalk.ts`),
 `/talk` (`features/talk/TalkScreen.tsx`), the note's filing banner
 (`FilingBanner.tsx`, `features/notes/NoteDetailScreen.tsx`), the library's
 filing row (`FilingRow.tsx`, with its parts under `filing/`: `model.ts` for
@@ -82,41 +84,40 @@ met with exactly the library's controls.
 
 ## PTT (hold to talk)
 
-`useHoldToTalk` is the gesture, shared by the tab-bar PTT disc (`holdDelayMs`
-350: a press has to be told from a tap) and `/talk` (0: a press is a hold at
-once). PTT is the name the app gives both — on the disc under its glyph, the
-`/talk` heading, the You row and the manifest shortcut (owner feedback
-2026-09-26); "hold to talk" is the instruction beneath the name, and the
-buttons' `aria-label`s spell it out for a screen reader — except the disc on
-`/talk`, which only taps there and says only "tap to record".
+`useHoldToTalk` is the gesture, and `/talk` is its only surface: a press is a
+hold from the first frame. PTT is the name the app gives it — the `/talk`
+heading, the You row and the manifest shortcut (owner feedback 2026-09-26);
+"hold to talk" is the instruction beneath the name, and the button's
+`aria-label` spells it out for a screen reader. The tab-bar disc is named
+"Record" ("Record into this note" on a note), wears the microphone under a
+"Record" caption, and only taps: it held to talk from #85 (`HOLD_DELAY_MS`,
+an armed phase to tell a hold from a tap, and a card above the bar), and the
+owner asked for the hold on the widget only, not in the main app (feedback
+2026-09-27), so all of that is gone and the You row and the shortcut are the
+ways in.
 
-Phases: idle → armed → holding → hint | sent | busy. The rules, with the
-constants that pin them:
+Phases: idle → holding → hint | sent | busy. The rules, with the constants
+that pin them:
 
-- Armed for `HOLD_DELAY_MS` (350 ms). Moving more than 10 px while armed is a
-  scroll or a drag; its release is neither a tap nor a hold.
-- Holding calls `store.start(target)`. The overlay above the bar shows the
-  live level, the clock and "Release to send · slide away to cancel"; it is
-  plain DOM over the current screen, so history is untouched and Back still
-  works. Its instruction is spoken from one always-mounted live region.
+- Pressing calls `store.start(target)`. The disc shows the live level, the
+  clock and "Release to send"; it is plain DOM, so history is untouched and
+  Back still works.
 - Release sends (`stopAndSend`) when the microphone is live, or when a
   recording settled with audio while the finger was still down — the cap or a
-  call ending the track is a message, not a slip.
-- Less than `MIN_TALK_MS` (600 ms) of audio is a slip: discarded, and "Hold to
-  talk" shows for `HOLD_NOTICE_MS` (1.5 s).
+  call ending the track is a message, not a slip. The page being hidden
+  mid-hold — a call, the lock screen — ends the hold as a release for the
+  same reason.
+- Less than `MIN_TALK_MS` (600 ms) of audio is a slip: discarded, and "Too
+  short — hold to talk" shows for `HOLD_NOTICE_MS` (1.5 s).
 - A pointer more than `SLIDE_AWAY_PX` (80) off the button's edge — the edge,
-  not the press point, so a thumb drifting inside the `/talk` disc is not a
-  cancel — turns the instruction to "Release to cancel"; release discards.
+  not the press point, so a thumb drifting inside the disc is not a cancel —
+  turns the instruction to "Release to cancel"; release discards.
 - Pressed while the last recording is still stopping or uploading: "Still
   sending the last one…" and no new recording. A microphone live on another
   screen, or unsent audio waiting on the capture screen, stands the hold
-  down: the tap that follows goes there. A refused microphone is the capture
-  screen's failure card to explain, so the release hands off to it.
-- The target is the tab bar's: the open, unarchived note (the bar reads "Into
-  this note"), else a new note for the router to file. On `/talk` the pill
-  above the disc is the target and the tab-bar mic only taps — two hold
-  surfaces in one viewport recording to different places would be two answers
-  to one question.
+  down. A refused microphone is the screen's failure line to explain.
+- The target is the pill above the disc; `?note=` seeds it, as it does the
+  capture screen's.
 
 `/talk` is the walkie-talkie, and its disc wears one: the `ptt` glyph in
 `Icon.tsx` — body, antenna, grille and the side key that is push-to-talk —
@@ -195,7 +196,8 @@ Tests: `machine.test.ts`, `store.test.ts` (stop-and-send), `CaptureScreen.test.t
 `FilingBanner.test.tsx`, `FilingRow.test.tsx` (the tiers, the receipts, the poll's
 ladder and focus refetch), `filing/model.test.ts`, `filing/FilingItem.test.tsx`,
 `filing/TargetPrompt.test.tsx`, `features/talk/TalkScreen.test.tsx`,
-`components/RecordButton.test.tsx`, `RecordingIndicator.test.tsx`, `TabBar.test.tsx`;
-end to end, `frontend/e2e/capture.spec.ts` (Send while recording, the return
-and the banner, the hold on Home and on a note, slide-away and the short hold,
-the four discs on one row at 320 px), `talk.spec.ts`, `manifest.spec.ts`.
+`components/RecordButton.test.tsx` (a tap, and only a tap), `RecordingIndicator.test.tsx`,
+`TabBar.test.tsx`; end to end, `frontend/e2e/capture.spec.ts` (Send while
+recording, the return and the banner, the four discs on one row at 320 px),
+`talk.spec.ts` (the hold, into a new note and into `?note=`, slide-away, the
+short hold, Space), `manifest.spec.ts`.

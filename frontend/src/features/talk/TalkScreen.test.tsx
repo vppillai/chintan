@@ -50,9 +50,13 @@ class FakeRecorder {
 }
 
 let recorder = new FakeRecorder();
+let stream = new FakeStream();
 
 const fakeDeps: RecorderDeps = {
-  requestMicrophone: async () => new FakeStream() as unknown as MediaStream,
+  requestMicrophone: async () => {
+    stream = new FakeStream();
+    return stream as unknown as MediaStream;
+  },
   chooseEncoder: () => ({ mimeType: 'audio/webm;codecs=opus', contentType: 'audio/webm' }),
   isSupported: () => true,
   createRecorder: () => {
@@ -107,6 +111,17 @@ const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 const state = () => useCaptureStore.getState().model.state;
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
+const status = () => document.querySelector('.talk__status');
+/** The OS covering the page — a call, the lock screen — which jsdom cannot do on its own. */
+const pageHidden = (hidden: boolean) => {
+  act(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      value: hidden ? 'hidden' : 'visible',
+      configurable: true,
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+};
 
 // Every gesture on a fake clock that still moves with real time, as
 // RecordButton.test.tsx: `wait` advances the clock rather than sleeping.
@@ -264,6 +279,86 @@ describe('the talk screen', () => {
     fireEvent.pointerUp(button, touch);
     fireEvent.click(button);
     expect(document.querySelector('.talk__status')).toHaveTextContent('Still sending the last one…');
+  });
+
+  it('sends what was said before a call ended the track, rather than discarding it', async () => {
+    mount();
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
+    fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
+    await wait(50);
+    expect(state()).toBe('recording');
+    act(() => {
+      vi.advanceTimersByTime(MIN_TALK_MS + 100);
+    });
+    act(() => {
+      recorder.emitChunk(10);
+    });
+
+    // The track ends under the finger — a phone call, the headset coming out.
+    // The machine settles the take on its own; the hold must treat that as
+    // the message, not as a microphone that never came up.
+    act(() => {
+      stream.track.dispatchEvent(new Event('ended'));
+    });
+    await waitFor(() => {
+      expect(state()).toBe('review');
+    });
+    expect(button).toHaveTextContent('Release to send');
+
+    fireEvent.pointerUp(button, touch);
+    await waitFor(() => {
+      expect(state()).toBe('uploaded');
+    });
+    expect(creates).toHaveLength(1);
+  });
+
+  it('ends a hold as a release when the page is hidden, so a slip gets the hint rather than an open mic', async () => {
+    // A call, the lock screen, an app switch: not every browser sends
+    // `pointercancel` for it, and the microphone stayed open until the next
+    // press, whose release sent everything recorded meanwhile. The hold ends
+    // as a release — the rule is a partial recording, never a discard — and
+    // one hidden inside MIN_TALK_MS is a slip.
+    mount();
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
+    fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
+    await wait(50);
+    expect(state()).toBe('recording');
+
+    pageHidden(true);
+    expect(status()).toHaveTextContent('Too short — hold to talk');
+    await waitFor(() => {
+      expect(state()).toBe('idle');
+    });
+    pageHidden(false);
+
+    // Back on the page, the finger lifts: not a second release.
+    fireEvent.pointerUp(button, touch);
+    expect(creates).toHaveLength(0);
+  });
+
+  it('sends what was said before the page was hidden, rather than discarding it', async () => {
+    // An incoming call on Android both ends the track and covers Chrome; the
+    // words before it are the message, as when only the track ends.
+    mount('/talk?note=roof-repair');
+    const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
+    fireEvent.pointerDown(button, { ...touch, clientX: 0, clientY: 0 });
+    await wait(50);
+    expect(state()).toBe('recording');
+    act(() => {
+      vi.advanceTimersByTime(MIN_TALK_MS + 100);
+    });
+    act(() => {
+      recorder.emitChunk(10);
+    });
+
+    pageHidden(true);
+    await waitFor(() => {
+      expect(state()).toBe('uploaded');
+    });
+    pageHidden(false);
+    fireEvent.pointerUp(button, touch);
+    expect(recorder.state).toBe('inactive');
+    expect(creates).toEqual([expect.objectContaining({ note_id: 'roof-repair' })]);
   });
 
   it('measures sliding away from the disc, not from where the thumb landed on it', async () => {

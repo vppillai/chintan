@@ -218,7 +218,7 @@ test('several notes can be deleted at once from the library, and Undo brings the
   await dialog.getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
-  await expect(page.getByText(/tap PTT to record your first note/i)).toBeVisible();
+  await expect(page.getByText(/tap Record to start your first note/i)).toBeVisible();
   expect(api.notes['roof-repair']?.archived).toBe(true);
   expect(api.notes['reading-list']?.archived).toBe(true);
   // And the chip now counts them.

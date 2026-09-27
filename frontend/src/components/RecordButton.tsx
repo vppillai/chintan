@@ -1,24 +1,22 @@
-import { useLocation, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 
 import { ROUTES } from '@/app/routes.ts';
-import { HoldOverlay } from '@/features/capture/HoldOverlay.tsx';
-import { HOLD_DELAY_MS, useHoldToTalk } from '@/features/capture/useHoldToTalk.ts';
 
 import { Icon } from './Icon.tsx';
 
 /**
- * The record target — PTT, and the disc says so under its glyph (owner
- * feedback 2026-09-26) — seated in the middle of the tab bar on every screen:
- * in flow, not floating, so it can never overlay a note row. The label is
- * `aria-hidden` because the button's `aria-label` spells the gesture out.
+ * The record target, seated in the middle of the tab bar on every screen —
+ * in flow, not floating, so it can never overlay a note row. Tapped, it
+ * opens the capture screen; that is all it does. The disc names itself under
+ * its glyph (owner feedback 2026-09-26), and the caption is `aria-hidden`
+ * because the button's `aria-label` already says it.
  *
  * It is the only element in the app allowed to wear `--color-accent`.
  *
- * Tapped, it opens the capture screen. Held, it records in place: the
- * microphone opens after `HOLD_DELAY_MS`, a card above the bar shows the
- * level and the clock, and letting go sends — push-to-talk for the thought
- * that is one sentence long (`useHoldToTalk`). Where the recording goes is
- * the same either way.
+ * It held to talk for a while (#85, "PTT" from #114). The owner asked for
+ * push-to-talk on the widget only, not in the main app (feedback
+ * 2026-09-27), so the hold lives on `/talk` alone — reached from You and the
+ * manifest shortcut — and this disc is a plain Record control again.
  *
  * On a note it records into that note (`noteId`) and is named for it — the
  * same button, so the thumb never has to choose between two record controls.
@@ -27,49 +25,24 @@ import { Icon } from './Icon.tsx';
  * recording to different places from one screen. The sighted caption is the
  * tab bar's (`.tab-bar__into`), beside the disc rather than inside it, so
  * the disc's own box stays the disc.
- *
- * On `/talk` it only taps: that screen's disc is the hold, into the note its
- * pill names, and a second hold surface in the same viewport recording
- * somewhere else would be two answers to one question. Its name there says
- * only "tap to record", because a name that promised a hold the control
- * refuses would be an instruction the screen reader cannot follow up on.
  */
 export function RecordButton({ noteId = null }: { noteId?: string | null }) {
   const navigate = useNavigate();
-  const onTalk = useLocation().pathname === ROUTES.talk;
   const into = noteId !== null;
-  const hold = useHoldToTalk({ noteId, holdDelayMs: HOLD_DELAY_MS });
-  const holding = hold.phase === 'holding';
 
   return (
-    <>
-      <button
-        type="button"
-        className="record-button"
-        data-holding={holding || undefined}
-        data-away={hold.away || undefined}
-        aria-label={
-          holding
-            ? 'Recording: release to send'
-            : onTalk
-              ? 'PTT: tap to record'
-              : into
-                ? 'PTT into this note: tap to record, hold to talk'
-                : 'PTT: tap to record, hold to talk'
-        }
-        {...(onTalk ? {} : hold.handlers)}
-        onClick={() => {
-          // The click that ends a hold is the release, not a tap.
-          if (hold.consumeClick()) return;
-          void navigate(into ? ROUTES.captureInto(noteId) : ROUTES.capture);
-        }}
-      >
-        <Icon name="mic" size={24} strokeWidth={2.25} className="record-button__icon" />
-        <span className="record-button__label" aria-hidden="true">
-          PTT
-        </span>
-      </button>
-      <HoldOverlay phase={hold.phase} away={hold.away} />
-    </>
+    <button
+      type="button"
+      className="record-button"
+      aria-label={into ? 'Record into this note' : 'Record'}
+      onClick={() => {
+        void navigate(into ? ROUTES.captureInto(noteId) : ROUTES.capture);
+      }}
+    >
+      <Icon name="mic" size={24} strokeWidth={2.25} className="record-button__icon" />
+      <span className="record-button__label" aria-hidden="true">
+        Record
+      </span>
+    </button>
   );
 }
