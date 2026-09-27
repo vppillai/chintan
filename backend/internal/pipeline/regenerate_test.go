@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -266,6 +269,230 @@ func TestKeepTickFollowsTheWordsThenTheLine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := keepTick(tc.old, tc.text); got != tc.want {
 				t.Errorf("keepTick(%q, %q) = %q, want %q", tc.old, tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// failOnceOnPutIfMatch fails the first conditional write of one key — the
+// append's body write (service.RewriteNoteBody) — and counts the ones after
+// it, so a test can induce the fault an S3 5xx is and then read how many
+// times the body was written once the fault cleared.
+type failOnceOnPutIfMatch struct {
+	repository.Objects
+	key    string
+	mu     sync.Mutex
+	failed bool
+	puts   int
+}
+
+func (o *failOnceOnPutIfMatch) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	if key == o.key {
+		o.mu.Lock()
+		first := !o.failed
+		o.failed = true
+		if !first {
+			o.puts++
+		}
+		o.mu.Unlock()
+		if first {
+			return errInducedObjectFault
+		}
+	}
+	return o.Objects.PutIfMatch(ctx, key, body, contentType, etag)
+}
+
+func (o *failOnceOnPutIfMatch) writes() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.puts
+}
+
+func seedChecklistForRegenerate(t *testing.T, h *harness, noteKey string) model.NoteIndex {
+	t.Helper()
+	note, err := h.store.PutNote(context.Background(), "user1", model.NoteIndex{
+		ID: "list1", Title: "Shopping list", Kind: model.NoteKindChecklist, UpdatedAt: model.Now(),
+		S3MarkdownKey: noteKey,
+		S3MetaKey:     "tenants/user1/notes/list1/meta.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return note
+}
+
+// The append can fail after the extraction has overwritten the recording's
+// clean artefact — an object store fault here — and the claim is handed back
+// with the row at `appending`. Until 2026-09-27 the attempt that resumed
+// there had no record of which lines were the recording's and put the new
+// items in beside the old ones. The extraction keeps a copy of the old items
+// (clean.prev.txt) and the resume reads it: the strip's Retry replaces the
+// old lines exactly once, without a second extraction; and an attempt that
+// finds the list already rewritten — its own earlier try that wrote the
+// block and died before it could say so — finishes without writing.
+func TestAChecklistAppendResumedAfterAFailureReplacesTheOldItemsExactlyOnce(t *testing.T) {
+	const noteKey = "tenants/user1/notes/list1/note.md"
+	objects := &failOnceOnPutIfMatch{Objects: memory.NewObjects(), key: noteKey}
+	h := newHarness(t, harnessOpts{objects: objects, llm: &fake.LLM{ItemsResponse: []string{"eggs", "milk", "butter"}}})
+	ctx := context.Background()
+	note := seedChecklistForRegenerate(t, h, noteKey)
+	seedTranscribedInto(t, h, note, "c_1", "eggs and milk and butter", "", "Milk\nEggs")
+	body := "- [x] Milk\n- [ ] Typed by hand\n- [ ] Eggs\n" + service.CaptureMarker("c_1")
+	if err := h.objects.Put(ctx, noteKey, []byte(body), "text/markdown"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The request path's reset, then the worker's task: the extraction
+	// lands and the body write fails.
+	c1, err := h.store.GetCapture(ctx, "user1", "c_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.ResetForRegenerate(&c1, h.clock.Now())
+	if _, err := h.store.PutCapture(ctx, c1); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(Invocation{Task: TaskRegenerateNote, TenantID: "user1", NoteID: "list1", CaptureIDs: []string{"c_1"}})
+	if err := NewWorker(h.pipeline).Handle(ctx, raw); err == nil {
+		t.Fatal("the task succeeded through an induced body-write fault")
+	}
+	c1, _ = h.store.GetCapture(ctx, "user1", "c_1")
+	if c1.Status != model.StatusAppending || c1.AppendToken != "" || c1.CleanKey == "" {
+		t.Fatalf("after the fault: status=%s token=%q clean=%q; want appending with the claim handed back and the new items stored", c1.Status, c1.AppendToken, c1.CleanKey)
+	}
+	if got, _ := h.objects.Get(ctx, noteKey); string(got) != body {
+		t.Fatalf("the failed write changed the body:\n%s", got)
+	}
+
+	// The strip's Retry: run resumes at the append with the copy.
+	final, err := h.pipeline.Run(ctx, "user1", "c_1")
+	if err != nil || final.Status != model.StatusAppended {
+		t.Fatalf("Retry = %s (%s), %v; want appended", final.Status, final.Error, err)
+	}
+	want := "- [ ] eggs\n- [x] milk\n- [ ] butter\n- [ ] Typed by hand\n" + service.CaptureMarker("c_1")
+	if got, _ := h.objects.Get(ctx, noteKey); string(got) != want {
+		t.Fatalf("checklist after the resumed append:\n%s\nwant:\n%s", got, want)
+	}
+	if calls := h.llm.ItemsCalls(); len(calls) != 1 {
+		t.Errorf("items calls = %d, want the one extraction: the resume does not bill again", len(calls))
+	}
+
+	// The attempt that wrote the block and died before it could say so: the
+	// row at appending under its own fresh claim, the body already rewritten.
+	// The retry inside the lease sees its words are in and finishes the
+	// bookkeeping; the body is not written again.
+	c1, _ = h.store.GetCapture(ctx, "user1", "c_1")
+	c1.Status, c1.AppendedAt = model.StatusAppending, 0
+	c1.AppendToken, c1.AppendClaimedAt = appendToken("c_1", c1.CleanKey), h.clock.Now().Unix()
+	if _, err := h.store.PutCapture(ctx, c1); err != nil {
+		t.Fatal(err)
+	}
+	writes := objects.writes()
+	final, err = h.pipeline.Run(ctx, "user1", "c_1")
+	if err != nil || final.Status != model.StatusAppended {
+		t.Fatalf("retry inside the lease = %s (%s), %v; want appended", final.Status, final.Error, err)
+	}
+	if got, _ := h.objects.Get(ctx, noteKey); string(got) != want {
+		t.Fatalf("checklist after the retry inside the lease:\n%s\nwant:\n%s", got, want)
+	}
+	if n := objects.writes() - writes; n != 0 {
+		t.Errorf("the body was written %d time(s) for items already in the list", n)
+	}
+}
+
+// The task's own retry: Lambda re-delivers a regenerate-note whose run hit a
+// fault, and a recording left mid-way — at appending with its claim handed
+// back, or cleaned and never appended — is finished by it rather than skipped
+// for the strip's Retry to find a quarter of an hour on; the ones never
+// started are run; the cleanup is not billed again for a row whose artefact
+// is stored.
+func TestRegenerateTaskRetryFinishesTheRecordingsLeftMidWay(t *testing.T) {
+	const noteKey = "tenants/user1/notes/note1/note.md"
+	objects := &failOnceOnPutIfMatch{Objects: memory.NewObjects(), key: noteKey}
+	llmFake := &fake.LLM{Response: "Again."}
+	h := newHarness(t, harnessOpts{objects: objects, llm: llmFake})
+	ctx := context.Background()
+	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
+		ID: "note1", Title: "Roof", UpdatedAt: model.Now(),
+		S3MarkdownKey: noteKey, S3MetaKey: "tenants/user1/notes/note1/meta.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTranscribedInto(t, h, note, "c_1", "one", "", "One.")
+	seedTranscribedInto(t, h, note, "c_2", "two", "", "Two.")
+	seedTranscribedInto(t, h, note, "c_3", "three", "", "Three.")
+	for _, id := range []string{"c_1", "c_2", "c_3"} {
+		c, _ := h.store.GetCapture(ctx, "user1", id)
+		service.ResetForRegenerate(&c, h.clock.Now())
+		if id == "c_3" {
+			// An earlier attempt cleaned it and died before the append.
+			c.Status, c.CleanKey = model.StatusCleaned, "tenants/user1/captures/c_3/clean.txt"
+			if err := h.objects.Put(ctx, c.CleanKey, []byte("Three, again."), "text/plain"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := h.store.PutCapture(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := json.Marshal(Invocation{Task: TaskRegenerateNote, TenantID: "user1", NoteID: "note1", CaptureIDs: []string{"c_1", "c_2", "c_3"}})
+	if err := NewWorker(h.pipeline).Handle(ctx, raw); err == nil {
+		t.Fatal("the task succeeded through an induced body-write fault")
+	}
+	if c, _ := h.store.GetCapture(ctx, "user1", "c_1"); c.Status != model.StatusAppending {
+		t.Fatalf("c_1 after the fault = %s, want appending", c.Status)
+	}
+
+	// Lambda's retry, same payload.
+	if err := NewWorker(h.pipeline).Handle(ctx, raw); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	got, _ := h.objects.Get(ctx, noteKey)
+	want := service.CaptureMarker("c_1") + "\nAgain.\n\n" + service.CaptureMarker("c_2") + "\nAgain.\n\n" + service.CaptureMarker("c_3") + "\nThree, again."
+	if string(got) != want {
+		t.Fatalf("body after the retry:\n%s\nwant:\n%s", got, want)
+	}
+	for _, id := range []string{"c_1", "c_2", "c_3"} {
+		if c, _ := h.store.GetCapture(ctx, "user1", id); c.Status != model.StatusAppended {
+			t.Errorf("%s = %s, want appended", id, c.Status)
+		}
+	}
+	if n := llmFake.Calls(); n != 2 {
+		t.Errorf("cleanup calls = %d, want two: c_1 once before the fault, c_2 once, c_3 never (its artefact was stored)", n)
+	}
+}
+
+// replaceChecklistItems on its own: a second pass over a list the first
+// rewrote returns it unchanged, whatever words the old and new items share;
+// the person's deletion of a recording's items stands even when they typed
+// one of the new words; a sub-item is found by its words and the block goes
+// back at the top level.
+func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
+	m := service.CaptureMarker("c_1")
+	prev := []string{"Milk", "Eggs"}
+	text := "- [ ] eggs\n- [ ] milk\n- [ ] butter"
+	first := replaceChecklistItems("- [x] Milk\n- [ ] Typed\n- [ ] Eggs\n"+m, "c_1", prev, text)
+	if want := "- [ ] eggs\n- [x] milk\n- [ ] butter\n- [ ] Typed\n" + m; first != want {
+		t.Fatalf("first pass:\n%s\nwant:\n%s", first, want)
+	}
+	if again := replaceChecklistItems(first, "c_1", prev, text); again != first {
+		t.Errorf("a second pass changed the list:\n%s", again)
+	}
+	cases := []struct {
+		name, body string
+		prev       []string
+		text, want string
+	}{
+		{"landed with no words in common reads as the person's deletion", "- [ ] butter\n- [ ] Typed\n" + m, []string{"Bread"}, "- [ ] butter", "- [ ] butter\n- [ ] Typed\n" + m},
+		{"a deletion is not overruled by a typed line with a new item's words", "- [ ] butter\n" + m, prev, text, "- [ ] butter\n" + m},
+		{"a sub-item is matched by its words and the block is written flat", "- [ ] Typed\n  - [x] Milk\n  - [ ] Eggs\n" + m, prev, text, "- [ ] Typed\n- [ ] eggs\n- [x] milk\n- [ ] butter\n" + m},
+		{"a typed duplicate of a new item folds into the block", "- [ ] Milk\n- [ ] butter\n- [ ] Typed\n" + m, prev, text, "- [ ] eggs\n- [ ] milk\n- [ ] butter\n- [ ] Typed\n" + m},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := replaceChecklistItems(tc.body, "c_1", tc.prev, tc.text); got != tc.want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, tc.want)
 			}
 		})
 	}

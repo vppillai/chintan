@@ -32,9 +32,11 @@ const TaskRegenerateNote = "regenerate-note"
 // one body never wait on each other's stamp. A recording that fails on its
 // own terms — the provider, the spend cap — is left with that verdict for
 // the strip to show and Retry to resume, and the run goes on to the next; an
-// infrastructure fault returns the error, Lambda retries the task, and the
-// recordings already appended are skipped by their status. The whole-note
-// view is regenerated once, at the end, rather than after each append: with
+// infrastructure fault returns the error, Lambda retries the task, the
+// recordings already appended are skipped by their status and the one left
+// mid-way — cleaned, or at appending with its claim handed back — is
+// resumed where it stood (regenerationInFlight). The whole-note view is
+// regenerated once, at the end, rather than after each append: with
 // auto_clean every append would have queued a run, and each run but the
 // last would have been superseded after its model call was billed.
 //
@@ -63,7 +65,10 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 		// recording still in flight is left alone rather than raced.
 		captures, err := service.RegenerableCaptures(ctx, p.cfg.Store, p.cfg.Objects, tenantID, note, p.now())
 		if errors.Is(err, service.ErrRegenerateInFlight) {
+			// The CLI reported this note queued; the log line and the
+			// counter are where an operator learns it was passed over.
 			log.Info("regenerate-note: a recording is still in flight; not regenerating this note now")
+			obs.Count(ctx, "NoteRegenerateSkipped", map[string]string{"Reason": "in_flight"})
 			return nil
 		}
 		if err != nil {
@@ -91,9 +96,9 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 		if err != nil {
 			return fmt.Errorf("pipeline: regenerate-note: get capture: %w", err)
 		}
-		if capture.NoteID != noteID || capture.Status != model.StatusTranscribed || capture.CleanKey != "" {
+		if capture.NoteID != noteID || capture.RawKey == "" || !regenerationInFlight(capture.Status) {
 			// Appended by an earlier attempt of this task, failed on its own
-			// terms, moved elsewhere meanwhile, or never reset: not ours.
+			// terms, moved elsewhere or transcribed again meanwhile: not ours.
 			continue
 		}
 		final, err := p.regenerateCapture(ctx, tenantID, &capture, note)
@@ -103,7 +108,12 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 		if err != nil {
 			return err
 		}
-		done++
+		if final.Status == model.StatusAppended {
+			// Only a landed recording changed the body. One that failed or
+			// was capped left it as it was, and the whole-note view is not
+			// billed over an unchanged body.
+			done++
+		}
 		obs.Count(ctx, "CaptureRegenerated", map[string]string{"Outcome": string(final.Status)})
 	}
 
@@ -122,31 +132,33 @@ func (p *Pipeline) RegenerateNote(ctx context.Context, tenantID, noteID string, 
 	return nil
 }
 
+// regenerationInFlight reports whether status is one the regeneration itself
+// leaves a recording in: reset by the request path (transcribed), or left
+// mid-way by an earlier attempt of the task that hit a fault — the cleanup
+// begun or persisted (cleaning, cleaned), or the append claimed and handed
+// back (appending). Lambda's retry of the task finishes those instead of
+// leaving one row for the strip's Retry a quarter of an hour on. An append
+// still held by a live attempt is refused by the claim, as ever.
+func regenerationInFlight(status model.CaptureStatus) bool {
+	switch status {
+	case model.StatusTranscribed, model.StatusCleaning, model.StatusCleaned, model.StatusAppending:
+		return true
+	}
+	return false
+}
+
 // regenerateCapture is run from the point after transcription for a capture
 // whose transcript is already stored: the cleanup or the item extraction with
-// the current prompt, then the append, which replaces the paragraph by its
-// marker or the items by their words. The instruction strip is not run again
-// — the routed transcript, when there is one, already has the words spoken
-// to the app removed — and the language check is not, since the transcript
-// is the one being kept.
+// the current prompt — or neither, when an earlier attempt of the task did it
+// and died before the append landed — then the append, which replaces the
+// paragraph by its marker or the items by their words. The instruction strip
+// is not run again — the routed transcript, when there is one, already has
+// the words spoken to the app removed — and the language check is not, since
+// the transcript is the one being kept.
 func (p *Pipeline) regenerateCapture(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) (model.CaptureIndex, error) {
-	var previous []string
-	if note.Kind == model.NoteKindChecklist {
-		items, err := p.extractItems(ctx, tenantID, capture, note)
-		if err != nil {
-			return *capture, err
-		}
-		if service.CaptureIsTerminal(capture.Status) {
-			return *capture, p.dropReplacedItems(ctx, tenantID, capture, note, items)
-		}
-		previous = items
-	} else {
-		if err := p.clean(ctx, tenantID, capture, note.Verbatim); err != nil {
-			return *capture, err
-		}
-		if service.CaptureIsTerminal(capture.Status) {
-			return *capture, nil
-		}
+	previous, err := p.cleanForNote(ctx, tenantID, capture, note)
+	if err != nil || service.CaptureIsTerminal(capture.Status) {
+		return *capture, err
 	}
 	return p.append(ctx, tenantID, capture, note, appendOptions{previousItems: previous})
 }

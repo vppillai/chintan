@@ -82,6 +82,21 @@ func CaptureClean(userID, captureID string) (string, error) {
 	return fmt.Sprintf("tenants/%s/captures/%s/clean.txt", userID, captureID), nil
 }
 
+// CaptureCleanPrevious holds what CaptureClean held before the last item
+// extraction overwrote it: the items a checklist recording produced the time
+// before, kept until the append that replaces them by their words has landed,
+// so an append resumed after a failure still knows which lines are the
+// recording's (pipeline.extractItems, replaceChecklistItems).
+func CaptureCleanPrevious(userID, captureID string) (string, error) {
+	if err := check(userID, "userID"); err != nil {
+		return "", err
+	}
+	if err := check(captureID, "captureID"); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("tenants/%s/captures/%s/clean.prev.txt", userID, captureID), nil
+}
+
 // CaptureSegments holds the timestamped raw transcript that drives tap-to-seek
 // playback. Timestamps belong to the raw transcript: cleanup rewrites the text,
 // so cleaned prose carries no reliable time mapping.

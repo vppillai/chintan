@@ -253,7 +253,13 @@ func captureObjectKeys(userID string, c model.CaptureIndex) []string {
 			peaksKey = derived
 		}
 	}
-	return []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, peaksKey}
+	// The copy of the clean artefact a checklist re-append keeps until it
+	// lands (pipeline.extractItems); derived too, since no row field names it.
+	var previousKey string
+	if derived, err := keys.CaptureCleanPrevious(userID, c.ID); err == nil {
+		previousKey = derived
+	}
+	return []string{c.AudioKey, c.RawKey, c.RoutedKey, c.CleanKey, c.SegmentsKey, peaksKey, previousKey}
 }
 
 // deleteObjectIfPresent removes a key, treating "already gone" as success so a

@@ -123,11 +123,12 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 //
 // previous is what the recording's clean artefact held before this call
 // overwrote it — the items it added the last time it was appended — or nil
-// on a first run. It is read here because this is the last moment it exists:
-// a recording transcribed or regenerated again is re-appended over its old
-// items, and a list that has been ticked or reordered holds those items
-// under nobody's marker, so the append finds them by their words
-// (replaceChecklistItems).
+// on a first run. It is read here because this is the last moment it exists
+// at CleanKey: a recording transcribed or regenerated again is re-appended
+// over its old items, and a list that has been ticked or reordered holds
+// those items under nobody's marker, so the append finds them by their words
+// (replaceChecklistItems). A copy is kept at keys.CaptureCleanPrevious for
+// the attempt that resumes at the append after this one fails (previousItems).
 func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) (previous []string, err error) {
 	if err := p.setStatus(ctx, capture, service.StatusCleaning); err != nil {
 		return nil, err
@@ -143,6 +144,19 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	}
 	if before, err := p.cfg.Objects.Get(ctx, cleanKey); err == nil && len(before) > 0 {
 		previous = strings.Split(string(before), "\n")
+		// Kept beside the artefact this call is about to overwrite, because
+		// the append that replaces these items can fail after it — an object
+		// store fault, a stamp wait that ran out — and the attempt that
+		// resumes at the append (run, regenerateCapture) has no other record
+		// of which lines are the recording's; without it the new items went
+		// in beside the old ones (review of #138).
+		prevKey, err := keys.CaptureCleanPrevious(tenantID, capture.ID)
+		if err != nil {
+			return nil, fmt.Errorf("pipeline: previous items key: %w", err)
+		}
+		if err := p.cfg.Objects.Put(ctx, prevKey, before, "text/plain"); err != nil {
+			return nil, fmt.Errorf("pipeline: keep previous items: %w", err)
+		}
 	} else if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("pipeline: get previous items: %w", err)
 	}
@@ -217,6 +231,25 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return previous, p.persist(ctx, capture)
+}
+
+// previousItems reads the copy extractItems kept of a checklist recording's
+// earlier items, for an append resumed after the extraction has already
+// overwritten the artefact at CleanKey. Nil when there is none: the
+// recording's first append.
+func (p *Pipeline) previousItems(ctx context.Context, tenantID, captureID string) ([]string, error) {
+	key, err := keys.CaptureCleanPrevious(tenantID, captureID)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: previous items key: %w", err)
+	}
+	before, err := p.cfg.Objects.Get(ctx, key)
+	if errors.Is(err, repository.ErrNotFound) || (err == nil && len(before) == 0) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("pipeline: get previous items: %w", err)
+	}
+	return strings.Split(string(before), "\n"), nil
 }
 
 // cleanupLanguage is the ISO-639-1 code the cleanup prompt names the

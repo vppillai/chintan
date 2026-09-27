@@ -523,48 +523,61 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		}
 	}
 
-	var previousItems []string
-	switch {
-	case capture.CleanKey != "":
-		// Cleaned already; a retry resumes at the append.
-	case note.Kind == model.NoteKindChecklist:
-		// A checklist takes items, not a cleaned paragraph, and the items
-		// come from the raw transcript: the extraction prompt handles the
-		// words addressed to the app itself, so neither the router's spans
-		// nor the instruction strip below is consulted — the item is not at
-		// the mercy of where a span ended ("Add umbrella to shopping list"
-		// routed as the item "list", owner feedback 2026-09-26). A verbatim
-		// checklist takes the raw transcript itself as its one item, on the
-		// routed path as on the targeted one; the routed text would carry
-		// the same span damage.
-		previous, err := p.extractItems(ctx, tenantID, capture, note)
-		if err != nil {
-			return *capture, err
-		}
-		if service.CaptureIsTerminal(capture.Status) {
-			return *capture, p.dropReplacedItems(ctx, tenantID, capture, note, previous)
-		}
-		previousItems = previous
-	default:
-		if capture.RoutedKey == "" {
-			// Recorded into a note, so routing — and with it the removal of
-			// the words addressed to the app — was skipped.
-			if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
-				return *capture, err
-			}
-			if service.CaptureIsTerminal(capture.Status) {
-				return *capture, nil
-			}
-		}
-		if err := p.clean(ctx, tenantID, capture, note.Verbatim); err != nil {
+	if capture.CleanKey == "" && note.Kind != model.NoteKindChecklist && capture.RoutedKey == "" {
+		// Recorded into a note, so routing — and with it the removal of the
+		// words addressed to the app — was skipped. A checklist is not
+		// stripped: its items come from the raw transcript, and the
+		// extraction prompt handles the words addressed to the app itself,
+		// so neither the router's spans nor this strip is consulted — the
+		// item is not at the mercy of where a span ended ("Add umbrella to
+		// shopping list" routed as the item "list", owner feedback
+		// 2026-09-26). A verbatim checklist takes the raw transcript itself
+		// as its one item, on the routed path as on the targeted one; the
+		// routed text would carry the same span damage.
+		if err := p.stripInstructions(ctx, tenantID, capture, note); err != nil {
 			return *capture, err
 		}
 		if service.CaptureIsTerminal(capture.Status) {
 			return *capture, nil
 		}
 	}
-
+	previousItems, err := p.cleanForNote(ctx, tenantID, capture, note)
+	if err != nil || service.CaptureIsTerminal(capture.Status) {
+		return *capture, err
+	}
 	return p.append(ctx, tenantID, capture, note, appendOptions{autoClean: true, previousItems: previousItems})
+}
+
+// cleanForNote is the stage a retry resumes at once the transcript is stored:
+// the cleanup for a plain note, the item extraction for a checklist, or
+// nothing when CleanKey says an earlier attempt already did it and the append
+// is what is left. It returns the items a checklist recording produced the
+// last time it was appended — from the extraction, or from the copy the
+// extraction set aside when this attempt resumes at the append — for the
+// append to replace by their words (replaceChecklistItems); nil for a plain
+// note or a first append. A recording that ends here (no_content) has its
+// earlier items withdrawn; the caller reads the status before appending. A
+// capture's own run and a regeneration (regenerateCapture) share it so that
+// neither forgets a resume the other knows about.
+func (p *Pipeline) cleanForNote(ctx context.Context, tenantID string, capture *model.CaptureIndex, note model.NoteIndex) ([]string, error) {
+	switch {
+	case capture.CleanKey != "":
+		if note.Kind != model.NoteKindChecklist {
+			return nil, nil
+		}
+		return p.previousItems(ctx, tenantID, capture.ID)
+	case note.Kind == model.NoteKindChecklist:
+		previous, err := p.extractItems(ctx, tenantID, capture, note)
+		if err != nil {
+			return nil, err
+		}
+		if service.CaptureIsTerminal(capture.Status) {
+			return nil, p.dropReplacedItems(ctx, tenantID, capture, note, previous)
+		}
+		return previous, nil
+	default:
+		return nil, p.clean(ctx, tenantID, capture, note.Verbatim)
+	}
 }
 
 // wantsNoteLanguage reports whether the transcript at RawKey was made in a

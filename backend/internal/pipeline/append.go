@@ -116,7 +116,7 @@ func (p *Pipeline) append(ctx context.Context, tenantID string, capture *model.C
 		// window of one object read and one write — dead-letters and raises
 		// the alarm, and the user's retry after the lease takes the claim over
 		// and does the append once.
-		if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText); err != nil {
+		if written, err := p.paragraphInNote(ctx, note.S3MarkdownKey, capture.ID, cleanedText, opts.previousItems); err != nil {
 			return current, fmt.Errorf("pipeline: check note for interrupted append: %w", err)
 		} else if written {
 			obs.Log(ctx).Info("append claim is held but the capture's paragraph is already in the note; finishing the interrupted attempt",
@@ -259,11 +259,15 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 	return appended, nil
 }
 
-// paragraphInNote reports whether the note body carries text as the paragraph
-// under captureID's marker — the exact statement that this attempt's words
-// have been written. A checklist item the person ticked meanwhile still
-// counts: the words are there, the tick is theirs.
-func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text string) (bool, error) {
+// paragraphInNote reports whether the note body already carries this
+// attempt's words — the exact statement that the append has been written.
+// For a paragraph under captureID's marker that is text standing there; a
+// checklist item the person ticked meanwhile still counts, the words are
+// there and the tick is theirs. For a recording whose items live under
+// nobody's marker (previousItems set, see replaceChecklistItems) it is that
+// replacing them would change nothing: the new lines are in, or the person
+// took the old ones out.
+func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text string, previousItems []string) (bool, error) {
 	existing, err := p.cfg.Objects.Get(ctx, noteKey)
 	if errors.Is(err, repository.ErrNotFound) {
 		return false, nil
@@ -271,8 +275,15 @@ func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text
 	if err != nil {
 		return false, err
 	}
-	_, old, found := service.CutCaptureParagraph(string(existing), captureID)
-	return found && old == keepTick(old, text), nil
+	body := string(existing)
+	_, old, found := service.CutCaptureParagraph(body, captureID)
+	if !found {
+		return false, nil
+	}
+	if old == keepTick(old, text) {
+		return true, nil
+	}
+	return previousItems != nil && replaceChecklistItems(body, captureID, previousItems, text) == body, nil
 }
 
 // appendToken is deterministic so a retry of the same work recognises its own
@@ -371,7 +382,13 @@ func checklistLineText(line string) (text string, ok bool) {
 	default:
 		return "", false
 	}
-	return strings.ToLower(strings.Join(strings.Fields(trimmed), " ")), true
+	return foldWords(trimmed), true
+}
+
+// foldWords is a line's words as they are compared: whitespace runs collapsed
+// the way checklistItems writes them, case folded.
+func foldWords(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // replaceChecklistItems puts text — a recording's items, freshly extracted —
@@ -393,6 +410,16 @@ func checklistLineText(line string) (text string, ok bool) {
 //     are left the person deleted that recording's items, and putting them
 //     back would overrule that: the body is returned as it was.
 //
+// Lines with the NEW items' words are taken up too, each once, and go back
+// as part of the new block. That is what makes a second pass over a list the
+// first pass already rewrote return it unchanged — the attempt that wrote the
+// block and died before it could say so is finished, not repeated (append's
+// claim-held branch, paragraphInNote) — and it means a typed line with the
+// same words as a new item is folded into the block rather than kept as a
+// duplicate. Indent is not read: a sub-item is matched by its words like any
+// line, and the block is written at the top level (checklists.md,
+// "indent-blind").
+//
 // An empty text removes the recording's items and writes nothing in their
 // place: the recording, extracted again, named nothing to add.
 func replaceChecklistItems(body, captureID string, previous []string, text string) string {
@@ -400,28 +427,42 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 	if !found || strings.TrimSpace(old) != "" || len(previous) == 0 {
 		return replaceCaptureParagraph(body, captureID, text)
 	}
-	want := map[string]int{}
+	wanted := map[string]int{}
 	for _, item := range previous {
-		if t := strings.ToLower(strings.Join(strings.Fields(item), " ")); t != "" {
-			want[t]++
+		if t := foldWords(item); t != "" {
+			wanted[t]++
+		}
+	}
+	fresh := map[string]int{}
+	for _, line := range strings.Split(text, "\n") {
+		if t, ok := checklistLineText(line); ok {
+			fresh[t]++
 		}
 	}
 	lines := strings.Split(body, "\n")
 	kept := make([]string, 0, len(lines))
 	var removed []string
-	at := -1
+	at, oldSeen := -1, false
 	for _, line := range lines {
-		if t, ok := checklistLineText(line); ok && want[t] > 0 {
-			want[t]--
-			removed = append(removed, line)
-			if at < 0 {
-				at = len(kept)
-			}
+		t, ok := checklistLineText(line)
+		isOld, isNew := ok && wanted[t] > 0, ok && fresh[t] > 0
+		if !isOld && !isNew {
+			kept = append(kept, line)
 			continue
 		}
-		kept = append(kept, line)
+		if isOld {
+			wanted[t]--
+			oldSeen = true
+		}
+		if isNew {
+			fresh[t]--
+		}
+		removed = append(removed, line)
+		if at < 0 {
+			at = len(kept)
+		}
 	}
-	if at < 0 {
+	if !oldSeen {
 		return body
 	}
 	out := make([]string, 0, len(kept)+len(lines))
