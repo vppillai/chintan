@@ -50,7 +50,7 @@ func TestLiveEval(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
 				}
-				t.Logf("%s | %s %s %q conf=%.2f | %q", tc.Transcript, d.Action, d.NoteID, d.Title, d.Confidence, d.Content)
+				t.Logf("%s | %s %s %q checklist=%v conf=%.2f | %q", tc.Transcript, d.Action, d.NoteID, d.Title, d.Checklist, d.Confidence, d.Content)
 				checkRoute(t, tc, d, idOf)
 			})
 		}
@@ -136,6 +136,11 @@ func checkRoute(t *testing.T, tc routeCase, d RouteDecision, idOf map[string]str
 	}
 	if tc.Title != "" && d.Title != tc.Title {
 		t.Errorf("title = %q, want %q", d.Title, tc.Title)
+	}
+	// kind: the parser keeps it for a new note only, so an append passes
+	// whatever the model said; the case's action assertion is what pins that.
+	if tc.Kind != "" && d.Action == RouteNew && d.Checklist != (tc.Kind == "checklist") {
+		t.Errorf("checklist = %v, want kind %s", d.Checklist, tc.Kind)
 	}
 	// title_names: the decision names that note, as a new note with its
 	// title or as an append to it — the same outcome once

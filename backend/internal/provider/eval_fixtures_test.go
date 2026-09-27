@@ -27,6 +27,9 @@ func TestEvalFixturesParse(t *testing.T) {
 			}
 		}
 		checkScriptName(t, "route", i, tc.TitleScript)
+		if tc.Kind != "" && tc.Kind != "note" && tc.Kind != "checklist" {
+			t.Errorf("route case %d: kind %q is not note or checklist", i+1, tc.Kind)
+		}
 	}
 	for i, tc := range fx.Cleanup.Cases {
 		checkScriptName(t, "cleanup", i, tc.Script)
@@ -125,6 +128,7 @@ type routeCase struct {
 	Dest             string   `json:"note"`
 	MinConfidence    *float64 `json:"min_confidence"`
 	Title            string   `json:"title"`
+	Kind             string   `json:"kind"`
 	TitleNames       string   `json:"title_names"`
 	TitleExcludes    []string `json:"title_excludes"`
 	TitleScript      string   `json:"title_script"`

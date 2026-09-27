@@ -56,9 +56,16 @@ appended. Every row should hold on three of three runs, as the eval's
 | 17 | add this to money we are forty thousand over on the kitchen | Kitchen rebuild | we are forty thousand over on the kitchen | **tag**, one word |
 | 18 | create a shopping list and add chickpeas and green gram into it | Shopping list | items "Chickpeas", "Green gram" | owner sentence (C7) |
 | 19 | Add umbrella to shopping list | Shopping list | item "Umbrella" | owner sentence (C7) |
+| 20 | add milk to the shopping list | Shopping list | item "Milk" | owner sentence 2026-09-27 (F5), the list listed |
+| 21 | add milk to my groceries list | a **new checklist** (title without "add milk"; no Groceries note may exist beforehand) | item "Milk" | F5: the router's `kind` makes the new note a checklist, so the item is extracted in the same run and the body is never the sentence |
+| 22 | packing list for the weekend passport charger sunscreen and the travel adapter | a **new checklist** | items "Passport", "Charger", "Sunscreen", "Travel adapter" | F5: dictated items name a list |
 
 ## Also check
 
+- **F5, the kind.** Rows 21 and 22 must show on Home as checklists ("0 of 1
+  done", "0 of 4 done") without anyone converting them; a plain note holding
+  the sentence is the 2026-09-27 fault come back. Delete the two notes
+  between runs so the next run creates them again.
 - **PR-D2, the window.** A note the owner has not touched in months (below
   the old fifty most recent) named by title routes to it. Pick the oldest
   note on Home's list and say "add this to my <its title> note testing the
