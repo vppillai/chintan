@@ -133,18 +133,30 @@ export function setItemText(body: string, index: number, text: string): string {
 /**
  * A new open item after the item at `index`, or at the end of the list when
  * `index` is null — the "Add an item" row. It sits at the depth of the item
- * it follows, so Enter in a sub-item starts another sub-item.
+ * it follows, so Enter in a sub-item starts another sub-item; after a parent
+ * with sub-items it is the parent's first sub-item, as an outliner does,
+ * because the new row appears right under the parent, and a top-level line
+ * there would have taken the parent's sub-items for its own.
  */
 export function insertItemAfter(body: string, index: number | null, text = ''): string {
   return withItems(body, (items) => {
     const at = index === null ? items.length : Math.min(index + 1, items.length);
-    const depth = index === null ? 0 : (items[index]?.depth ?? 0);
+    const item = index === null ? undefined : items[index];
+    // A line deeper than the item right after it means the item is a parent.
+    const depth = item ? item.depth + ((items[at]?.depth ?? 0) > item.depth ? 1 : 0) : 0;
     items.splice(at, 0, { text: text.replace(/[\r\n]+/g, ' ').trim(), done: false, depth });
   });
 }
 
+/**
+ * Drops the item at `index`. A parent's sub-items come up a level rather
+ * than hanging from whichever of them the parser would read as the new
+ * parent: they were the job's parts, and the job is gone, not the first
+ * part.
+ */
 export function removeItem(body: string, index: number): string {
   return withItems(body, (items) => {
+    for (const i of blockOf(items, index).slice(1)) (items[i] as ChecklistItem).depth -= 1;
     items.splice(index, 1);
   });
 }
@@ -168,12 +180,18 @@ function parentOf(items: readonly ChecklistItem[], index: number): number | null
  * Whether `nestUnder` would change anything: `under` stands above `index`
  * and there is a level left to go — one under `under`, never past
  * `MAX_DEPTH`. The first open item has no row above it, so it can never be
- * a sub-item; an item already as deep as `under` allows stays.
+ * a sub-item; an item already as deep as `under` allows stays. Neither
+ * `under` nor its own parent may be done: an open part under a finished job
+ * is what `toggleItem` never writes, and a body written elsewhere with a
+ * done parent over an open sub-item must not gain a second one through it.
  */
 export function canNest(items: readonly ChecklistItem[], index: number, under: number): boolean {
   const item = items[index];
   const parent = items[under];
-  return !!item && !!parent && under < index && Math.min(MAX_DEPTH, parent.depth + 1) > item.depth;
+  if (!item || !parent || under >= index || parent.done) return false;
+  const grandparent = parentOf(items, under);
+  if (grandparent !== null && items[grandparent]?.done) return false;
+  return Math.min(MAX_DEPTH, parent.depth + 1) > item.depth;
 }
 
 /**
