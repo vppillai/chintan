@@ -206,4 +206,4 @@ The pipeline: upload → `appended_at` in **~4 s** for an 8 s clip; the UI adds 
 ## Scripts and artefacts
 
 - The scripts that produced this pass lived in `frontend/qa/` until 8f80f59 (the last commit to carry them); they drove the pre-#75 UI — a top-level Select button, a bulk Archive action, `.bulk-bar` — and were removed. See git history.
-- Screenshots referenced above are in this directory (`mobile-*`, `desktop-*`, `setup-*`); `old-build/` holds the pre-#22 evidence. Full request/console logs: `~/temp/chintan-qa/frontend/qa/shots/*.log.json` on orb.
+- The screenshots named in the **Evidence** lines above (`mobile-*`, `desktop-*`, `setup-*`, and `old-build/` for the pre-#22 evidence) were removed from the repository on 2026-09-27 (CH-O3): they showed a UI that no longer exists — the pre-#75 Home, the typed delete, the note action bar — and cost every clone 7.2 MB. The filenames still identify each shot; the files are in git history before the merge of that PR (`git log --diff-filter=D -- docs/qa/2026-09-04/`). Full request/console logs: `~/temp/chintan-qa/frontend/qa/shots/*.log.json` on orb.
