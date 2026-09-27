@@ -17,8 +17,10 @@ import { expect, noteAction, test } from './fixtures.ts';
  * neither produce nor show.
  *
  * No typed word anywhere (owner, 2026-09-26: "I have to type delete. I don't
- * like that UX"). Delete on Home archives on the tap and offers Undo in a
- * toast; Delete forever, in the archive, is a plain confirm.
+ * like that UX"). Delete on Home asks first — "Delete “<title>”?", Cancel
+ * under Enter (owner, 2026-09-27: "ask are you sure, don't directly
+ * archive") — then archives and offers Undo in a toast; Delete forever, in
+ * the archive, is a plain confirm of its own.
  *
  * These run against the stubbed API in `fixtures.ts`, which implements the same
  * four operations `openapi.yaml` declares.
@@ -33,7 +35,7 @@ async function tabTo(page: Page, name: string): Promise<void> {
   throw new Error(`Tab never reached "${name}"`);
 }
 
-test('Delete on a note archives it with no dialog, and Undo on the library restores it', async ({
+test('Delete on a note asks first, archives on the answer, and Undo on the library restores it', async ({
   page,
   api,
 }) => {
@@ -42,7 +44,21 @@ test('Delete on a note archives it with no dialog, and Undo on the library resto
 
   await noteAction(page, 'Delete');
 
-  // No dialog: back on the library, and the app is not left sitting on a note that is gone.
+  // The question names the note and says where it goes; Enter lands on
+  // Cancel, so the accidental Delete backs out with nothing gone.
+  const dialog = page.getByRole('dialog', { name: 'Delete “Roof repair”?' });
+  await expect(dialog).toContainText('It is kept in the Archive for 30 days, then gone for good.');
+  await expect(dialog.getByRole('textbox')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/notes\/roof-repair$/);
+  expect(api.notes['roof-repair']?.archived).toBe(false);
+
+  await noteAction(page, 'Delete');
+  await dialog.getByRole('button', { name: 'Delete' }).click();
+
+  // Back on the library: the app is not left sitting on a note that is gone.
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('button', { name: /roof repair/i })).toHaveCount(0);
@@ -67,6 +83,7 @@ test('Delete on a row archives it, and Undo is reached from the keyboard', async
   // The row's ⋮ has Pin, Delete and Select — no separate Archive on Home.
   await expect(page.getByRole('menuitem')).toHaveText(['Pin', 'Delete', 'Select']);
   await page.getByRole('menuitem', { name: 'Delete' }).click();
+  await page.getByRole('dialog', { name: 'Delete “Roof repair”?' }).getByRole('button', { name: 'Delete' }).click();
 
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(row).toHaveCount(0);
@@ -192,10 +209,13 @@ test('several notes can be deleted at once from the library, and Undo brings the
   const tabs = await page.locator('.tab-bar').boundingBox();
   expect(bar!.y + bar!.height).toBeLessThanOrEqual(tabs!.y + 1);
 
-  // One destructive action, no dialog.
+  // One destructive action, behind a count.
   const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
   await expect(toolbar.getByRole('button')).toHaveText(['Deselect all', 'Delete', 'Cancel']);
   await toolbar.getByRole('button', { name: 'Delete' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Delete 2 notes?' });
+  await expect(dialog).toContainText('They are kept in the Archive for 30 days, then gone for good.');
+  await dialog.getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   await expect(page.getByText(/tap PTT to record your first note/i)).toBeVisible();

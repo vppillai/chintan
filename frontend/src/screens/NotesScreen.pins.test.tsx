@@ -1,5 +1,5 @@
 import { onlineManager } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -234,6 +234,7 @@ describe('pinned notes on Home', () => {
 
     await user.click(moreFor('One'));
     await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
       expect(pinnedTitles()).toEqual(['Two']);
     });

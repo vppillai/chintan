@@ -14,6 +14,7 @@ import type { NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
+import { DeleteConfirm } from '@/components/DeleteConfirm.tsx';
 import { DownloadButton } from '@/components/DownloadButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
@@ -57,8 +58,10 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * (owner, 2026-09-26: no typed word anywhere):
  *
  *   Delete        the archive. Reversible for as long as the purge window
- *                 lasts, so it asks nothing: the note goes, the screen returns
- *                 to the library, and the toast there offers Undo.
+ *                 lasts. It still asks once (owner, 2026-09-27: "ask are you
+ *                 sure, don't directly archive" — `DeleteConfirm`, which says
+ *                 where the note goes); then the note goes, the screen
+ *                 returns to the library, and the toast there offers Undo.
  *   Delete for    irreversible, and it takes the recordings and the transcripts
  *   ever          with it, so it names what goes — the title is in the
  *                 sentence — and asks once, plainly, with focus on Cancel.
@@ -95,7 +98,7 @@ export function NoteMenu({
   // A pin made offline would pause until the network returned and then fire
   // with a version the cache may no longer hold (review 2026-09-24, R4-11).
   const online = useOnline();
-  const [confirmingPurge, setConfirmingPurge] = useState(false);
+  const [confirming, setConfirming] = useState<'delete' | 'purge' | null>(null);
 
   const busy =
     archive.isPending || restore.isPending || undo.isPending || purge.isPending || pin.isPending;
@@ -129,7 +132,7 @@ export function NoteMenu({
             destructive: true,
             disabled: busy,
             onSelect: () => {
-              setConfirmingPurge(true);
+              setConfirming('purge');
             },
           },
         ]
@@ -139,25 +142,29 @@ export function NoteMenu({
             destructive: true,
             disabled: busy,
             onSelect: () => {
-              archive.mutate(note.id, {
-                // `replace: true` on both paths is deliberate: the note's own
-                // URL is now either archived or gone, and leaving it in the
-                // history means Back walks straight into a screen that 404s.
-                // The toast outlives this menu — it is the shell's — and Undo
-                // restores through this hook, whose own `onSuccess` refetches
-                // the lists whether or not the menu is still mounted; handed
-                // the note as it was, it re-pins a pinned one (`useUndoDelete`).
-                onSuccess: () => {
-                  showDeleted(1, () => {
-                    undo.mutate([note]);
-                  });
-                  void navigate(ROUTES.notes, { replace: true });
-                },
-              });
+              setConfirming('delete');
             },
           },
         ]),
   ];
+
+  const archiveNow = (): void => {
+    archive.mutate(note.id, {
+      // `replace: true` on both paths is deliberate: the note's own URL is
+      // now either archived or gone, and leaving it in the history means
+      // Back walks straight into a screen that 404s. The toast outlives this
+      // menu — it is the shell's — and Undo restores through this hook, whose
+      // own `onSuccess` refetches the lists whether or not the menu is still
+      // mounted; handed the note as it was, it re-pins a pinned one
+      // (`useUndoDelete`).
+      onSuccess: () => {
+        showDeleted(1, () => {
+          undo.mutate([note]);
+        });
+        void navigate(ROUTES.notes, { replace: true });
+      },
+    });
+  };
 
   return (
     <>
@@ -169,17 +176,30 @@ export function NoteMenu({
         </p>
       )}
 
+      <DeleteConfirm
+        open={confirming === 'delete'}
+        count={1}
+        title={note.title}
+        onCancel={() => {
+          setConfirming(null);
+        }}
+        onConfirm={() => {
+          setConfirming(null);
+          archiveNow();
+        }}
+      />
+
       <ConfirmDialog
-        open={confirmingPurge}
+        open={confirming === 'purge'}
         title="Delete this note forever?"
         body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel="Delete forever"
         destructive
         onCancel={() => {
-          setConfirmingPurge(false);
+          setConfirming(null);
         }}
         onConfirm={() => {
-          setConfirmingPurge(false);
+          setConfirming(null);
           purge.mutate(note.id, {
             // Back to the archive, which is where this note was. Staying put
             // would leave the screen showing a note the server no longer has.
