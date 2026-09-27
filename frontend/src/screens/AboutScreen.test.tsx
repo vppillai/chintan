@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, RouterProvider, createMemoryRouter } from 'react-router';
 import { describe, expect, it } from 'vitest';
@@ -57,6 +57,17 @@ describe('About', () => {
     expect(screen.getByText(/waits at the top of your notes/i)).toBeInTheDocument();
     // Cleanup follows the note.
     expect(screen.getByText(/a note marked verbatim is left exactly as spoken/i)).toBeInTheDocument();
+  });
+
+  it('says other devices can post in with a key, in one sentence that sends the reader to You for the rest', () => {
+    mountAlone();
+    // One sentence, no recipes: those live on the Devices card (owner, 2026-09-27).
+    const devices = screen.getByText(/other devices can post recordings and text into your notes with a device key/i);
+    expect(devices.closest('.about__section')).toContainElement(
+      screen.getByRole('heading', { name: 'How filing works' }),
+    );
+    expect(within(devices).getByRole('link', { name: /devices & shortcuts/i })).toHaveAttribute('href', '/settings');
+    expect(screen.queryByText(/pebble/i)).toBeNull();
   });
 
   it('says where each kind of data lives, in the reader’s own account, and for how long', () => {

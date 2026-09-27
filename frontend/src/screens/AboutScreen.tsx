@@ -118,6 +118,15 @@ export function AboutScreen() {
             <em>Polished</em> tidies the wording as well, and a note marked verbatim is left
             exactly as spoken.
           </p>
+          <p>
+            Other devices can post recordings and text into your notes with a device key &mdash; a
+            watch, a ring, a phone shortcut &mdash; and each is filed the same way. The keys, and
+            how to point each device at the app, are under{' '}
+            <Link className="text-link" to={ROUTES.settings}>
+              Devices &amp; shortcuts
+            </Link>{' '}
+            on You.
+          </p>
         </div>
       </section>
 

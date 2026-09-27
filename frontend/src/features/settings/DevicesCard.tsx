@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { ApiError } from '@/api/problem.ts';
 import { useCreateDevice, useDeleteDevice, useDevices } from '@/api/queries.ts';
@@ -8,6 +8,7 @@ import { CopyButton } from '@/components/CopyButton.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import { config } from '@/config/env.ts';
 import { describeAgo, formatRowTime } from '@/features/notes/groups.ts';
+import { REPOSITORY_URL } from '@/screens/AboutScreen.tsx';
 
 import { RowButton, SettingsCard } from './SettingsCard.tsx';
 import { formatMegabytes } from './usage.ts';
@@ -86,6 +87,8 @@ function inboxTextUrl(apiUrl: string = config.apiUrl): string {
 
 /** What the person pastes their key over in every recipe. */
 const KEY_PLACEHOLDER = 'YOUR_KEY';
+/** The README's fuller recipes — text shortcuts, Tasker, the two-step upload — which the card does not repeat. */
+export const CONNECT_DOCS_URL = `${REPOSITORY_URL}#connect-a-device`;
 
 /**
  * A terminal recipe: one file, one request. `m4a` because that is what a
@@ -423,11 +426,14 @@ export function DevicesCard() {
 }
 
 /**
- * How the common clients are pointed at the inbox. Four recipes behind
- * disclosures, each with its copy button, and one sentence for everything
- * else — the point of a bearer key is that nothing here is special. The
- * ring's is the one that posts a form rather than a file; the inbox reads
- * both, so the recipe is still an address and a header.
+ * How the common clients are pointed at the inbox: one sentence, then five
+ * disclosures, each a chevron on a 44 px summary — the four clients with
+ * their copy buttons, and one for everything else, which holds the raw
+ * addresses, the note-id header and the README link. The addresses used to
+ * sit under the folds as a paragraph of long text, and the owner asked for
+ * it folded (2026-09-27). The ring's is the one that posts a form rather than
+ * a file; the inbox reads both, so the recipe is still an address and a
+ * header.
  */
 function Recipes() {
   const audioUrl = inboxAudioUrl();
@@ -436,111 +442,107 @@ function Recipes() {
     <div className="recipes">
       <h3 className="recipes__title">Connect a device</h3>
       <p className="recipes__lead">
-        Everything posts to the same address with your key in one header. The recording is
-        transcribed and filed exactly as one made here.
-      </p>
-      <p className="recipes__lead">
-        To file into one note every time, add the header <code>X-Chintan-Note-Id</code> with the
-        note&rsquo;s id (the last part of its address).
+        Everything posts to the same address with your key in one header, and is transcribed and
+        filed exactly as a recording made here.
       </p>
 
-      <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">
-          <Icon name="chevron-right" size={16} className="recipe__chevron" />
-          From a terminal (curl)
-        </summary>
-        <div className="you-card__more-body">
-          <pre className="recipe__code">{curl}</pre>
-          <div>
-            <CopyButton label="Copy command" text={() => curl} className="settings-status__action" />
-          </div>
+      <Recipe title="From a terminal (curl)">
+        <pre className="recipe__code">{curl}</pre>
+        <div>
+          <CopyButton label="Copy command" text={() => curl} className="settings-status__action" />
         </div>
-      </details>
+      </Recipe>
 
-      <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">
-          <Icon name="chevron-right" size={16} className="recipe__chevron" />
-          iPhone or Apple Watch (Shortcuts)
-        </summary>
-        <div className="you-card__more-body">
-          <ol className="recipe__steps">
-            <li>
-              In Shortcuts, tap + and add <strong>Record Audio</strong> (Finish Recording: On Tap).
-            </li>
-            <li>
-              Add <strong>Get Contents of URL</strong>. URL: <code>{audioUrl}</code>. Method:
-              POST. Headers: <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>,{' '}
-              <code>Content-Type</code> = <code>audio/m4a</code>. Request Body: File → Recorded
-              Audio.
-            </li>
-            <li>
-              Name it &ldquo;{config.appName}&rdquo; and put it on the Home Screen, the Action
-              button or Back Tap; a watch runs it from its Shortcuts app.
-            </li>
-          </ol>
-          <div>
-            <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
-          </div>
+      <Recipe title="iPhone or Apple Watch (Shortcuts)">
+        <ol className="recipe__steps">
+          <li>
+            In Shortcuts, tap + and add <strong>Record Audio</strong> (Finish Recording: On Tap).
+          </li>
+          <li>
+            Add <strong>Get Contents of URL</strong>. URL: <code>{audioUrl}</code>. Method: POST.
+            Headers: <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>,{' '}
+            <code>Content-Type</code> = <code>audio/m4a</code>. Request Body: File → Recorded
+            Audio.
+          </li>
+          <li>
+            Name it &ldquo;{config.appName}&rdquo; and put it on the Home Screen, the Action button
+            or Back Tap; a watch runs it from its Shortcuts app.
+          </li>
+        </ol>
+        <div>
+          <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
         </div>
-      </details>
+      </Recipe>
 
-      <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">
-          <Icon name="chevron-right" size={16} className="recipe__chevron" />
-          Android (HTTP Shortcuts app)
-        </summary>
-        <div className="you-card__more-body">
-          <ol className="recipe__steps">
-            <li>
-              Install <strong>HTTP Shortcuts</strong> (free, on Google Play and F-Droid) and create
-              a shortcut. Method: POST. URL: <code>{audioUrl}</code>.
-            </li>
-            <li>
-              Request Headers: <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>,{' '}
-              <code>Content-Type</code> = <code>audio/m4a</code>. Request Body: File, with the
-              source set to record audio when it runs (older versions offer a file picker
-              instead).
-            </li>
-            <li>Place it on the home screen or as a Quick Settings tile.</li>
-          </ol>
-          <div>
-            <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
-          </div>
+      <Recipe title="Android (HTTP Shortcuts app)">
+        <ol className="recipe__steps">
+          <li>
+            Install <strong>HTTP Shortcuts</strong> (free, on Google Play and F-Droid) and create a
+            shortcut. Method: POST. URL: <code>{audioUrl}</code>.
+          </li>
+          <li>
+            Request Headers: <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>,{' '}
+            <code>Content-Type</code> = <code>audio/m4a</code>. Request Body: File, with the source
+            set to record audio when it runs (older versions offer a file picker instead).
+          </li>
+          <li>Place it on the home screen or as a Quick Settings tile.</li>
+        </ol>
+        <div>
+          <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
         </div>
-      </details>
+      </Recipe>
 
-      <details className="you-card__more recipe">
-        <summary className="you-card__more-summary">
-          <Icon name="chevron-right" size={16} className="recipe__chevron" />
-          Pebble Index 01 ring
-        </summary>
-        <div className="you-card__more-body">
-          <ol className="recipe__steps">
-            <li>
-              In the Pebble app, open <strong>Index</strong> → <strong>Webhook</strong>. URL:{' '}
-              <code>{audioUrl}</code>.
-            </li>
-            <li>
-              Add a header <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>. The
-              bare key, without &ldquo;Bearer&rdquo;, works too.
-            </li>
-            <li>
-              Send the <strong>Recording</strong> (or <strong>Both</strong>). A note from the ring
-              lands like any recording: transcribed, filed and cleaned.
-            </li>
-          </ol>
-          <div>
-            <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
-          </div>
+      <Recipe title="Pebble Index 01 ring">
+        <ol className="recipe__steps">
+          <li>
+            In the Pebble app, open <strong>Index</strong> → <strong>Webhook</strong>. URL:{' '}
+            <code>{audioUrl}</code>.
+          </li>
+          <li>
+            Add a header <code>Authorization</code> = <code>Bearer {KEY_PLACEHOLDER}</code>. The
+            bare key, without &ldquo;Bearer&rdquo;, works too.
+          </li>
+          <li>
+            Send the <strong>Recording</strong> (or <strong>Both</strong>). A note from the ring
+            lands like any recording: transcribed, filed and cleaned.
+          </li>
+        </ol>
+        <div>
+          <CopyButton label="Copy address" text={() => audioUrl} className="settings-status__action" />
         </div>
-      </details>
+      </Recipe>
 
-      <p className="recipes__note">
-        Watches, rings and other apps: anything that can POST a file with one header works.
-        Send audio to <code>{audioUrl}</code>, or text as{' '}
-        <code>{'{"text": "…"}'}</code> to <code>{inboxTextUrl()}</code>, with{' '}
-        <code>Authorization: Bearer {KEY_PLACEHOLDER}</code>.
-      </p>
+      <Recipe title="Other apps, and filing into one note">
+        <p className="recipes__note">
+          Watches, rings and other apps: anything that can POST a file with one header works. Send
+          audio to <code>{audioUrl}</code>, or text as <code>{'{"text": "…"}'}</code> to{' '}
+          <code>{inboxTextUrl()}</code>, with <code>Authorization: Bearer {KEY_PLACEHOLDER}</code>.
+        </p>
+        <p className="recipes__note">
+          To file into one note every time, from any of these, add the header{' '}
+          <code>X-Chintan-Note-Id</code> with the note&rsquo;s id (the last part of its address).
+        </p>
+        <p className="recipes__note">
+          Text shortcuts, Tasker and the two-step upload for long recordings are in the{' '}
+          <a className="text-link" href={CONNECT_DOCS_URL} target="_blank" rel="noopener noreferrer">
+            README on github.com
+          </a>
+          .
+        </p>
+      </Recipe>
     </div>
+  );
+}
+
+/** One recipe: a native disclosure, closed until tapped, whose summary is the card's chevron row. */
+function Recipe({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="you-card__more recipe">
+      <summary className="you-card__more-summary">
+        <Icon name="chevron-right" size={16} className="recipe__chevron" />
+        {title}
+      </summary>
+      <div className="you-card__more-body">{children}</div>
+    </details>
   );
 }
