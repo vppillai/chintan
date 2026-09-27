@@ -69,14 +69,33 @@ func RegenerableCaptures(ctx context.Context, store repository.Store, objects re
 	if AppendInProgress(note, now) {
 		return nil, ErrRegenerateInFlight
 	}
-	all, err := repository.DrainPages(ctx, MaxRegenerateCaptures, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
+	// The listing is GSI1's projection — status, the keys, the times of the
+	// capture — and not the whole row: it carries no last_progress_at to
+	// judge a stuck capture by, and a row written back from it would drop
+	// the language, the source and the timing record. So the listing picks
+	// the candidates and each is read whole before it is judged or returned.
+	listed, err := repository.DrainPages(ctx, MaxRegenerateCaptures, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
 		return store.ListCapturesByNote(ctx, userID, note.ID, opts)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list captures: %w", err)
 	}
-	for _, c := range all {
-		if !model.IsTerminalStatus(c.Status) && !CaptureStuck(c, now) {
+	whole := func(c model.CaptureIndex) (model.CaptureIndex, error) {
+		full, err := store.GetCapture(ctx, userID, c.ID)
+		if err != nil {
+			return model.CaptureIndex{}, fmt.Errorf("failed to get capture: %w", err)
+		}
+		return full, nil
+	}
+	for _, c := range listed {
+		if model.IsTerminalStatus(c.Status) {
+			continue
+		}
+		full, err := whole(c)
+		if err != nil {
+			return nil, err
+		}
+		if !model.IsTerminalStatus(full.Status) && !CaptureStuck(full, now) {
 			return nil, ErrRegenerateInFlight
 		}
 	}
@@ -90,7 +109,7 @@ func RegenerableCaptures(ctx context.Context, store repository.Store, objects re
 	body := string(raw)
 
 	var out []model.CaptureIndex
-	for _, c := range all {
+	for _, c := range listed {
 		if c.Status != model.StatusAppended || c.RawKey == "" {
 			continue
 		}
@@ -99,7 +118,11 @@ func RegenerableCaptures(ctx context.Context, store repository.Store, objects re
 				continue
 			}
 		}
-		out = append(out, c)
+		full, err := whole(c)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, full)
 	}
 	// Oldest first: the order the note was dictated in, so a body read while
 	// the run is half way through reads as the note did.

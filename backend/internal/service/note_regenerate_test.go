@@ -20,7 +20,13 @@ func TestRequestRegenerateResetsWhatQualifiesAndHandsOverOnce(t *testing.T) {
 	n := h.note("u", "Roof", body)
 	// Newest first in the store; the hand-off is oldest first.
 	h.appended("u", n.ID, "c_new", "2026-01-01T10:00:00.000000000Z")
-	h.appended("u", n.ID, "c_old", "2026-01-01T09:00:00.000000000Z")
+	old := h.appended("u", n.ID, "c_old", "2026-01-01T09:00:00.000000000Z")
+	// Fields the note's capture listing does not project: a reset written
+	// back from the listing rather than the row would erase them.
+	old.Language, old.Source = "ml", "device:ring"
+	if _, err := h.store.PutCapture(h.ctx, old); err != nil {
+		t.Fatal(err)
+	}
 	// Its paragraph was rewritten by hand: the marker is a trailer now.
 	h.appended("u", n.ID, "c_edited", "2026-01-01T11:00:00.000000000Z")
 	// No words in the note: never landed, or arrived without a transcript.
@@ -51,6 +57,9 @@ func TestRequestRegenerateResetsWhatQualifiesAndHandsOverOnce(t *testing.T) {
 		}
 		if c.RawKey == "" || c.RoutedKey == "" || c.SegmentsKey == "" {
 			t.Errorf("%s lost a transcript key: %+v", id, c)
+		}
+		if id == "c_old" && (c.Language != "ml" || c.Source != "device:ring") {
+			t.Errorf("c_old lost fields the listing does not project: language %q source %q", c.Language, c.Source)
 		}
 	}
 	for _, id := range []string{"c_edited", "c_no_raw"} {

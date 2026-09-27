@@ -51,7 +51,11 @@ to the end of the body when the person rewrites its paragraph
 longer there would land a second copy beside the person's words — so such a
 recording is skipped and not counted. A checklist is different, see below.
 At most two hundred recordings per request (`MaxRegenerateCaptures`), the
-newest two hundred the store lists.
+newest two hundred the store lists. The listing is GSI1's projection — no
+`last_progress_at` to judge a stuck capture by, and a row written back from
+it would drop the language, the source and the timing record — so it only
+picks the candidates, and each is read whole before it is judged or reset;
+the `dynamofake` table double is what caught that.
 
 ## The two roads
 
