@@ -3,7 +3,7 @@
 Status: the poll and the focus refetch are implemented (2026-09-26, round 5,
 R5-RC-3); Web Push is proposed and awaits owner decision R5-RC-D1/D2. Code
 today: `usePendingCaptures` and `capturePollInterval`
-(`frontend/src/api/queries.ts`), the library's receipts (`FilingRow.tsx`,
+(`frontend/src/api/queries/captures.ts`), the library's receipts (`FilingRow.tsx`,
 `docs/design/capture-ux.md` "Receipts on Home"), the note screen's own poll
 (`useNote`, the same function). Nothing in this note changes the wire.
 

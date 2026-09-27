@@ -144,8 +144,9 @@ those plus the probes.
   and no player.
 
 Every inbox capture carries `source: device:<id>` (the wire says `app` for
-the app's own, and for every capture from before the field existed), so the
-row can say "From ⟨device⟩" once the frontend reads `GET /v1/devices`, and
+the app's own, and for every capture from before the field existed), and the
+Recordings tab says "From ⟨device⟩" by name, reading `GET /v1/devices` once a
+device-sourced row is on screen (`useDevices`, `queries/devices.ts`); and
 Home shows a receipt for every inbox capture, targeted or not — nobody
 watched a device's recording land on the note (`docs/design/capture-ux.md`,
 "Receipts on Home").

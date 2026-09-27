@@ -15,7 +15,7 @@ empty states) — `features/notes/groups.ts`
 `hooks/useSwipeActions.ts`, `hooks/useLongPress.ts`,
 `components/SelectionBar.tsx`, `components/Toast.tsx`,
 `components/ConfirmDialog.tsx`, `usePinNote` and `useReorderPins`
-(`api/queries.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
+(`api/queries/notes.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
 the rows, chips, field and heading, then the overrides), the drawn checkbox
 (`features/notes/ChecklistEditor.tsx` `Check` / `CheckMark`,
 `styles/checklist.css`).
@@ -142,14 +142,14 @@ the tier rather than against it: `?tag=` and `?kind=checklist` filter on the
 server, so the Pinned group shows the pinned notes that match and the days the
 rest. The archive never has a Pinned group, because archiving clears the pin.
 
-That is also the known gap. A drag inside a filtered Pinned group sends only
-the visible ids; the server ranks that subset from zero and leaves the others
-where they were, so the whole group can interleave (round-4 R4-2). With it: a
-pin stamps `updated_at`, so an unpinned note re-files under Today (R4-1,
-backend); an unpin inside the refetch window carries a stale `version` and is
-refused (R4-3); and on the phone nothing says a pinned row can be moved
-(R4-4). Neither mutation checks the connection. All four are in
-`docs/reviews/2026-09-24/round-4.md`, with fixes in flight.
+Reorder is offered only when the whole Pinned group is on screen: under a
+tag or kind filter the rows have no grip and no Move items, because a drag
+over the visible subset would rank it from zero and interleave the pins the
+filter hid (`PinnedGroup`'s `reorderable`; round-4 R4-2, fixed in #99). A
+pin writes the server's answer back into the cache, so an Unpin before the
+refetch carries the new `version` (R4-3); "Move up" and "Move down" in a
+pinned row's ⋮ are the path that needs no gesture (R4-4); and Pin and
+reorder wait for the network — offline, the items are disabled (`useOnline`).
 
 ## Offline
 
@@ -178,10 +178,9 @@ and not on every render, and is one frame under reduced motion. Checked fills
 the box with ink and draws the tick in ground; the hidden control's focus ring
 lands on the mark. The same label shape — `.checklist__box`, then `CheckMark`
 — is the Items tab's rows, the Split up preview, the Details switches
-(Checklist, Word for word) and the Cleaned tab's auto-refresh. Not, on main,
-the bulk-select box on a note row, which is still the native control at 24 px
-with `accent-color` ink; the contract asked for the drawn box there too, and
-that is in flight with the round-4 fixes.
+(Checklist, Word for word), the Cleaned tab's auto-refresh, and the
+bulk-select box on a note row (`NoteRow.tsx`), which is the same drawn
+`CheckMark`.
 
 Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 `NotesScreen.pins.test.tsx`, `NotesScreen.checklist.test.tsx`,

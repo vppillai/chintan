@@ -23,7 +23,9 @@ after an unpin has left a gap (count × 1000 would then equal an existing rank
 and the tie-break would put the new pin above it); finding the highest is one
 drain of the partition, paid on a pin alone, and the fifty-first pin is refused
 (409 `you can pin up to fifty notes`). `{pinned: false}` clears both. Pinning a
-pinned note changes nothing.
+pinned note changes nothing but the row's `version`: the pin fields are left
+as they are and `updated_at` holds, so the note does not re-file under Today
+(review R4-1).
 
 `POST /v1/notes/pins {ids}` is the drag: `pin_rank` becomes each note's
 position × 1000, and the notes come back in that order. Every id must name one
