@@ -324,6 +324,66 @@
 }
 
 /* --------------------------------------------------------------------------
+   Switch — one on/off, the Notifications card's
+   -------------------------------------------------------------------------- */
+
+/*
+ * A real button with role="switch": the 44 px target is the button, the
+ * drawn part is the track inside it, so the thumb can be a phone's size
+ * (26 px) without the target shrinking to it. On is the ink; off is the
+ * strong hairline, which the thumb's paper still reads against in both
+ * themes. Motion is the fast token, which reduced-motion zeroes.
+ */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--layout-touch-target-min);
+  min-block-size: var(--layout-touch-target-min);
+  padding-inline: var(--space-1);
+}
+
+.switch__track {
+  position: relative;
+  display: block;
+  inline-size: 3.25rem;
+  block-size: 2rem;
+  border-radius: var(--radius-full);
+  background-color: var(--color-line-strong);
+  box-shadow: var(--shadow-inset);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.switch[aria-checked='true'] .switch__track {
+  background-color: var(--color-ink);
+}
+
+.switch__thumb {
+  position: absolute;
+  inset-block-start: 0.1875rem;
+  inset-inline-start: 0.1875rem;
+  inline-size: 1.625rem;
+  block-size: 1.625rem;
+  border-radius: var(--radius-full);
+  background-color: var(--color-ground);
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.switch[aria-checked='true'] .switch__thumb {
+  transform: translateX(1.25rem);
+}
+
+.switch[disabled] .switch__track {
+  background-color: var(--color-line);
+  cursor: default;
+}
+
+.switch[aria-busy='true'] .switch__thumb {
+  opacity: 0.6;
+}
+
+/* --------------------------------------------------------------------------
    Segmented control — two or three options in one shape
    -------------------------------------------------------------------------- */
 

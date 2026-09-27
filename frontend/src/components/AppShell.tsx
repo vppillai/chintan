@@ -13,6 +13,7 @@ import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
 import { useResendOnReconnect } from '@/features/capture/useResendOnReconnect.ts';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
+import { usePushWakeup } from '@/pwa/usePushWakeup.ts';
 
 import { RecordingIndicator } from './RecordingIndicator.tsx';
 import { StatusRegion } from './StatusRegion.tsx';
@@ -71,6 +72,9 @@ export function AppShell() {
   // A recording sent while offline goes out when the connection returns,
   // whichever screen the user is on by then.
   useResendOnReconnect();
+  // The service worker's word that a recording filed while a window was
+  // open, so Home shows the receipt rather than the OS a notification.
+  usePushWakeup();
 
   const screen = screenForPath(location.pathname);
 
