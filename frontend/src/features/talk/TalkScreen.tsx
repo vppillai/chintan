@@ -138,7 +138,7 @@ export function TalkScreen() {
           hold.consumeClick();
         }}
       >
-        <Icon name="mic" size={56} strokeWidth={2.5} />
+        <Icon name="ptt" size={56} strokeWidth={2.5} />
         <span className="talk__label">{label}</span>
       </button>
 

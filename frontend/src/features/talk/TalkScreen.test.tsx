@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { PATHS } from '@/components/Icon.tsx';
 import { INITIAL_CAPTURE } from '@/features/capture/machine.ts';
 import type { RecorderDeps } from '@/features/capture/recorder.ts';
 import { useCaptureStore } from '@/features/capture/store.ts';
@@ -137,6 +138,12 @@ afterEach(() => {
 });
 
 describe('the talk screen', () => {
+  it('wears the walkie-talkie, not the microphone: this disc does nothing but push-to-talk (R5-BR-P3)', () => {
+    mount();
+    const disc = screen.getByRole('button', { name: 'PTT: hold to talk, release to send' });
+    expect(disc.querySelector('svg path')).toHaveAttribute('d', PATHS.ptt);
+  });
+
   it('records from the first frame of a press, says Sending until the server has it, and is ready again', async () => {
     mount('/talk?note=roof-repair');
     const button = screen.getByRole('button', { name: /^PTT: hold to talk/ });
