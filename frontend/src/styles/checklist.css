@@ -41,6 +41,14 @@
   border-block-end: 0;
 }
 
+/* A sub-item is set in by one step, its grip and box after it: the indent
+   alone says "part of the row above", as Keep's does, and the box is the same
+   drawn box. One level (`MAX_DEPTH` in checklist.ts); a third would be a
+   second rule here. */
+.checklist__row[data-depth='1'] {
+  padding-inline-start: var(--space-6);
+}
+
 /* The box: a real checkbox stretched invisibly over its 44 px label, so the
    label is the target and the tap lands on the control itself; the mark
    beside the words is the 22 px box a finger sees, drawn by the component in

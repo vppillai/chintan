@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  MAX_DEPTH,
   blockOf,
+  canNest,
   checklistToProse,
   describeProgress,
   insertItemAfter,
   moveItem,
+  nestUnder,
   openItemsText,
   parseChecklist,
   progressOf,
@@ -17,6 +20,7 @@ import {
   snippetIsCut,
   toggleItem,
   uncheckAll,
+  unnest,
 } from './checklist.ts';
 
 describe('parsing a checklist body', () => {
@@ -102,7 +106,11 @@ describe('sub-items: two spaces of indent under the parent', () => {
     // A jump of two levels is clamped to one; a child with no parent is top level.
     expect(parseChecklist('- [ ] A\n    - [ ] deep').at(-1)?.depth).toBe(1);
     expect(parseChecklist('  - [ ] orphan').at(0)?.depth).toBe(0);
-    expect(parseChecklist('- [ ] A\n  - [ ] B\n      - [ ] C').map((item) => item.depth)).toEqual([0, 1, 2]);
+    // One level (CL-D1): a third level written elsewhere reads as the second
+    // and flattens to it on the first save here.
+    expect(MAX_DEPTH).toBe(1);
+    expect(parseChecklist('- [ ] A\n  - [ ] B\n    - [ ] C').map((item) => item.depth)).toEqual([0, 1, 1]);
+    expect(serialiseChecklist(parseChecklist('- [ ] A\n  - [ ] B\n    - [ ] C'))).toBe('- [ ] A\n  - [ ] B\n  - [ ] C');
   });
 
   it('round-trips a nested body byte for byte', () => {
@@ -123,12 +131,91 @@ describe('sub-items: two spaces of indent under the parent', () => {
     expect(insertItemAfter(NESTED, null, 'Jam')).toBe(`${NESTED}\n- [ ] Jam`);
   });
 
+  it('a new item after a parent is its first sub-item, not a top-level line that would take them', () => {
+    expect(insertItemAfter('- [ ] Party\n  - [ ] Plates\n  - [ ] Cups', 0)).toBe(
+      '- [ ] Party\n  - [ ] \n  - [ ] Plates\n  - [ ] Cups',
+    );
+    // A parent whose only sub-item is done is still a parent.
+    expect(insertItemAfter('- [ ] Party\n  - [x] Plates\n- [ ] Bread', 0, 'Cups')).toBe(
+      '- [ ] Party\n  - [ ] Cups\n  - [x] Plates\n- [ ] Bread',
+    );
+    // Not a parent: the same level, as before.
+    expect(insertItemAfter('- [ ] Party\n- [ ] Bread', 0)).toBe('- [ ] Party\n- [ ] \n- [ ] Bread');
+  });
+
+  it('removing a parent brings its sub-items up a level rather than under the first of them', () => {
+    expect(removeItem('- [ ] Party\n  - [ ] Plates\n  - [x] Cups\n- [ ] Bread', 0)).toBe(
+      '- [ ] Plates\n- [x] Cups\n- [ ] Bread',
+    );
+    // A sub-item's removal moves nothing else.
+    expect(removeItem(NESTED, 1)).toBe('- [ ] Party\n  - [x] Candles\n- [x] Eggs\n- [ ] Bread');
+  });
+
+  it('nothing nests under a done row, or beside an open sub-item of a done parent', () => {
+    // A body written elsewhere: a done parent over an open sub-item. Tab on
+    // Bread must not make it a second one through the open sibling.
+    const odd = parseChecklist('- [x] Party\n  - [ ] Plates\n- [ ] Bread');
+    expect(canNest(odd, 2, 1)).toBe(false);
+    expect(nestUnder('- [x] Party\n  - [ ] Plates\n- [ ] Bread', 2, 1)).toBe('- [x] Party\n  - [ ] Plates\n- [ ] Bread');
+    // Nor under a done row itself — the row above during the tick's beat.
+    expect(canNest(parseChecklist('- [x] Milk\n- [ ] Bread'), 1, 0)).toBe(false);
+  });
+
   it('a block is the item and every item nested under it', () => {
     const items = parseChecklist(NESTED);
     expect(blockOf(items, 0)).toEqual([0, 1, 2]);
     expect(blockOf(items, 1)).toEqual([1]);
     expect(blockOf(items, 4)).toEqual([4]);
     expect(blockOf(items, 9)).toEqual([9]);
+  });
+
+  it('nests an item under the row above it, one level at most, and the first item never', () => {
+    expect(nestUnder('- [ ] A\n- [ ] B', 1, 0)).toBe('- [ ] A\n  - [ ] B');
+    expect(canNest(parseChecklist('- [ ] A\n- [ ] B'), 1, 0)).toBe(true);
+    // Under a sub-item: a sibling, under the same parent, right after the row it nests under.
+    expect(nestUnder(NESTED, 4, 1)).toBe('- [ ] Party\n  - [ ] Plates\n  - [ ] Bread\n  - [x] Candles\n- [x] Eggs');
+    // Already a sub-item: nowhere deeper to go.
+    expect(nestUnder(NESTED, 2, 1)).toBe(NESTED);
+    expect(canNest(parseChecklist(NESTED), 2, 1)).toBe(false);
+    expect(canNest(parseChecklist(NESTED), 1, 0)).toBe(false);
+    // Nothing above the first item; `under` must stand above; a bad index.
+    expect(canNest(parseChecklist(NESTED), 0, 0)).toBe(false);
+    expect(nestUnder(NESTED, 0, 4)).toBe(NESTED);
+    expect(nestUnder(NESTED, 9, 0)).toBe(NESTED);
+    expect(nestUnder('Milk\n\nEggs', 0, 0)).toBe('- [ ] Milk\n- [ ] Eggs');
+  });
+
+  it('nests under the row a person sees above: done lines between them slip below', () => {
+    // Milk and Bread are the open rows; Eggs sits in Done. Bread under Milk
+    // is a child of Milk in the body, not of the done Eggs line.
+    expect(nestUnder('- [ ] Milk\n- [x] Eggs\n- [ ] Bread', 2, 0)).toBe('- [ ] Milk\n  - [ ] Bread\n- [x] Eggs');
+    // After the parent's whole block, done sub-items included.
+    expect(nestUnder('- [ ] Party\n  - [x] Plates\n- [x] Eggs\n- [ ] Bread', 3, 0)).toBe(
+      '- [ ] Party\n  - [x] Plates\n  - [ ] Bread\n- [x] Eggs',
+    );
+    // Already in place: only the depth changes.
+    expect(nestUnder('- [ ] Party\n  - [x] Plates\n- [ ] Bread', 2, 0)).toBe('- [ ] Party\n  - [x] Plates\n  - [ ] Bread');
+  });
+
+  it('brings an item up a level in place, and the sub-items that followed become its own', () => {
+    expect(unnest(NESTED, 1)).toBe('- [ ] Party\n- [ ] Plates\n  - [x] Candles\n- [x] Eggs\n- [ ] Bread');
+    expect(unnest(NESTED, 2)).toBe('- [ ] Party\n  - [ ] Plates\n- [x] Candles\n- [x] Eggs\n- [ ] Bread');
+    expect(unnest(NESTED, 0)).toBe(NESTED);
+    expect(unnest(NESTED, 9)).toBe(NESTED);
+  });
+
+  it('a parent made a sub-item takes its children along as siblings, one level being the limit', () => {
+    expect(nestUnder('- [ ] A\n- [ ] P\n  - [ ] C', 1, 0)).toBe('- [ ] A\n  - [ ] P\n  - [ ] C');
+    // The same clamp when a parent is dropped on a sub-item's slot.
+    expect(moveItem('- [ ] A\n  - [ ] B\n- [ ] P\n  - [ ] C', 2, 1)).toBe('- [ ] A\n  - [ ] P\n  - [ ] C\n  - [ ] B');
+  });
+
+  it('ticking a parent ticks its sub-items; reopening a sub-item reopens its parent; reopening a parent leaves them', () => {
+    expect(toggleItem(NESTED, 0)).toBe('- [x] Party\n  - [x] Plates\n  - [x] Candles\n- [x] Eggs\n- [ ] Bread');
+    expect(toggleItem('- [x] P\n  - [x] C\n  - [x] D', 1)).toBe('- [ ] P\n  - [ ] C\n  - [x] D');
+    expect(toggleItem('- [x] P\n  - [x] C', 0)).toBe('- [ ] P\n  - [x] C');
+    // A sub-item ticked on its own leaves its parent open.
+    expect(toggleItem(NESTED, 1)).toBe('- [ ] Party\n  - [x] Plates\n  - [x] Candles\n- [x] Eggs\n- [ ] Bread');
   });
 
   it('prose conversion flattens: the indent has no notation in prose', () => {

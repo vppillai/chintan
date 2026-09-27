@@ -33,25 +33,30 @@ carries the converted body from the client, and a body the client did not
 send is left as it is.
 
 A sub-item is two spaces of indent under its parent — `  - [ ] Plates` under
-`- [ ] Party`. The frontend parser (`parseChecklist`) reads the indent as a
-depth clamped to the parent's plus one — a jump of two levels reads as one, a
-child with no parent is top level — and writes it back exactly, so a body
-indented in another editor round-trips byte for byte. Until 2026-09-26 such a
-line missed the item pattern altogether: it showed as an open row whose text
-was the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
-save. No writer invents an indent today. The worker appends at the end of the
-body with none, so a filed item is top level by construction; the editor
-gives a new item the depth of the item it follows and nothing else; a moved
-item takes the depth of the slot it lands in and carries its sub-items with
-it (`blockOf`, `moveItem`). The backend is indent-blind until the nesting
-phase, in three places: `keepTick` (`pipeline/append.go`) carries a tick only
-from a line that begins `- [x] `, which every worker-written line does;
-`lowerTick` and
+`- [ ] Party` — and there is one level of them (`MAX_DEPTH = 1` in
+`checklist.ts`; owner decision CL-D1, 2026-09-27, Keep parity: a spoken list
+is a handful of items, and nothing in a voice-first product produces depth
+three). The frontend parser (`parseChecklist`) reads the indent as a depth
+clamped to the parent's plus one and to `MAX_DEPTH` — a jump of two levels
+reads as one, a third level written elsewhere reads as the second and
+flattens to it on the first save here, a child with no parent is top level —
+and writes it back as two spaces per level, so a one-level body indented in
+another editor round-trips byte for byte. Until 2026-09-26 such a line
+missed the item pattern altogether: it showed as an open row whose text was
+the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
+save. The worker appends at the end of the body with no indent, so a filed
+item is top level by construction, and `extractItems` and the `tasks` prompt
+know nothing of depth; the editor gives a new item the depth of the item it
+follows, nests and un-nests on request ("Sub-items" below), and a moved item
+takes the depth of the slot it lands in and carries its sub-items with it
+(`blockOf`, `moveItem`). The backend is indent-blind, in three places, and
+stays so: `keepTick` (`pipeline/append.go`) carries a tick only from a line
+that begins `- [x] `, which every worker-written line does; `lowerTick` and
 `checklistItemLine` (`cleanup/prompt.go`) trim a line before reading it, so a
 `tasks` answer over a nested body is checked and stored flat — adopting the
 view drops the indent, never a tick; and the row's "3 of 7 done" counts every
-item whatever its depth. Whether nesting gets an editor, and how deep, is the
-owner's (`docs/backlog.md` CL-D1); the parser has no upper clamp until then.
+item whatever its depth, as Keep's count does. Export and the search text see
+the raw lines, indent and all, which is Markdown.
 
 ## The append rule
 
@@ -180,7 +185,8 @@ while it is in the air, and on release `moveItem` rewrites the body once and
 the editor saves at once, as it does for a tick — a discrete act, not typing.
 The arrow keys on a focused grip move the row one slot. A tap on the grip —
 a lift that never moved — opens the row's menu: Move up, Move down, Move to
-top, Move to bottom, Delete. That is the single-pointer path WCAG 2.5.7 asks
+top, Move to bottom, Make a sub-item, Move up a level, Delete. That is the
+single-pointer path WCAG 2.5.7 asks
 for, and it hangs on the grip rather than on a ⋮ of its own because a phone's
 width has no room for a grip, a box, a dictated sentence and a ⋮ in one row.
 The hook reports the tap before it swallows the browser's click: once the
@@ -191,6 +197,81 @@ row, since the slots it was moving between are gone. The touch-driven
 pull-to-refresh stands down for a `touchmove` whose default the lifted row
 has already prevented, or a downward drag at the top of a list pulled the
 page along under the row.
+
+### Sub-items
+
+One level, as Keep has, and Keep's keys: Tab in an item's field makes it a
+sub-item of the open row shown above it, Shift+Tab brings it up a level; the
+grip's menu carries the same two as "Make a sub-item" and "Move up a level"
+for a finger and for anyone who does not know the keys, 44 px each and named
+for a screen reader, which also hears "Made a sub-item" / "Moved up a level"
+and the field's name change from "Item 2" to "Sub-item 2"; the keys are
+described on the field itself (`aria-describedby`), where they act, since a
+reader in the field never hears the grip's description. A sub-item is set
+in by one spacing step (`data-depth`, `--space-6`) with the same drawn box
+and grip after it; the indent alone says "part of the row above". The first
+open item can never be a sub-item — it has nothing to nest under — and a
+Tab that can change nothing (that row, a row already a sub-item, Shift+Tab
+at the top level) is left to the browser, so focus moves on and the list is
+never a keyboard trap.
+
+The row above is the one a person sees, not the body's previous line
+(`nestUnder`): with `Milk`, `[x] Eggs`, `Bread` in the body the open rows
+are Milk and Bread, and Tab on Bread makes it Milk's sub-item, moving its
+line above Eggs's — a done line's place shows nowhere, so nothing visible
+moves, and ticking Milk then takes Bread with it as the eye expects. Nesting
+under the previous body line instead would have made Bread the sub-item of a
+row sitting in Done: indented under Milk on screen, orphaned when Milk was
+ticked, and pulled under Eggs when Eggs was reopened. Under a sub-item, Tab
+makes a sibling under the same parent. Up a level (`unnest`) is in place,
+and the sub-items that followed under the same parent become the row's own,
+as an outliner does. A parent made a sub-item takes its children along as
+its siblings, the one level being the limit; the same clamp applies when a
+parent is dropped on a sub-item's slot.
+
+Ticking a parent ticks its sub-items — the parent is the whole job, and a
+finished job has no open parts — and the whole block is held for the tick's
+beat and moves to Done together, its depth kept, so a finished parent reads
+as a block there too. Reopening a sub-item reopens its parent, because a
+parent with an open part is not done. Reopening a parent leaves its
+sub-items as they are (the choice CL-D2 asked to be stated): they were
+finished on their own terms, nothing about the parent says otherwise, and
+the person can tick the parent again once the reopened part is done — Keep's
+behaviour, and the one that never un-does work by implication. The reopened
+parent then stands open in the list over sub-items that show only under
+Done, and ticking it again re-ticks lines already done, so nothing visible
+changes but the parent's own row: known, and kept, because the alternative
+reopens work nobody asked to reopen. A sub-item
+ticked on its own moves to Done alone and its parent stays open; nothing
+completes a parent by counting its children. Delete done takes a done
+parent's sub-items with it (`removeDone`); Uncheck all reopens every line.
+
+Enter at the end of a parent starts its first sub-item (`insertItemAfter`),
+as an outliner does: the new row appears right under the parent, where the
+eye is, and a top-level line there would have taken the parent's sub-items
+for its own — the body `Party`, `[ ]`, `  Plates`, `  Cups` reads as an
+empty parent over them. The other choice, a top-level row after the block,
+puts the new row under the last sub-item, away from where Enter was pressed.
+Deleting a parent — Backspace in its emptied field, the menu's Delete, the ×
+under Done — brings its sub-items up a level (`removeItem`) rather than
+leaving the parser to read the first of them as the parent of the rest: the
+job is gone, not its first part.
+
+Moving a parent from the grip moves its block: a drag carries the sub-items
+(`moveItem`), Move down and the down arrow step past the parent's own
+children to the first row outside the block, a block that ends the list
+cannot move down, and a row dropped on a sub-item's slot becomes one while a
+sub-item dropped on a top-level slot comes out. Neither the menu nor the
+arrow keys offer a level, so a move that changes the row's level is said:
+"Now a sub-item" / "Now a top-level item" on the status line. A drag's draft
+shows the lifted row alone while it is in the air and the block snaps
+together on release; a parent dropped one slot down stands on its own
+sub-item's slot, which the draft can show but nothing can mean, and it goes
+back where it was rather than past the next row as the menu's step would
+(a drag is placed by eye, and a jump past what the eye placed it on is the
+surprise). Split up (`extractItems`, the `tasks` prompt) appends and proposes
+at depth 0 as before; export and the search text are unchanged. A third
+level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
 
 Done items keep their line where it stands; the Done section is the view's
 grouping, not the body's. It is a disclosure — the `<h2>` holds a button
@@ -220,8 +301,13 @@ Rejected: items as rows, or order metadata beside the body — the state of a
 task in two places, see below; hold-to-lift on the row as the pinned group
 has — a row's words are a field, and a hold on them should select words, not
 lift the row, so the grip is where every pointer lifts; unlimited nesting
-depth — one level is what a spoken list needs, and the parser's clamp to
-parent+1 is ready for whichever the owner picks.
+depth (CL-D1, 2026-09-27) — one level is what a spoken list needs and what
+Keep offers, deeper lists want an outline UI (collapse, guide lines per
+level) and make the 500-rune snippet count and the `tasks` view harder to
+reason about, and a third level is one constant plus CSS if a real list ever
+asks; a drag-right gesture to nest — Tab and the menu cover keyboard and
+finger, and a horizontal threshold on a vertical drag is a second gesture to
+learn and to get wrong.
 
 ## Why the body stays the single source of truth
 
@@ -229,8 +315,9 @@ Every reader — the row's "3 of 7 done", the Items tab, the offline corpus,
 Ask, the export — derives from the body, and every writer writes the body:
 the worker's append, the editor's save, delete and move, the client's
 conversion between kinds. Ticking an item is a body edit that flips `[ ]` to
-`[x]` in place, so the recording's marker stays attached to its item and the
-delete/move rule keeps working after any number of ticks.
+`[x]` in place (a parent's sub-items with it), so the recording's marker
+stays attached to its item and the delete/move rule keeps working after any
+number of ticks.
 
 The alternative — items as rows, or a done-set beside the body — would put the
 state of a task in two places and make every existing invariant conditional:
