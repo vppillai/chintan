@@ -256,7 +256,3 @@ export function timeoutError(ms: number): ApiError {
 export function cancelledError(): ApiError {
   return new ApiError({ kind: 'cancelled', status: 0, title: 'Cancelled' });
 }
-
-export function isApiError(value: unknown): value is ApiError {
-  return value instanceof ApiError;
-}

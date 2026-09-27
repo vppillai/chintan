@@ -15,7 +15,7 @@ import { useCaptureStore } from '../store.ts';
  * between the PUT landing and the poll, where the row would otherwise sit at
  * "Uploaded" for ever.
  */
-export const HANDOFF_GRACE_MS = 10_000;
+const HANDOFF_GRACE_MS = 10_000;
 
 /**
  * The upload in progress, read from the capture store rather than the server.

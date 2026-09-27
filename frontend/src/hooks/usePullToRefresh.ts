@@ -41,7 +41,7 @@ export type PullPhase =
 /** How far to pull before letting go refreshes. */
 export const PULL_THRESHOLD_PX = 64;
 /** The indicator stops growing here, however far the finger goes. */
-export const PULL_MAX_PX = 96;
+const PULL_MAX_PX = 96;
 /** The finger travels further than the indicator grows: it should feel elastic. */
 export const PULL_DAMPING = 0.6;
 

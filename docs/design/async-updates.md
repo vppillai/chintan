@@ -25,7 +25,7 @@ anything moving last made progress (`last_progress_at`, else `created_at`):
 | a capture is under 30 s old | 1.5 s | the pipeline finishes in p50 1.9 s, p90 4.0 s; a 4 s poll added a median 2 s of pure waiting |
 | under 2 min | 4 s | it is waiting on a provider |
 | under 10 min | 15 s | two quiet minutes: something is slow, not stuck |
-| 10 min and beyond | 60 s | the poll's stuck threshold (`STUCK_AFTER_MS`; the row's `isStuck` shares the constant but measures from `created_at`); the row offers Retry at 15 min, and this is what re-renders it on time |
+| 10 min and beyond | 60 s | the poll's stuck threshold (`STUCK_AFTER_MS`, `schema.ts`; the row's `isStuck` reads the same constant and the same clock, `last_progress_at` else `created_at`); the row offers Retry at 15 min, and this is what re-renders it on time |
 | nothing moving | off | — |
 
 It never stops while anything is non-terminal. Before the ladder it stayed at

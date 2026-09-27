@@ -13,7 +13,8 @@ import { setCanHover } from '@/test/setup.ts';
 
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 
-import { HOLD_TO_DELETE_MS, NotesScreen, chipScrollBy } from './NotesScreen.tsx';
+import { NotesScreen, chipScrollBy } from './NotesScreen.tsx';
+import { HOLD_TO_DELETE_MS } from './library/holdToDelete.ts';
 
 const ARCHIVED_NOTES = TEST_NOTES.map((note) => ({
   ...note,

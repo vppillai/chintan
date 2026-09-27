@@ -37,7 +37,7 @@ export const TOKEN_STORAGE_KEY = 'chintan.tokens.v2';
  * Refresh this far before the token actually expires. A token that expires
  * mid-flight produces a 401 the user sees; one refreshed early does not.
  */
-export const REFRESH_SKEW_MS = 120_000;
+const REFRESH_SKEW_MS = 120_000;
 
 /**
  * Parses the wire shape into the internal one. The only function permitted to

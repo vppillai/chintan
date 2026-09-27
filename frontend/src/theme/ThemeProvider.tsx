@@ -10,7 +10,6 @@ import {
 
 import {
   DARK_MEDIA_QUERY,
-  DEFAULT_THEME,
   readStoredTheme,
   resolveTheme,
   writeStoredTheme,
@@ -110,5 +109,3 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
-
-export { DEFAULT_THEME };

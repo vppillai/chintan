@@ -24,7 +24,6 @@ vi.mock('@/config/env.ts', () => ({
     appName: 'Chintan',
     appDescription: 'Speak a thought. It files itself.',
   },
-  isConfigured: () => true,
 }));
 
 /** Mounts the real shell with no token, as a signed-out visitor has. */

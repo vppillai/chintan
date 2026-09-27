@@ -30,7 +30,7 @@ import type { CaptureEvent } from './machine.ts';
  * not care whether the create or the PUT failed; they care where the recording
  * is.
  */
-export const OFFLINE_MESSAGE =
+const OFFLINE_MESSAGE =
   'The upload did not finish. Your recording is safe on this device.';
 
 /**
@@ -41,7 +41,7 @@ export const OFFLINE_MESSAGE =
  * in production went out with an identical signature, an hour after it expired,
  * and said nothing but "the upload did not finish".
  */
-export const EXPIRED_MESSAGE =
+const EXPIRED_MESSAGE =
   'That could not be sent: the upload link had expired. The recording is still on this device — try again.';
 
 /**
@@ -114,7 +114,7 @@ export interface UploadDeps {
   saveRecord: typeof saveCaptureRecord;
 }
 
-export const defaultUploadDeps: UploadDeps = {
+const defaultUploadDeps: UploadDeps = {
   assemble: assembleBlob,
   put: putPresigned,
   confirm: confirmUploaded,

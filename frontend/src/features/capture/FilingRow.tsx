@@ -82,10 +82,12 @@ export function FilingRow() {
    * twice.) A side effect belongs in the handler.
    */
   const dismiss = (captureId: string): void => {
+    focusPastDismissed();
     setDismissed(dismissCapture(captureId, dismissed));
   };
   /** Every capture of the group, in one state update, so one render removes the row. */
   const dismissGroup = (group: ReceiptGroup): void => {
+    focusPastDismissed();
     setDismissed(dismissCaptures(group.captureIds, dismissed));
   };
   const openGroup = (group: ReceiptGroup): void => {
@@ -95,8 +97,9 @@ export function FilingRow() {
     // not (a poll that first saw the capture appended).
     refreshAppendedNote(queryClient, group.noteId);
     // Opening the note is acting on the row: it has been read, and the
-    // library the user comes back to should not offer it again.
-    dismissGroup(group);
+    // library the user comes back to should not offer it again. No focus
+    // hand-off here: `useRouteFocus` places focus on the note screen.
+    setDismissed(dismissCaptures(group.captureIds, dismissed));
     void navigate(ROUTES.note(group.noteId));
   };
 
@@ -214,6 +217,30 @@ export function FilingRow() {
       )}
     </section>
   );
+}
+
+/**
+ * Moves focus off a row about to leave, when its control holds focus: a ×
+ * pressed from the keyboard used to take focus with it to `<body>`, and the
+ * next Tab started from the top of the page. Focus goes to the neighbouring
+ * row's own control — its × or Dismiss, or the folded receipts' summary —
+ * else, when this was the last row, to the library's heading, which
+ * `NotesScreen` makes focusable for the purpose. Read before the state
+ * update, while the row is still in the document.
+ *
+ * When no row holds focus, nothing moves. Safari — macOS and iOS, where the
+ * PWA lives — does not focus a tapped or clicked button, so after a tap the
+ * active element is `<body>`, and focusing the heading from there scrolled a
+ * reader who dismissed a receipt mid-list back to the top of Home.
+ */
+function focusPastDismissed(): void {
+  const row = document.activeElement?.closest<HTMLElement>('.filing-row');
+  if (!row) return;
+  const neighbour = row.nextElementSibling ?? row.previousElementSibling;
+  const target =
+    neighbour?.querySelector<HTMLElement>('.filing-row__dismiss, .filing-row__action, summary') ??
+    document.querySelector<HTMLElement>('.library-heading');
+  target?.focus();
 }
 
 /** The row for an upload this device is still making. See `useLocalUpload`. */

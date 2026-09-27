@@ -32,7 +32,7 @@ import { useCaptureStore } from './store.ts';
 
 // The timings live in `holdTiming.ts` so the e2e specs can import them; they
 // are still this hook's, and everything that reads them reads them from here.
-export { HOLD_DELAY_MS, HOLD_NOTICE_MS, MIN_TALK_MS, SLIDE_AWAY_PX } from './holdTiming.ts';
+export { HOLD_DELAY_MS, HOLD_NOTICE_MS, MIN_TALK_MS } from './holdTiming.ts';
 /** Movement that turns an armed press into a scroll or a drag, as `useLongPress` draws it. */
 const ARM_TOLERANCE_PX = 10;
 

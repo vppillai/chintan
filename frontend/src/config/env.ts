@@ -82,7 +82,3 @@ export const config: AppConfig = {
     DEFAULT_APP_DESCRIPTION,
   ),
 };
-
-export function isConfigured(candidate: AppConfig = config): boolean {
-  return candidate.apiUrl.length > 0 && candidate.clientId.length > 0;
-}

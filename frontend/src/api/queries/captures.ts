@@ -13,7 +13,7 @@ import {
 
 import { useApi } from '../ApiProvider.tsx';
 import type { ChintanApi } from '../endpoints.ts';
-import { isTerminalStatus } from '../schema.ts';
+import { STUCK_AFTER_MS, isTerminalStatus } from '../schema.ts';
 import type { CaptureMoveWire, CaptureWire, NoteDetailWire } from '../schema.ts';
 
 import { SEARCH_CORPUS_KEY, invalidateNoteLists, queryKeys } from './keys.ts';
@@ -33,24 +33,10 @@ const RECENTLY_SETTLED_MS = 10 * 60 * 1000;
  * receipt on the library screen is noise — the owner met three of them, weeks
  * old, above an empty library.
  */
-export const FILED_RECEIPT_MS = 24 * 60 * 60 * 1000;
+const FILED_RECEIPT_MS = 24 * 60 * 60 * 1000;
 
 /** Newest-first, and twenty is more than one person records before the first has filed. */
 const CAPTURE_LIST_LIMIT = 20;
-
-/**
- * How long a capture can sit in a non-terminal status before the row stops
- * trusting the pipeline and offers a way out (`filing/model.ts`'s `isStuck`),
- * and the point past which the poll asks once a minute.
- *
- * A capture only reaches this state if the upload event that should have
- * driven the worker never arrived, or the worker died mid-stage without
- * writing a `failed` status — both silent by design elsewhere in the stack
- * (`chintanctl reconcile`'s `stuck_capture` finding exists because of exactly
- * this). Without a client-side timeout the row polls forever showing a stage
- * strip that will never move, with no error and no Retry.
- */
-export const STUCK_AFTER_MS = 10 * 60 * 1000;
 
 /**
  * How often to ask while something is still moving through the pipeline.

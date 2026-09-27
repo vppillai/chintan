@@ -17,7 +17,7 @@ export const EXPORT_POLL_MS = 1_500;
  * tapped again, which starts a fresh job. Two minutes is many times the
  * longest export seen; a job still not ready by then is not going to be.
  */
-export const EXPORT_TIMEOUT_MS = 2 * 60_000;
+const EXPORT_TIMEOUT_MS = 2 * 60_000;
 
 /**
  * Starts an export, waits for it to be ready and fetches the file.

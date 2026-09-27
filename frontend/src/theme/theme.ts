@@ -27,7 +27,7 @@ export const THEME_LABELS: Record<ThemePreference, string> = {
   system: 'Follow system',
 };
 
-export function isThemePreference(value: unknown): value is ThemePreference {
+function isThemePreference(value: unknown): value is ThemePreference {
   return (
     typeof value === 'string' &&
     (THEME_PREFERENCES as readonly string[]).includes(value)

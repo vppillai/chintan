@@ -19,7 +19,7 @@ import { QUEUED_EDIT_KEY, queuedEditPayload } from './queuedEdits.ts';
  * One kind, one branch. The `switch` this used to be had six arms and five of
  * them were unreachable — see `QueuedMutationKind`.
  */
-export async function runMutation(
+async function runMutation(
   api: ChintanApi,
   mutation: QueuedMutation,
 ): Promise<void> {

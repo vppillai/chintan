@@ -1,6 +1,5 @@
 import { ApiError } from '@/api/problem.ts';
-import { STUCK_AFTER_MS } from '@/api/queries.ts';
-import { isTerminalStatus, type CaptureStatus, type CaptureWire } from '@/api/schema.ts';
+import { STUCK_AFTER_MS, isTerminalStatus, type CaptureStatus, type CaptureWire } from '@/api/schema.ts';
 
 /**
  * What a filing row says and when, as pure functions over the wire row, so
@@ -36,18 +35,19 @@ export function stageIndex(status: CaptureStatus): number {
 }
 
 /**
- * Whether a non-terminal capture has sat past `STUCK_AFTER_MS` (defined with
- * the poll, which backs off to once a minute at the same threshold) and the
- * row should stop trusting the pipeline and offer a way out. This measures
- * from `created_at`; the poll measures from `last_progress_at` when the
- * server sends it, so the two agree exactly only for a capture that never
- * moved.
+ * Whether a non-terminal capture has sat past `STUCK_AFTER_MS` (`schema.ts`;
+ * the poll backs off to once a minute at the same threshold) and the row
+ * should stop trusting the pipeline and offer a way out. Measured from
+ * `last_progress_at` — every stage hand-off re-stamps it, so a capture that
+ * moved into transcribing nine minutes in is not called stuck a minute
+ * later — else from `created_at`, on rows from before it was recorded. The
+ * poll reads the same clock (`capturePollInterval`), so the two agree.
  */
 export function isStuck(capture: CaptureWire): boolean {
   if (isTerminalStatus(capture.status)) return false;
-  const createdAt = Date.parse(capture.created_at);
-  if (Number.isNaN(createdAt)) return false;
-  return Date.now() - createdAt > STUCK_AFTER_MS;
+  const since = Date.parse(capture.last_progress_at ?? capture.created_at);
+  if (Number.isNaN(since)) return false;
+  return Date.now() - since > STUCK_AFTER_MS;
 }
 
 /**
@@ -67,8 +67,8 @@ export function isStuck(capture: CaptureWire): boolean {
  * before it stalled, and the tap inside that gap is answered by the 409's
  * own sentence. Read when carried, so the gap closes the day it is sent.
  */
-export const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
-export const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
+const RETRY_ACCEPTED_AFTER_MS = 15 * 60 * 1000;
+const RETRY_ACCEPTED_APPENDING_MS = 20 * 60 * 1000;
 
 export function retryAccepted(capture: CaptureWire): boolean {
   if (isTerminalStatus(capture.status)) return false;

@@ -3,7 +3,6 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 
 import { ApiClient } from './client.ts';
 import { ChintanApi } from './endpoints.ts';
-import { ApiError } from './problem.ts';
 import { createSession, type Session } from './session.ts';
 
 export interface ApiContextValue {
@@ -13,7 +12,7 @@ export interface ApiContextValue {
 
 const ApiContext = createContext<ApiContextValue | null>(null);
 
-export function createQueryClient(): QueryClient {
+function createQueryClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
       queries: {
@@ -68,5 +67,3 @@ function useApiContext(): ApiContextValue {
   if (!context) throw new Error('useApi must be used inside an ApiProvider');
   return context;
 }
-
-export { ApiError };

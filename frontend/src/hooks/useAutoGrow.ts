@@ -7,7 +7,7 @@ import { useLayoutEffect, type RefObject } from 'react';
  * stylesheet does the whole job and this hook does nothing. Exported so a
  * test can pin the fallback.
  */
-export function supportsFieldSizing(): boolean {
+function supportsFieldSizing(): boolean {
   return (
     typeof CSS !== 'undefined' &&
     typeof CSS.supports === 'function' &&

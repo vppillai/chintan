@@ -8,7 +8,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
 import type { LibraryParams } from './useLibraryParams.ts';
 
 /** Below this the search field no longer fits the long placeholder beside its Ask glyph. */
-export const NARROW_FIELD_QUERY = '(max-width: 26rem)';
+const NARROW_FIELD_QUERY = '(max-width: 26rem)';
 
 /** A count for a chip, and whether there is more behind it than has been loaded. */
 export interface ChipCount {

@@ -14,6 +14,7 @@
 import { appendChunk } from './buffer.ts';
 import { PeakCollector } from './peaks.ts';
 import {
+  TARGET_BITS_PER_SECOND,
   chooseEncoder,
   classifyMicrophoneError,
   isRecordingSupported,
@@ -24,9 +25,9 @@ import { acquireWakeLock, type WakeLockHandle } from './wakeLock.ts';
 import type { CaptureEvent } from './machine.ts';
 
 /** How often the recorder is asked to hand over a chunk. */
-export const CHUNK_INTERVAL_MS = 3_000;
+const CHUNK_INTERVAL_MS = 3_000;
 /** Timer resolution for the elapsed display and the duration cap. */
-export const TICK_INTERVAL_MS = 200;
+const TICK_INTERVAL_MS = 200;
 /** Analyser frames per second fed into the peak collector. */
 const ANALYSER_INTERVAL_MS = 50;
 
@@ -48,7 +49,7 @@ export const defaultRecorderDeps: RecorderDeps = {
   createRecorder: (stream, mimeType) =>
     new MediaRecorder(stream, {
       ...(mimeType ? { mimeType } : {}),
-      audioBitsPerSecond: 24_000,
+      audioBitsPerSecond: TARGET_BITS_PER_SECOND,
     }),
   createAudioContext: () => {
     try {

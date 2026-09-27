@@ -52,7 +52,7 @@ export function RouteError() {
 }
 
 /** One line a person can quote in a bug report, never a stack trace. */
-export function describeRouteError(error: unknown): string {
+function describeRouteError(error: unknown): string {
   if (isRouteErrorResponse(error)) {
     return `${String(error.status)} ${error.statusText}`;
   }

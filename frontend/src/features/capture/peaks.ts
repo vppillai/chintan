@@ -17,7 +17,7 @@
  */
 
 /** Resolution of the stored envelope. ~2 KB of JSON, enough for any width. */
-export const PEAK_BUCKETS = 800;
+const PEAK_BUCKETS = 800;
 
 /**
  * The quietest "loudest moment" the envelope will normalise to.
@@ -96,7 +96,7 @@ export class PeakCollector {
   }
 }
 
-export function downsample(
+function downsample(
   samples: readonly number[],
   buckets: number,
   peak?: number,
