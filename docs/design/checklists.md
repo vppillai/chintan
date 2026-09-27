@@ -131,10 +131,11 @@ checklist regression — a plain note's marker moves the same way once its
 paragraph is edited — but a checklist is edited far more often than it is
 dictated into, so in practice the per-recording delete works for a list that
 has only been spoken to. Transcribing a
-recording again replaces its items where they stand and carries the ticks
-line for line (`keepTick`); when the new transcription yields a different
-number of items no tick is carried, because no line can be said to be the
-one that was ticked. Each item is cut at 2,000 runes. Snippet and search text
+recording again — or regenerating the note, `regenerate.md` — replaces its
+items where they stand, or, on a list whose markers have been carried,
+finds them by their words and swaps them in place (`replaceChecklistItems`);
+a tick follows its item's words, and line for line only when no words match
+and the count holds (`keepTick`). Each item is cut at 2,000 runes. Snippet and search text
 see the raw lines.
 
 ## The `tasks` clean mode
