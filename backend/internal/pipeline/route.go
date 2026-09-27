@@ -54,8 +54,8 @@ func (p *Pipeline) stripInstructions(ctx context.Context, tenantID string, captu
 		return nil
 	}
 
-	candidates := []routing.Candidate{{NoteID: note.ID, Title: note.Title, Aliases: note.Aliases}}
-	decision, err := p.routeWithRetries(ctx, tenantID, capture.ID, transcript, candidates)
+	candidates := []routing.Candidate{routeCandidate(note)}
+	decision, err := p.routeWithRetries(ctx, tenantID, capture.ID, transcript, candidates, cleanupLanguage(*capture))
 	if err != nil {
 		if errors.Is(err, breaker.ErrSpendCapExceeded) {
 			return p.handleProviderError(ctx, capture, "route", err)
@@ -97,7 +97,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	}
 	transcript := string(rawBytes)
 
-	decision, err := p.decideTarget(ctx, tenantID, capture.ID, transcript)
+	decision, err := p.decideTarget(ctx, tenantID, capture.ID, transcript, cleanupLanguage(*capture))
 	if err != nil {
 		if errors.Is(err, breaker.ErrSpendCapExceeded) {
 			return p.handleProviderError(ctx, capture, "route", err)
@@ -202,7 +202,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 // one routing error route() does not turn into a new note.
 var errRouteCandidates = errors.New("pipeline: list routing candidates")
 
-func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript string) (provider.RouteDecision, error) {
+func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript, language string) (provider.RouteDecision, error) {
 	if p.cfg.Router == nil {
 		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
 	}
@@ -228,27 +228,46 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 	if len(active) > maxRouteCandidates {
 		active = active[:maxRouteCandidates]
 	}
+	active = withinRouteBudget(active)
 
 	candidates := make([]routing.Candidate, 0, len(active))
 	for _, n := range active {
-		candidates = append(candidates, routing.Candidate{
-			NoteID:  n.ID,
-			Title:   n.Title,
-			Aliases: n.Aliases,
-		})
+		candidates = append(candidates, routeCandidate(n))
 	}
 
-	decision, err := p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates)
+	decision, err := p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates, language)
 	if err != nil {
 		return decision, err
 	}
 	return preferExistingTitle(ctx, decision, active), nil
 }
 
+// routeCandidate is the note as the router sees it: title, aliases and tags,
+// each a name the speaker may file by.
+func routeCandidate(n model.NoteIndex) routing.Candidate {
+	return routing.Candidate{NoteID: n.ID, Title: n.Title, Aliases: n.Aliases, Tags: n.Tags}
+}
+
+// withinRouteBudget cuts the ordered list where its rendered lines would pass
+// maxRouteCandidateTokens, so a tenant of two hundred long-titled notes cannot
+// grow the prompt past what the ceiling was priced for. The most recently
+// touched notes lead the list and are kept; the estimate is the same one the
+// breaker reserves against.
+func withinRouteBudget(active []model.NoteIndex) []model.NoteIndex {
+	total := 0.0
+	for i, n := range active {
+		total += estimateCandidateTokens([]routing.Candidate{routeCandidate(n)})
+		if total > maxRouteCandidateTokens {
+			return active[:i]
+		}
+	}
+	return active
+}
+
 // preferExistingTitle applies the rule the prompt already states — an existing
 // note with the same title is the destination — after the model has answered.
-// A "new" decision whose title names an active candidate, by title or alias
-// and compared case- and whitespace-insensitively, appends to that note. The
+// A "new" decision whose title names an active candidate, by title, alias or
+// tag and compared case- and whitespace-insensitively, appends to that note. The
 // model started a second "staging smoke" beside the one that existed (live QA
 // 2026-09-05 §5b), and a rule this mechanical is the code's to enforce, not the
 // model's to remember. The candidates are the notes the router saw, so the
@@ -278,14 +297,14 @@ func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, a
 	return decision
 }
 
-// titleNames reports whether want, already normalised, is n's title or one of
-// its aliases.
+// titleNames reports whether want, already normalised, is n's title, one of
+// its aliases or one of its tags — the names the router was shown for it.
 func titleNames(n model.NoteIndex, want string) bool {
 	if normalizeTitle(n.Title) == want {
 		return true
 	}
-	for _, alias := range n.Aliases {
-		if normalizeTitle(alias) == want {
+	for _, name := range append(append([]string(nil), n.Aliases...), n.Tags...) {
+		if normalizeTitle(name) == want {
 			return true
 		}
 	}
@@ -301,7 +320,7 @@ func normalizeTitle(s string) string {
 // routeWithRetries asks the router, with one retry on a stall or a 5xx. It
 // is the model half of decideTarget, shared with stripInstructions, which
 // wants the instruction spans and not the destination.
-func (p *Pipeline) routeWithRetries(ctx context.Context, tenantID, captureID, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
+func (p *Pipeline) routeWithRetries(ctx context.Context, tenantID, captureID, transcript string, candidates []routing.Candidate, language string) (provider.RouteDecision, error) {
 	// Each attempt is its own breaker.Do, so each reserves before it calls and
 	// settles for itself. An attempt that fails — a timeout included — reports
 	// no usage, and the breaker releases exactly what that attempt reserved,
@@ -312,7 +331,7 @@ func (p *Pipeline) routeWithRetries(ctx context.Context, tenantID, captureID, tr
 	// calls into one.
 	var lastErr error
 	for attempt := 1; attempt <= routeAttempts; attempt++ {
-		decision, err := p.routeOnce(ctx, tenantID, transcript, candidates)
+		decision, err := p.routeOnce(ctx, tenantID, transcript, candidates, language)
 		if err == nil {
 			return decision, nil
 		}
@@ -353,7 +372,7 @@ func (p *Pipeline) routeWithRetries(ctx context.Context, tenantID, captureID, tr
 // reservation still has a live context to run on; a release attempted on the
 // expired context would fail, and the estimate would stay in the day's total
 // as spend that never happened.
-func (p *Pipeline) routeOnce(ctx context.Context, tenantID, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
+func (p *Pipeline) routeOnce(ctx context.Context, tenantID, transcript string, candidates []routing.Candidate, language string) (provider.RouteDecision, error) {
 	var decision provider.RouteDecision
 	_, err := p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.LLMProvider,
@@ -367,7 +386,7 @@ func (p *Pipeline) routeOnce(ctx context.Context, tenantID, transcript string, c
 	}, func(ctx context.Context) (breaker.Result, error) {
 		attemptCtx, cancel := context.WithTimeout(ctx, p.cfg.RouteAttemptTimeout)
 		defer cancel()
-		out, err := p.cfg.Router.Route(attemptCtx, transcript, candidates)
+		out, err := p.cfg.Router.Route(attemptCtx, transcript, candidates, language)
 		if err != nil {
 			return breaker.Result{}, err
 		}
@@ -415,6 +434,10 @@ func routeRetryReason(err error) (string, bool) {
 // replaces it with what the provider reports.
 const routeOutputTokensEstimate = 64
 
+// estimateCandidateTokens is the pre-call guess at the candidate block: the
+// usual four characters a token over every name, plus three tokens a line for
+// the ordinal and the separators (measured 2026-09-26: "12 | Roof repair" is 7
+// tokens).
 func estimateCandidateTokens(candidates []routing.Candidate) float64 {
 	total := 0
 	for _, c := range candidates {
@@ -422,8 +445,11 @@ func estimateCandidateTokens(candidates []routing.Candidate) float64 {
 		for _, a := range c.Aliases {
 			total += len(a)
 		}
+		for _, t := range c.Tags {
+			total += len(t)
+		}
 	}
-	return float64(total)/4 + 1
+	return float64(total)/4 + 3*float64(len(candidates)) + 1
 }
 
 // fallbackNoteTitle names a note the router could not title: the first words

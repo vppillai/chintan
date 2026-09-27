@@ -41,8 +41,12 @@ const (
 // transcript with words deleted, by construction. Spans that do not fit the
 // transcript are ignored and every word is kept — a stray instruction word in
 // the note is trivial to fix, dictation left out of it is lost.
-func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error) {
-	userPrompt, err := routing.UserPrompt(transcript, candidates)
+//
+// language is the code the transcript is known to be in, or "" (the pipeline's
+// cleanupLanguage); the user prompt names it so an invented title stays in the
+// speaker's script.
+func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates []routing.Candidate, language string) (RouteDecision, error) {
+	userPrompt, err := routing.UserPrompt(transcript, candidates, language)
 	if err != nil {
 		return RouteDecision{}, err
 	}
@@ -52,16 +56,11 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		return RouteDecision{}, err
 	}
 
-	decision, reply, err := parseRouteDecision(out)
+	decision, reply, err := parseRouteDecision(out, candidates)
 	if err != nil {
 		return RouteDecision{}, err
 	}
 	decision.Usage = usage
-
-	// The model may return an id that is not on the list; refuse to trust it.
-	if decision.Action == RouteAppend && !containsNoteID(candidates, decision.NoteID) {
-		return RouteDecision{}, fmt.Errorf("provider: router returned unknown note id")
-	}
 	decision.Content = routedContent(ctx, transcript, decision.Title, reply)
 	return decision, nil
 }
@@ -143,7 +142,14 @@ func sanitizeTitle(title string) string {
 // parseRouteDecision tolerates markdown fences and surrounding prose. The reply
 // carries the span list as the model gave it, so routedContent can tell
 // "nothing to remove" from "ignored the format".
-func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
+//
+// An append names its note by the 1-based number of its line in the prompt
+// (`note`), which is mapped back to the id here; a `note_id` string is still
+// accepted when it is one of the listed ids, so a model that answers in the
+// pre-2026-09-27 shape is not refused. Anything else — a number off the list,
+// a fraction, an id that was not offered — is "unknown note id", which the
+// pipeline answers with its own fallback rather than trusting.
+func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecision, routeReply, error) {
 	jsonText, err := llm.ExtractJSONObject(raw)
 	if err != nil {
 		return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router %w", err)
@@ -151,6 +157,7 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 
 	var parsed struct {
 		Action     RouteAction `json:"action"`
+		Note       *float64    `json:"note"`
 		NoteID     string      `json:"note_id"`
 		Title      string      `json:"title"`
 		Confidence float64     `json:"confidence"`
@@ -166,14 +173,14 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 
 	decision := RouteDecision{
 		Action:     parsed.Action,
-		NoteID:     parsed.NoteID,
 		Title:      parsed.Title,
 		Confidence: parsed.Confidence,
 	}
 	switch decision.Action {
 	case RouteAppend:
-		if strings.TrimSpace(decision.NoteID) == "" {
-			return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router chose append without a note id")
+		decision.NoteID, err = listedNoteID(parsed.Note, parsed.NoteID, candidates)
+		if err != nil {
+			return RouteDecision{}, routeReply{}, err
 		}
 	case RouteNew:
 	default:
@@ -207,19 +214,32 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 	return decision, reply, nil
 }
 
+// listedNoteID resolves an append's destination: the 1-based line number the
+// prompt showed, else a listed id. The model may name a note that is not on
+// the list; refuse to trust it.
+func listedNoteID(note *float64, noteID string, candidates []routing.Candidate) (string, error) {
+	if note != nil {
+		n, ok := wordIndex(note)
+		if !ok || n < 1 || n > len(candidates) {
+			return "", fmt.Errorf("provider: router returned unknown note id")
+		}
+		return candidates[n-1].NoteID, nil
+	}
+	if strings.TrimSpace(noteID) == "" {
+		return "", fmt.Errorf("provider: router chose append without a note id")
+	}
+	for _, c := range candidates {
+		if c.NoteID == noteID {
+			return noteID, nil
+		}
+	}
+	return "", fmt.Errorf("provider: router returned unknown note id")
+}
+
 // wordIndex accepts a JSON number as a word position only when it is a whole number.
 func wordIndex(v *float64) (int, bool) {
 	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v != math.Trunc(*v) || math.Abs(*v) > math.MaxInt32 {
 		return 0, false
 	}
 	return int(*v), true
-}
-
-func containsNoteID(candidates []routing.Candidate, noteID string) bool {
-	for _, c := range candidates {
-		if c.NoteID == noteID {
-			return true
-		}
-	}
-	return false
 }

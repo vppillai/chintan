@@ -31,7 +31,8 @@ type RouteDecision struct {
 	Usage TokenUsage `json:"-"`
 }
 
-// Router decides which note a transcript belongs to.
+// Router decides which note a transcript belongs to. language is the code the
+// transcript is known to be in, or "" when nothing knows.
 type Router interface {
-	Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error)
+	Route(ctx context.Context, transcript string, candidates []routing.Candidate, language string) (RouteDecision, error)
 }

@@ -56,7 +56,6 @@ func newAppendFixture(t *testing.T, objects repository.Objects, wrap func(reposi
 		UserID:    "user1",
 		NoteID:    "note1",
 		Status:    model.StatusCleaned,
-		Mode:      model.CleanupFaithful,
 		AudioKey:  "tenants/user1/captures/capture1/audio.webm",
 		RawKey:    "tenants/user1/captures/capture1/raw.txt",
 		CleanKey:  appendCleanKey,
@@ -343,7 +342,7 @@ func TestRouterSeesTheMostRecentlyTouchedNotes(t *testing.T) {
 		}
 	}
 
-	if _, err := h.pipeline.decideTarget(ctx, "user1", "c_probe", "some words"); err != nil {
+	if _, err := h.pipeline.decideTarget(ctx, "user1", "c_probe", "some words", ""); err != nil {
 		t.Fatalf("decideTarget: %v", err)
 	}
 	if len(h.router.LastCandidates) != 2 {

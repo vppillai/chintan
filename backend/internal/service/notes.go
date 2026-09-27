@@ -66,9 +66,10 @@ func NoteIsActive(n model.NoteIndex) bool {
 	return strings.TrimSpace(n.DeletedAt) == ""
 }
 
-// maxTagLen bounds one tag. Tags are rendered into list filters and search
-// (never into the routing prompt, which sees titles and aliases only), so an
-// unbounded tag is a stored cost amplifier.
+// maxTagLen bounds one tag. Tags are rendered into list filters, search and,
+// since 2026-09-27, the routing prompt's candidate lines beside the aliases
+// (routing.Candidate.Tags), so an unbounded tag is a stored cost amplifier;
+// the prompt bounds each rendered field again (routing.maxFieldLen).
 const maxTagLen = 40
 
 // normalizeTags folds tags to a canonical form: trimmed, lowercased, collapsed
@@ -529,8 +530,8 @@ func (s *NotesService) applyNoteUpdates(ctx context.Context, userID string, note
 		note.Kind = *updates.Kind
 	}
 	if updates.CleanMode != nil {
-		// Checked against the kind as this request leaves it, so a note can
-		// become a checklist and take tasks in one PATCH.
+		// Checked against the kind as this request leaves it: a note becoming
+		// a checklist in this same PATCH cannot take a cleaned mode.
 		if err := CheckCleanMode(*note, *updates.CleanMode); err != nil {
 			return false, err
 		}
