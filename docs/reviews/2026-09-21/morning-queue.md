@@ -123,3 +123,59 @@ Your ring works end to end (#102, #103): the inbox takes the key as `Authorizati
 Decisions taken with you today: CloudTrail stays as it is (a nickel a month, and read events are what would show a secret being read); the source of a recording is shown in the Recordings tab only, not in the note body or the Home receipt; a filing instruction creates its note and adds no text.
 
 Open, small, no decision needed: a text-only recording row still requests audio it does not have (a harmless 404 in the console); `TestConcurrentCompleteCaptureAppendsExactlyOnce` is timing-sensitive under `-race` on a loaded runner (one deploy run failed and passed on re-run); the ring's `transcription` part could serve as a fallback when our transcription cannot run. One for you: switching apps mid-hold *sends* the note rather than cancelling (deliberate in the code; the review had asked for a cancel) — say if you would rather it discard.
+
+## Round 5 — what shipped (26 Sept, evening)
+
+Every stream of the round-5 report (`docs/reviews/2026-09-26/round-5-proposals.md`) is merged: PRs #110 (the report), #111 (`pipeline.go` split into one file per stage), #112 (`FilingRow.tsx` split into model, hook, item and prompt), #113 (custom API and app domain, dormant until a config names one; stripped Lambda binaries; refused-inbox-key alarm), #114 (brand leads the header; push-to-talk is PTT, on the disc too), #115 (`frontend/qa` deleted, `Recordings.tsx` split, ResumePrompt and useAuthGate covered), #116 (Home receipts: one row per note, tiers, a poll that asks on focus and backs off), #117 (backend seams: one CAS loop, one re-indexer, a tested S3 adapter), #118 (prompts wave 1: shared rules, legacy path deleted, note language, live eval, `prompts.md`), #119 (checklists: reorder by grip, collapse Done, uncheck all, delete done), #120 (capture timing record, `chintanctl latency`, per-key monthly usage, refusal counter, Rotate key), #121 (`queries.ts` and `NotesScreen` split, dead CSS deleted, `shell.css` re-homed), #122 and #123 (backend structure: `UpdateNote` split, package comments, dead code and its `deadcode` gate, append-stamp clock), #124 (frontend test hygiene: fake clocks, typed e2e mock, generated fixtures, condition waits), #125 (`knip` as a lint gate, dead exports, the `isStuck` clock). After them, #126 (the three lows below) and this docs pass (CH-16a: the design docs match the tree, `docs/design/README.md` indexes them).
+
+Your ten asks, and what each became:
+
+1. **PTT.** `/talk` is PTT everywhere, the tab-bar disc says `PTT` under a 24 px mic and its accessible name explains the abbreviation (#114). Waiting on you: which glyph on which disc (R5-BR-P3).
+2. **Brand over "Notes".** The name leads the Home row in 19 px serif ink (`Wordmark`), "Notes · N" is secondary, the date line is gone, and the shell banner on the other screens takes the same lockup (#114). Waiting: the mark itself (R5-BR-L1) and where the brand row lives (R5-BR-H2).
+3. **Checklist items like Keep.** A nested-aware parser, grip reorder by drag, arrow keys or a tap menu, Done as a remembered disclosure with Uncheck all and Delete done + Undo (#119). Waiting: nesting depth (CL-D1) and whether a tick keeps moving to Done (CL-D2); phase 2 follows the answers.
+4. **Receipts piling up.** One row per destination note, tiers moving → needs you → filed, the fourth group onward behind a native disclosure; a device capture sent into a note still gets a receipt (#116, on #112's split; the stuck clock left from review landed in #125). Waiting: grouped rows or "N new" badges, after a week with the rows (R5-RC-D3).
+5. **Async updates.** The poll asks again on focus and backs off 1.5 s → 4 s → 15 s → 60 s, never stopping while something is moving (#116); `docs/design/async-updates.md` records the measured baseline and the Web Push design. Waiting: build Web Push now (R5-RC-D1) and where the permission is asked (R5-RC-D2).
+6. **Webhook delay.** `recorded_at` from the device and per-stage timestamps on the capture row, never on the wire; `chintanctl latency` prints p50/p95/max per hop by source (#120). Nothing in About. Measured: Chintan's share is ~2 s targeted, 2.5–5 s routed; the ring's own transfer and transcription are the long pole. Waiting: the Recording-only webhook experiment (WH-D).
+7. **Prompts.** Shared rules in `internal/llm`, the legacy `content` path deleted, whole-note prompts as one template with the note's language, an owner-runnable live eval over fixtures, `docs/design/prompts.md` (#118). The routing rewrite (PR-2) and cleanup consolidation (PR-4) wait on the eval baseline — your action below — and on PR-D1…D5.
+8. **Efficient, clean, documented.** Three waves: the pipeline file split (#111); the frontend and backend splits, seams and deletions (#112, #115, #117, #121, #122, #123); fake clocks and typed fixtures (#124); the `knip`, `deadcode` and CSS-class gates so it does not recur (#121, #123, #125); and this docs pass. Waiting: CH-O1…O3.
+9. **Key usage and abuse.** Monthly request and byte counters on the Devices card at zero extra writes, an `InboxKeyRefused` metric with a sixth alarm, Rotate key from the card (#113, #120). Waiting: WH-A, WH-B, WH-C, WH-E.
+10. **Custom domain.** Three optional config keys (`api_host`, `app_host`, `dns_zone_id`) and conditional resources that CI proves dormant; $0 on AWS today and after (#113). Waiting: OD-1, OD-2, OD-3.
+
+**Live QA (26 Sept, 21:59–22:11 UTC, prod).** Thirty-four checks over receipts, brand and PTT, checklists, recordings and the console, from a Pixel 8 Pro context and a 1280 px desktop: 32 pass, one partial (the empty "Recordings being filed" section is unreachable while a foreign `needs_target` row sits on this account), one Low fail and one Low finding, both closed by #126 — a text-only recording row asked for audio it does not have (the harmless 404 from the round-4 list above, now gone), and `transcribed` was a wire status the frontend did not list, so a capture sitting in it drew every stage segment done with no label (`cleaned` had the same gap; both are in the contract on both sides now). The pass's report, `qa-w1-live.md`, was not committed; its outcome is this paragraph. Also in #126: the one CI flake on #125 — the receipt test read a note title before the device cache had delivered it — is fixed in the test.
+
+**Twenty-four decisions, still open.** Each is a section of `docs/reviews/2026-09-26/round-5-proposals.md` §2, with the options costed and a recommendation:
+
+- R5-BR-L1 — which logo mark: Bindu C, Wave to line, or Drop (§2.1; recommends Bindu C; the renders are under `r5/`).
+- R5-BR-H2 — where the brand row lives on Home: the heading row, as shipped, or the shell banner on every screen (§2.2; recommends as shipped).
+- R5-BR-P3 — PTT disc glyph: a heavier microphone or a walkie-talkie (§2.3; recommends the mic on the tab bar, the walkie-talkie on `/talk`).
+- CL-D1 — checklist nesting: one level, as Keep, or unlimited (§2.4; recommends one).
+- CL-D2 — checked items keep moving to Done, and should Done start collapsed (§2.5; recommends keep moving, start open).
+- R5-RC-D1 — build Web Push now (§2.6; recommends yes, once phase 1 has settled).
+- R5-RC-D2 — where the notification permission is asked (§2.7; recommends a You card).
+- R5-RC-D3 — receipts after grouping: grouped rows or "N new" badges on the note rows (§2.8; recommends a week with the rows first).
+- PR-D1 — send tags to the router (§2.9; recommends yes, with PR-2).
+- PR-D2 — route over every active note, not the 50 most recent (§2.10; recommends yes, with PR-2).
+- PR-D3 — still ask the router when the transcript has no cue (§2.11; recommends yes, reviewed after two weeks of fixtures).
+- PR-D4 — drop the `tasks` whole-note mode, Split up (§2.12; recommends drop).
+- PR-D5 — per-capture cleanup Faithful only; Polished stays as the whole-note view (§2.13; recommends yes, unless you use Polished per capture).
+- WH-A — optional expiry on device keys (§2.14; recommends as an option with no default).
+- WH-B — record where a key was last used from (§2.15; recommends a /24 neighbourhood).
+- WH-C — revoke-all endpoint (§2.16; recommends no).
+- WH-D — set the Pebble webhook to Recording only: does it wait for Pebble's transcription (§2.17; recommends running it now that LAT-1 is live).
+- WH-E — per-device provider cost in the usage rows (§2.18; recommends not yet).
+- OD-1 — where the domain's DNS lives: the registrar or a Route 53 zone (§2.19; recommends the registrar unless you register at Route 53).
+- OD-2 — Cognito sign-in page: keep the amazoncognito.com address (§2.20; recommends keep).
+- OD-3 — URL shape on the custom domain (§2.21; recommends `app.example.com/dev/`).
+- CH-O1 — split the pipeline package, or only its file (§2.22; recommends the file only, which #111 did).
+- CH-O2 — one repository test double instead of two (§2.23; recommends yes, as its own PR).
+- CH-O3 — 7.3 MB of 2026-09-04 QA screenshots in git (§2.24; recommends delete).
+
+Once these are taken, the 3.7 MB of decision renders under `docs/reviews/2026-09-26/r5/` can be pruned.
+
+**One action for you: the prompt baseline.** PR-2 (the routing rewrite) and PR-4 are gated on the live eval passing three times in a row against the real model. The key is read from SSM into the shell and never printed; a run costs cents:
+
+```bash
+cd backend && export PATH=/usr/local/go/bin:$PATH
+export LLM_API_KEY=$(aws ssm get-parameter --with-decryption --region us-west-2 --name /chintan/dev/llm_api_key --query Parameter.Value --output text)
+LIVE_LLM=1 go test ./internal/provider -run TestLiveEval -v -count=3
+```
