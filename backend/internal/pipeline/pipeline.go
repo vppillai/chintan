@@ -134,6 +134,10 @@ type Config struct {
 	// not the request path — but couples the clean's failure to the capture's
 	// invocation rather than giving it retries of its own.
 	CleanInvoker NoteCleanInvoker
+	// Pusher sends the Web Push notification after a capture is appended,
+	// parks at needs_target or fails (notify.go). Optional: nil is an
+	// instance without a VAPID key pair, and nothing is sent.
+	Pusher Pusher
 
 	// Provider and model names are what the price table is keyed on. They are
 	// passed in rather than inferred so an instance can point at a different
@@ -351,6 +355,10 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		log.Error("capture pipeline could not complete", slog.String("error", err.Error()))
 		return final, err
 	}
+	// Only a run that moved the capture to its end announces it: a retry of
+	// a finished capture returned above, and a conceded delivery leaves the
+	// announcement to the owner.
+	p.notify(ctx, final)
 	finished := []any{
 		slog.String("status", string(final.Status)),
 		slog.Int64("elapsed_ms", elapsed.Milliseconds()),
@@ -434,6 +442,7 @@ func (p *Pipeline) RejectOversizedCapture(ctx context.Context, ref CaptureRef) e
 		}
 		return err
 	}
+	p.notify(ctx, capture)
 	return nil
 }
 

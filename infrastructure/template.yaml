@@ -1127,10 +1127,12 @@ Resources:
   # Both functions ran under one role, so the API — the function every browser
   # can reach — held the worker's grants: both provider keys through SSM,
   # dynamodb:Scan across every tenant, sqs:SendMessage, budgets:ViewBudget
-  # (review 2026-09-05, S7). cmd/api/main.go wires no SSM, Scan, SQS or
-  # Budgets client; what it uses is item operations and Query on the table,
-  # objects under the tenant prefixes, and one asynchronous invoke of the
-  # worker's live alias. The worker gets the rest.
+  # (review 2026-09-05, S7). cmd/api/main.go wires no Scan, SQS or Budgets
+  # client; what it uses is item operations and Query on the table, objects
+  # under the tenant prefixes, one asynchronous invoke of the worker's live
+  # alias, and — since Web Push (docs/design/push.md) — one SSM read of the
+  # VAPID *public* key, which is public. The worker gets the rest, including
+  # the private key.
   #
   # Both names keep the `chintan-lambda-` prefix. The agent boundary and deny
   # policies (infrastructure/agent-policies) refuse ssm:GetParameter and
@@ -1198,6 +1200,20 @@ Resources:
                 Resource:
                   - !GetAtt DynamoDBTable.Arn
                   - !Sub '${DynamoDBTable.Arn}/index/*'
+        - PolicyName: SSMAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The one parameter the API reads: the VAPID public key GET
+              # /v1/push/key hands the browser (docs/design/push.md). Not
+              # the private key, which only the worker signs with. An
+              # optional read: absent, the route answers 404 and the app's
+              # Notifications card says notifications are not set up here.
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/vapid_public_key'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
@@ -1323,6 +1339,12 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/groq_api_key'
                   - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/llm_api_key'
+                  # The VAPID pair Web Push signs with (docs/design/push.md).
+                  # Both are optional reads: absent, the worker starts and
+                  # sends nothing. scripts/vapid-keys.sh prints the commands
+                  # that create them.
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/vapid_private_key'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/chintan/${InstanceName}/vapid_public_key'
               # No kms:Decrypt. ssm:GetParameter with WithDecryption on a
               # SecureString under the AWS-managed aws/ssm key is authorised by
               # the SSM grant alone; the AWS-managed key's policy lets SSM
@@ -1406,9 +1428,11 @@ Resources:
           # bucket → alias → function → role cycle; see ContentBucket.
           CONTENT_BUCKET: !Sub 'chintan-content-${InstanceName}-${Environment}-${AWS::AccountId}'
           ALLOWED_ORIGIN: !Ref AllowedOrigin
-          # No LLM_* or *_KEY_PATH: cmd/api calls no provider and its role has
-          # no ssm:GetParameter, so the four the worker reads were set here and
-          # read by nothing (review 2026-09-24, R4-38).
+          # No LLM_* or provider *_KEY_PATH: cmd/api calls no provider, so the
+          # four the worker reads were set here and read by nothing (review
+          # 2026-09-24, R4-38). The one SSM path it does read is the VAPID
+          # public key below.
+          VAPID_PUBLIC_KEY_PATH: !Sub '/chintan/${InstanceName}/vapid_public_key'
           # Both halves are required. The service verifies tokens itself rather
           # than trusting the gateway authorizer, and it builds the JWKS issuer
           # URL from the region and the pool id — so with the client id alone it
@@ -1469,6 +1493,14 @@ Resources:
           LLM_MODEL: MiniMax-M3
           GROQ_API_KEY_PATH: !Sub '/chintan/${InstanceName}/groq_api_key'
           LLM_API_KEY_PATH: !Sub '/chintan/${InstanceName}/llm_api_key'
+          # Web Push (docs/design/push.md): the VAPID pair the worker signs
+          # notifications with, and the subject a push service may contact
+          # about them — the app's own origin, an https URL as RFC 8292
+          # wants. Both parameters are optional reads; until the owner puts
+          # them in SSM the worker logs one line at start and sends nothing.
+          VAPID_PRIVATE_KEY_PATH: !Sub '/chintan/${InstanceName}/vapid_private_key'
+          VAPID_PUBLIC_KEY_PATH: !Sub '/chintan/${InstanceName}/vapid_public_key'
+          VAPID_SUBJECT: !Ref AllowedOrigin
           # No USER_POOL_ID / USER_POOL_CLIENT_ID and no ALLOWED_ORIGIN: the
           # worker is invoked by S3, EventBridge and the API, never with a
           # user's token and never by a browser, and cmd/worker/main.go reads
