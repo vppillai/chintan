@@ -146,6 +146,13 @@ type Partition interface {
 	ScanIndex(ctx context.Context, index, pkAttr, pk string, fn func(Item) error) error
 }
 
+// Worker is the asynchronous hand-off to the instance's worker Lambda, for
+// the one command that queues work rather than doing it (regenerate). The
+// payload is the worker's own Invocation JSON; nothing waits for the result.
+type Worker interface {
+	Invoke(ctx context.Context, payload []byte) error
+}
+
 // ErrItemChanged is returned by Partition.Update when the item is gone or its
 // version is no longer the one the caller read. The caller re-reads or skips;
 // it never overwrites.

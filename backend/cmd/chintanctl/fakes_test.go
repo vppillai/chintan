@@ -30,6 +30,26 @@ func NumberAttr(v int64) AttrValue {
 	return AttrValue{N: &s}
 }
 
+// fakeWorker records every payload handed to the worker and runs nothing.
+type fakeWorker struct {
+	mu       sync.Mutex
+	payloads []string
+	err      error
+}
+
+func (f *fakeWorker) Invoke(ctx context.Context, payload []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.payloads = append(f.payloads, string(payload))
+	return nil
+}
+
 // fakePartition is an in-memory Partition: pk -> sk -> item.
 type fakePartition struct {
 	mu      sync.Mutex

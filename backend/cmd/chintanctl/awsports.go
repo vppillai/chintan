@@ -14,6 +14,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dynamotypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -523,6 +525,54 @@ func resolveTarget(ctx context.Context, g globalFlags) (target, *dynamodb.Client
 	t.Bucket = bucket
 
 	return t, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg), nil
+}
+
+// workerAliasOutput is the CloudFormation output carrying the worker's live
+// alias ARN — the same one the API invokes (WORKER_FUNCTION_ARN), so a
+// rollback that moves the alias moves the operator's hand-offs with it.
+const workerAliasOutput = "WorkerFunctionLiveAliasArn"
+
+// lambdaWorker implements Worker against the real function, the way
+// pipeline.Invoker does for the API: an Event invocation, answered 202 once
+// queued, retried by Lambda on its own and dead-lettered after three tries.
+type lambdaWorker struct {
+	client   *lambda.Client
+	function string
+}
+
+func (w *lambdaWorker) Invoke(ctx context.Context, payload []byte) error {
+	out, err := w.client.Invoke(ctx, &lambda.InvokeInput{
+		FunctionName:   aws.String(w.function),
+		InvocationType: lambdatypes.InvocationTypeEvent,
+		Payload:        payload,
+	})
+	if err != nil {
+		return fmt.Errorf("invoke worker: %w", err)
+	}
+	if out.StatusCode != 202 {
+		return fmt.Errorf("invoke worker: unexpected status %d", out.StatusCode)
+	}
+	return nil
+}
+
+// resolveWorker finds the instance's worker through the stack output, the
+// one place that cannot be wrong about which function is live. The caller
+// needs lambda:InvokeFunction on it; the agent principal deliberately does
+// not have that, so this is run with the operator's own credentials.
+func resolveWorker(ctx context.Context, g globalFlags) (Worker, error) {
+	var opts []func(*config.LoadOptions) error
+	if g.region != "" {
+		opts = append(opts, config.WithRegion(g.region))
+	}
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("load aws config: %w", err)
+	}
+	arn, err := describeStackOutput(ctx, cloudformation.NewFromConfig(cfg), stackNameFor(g.instance, g.environment), workerAliasOutput)
+	if err != nil {
+		return nil, err
+	}
+	return &lambdaWorker{client: lambda.NewFromConfig(cfg), function: arn}, nil
 }
 
 // describeStackOutput reads one output value from a CloudFormation stack.
