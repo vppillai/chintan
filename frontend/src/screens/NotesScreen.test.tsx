@@ -498,7 +498,7 @@ describe('doing something to several notes at once', () => {
     expect(screen.queryByRole('toolbar')).toBeNull();
   });
 
-  it('Delete archives every selected note with no dialog, and Undo brings them back', async () => {
+  it('Delete asks first, then archives every selected note, and Undo brings them back', async () => {
     const user = userEvent.setup();
     setCanHover(true);
     const archived = new Set<string>();
@@ -552,8 +552,13 @@ describe('doing something to several notes at once', () => {
 
     await user.click(within(bar).getByRole('button', { name: 'Delete' }));
 
-    // No dialog: the note is archived on the tap.
-    expect(screen.queryByRole('dialog')).toBeNull();
+    // One selected note is named, as the row's own confirm names it; nothing
+    // has gone until the question is answered (owner, 2026-09-27).
+    const dialog = screen.getByRole('dialog', { name: 'Delete “Roof repair”?' });
+    expect(dialog).toHaveTextContent('It is kept in the Archive for 30 days, then gone for good.');
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(archived.size).toBe(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
       expect([...archived]).toEqual([TEST_NOTES[0]?.id]);
     });
@@ -753,6 +758,12 @@ describe('doing something to several notes at once', () => {
     await startSelecting(user, 'Roof repair');
     await user.click(screen.getByRole('button', { name: 'Select all' }));
     await user.click(screen.getByRole('button', { name: 'Delete' }));
+    // Several notes are counted, not named.
+    const dialog = screen.getByRole('dialog', {
+      name: `Delete ${String(TEST_NOTES.length)} notes?`,
+    });
+    expect(dialog).toHaveTextContent('They are kept in the Archive for 30 days, then gone for good.');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();

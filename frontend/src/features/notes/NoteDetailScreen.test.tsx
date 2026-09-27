@@ -618,8 +618,9 @@ describe('the note is panels under one strip', () => {
 
 /**
  * Getting rid of the note from its own screen, through the header's ⋮
- * (`NoteMenu`). Delete is the archive and asks nothing; Delete forever asks
- * once, plainly. There is no typed word (owner, 2026-09-26).
+ * (`NoteMenu`). Delete is the archive and asks first (owner, 2026-09-27:
+ * "ask are you sure"); Delete forever asks in its own words. There is no
+ * typed word in either (owner, 2026-09-26).
  */
 describe('deleting from the note screen', () => {
   async function loaded() {
@@ -628,7 +629,7 @@ describe('deleting from the note screen', () => {
     });
   }
 
-  it('Delete archives with no dialog, lands on the library and offers Undo, which restores', async () => {
+  it('Delete asks first, then archives, lands on the library and offers Undo, which restores', async () => {
     const user = userEvent.setup();
     const api = server([ROOF]);
     const { router } = mount(api.fetchImpl, '/notes/roof-repair');
@@ -637,6 +638,26 @@ describe('deleting from the note screen', () => {
     await user.click(screen.getByRole('button', { name: 'Note actions' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
 
+    // The question, with nothing gone yet and the safe answer under Enter.
+    const dialog = screen.getByRole('dialog', { name: 'Delete “Roof repair”?' });
+    expect(dialog).toHaveTextContent('It is kept in the Archive for 30 days, then gone for good.');
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(api.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+
+    // Cancel hands focus back to the ⋮ the menuitem came from, not the body.
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Note actions' })).toHaveFocus();
+    expect(api.calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+
+    await user.click(screen.getByRole('button', { name: 'Note actions' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await user.click(
+      within(screen.getByRole('dialog', { name: 'Delete “Roof repair”?' })).getByRole('button', {
+        name: 'Delete',
+      }),
+    );
     expect(screen.queryByRole('dialog')).toBeNull();
     await waitFor(() => {
       expect(api.calls).toContain('DELETE /v1/notes/roof-repair');

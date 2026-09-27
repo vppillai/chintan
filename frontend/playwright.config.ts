@@ -86,6 +86,9 @@ export default defineConfig({
       // on 127.0.0.1 never connects — the run then sits until the timeout.
       command: 'bun run build && bun run preview -- --port 4173 --strictPort --host 127.0.0.1',
       url: 'http://127.0.0.1:4173',
+      // Outside CI this attaches to whatever already holds :4173 — on a
+      // shared box that can be another checkout's preview, and the run then
+      // tests someone else's build. Run with `CI=1` when in doubt.
       reuseExistingServer: !process.env['CI'],
       timeout: 120_000,
       env: {

@@ -14,7 +14,7 @@ empty states) — `features/notes/groups.ts`
 `components/NoteRow.tsx`, `components/SwipeRow.tsx` with
 `hooks/useSwipeActions.ts`, `hooks/useLongPress.ts`,
 `components/SelectionBar.tsx`, `components/Toast.tsx`,
-`components/ConfirmDialog.tsx`, `usePinNote` and `useReorderPins`
+`components/ConfirmDialog.tsx` and `components/DeleteConfirm.tsx`, `usePinNote` and `useReorderPins`
 (`api/queries/notes.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
 the rows, chips, field and heading, then the overrides), the drawn checkbox
 (`features/notes/ChecklistEditor.tsx` `Check` / `CheckMark`,
@@ -114,11 +114,21 @@ the long-press duration is not a swipe. Nothing is only a swipe away.
 No typed word anywhere (owner, 2026-09-26: "when I delete, I have to type
 delete. I don't like that UX"). Delete on Home — the row's ⋮, the swipe tray,
 the note header's ⋮ and the selection bar — is the archive (`useArchiveNote`,
-`useBulkArchiveNotes`): it happens on the tap with no dialog, and a toast in
+`useBulkArchiveNotes`), and it asks first (owner, 2026-09-27: "When deleting,
+ask are you sure. Don't directly archive"): `components/DeleteConfirm.tsx`, one
+`ConfirmDialog` shared by all four places, titled "Delete “⟨title⟩”?" for one
+note and "Delete N notes?" from the bar, whose body says where the note goes —
+"It is kept in the Archive for 30 days, then gone for good." ("They are kept…"
+for several) — with one destructive Delete button, no field, and focus on
+Cancel, so Enter and Escape both back out with nothing gone — and back to the
+control that asked, the ⋮ included (`OverflowMenu` hands focus to its trigger
+before a pick runs, so the dialog has it to restore). On the answer the archive
+runs and a toast in
 the shell (`components/Toast.tsx`, a row above the tab bar like the update
 prompt, never over the record button) says "Deleted · kept in Archive for 30
 days" with an Undo button for six seconds — the clock stops while a pointer
-rests on it or focus is in it. Undo restores, and re-pins what was pinned; the
+rests on it or focus is in it; the toast stays because it costs nothing and
+covers a slip on the second button too. Undo restores, and re-pins what was pinned; the
 toast is a polite live region that is always mounted and displayed (the card
 inside it comes and goes), and the button is a real one, so a keyboard reaches
 it. There is no separate Archive item: the
@@ -126,7 +136,7 @@ Archive is where deleted notes wait, thirty days, until the sweep purges them
 or Restore brings them back. The Archived chip and view keep their names.
 
 Delete forever, in the archive only — row, header and bar — is a plain
-`ConfirmDialog`: the sentence names the note and what goes with it, one
+`ConfirmDialog` of its own: the sentence names the note and what goes with it, one
 destructive button, Cancel with focus. For a bulk Delete forever of more than
 ten notes (`HOLD_TO_DELETE_ABOVE`) the button reads "Hold to delete N notes"
 and has to be held for a second (`holdMs`) under a finger or a mouse button —

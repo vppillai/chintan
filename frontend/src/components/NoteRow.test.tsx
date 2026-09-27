@@ -12,8 +12,9 @@ import { Toast, dismissToast } from './Toast.tsx';
 
 /**
  * The swipe tray behind a note row: the right actions for the view the row
- * is in — pin and Delete (the archive, with Undo in the toast) on the tap,
- * Delete forever behind a plain confirm in the archive. The gesture itself is
+ * is in — pin on the tap, Delete (the archive, with Undo in the toast) behind
+ * "Delete “<title>”?" (owner, 2026-09-27: "ask are you sure"), Delete forever
+ * behind its own plain confirm in the archive. The gesture itself is
  * SwipeRow's test. And the ⋮ at the row's right, which offers the same
  * actions plus Select to a pointer that cannot swipe (2026-09-24, C).
  */
@@ -127,6 +128,9 @@ describe('NoteRow swipe actions', () => {
 
     await user.click(screen.getByRole('button', { name: 'More' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    // The menu's Delete asks the same question the tray's does.
+    const dialog = await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
       expect(calls).toContain('DELETE /v1/notes/roof-repair');
     });
@@ -194,13 +198,22 @@ describe('NoteRow swipe actions', () => {
     expect(screen.queryByRole('group', { hidden: true })).toBeNull();
   });
 
-  it('Delete archives on the tap, with no dialog, and offers Undo, which restores', async () => {
+  it('Delete asks first — the title, where the note goes, focus on Cancel — then archives and offers Undo, which restores', async () => {
     const user = userEvent.setup();
     const { calls } = mount(ACTIVE);
     const tray = swipeOpen();
 
     fireEvent.click(within(tray).getByRole('button', { name: 'Delete' }));
 
+    // Nothing has gone yet: the question names the note and says where it
+    // would go, with nothing to type and the safe answer under Enter.
+    const dialog = await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
+    expect(dialog).toHaveTextContent('It is kept in the Archive for 30 days, then gone for good.');
+    expect(within(dialog).queryByRole('textbox')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    expect(calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
       expect(calls).toContain('DELETE /v1/notes/roof-repair');
     });
@@ -217,6 +230,35 @@ describe('NoteRow swipe actions', () => {
       expect(calls).toContain('POST /v1/notes/roof-repair/restore');
     });
     expect(toast).toBeEmptyDOMElement();
+  });
+
+  it('Escape, or Enter on the focused Cancel, closes the delete confirm and archives nothing', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount(ACTIVE);
+
+    fireEvent.click(within(swipeOpen()).getByRole('button', { name: 'Delete' }));
+    await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(within(swipeOpen()).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    // From the ⋮, the everyday keyboard route: the menuitem that opened the
+    // dialog is gone with the menu, so Cancel has to land focus back on the
+    // ⋮ itself, not at the top of the document (WCAG 2.4.3).
+    await user.click(screen.getByRole('button', { name: 'More' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'More' })).toHaveFocus();
+
+    expect(calls.filter((call) => call.startsWith('DELETE'))).toEqual([]);
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 
   it('restores on the tap in the archive', async () => {

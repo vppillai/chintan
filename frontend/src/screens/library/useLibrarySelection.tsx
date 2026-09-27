@@ -8,6 +8,7 @@ import {
 } from '@/api/queries.ts';
 import type { NoteState, NoteWire } from '@/api/schema.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
+import { DeleteConfirm } from '@/components/DeleteConfirm.tsx';
 import type { SelectOptions } from '@/components/NoteRow.tsx';
 import { SelectionBar } from '@/components/SelectionBar.tsx';
 import { showDeleted } from '@/components/Toast.tsx';
@@ -31,7 +32,7 @@ export function useLibrarySelection(visible: readonly NoteWire[]) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** The last row toggled, for Shift-click to extend from. */
   const anchorRef = useRef<string | null>(null);
-  const [confirming, setConfirming] = useState<'restore' | 'purge' | null>(null);
+  const [confirming, setConfirming] = useState<'delete' | 'restore' | 'purge' | null>(null);
   const bulkArchive = useBulkArchiveNotes();
   const bulkRestore = useBulkRestoreNotes();
   const undo = useUndoDelete();
@@ -79,14 +80,15 @@ export function useLibrarySelection(visible: readonly NoteWire[]) {
   };
 
   /*
-   * Delete on Home is the archive, on the tap: the notes wait in the Archive
-   * for thirty days, and the toast offers Undo, which restores the ones that
-   * went — pinned again, where they were pinned (`useUndoDelete`). The
-   * library stays mounted through the mutation, so the per-call `onSuccess`
-   * is safe here where a row's is not (`NoteRow`).
+   * Delete on Home is the archive, once the confirm is answered: the notes
+   * wait in the Archive for thirty days, and the toast offers Undo, which
+   * restores the ones that went — pinned again, where they were pinned
+   * (`useUndoDelete`). The library stays mounted through the mutation, so
+   * the per-call `onSuccess` is safe here where a row's is not (`NoteRow`).
    */
   const deleteSelected = (): void => {
     const chosen = visible.filter((note) => selectedIds.has(note.id));
+    setConfirming(null);
     bulkArchive.mutate(
       chosen.map((note) => note.id),
       {
@@ -135,9 +137,10 @@ export function useLibrarySelection(visible: readonly NoteWire[]) {
 }
 
 /**
- * The bar above the tab bar while selecting, and the two confirms. In the
- * active view the one action is Delete — the archive, on the tap, with Undo
- * in the toast (owner, 2026-09-26: no typed word anywhere). In the archive
+ * The bar above the tab bar while selecting, and the three confirms. In the
+ * active view the one action is Delete — the archive, behind "Delete N
+ * notes?" (`DeleteConfirm`; owner, 2026-09-27), with Undo in the toast
+ * (owner, 2026-09-26: no typed word anywhere). In the archive
  * the actions are Restore and Delete forever, the one thing here that cannot
  * be undone: it asks once, plainly, and for more than ten notes the confirm
  * is a press held for a second rather than a tap (`holdMs`), because "select
@@ -171,7 +174,9 @@ export function LibrarySelectionBar({
               type="button"
               className="selection-bar__action selection-bar__action--destructive"
               disabled={selectedIds.size === 0 || selection.busy}
-              onClick={selection.deleteSelected}
+              onClick={() => {
+                selection.setConfirming('delete');
+              }}
             >
               {selection.archiving ? 'Deleting…' : 'Delete'}
             </button>
@@ -201,6 +206,16 @@ export function LibrarySelectionBar({
           )}
         </SelectionBar>
       )}
+
+      <DeleteConfirm
+        open={selection.confirming === 'delete'}
+        count={selectedIds.size}
+        title={onlySelected?.title}
+        onCancel={() => {
+          selection.setConfirming(null);
+        }}
+        onConfirm={selection.deleteSelected}
+      />
 
       <ConfirmDialog
         open={selection.confirming === 'restore'}

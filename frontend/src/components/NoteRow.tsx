@@ -25,6 +25,7 @@ import { useLongPress } from '@/hooks/useLongPress.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
+import { DeleteConfirm } from './DeleteConfirm.tsx';
 import { showDeleted } from './Toast.tsx';
 import { Icon } from './Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu.tsx';
@@ -104,12 +105,14 @@ export interface NoteRowProps {
  * its own (2026-09-24, B); the glyph before the title says so.
  *
  * Delete on Home is the archive (owner, 2026-09-26: "I have to type delete. I
- * don't like that UX"). It happens on the tap, with no dialog, and the toast
- * that follows offers Undo for a few seconds — the note is in the Archive for
- * thirty days either way, so the tap is never the last word. There is no
- * separate Archive item any more: the Archive is where deleted notes wait.
- * Delete forever, in the archive, is the one thing here that cannot be undone,
- * so it names what goes and asks once, plainly, with focus on Cancel.
+ * don't like that UX"). It asks first — "Delete “<title>”?", no field, focus
+ * on Cancel (`DeleteConfirm`; owner, 2026-09-27: "ask are you sure, don't
+ * directly archive") — and the toast that follows offers Undo for a few
+ * seconds: the note is in the Archive for thirty days either way, so neither
+ * tap is the last word. There is no separate Archive item any more: the
+ * Archive is where deleted notes wait. Delete forever, in the archive, is the
+ * one thing here that cannot be undone, so it names what goes with the note
+ * and asks in its own words.
  */
 export function NoteRow({
   note,
@@ -140,7 +143,7 @@ export function NoteRow({
   const undo = useUndoDelete();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
-  const [confirmingPurge, setConfirmingPurge] = useState(false);
+  const [confirming, setConfirming] = useState<'delete' | 'purge' | null>(null);
   // Select from the ⋮ re-renders this row as a label, unmounting the trigger
   // the menu would hand focus back to, so focus would drop to the body and a
   // keyboard user would Tab from the top to reach the checkbox they just made.
@@ -263,17 +266,17 @@ export function NoteRow({
   };
   const pinLabel = note.pinned ? 'Unpin' : 'Pin';
   /*
-   * Delete on Home: archive, then offer Undo. Chained on the promise rather
-   * than in a per-call `onSuccess`, which TanStack drops once the row has
-   * unmounted — and the archive's own refetch is about to remove this row
-   * from the list it is in. Undo calls the undo hook of this same row for
-   * the same reason: its hook-level `onSuccess` refetches the lists whether
-   * or not the row is still mounted. It is handed the note as it was, so a
-   * pinned note comes back pinned — the server's restore alone would not
-   * (`useUndoDelete`). A failure lands on the mutation's state and is shown
-   * beneath the row, with no toast claiming otherwise.
+   * Delete on Home, once confirmed: archive, then offer Undo. Chained on the
+   * promise rather than in a per-call `onSuccess`, which TanStack drops once
+   * the row has unmounted — and the archive's own refetch is about to remove
+   * this row from the list it is in. Undo calls the undo hook of this same
+   * row for the same reason: its hook-level `onSuccess` refetches the lists
+   * whether or not the row is still mounted. It is handed the note as it
+   * was, so a pinned note comes back pinned — the server's restore alone
+   * would not (`useUndoDelete`). A failure lands on the mutation's state and
+   * is shown beneath the row, with no toast claiming otherwise.
    */
-  const remove = (): void => {
+  const archiveNow = (): void => {
     void archive
       .mutateAsync(note.id)
       .then(() => {
@@ -283,8 +286,11 @@ export function NoteRow({
       })
       .catch(() => undefined);
   };
+  const remove = (): void => {
+    setConfirming('delete');
+  };
   const removeForever = (): void => {
-    setConfirmingPurge(true);
+    setConfirming('purge');
   };
 
   // The tray and the menu offer the same actions, in the same words: the
@@ -365,17 +371,30 @@ export function NoteRow({
         </p>
       )}
 
+      <DeleteConfirm
+        open={confirming === 'delete'}
+        count={1}
+        title={note.title}
+        onCancel={() => {
+          setConfirming(null);
+        }}
+        onConfirm={() => {
+          setConfirming(null);
+          archiveNow();
+        }}
+      />
+
       <ConfirmDialog
-        open={confirmingPurge}
+        open={confirming === 'purge'}
         title="Delete this note forever?"
         body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
         confirmLabel="Delete forever"
         destructive
         onCancel={() => {
-          setConfirmingPurge(false);
+          setConfirming(null);
         }}
         onConfirm={() => {
-          setConfirmingPurge(false);
+          setConfirming(null);
           purge.mutate(note.id);
         }}
       />
