@@ -97,23 +97,9 @@ type CleanedRecord = NoteCleanedWire;
 /**
  * What the worker would write for a note: the structured rewrite is the
  * title and the note's sentences as a list under a heading; the polished one
- * is the body as it is. Enough Markdown to prove the renderer draws it. For a
- * checklist the one mode is `tasks`: every open item split at its "and" into
- * one item per action, done items kept verbatim.
+ * is the body as it is. Enough Markdown to prove the renderer draws it.
  */
 function cleanedFor(note: NoteRecord, mode: CleanMode): CleanedRecord {
-  if (mode === 'tasks') {
-    const body = note.body
-      .split('\n')
-      .filter((line) => line.trim())
-      .flatMap((line) => {
-        const match = /^- \[( |x)\] (.*)$/.exec(line);
-        if (!match || match[1] === 'x') return [line];
-        return (match[2] ?? '').split(/\s+and\s+/).map((task) => `- [ ] ${task.trim()}`);
-      })
-      .join('\n');
-    return { body, mode, generated_at: new Date().toISOString(), stale: false };
-  }
   const sentences = note.body
     .split(/(?<=[.!?])\s+/)
     .map((sentence) => sentence.trim())
@@ -211,7 +197,6 @@ export function freshState(): ApiState {
     captures: [],
     requests: [],
     settings: {
-      cleanup_mode: 'faithful',
       retention_days: 0,
       theme: 'ink',
       default_language: 'en',
@@ -726,12 +711,13 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
         await problem(route, 404, { title: 'Not found' });
         return;
       }
+      if (note.kind === 'checklist') {
+        // As the real server rules: a checklist has no cleaned view.
+        await problem(route, 400, { title: 'Bad Request', detail: 'a checklist has no cleaned view' });
+        return;
+      }
       const body = (request.postDataJSON() ?? {}) as { mode?: CleanMode };
-      // A checklist has one mode, whatever was asked, as the real server rules.
-      const mode =
-        note.kind === 'checklist'
-          ? 'tasks'
-          : (body.mode ?? note.cleaned_mode ?? note.cleaned?.mode ?? 'structured');
+      const mode = body.mode ?? note.cleaned_mode ?? note.cleaned?.mode ?? 'structured';
       setTimeout(() => {
         note.cleaned = cleanedFor(note, mode);
       }, CLEAN_WORKER_MS);

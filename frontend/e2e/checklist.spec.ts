@@ -13,9 +13,9 @@ function values(list: Locator): Promise<string[]> {
 
 /**
  * Checklist notes, end to end against the stubbed API: the Checklists chip
- * on Home, the Items tab with its open and done rows, the Details switch
- * that converts a note and sends `kind` with the body, and the Split up tab
- * whose one mode the server applies unasked.
+ * on Home, the Items tab with its open and done rows, and the Details switch
+ * that converts a note and sends `kind` with the body. A checklist has no
+ * Cleaned tab: its recordings became items as they were filed.
  */
 
 test('Home has a Checklists chip after All that filters the library through the URL', async ({
@@ -54,8 +54,12 @@ test('the Items tab ticks, adds, edits and deletes items through the note’s ow
   seedShopping(api);
   await page.goto('/notes/shopping');
   const tabs = page.getByRole('tablist', { name: 'Note views' }).getByRole('tab');
-  await expect(tabs).toHaveText(['Items', 'Split up', 'Recordings (0)']);
+  await expect(tabs).toHaveText(['Items', 'Recordings (0)']);
   await expect(page.getByText('1 of 3 done')).toBeVisible();
+  // A link to the Cleaned tab a checklist no longer has opens its items.
+  await page.goto('/notes/shopping?tab=cleaned');
+  await expect(page.getByRole('tab', { name: 'Items' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: /split up|cleaned/i })).toHaveCount(0);
 
   const items = page.getByRole('list', { name: 'Items' });
   await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
@@ -126,63 +130,6 @@ test('Details turns a note into a checklist and back, sending kind with the conv
     'Ridge tiles on the south slope have slipped.\n\nGet two quotes.',
   );
   await expect.poll(() => api.notes['roof-repair']?.kind).toBe('note');
-});
-
-test('Split up has no mode picker, and its list is live: the first tick adopts the split list, later ones edit it', async ({
-  page,
-  api,
-}) => {
-  seedShopping(api);
-  await page.goto('/notes/shopping?tab=cleaned');
-  await expect(page.getByRole('tab', { name: 'Split up' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('group', { name: 'Cleaned view mode' })).toHaveCount(0);
-  await expect(page.getByText('Not split up yet')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Generate' }).click();
-  const preview = page.getByRole('list', { name: 'Split up items' });
-  await expect(preview).toBeVisible({ timeout: 10_000 });
-  await expect(preview.getByRole('checkbox')).toHaveCount(4);
-  for (const box of await preview.getByRole('checkbox').all()) await expect(box).toBeEnabled();
-  await expect(preview.getByRole('textbox')).toHaveCount(0);
-  await expect(page.getByText(/generated just now · split up/i)).toBeVisible();
-  const caption = page.getByText('Ticking here replaces your list with the split version.');
-  await expect(caption).toBeVisible();
-  // The request named no mode; the server applied `tasks` itself.
-  const clean = api.requests.find((r) => r.method === 'POST' && r.url === '/v1/notes/shopping/clean');
-  expect(clean).toBeTruthy();
-
-  // No native box anywhere: the control is a real checkbox hidden under its
-  // 44 px label, and the box beside it is drawn.
-  const butter = preview.getByRole('checkbox', { name: 'butter' });
-  await expect(butter).toHaveCSS('opacity', '0');
-  const target = await butter.locator('..').boundingBox();
-  expect(target?.height).toBeGreaterThanOrEqual(44);
-  expect(target?.width).toBeGreaterThanOrEqual(44);
-
-  // The first tick adopts the split list and ticks butter, in one PATCH.
-  await butter.click();
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] butter');
-  expect(api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping')).toHaveLength(1);
-  await expect(butter).toBeChecked();
-  await expect(caption).toHaveCount(0);
-  await expect(page.getByText(/your list · split up just now/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
-
-  // The next act edits the body it made, not another replacement: the ×
-  // under a done item deletes it, and butter stays done.
-  await preview.getByRole('button', { name: 'Delete Eggs' }).click();
-  await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread\n- [x] butter');
-
-  // Away and back, the tab shows the body, still ticked; Regenerate stays and
-  // Use this list does not: the body already is this list.
-  await page.getByRole('tab', { name: 'Items' }).click();
-  await expect.poll(() => values(page.getByRole('list', { name: 'Items' }))).toEqual(['Milk', 'Bread', '']);
-  await page.getByRole('tab', { name: 'Split up' }).click();
-  await expect(page.getByRole('list', { name: 'Split up items' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
-  await expect(page.getByText('Ticking here replaces your list with the split version.')).toHaveCount(0);
-  await expect(page.getByText('The note changed since this was generated.')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
 });
 
 /** The PATCHes the note has received. */
@@ -395,7 +342,7 @@ test('Done is a disclosure remembered for the session; Delete done is undone fro
 });
 
 /*
- * Pictures of the three screens, in both themes, on a phone and a desktop.
+ * Pictures of the two screens, in both themes, on a phone and a desktop.
  * Opt-in like the layout sweep: `CHECKLIST_SHOTS=1 bun run e2e checklist`
  * writes them under e2e/__screenshots__/sweep/, which is gitignored.
  */
@@ -432,10 +379,6 @@ for (const viewport of SHOT_VIEWPORTS) {
       await expect(page.getByRole('heading', { name: 'Done (2)' })).toBeVisible();
       await shot('items');
 
-      await page.getByRole('tab', { name: 'Split up' }).click();
-      await page.getByRole('button', { name: 'Generate' }).click();
-      await expect(page.getByRole('list', { name: 'Split up items' })).toBeVisible({ timeout: 10_000 });
-      await shot('split-up');
     });
   }
 }

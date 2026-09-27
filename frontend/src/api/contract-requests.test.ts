@@ -128,7 +128,6 @@ describe('the requests the frontend actually sends', () => {
     await call('getSettings', () => api.getSettings());
     await call('putSettings', () =>
       api.putSettings({
-        cleanup_mode: 'polished',
         retention_days: 30,
         theme: 'nocturne',
         default_language: 'ml',

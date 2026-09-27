@@ -525,9 +525,9 @@ function VerbatimSwitch({
 }
 
 /**
- * Prose or checklist. It changes what the rest of the screen is (Items and
- * Split up for Text and Cleaned) and what a recording into the note becomes
- * (an item, not a paragraph). Last in Details: the language stays first,
+ * Prose or checklist. It changes what the rest of the screen is (Items for
+ * Text, and no Cleaned tab) and what a recording into the note becomes (an
+ * item, not a paragraph). Last in Details: the language stays first,
  * where the owner's trial finally found it, and a note is converted once.
  *
  * The same drawn checkbox as the Cleaned tab's auto-refresh switch: the

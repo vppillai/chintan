@@ -656,7 +656,7 @@ describe('the screen says which language the recording will be transcribed in', 
     return async (input) => {
       const url = new URL(String(input));
       const body = url.pathname.endsWith('/v1/settings')
-        ? { cleanup_mode: 'faithful', retention_days: 30, theme: 'system', default_language: defaultLanguage }
+        ? { retention_days: 30, theme: 'system', default_language: defaultLanguage }
         : {
             items: [
               { ...TEST_NOTES[0], language: 'ml' },

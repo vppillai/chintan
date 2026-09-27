@@ -11,7 +11,6 @@ import { TEST_TOKENS, TestProviders, testApiContext } from '@/test/providers.tsx
 import { SettingsScreen } from './SettingsScreen.tsx';
 
 const STORED: SettingsWire = {
-  cleanup_mode: 'faithful',
   retention_days: 0,
   theme: 'ink',
   default_language: 'en',
@@ -91,26 +90,10 @@ describe('every control saves itself when it is changed', () => {
     });
     expect(puts[0]?.default_language).toBe('ml');
     // The rest of the record rides along unchanged: PUT replaces the whole thing.
-    expect(puts[0]?.cleanup_mode).toBe('faithful');
+    expect(puts[0]?.theme).toBe('ink');
     expect(screen.getByText(/transcribed as Malayalam/i)).toBeInTheDocument();
     // A brief tick, not a permanent claim.
     expect(await screen.findByText('Saved')).toBeInTheDocument();
-  });
-
-  it('saves a cleanup mode on tap', async () => {
-    const { puts } = mountSettings();
-    await screen.findByRole('combobox', { name: /transcription language/i });
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
-    });
-
-    await userEvent.click(screen.getByRole('button', { name: /polished/i }));
-
-    await waitFor(() => {
-      expect(puts).toHaveLength(1);
-    });
-    expect(puts[0]?.cleanup_mode).toBe('polished');
-    expect(screen.getByRole('button', { name: /polished/i })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('applies a theme on the device at once and saves it like the rest', async () => {
@@ -122,7 +105,7 @@ describe('every control saves itself when it is changed', () => {
     const { puts } = mountSettings();
     await screen.findByRole('combobox', { name: /transcription language/i });
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Nocturne' })).toBeEnabled();
     });
 
     await userEvent.click(screen.getByRole('button', { name: 'Nocturne' }));
@@ -243,14 +226,14 @@ describe('every control saves itself when it is changed', () => {
       </TestProviders>,
     );
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /polished/i })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Nocturne' })).toBeEnabled();
     });
 
-    await userEvent.click(screen.getByRole('button', { name: /polished/i }));
+    await userEvent.click(screen.getByRole('button', { name: 'Nocturne' }));
 
     expect(await screen.findByText(/couldn.t save your settings/i)).toBeInTheDocument();
     // The choice stays where the user put it.
-    expect(screen.getByRole('button', { name: /polished/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Nocturne' })).toHaveAttribute('aria-pressed', 'true');
 
     refuse = false;
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -258,7 +241,7 @@ describe('every control saves itself when it is changed', () => {
     await waitFor(() => {
       expect(puts).toHaveLength(2);
     });
-    expect(puts[1]?.cleanup_mode).toBe('polished');
+    expect(puts[1]?.theme).toBe('nocturne');
     expect(await screen.findByText('Saved')).toBeInTheDocument();
   });
 });

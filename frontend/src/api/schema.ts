@@ -59,11 +59,14 @@ export interface ReadinessWire {
   checks: Record<string, { ok?: boolean; latency_ms?: number }>;
 }
 
-export type CleanupMode = 'faithful' | 'polished';
 export type ThemeSetting = 'ink' | 'nocturne' | 'system';
 
+/**
+ * Per-recording cleanup is faithful for everyone since 2026-09-27; the
+ * `cleanup_mode` this carried is accepted and ignored by PUT and never
+ * returned, so it is not in the type.
+ */
 export interface SettingsWire {
-  cleanup_mode: CleanupMode;
   retention_days: number;
   theme: ThemeSetting;
   /**
@@ -152,11 +155,11 @@ export interface NoteWire {
 }
 
 /**
- * `tasks` is the one mode a checklist is cleaned in — the list rewritten as
- * granular, actionable items — and the server refuses it for a plain note and
- * the other two for a checklist.
+ * The whole-note view's two modes. A checklist has no cleaned view (the
+ * `tasks` mode that split one after the fact went on 2026-09-27; items are
+ * extracted per recording instead) and `POST …/clean` is 400 for one.
  */
-export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
+export type NoteCleanMode = 'polished' | 'structured';
 
 /**
  * The whole-note cleaned view: one pass of the cleanup model over the entire

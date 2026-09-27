@@ -22,7 +22,6 @@ const NOTE: NoteDetailWire = {
 };
 
 const SETTINGS: SettingsWire = {
-  cleanup_mode: 'faithful',
   retention_days: 0,
   theme: 'ink',
   default_language: 'ml',
