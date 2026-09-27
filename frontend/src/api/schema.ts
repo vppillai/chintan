@@ -208,6 +208,19 @@ export interface NoteCleanQueuedWire {
   mode: NoteCleanMode;
 }
 
+/**
+ * The 202 of `POST /v1/notes/{id}/regenerate`: every recording of the note
+ * cleaned again with the current prompts, from its stored transcript, and put
+ * back where it stands. `captures` is how many the worker will clean; zero
+ * means nothing in the note came from a prompt and nothing was queued. Those
+ * captures go back to `transcribed` until each lands, so the note's own poll
+ * and the filing strip show the progress.
+ */
+export interface NoteRegenerateQueuedWire {
+  status: 'queued';
+  captures: number;
+}
+
 export interface NoteCreateWire {
   title: string;
   body?: string;

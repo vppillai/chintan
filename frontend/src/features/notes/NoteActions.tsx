@@ -6,11 +6,12 @@ import {
   useArchiveNote,
   useDeleteNoteForever,
   usePinNote,
+  useRegenerateNote,
   useRestoreNote,
   useSettings,
   useUndoDelete,
 } from '@/api/queries.ts';
-import type { NoteDetailWire } from '@/api/schema.ts';
+import { isTerminalStatus, type NoteDetailWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { ConfirmDialog } from '@/components/ConfirmDialog.tsx';
 import { CopyButton } from '@/components/CopyButton.tsx';
@@ -30,12 +31,26 @@ import { cleanedDocument, cleanedMarkdown } from './cleaned.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
- * The note's actions: Details · Share · Pin (or Unpin) · Delete (or Restore
- * · Delete forever), behind the ⋮ in the header, and the two disclosures they
- * open in a drawer at the foot of the screen. Pin is here as well as on the
- * row (2026-09-24, B) because the note is where the person decides it is
- * worth keeping at the top; an archived note offers no pin, since archiving
- * clears it.
+ * The note's actions: Details · Share · Pin (or Unpin) · Regenerate from
+ * recordings… · Delete (or Restore · Delete forever), behind the ⋮ in the
+ * header, and the two disclosures they open in a drawer at the foot of the
+ * screen. Pin is here as well as on the row (2026-09-24, B) because the note
+ * is where the person decides it is worth keeping at the top; an archived
+ * note offers no pin, since archiving clears it.
+ *
+ * Regenerate (owner, 2026-09-27) re-does the AI cleanup of every recording in
+ * the note with the current prompts, from the transcripts the server already
+ * has — the way to bring a note made before a prompt change up to date. It
+ * asks once, plainly, because it replaces edits made inside those paragraphs;
+ * ticks are kept. The count in the sentence is the recordings that have
+ * landed, which is the server's own rule (`service.RegenerableCaptures`) as
+ * far as this side can see it: a verbatim note has nothing from a prompt, and
+ * a paragraph the person rewrote by hand is left alone by the worker and not
+ * counted in its 202. The item is off while a recording is still moving —
+ * this regeneration or a new recording — since the server would refuse, and
+ * offline, since nothing here can be queued. Progress is the filing strip
+ * under the meta line: the captures go back to `transcribed` and the note's
+ * poll follows them until the last lands.
  *
  * They were a sticky bar at the foot with a fourth, primary "Record into
  * this". On a phone that bar wrapped to two rows (96 px) and sat 30 px above
@@ -95,14 +110,23 @@ export function NoteMenu({
   const undo = useUndoDelete();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
+  const regenerate = useRegenerateNote();
   // A pin made offline would pause until the network returned and then fire
   // with a version the cache may no longer hold (review 2026-09-24, R4-11).
   const online = useOnline();
-  const [confirming, setConfirming] = useState<'delete' | 'purge' | null>(null);
+  const [confirming, setConfirming] = useState<'delete' | 'purge' | 'regenerate' | null>(null);
+  const regenerable = regenerableCount(note);
+  const regenerating = (note.captures ?? []).some((capture) => !isTerminalStatus(capture.status));
 
   const busy =
-    archive.isPending || restore.isPending || undo.isPending || purge.isPending || pin.isPending;
-  const failure = archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error;
+    archive.isPending ||
+    restore.isPending ||
+    undo.isPending ||
+    purge.isPending ||
+    pin.isPending ||
+    regenerate.isPending;
+  const failure =
+    archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error ?? regenerate.error;
 
   const items: OverflowMenuItem[] = [
     { label: 'Details', onSelect: () => onOpenPanel('details') },
@@ -115,6 +139,13 @@ export function NoteMenu({
             disabled: busy || !online,
             onSelect: () => {
               pin.mutate({ note, pinned: !note.pinned });
+            },
+          },
+          {
+            label: regenerating ? 'Regenerating…' : 'Regenerate from recordings…',
+            disabled: busy || !online || regenerating || regenerable === 0,
+            onSelect: () => {
+              setConfirming('regenerate');
             },
           },
         ]),
@@ -190,6 +221,20 @@ export function NoteMenu({
       />
 
       <ConfirmDialog
+        open={confirming === 'regenerate'}
+        title="Regenerate from recordings?"
+        body={regenerateSentence(regenerable)}
+        confirmLabel="Regenerate"
+        onCancel={() => {
+          setConfirming(null);
+        }}
+        onConfirm={() => {
+          setConfirming(null);
+          regenerate.mutate(note.id);
+        }}
+      />
+
+      <ConfirmDialog
         open={confirming === 'purge'}
         title="Delete this note forever?"
         body={`“${note.title}” and its recordings and transcripts are destroyed. This cannot be undone, and there is no copy on the server or on any other device you have signed in on.`}
@@ -209,6 +254,18 @@ export function NoteMenu({
       />
     </>
   );
+}
+
+/** The recordings a regeneration would clean again, as far as the wire shows. */
+function regenerableCount(note: NoteDetailWire): number {
+  if (note.verbatim) return 0;
+  return (note.captures ?? []).filter((capture) => capture.status === 'appended').length;
+}
+
+/** What the confirm says: the count, what is replaced, what is kept. */
+function regenerateSentence(count: number): string {
+  const recordings = count === 1 ? '1 recording' : `${String(count)} recordings`;
+  return `Re-does the AI cleanup of ${recordings} with the current settings; edits you made inside those paragraphs are replaced. Ticks are kept.`;
 }
 
 /**
