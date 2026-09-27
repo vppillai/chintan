@@ -10,7 +10,7 @@ import type { SVGProps } from 'react';
  * at every size, so a 16 px chevron beside a 22 px tab icon reads as the same
  * pen. Before this the weight was 1.6 units and thinned with the box, so the
  * small icons came out at just over a pixel next to the tab bar's. The two
- * display-size discs — the tab bar's PTT and `/talk` — pass their own
+ * display-size discs — the tab bar's Record and `/talk` — pass their own
  * `strokeWidth`: 1.75 px was set for 16–30 px UI glyphs and reads thin on a
  * 76 px accent disc.
  *

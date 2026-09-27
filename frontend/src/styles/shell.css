@@ -122,11 +122,11 @@
 }
 
 /* --------------------------------------------------------------------------
-   Record button (PTT) — the only element permitted to use --color-accent.
+   Record button — the only element permitted to use --color-accent.
    -------------------------------------------------------------------------- */
 
-/* The glyph over a caps "PTT", as the hero-era button carried "RECORD": the
-   disc names itself, since PTT is what the app calls it everywhere else. */
+/* The glyph over a caps "RECORD", as the hero-era button carried it: the
+   disc names itself (owner feedback 2026-09-26). */
 .record-button {
   display: grid;
   place-items: center;
@@ -159,7 +159,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Tab bar — Home · PTT · You, on every screen but the capture screen.
+   Tab bar — Home · Record · You, on every screen but the capture screen.
 
    A grid row in normal flow, NOT a floating action button. Content above it
    can therefore never be overlaid: `.app` reserves the row.

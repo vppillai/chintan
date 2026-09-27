@@ -5,8 +5,6 @@
  * runner cannot load, and a literal there drifted from the constant here.
  */
 
-/** How long the tab-bar mic must be held before a press is a hold rather than a tap. */
-export const HOLD_DELAY_MS = 350;
 /** Fewer milliseconds of audio than this is a slip, not a message. */
 export const MIN_TALK_MS = 600;
 /** How far off the button the pointer may be before release means cancel. */
