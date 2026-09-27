@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 
@@ -15,11 +15,15 @@ import type { NoteEditor } from './useNoteEditor.ts';
  * body the real editor would have been handed — the one thing this component
  * exists to produce — and when it would have been asked to save. `setBody`
  * is the outside world changing the note under the editor, as a refetch does.
+ * A save re-renders once it has settled, as the real editor's does
+ * (`performSave` → `commit` → `dispatch`), so a focus target left armed past
+ * the render it was set for shows up here as it would in the app.
  */
 function mount(initial: string, noteId = 'shopping') {
   const log = { bodies: [] as string[], saves: 0, setBody: (_next: string): void => {} };
   function Harness() {
     const [body, setBody] = useState(initial);
+    const [, setSettled] = useState(0);
     log.setBody = setBody;
     const editor: NoteEditor = {
       model: initialEditor(
@@ -33,6 +37,10 @@ function mount(initial: string, noteId = 'shopping') {
       },
       saveNow: async () => {
         log.saves += 1;
+        await Promise.resolve();
+        act(() => {
+          setSettled(log.saves);
+        });
       },
       takeTheirs: () => {},
       keepMine: () => {},
@@ -373,6 +381,10 @@ describe('one level of sub-items', () => {
     const plates = screen.getByRole('textbox', { name: 'Item 2' });
     await user.click(plates);
 
+    // The keys are described on the field, where they act, not only on the grip.
+    expect(plates).toHaveAccessibleDescription(/Tab makes this item a sub-item/);
+    expect(screen.getByRole('button', { name: 'Move Plates' })).not.toHaveAccessibleDescription(/Tab/);
+
     await user.keyboard('{Tab}');
     expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(1);
@@ -419,13 +431,33 @@ describe('one level of sub-items', () => {
     const user = userEvent.setup();
     const { body } = mount(LIST);
     // Milk and Bread are the open rows; Eggs sits in Done between them in the body.
-    const bread = screen.getByRole('textbox', { name: 'Item 2' });
+    const bread = screen.getByRole('textbox', { name: 'Item 2' }) as HTMLTextAreaElement;
     await user.click(bread);
+    bread.setSelectionRange(2, 2);
     await user.keyboard('{Tab}');
     expect(body()).toBe('- [ ] Milk\n  - [ ] Bread\n- [x] Eggs');
-    // The row's line moved up past Eggs's, so its field is a fresh element; focus followed.
-    expect(screen.getByRole('textbox', { name: 'Sub-item 2' })).toHaveFocus();
-    expect(screen.getByRole('textbox', { name: 'Sub-item 2' })).toHaveValue('Bread');
+    // The row's line moved up past Eggs's, so its field is a fresh element;
+    // focus followed, and the caret is where it was, mid-word.
+    const fresh = screen.getByRole('textbox', { name: 'Sub-item 2' }) as HTMLTextAreaElement;
+    expect(fresh).toHaveFocus();
+    expect(fresh).toHaveValue('Bread');
+    expect([fresh.selectionStart, fresh.selectionEnd]).toEqual([2, 2]);
+  });
+
+  it('the menu nests a row whose line moves past a done one, and the keyboard stays on its grip once the save settles', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount(LIST);
+    const grip = screen.getByRole('button', { name: 'Move Bread' });
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    await user.click(screen.getByRole('menuitem', { name: 'Make a sub-item' }));
+    expect(body()).toBe('- [ ] Milk\n  - [ ] Bread\n- [x] Eggs');
+    expect(log.saves).toBe(1);
+    // Bread's index changed, which remade its field — a target the Tab path
+    // would focus — but the menu asked for the grip, and the save's render
+    // must not hand focus to the field after it.
+    expect(screen.getByRole('button', { name: 'Move Bread' })).toHaveFocus();
+    expect(screen.getByRole('textbox', { name: 'Sub-item 2' })).not.toHaveFocus();
   });
 
   it('the grip’s menu nests and un-nests the row and keeps the keyboard on its grip', async () => {
@@ -472,6 +504,74 @@ describe('one level of sub-items', () => {
     expect(await open.findByRole('checkbox', { name: 'Party' })).not.toBeChecked();
     expect(open.getByRole('checkbox', { name: 'Plates' })).not.toBeChecked();
     expect(within(doneSection()).getByRole('checkbox', { name: 'Cups' })).toBeChecked();
+  });
+
+  it('Enter in a parent starts its first sub-item; deleting a parent brings its sub-items up a level', async () => {
+    const user = userEvent.setup();
+    const { body } = mount('- [ ] Party\n  - [ ] Plates\n  - [ ] Cups');
+    await user.click(screen.getByRole('textbox', { name: 'Item 1' }));
+    await user.keyboard('{Enter}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] \n  - [ ] Plates\n  - [ ] Cups');
+    const fresh = screen.getByRole('textbox', { name: 'Sub-item 2' });
+    expect(fresh).toHaveFocus();
+    // Backspace in the empty sub-item removes it and steps back to Party.
+    await user.keyboard('{Backspace}');
+    expect(body()).toBe('- [ ] Party\n  - [ ] Plates\n  - [ ] Cups');
+    expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveFocus();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Party' }), { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+    expect(body()).toBe('- [ ] Plates\n- [ ] Cups');
+    expect(openValues()).toEqual(['Plates', 'Cups', '']);
+    expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveFocus();
+  });
+
+  it('a move that lands a row on another level says so', async () => {
+    const user = userEvent.setup();
+    const { body } = mount('- [ ] A\n- [ ] B\n  - [ ] B1');
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move A' }), { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerUp(items(), { ...mouse, clientX: 10, clientY: 0 });
+    await user.click(screen.getByRole('menuitem', { name: 'Move to bottom' }));
+    // The bottom slot is a sub-item's, so A is one now — the menu offered no level.
+    expect(body()).toBe('- [ ] B\n  - [ ] B1\n  - [ ] A');
+    expect(screen.getByText('Now a sub-item')).toHaveAttribute('role', 'status');
+
+    const grip = screen.getByRole('button', { name: 'Move A' });
+    expect(grip).toHaveFocus();
+    await user.keyboard('{ArrowUp}');
+    expect(body()).toBe('- [ ] B\n  - [ ] A\n  - [ ] B1');
+    // Still a sub-item: nothing new to say.
+    expect(screen.getByText('Now a sub-item')).toBeInTheDocument();
+    await user.keyboard('{ArrowUp}');
+    expect(body()).toBe('- [ ] A\n- [ ] B\n  - [ ] B1');
+    expect(screen.getByText('Now a top-level item')).toHaveAttribute('role', 'status');
+  });
+
+  it('a parent dragged onto its own sub-item’s slot goes back where it was; dragged past the block’s end it moves', () => {
+    const { log, body } = mount('- [ ] Party\n  - [ ] Plates\n- [ ] Bread');
+    const list = items();
+    // Rows 40 px tall, stacked from the top, so a pointer can stop on one slot.
+    within(list)
+      .getAllByRole('listitem')
+      .filter((row) => row.hasAttribute('data-drag-id'))
+      .forEach((row, i) => {
+        vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({ top: i * 40, height: 40 } as DOMRect);
+      });
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Party' }), { ...mouse, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 10, clientY: 61 });
+    // The draft shows Party under its own sub-item, which nothing can mean.
+    expect(openValues()).toEqual(['Plates', 'Party', 'Bread', '']);
+    fireEvent.pointerUp(list, { ...mouse, clientX: 10, clientY: 61 });
+    expect(log.bodies).toEqual([]);
+    expect(openValues()).toEqual(['Party', 'Plates', 'Bread', '']);
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Party' }), { ...mouse, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 10, clientY: 101 });
+    expect(openValues()).toEqual(['Plates', 'Bread', 'Party', '']);
+    fireEvent.pointerUp(list, { ...mouse, clientX: 10, clientY: 101 });
+    expect(body()).toBe('- [ ] Bread\n- [ ] Party\n  - [ ] Plates');
   });
 
   it('a parent moves down past its own sub-items as a block, and a block that ends the list cannot move down', async () => {
