@@ -77,6 +77,17 @@ test('hold sends, a tap is too short, Space is the button, and Back leaves to Ho
   await expect(page).toHaveURL(/\/$/);
 });
 
+test('records into the note the URL names, as the capture screen is seeded', async ({ page, api }) => {
+  // The one hold surface left in the app (owner feedback 2026-09-27): a
+  // recording aimed at a note goes there from here too, not only from `/capture`.
+  await page.goto('/talk?note=roof-repair');
+  await expect(page.getByRole('button', { name: /^into roof repair/i })).toBeVisible();
+  await holdTheButton(page, MIN_TALK_MS + 100);
+  await expect(page.locator('.talk__status')).toHaveText('Sent · filing');
+  await expect.poll(() => api.captures.length, { message: 'capture created' }).toBe(1);
+  expect(api.captures[0]?.note_id).toBe('roof-repair');
+});
+
 test('slides away to cancel', async ({ page, api }) => {
   await page.goto('/talk');
   const button = page.getByRole('button', { name: /^PTT: hold to talk/ });
