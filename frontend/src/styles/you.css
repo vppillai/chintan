@@ -245,6 +245,12 @@
   color: var(--color-faint);
 }
 
+/* An expired device key: the row stays so it can be removed, and its hint
+   says why nothing from that device has landed. */
+.you-row__hint--expired {
+  color: var(--color-destructive);
+}
+
 /* The control keeps to the right; when it is wider than the room beside the
    label (the language select on a 320 px phone, a device row's two buttons)
    it wraps under it, still right-aligned, and its own children wrap in turn. */

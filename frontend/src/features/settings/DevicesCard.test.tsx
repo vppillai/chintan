@@ -7,7 +7,27 @@ import { DEFAULT_TIMEOUT_MS } from '@/api/client.ts';
 import type { DeviceCreatedWire, DeviceWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
-import { DevicesCard, MAX_DEVICES, UNCONFIRMED_TEXT, curlRecipe, deviceHint, inboxAudioUrl } from './DevicesCard.tsx';
+import {
+  DevicesCard,
+  MAX_DEVICES,
+  UNCONFIRMED_TEXT,
+  curlRecipe,
+  deviceHint,
+  inboxAudioUrl,
+  isExpired,
+} from './DevicesCard.tsx';
+
+const DAY_MS = 86_400_000;
+/** A perpetual, never-used device, for the tests that vary one field. */
+const idle: DeviceWire = {
+  id: 'dev_1',
+  name: 'Watch',
+  created_at: '2026-01-01T00:00:00Z',
+  last_used_at: null,
+  last_used_from: null,
+  expires_at: null,
+  usage_month: null,
+};
 
 /**
  * The generated list with its ids made distinct: the fixture generator
@@ -86,34 +106,75 @@ describe('the devices card on You', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent('Watch');
     // The device that has sent this month says how much, then when last.
-    expect(rows[0]).toHaveTextContent(/1 sent this month · .+ MB · Last used on/);
+    // …and from which neighbourhood, never a full address (WH-B).
+    expect(rows[0]).toHaveTextContent(/1 sent this month · .+ MB · Last used on .+ from 203\.0\.113\.x/);
     expect(rows[0]).not.toHaveTextContent(/Added/);
+    expect(rows[0]).not.toHaveTextContent(/Expire/);
     expect(rows[1]).toHaveTextContent('Shortcut on the phone');
     expect(rows[1]).toHaveTextContent(/Added .+ · Never used/);
     expect(rows[1]).not.toHaveTextContent(/sent this month/);
+    // The fixture's thirty-day key carries a date the generator pins in the
+    // past, so the row reads as expired and still offers Remove (WH-A).
+    expect(rows[1]).toHaveTextContent(/Never used · Expired/);
+    expect(screen.getByRole('button', { name: 'Remove Shortcut on the phone' })).toBeEnabled();
     // No key anywhere on the list: the server never sends one here.
     expect(card).not.toHaveTextContent('ck_');
   });
 
   it('says when it was added and last used for a device that sent nothing this month', () => {
+    expect(deviceHint({ ...idle, last_used_at: '2026-02-01T00:00:00Z' })).toMatch(/^Added .+ · Last used /);
     expect(
       deviceHint({
-        id: 'dev_1',
-        name: 'Watch',
-        created_at: '2026-01-01T00:00:00Z',
-        last_used_at: '2026-02-01T00:00:00Z',
-        usage_month: null,
-      }),
-    ).toMatch(/^Added .+ · Last used /);
-    expect(
-      deviceHint({
-        id: 'dev_1',
-        name: 'Watch',
-        created_at: '2026-01-01T00:00:00Z',
+        ...idle,
         last_used_at: '2026-02-01T00:00:00Z',
         usage_month: { requests: 12, bytes: 8_700_000, month: '2026-02' },
       }),
     ).toMatch(/^12 sent this month · 8\.7 MB · Last used /);
+  });
+
+  it('says where the key was last used from, as a neighbourhood, and when it expires (WH-A, WH-B)', () => {
+    const now = Date.parse('2026-09-26T12:00:00Z');
+    const used = { ...idle, last_used_at: '2026-09-26T10:00:00Z', last_used_from: '203.0.113.x' };
+    expect(deviceHint(used, now)).toMatch(/^Added .+ · Last used 2 hours ago from 203\.0\.113\.x$/);
+    expect(deviceHint({ ...used, last_used_from: null }, now)).toMatch(/2 hours ago$/);
+    // Counting up to the date: a key that ends in eleven and a half days has twelve left.
+    const twelve = { ...idle, expires_at: new Date(now + 11.5 * DAY_MS).toISOString() };
+    expect(deviceHint(twelve, now)).toMatch(/^Added .+ · Never used · Expires in 12 days$/);
+    expect(isExpired(twelve, now)).toBe(false);
+    expect(deviceHint({ ...idle, expires_at: new Date(now + 3_600_000).toISOString() }, now)).toMatch(/Expires in 1 day$/);
+    const gone = { ...idle, expires_at: new Date(now - 1000).toISOString() };
+    expect(deviceHint(gone, now)).toMatch(/^Added .+ · Never used · Expired$/);
+    expect(isExpired(gone, now)).toBe(true);
+    expect(isExpired(idle, now)).toBe(false);
+  });
+
+  it('offers an expiry when creating: Never by default and not sent, thirty days as expires_in_days', async () => {
+    const user = userEvent.setup();
+    const { calls } = mount();
+    await user.click(await screen.findByRole('button', { name: /add a device/i }));
+    const expires = screen.getByRole('combobox', { name: 'Expires after' });
+    expect(expires).toHaveValue('');
+    expect(within(expires).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Never',
+      '30 days',
+      '90 days',
+      '1 year',
+    ]);
+    await user.type(screen.getByRole('textbox', { name: /what is this device/i }), 'Ring');
+    await user.click(screen.getByRole('button', { name: 'Create key' }));
+    await screen.findByRole('status');
+    expect(calls.find((call) => call.method === 'POST')?.body).toEqual({ name: 'Ring' });
+    await user.click(screen.getByRole('button', { name: 'Done' }));
+
+    await user.click(screen.getByRole('button', { name: /add a device/i }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Expires after' }), '30');
+    await user.type(screen.getByRole('textbox', { name: /what is this device/i }), 'Script');
+    await user.click(screen.getByRole('button', { name: 'Create key' }));
+    await screen.findByRole('status');
+    expect(calls.filter((call) => call.method === 'POST').at(-1)?.body).toEqual({
+      name: 'Script',
+      expires_in_days: 30,
+    });
   });
 
   it('says so when there are none, and stops adding at ten', async () => {
@@ -125,11 +186,9 @@ describe('the devices card on You', () => {
   it('is full at ten devices, for Add and for Rotate alike', async () => {
     mount(
       Array.from({ length: MAX_DEVICES }, (_, index) => ({
+        ...idle,
         id: `dev_${String(index)}`,
         name: `Device ${String(index)}`,
-        created_at: '2026-01-01T00:00:00Z',
-        last_used_at: null,
-        usage_month: null,
       })),
     );
     expect(await deviceRows()).toHaveLength(MAX_DEVICES);
