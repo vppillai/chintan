@@ -234,12 +234,18 @@ About: `captureOf` leaves both fields out, and the wire test pins that.
 - No key material in logs or responses beyond the 201 that issues it; the
   device id is what identifies a device everywhere else.
 
-### `source` on a note's page
+### `source` and `last_progress_at` on a note's page
 
-`Capture.source` lives in the row's blob and, since 2026-09-24, as a top-level
-attribute too. gsi1's INCLUDE projection does not carry it, and CloudFormation
-cannot change a live index's projection, so `ListCapturesByNote` overlays the
-page's sources with one `BatchGetItem` (`hydrateCaptureSources`) rather than
-saying "app" for every row the way it did on the day the inbox shipped. When
-gsi1 is next rebuilt by hand, add `source` to `NonKeyAttributes` and delete the
-overlay.
+`Capture.source` (since 2026-09-24) and `Capture.last_progress_at` (since
+2026-09-27) live in the row's blob and as top-level attributes too. gsi1's
+INCLUDE projection carries neither, and CloudFormation cannot change a live
+index's projection, so `ListCapturesByNote` overlays both on the page with one
+`BatchGetItem` (`hydrateUnprojectedCaptureFields`) rather than saying "app" for
+every row, as it did on the day the inbox shipped, or `null` for every
+recording's progress, which made the app measure a regeneration's age from
+`created_at` and call a healthy run on a ten-minute-old note stuck from its
+first second (QA 2026-09-27, F1). A row last written before its attribute was
+promoted has no top-level value and reads as it did before: "app", and
+`created_at`; the pipeline rewrites the whole row on every hand-off, so a
+recording that moves gets both. When gsi1 is next rebuilt by hand, add both to
+`NonKeyAttributes` and delete the overlay.

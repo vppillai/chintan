@@ -247,3 +247,36 @@ func TestListCapturesByNoteKeepsTheSource(t *testing.T) {
 		t.Errorf("c_app source = %q, want empty (the wire spells that \"app\")", got["c_app"])
 	}
 }
+
+// gsi1 does not project last_progress_at either, so every capture on a note's
+// page carried none and the app measured a regeneration's age from created_at:
+// a note older than ten minutes read as stuck from its first second (QA
+// 2026-09-27, F1). The overlay carries it; the fake's template-derived
+// projection makes this fail without it.
+func TestListCapturesByNoteKeepsLastProgressAt(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := t.Context()
+	progressed := model.Now()
+	for _, c := range []model.CaptureIndex{
+		{ID: "c_new", UserID: owner, NoteID: "note_1", Status: model.StatusTranscribed, CreatedAt: model.Now(), LastProgressAt: progressed},
+		{ID: "c_old", UserID: owner, NoteID: "note_1", Status: model.StatusAppended, CreatedAt: model.Now()},
+	} {
+		if _, err := store.PutCapture(ctx, c); err != nil {
+			t.Fatalf("seed %s: %v", c.ID, err)
+		}
+	}
+	page, err := store.ListCapturesByNote(ctx, owner, "note_1", repository.ListOptions{})
+	if err != nil {
+		t.Fatalf("ListCapturesByNote: %v", err)
+	}
+	got := map[string]string{}
+	for _, c := range page.Items {
+		got[c.ID] = c.LastProgressAt
+	}
+	if got["c_new"] != progressed {
+		t.Errorf("c_new last_progress_at on the note's page = %q, want %q", got["c_new"], progressed)
+	}
+	if got["c_old"] != "" {
+		t.Errorf("c_old last_progress_at = %q, want empty (a row from before 2026-09-05 reads as created_at)", got["c_old"])
+	}
+}

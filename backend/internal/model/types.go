@@ -470,7 +470,9 @@ type CaptureIndex struct {
 	// 900 s, so a row untouched for longer than that has no live worker, and a
 	// retry may start one without starting a second delivery
 	// (service.CaptureStuckAfter). Empty on rows written before 2026-09-05,
-	// which read as CreatedAt. In the record blob only; nothing lists on it.
+	// which read as CreatedAt. Nothing lists on it; since 2026-09-27 it is a
+	// top-level attribute too, so the by-note page can overlay it without the
+	// blob (repository.hydrateUnprojectedCaptureFields).
 	LastProgressAt string `json:"last_progress_at,omitempty"`
 
 	// TargetSource says who set NoteID. Empty on rows written before 2026-09
