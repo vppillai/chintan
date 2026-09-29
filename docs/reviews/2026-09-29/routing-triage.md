@@ -79,15 +79,18 @@ are in this PR, one commit each.
    "Grocery list" (`note_18d235d1167591e2`), "Gutter leak" ×10, and the
    five house-tagged notes (Boiler service, Kitchen tap, Garden beds,
    Garage shelving plus the tagged Roof repair). The batch purge endpoint
-   was retired in #159, so use `DELETE /v1/notes/{id}/permanent` per note.
+   was retired in #159, so use `DELETE /v1/notes/{noteId}/permanent` per note.
    Then run `orb:~/r3/live/r6b-routing.py` (set-up, three runs, judge,
    teardown) unchanged, on this PR's build once deployed; keep the
    undo-everything method, it is production behaviour. Expected: rows 1,
    2, 6, 14, 15 return to 3/3 with no other change, old rows from 14/22 to
-   about 19/22, rows 21 and 32 measured for the first time. If rows 2, 6,
-   14 still park with a single "Roof repair"/"Dentist" listed, the tenant
-   story is wrong and the prompt's confidence sentence becomes the
-   suspect. Verify: rows 1, 2, 6, 14, 15 at 3/3; zero landings marked
+   about 19/22, rows 21 and 32 measured for the first time. On this PR's
+   build row 14 is confounded by `spoken_name` (and row 30 by R6-RT-8):
+   for the tenant story to hold, row 14's `routing decided` lines must
+   read `matched_by=model`, not `spoken_name`; rows 1, 2, 6, 15 remain
+   the clean test. If rows 2, 6, 14 still park with a single "Roof
+   repair"/"Dentist" listed, the tenant story is wrong and the prompt's
+   confidence sentence becomes the suspect. Verify: rows 1, 2, 6, 14, 15 at 3/3; zero landings marked
    pre-existing; the raw judge score equals the reported score. This
    re-run also falsifies or confirms the whole attribution above.
 2. **Pull the `routing decided` lines for the 21 failed captures** —

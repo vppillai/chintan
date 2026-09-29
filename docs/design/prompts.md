@@ -188,7 +188,9 @@ the person chooses).
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`,
 `RouterTitleMatchedExistingNote` (11 of 86 routes in the week measured under
 the old prompt, which told the model the opposite of what the code then does;
-the count should fall to near zero under the new one),
+the count should fall to near zero under the new one — read with care since
+R6-RT-1 and R6-RT-7, because the prefix and `spoken_name` rescues count
+under the same name; a `MatchedBy` dimension is follow-up R6-RT-10),
 `RouterNewNoteKind{Kind=note|checklist}` (how often the model answers
 `checklist` for a new note, without a battery run),
 `RouterRetried{Reason}`, `RouterTimedOut{Attempt}`,
