@@ -109,7 +109,11 @@ func TestLiveEval(t *testing.T) {
 	t.Run("tasks", func(t *testing.T) {
 		for i, tc := range fx.Tasks.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
-				out, err := c.CleanNote(ctx, model.NoteCleanTasks, tc.Body, "", fx.Tasks.ListTitle)
+				title := fx.Tasks.ListTitle
+				if tc.ListTitle != "" {
+					title = tc.ListTitle
+				}
+				out, err := c.CleanNote(ctx, model.NoteCleanTasks, tc.Body, "", title)
 				if err != nil {
 					t.Fatalf("%q | ERROR %v", tc.Body, err)
 				}

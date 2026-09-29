@@ -541,3 +541,112 @@ func TestRouteGrowsASpanOverTheSpokenTitleAndATrailingNote(t *testing.T) {
 		t.Errorf("content = %q, want no trailing note", decision.Content)
 	}
 }
+
+// A model that titles a short recording with the sentence itself ("make a
+// note the dog is having his dinner" → "The dog is having his dinner", the
+// owner's ring on 2026-09-27) hands ExtendSpans a title that is the
+// dictation: grown over it, the span covers every word and the note was
+// created empty (DB6-4, review 2026-09-29). The growth must never be what
+// empties the body; the model's own spans leave the sentence, so that is the
+// content, title duplicated or not. The fallback is bounded to a title longer
+// than a name (maxNameWords): a naming-only recording whose span stops
+// before or inside a name of one to five words ("Create a note with the
+// title test123", route fixture case 4; "title this staging smoke", row 13's
+// span shape) still ends empty, as the growth alone made it, and never
+// keeps the name or its tail as body.
+func TestRouteKeepsTheDictationWhenGrowingOverTheTitleWouldEmptyIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, reply, transcript string
+		candidates              []routing.Candidate
+		want                    string
+	}{
+		{
+			name:       "a title that is the sentence keeps the sentence",
+			reply:      `{"action":"new","title":"The dog is having his dinner","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":3}]}`,
+			transcript: "make a note the dog is having his dinner",
+			want:       "the dog is having his dinner",
+		},
+		{
+			name:       "a naming-only recording whose span stops before a one-word name stays empty",
+			reply:      `{"action":"new","title":"test123","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":6}]}`,
+			transcript: "Create a note with the title test123",
+			want:       "",
+		},
+		{
+			name:       "a naming-only recording whose span stops inside a two-word name stays empty",
+			reply:      `{"action":"new","title":"staging smoke","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":3}]}`,
+			transcript: "title this staging smoke",
+			want:       "",
+		},
+		{
+			// An append's title is the destination's name, spoken as the
+			// instruction's last words: there a recording that is nothing but
+			// the instruction may legitimately end empty.
+			name:       "an instruction-only append stays empty",
+			reply:      `{"action":"append","note":1,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":4}]}`,
+			transcript: "add this to roof note",
+			candidates: []routing.Candidate{{NoteID: "n1", Title: "Roof"}},
+			want:       "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv, _ := routerServer(t, tc.reply)
+			decision, err := newRouter(t, srv).Route(context.Background(), tc.transcript, tc.candidates, "")
+			if err != nil {
+				t.Fatalf("Route: %v", err)
+			}
+			if decision.Content != tc.want {
+				t.Errorf("content = %q, want %q", decision.Content, tc.want)
+			}
+		})
+	}
+}
+
+// On an append the reply has no title, so until 2026-09-29 ExtendSpans had
+// nothing to grow over and "Create a new note and add it to Pebble Ring
+// Test" with the span stopping at "to" appended the note's own name to it
+// (battery row 9, run 3). The destination's title is looked up for the
+// growth; the recording is then nothing but instruction and the body stays
+// empty. Row 13's span, which stopped inside "staging smoke", grows to the
+// title's end so "smoke" no longer opens the body.
+func TestRouteGrowsASpanOverTheDestinationsNameAndToTheEndOfATitleItStoppedInside(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := routerServer(t, `{"action":"append","note":2,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":8}]}`)
+	decision, err := newRouter(t, srv).Route(context.Background(), "Create a new note and add it to Pebble Ring Test",
+		[]routing.Candidate{{NoteID: "n1", Title: "Roof repair"}, {NoteID: "n2", Title: "Pebble Ring Test"}}, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.NoteID != "n2" || decision.Title != "" {
+		t.Fatalf("decision = %+v, want an untitled append to n2", decision)
+	}
+	if decision.Content != "" {
+		t.Errorf("content = %q, want empty: the note's own name is the instruction's last words", decision.Content)
+	}
+
+	srv, _ = routerServer(t, `{"action":"new","title":"staging smoke","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":3}]}`)
+	decision, err = newRouter(t, srv).Route(context.Background(), "title this staging smoke and then the actual content of the note is that the deploy pipeline is green", nil, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "and then the actual content of the note is that the deploy pipeline is green" {
+		t.Errorf("content = %q, want the title's last word outside it", decision.Content)
+	}
+
+	// The destination's title is for the growth only: the empty-content
+	// guard's title-length test is about a title the model wrote, so an
+	// instruction-only append into a note with a long name still ends
+	// empty rather than keeping the instruction as body.
+	srv, _ = routerServer(t, `{"action":"append","note":1,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":6}]}`)
+	decision, err = newRouter(t, srv).Route(context.Background(), "add this to the milos note",
+		[]routing.Candidate{{NoteID: "n1", Title: "Things I need to talk about with Milos next week"}}, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "" {
+		t.Errorf("content = %q, want empty: the destination's long name is not the model's title", decision.Content)
+	}
+}

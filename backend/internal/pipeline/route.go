@@ -97,7 +97,8 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	}
 	transcript := string(rawBytes)
 
-	decision, err := p.decideTarget(ctx, tenantID, capture.ID, transcript, cleanupLanguage(*capture), sourceDim(capture.Source))
+	r, err := p.decideTarget(ctx, tenantID, capture.ID, transcript, cleanupLanguage(*capture))
+	decision, matchedBy := r.decision, r.matchedBy
 	if err != nil {
 		if errors.Is(err, breaker.ErrSpendCapExceeded) {
 			return p.handleProviderError(ctx, capture, "route", err)
@@ -119,6 +120,19 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 			slog.String("error", err.Error()))
 		decision = provider.RouteDecision{Action: provider.RouteNew, Content: transcript}
 	}
+	// One decision line per routed capture, written from the branch this
+	// function finally takes. Until 2026-09-29 decideTarget logged it before
+	// the same-second re-check below, so a deduped capture read as a new note
+	// nothing matched, and an archived destination or a park was only
+	// inferable from other lines (DB6-13). None when the router did not
+	// answer: the Warn above is that capture's line.
+	decided := err == nil
+	finish := func(outcome string) error {
+		if decided {
+			logRoutingDecision(ctx, decision, matchedBy, outcome, r.candidates, transcript, sourceDim(capture.Source))
+		}
+		return p.persist(ctx, capture)
+	}
 
 	// Persist the transcript minus any spoken instruction, so cleanup and any
 	// later retry work from the words the user meant to keep.
@@ -132,6 +146,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.RoutedKey = routedKey
 	capture.RouteConfidence = decision.Confidence
 
+	outcome := "new"
 	if decision.Action == provider.RouteAppend && decision.NoteID != "" {
 		// Falling through to "make a new note" is only correct for an answer, not
 		// for a failure to get one. A throttle or a 5xx on this read used to be
@@ -147,20 +162,22 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 				capture.NoteID = decision.NoteID
 				capture.TargetSource = model.TargetSourceRouter
 				capture.Status = model.StatusTranscribed
-			} else {
-				// Plausible but unsure: ask before writing into an existing note.
-				capture.SuggestedNoteID = decision.NoteID
-				capture.Status = model.StatusNeedsTarget
+				return finish("append")
 			}
-			return p.persist(ctx, capture)
+			// Plausible but unsure: ask before writing into an existing note.
+			capture.SuggestedNoteID = decision.NoteID
+			capture.Status = model.StatusNeedsTarget
+			return finish("needs_target")
 		case err == nil:
 			obs.Log(ctx).Info("routed note is archived; keeping the dictation in a new note",
 				slog.String("capture_id", capture.ID),
 				slog.String("note_id", decision.NoteID))
+			outcome = "new_after_missing"
 		case errors.Is(err, repository.ErrNotFound):
 			obs.Log(ctx).Info("routed note no longer exists; keeping the dictation in a new note",
 				slog.String("capture_id", capture.ID),
 				slog.String("note_id", decision.NoteID))
+			outcome = "new_after_missing"
 		default:
 			return fmt.Errorf("pipeline: get routed note %s: %w", decision.NoteID, err)
 		}
@@ -173,7 +190,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	if p.cfg.Notes == nil {
 		capture.SuggestedTitle = title
 		capture.Status = model.StatusNeedsTarget
-		return p.persist(ctx, capture)
+		return finish("needs_target")
 	}
 
 	// The candidate list was read before the model call, and the ring posts
@@ -183,20 +200,23 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	// only on the path that is about to create a note, catches the sibling's
 	// note and appends to it instead. A store fault fails the invocation as
 	// errRouteCandidates does: the retry is cheap, the duplicate note is not.
+	// The rule is preferExistingTitle's pure half: the dedupe is counted as
+	// itself, not as a title match too (DB6-13).
 	fresh, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxRouteCandidates})
 	if err != nil {
 		return fmt.Errorf("pipeline: re-check routing candidates: %w", err)
 	}
-	if again, matchedBy := preferExistingTitle(ctx, decision, transcript, fresh); matchedBy != "" {
+	if noteID, by := existingNoteNamed(decision, transcript, fresh); noteID != "" {
 		obs.Log(ctx).Info("a note this recording names appeared while it was being routed; appending to it instead of creating one",
 			slog.String("capture_id", capture.ID),
-			slog.String("note_id", again.NoteID))
+			slog.String("note_id", noteID))
 		obs.Count(ctx, "RouterCreateDeduped", map[string]string{})
-		capture.NoteID = again.NoteID
-		capture.RouteConfidence = again.Confidence
+		decision, matchedBy = filedInto(decision, noteID), by
+		capture.NoteID = noteID
+		capture.RouteConfidence = decision.Confidence
 		capture.TargetSource = model.TargetSourceRouter
 		capture.Status = model.StatusTranscribed
-		return p.persist(ctx, capture)
+		return finish("deduped")
 	}
 
 	note, err := p.cfg.Notes.CreateNote(ctx, tenantID, title, nil)
@@ -239,7 +259,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.NoteID = note.ID
 	capture.TargetSource = model.TargetSourceRouter
 	capture.Status = model.StatusTranscribed
-	return p.persist(ctx, capture)
+	return finish(outcome)
 }
 
 // errRouteCandidates marks a routing failure that happened before the router
@@ -247,11 +267,19 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 // one routing error route() does not turn into a new note.
 var errRouteCandidates = errors.New("pipeline: list routing candidates")
 
-// source is the capture's Source dimension (sourceDim: app or device), for the
-// decision line only.
-func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript, language, source string) (provider.RouteDecision, error) {
+// routed is decideTarget's answer: the decision after preferExistingTitle,
+// how it matched ("" when the model's own answer stood) and how many notes
+// the router saw, the last two for the decision line route() logs once its
+// branch is final.
+type routed struct {
+	decision   provider.RouteDecision
+	matchedBy  string
+	candidates int
+}
+
+func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transcript, language string) (routed, error) {
 	if p.cfg.Router == nil {
-		return provider.RouteDecision{}, fmt.Errorf("pipeline: routing is not configured")
+		return routed{}, fmt.Errorf("pipeline: routing is not configured")
 	}
 
 	// The store orders the list most recently touched first over every note
@@ -261,7 +289,7 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 	// store's own order was by creation.
 	active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxRouteCandidates})
 	if err != nil {
-		return provider.RouteDecision{}, fmt.Errorf("%w: %w", errRouteCandidates, err)
+		return routed{}, fmt.Errorf("%w: %w", errRouteCandidates, err)
 	}
 
 	// Kept as a guard on the order the store promised, and because it is the
@@ -284,16 +312,23 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 
 	decision, err := p.routeWithRetries(ctx, tenantID, captureID, transcript, candidates, language)
 	if err != nil {
-		return decision, err
+		return routed{}, err
 	}
 	decision, matchedBy := preferExistingTitle(ctx, decision, transcript, active)
+	return routed{decision: decision, matchedBy: matchedBy, candidates: len(candidates)}, nil
+}
 
-	// One line per decision, counts and enumerations only, so a week of
-	// routes can be judged from the log alone: until 2026-09-29 telling a
-	// new note from an append meant joining DynamoDB rows, S3 transcripts and
-	// log lines, and a route whose note was since purged could not be judged
-	// at all. No title, no transcript word, no device id; the correlation id
-	// rides the context.
+// logRoutingDecision is the one INFO line `routing decided` per routed
+// capture, counts and enumerations only, so a week of routes can be judged
+// from the log alone: until 2026-09-29 telling a new note from an append
+// meant joining DynamoDB rows, S3 transcripts and log lines, and a route
+// whose note was since purged could not be judged at all. outcome is what
+// route() did with the decision: append, needs_target, new, deduped (the
+// pre-create re-check found the note a sibling capture had just made) or
+// new_after_missing (the model's note was archived or gone by the time it
+// was read). No title, no transcript word, no device id (source is
+// sourceDim's app or device); the correlation id rides the context.
+func logRoutingDecision(ctx context.Context, decision provider.RouteDecision, matchedBy, outcome string, candidates int, transcript, source string) {
 	switch {
 	case matchedBy != "":
 	case decision.Action == provider.RouteAppend:
@@ -311,14 +346,14 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		slog.String("action", string(decision.Action)),
 		slog.Float64("confidence", decision.Confidence),
 		slog.String("matched_by", matchedBy),
-		slog.Int("candidates", len(candidates)),
+		slog.String("outcome", outcome),
+		slog.Int("candidates", candidates),
 		slog.Int("transcript_words", dictated),
 		slog.Int("title_words", titleWords),
 		slog.Int("spans", decision.Spans),
 		slog.Int("removed_words", dictated-kept),
 		slog.Bool("checklist", decision.Checklist),
 		slog.String("source", source))
-	return decision, nil
 }
 
 // routeCandidate is the note as the router sees it: title, aliases and tags,
@@ -366,12 +401,6 @@ func withinRouteBudget(active []model.NoteIndex) []model.NoteIndex {
 // derived content is kept as the model left it; a name that stays in the
 // body is one word to delete, dictation stripped by a guess is gone.
 func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, transcript string, active []model.NoteIndex) (provider.RouteDecision, string) {
-	if decision.Action == provider.RouteAppend && decision.Confidence >= routeConfidenceThreshold {
-		return decision, ""
-	}
-	if decision.Action != provider.RouteNew && decision.Action != provider.RouteAppend {
-		return decision, ""
-	}
 	noteID, matchedBy := existingNoteNamed(decision, transcript, active)
 	if noteID == "" {
 		return decision, ""
@@ -380,31 +409,49 @@ func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, t
 		slog.String("note_id", noteID),
 		slog.String("matched_by", matchedBy))
 	obs.Count(ctx, "RouterTitleMatchedExistingNote", map[string]string{})
+	return filedInto(decision, noteID), matchedBy
+}
+
+// filedInto is decision turned into an append to noteID by a rule of the
+// code's: confidence 1, since the rule is mechanical, and no title and no
+// kind, since the note has both — Checklist is always false for an append
+// (provider.RouteDecision), and a rescued "new checklist" kept it, so the
+// decision line counted appends into checklists (DB6-39).
+func filedInto(decision provider.RouteDecision, noteID string) provider.RouteDecision {
 	decision.Action = provider.RouteAppend
 	decision.NoteID = noteID
 	decision.Title = ""
+	decision.Checklist = false
 	decision.Confidence = 1
-	return decision, matchedBy
+	return decision
 }
 
 // existingNoteNamed finds the active note the decision or the transcript
 // names, and how: the exact title rule first, then the longest name either
-// opens with.
+// opens with, then, for an append the model was unsure of, the model's own
+// suggestion spoken as a name (spokenAsName). It applies to a "new" decision
+// and to an append under routeConfidenceThreshold; an append the model was
+// sure of stands. It is the pure half of preferExistingTitle, run again by
+// route()'s pre-create re-check without the title-match count.
 func existingNoteNamed(decision provider.RouteDecision, transcript string, active []model.NoteIndex) (string, string) {
-	if decision.Action == provider.RouteNew {
-		if want := normalizeTitle(decision.Title); want != "" {
-			for _, n := range active {
-				if kind := titleNames(n, want); kind != "" {
-					return n.ID, kind
-				}
+	if decision.Action == provider.RouteAppend && decision.Confidence >= routeConfidenceThreshold {
+		return "", ""
+	}
+	if decision.Action != provider.RouteNew && decision.Action != provider.RouteAppend {
+		return "", ""
+	}
+	title := routing.NormalizeSpeech(decision.Title)
+	if decision.Action == provider.RouteNew && title != "" {
+		for _, n := range active {
+			if kind := titleNames(n, title); kind != "" {
+				return n.ID, kind
 			}
 		}
 	}
-	title := routing.NormalizeSpeech(decision.Title)
 	speech := routing.NormalizeSpeech(transcript)
 	bestID, bestBy, bestLen := "", "", 0
 	for _, n := range active {
-		for _, name := range append([]string{n.Title}, append(append([]string(nil), n.Aliases...), n.Tags...)...) {
+		for _, name := range noteNames(n) {
 			name = routing.NormalizeSpeech(name)
 			if len(name) <= bestLen || !prefixRuleName(name) {
 				continue
@@ -417,7 +464,57 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 			}
 		}
 	}
+	if bestID == "" && decision.Action == provider.RouteAppend {
+		// Only the note the model itself suggested is looked at; the rule
+		// confirms a suggestion and never re-picks among the candidates.
+		for _, n := range active {
+			if n.ID == decision.NoteID && spokenAsName(n, transcript) {
+				return n.ID, "spoken_name"
+			}
+		}
+	}
 	return bestID, bestBy
+}
+
+// spokenAsName reports whether one of n's names is spoken in transcript as a
+// name rather than a topic: as whole words, two words or eight letters long
+// (prefixRuleName, for the same reason it exists), and either followed by
+// "note" or "list" ("okay so this goes in the roof repair note …", battery
+// 2026-09-29 row 14, parked twice with that very note suggested) or as the
+// object of an instruction cue ("Create a new note and add it to Pebble
+// Ring Test", row 9, routing.NamedAfterCue). It is the rule for the model's
+// own unsure append (matched_by spoken_name, R6-RT-7): the model picked the
+// note and asked, and the name spoken as a name is what the person would
+// answer with, so the append is taken — the silent-file-over-ask trade of
+// decision R6-RT-OD1 applied to the model's own suggestion. "I was thinking
+// about the roof today" names no note this way, whatever the model
+// suggested; nor does a name mentioned elsewhere in a recording whose cue
+// names something else ("put this in my journal I was thinking about the
+// roof repair today"), nor the cue naming a different note than the model
+// picked ("add this to my roof repair note …" with Portugal trip suggested)
+// — the first PR 170 draft asked routing.MentionsInstruction, a
+// whole-transcript predicate, and filed both. A one-word name of five to
+// seven letters ("dentist", "house") is left to the owner's decision (triage
+// 2026-09-29, owner decision 1): on a tenant with two Dentist notes it turns
+// an ask into a silent file on a name the model was only half sure of.
+func spokenAsName(n model.NoteIndex, transcript string) bool {
+	speech := " " + routing.NormalizeSpeech(transcript) + " "
+	for _, name := range noteNames(n) {
+		name = routing.NormalizeSpeech(name)
+		if !prefixRuleName(name) {
+			continue
+		}
+		if routing.NamedAfterCue(transcript, name) || strings.Contains(speech, " "+name+" note ") || strings.Contains(speech, " "+name+" list ") {
+			return true
+		}
+	}
+	return false
+}
+
+// noteNames is the note's title, aliases and tags: every name the router was
+// shown for it, and so every name a speaker may file by.
+func noteNames(n model.NoteIndex) []string {
+	return append([]string{n.Title}, append(append([]string(nil), n.Aliases...), n.Tags...)...)
 }
 
 // prefixRuleName is the guard on what may file a recording by opening it: two
@@ -427,30 +524,28 @@ func prefixRuleName(name string) bool {
 	return strings.Contains(name, " ") || utf8.RuneCountInString(name) >= 8
 }
 
-// titleNames reports which of n's names want, already normalised, is — its
-// title, one of its aliases or one of its tags, the names the router was shown
-// for it — or "" when none.
+// titleNames reports which of n's names want, already in NormalizeSpeech
+// form, is — its title, one of its aliases or one of its tags, the names the
+// router was shown for it — or "" when none. The comparison ignores
+// punctuation as the prefix rules do: a model that answers new "Roof
+// repair." for the note "Roof repair" named it (DB6-40; until 2026-09-29
+// the exact rule kept the full stop and the prefix rule needed a following
+// word, so a duplicate note was created).
 func titleNames(n model.NoteIndex, want string) string {
-	if normalizeTitle(n.Title) == want {
+	if routing.NormalizeSpeech(n.Title) == want {
 		return "title"
 	}
 	for _, a := range n.Aliases {
-		if normalizeTitle(a) == want {
+		if routing.NormalizeSpeech(a) == want {
 			return "alias"
 		}
 	}
 	for _, t := range n.Tags {
-		if normalizeTitle(t) == want {
+		if routing.NormalizeSpeech(t) == want {
 			return "tag"
 		}
 	}
 	return ""
-}
-
-// normalizeTitle is the comparison form of a title: lowercased, one space
-// between words, none around them.
-func normalizeTitle(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // routeWithRetries asks the router, with one retry on a stall or a 5xx. It

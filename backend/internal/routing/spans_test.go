@@ -117,6 +117,31 @@ func TestMentionsInstruction(t *testing.T) {
 	}
 }
 
+// NamedAfterCue is what spoken_name files on: the name as the object of the
+// filing phrase, not a mention elsewhere in a recording that has a cue
+// somewhere ("put this in my journal I was thinking about the roof repair
+// today" mentions Roof repair and names the journal).
+func TestNamedAfterCue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		transcript, name string
+		want             bool
+	}{
+		{"Create a new note and add it to Pebble Ring Test", "Pebble Ring Test", true},
+		{"add this to my roof repair note the portugal trip went over budget", "Roof repair", true},
+		{"Put it in the garden beds note please", "Garden beds", true},
+		{"put this under our kitchen rebuild", "Kitchen rebuild", true},
+		{"add this to my roof repair note the portugal trip went over budget", "Portugal trip", false},
+		{"put this in my journal I was thinking about the roof repair today", "Roof repair", false},
+		{"the roof repair is going to cost a fortune", "Roof repair", false},
+		{"add it to the pebble ring test", "", false},
+	} {
+		if got := NamedAfterCue(tc.transcript, tc.name); got != tc.want {
+			t.Errorf("NamedAfterCue(%q, %q) = %v, want %v", tc.transcript, tc.name, got, tc.want)
+		}
+	}
+}
+
 // The router stops a span one word early in two shapes the production battery
 // showed three of three (2026-09-29, rows 13 and 2): before the spoken title,
 // and before the "note" that closes a filing phrase. Both are closed from the
@@ -149,10 +174,65 @@ func TestExtendSpansClosesTheGapBeforeTheTitleAndTheTrailingNote(t *testing.T) {
 			want: []Span{{0, 7}},
 		},
 		{
+			// Row 13's actual shape, three of three: the span took the title's
+			// first word and left "smoke" to open the body.
+			name:       "a naming span stopping inside the title grows to its end",
+			transcript: "title this staging smoke and then the actual content of the note is that the deploy pipeline is green",
+			spans:      []Span{{0, 3}}, title: "staging smoke",
+			want: []Span{{0, 4}},
+		},
+		{
+			// Row 9 run 3: on an append the title is the destination's, and the
+			// span that stopped before it grows over it, so nothing is left to
+			// append. The k = 0 growth itself predates R6-RT-6 (#151); what
+			// that item added is Route handing the destination's title over
+			// at all, which the router test covers, so this case documents
+			// the shape rather than failing without the fix.
+			name:       "a filing span stopping before the destination's name grows over it",
+			transcript: "Create a new note and add it to Pebble Ring Test",
+			spans:      []Span{{0, 8}}, title: "Pebble Ring Test",
+			want: []Span{{0, 11}},
+		},
+		{
+			name:       "a filing span stopping inside the destination's name grows to its end",
+			transcript: "Create a new note and add it to Pebble Ring Test",
+			spans:      []Span{{0, 9}}, title: "Pebble Ring Test",
+			want: []Span{{0, 11}},
+		},
+		{
+			// A three-word title against a one-word span: k = 2 would match
+			// words[0:3] and grow the span to {1,3} if the overlap were
+			// allowed to start before the span.
+			name:       "the overlap never reaches back before the span",
+			transcript: "staging smoke is the title",
+			spans:      []Span{{1, 2}}, title: "staging smoke is",
+			want: []Span{{1, 2}},
+		},
+		{
 			name:       "the next word is neither",
 			transcript: "add this to my roof repair note the gutter leaks",
 			spans:      []Span{{0, 7}}, title: "",
 			want: []Span{{0, 7}},
+		},
+		{
+			// Rows 23, 24 and 26 of the same battery: the span already covers
+			// the name, or the name does not abut it, and nothing grows.
+			name:       "a name-first append whose span covers the name is left alone",
+			transcript: "App feedback checklist move seems to be good where I can drag items up and down",
+			spans:      []Span{{0, 2}}, title: "App feedback",
+			want: []Span{{0, 2}},
+		},
+		{
+			name:       "a name-first append with words after the name is left alone",
+			transcript: "Business ideas by Priyanka seated pool for dogs",
+			spans:      []Span{{0, 2}}, title: "Business ideas",
+			want: []Span{{0, 2}},
+		},
+		{
+			name:       "a filing phrase whose span ends after note is left alone",
+			transcript: "Add to the app feedback note and the push to talk icon does not look good",
+			spans:      []Span{{0, 6}}, title: "App feedback",
+			want: []Span{{0, 6}},
 		},
 		{
 			name:       "the title elsewhere than right after the span does not count",

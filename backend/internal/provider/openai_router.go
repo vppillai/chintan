@@ -24,6 +24,13 @@ const (
 	// maxSpokenTitleWords is the longest title that still reads as a name rather than a
 	// sentence the router mistook for one.
 	maxSpokenTitleWords = 8
+	// maxNameWords is the prompt's own bound on a name: its Titles rule says "a
+	// name is a short noun phrase of one to five words, never a whole sentence"
+	// (R6-RT-8). A title within it is a name the speaker may have said in full,
+	// so a span grown over it removes instruction; a title past it is the
+	// dictation the model mistook for a name, and growing over it removes the
+	// note.
+	maxNameWords = 5
 	// routeMaxTokens caps the routing completion. A well-formed reply is an action, an
 	// id or a short title, a confidence and a span or two — under fifty tokens — so the
 	// cap never shortens a real answer; it bounds a runaway one, which then fails to
@@ -71,7 +78,21 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	if reply.Spans != nil {
 		decision.Spans = len(*reply.Spans)
 	}
-	decision.Content = routedContent(ctx, transcript, decision.Title, reply)
+	// An append's reply carries no title, and the words a span stopped short
+	// of or inside are then the destination's own name ("Create a new note
+	// and add it to" + "Pebble Ring Test", battery 2026-09-29 row 9, appended
+	// as text once in three), so ExtendSpans is given that note's title. The
+	// decision's Title stays empty: an append has none.
+	title := decision.Title
+	if decision.Action == RouteAppend {
+		for _, cand := range candidates {
+			if cand.NoteID == decision.NoteID {
+				title = cand.Title
+				break
+			}
+		}
+	}
+	decision.Content = routedContent(ctx, transcript, title, decision.Action, reply)
 	return decision, nil
 }
 
@@ -89,7 +110,12 @@ type routeReply struct {
 // stopped short of (routing.ExtendSpans). Every failure keeps the whole
 // transcript; nothing here can lose a word the speaker said. Logs carry counts
 // only: note text does not belong in logs.
-func routedContent(ctx context.Context, transcript, title string, reply routeReply) string {
+//
+// action says whose title is being grown over. On a new note it is the
+// model's, and a model that titles a short recording with the sentence
+// itself hands ExtendSpans a title that IS the dictation; on an append it is
+// the destination's name, the last words of the instruction.
+func routedContent(ctx context.Context, transcript, title string, action RouteAction, reply routeReply) string {
 	discard := func(reason, msg string, attrs ...any) string {
 		obs.Log(ctx).Warn(msg, attrs...)
 		obs.Count(ctx, "RouterSpansDiscarded", map[string]string{"Reason": reason})
@@ -112,13 +138,40 @@ func routedContent(ctx context.Context, transcript, title string, reply routeRep
 			slog.Int("dictated_words", dictated), slog.Int("spans", len(*reply.Spans)))
 	}
 
+	if strings.TrimSpace(content) == "" && action == RouteNew && len(routing.Words(title)) > maxNameWords {
+		// "make a note the dog is having his dinner", titled by the model "The
+		// dog is having his dinner" (the owner's ring, 2026-09-27): the span
+		// {0,3} grown over that title covers every word, and the note was
+		// created empty (DB6-4, review 2026-09-29). The growth is a
+		// convenience and must never be what empties the body, so when the
+		// model's own spans leave content, that is the content, title
+		// duplicated or not. Only a title longer than a name (maxNameWords)
+		// takes this path: a naming-only recording whose span stopped before
+		// or inside a real name ("Create a note with the title test123",
+		// "title this staging smoke" — the battery of 2026-09-29 showed the
+		// span stopping short on rows 2 and 13 three of three) is emptied by
+		// the growth on purpose, and the un-grown result would hand the name
+		// or its tail back as body. An append's title is the destination's
+		// name spoken as the instruction's last words, so there a recording
+		// that is nothing but the instruction may legitimately end empty.
+		if own, err := routing.RemoveSpans(transcript, *reply.Spans); err == nil && strings.TrimSpace(own) != "" {
+			content = own
+		}
+	}
+
 	if strings.TrimSpace(content) == "" {
 		// A recording can be nothing but an instruction ("create a note called
 		// test123"), which leaves no content. Believe that only while the transcript
 		// is too short to have held dictation worth keeping, and while the title is
 		// short enough to be a name: a title the length of a sentence means the router
-		// swallowed the dictation into it instead of splitting the two.
-		titleWords := len(routing.Words(title))
+		// swallowed the dictation into it instead of splitting the two. That
+		// judgement is of the model's title, so on an append, whose title is
+		// the destination's and not the model's, it does not apply (0, as the
+		// decision line's title_words).
+		titleWords := 0
+		if action == RouteNew {
+			titleWords = len(routing.Words(title))
+		}
 		if dictated > maxInstructionOnlyWords || titleWords > maxSpokenTitleWords {
 			return discard("empty_content", "router spans cover a recording too long to be instruction-only; keeping the dictation",
 				slog.Int("dictated_words", dictated), slog.Int("title_words", titleWords))

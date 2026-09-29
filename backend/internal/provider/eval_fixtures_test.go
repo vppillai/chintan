@@ -53,7 +53,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	}
 
 	// Every case has to assert something, or it only spends money.
-	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "question": true, "_note": true}
+	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "list_title": true, "question": true, "_note": true}
 	raw, err := os.ReadFile(evalFixturesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -169,9 +169,11 @@ type itemsCase struct {
 }
 
 // tasksCase: want is task-list lines, indent included, as SplitOutput
-// stores them.
+// stores them; list_title, when set, is the title the user prompt names
+// instead of the section's, for a case about the list's own name.
 type tasksCase struct {
 	Body          string   `json:"body"`
+	ListTitle     string   `json:"list_title"`
 	Comment       string   `json:"_note"`
 	Want          []string `json:"want"`
 	WantUnchanged bool     `json:"want_unchanged"`

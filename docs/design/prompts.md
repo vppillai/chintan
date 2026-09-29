@@ -62,9 +62,10 @@ target note as the only candidate, for a capture recorded into a note whose
 transcript contains a filing or naming cue (`routing.MentionsInstruction`,
 `routing/spans.go`; no cue, no call).
 
-**Sent.** The system prompt (about 1,250 tokens at four characters a token
-after the name-first rules of 2026-09-29; 987 measured before the kind rule
-of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
+**Sent.** The system prompt (about 1,350 tokens at four characters a token
+after the sentence-is-not-a-name rule and example of 2026-09-29; about
+1,250 after the name-first rules earlier that day; 987 measured before the
+kind rule of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
 (filing, naming), the reply
 shape, then four sections — *Destination* (append only when a listed note
 was clearly asked for by its title or one of its other names; a spoken title
@@ -79,14 +80,20 @@ span in doubt, the name/content boundary, and that a filing or naming span
 ends after the note's name — "Create a new note from app feedback and add
 the fact" is `{0,7}`, never 6), *Titles* (as spoken, however
 short; invented only when none was spoken; a recording that opens with an
-unlisted name is a new note titled with the name only; the speaker's script)
+unlisted name is a new note titled with the name only; a name is a short
+noun phrase of one to five words and never a whole sentence — "The dog is
+having his dinner" has no name in front, so the title is invented and every
+word is content, R6-RT-8, the owner's ring shape the battery of 2026-09-29
+returned titled with the sentence two of three; the speaker's script)
 and *Kind*,
 for `new` only (`checklist` when the speaker names a list — shopping list,
 groceries, to-do, packing list, "add X to the Y list" — or dictates things
-to tick off one by one; otherwise, and in doubt, `note`) — and eight worked
+to tick off one by one; otherwise, and in doubt, `note`) — and nine worked
 examples: the sixth "add milk to my groceries list" with no Groceries note
 listed, the seventh and eighth the two name-first shapes (a listed "App
-feedback", an unlisted "Things to talk with Milos"). The user prompt: the language line when the
+feedback", an unlisted "Things to talk with Milos"), the ninth the sentence
+with no name in front ("The dog is having his dinner" → new "Dog dinner",
+no span). The user prompt: the language line when the
 capture's language is known (`cleanupLanguage`); `Existing notes:` — one
 numbered line per candidate, `3 | Roof repair | also: gutters, roof, house`,
 the aliases and then the tags after `also:` (either spoken is a request for
@@ -130,21 +137,42 @@ discard the spans and keep every word; before they are applied, a span is
 grown over the spoken title it stopped short of and over a "note" that
 follows it (`routing.ExtendSpans` — the production battery of 2026-09-29 had
 the title words opening the body on row 13 and a trailing "Note:" on row 2,
-three of three each); spans that leave no content are
-believed only for a transcript of at most 20 words with a title of at most
-8 words, since a longer one means the router swallowed dictation into the
-title; the derived content is re-checked as a sub-sequence of the transcript
+three of three each); on a new note whose title is longer than a name —
+more than five words, the Titles rule's own bound — a growth that would
+leave nothing is undone and the model's own spans decide, so "make a note
+the dog is having his dinner" titled with the sentence keeps it as body
+(DB6-4), while a naming-only recording whose span stopped before or inside
+a real name ("title this staging smoke", "create a note with the title
+test123") still ends empty rather than keeping the name's tail; spans that
+leave no content are believed only for a transcript of at most 20 words
+with a title of at most 8 words, since a longer one means the router
+swallowed dictation into the title; the derived content is re-checked as a sub-sequence of the transcript
 (`llm.VerifySubsequence`); the title is one line of at most 120 runes;
 confidence is clamped. Then the pipeline: a `new` decision whose title names
-an active candidate, by title, alias or tag, becomes an append to it
-(`preferExistingTitle`, `matched_by` title|alias|tag on its log line); so
+an active candidate, by title, alias or tag, compared in `NormalizeSpeech`
+form so "Roof repair." names "Roof repair" (DB6-40), becomes an append to it
+(`preferExistingTitle`, `matched_by` title|alias|tag on its log line; the
+rescued decision carries no title and no kind, DB6-39); so
 does a `new` decision, or an append under the confidence bar, whose title or
 whose transcript *opens with* a listed name as whole words
 (`prefix_title`|`prefix_transcript`) — the name-first shape the owner's ring
 speaks, "App feedback checklist move seems to be good", which the model twice
 titled as a new note on 2026-09-27; the name must be two words or eight
 letters, the longest match wins, and the derived content is kept as the model
-left it (R6-RT-1, decision R6-RT-OD1). On the path that is about to create a
+left it (R6-RT-1, decision R6-RT-OD1); and so does an append under the bar
+whose own suggested note is *spoken as a name* — one of its names as whole
+words, two words or eight letters, followed by "note" or "list" or spoken as
+the object of an instruction cue, at most "my"/"the"/"our" between
+(`routing.NamedAfterCue`; "okay so this goes in the roof repair note …",
+"Create a new note and add it to Pebble Ring Test"; `spoken_name`, R6-RT-7)
+— the model's own suggestion confirmed, never a re-pick among the
+candidates, and never a topic mention ("I was thinking about the roof
+today", "put this in my journal I was thinking about the roof repair
+today"), nor a cue naming a different note than the model picked ("add this
+to my roof repair note …" with Portugal trip suggested parks, as before);
+a one-word name of
+five to seven letters ("dentist", "house") waits on the owner (triage
+2026-09-29). On the path that is about to create a
 note the active list is read once more and the same rule run over it, so two
 same-second ring captures naming a list nobody has yet make one list, not
 two (R6-RT-3; `RouterCreateDeduped`); a `new` checklist is created as one, `Kind` written
@@ -160,7 +188,9 @@ the person chooses).
 **Metrics.** `RouterSpansDiscarded{Reason=missing_field|malformed|too_long|empty_content|not_derived}`,
 `RouterTitleMatchedExistingNote` (11 of 86 routes in the week measured under
 the old prompt, which told the model the opposite of what the code then does;
-the count should fall to near zero under the new one),
+the count should fall to near zero under the new one — read with care since
+R6-RT-1 and R6-RT-7, because the prefix and `spoken_name` rescues count
+under the same name; a `MatchedBy` dimension is follow-up R6-RT-10),
 `RouterNewNoteKind{Kind=note|checklist}` (how often the model answers
 `checklist` for a new note, without a battery run),
 `RouterRetried{Reason}`, `RouterTimedOut{Attempt}`,
@@ -168,14 +198,23 @@ the count should fall to near zero under the new one),
 capture had just made),
 `TargetedInstructionCheck{Outcome=no_cue|removed|nothing_removed|failed}`.
 
-**The decision line.** `decideTarget` logs one INFO line `routing decided`
-per routed capture, counts and enumerations only, so a week of routes can be
-judged from the log alone (until 2026-09-29 that took the DynamoDB row, the
-S3 transcript and the log together, and a route whose note was since purged
-could not be judged at all): `action` (append|new), `confidence`,
-`matched_by` (model|title|alias|tag|prefix_title|prefix_transcript|none —
-`model` when the model itself chose the append, `none` for a new note nothing
-matched), `candidates`, `transcript_words`, `title_words` (0 for an append),
+**The decision line.** `route` logs one INFO line `routing decided` per
+routed capture (`logRoutingDecision`), counts and enumerations only, so a
+week of routes can be judged from the log alone (until 2026-09-29 that took
+the DynamoDB row, the S3 transcript and the log together, and a route whose
+note was since purged could not be judged at all). It is written once the
+branch is final — `decideTarget` wrote it before the same-second re-check
+until the same day, so a deduped capture read as a new note nothing matched
+(DB6-13) — and carries: `action` (append|new), `confidence`,
+`matched_by` (model|title|alias|tag|prefix_title|prefix_transcript|spoken_name|none
+— `model` when the model itself chose the append, `spoken_name` when the
+code took the model's unsure suggestion because its name was spoken as one,
+`none` for a new note nothing matched), `outcome` — what `route` did with
+the decision: append, needs_target, new, deduped (the pre-create re-check
+found the note a sibling capture had just made; counted as
+`RouterCreateDeduped` alone, never as `RouterTitleMatchedExistingNote` too)
+or new_after_missing (the model's note was archived or gone by the time it
+was read) — `candidates`, `transcript_words`, `title_words` (0 for an append),
 `spans` (as the reply carried them), `removed_words`, `checklist` (the
 reply's kind) and `source` (app|device, never the device id). The correlation
 id rides the context; no title and no transcript word is on the line, so the

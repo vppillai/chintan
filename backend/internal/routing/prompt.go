@@ -42,7 +42,11 @@ const maxFieldLen = 120
 // listed name is an append with a span over the name only, one that opens
 // with an unlisted name is a new note titled with the name only, and a
 // filing or naming span ends after the name — the code's prefix rule and
-// routing.ExtendSpans hold the deterministic half of each.
+// routing.ExtendSpans hold the deterministic half of each. Titles also says
+// what a name is not: a whole sentence (R6-RT-8) — the owner's ring said
+// "The dog is having his dinner" on 2026-09-27 and the model titled the
+// note with the sentence, twice in three after the name-first rules made
+// opening words the most rehearsed title.
 //
 // A new note also gets a kind. The router is the one component that hears
 // "add milk to the shopping list" before any note exists; without the kind
@@ -77,6 +81,7 @@ Spans
 Titles
 - Use a spoken title exactly as spoken, however short. Invent a short descriptive title (one to five words) only when none was spoken.
 - A recording that opens with an unlisted name followed by content ("Things to talk with Milos appreciation for the team") is a new note titled with the name only; the words after it are content, outside the title.
+- A name is a short noun phrase of one to five words, never a whole sentence: "The dog is having his dinner" has no name in front, so invent a title of one to five words and keep every word as content.
 - Keep the speaker's language and script; never translate or transliterate.
 
 Kind, for "new" only
@@ -98,7 +103,9 @@ Examples, transcript then reply:
 - "0:App 1:feedback 2:the 3:split 4:up 5:is 6:slow", with App feedback among the notes
   {"action":"append","note":<the number listed for App feedback>,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":2}]}
 - "0:Things 1:to 2:talk 3:with 4:Milos 5:appreciation 6:for 7:the 8:team", with no such note
-  {"action":"new","title":"Things to talk with Milos","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":5}]}`
+  {"action":"new","title":"Things to talk with Milos","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":5}]}
+- "0:The 1:dog 2:is 3:having 4:his 5:dinner", with no such note
+  {"action":"new","title":"Dog dinner","kind":"note","confidence":1,"instruction_spans":[]}`
 
 // SystemPrompt returns the routing system prompt.
 func SystemPrompt() string {

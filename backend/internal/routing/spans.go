@@ -98,21 +98,26 @@ func RemoveSpans(transcript string, spans []Span) (string, error) {
 	return strings.Join(kept, " "), nil
 }
 
-// ExtendSpans closes the two gaps the router leaves most often at the end of
-// an instruction span, both deterministic once the span and the title are
-// known (production battery 2026-09-29, rows 2 and 13, three of three each):
-// a span that stops just before the spoken title ("0:title 1:this" with the
-// title "staging smoke" following) grows over the title's words, and a span
-// followed by the word "note" ("put that in my roof" + "note") grows over
-// it, since "note" after a filing phrase is the noun of the phrase and not
-// dictation. Spans that do not fit the transcript are returned as they are,
-// so RemoveSpans still refuses them. The result is still only words deleted
-// from the transcript; nothing here can add a word.
+// ExtendSpans closes the gaps the router leaves most often at the end of an
+// instruction span, each deterministic once the span and the title are known
+// (production battery 2026-09-29, rows 2 and 13, three of three each): a span
+// that stops just before the spoken title ("0:title 1:this" with the title
+// "staging smoke" following) or inside it ("0:title 1:this 2:staging" with
+// the same title, which left "smoke" opening row 13's body in every run)
+// grows to the title's end, and a span followed by the word "note" ("put that
+// in my roof" + "note") grows over it, since "note" after a filing phrase is
+// the noun of the phrase and not dictation. The title is the new note's, or
+// on an append the destination's, since a span may stop inside either
+// ("Create a new note and add it to" + "Pebble Ring Test", row 9). Spans that
+// do not fit the transcript are returned as they are, so RemoveSpans still
+// refuses them. The result is still only words deleted from the transcript;
+// nothing here can add a word.
 //
 // ponytail: "note" is the one trailing noun the battery showed; "list" is the
 // same shape and joins it the day a battery row shows it.
 func ExtendSpans(words []string, spans []Span, title string) []Span {
-	titleWords := strings.Fields(NormalizeSpeech(title))
+	title = NormalizeSpeech(title)
+	n := len(strings.Fields(title))
 	out := make([]Span, len(spans))
 	for i, s := range spans {
 		out[i] = s
@@ -120,9 +125,19 @@ func ExtendSpans(words []string, spans []Span, title string) []Span {
 			continue
 		}
 		end := s.EndWord
-		if n := len(titleWords); n > 0 && end+n <= len(words) &&
-			NormalizeSpeech(strings.Join(words[end:end+n], " ")) == strings.Join(titleWords, " ") {
-			end += n
+		// The title's words start k words back into the span: k = 0 is the
+		// title right after it, k = 1..n-1 a span that stopped inside it. The
+		// smallest k wins, so a title repeated in the transcript costs the
+		// fewest words.
+		for k := 0; k < n; k++ {
+			start := end - k
+			if start < s.StartWord || start+n > len(words) {
+				continue
+			}
+			if NormalizeSpeech(strings.Join(words[start:start+n], " ")) == title {
+				end = start + n
+				break
+			}
 		}
 		if end < len(words) && NormalizeSpeech(words[end]) == "note" {
 			end++
@@ -167,6 +182,31 @@ func MentionsInstruction(transcript string) bool {
 	for _, cue := range instructionCues {
 		if strings.Contains(padded, " "+cue+" ") {
 			return true
+		}
+	}
+	return false
+}
+
+// NamedAfterCue reports whether name is spoken as the object of an
+// instruction cue in transcript — "add it to Pebble Ring Test", "put this in
+// my roof repair note" — with at most one of "my", "the" or "our" between
+// the cue and the name, both compared in NormalizeSpeech form. It is the
+// precise sibling of MentionsInstruction, which only says a recording
+// carries a cue somewhere: a rule that files silently on a spoken name
+// (spoken_name, R6-RT-7) needs the name to be what the cue names, or "put
+// this in my journal I was thinking about the roof repair today" would file
+// into Roof repair.
+func NamedAfterCue(transcript, name string) bool {
+	name = NormalizeSpeech(name)
+	if name == "" {
+		return false
+	}
+	padded := " " + NormalizeSpeech(transcript) + " "
+	for _, cue := range instructionCues {
+		for _, between := range []string{" ", " my ", " the ", " our "} {
+			if strings.Contains(padded, " "+cue+between+name+" ") {
+				return true
+			}
 		}
 	}
 	return false
