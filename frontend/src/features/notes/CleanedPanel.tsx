@@ -6,9 +6,9 @@ import { ApiError } from '@/api/problem.ts';
 import { queryKeys } from '@/api/queries.ts';
 import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { CheckMark } from '@/components/CheckMark.tsx';
+import { showToast } from '@/components/Toast.tsx';
 
-import { ChecklistPreview } from './ChecklistEditor.tsx';
-import { removeItem, toggleItem } from './checklist.ts';
+import { ChecklistEditor } from './ChecklistEditor.tsx';
 import {
   CLEAN_POLL_MS,
   CLEAN_POLL_TIMEOUT_MS,
@@ -47,11 +47,16 @@ import type { NoteEditor } from './useNoteEditor.ts';
  *
  * For a checklist the tab is Split up: the one mode is `tasks` — the list
  * rewritten as one task per action — so there is no mode to pick, and the
- * result is shown as the same rows, live: the first tick or delete makes the
- * split list the body and acts on it in the same save, as Use this list
- * makes it the body outright, and from then on the tab shows the body itself
- * (`adoptedSplits`). The server applies the mode itself, so the request
- * names none.
+ * result is shown in the Items editor itself, over the proposal (2026-09-29,
+ * R6-CL-2, decision R6-CL-D1 a): rows, grips, boxes, the add row, Done. The
+ * first act there — a tick, a drag, a Tab, a keystroke — makes the split
+ * list the body and applies that act in the same save, as Use this list
+ * makes it the body outright; the shell's toast offers Undo for six seconds
+ * (OF-DEL: no question first for what can be undone), and from then on the
+ * tab shows the body itself (`adoptedSplits`). A proposal older than the
+ * note, or one a regeneration is about to replace, is shown `inert` until
+ * Regenerate or Use this list. The server applies the mode itself, so the
+ * request names none.
  */
 
 /**
@@ -95,7 +100,7 @@ export function CleanedPanel({
     () => markTree(renderMarkdown(cleanedBody), query, active),
     [cleanedBody, query, active],
   );
-  // The preview draws rows, not the marked tree, so it has no marks to count.
+  // The editor draws rows, not the marked tree, so it has no marks to count.
   useReportTotal(find, checklist ? 0 : rendered.total);
   useScrollToActiveMatch(bodyRef, find ? active : null, rendered.total);
 
@@ -112,14 +117,35 @@ export function CleanedPanel({
   // Said once, when the body is replaced: the caption's leaving is the only
   // other sign, and a screen reader never hears a line vanish.
   const [announcement, setAnnouncement] = useState('');
-  // The split list as the body, ticked or cut as asked: the same edit-and-save
-  // a tick in the Items tab is, so it rides the autosave and its conflict
-  // prompt like any other change to the items.
+  /*
+   * The editor's every write, and the split list as the body with the act
+   * applied: the same edit a change in the Items tab is, so it rides the
+   * autosave and its conflict prompt like any other change to the items.
+   * The first is the replacement, so it is saved at once whatever it was —
+   * a keystroke included — and can be taken back: Undo puts the body as it
+   * stood back, saves, and the tab shows the proposal again. The acts after
+   * it are ordinary edits, saved as the editor asks (`onSave`).
+   */
   const adopt = (body: string): void => {
+    const previous = draft.body;
+    const first = !adopted;
     if (cleaned) adoptedSplits.set(note.id, cleaned.generated_at);
-    if (!adopted) setAnnouncement('Your list is now the split version.');
     editor.edit({ body });
+    if (!first) return;
     void editor.saveNow();
+    const message = 'Your list is now the split version.';
+    setAnnouncement(message);
+    showToast({
+      message,
+      action: {
+        label: 'Undo',
+        onSelect: () => {
+          adoptedSplits.delete(note.id);
+          editor.edit({ body: previous });
+          void editor.saveNow();
+        },
+      },
+    });
   };
 
   const chooseMode = (next: CleanedMode): void => {
@@ -221,12 +247,12 @@ export function CleanedPanel({
             </div>
           </div>
 
-          {/* Not while the proposal is stale: the rows are held then, and a
+          {/* Not while the proposal is stale: the rows are inert then, and a
               sentence about ticking above rows that cannot be ticked
               contradicts itself. The stale notice below says what to do. */}
           {checklist && !adopted && !cleaned.stale && (
             <p className="cleaned__meta">
-              Ticking here replaces your list with the split version.
+              Ticking, moving or editing here replaces your list with the split version.
             </p>
           )}
 
@@ -248,30 +274,27 @@ export function CleanedPanel({
           <Progress pending={pending} notice={notice} />
 
           {checklist ? (
+            /*
+              Inert while a regeneration is pending, and while the proposal is
+              older than the note: an act then would write a list that
+              predates the note's later changes over the body in one save,
+              and an item a recording appended since would leave the body
+              silently. Use this list stays the explicit way to take a stale
+              proposal anyway. One attribute on the wrapper, not a prop the
+              editor would have to thread through every control.
+            */
             <div
               ref={bodyRef}
               className="cleaned__body"
               lang={lang}
               data-stale={(cleaned.stale && !adopted) || undefined}
+              inert={pending || (cleaned.stale && !adopted) || undefined}
             >
-              {/*
-                Held while a regeneration is pending, and while the proposal
-                is older than the note: a tick then would write a list that
-                predates the note's later changes over the body in one save,
-                and an item a recording appended since would leave the body
-                silently. Use this list stays the explicit way to take a
-                stale proposal anyway.
-              */}
-              <ChecklistPreview
+              <ChecklistEditor
+                noteId={note.id}
                 body={splitBody}
-                label="Split up items"
-                disabled={pending || (cleaned.stale && !adopted)}
-                onToggle={(index) => {
-                  adopt(toggleItem(splitBody, index));
-                }}
-                onDelete={(index) => {
-                  adopt(removeItem(splitBody, index));
-                }}
+                onChange={adopt}
+                onSave={() => void editor.saveNow()}
               />
             </div>
           ) : (

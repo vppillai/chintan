@@ -1,13 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import { Check } from '@/components/CheckMark.tsx';
 import { Icon } from '@/components/Icon.tsx';
 import type { OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { showToast } from '@/components/Toast.tsx';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
 
-import { ChecklistDone, DeleteItem } from './ChecklistDone.tsx';
-import { ChecklistRow, ItemField, rowClass } from './ChecklistRow.tsx';
+import { ChecklistDone } from './ChecklistDone.tsx';
+import { ChecklistRow, ItemField } from './ChecklistRow.tsx';
 import {
   blockOf,
   canNest,
@@ -23,14 +22,14 @@ import {
   unnest,
   type ChecklistItem,
 } from './checklist.ts';
-import type { NoteEditor } from './useNoteEditor.ts';
 
 // The drawn box lives in components/ now; NoteActions and NoteRow still take
 // it from here until the round-6 wave-2 cleanup points them at it (S8).
 export { CheckMark } from '@/components/CheckMark.tsx';
 
 /**
- * The Items tab: a checklist note's body as rows to tick off.
+ * A checklist body as rows to tick off: the Items tab, and the Split up tab
+ * over its proposal.
  *
  * Open items first, in body order, each a grip, a real checkbox and a text
  * field that wraps and grows with its words (`ChecklistRow`); an "Add an
@@ -41,16 +40,25 @@ export { CheckMark } from '@/components/CheckMark.tsx';
  * (`toggleItem`), so a recording the worker appends meanwhile lands where it
  * would have anyway.
  *
- * The grip is the one control for the order (2026-09-26, CL-3). A drag on
- * it lifts the row and the list re-sorts under the pointer (`useDragReorder`,
- * the pinned group's gesture); nothing is written until release, then the
- * body is rewritten once (`moveItem`) and saved, as a tick is. The arrow
- * keys on it move the row one slot. A tap on it — a lift that never moved —
- * opens the row's menu: Move up, Move down, Move to top, Move to bottom,
- * Delete; the path that needs no drag at all (WCAG 2.5.7), and a menu on
- * the grip rather than a ⋮ per row because a phone's width has no room for
- * both beside a dictated sentence. A body that changes under a lifted row —
- * a recording landing by refetch — drops the row, since the slots it was
+ * The grip is the one control for the order and the level (2026-09-26,
+ * CL-3; 2026-09-29, R6-CL-2). A drag on it up or down lifts the row and the
+ * list re-sorts under the pointer (`useDragReorder`, the pinned group's
+ * gesture); nothing is written until release, then the body is rewritten
+ * once (`moveItem`) and saved, as a tick is. A drag on it sideways — the
+ * first ten pixels decide the axis, and it is locked from then on — keeps
+ * the row in its slot and changes its level instead: one indent step
+ * (24 px, `--space-6`) to the right makes it a sub-item of the open row
+ * above, one to the left brings it up, one level either way, previewed on
+ * the lifted row (`data-nest-preview`: the indent it would take and an
+ * accent bar at its start) and written once on release through `nest`, the
+ * same path as Tab. The up and down arrows on a focused grip move the row
+ * one slot; the right and left arrows change its level. A tap on the grip
+ * — a lift that never moved — opens the row's menu: Move up, Move down,
+ * Move to top, Move to bottom, Make a sub-item, Move up a level, Delete;
+ * the path that needs no drag at all (WCAG 2.5.7), and a menu on the grip
+ * rather than a ⋮ per row because a phone's width has no room for both
+ * beside a dictated sentence. A body that changes under a lifted row — a
+ * recording landing by refetch — drops the row, since the slots it was
  * moving between are gone. Done rows have no grip: their order is the
  * body's, and nothing shows it.
  *
@@ -78,10 +86,12 @@ export { CheckMark } from '@/components/CheckMark.tsx';
  * toast for six seconds rather than asking first (OF-DEL: no typed word,
  * no dialog for what can be undone).
  *
- * Every change is `editor.edit({ body })` and rides the note's own autosave,
- * conflict prompt and offline queue; a tick, a move and a delete save at
- * once, as a discrete act does, and typing saves on blur. Nothing here knows
- * about the server.
+ * Every change is one `onChange(body)`, and a tick, a move and a delete
+ * call `onSave` at once, as a discrete act does, while typing saves on blur.
+ * The Items tab hands those to the note editor, so a change rides the note's
+ * own autosave, conflict prompt and offline queue; the Split up tab hands
+ * them to `adopt`, which makes the first of them replace the body with the
+ * proposal. Nothing here knows about the server, or whose body this is.
  *
  * Keyboard: Enter in an item starts a new one under it — a parent's first
  * sub-item when it has any (`insertItemAfter`); Backspace in an emptied item
@@ -91,8 +101,19 @@ export { CheckMark } from '@/components/CheckMark.tsx';
  * level changes its level (`moveItem`), and the status line says so, since
  * neither the menu nor the arrow keys offered a choice.
  */
-export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId: string }) {
-  const body = editor.model.draft.body;
+export function ChecklistEditor({
+  noteId,
+  body,
+  onChange,
+  onSave,
+}: {
+  /** For the Done disclosure, remembered per note. */
+  noteId: string;
+  body: string;
+  onChange: (body: string) => void;
+  /** A discrete act — a tick, a move, a delete, leaving a field — is done; save now. */
+  onSave: () => void;
+}) {
   const items = useMemo(() => parseChecklist(body), [body]);
   const hintId = useId();
   const fieldHintId = useId();
@@ -160,11 +181,11 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
   });
 
   const write = (next: string, focus?: number, hold: readonly number[] | null = null): void => {
-    editor.edit({ body: next });
+    onChange(next);
     if (focus !== undefined) focusAfterWrite.current = focus;
     setHeld(hold);
   };
-  const save = (): void => void editor.saveNow();
+  const save = onSave;
 
   const toggle = (index: number, item: ChecklistItem): void => {
     const next = toggleItem(body, index);
@@ -292,6 +313,12 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
     onTap: (id) => {
       grips.current.get(openIds.indexOf(id))?.click();
     },
+    // A sideways drag released a level over: the same write as Tab and the
+    // menu, which refuse the first open row, a row already a sub-item and a
+    // done neighbour, and say what they did.
+    onShift: (id, levels) => {
+      nest(openIds.indexOf(id), levels, 'grip');
+    },
   });
   const dragging = drag.draggingId !== null;
   useEffect(() => {
@@ -305,6 +332,21 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
         return entry ? [entry] : [];
       })
     : open;
+
+  /**
+   * The level the lifted row at `position` would take if the sideways drag
+   * let go now, for the row to draw; nothing when the drag is not sideways,
+   * is on another row, or asks for what `nest` would refuse.
+   */
+  const nestPreview = (position: number): 1 | -1 | undefined => {
+    const shift = drag.draftShift;
+    const entry = shownOpen[position];
+    if (!shift || !entry || shift.id !== String(entry.index) || shift.levels === 0) return undefined;
+    const above = shownOpen[position - 1];
+    const allowed =
+      shift.levels > 0 ? above !== undefined && canNest(items, entry.index, above.index) : entry.item.depth > 0;
+    return allowed ? shift.levels : undefined;
+  };
 
   /** The grip's menu: the no-drag path to every place a row can go, its level, then the row's delete. */
   const gripMenu = (index: number, position: number, item: ChecklistItem): OverflowMenuItem[] => {
@@ -373,8 +415,8 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
       {open.length > 0 && (
         <>
           <p id={hintId} className="visually-hidden">
-            To reorder, drag a handle, or focus it and press the up and down arrow keys; tap it for
-            more.
+            To reorder, drag a handle, or focus it and press the up and down arrow keys; drag it
+            sideways, or press the right and left arrows, to change its level; tap it for more.
           </p>
           {/* Described on the field, where the keys act: the grip's hint is never read there. */}
           <p id={fieldHintId} className="visually-hidden">
@@ -397,6 +439,7 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
             index={index}
             position={position}
             dragging={drag.draggingId === String(index)}
+            nestPreview={nestPreview(position)}
             hintId={hintId}
             fieldHintId={fieldHintId}
             menu={gripMenu(index, position, item)}
@@ -409,7 +452,9 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
               else inputs.current.delete(index);
             }}
             onLift={(event) => {
-              if (event.button === 0) drag.start(event.pointerId, String(index));
+              if (event.button === 0) {
+                drag.start(event.pointerId, String(index), { x: event.clientX, y: event.clientY });
+              }
             }}
             onStep={(by) => {
               moveOpen(index, position + by, true);
@@ -513,58 +558,4 @@ export function parseMotionMs(raw: string): number {
   if (value.endsWith('ms')) return n;
   if (value.endsWith('s')) return n * 1000;
   return n;
-}
-
-/**
- * The Split up tab's list: the same rows, ticking and deleting through the
- * caller, which decides what body they change — `CleanedPanel` makes the
- * first act adopt the split list as the note's body. Items stay in body
- * order and a done one fills in where it stands rather than moving down,
- * because this list is a reading of a proposal, not the editor; a done item
- * still has its × as it does under Done. `disabled` holds every row while a
- * regeneration is on its way, as the buttons are held: a tick then would
- * adopt a proposal about to be replaced. A row is keyed by its words as
- * well as its place, so a delete above it remounts it (no transition) rather
- * than sliding the tick of the row that stood there.
- */
-export function ChecklistPreview({
-  body,
-  label,
-  disabled = false,
-  onToggle,
-  onDelete,
-}: {
-  body: string;
-  label: string;
-  disabled?: boolean;
-  onToggle: (index: number) => void;
-  onDelete: (index: number) => void;
-}) {
-  const items = parseChecklist(body);
-  return (
-    <ul className="checklist checklist--preview" role="list" aria-label={label}>
-      {items.map((item, index) => (
-        <li key={`${String(index)}:${item.text}`} className={rowClass(item)}>
-          <Check
-            checked={item.done}
-            name={item.text || `Item ${String(index + 1)}`}
-            disabled={disabled}
-            onChange={() => {
-              onToggle(index);
-            }}
-          />
-          <span className="checklist__text">{item.text}</span>
-          {item.done && (
-            <DeleteItem
-              text={item.text}
-              disabled={disabled}
-              onClick={() => {
-                onDelete(index);
-              }}
-            />
-          )}
-        </li>
-      ))}
-    </ul>
-  );
 }

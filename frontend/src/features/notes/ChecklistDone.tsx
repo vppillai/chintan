@@ -117,13 +117,11 @@ function rememberDoneOpen(noteId: string, open: boolean): void {
 }
 
 /** The × on a done row: gone for good, not reopened. */
-export function DeleteItem({
+function DeleteItem({
   text,
-  disabled = false,
   onClick,
 }: {
   text: string;
-  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -131,7 +129,6 @@ export function DeleteItem({
       type="button"
       className="checklist__delete"
       aria-label={`Delete ${text || 'item'}`}
-      disabled={disabled}
       onClick={onClick}
     >
       <Icon name="close" size={16} />

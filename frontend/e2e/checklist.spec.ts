@@ -128,7 +128,7 @@ test('Details turns a note into a checklist and back, sending kind with the conv
   await expect.poll(() => api.notes['roof-repair']?.kind).toBe('note');
 });
 
-test('Split up has no mode picker, and its list is live: the first tick adopts the split list, later ones edit it', async ({
+test('Split up has no mode picker, and is the Items editor over the proposal: the first tick adopts the split list, with Undo; later acts edit it', async ({
   page,
   api,
 }) => {
@@ -139,13 +139,15 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
   await expect(page.getByText('Not split up yet')).toBeVisible();
 
   await page.getByRole('button', { name: 'Generate' }).click();
-  const preview = page.getByRole('list', { name: 'Split up items' });
-  await expect(preview).toBeVisible({ timeout: 10_000 });
-  await expect(preview.getByRole('checkbox')).toHaveCount(4);
-  for (const box of await preview.getByRole('checkbox').all()) await expect(box).toBeEnabled();
-  await expect(preview.getByRole('textbox')).toHaveCount(0);
+  // The real editor over the proposal: grips, fields, the add row, Done.
+  const split = page.getByRole('region', { name: 'Split up' });
+  const rows = split.getByRole('list', { name: 'Items' });
+  await expect(rows).toBeVisible({ timeout: 10_000 });
+  await expect.poll(() => values(rows)).toEqual(['Milk', 'Bread', 'butter', '']);
+  await expect(rows.getByRole('button', { name: /^Move / })).toHaveCount(3);
+  await expect(split.getByRole('region', { name: 'Done (1)' }).getByRole('checkbox', { name: 'Eggs' })).toBeChecked();
   await expect(page.getByText(/generated just now · split up/i)).toBeVisible();
-  const caption = page.getByText('Ticking here replaces your list with the split version.');
+  const caption = page.getByText('Ticking, moving or editing here replaces your list with the split version.');
   await expect(caption).toBeVisible();
   // The request named no mode; the server applied `tasks` itself.
   const clean = api.requests.find((r) => r.method === 'POST' && r.url === '/v1/notes/shopping/clean');
@@ -153,24 +155,26 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
 
   // No native box anywhere: the control is a real checkbox hidden under its
   // 44 px label, and the box beside it is drawn.
-  const butter = preview.getByRole('checkbox', { name: 'butter' });
+  const butter = rows.getByRole('checkbox', { name: 'butter' });
   await expect(butter).toHaveCSS('opacity', '0');
   const target = await butter.locator('..').boundingBox();
   expect(target?.height).toBeGreaterThanOrEqual(44);
   expect(target?.width).toBeGreaterThanOrEqual(44);
 
-  // The first tick adopts the split list and ticks butter, in one PATCH.
+  // The first tick adopts the split list and ticks butter, in one PATCH, and
+  // Undo waits in the shell's toast.
   await butter.click();
   await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] butter');
   expect(api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping')).toHaveLength(1);
-  await expect(butter).toBeChecked();
+  await expect(split.getByRole('region', { name: 'Done (2)' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
+  await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
   await expect(caption).toHaveCount(0);
   await expect(page.getByText(/your list · split up just now/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
 
   // The next act edits the body it made, not another replacement: the ×
   // under a done item deletes it, and butter stays done.
-  await preview.getByRole('button', { name: 'Delete Eggs' }).click();
+  await split.getByRole('button', { name: 'Delete Eggs' }).click();
   await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n- [ ] Bread\n- [x] butter');
 
   // Away and back, the tab shows the body, still ticked; Regenerate stays and
@@ -178,8 +182,8 @@ test('Split up has no mode picker, and its list is live: the first tick adopts t
   await page.getByRole('tab', { name: 'Items' }).click();
   await expect.poll(() => values(page.getByRole('list', { name: 'Items' }))).toEqual(['Milk', 'Bread', '']);
   await page.getByRole('tab', { name: 'Split up' }).click();
-  await expect(page.getByRole('list', { name: 'Split up items' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
-  await expect(page.getByText('Ticking here replaces your list with the split version.')).toHaveCount(0);
+  await expect(split.getByRole('region', { name: 'Done (1)' }).getByRole('checkbox', { name: 'butter' })).toBeChecked();
+  await expect(page.getByText('Ticking, moving or editing here replaces your list with the split version.')).toHaveCount(0);
   await expect(page.getByText('The note changed since this was generated.')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Use this list' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
@@ -288,6 +292,50 @@ test.describe('reordering by the grip', () => {
       // The finger lifting after the drag neither opened the menu nor ticked a box.
       await expect(page.getByRole('menu')).toHaveCount(0);
       await expect(page.getByText('1 of 3 done')).toBeVisible();
+    });
+
+    test('a touch drag sideways on a grip makes the row a sub-item, previewed in place and kept across a reload', async ({
+      page,
+      api,
+    }) => {
+      seedShopping(api);
+      await page.goto('/notes/shopping');
+      const items = page.getByRole('list', { name: 'Items' });
+      await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+      const row = items.locator('li').nth(1);
+
+      const cdp = await page.context().newCDPSession(page);
+      const grip = (await page.getByRole('button', { name: 'Move Bread and butter' }).boundingBox())!;
+      const x = grip.x + grip.width / 2;
+      const y = grip.y + grip.height / 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      // One indent step and a little, to the right, level: the first ten
+      // pixels decide the axis, then every 24 px is a level.
+      const steps = 6;
+      for (let i = 1; i <= steps; i += 1) {
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: x + (30 * i) / steps, y: y + 1 }],
+        });
+      }
+      // In the air: the row keeps its slot, shows the level it would take, and nothing is saved.
+      await expect(row).toHaveAttribute('data-nest-preview', '1');
+      await expect.poll(() => values(items)).toEqual(['Milk', 'Bread and butter', '']);
+      expect(saves(api)).toBe(0);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+      // One write, saved at once: two spaces of indent, under the row shown
+      // above — Milk — with the done Eggs line, which showed nowhere, below.
+      await expect.poll(() => api.notes['shopping']?.body).toBe('- [ ] Milk\n  - [ ] Bread and butter\n- [x] Eggs');
+      expect(saves(api)).toBe(1);
+      await expect(row).toHaveAttribute('data-depth', '1');
+      await expect(row).not.toHaveAttribute('data-nest-preview');
+      await expect(page.getByRole('menu')).toHaveCount(0);
+
+      // The body is what is reloaded, and the indent is read back from it.
+      await page.reload();
+      await expect(page.getByRole('list', { name: 'Items' }).locator('li').nth(1)).toHaveAttribute('data-depth', '1');
+      await expect(page.getByRole('textbox', { name: 'Sub-item 2' })).toHaveValue('Bread and butter');
     });
   });
 });

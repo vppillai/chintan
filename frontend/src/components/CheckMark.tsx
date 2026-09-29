@@ -10,26 +10,10 @@ import { ICON_STROKE_WIDTH, PATHS } from '@/components/Icon.tsx';
  * it with one dash and draw it as a stroke when the box is ticked. No
  * browser's native box appears anywhere in the app.
  */
-export function Check({
-  checked,
-  name,
-  disabled = false,
-  onChange,
-}: {
-  checked: boolean;
-  name: string;
-  disabled?: boolean;
-  onChange: () => void;
-}) {
+export function Check({ checked, name, onChange }: { checked: boolean; name: string; onChange: () => void }) {
   return (
     <label className="checklist__check">
-      <input
-        type="checkbox"
-        className="checklist__box"
-        checked={checked}
-        disabled={disabled}
-        onChange={onChange}
-      />
+      <input type="checkbox" className="checklist__box" checked={checked} onChange={onChange} />
       <CheckMark />
       <span className="visually-hidden">{name}</span>
     </label>

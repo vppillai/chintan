@@ -7,12 +7,10 @@ import { Toast, dismissToast } from '@/components/Toast.tsx';
 
 import { doneStorageKey } from './ChecklistDone.tsx';
 import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
-import { initialEditor, type NoteDraft } from './autosave.ts';
-import type { NoteEditor } from './useNoteEditor.ts';
 
 /**
- * The editor against a stand-in for `useNoteEditor` that applies every
- * `edit({ body })` and counts every `saveNow()`, so what these assert is the
+ * The editor against a stand-in for the note editor that applies every
+ * `onChange(body)` and counts every `onSave()`, so what these assert is the
  * body the real editor would have been handed — the one thing this component
  * exists to produce — and when it would have been asked to save. `setBody`
  * is the outside world changing the note under the editor, as a refetch does.
@@ -26,28 +24,24 @@ function mount(initial: string, noteId = 'shopping') {
     const [body, setBody] = useState(initial);
     const [, setSettled] = useState(0);
     log.setBody = setBody;
-    const editor: NoteEditor = {
-      model: initialEditor(
-        { title: 'Shopping', body, aliases: [], tags: [], kind: 'checklist' },
-        1,
-      ),
-      edit: (patch: Partial<NoteDraft>) => {
-        if (typeof patch.body !== 'string') return;
-        log.bodies.push(patch.body);
-        setBody(patch.body);
-      },
-      saveNow: async () => {
-        log.saves += 1;
-        await Promise.resolve();
-        act(() => {
-          setSettled(log.saves);
-        });
-      },
-      takeTheirs: () => {},
-      keepMine: () => {},
-      keepBoth: () => {},
-    };
-    return <ChecklistEditor editor={editor} noteId={noteId} />;
+    return (
+      <ChecklistEditor
+        noteId={noteId}
+        body={body}
+        onChange={(next) => {
+          log.bodies.push(next);
+          setBody(next);
+        }}
+        onSave={() => {
+          log.saves += 1;
+          void Promise.resolve().then(() => {
+            act(() => {
+              setSettled(log.saves);
+            });
+          });
+        }}
+      />
+    );
   }
   const view = render(
     <>
@@ -592,6 +586,111 @@ describe('one level of sub-items', () => {
     expect(within(menu).getByRole('menuitem', { name: 'Move down' })).toBeDisabled();
     expect(within(menu).getByRole('menuitem', { name: 'Move to bottom' })).toBeDisabled();
     expect(within(menu).getByRole('menuitem', { name: 'Move up' })).toBeEnabled();
+  });
+});
+
+describe('nesting by the grip', () => {
+  const TWO = '- [ ] Milk\n- [ ] Bread';
+
+  it('a drag sideways by one step makes the row a sub-item of the one above: previewed in place, one write on release, said', () => {
+    const { log, body } = mount(TWO);
+    const list = items();
+    const grip = screen.getByRole('button', { name: 'Move Bread' });
+    expect(grip).toHaveAccessibleDescription(/right and left arrows, to change its level/);
+
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 50 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 40, clientY: 52 });
+    // The row keeps its slot and shows the level it would take; nothing is written.
+    expect(grip.closest('li')).toHaveAttribute('data-nest-preview', '1');
+    expect(grip.closest('li')).toHaveAttribute('data-dragging');
+    expect(openValues()).toEqual(['Milk', 'Bread', '']);
+    expect(log.bodies).toEqual([]);
+
+    fireEvent.pointerUp(list, { ...mouse, clientX: 40, clientY: 52 });
+    expect(log.bodies).toEqual(['- [ ] Milk\n  - [ ] Bread']);
+    expect(body()).toBe('- [ ] Milk\n  - [ ] Bread');
+    expect(log.saves).toBe(1);
+    expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
+    const row = screen.getByRole('button', { name: 'Move Bread' }).closest('li');
+    expect(row).toHaveAttribute('data-depth', '1');
+    expect(row).not.toHaveAttribute('data-nest-preview');
+    // A decided drag is never a tap.
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('the first row never goes in: the drag previews nothing and writes nothing', () => {
+    const { log } = mount(TWO);
+    const list = items();
+    const grip = screen.getByRole('button', { name: 'Move Milk' });
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 40, clientY: 12 });
+    expect(grip.closest('li')).not.toHaveAttribute('data-nest-preview');
+    fireEvent.pointerUp(list, { ...mouse, clientX: 40, clientY: 12 });
+    expect(log.bodies).toEqual([]);
+    expect(log.saves).toBe(0);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('a drag left by one step on a sub-item brings it up a level', () => {
+    const { log } = mount('- [ ] Milk\n  - [ ] Bread');
+    const list = items();
+    const grip = screen.getByRole('button', { name: 'Move Bread' });
+    fireEvent.pointerDown(grip, { ...mouse, clientX: 50, clientY: 50 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 20, clientY: 48 });
+    expect(grip.closest('li')).toHaveAttribute('data-nest-preview', '-1');
+    fireEvent.pointerUp(list, { ...mouse, clientX: 20, clientY: 48 });
+    expect(log.bodies).toEqual([TWO]);
+    expect(log.saves).toBe(1);
+    expect(screen.getByText('Moved up a level')).toHaveAttribute('role', 'status');
+  });
+
+  it('a sideways wobble short of a step is neither a tap nor a change', () => {
+    const { log } = mount(TWO);
+    const list = items();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Bread' }), { ...mouse, clientX: 10, clientY: 50 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 25, clientY: 50 });
+    fireEvent.pointerUp(list, { ...mouse, clientX: 25, clientY: 50 });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(log.bodies).toEqual([]);
+    expect(log.saves).toBe(0);
+  });
+
+  it('a drag that is mostly downward still reorders, whatever it drifts sideways', () => {
+    const { log } = mount(TWO);
+    const list = items();
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Move Milk' }), { ...mouse, clientX: 10, clientY: 0 });
+    fireEvent.pointerMove(list, { ...mouse, clientX: 12, clientY: 60 });
+    expect(openValues()).toEqual(['Bread', 'Milk', '']);
+    expect(screen.getByRole('button', { name: 'Move Milk' }).closest('li')).not.toHaveAttribute('data-nest-preview');
+    fireEvent.pointerUp(list, { ...mouse, clientX: 12, clientY: 60 });
+    expect(log.bodies).toEqual(['- [ ] Bread\n- [ ] Milk']);
+  });
+
+  it('the right and left arrows on a focused grip nest and un-nest the row and keep the keyboard on it', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount(TWO);
+    screen.getByRole('button', { name: 'Move Bread' }).focus();
+
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Milk\n  - [ ] Bread');
+    expect(log.saves).toBe(1);
+    expect(screen.getByRole('button', { name: 'Move Bread' })).toHaveFocus();
+    expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
+    // One level is the limit: a second press changes nothing and writes nothing.
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [ ] Milk\n  - [ ] Bread');
+    expect(log.saves).toBe(1);
+
+    await user.keyboard('{ArrowLeft}');
+    expect(body()).toBe(TWO);
+    expect(log.saves).toBe(2);
+    expect(screen.getByRole('button', { name: 'Move Bread' })).toHaveFocus();
+
+    // The first row has nothing to go under.
+    screen.getByRole('button', { name: 'Move Milk' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe(TWO);
+    expect(log.saves).toBe(2);
   });
 });
 

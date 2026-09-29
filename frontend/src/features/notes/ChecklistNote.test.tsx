@@ -4,6 +4,7 @@ import { RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
+import { Toast, dismissToast } from '@/components/Toast.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { NoteDetailScreen } from './NoteDetailScreen.tsx';
@@ -15,7 +16,8 @@ import { CLEAN_POLL_MS } from './cleaned.ts';
  * later. What these prove is the 2026-09-21 contract's frontend half: the
  * tabs are Items and Split up, the meta line counts items, the Details switch
  * converts the body and sends `kind` with it, and the Split up tab has no
- * mode to pick.
+ * mode to pick — and round 6's: Split up is the Items editor over the
+ * proposal, whose first act adopts it with Undo in the toast.
  */
 
 const SHOPPING: NoteDetailWire = {
@@ -103,6 +105,8 @@ function server(initial: NoteDetailWire) {
   render(
     <TestProviders api={testApiContext(fetchImpl)}>
       <RouterProvider router={router} />
+      {/* The shell's, in the app; here so the Undo that adopting offers can be pressed. */}
+      <Toast />
     </TestProviders>,
   );
   return { ...state, router, get patches() { return state.patches; }, get cleans() { return state.cleans; } };
@@ -121,6 +125,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  dismissToast();
   vi.useRealTimers();
 });
 
@@ -187,7 +192,7 @@ describe('a checklist note', () => {
     );
   });
 
-  it('Split up has no mode to pick, and its list is live: the first tick adopts the split list, the next edits it', async () => {
+  it('Split up has no mode to pick, and is the Items editor over the proposal: the first act adopts it, with Undo; the next edits it', async () => {
     const user = userEvent.setup();
     const api = server(SHOPPING);
     await screen.findByRole('textbox', { name: 'Item 1' });
@@ -204,81 +209,109 @@ describe('a checklist note', () => {
     // No mode named: the server applies `tasks` itself.
     expect(api.cleans).toEqual([null]);
 
-    const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
+    // The real editor: grips, boxes, fields, the add row, and Done under them.
+    const rows = () => within(panel().getByRole('list', { name: 'Items' }));
     await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
-    await waitFor(() => panel().getByRole('list', { name: 'Split up items' }));
-    const boxes = preview().getAllByRole('checkbox');
-    expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true, false, false]);
-    for (const box of boxes) expect(box).toBeEnabled();
-    expect(preview().queryByRole('textbox')).toBeNull();
+    await waitFor(() => panel().getByRole('list', { name: 'Items' }));
+    expect(rows().getAllByRole('button', { name: /^Move / }).map((grip) => grip.textContent)).toHaveLength(3);
+    expect(rows().getAllByRole('textbox').map((box) => (box as HTMLTextAreaElement).value)).toEqual([
+      'Milk',
+      'Bread',
+      'Butter',
+      '',
+    ]);
+    expect(rows().getByRole('textbox', { name: 'Add an item' })).toBeInTheDocument();
+    expect(within(panel().getByRole('region', { name: /^Done/ })).getByRole('checkbox', { name: 'Eggs' })).toBeChecked();
     expect(panel().getByText(/^Generated .* · Split up$/)).toBeInTheDocument();
-    const caption = 'Ticking here replaces your list with the split version.';
+    const caption = 'Ticking, moving or editing here replaces your list with the split version.';
     expect(panel().getByText(caption)).toBeInTheDocument();
     expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
+    expect(document.querySelector('.cleaned__body')).not.toHaveAttribute('inert');
 
-    // The first tick: the body becomes the split list with Butter done, in
-    // one save; the caption has done its job.
-    await user.click(preview().getByRole('checkbox', { name: 'Butter' }));
+    // The first act — Tab in a row — adopts: the body becomes the split list
+    // with the nest applied, in one save; the caption has done its job.
+    await user.click(rows().getByRole('textbox', { name: 'Item 3' }));
+    await user.keyboard('{Tab}');
     await waitFor(() => {
       expect(api.patches).toHaveLength(1);
     });
     expect(api.patches[0]).toEqual(
-      expect.objectContaining({ body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter' }),
+      expect.objectContaining({ body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n  - [ ] Butter' }),
     );
     expect(api.patches[0]).not.toHaveProperty('cleaned_mode');
-    expect(preview().getByRole('checkbox', { name: 'Butter' })).toBeChecked();
+    expect(rows().getByRole('textbox', { name: 'Sub-item 3' })).toHaveFocus();
     expect(panel().queryByText(caption)).toBeNull();
-    // The rows are the body now, and the header, the live region and the
-    // missing button all say so: pressing Use this list again would have put
-    // the un-ticked proposal back over the tick just made.
+    // The rows are the body now, and the header, the live region, the toast
+    // and the missing button all say so: pressing Use this list again would
+    // have put the un-nested proposal back over the change just made.
     expect(panel().getByText(/^Your list · split up /)).toBeInTheDocument();
-    expect(panel().getByRole('status')).toHaveTextContent('Your list is now the split version.');
+    expect(panel().getByText('Your list is now the split version.', { selector: '[role="status"]' })).toBeInTheDocument();
+    expect(screen.getByText('Your list is now the split version.', { selector: '.toast__text' })).toBeInTheDocument();
     expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
 
-    // The next act edits the body it made — Eggs reopened, Butter kept done —
-    // rather than replacing it with the proposal again.
-    await user.click(preview().getByRole('checkbox', { name: 'Eggs' }));
+    // Undo puts the body as it stood back, in a second save, and the tab
+    // shows the proposal again, ready to be taken another way.
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => {
       expect(api.patches).toHaveLength(2);
     });
-    expect(api.patches[1]).toEqual(
-      expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread\n- [x] Butter' }),
-    );
+    expect(api.patches[1]).toEqual(expect.objectContaining({ body: SHOPPING.body }));
+    expect(panel().getByText(caption)).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
+    expect(rows().getByRole('textbox', { name: 'Item 3' })).toHaveValue('Butter');
 
-    // A done item's × deletes it, as under Done.
-    await user.click(preview().getByRole('button', { name: 'Delete Butter' }));
+    // A tick is a first act too: Butter done, in the split list, one save.
+    await user.click(rows().getByRole('checkbox', { name: 'Butter' }));
     await waitFor(() => {
       expect(api.patches).toHaveLength(3);
     });
-    expect(api.patches[2]).toEqual(expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread' }));
+    expect(api.patches[2]).toEqual(
+      expect.objectContaining({ body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter' }),
+    );
+    expect(panel().queryByText(caption)).toBeNull();
+
+    // The next act edits the body it made — Eggs reopened, Butter kept done —
+    // rather than replacing it with the proposal again.
+    await user.click(within(panel().getByRole('region', { name: /^Done/ })).getByRole('checkbox', { name: 'Eggs' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(4);
+    });
+    expect(api.patches[3]).toEqual(
+      expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread\n- [x] Butter' }),
+    );
 
     // Away and back — the panel is remounted — the tab still shows the body,
     // not the proposal; Regenerate is still there and Use this list is not.
     await user.click(screen.getByRole('tab', { name: 'Items' }));
     expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Bread');
-    expect(screen.queryByRole('checkbox', { name: 'Butter' })).toBeNull();
+    expect(screen.getByRole('checkbox', { name: 'Butter' })).toBeChecked();
     await user.click(screen.getByRole('tab', { name: 'Split up' }));
-    expect(preview().getAllByRole('checkbox')).toHaveLength(3);
+    expect(rows().getAllByRole('textbox')).toHaveLength(4);
     expect(panel().queryByText(caption)).toBeNull();
     expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
     expect(panel().getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
 
-    // Regenerate holds the rows with the buttons while the worker is at it —
-    // a tick now would adopt a proposal about to be replaced — and what
+    // Regenerate makes the rows inert with the buttons while the worker is at
+    // it — an act now would adopt a proposal about to be replaced — and what
     // arrives is a new proposal: the caption and Use this list are back.
     await user.click(panel().getByRole('button', { name: 'Regenerate' }));
-    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
+    expect(document.querySelector('.cleaned__body')).toHaveAttribute('inert');
     await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
     await waitFor(() => {
-      expect(preview().getAllByRole('checkbox')).toHaveLength(4);
+      expect(panel().getByText(caption)).toBeInTheDocument();
     });
-    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
-    expect(panel().getByText(caption)).toBeInTheDocument();
+    expect(document.querySelector('.cleaned__body')).not.toHaveAttribute('inert');
+    expect(rows().getAllByRole('textbox').map((box) => (box as HTMLTextAreaElement).value)).toEqual([
+      'Milk',
+      'Bread',
+      'Butter',
+      '',
+    ]);
     expect(panel().getByRole('button', { name: 'Use this list' })).toBeEnabled();
-    expect(api.patches).toHaveLength(3);
+    expect(api.patches).toHaveLength(4);
   });
 
-  it('a stale proposal holds its rows: a tick writes nothing, Use this list still takes it', async () => {
+  it('a stale proposal is shown inert: nothing in its rows can be reached, and Use this list still takes it', async () => {
     const user = userEvent.setup();
     // The list changed (a recording appended an item, say) after it was split.
     const api = server({ ...SHOPPING, cleaned: { ...SPLIT, stale: true } });
@@ -287,29 +320,30 @@ describe('a checklist note', () => {
     await user.click(await screen.findByRole('tab', { name: 'Split up' }));
 
     const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
-    const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
+    const rows = () => within(panel().getByRole('list', { name: 'Items' }));
     const stale = 'The note changed since this was generated.';
-    const caption = 'Ticking here replaces your list with the split version.';
+    const caption = 'Ticking, moving or editing here replaces your list with the split version.';
     expect(panel().getByText(stale)).toBeInTheDocument();
     expect(panel().queryByText(caption)).toBeNull();
-    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
-    expect(preview().getByRole('button', { name: 'Delete Eggs' })).toBeDisabled();
-
-    // A tick or × on a held row writes nothing: one PATCH there would have
-    // put the old proposal over the body and lost the item added since.
-    await user.click(preview().getByRole('checkbox', { name: 'Butter' }));
-    await user.click(preview().getByRole('button', { name: 'Delete Eggs' }));
+    // The rows are drawn — the proposal can be read — but inert: one act
+    // there would have put the old proposal over the body and lost the item
+    // added since. (jsdom does not enforce `inert`; the browser does.)
+    expect(rows().getAllByRole('button', { name: /^Move / })).toHaveLength(3);
+    expect(document.querySelector('.cleaned__body')).toHaveAttribute('inert');
+    expect(document.querySelector('.cleaned__body')).toHaveAttribute('data-stale');
     expect(api.patches).toHaveLength(0);
 
     // Use this list is the explicit overwrite, and still is one: the body
-    // becomes the proposal as it stands, Butter unticked and Eggs kept.
+    // becomes the proposal as it stands, Butter open and Eggs kept.
     await user.click(panel().getByRole('button', { name: 'Use this list' }));
     await waitFor(() => {
       expect(api.patches).toHaveLength(1);
     });
     expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
-    // The rows are the body now and free again; the stale notice has gone.
-    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
+    // The rows are the body now and reachable again; the stale notice has
+    // gone; Undo waits in the toast, as it does after any first act.
+    expect(document.querySelector('.cleaned__body')).not.toHaveAttribute('inert');
     expect(panel().queryByText(stale)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
   });
 });
