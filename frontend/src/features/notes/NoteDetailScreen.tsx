@@ -36,13 +36,13 @@ import {
   useScrollToActiveMatch,
   type FindTarget,
 } from './FindBar.tsx';
+import { NoteMenu } from './NoteActions.tsx';
 import {
   NoteDrawer,
-  NoteMenu,
   noteLanguageFieldId,
   notePanelHeadingId,
   type NotePanelKind,
-} from './NoteActions.tsx';
+} from './NoteDrawer.tsx';
 import {
   NoteTabList,
   noteTabId,
