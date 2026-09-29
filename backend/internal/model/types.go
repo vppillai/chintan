@@ -49,11 +49,14 @@ const (
 	// NoteCleanStructured rewrites the body as an organised Markdown document:
 	// short headings, lists for enumerations, filler and repetition removed.
 	NoteCleanStructured NoteCleanMode = "structured"
-	// NoteCleanTasks rewrites a checklist as granular, actionable tasks: an
-	// item holding several actions becomes one item per action, done items are
-	// kept verbatim and in place, order is otherwise kept, nothing is invented
-	// or merged. It is the only mode a checklist cleans in and means nothing
-	// for a plain note (service.CheckCleanMode).
+	// NoteCleanTasks re-renders a checklist as the list it was meant to be:
+	// one thing per item, a line holding several things split into one item
+	// each, a group the person named as a parent with its sub-items under it,
+	// an item joining a group the list already has, two lines naming one thing
+	// merged into an open item, every tick kept and none added
+	// (cleanup.TasksPrompt, cleanup.SplitOutput). It is the only mode a
+	// checklist cleans in and means nothing for a plain note
+	// (service.CheckCleanMode).
 	NoteCleanTasks NoteCleanMode = "tasks"
 	// DefaultNoteCleanMode is what a plain note cleans in until it says
 	// otherwise.
@@ -284,8 +287,9 @@ type NoteIndex struct {
 	// only when a list asks for it (repository.ListOptions.IncludeSearchText).
 	SearchText string `json:"-"`
 	// Kind says what the body is: "" for a plain note, NoteKindChecklist for a
-	// checklist whose body is one task-list item per line (see
-	// docs/design/checklists.md). Promoted like Language, and absent on rows
+	// checklist whose body is task-list lines, a sub-item indented two spaces
+	// under its parent (see docs/design/checklists.md). Promoted like
+	// Language, and absent on rows
 	// written before 2026-09-21, which are plain notes; the wire maps "" to
 	// "note" so a client never sees the storage default.
 	Kind string `json:"kind,omitempty"`
