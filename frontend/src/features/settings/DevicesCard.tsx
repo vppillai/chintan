@@ -521,7 +521,7 @@ function Recipes() {
         <p className="recipes__note">
           To file everything from a device into one specific note, add the header{' '}
           <code>X-Chintan-Note-Id</code> with the note&rsquo;s id &mdash; copy it from the
-          note&rsquo;s &#8942; &rarr; Details, or take the last part of its address.
+          note&rsquo;s ⋮ → Details, or take the last part of its address.
         </p>
         <p className="recipes__note">
           Text shortcuts, Tasker and the two-step upload for long recordings are in the{' '}
