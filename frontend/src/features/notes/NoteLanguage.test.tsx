@@ -170,6 +170,7 @@ describe('the language is where the user looks', () => {
       'Also called',
       'Word for word',
       'Checklist',
+      'Note id',
     ]);
     expect(screen.queryByRole('button', { name: 'Tags' })).toBeNull();
   });
