@@ -560,6 +560,13 @@ func statusScenarios() map[string]scenario {
 			h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "user1", nil)
 			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
 		},
+		// An active note is refused: the purge is irreversible, so it is only
+		// reachable from the Archive, where Undo has already had its chance.
+		"DELETE /v1/notes/{noteId}/permanent -> 400": func(t *testing.T) int {
+			h := newHarness(t)
+			note := h.createNote(t, "user1", "Still active", nil)
+			return h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "user1", nil).Code
+		},
 		"DELETE /v1/notes/{noteId}/permanent -> 401": send(http.MethodDelete, "/v1/notes/x/permanent", "", nil),
 		"DELETE /v1/notes/{noteId}/permanent -> 404": send(http.MethodDelete, "/v1/notes/missing/permanent", "user1", nil),
 		// A cascade that cannot finish fails loudly and leaves the note in

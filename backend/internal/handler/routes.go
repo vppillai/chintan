@@ -30,8 +30,6 @@ func (rt *router) routes() {
 	rt.handle("GET "+p+"/notes", rt.listNotes)
 	rt.handle("POST "+p+"/notes", rt.createNote, idempotent(), body(MaxNoteRequestBytes))
 	rt.handle("POST "+p+"/notes/match", rt.matchNotes)
-	// Before "/notes/{noteId}" in the table for readability only: ServeMux
-	// prefers the more specific literal pattern regardless of order.
 	// The Pinned group's order, one request per drag.
 	rt.handle("POST "+p+"/notes/pins", rt.reorderPins, idempotent())
 	rt.handle("GET "+p+"/notes/{noteId}", rt.getNote)

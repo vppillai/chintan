@@ -264,7 +264,10 @@ paths:
     delete:
       tags: [notes]
       summary: Archive a note
-      description: Soft delete. Retained 30 days, then purged by TTL.
+      description: |
+        Soft delete. Retained 30 days; the weekly expiry sweep then deletes the
+        note's captures, their objects and the note's own row (DynamoDB TTL is
+        only the backstop fourteen days behind the sweep).
       responses:
         '204': { description: Archived. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -292,11 +295,14 @@ paths:
       tags: [notes]
       summary: Delete a note and all its artifacts, irreversibly
       description: |
-        Cascades to every capture, audio file, and transcript. A partial cascade
-        failure returns 500 and leaves the note marked for retry — it does not
-        report success while orphaning audio.
+        Cascades to every capture, audio file, and transcript. Only an archived
+        note can be purged: an active one is refused with 400 and the fixed
+        detail `archive the note before deleting it permanently`. A partial
+        cascade failure returns 500 and leaves the note marked for retry — it
+        does not report success while orphaning audio.
       responses:
         '204': { description: Purged. }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/ServerError' }
@@ -342,12 +348,19 @@ paths:
         The body is optional. `mode` is `polished` (coherent prose, light
         touch on wording) or `structured` (Markdown with short headings and
         lists) for a plain note, and `tasks` — the only mode for a checklist:
-        the items rewritten as granular, actionable tasks, one item holding
-        several actions split into one per action, done items kept verbatim
-        and in place, nothing invented or merged; the result is task-list
-        lines and nothing else (a model answering in prose is recorded as
-        `cleaned.error` "the cleanup model returned nothing usable"; at most
-        500 items). Absent, the note's own `cleaned_mode` is used, else
+        the list as it stands re-rendered as the list it was meant to be. One
+        thing per item, a line that holds several things split into one item
+        each and a sentence spoken to the app reduced to the things it named;
+        a group the person named is a parent with its sub-items two spaces in,
+        and an item whose words say so joins a group the list already has
+        rather than making a second one; two lines naming one thing merge into
+        an open item if either was open; every tick is kept and none is added
+        (a view that would lose or add a tick is refused whole and the previous
+        view kept). An item whose words are not the body's is dropped. The
+        result is task-list lines and nothing else (a model answering in prose
+        is recorded as `cleaned.error` "the cleanup model returned nothing
+        usable"; at most 500 items counting sub-items). Absent, the note's own
+        `cleaned_mode` is used, else
         `structured` (`tasks` for a checklist). A mode that does not fit the
         kind is 400 (see `NoteCleanRequest`). A second request while one is queued is accepted: in the
         same mode it joins the run in flight rather than starting another; in the
@@ -1644,12 +1657,16 @@ components:
           type: string
           enum: [note, checklist]
           description: |
-            What the body is. `note` is free-form Markdown. `checklist` is one
-            item per line in GitHub task-list syntax — `- [ ] text` open,
-            `- [x] text` done; blank lines are ignored — and nothing else. A
-            recording filed into a checklist is appended as one open item
-            (the cleaned transcript collapsed to one line, at most 2,000
-            runes), and its cleaned view runs in `tasks` mode only. Settable
+            What the body is. `note` is free-form Markdown. `checklist` is
+            GitHub task-list lines — `- [ ] text` open, `- [x] text` done, a
+            sub-item indented two spaces under the line above it, one level;
+            blank lines are ignored — and nothing else. A recording filed into
+            a checklist is appended as the items extracted from it, a one-level
+            tree (at most 100 items counting sub-items, each at most 2,000
+            runes); an item named under a group the list already has joins
+            that group instead of repeating it. A reply that is not a list, or
+            a recording kept word for word, is appended as one open item
+            collapsed to one line. Its cleaned view runs in `tasks` mode only. Settable
             through `NoteCreate` and `NoteUpdate`; the server never converts
             the body, the client sends it converted. Always present; a note
             from before the field existed reads `note`.
