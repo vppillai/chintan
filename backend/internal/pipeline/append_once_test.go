@@ -200,16 +200,11 @@ func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 // returns, which held only when the loser conceded before the claim or read
 // the body after the holder's write.
 //
-// One more error is tolerated, and it is a wart rather than the design: a
-// loser that went into finishAppend beside the holder can lose the
-// completion's conditional write and surface repository.ErrVersionConflict,
-// because CompleteCaptureAppend does not re-read on a lost race to see that
-// its own token was completed by the other attempt. The retry still finds the
-// capture appended, which is asserted below. Under -race -count=200 the
-// earlier form failed three runs in two hundred, every one with this
-// conflict and none with errAppendClaimHeld. When CompleteCaptureAppend
-// learns to return the completed row for its own token, drop
-// ErrVersionConflict from the tolerated pair.
+// A loser that went into finishAppend beside the holder and lost the
+// completion's conditional write is not an error either: CompleteCaptureAppend
+// reads the row again and returns it once its own token is completed, by
+// whichever attempt (R6-FL-2). So errAppendClaimHeld is the only error a loser
+// may return; a version conflict here is the bug it used to be.
 func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
 	// Nothing on this path waits on the harness's fixed clock — the only
@@ -238,7 +233,7 @@ func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 		if err == nil {
 			continue
 		}
-		if !errors.Is(err, errAppendClaimHeld) && !errors.Is(err, repository.ErrVersionConflict) {
+		if !errors.Is(err, errAppendClaimHeld) {
 			t.Fatalf("completion %d failed with something other than the claim race: %v", i, err)
 		}
 		lost++
