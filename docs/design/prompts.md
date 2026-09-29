@@ -144,7 +144,15 @@ whose transcript *opens with* a listed name as whole words
 speaks, "App feedback checklist move seems to be good", which the model twice
 titled as a new note on 2026-09-27; the name must be two words or eight
 letters, the longest match wins, and the derived content is kept as the model
-left it (R6-RT-1, decision R6-RT-OD1). On the path that is about to create a
+left it (R6-RT-1, decision R6-RT-OD1); and so does an append under the bar
+whose own suggested note is *spoken as a name* — one of its names as whole
+words, two words or eight letters, followed by "note" or "list" or beside an
+instruction cue ("okay so this goes in the roof repair note …", "Create a new
+note and add it to Pebble Ring Test"; `spoken_name`, R6-RT-7) — the model's
+own suggestion confirmed, never a re-pick among the candidates, and never a
+topic mention ("I was thinking about the roof today"); a one-word name of
+five to seven letters ("dentist", "house") waits on the owner (triage
+2026-09-29). On the path that is about to create a
 note the active list is read once more and the same rule run over it, so two
 same-second ring captures naming a list nobody has yet make one list, not
 two (R6-RT-3; `RouterCreateDeduped`); a `new` checklist is created as one, `Kind` written
@@ -173,9 +181,10 @@ per routed capture, counts and enumerations only, so a week of routes can be
 judged from the log alone (until 2026-09-29 that took the DynamoDB row, the
 S3 transcript and the log together, and a route whose note was since purged
 could not be judged at all): `action` (append|new), `confidence`,
-`matched_by` (model|title|alias|tag|prefix_title|prefix_transcript|none —
-`model` when the model itself chose the append, `none` for a new note nothing
-matched), `candidates`, `transcript_words`, `title_words` (0 for an append),
+`matched_by` (model|title|alias|tag|prefix_title|prefix_transcript|spoken_name|none
+— `model` when the model itself chose the append, `spoken_name` when the
+code took the model's unsure suggestion because its name was spoken as one,
+`none` for a new note nothing matched), `candidates`, `transcript_words`, `title_words` (0 for an append),
 `spans` (as the reply carried them), `removed_words`, `checklist` (the
 reply's kind) and `source` (app|device, never the device id). The correlation
 id rides the context; no title and no transcript word is on the line, so the

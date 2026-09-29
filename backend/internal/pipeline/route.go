@@ -389,7 +389,8 @@ func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, t
 
 // existingNoteNamed finds the active note the decision or the transcript
 // names, and how: the exact title rule first, then the longest name either
-// opens with.
+// opens with, then, for an append the model was unsure of, the model's own
+// suggestion spoken as a name (spokenAsName).
 func existingNoteNamed(decision provider.RouteDecision, transcript string, active []model.NoteIndex) (string, string) {
 	if decision.Action == provider.RouteNew {
 		if want := normalizeTitle(decision.Title); want != "" {
@@ -404,7 +405,7 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 	speech := routing.NormalizeSpeech(transcript)
 	bestID, bestBy, bestLen := "", "", 0
 	for _, n := range active {
-		for _, name := range append([]string{n.Title}, append(append([]string(nil), n.Aliases...), n.Tags...)...) {
+		for _, name := range noteNames(n) {
 			name = routing.NormalizeSpeech(name)
 			if len(name) <= bestLen || !prefixRuleName(name) {
 				continue
@@ -417,7 +418,53 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 			}
 		}
 	}
+	if bestID == "" && decision.Action == provider.RouteAppend {
+		// Only the note the model itself suggested is looked at; the rule
+		// confirms a suggestion and never re-picks among the candidates.
+		for _, n := range active {
+			if n.ID == decision.NoteID && spokenAsName(n, transcript) {
+				return n.ID, "spoken_name"
+			}
+		}
+	}
 	return bestID, bestBy
+}
+
+// spokenAsName reports whether one of n's names is spoken in transcript as a
+// name rather than a topic: as whole words, two words or eight letters long
+// (prefixRuleName, for the same reason it exists), and either followed by
+// "note" or "list" ("okay so this goes in the roof repair note …", battery
+// 2026-09-29 row 14, parked twice with that very note suggested) or in a
+// recording that carries an instruction cue ("Create a new note and add it
+// to Pebble Ring Test", row 9, routing.MentionsInstruction). It is the rule
+// for the model's own unsure append (matched_by spoken_name, R6-RT-7): the
+// model picked the note and asked, and the name spoken as a name is what the
+// person would answer with, so the append is taken — the silent-file-over-ask
+// trade of decision R6-RT-OD1 applied to the model's own suggestion. "I was
+// thinking about the roof today" names no note this way, whatever the model
+// suggested. A one-word name of five to seven letters ("dentist", "house")
+// is left to the owner's decision (triage 2026-09-29, owner decision 1): on
+// a tenant with two Dentist notes it turns an ask into a silent file on a
+// name the model was only half sure of.
+func spokenAsName(n model.NoteIndex, transcript string) bool {
+	speech := " " + routing.NormalizeSpeech(transcript) + " "
+	cue := routing.MentionsInstruction(transcript)
+	for _, name := range noteNames(n) {
+		name = routing.NormalizeSpeech(name)
+		if !prefixRuleName(name) || !strings.Contains(speech, " "+name+" ") {
+			continue
+		}
+		if cue || strings.Contains(speech, " "+name+" note ") || strings.Contains(speech, " "+name+" list ") {
+			return true
+		}
+	}
+	return false
+}
+
+// noteNames is the note's title, aliases and tags: every name the router was
+// shown for it, and so every name a speaker may file by.
+func noteNames(n model.NoteIndex) []string {
+	return append([]string{n.Title}, append(append([]string(nil), n.Aliases...), n.Tags...)...)
 }
 
 // prefixRuleName is the guard on what may file a recording by opening it: two

@@ -571,6 +571,75 @@ func TestARecordingThatOpensWithANoteNameIsFiledIntoIt(t *testing.T) {
 	}
 }
 
+// An append the model was unsure of is taken when the note it suggested is
+// spoken as a name — one of its names as whole words, two words or eight
+// letters, followed by "note" or "list" or beside an instruction cue — and
+// stays a park when the name is only a topic, one short word, or not spoken
+// at all (R6-RT-7, matched_by spoken_name; battery 2026-09-29 rows 14 and 9
+// against 8, 6, 2 and 15). The rule confirms the model's own suggestion and
+// never re-picks among the candidates.
+func TestAnUnsureAppendIsTakenWhenTheSuggestedNoteIsSpokenAsAName(t *testing.T) {
+	t.Parallel()
+	active := []model.NoteIndex{
+		{ID: "n1", Title: "Roof repair", Aliases: []string{"gutters", "roof"}},
+		{ID: "n2", Title: "Pebble Ring Test"},
+		{ID: "n3", Title: "Dentist"},
+		{ID: "n4", Title: "Kitchen rebuild", Tags: []string{"house", "money"}},
+		{ID: "n5", Title: "Roof repair"}, // the test tenant's bare twin
+	}
+	unsure := func(noteID string) provider.RouteDecision {
+		return provider.RouteDecision{Action: provider.RouteAppend, NoteID: noteID, Confidence: 0.5}
+	}
+	for _, tc := range []struct {
+		name, transcript string
+		decision         provider.RouteDecision
+		wantBy           string
+	}{
+		{"row 14: the title followed by note", "okay so this goes in the roof repair note we need to check the flashing around the chimney", unsure("n1"), "spoken_name"},
+		{"row 9: the title after a filing cue", "Create a new note and add it to Pebble Ring Test", unsure("n2"), "spoken_name"},
+		{"row 8: a topic, not a name", "I was thinking about the roof today and how the Portugal trip went over budget", unsure("n1"), ""},
+		{"the name spoken without note, list or a cue is a mention", "the roof repair is going to cost a fortune this year", unsure("n1"), ""},
+		{"row 6: a one-word seven-letter name is the owner's decision", "call this note dentist I need to book a cleaning before December", unsure("n3"), ""},
+		{"row 2: the suggested twin's only name is not spoken", "the gutter is leaking again put that in my roof note", unsure("n5"), ""},
+		{"row 15: a one-word tag", "file this under house the tiler wants a deposit before he starts", unsure("n4"), ""},
+		{"the model's own append over the bar is left as it is", "okay so this goes in the roof repair note we need to check the flashing", provider.RouteDecision{Action: provider.RouteAppend, NoteID: "n1", Confidence: 0.9}, ""},
+		{"a new decision never files by a spoken name", "okay so this goes in the roof repair note we need to check the flashing", provider.RouteDecision{Action: provider.RouteNew, Title: "Flashing", Confidence: 0.5}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, by := preferExistingTitle(context.Background(), tc.decision, tc.transcript, active)
+			if by != tc.wantBy {
+				t.Fatalf("matched_by = %q, want %q", by, tc.wantBy)
+			}
+			if by == "" {
+				if got != tc.decision {
+					t.Errorf("decision changed to %+v without a match", got)
+				}
+				return
+			}
+			if got.Action != provider.RouteAppend || got.NoteID != tc.decision.NoteID || got.Confidence != 1 {
+				t.Errorf("decision = %+v, want the suggested note at confidence 1", got)
+			}
+		})
+	}
+
+	// Row 14 through the pipeline: appended into the suggested note, not parked.
+	f := newRoutingFixture(t, "okay so this goes in the roof repair note we need to check the flashing around the chimney",
+		provider.RouteDecision{Action: provider.RouteAppend, NoteID: "n1", Confidence: 0.5}, false)
+	f.router.Spans = []routing.Span{{StartWord: 0, EndWord: 8}}
+	ctx := context.Background()
+	capture, err := f.run(ctx, "c_1")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if capture.Status != model.StatusAppended || capture.NoteID != "n1" || capture.RouteConfidence != 1 {
+		t.Fatalf("capture = %s in %q at %.2f, want appended into n1 at 1", capture.Status, capture.NoteID, capture.RouteConfidence)
+	}
+	body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
+	if !strings.Contains(strings.ToLower(string(body)), "check the flashing") || strings.Contains(strings.ToLower(string(body)), "roof repair note") {
+		t.Errorf("n1 body = %q, want the dictation without the filing phrase", body)
+	}
+}
+
 // staleDrain hands decideTarget a candidate list from before a sibling
 // capture created its note, for the next `remaining` drains, and passes every
 // other call through. It is the window between reading the list and the
