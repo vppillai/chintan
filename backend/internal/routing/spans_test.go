@@ -184,7 +184,10 @@ func TestExtendSpansClosesTheGapBeforeTheTitleAndTheTrailingNote(t *testing.T) {
 		{
 			// Row 9 run 3: on an append the title is the destination's, and the
 			// span that stopped before it grows over it, so nothing is left to
-			// append.
+			// append. The k = 0 growth itself predates R6-RT-6 (#151); what
+			// that item added is Route handing the destination's title over
+			// at all, which the router test covers, so this case documents
+			// the shape rather than failing without the fix.
 			name:       "a filing span stopping before the destination's name grows over it",
 			transcript: "Create a new note and add it to Pebble Ring Test",
 			spans:      []Span{{0, 8}}, title: "Pebble Ring Test",
@@ -197,9 +200,12 @@ func TestExtendSpansClosesTheGapBeforeTheTitleAndTheTrailingNote(t *testing.T) {
 			want: []Span{{0, 11}},
 		},
 		{
+			// A three-word title against a one-word span: k = 2 would match
+			// words[0:3] and grow the span to {1,3} if the overlap were
+			// allowed to start before the span.
 			name:       "the overlap never reaches back before the span",
 			transcript: "staging smoke is the title",
-			spans:      []Span{{1, 2}}, title: "staging smoke",
+			spans:      []Span{{1, 2}}, title: "staging smoke is",
 			want: []Span{{1, 2}},
 		},
 		{

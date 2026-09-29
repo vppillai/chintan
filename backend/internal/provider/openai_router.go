@@ -85,9 +85,9 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	// decision's Title stays empty: an append has none.
 	title := decision.Title
 	if decision.Action == RouteAppend {
-		for _, c := range candidates {
-			if c.NoteID == decision.NoteID {
-				title = c.Title
+		for _, cand := range candidates {
+			if cand.NoteID == decision.NoteID {
+				title = cand.Title
 				break
 			}
 		}
@@ -164,8 +164,14 @@ func routedContent(ctx context.Context, transcript, title string, action RouteAc
 		// test123"), which leaves no content. Believe that only while the transcript
 		// is too short to have held dictation worth keeping, and while the title is
 		// short enough to be a name: a title the length of a sentence means the router
-		// swallowed the dictation into it instead of splitting the two.
-		titleWords := len(routing.Words(title))
+		// swallowed the dictation into it instead of splitting the two. That
+		// judgement is of the model's title, so on an append, whose title is
+		// the destination's and not the model's, it does not apply (0, as the
+		// decision line's title_words).
+		titleWords := 0
+		if action == RouteNew {
+			titleWords = len(routing.Words(title))
+		}
 		if dictated > maxInstructionOnlyWords || titleWords > maxSpokenTitleWords {
 			return discard("empty_content", "router spans cover a recording too long to be instruction-only; keeping the dictation",
 				slog.Int("dictated_words", dictated), slog.Int("title_words", titleWords))

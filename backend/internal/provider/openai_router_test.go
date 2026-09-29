@@ -635,4 +635,18 @@ func TestRouteGrowsASpanOverTheDestinationsNameAndToTheEndOfATitleItStoppedInsid
 	if decision.Content != "and then the actual content of the note is that the deploy pipeline is green" {
 		t.Errorf("content = %q, want the title's last word outside it", decision.Content)
 	}
+
+	// The destination's title is for the growth only: the empty-content
+	// guard's title-length test is about a title the model wrote, so an
+	// instruction-only append into a note with a long name still ends
+	// empty rather than keeping the instruction as body.
+	srv, _ = routerServer(t, `{"action":"append","note":1,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":6}]}`)
+	decision, err = newRouter(t, srv).Route(context.Background(), "add this to the milos note",
+		[]routing.Candidate{{NoteID: "n1", Title: "Things I need to talk about with Milos next week"}}, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "" {
+		t.Errorf("content = %q, want empty: the destination's long name is not the model's title", decision.Content)
+	}
 }
