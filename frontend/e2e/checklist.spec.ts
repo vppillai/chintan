@@ -211,6 +211,8 @@ test('a stale proposal on Split up is drawn as what it is, inert: its words and 
   const faint = await body.locator('.checklist__add-mark').evaluate((el) => getComputedStyle(el).color);
   await expect(body.locator('textarea.checklist__text').first()).toHaveCSS('color', faint);
   await expect(body.locator('.checklist__mark').first()).toHaveCSS('color', faint);
+  // The done row's box is filled, not only coloured: the fill is that ink too.
+  await expect(body.locator('.checklist__box:checked + .checklist__mark rect')).toHaveCSS('fill', faint);
 });
 
 /** The PATCHes the note has received. */

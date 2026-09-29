@@ -388,6 +388,14 @@ textarea.checklist__text {
   color: var(--color-faint);
 }
 
+/* A done row's box is filled with ink by `:checked` above, which the colour
+   alone leaves at full strength beside the faint words — and Done is open
+   by default, so the ticked boxes are on screen. */
+.cleaned__body[inert] .checklist__box:checked + .checklist__mark rect {
+  fill: var(--color-faint);
+  stroke: var(--color-faint);
+}
+
 /* Use this list · Regenerate, on the header's right. */
 .cleaned__actions {
   display: flex;
