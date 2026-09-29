@@ -251,5 +251,17 @@ recording's progress, which made the app measure a regeneration's age from
 first second (QA 2026-09-27, F1). A row last written before its attribute was
 promoted has no top-level value and reads as it did before: "app", and
 `created_at`; the pipeline rewrites the whole row on every hand-off, so a
-recording that moves gets both. When gsi1 is next rebuilt by hand, add both to
-`NonKeyAttributes` and delete the overlay.
+recording that moves gets both.
+
+The overlay is the permanent answer at this scale, not a stopgap waiting for
+an index rebuild (round 6, decision R6-OD-2 (c)). CloudFormation cannot widen
+a live index's projection, so carrying the two in the index would mean a
+second index, a two-step deploy and a switch of the index-name constant, all
+to save one `BatchGetItem` per page of a note's recordings, a read that costs
+well under a cent a month. The code is `hydrateUnprojectedCaptureFields` in
+`backend/internal/repository/dynamo_captures.go`, about sixty lines that
+`TestListCapturesByNoteKeepsTheSource` and
+`TestListCapturesByNoteKeepsLastProgressAt` (`capture_list_test.go`, against
+the template's real projection) hold. Rebuild the index only when a DynamoDB
+change is needed for another reason, and fold both into `NonKeyAttributes` and
+delete the overlay then.
