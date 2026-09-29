@@ -74,13 +74,22 @@ func (c *OpenAICleanup) Cleanup(ctx context.Context, raw, language string) (Clea
 // CleanNote rewrites a whole note as one document. Unlike Cleanup the
 // completion is capped: the answer is bounded by the input it rewrites, and a
 // model that starts repeating itself is cut off rather than billed to the end
-// of its context.
-func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language string) (Cleaned, error) {
-	systemPrompt, userPrompt, err := cleanup.NotePrompt(mode, body, language)
+// of its context. Tasks mode is its own prompt and cap: the answer is a JSON
+// object per item rather than a document.
+func (c *OpenAICleanup) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language, title string) (Cleaned, error) {
+	var systemPrompt, userPrompt string
+	var err error
+	maxTokens := cleanup.NoteMaxTokens(body)
+	if mode == model.NoteCleanTasks {
+		systemPrompt, userPrompt, err = cleanup.TasksPrompt(body, title, language)
+		maxTokens = cleanup.TasksMaxTokens(body)
+	} else {
+		systemPrompt, userPrompt, err = cleanup.NotePrompt(mode, body, language)
+	}
 	if err != nil {
 		return Cleaned{}, err
 	}
-	text, usage, err := c.complete(ctx, systemPrompt, userPrompt, cleanup.NoteMaxTokens(body))
+	text, usage, err := c.complete(ctx, systemPrompt, userPrompt, maxTokens)
 	if err != nil {
 		return Cleaned{}, err
 	}

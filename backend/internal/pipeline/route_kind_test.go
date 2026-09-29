@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
@@ -52,7 +53,7 @@ func TestARoutedRecordingThatNamesAnUnlistedListStartsAChecklistWithTheItem(t *t
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, harnessOpts{
 				stt:    &fake.STT{Response: raw},
-				llm:    &fake.LLM{ItemsResponse: []string{"Milk"}, Response: "Add milk to the shopping list."},
+				llm:    &fake.LLM{ItemsResponse: []cleanup.Item{{Text: "Milk"}}, Response: "Add milk to the shopping list."},
 				router: &fake.Router{Decision: tc.decision},
 			})
 			ctx := context.Background()

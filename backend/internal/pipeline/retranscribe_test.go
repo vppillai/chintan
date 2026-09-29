@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
@@ -50,7 +51,7 @@ func retranscribeNote(t *testing.T, kind string) (*harness, model.NoteIndex) {
 	t.Helper()
 	h := newHarness(t, harnessOpts{
 		stt: &fake.STT{Response: "the words as they were said"},
-		llm: &fake.LLM{Response: "The words as they were said.", ItemsResponse: []string{"The words", "as they", "were said"}},
+		llm: &fake.LLM{Response: "The words as they were said.", ItemsResponse: []cleanup.Item{{Text: "The words"}, {Text: "as they"}, {Text: "were said"}}},
 	})
 	note, err := h.store.PutNote(context.Background(), "user1", model.NoteIndex{
 		ID: "note1", Title: "Destination", Kind: kind, Language: "ml", UpdatedAt: model.Now(),

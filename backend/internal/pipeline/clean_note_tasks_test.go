@@ -25,25 +25,26 @@ func seedChecklist(t *testing.T, h *harness, mutate func(*model.NoteIndex)) {
 	})
 }
 
-// The split is the model's; the worker sends the marker-stripped item lines,
-// asks in tasks mode, and stores the list it gets back.
+// The split is the model's; the worker sends the marker-stripped item lines
+// with the list's title, asks in tasks mode, and stores the list it gets
+// back as task-list lines, a sub-item indented under its parent.
 func TestTasksModeStoresTheSplitListTheModelReturns(t *testing.T) {
-	llmFake := &fake.LLM{NoteResponse: "- [ ] call the roofer\n- [ ] buy sealant\n- [x] passport"}
+	llmFake := &fake.LLM{NoteResponse: `{"items":[{"text":"Roofer","children":[{"text":"Call the roofer"},{"text":"Buy sealant"}]},{"text":"passport","done":true}]}`}
 	h := newHarness(t, harnessOpts{llm: llmFake})
-	seedChecklist(t, h, nil)
+	seedChecklist(t, h, func(n *model.NoteIndex) { n.Title = "Errands" })
 
 	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	calls := llmFake.NoteCalls()
-	if len(calls) != 1 || calls[0].Mode != model.NoteCleanTasks {
-		t.Fatalf("model calls = %+v, want one in tasks mode", calls)
+	if len(calls) != 1 || calls[0].Mode != model.NoteCleanTasks || calls[0].Title != "Errands" {
+		t.Fatalf("model calls = %+v, want one in tasks mode for Errands", calls)
 	}
 	if calls[0].Body != "- [ ] call the roofer and buy sealant\n\n- [x] passport" {
 		t.Errorf("body sent = %q", calls[0].Body)
 	}
 	n := getNote(t, h, "l1")
-	if n.CleanedBody != "- [ ] call the roofer\n- [ ] buy sealant\n- [x] passport" || n.CleanedMode != model.NoteCleanTasks {
+	if n.CleanedBody != "- [ ] Roofer\n  - [ ] Call the roofer\n  - [ ] Buy sealant\n- [x] passport" || n.CleanedMode != model.NoteCleanTasks {
 		t.Errorf("stored view = %q in %q", n.CleanedBody, n.CleanedMode)
 	}
 	if n.CleanedStale || n.CleanedError != "" {
@@ -51,9 +52,9 @@ func TestTasksModeStoresTheSplitListTheModelReturns(t *testing.T) {
 	}
 }
 
-// Done items come back verbatim and the blank line the append placed is not
-// in the view: the stored text is item lines and nothing else.
-func TestTasksModeKeepsDoneItemsVerbatimAndDropsBlankLines(t *testing.T) {
+// The fake's default answers the body's own lines as items: done items come
+// back done and the blank line the append placed is not in the view.
+func TestTasksModeKeepsDoneItemsAndDropsBlankLines(t *testing.T) {
 	llmFake := &fake.LLM{}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedChecklist(t, h, nil)
@@ -90,10 +91,10 @@ func TestTasksModeRefusesMoreThanFiveHundredItems(t *testing.T) {
 	// them, so the count is the only thing the check can refuse.
 	items := make([]string, 0, 501)
 	for i := 0; i < 500; i++ {
-		items = append(items, "- [ ] roofer")
+		items = append(items, `"roofer"`)
 	}
-	items = append(items, "- [x] passport")
-	llmFake := &fake.LLM{NoteResponse: strings.Join(items, "\n")}
+	items = append(items, `{"text":"passport","done":true}`)
+	llmFake := &fake.LLM{NoteResponse: `{"items":[` + strings.Join(items, ",") + `]}`}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedChecklist(t, h, nil)
 	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
@@ -103,7 +104,7 @@ func TestTasksModeRefusesMoreThanFiveHundredItems(t *testing.T) {
 		t.Errorf("501 items: error=%q body=%q, want the unusable verdict and no view", n.CleanedError, n.CleanedBody)
 	}
 
-	llmFake.NoteResponse = strings.Join(items[1:], "\n")
+	llmFake.NoteResponse = `{"items":[` + strings.Join(items[1:], ",") + `]}`
 	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
@@ -116,26 +117,26 @@ func TestTasksModeRefusesMoreThanFiveHundredItems(t *testing.T) {
 // it is dropped and the split the model got right is stored (owner feedback
 // 2026-09-26, "- [x] Make a list." beside two correct splits).
 func TestTasksModeDropsATaskWhoseWordsAreNotInTheNote(t *testing.T) {
-	llmFake := &fake.LLM{NoteResponse: "- [ ] call the roofer\n- [ ] buy sealant\n- [ ] make a list\n- [x] passport"}
+	llmFake := &fake.LLM{NoteResponse: `{"items":["Call the roofer","Buy sealant","Make a list",{"text":"passport","done":true}]}`}
 	h := newHarness(t, harnessOpts{llm: llmFake})
 	seedChecklist(t, h, nil)
 	if err := NewWorker(h.pipeline).Handle(context.Background(), cleanNoteTask("user1", "l1", model.NoteCleanTasks)); err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
 	n := getNote(t, h, "l1")
-	if n.CleanedBody != "- [ ] call the roofer\n- [ ] buy sealant\n- [x] passport" || n.CleanedError != "" {
+	if n.CleanedBody != "- [ ] Call the roofer\n- [ ] Buy sealant\n- [x] passport" || n.CleanedError != "" {
 		t.Errorf("stored view = %q (%q), want the invented task dropped and the rest kept", n.CleanedBody, n.CleanedError)
 	}
 }
 
-// An answer that loses, invents or rewords a tick is refused whole and the
+// An answer that loses, reopens or invents a tick is refused whole and the
 // previous view is kept: adoption writes the view over the body, and a lost
 // tick there is worse than an older view.
 func TestTasksModeRefusesAnAnswerThatChangesTheDoneItems(t *testing.T) {
 	for name, reply := range map[string]string{
-		"a tick lost":          "- [ ] call the roofer\n- [ ] buy sealant\n- [ ] passport",
-		"a tick invented":      "- [x] call the roofer\n- [ ] buy sealant\n- [x] passport",
-		"a done item reworded": "- [ ] call the roofer\n- [ ] buy sealant\n- [x] passport renewed",
+		"a tick lost":          `{"items":["Call the roofer","Buy sealant","passport"]}`,
+		"a tick invented":      `{"items":[{"text":"Call the roofer","done":true},"Buy sealant",{"text":"passport","done":true}]}`,
+		"a done item reworded": `{"items":["Call the roofer","Buy sealant",{"text":"passport renewed","done":true}]}`,
 	} {
 		llmFake := &fake.LLM{NoteResponse: reply}
 		h := newHarness(t, harnessOpts{llm: llmFake})

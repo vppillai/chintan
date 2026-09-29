@@ -146,8 +146,9 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		stageCtx, cancel := context.WithTimeout(ctx, p.cfg.CleanNoteTimeout)
 		defer cancel()
 		// The note's own language, as the row asks for it; the prompt names
-		// it so a Malayalam note is not "corrected" into another script.
-		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body, note.Language)
+		// it so a Malayalam note is not "corrected" into another script. The
+		// title is the tasks prompt's: the list's own name is not an item.
+		out, err := p.cfg.LLM.CleanNote(stageCtx, mode, body, note.Language, note.Title)
 		if err != nil {
 			return breaker.Result{}, err
 		}
@@ -172,7 +173,13 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
 
-	text, dropped, err := cleanup.NoteOutput(mode, cleaned.Text, body)
+	var text string
+	var dropped int
+	if mode == model.NoteCleanTasks {
+		text, dropped, err = cleanup.SplitOutput(cleaned.Text, body)
+	} else {
+		text, err = cleanup.NoteOutput(cleaned.Text)
+	}
 	if dropped > 0 {
 		// Counts only: the dropped lines are the model's words about the note.
 		log.Warn("clean-note: dropped tasks whose words are not in the note", slog.Int("dropped", dropped))

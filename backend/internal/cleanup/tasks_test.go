@@ -10,30 +10,27 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
-// The checklist's mode asks for exactly what the contract promises: granular
-// tasks, one per action, the person's words, done items verbatim and in place,
-// order kept, nothing invented or merged — and task-list lines as the whole
-// answer, since NoteOutput refuses anything else.
-func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
-	system, user, err := cleanup.NotePrompt(model.NoteCleanTasks, "- [ ] call the roofer and buy sealant\n- [x] passport", "")
+// The Split up prompt composes the shared item rules and adds the three a
+// whole list needs — every line's meaning kept, existing groups kept and
+// joined, done stays done — asks for JSON items with "done", and its user
+// prompt names the list first so the list's own name is never an item.
+func TestTasksPromptComposesTheItemRulesAndNamesTheList(t *testing.T) {
+	system, user, err := cleanup.TasksPrompt("- [ ] call the roofer and buy sealant\n- [x] passport", "Errands", "ml")
 	if err != nil {
-		t.Fatalf("NotePrompt: %v", err)
+		t.Fatalf("TasksPrompt: %v", err)
 	}
 	lower := strings.ToLower(system)
 	for _, want := range []string{
-		"mode: tasks", "granular, actionable tasks", "one task per action", "person's words",
-		"already one thing", "stays exactly as written", "do not add a verb",
-		"never invent a task", "never merge two items", "verbatim and in its place", "in their order",
-		"return only the task list", `"- [ ] "`, `"- [x] "`,
-		"no headings", "no prose", "no blank lines",
+		"the list it was meant to be", "a sub-item indented two spaces",
+		"group as the person grouped", "never invent a group", `never "add milk"`,
+		"every line's meaning is kept", "a sentence spoken to the app", "keep the groups the list has", "under an existing group",
+		"two lines that name the same thing are one item", "done stays done", `"done": true`, "an open line is never marked done",
+		"open item if either was open", `"done":false`, "in the list's order",
+		"- [ ] add milk, eggs and protein powder to the shopping list", "- [ ] costco\n  - [ ] meat",
+		`{"text":"costco","children":[{"text":"meat"},{"text":"chicken"}]}`, `{"text":"bread","done":true}`,
 	} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("tasks system prompt lacks %q", want)
-		}
-	}
-	for _, other := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished} {
-		if s, _, _ := cleanup.NotePrompt(other, "x", ""); s == system {
-			t.Errorf("tasks shares its system prompt with %s", other)
 		}
 	}
 	for _, rule := range []string{llm.LanguageRule, llm.DataRule} {
@@ -41,115 +38,127 @@ func TestNotePromptTasksAsksForGranularTasksInTaskListLines(t *testing.T) {
 			t.Errorf("tasks system prompt lacks the shared rule %q", rule)
 		}
 	}
-	if !strings.HasPrefix(user, "The note is between the marker lines.\n"+llm.FenceMarker+"\n") || strings.Count(user, llm.FenceMarker) != 2 {
-		t.Errorf("the user prompt does not fence the checklist: %q", user)
+	if !strings.HasPrefix(user, "The list is titled: Errands\nThe note is in Malayalam (ml).\nThe note is between the marker lines.\n"+llm.FenceMarker+"\n") || strings.Count(user, llm.FenceMarker) != 2 {
+		t.Errorf("the user prompt does not name the list, the language and fence the checklist: %q", user)
+	}
+	_, user, _ = cleanup.TasksPrompt("- [ ] x", "My "+llm.FenceMarker+" list", model.LanguageAuto)
+	if !strings.HasPrefix(user, "The list is titled: My ----- list\nThe note is between the marker lines.\n") {
+		t.Errorf("the title is not sanitised or auto claims a language: %q", user)
+	}
+	if _, _, err := cleanup.TasksPrompt(" \n", "Errands", ""); err == nil {
+		t.Error("an empty body was accepted")
+	}
+	if _, _, err := cleanup.NotePrompt(model.NoteCleanTasks, "- [ ] x", ""); err == nil {
+		t.Error("NotePrompt accepted tasks; the mode needs the title and has TasksPrompt")
 	}
 }
 
-// In tasks mode the answer is a checklist body and is held to the format:
-// every non-blank line an item line, blank lines dropped, at most 500 items.
-// Anything else is refused whole, which the worker records as "nothing
-// usable" — a checklist view in prose is no view.
-func TestNoteOutputInTasksModeAcceptsOnlyATaskList(t *testing.T) {
-	const body = "- [ ] call the roofer\n- [x] passport"
-	ok := func(raw, want string) {
-		t.Helper()
-		got, dropped, err := cleanup.NoteOutput(model.NoteCleanTasks, raw, body)
-		if err != nil || got != want || dropped != 0 {
-			t.Errorf("NoteOutput(tasks, %q) = %q, %d, %v; want %q", raw, got, dropped, err, want)
-		}
-	}
-	refused := func(name, raw string) {
-		t.Helper()
-		if got, _, err := cleanup.NoteOutput(model.NoteCleanTasks, raw, body); !errors.Is(err, cleanup.ErrNotATaskList) {
-			t.Errorf("%s: NoteOutput(tasks, %q) = %q, %v; want ErrNotATaskList", name, raw, got, err)
-		}
+// The owner's live case of 2026-09-29: the sentence becomes the things it
+// named. A fenced reply is read; the tree is written with the indent; done
+// comes back as a tick.
+func TestSplitOutputAcceptsTheSplitAndWritesTheTree(t *testing.T) {
+	const body = "- [ ] Add milk, eggs and protein powder to the shopping list"
+	got, dropped, err := cleanup.SplitOutput(`{"items":[{"text":"Milk"},{"text":"Eggs"},{"text":"Protein powder"}]}`, body)
+	if err != nil || dropped != 0 || got != "- [ ] Milk\n- [ ] Eggs\n- [ ] Protein powder" {
+		t.Errorf("SplitOutput = %q, %d, %v", got, dropped, err)
 	}
 
-	ok("- [ ] call the roofer\n- [x] passport", "- [ ] call the roofer\n- [x] passport")
-	ok("\n  - [ ] call the roofer  \n\n- [x] passport\n", "- [ ] call the roofer\n- [x] passport")
-	ok(llm.FenceMarker+"\n- [ ] call the roofer\n- [x] passport\n"+llm.FenceMarker, "- [ ] call the roofer\n- [x] passport")
-	// A "[x]" inside an open item's text is text; the done check reads the
-	// line's prefix only.
-	if got, _, err := cleanup.NoteOutput(model.NoteCleanTasks, "- [ ] a [x] inside the text is fine", "- [ ] a [x] inside the text is fine"); err != nil || got != "- [ ] a [x] inside the text is fine" {
-		t.Errorf("NoteOutput(tasks, [x] in text) = %q, %v", got, err)
+	tree := "- [ ] add buying eggs from Walmart and meat from Costco in the shopping list\n- [x] Bread\n- [ ] Costco\n  - [x] Meat"
+	reply := llm.FenceMarker + "\n```json\n" + `{"items":[{"text":"Walmart","children":[{"text":"Eggs"}]},{"text":"Costco","children":[{"text":"Meat","done":true}]},{"text":"Bread","done":true}]}` + "\n```\n" + llm.FenceMarker
+	got, dropped, err = cleanup.SplitOutput(reply, tree)
+	if err != nil || dropped != 0 || got != "- [ ] Walmart\n  - [ ] Eggs\n- [ ] Costco\n  - [x] Meat\n- [x] Bread" {
+		t.Errorf("SplitOutput(tree) = %q, %d, %v", got, dropped, err)
 	}
 
-	refused("prose", "Call the roofer, then buy sealant.")
-	refused("a heading before the list", "# Tasks\n- [ ] call the roofer")
-	refused("a plain bullet", "- call the roofer")
-	refused("an item with no text", "- [ ] ")
-	refused("a numbered list", "1. call the roofer")
-	// A capital X is a tick, as the frontend reads it, and is stored as the
-	// worker's lowercase one.
-	ok("- [ ] call the roofer\n- [X] passport", "- [ ] call the roofer\n- [x] passport")
-
-	// The item cap: five hundred is stored, one more is refused. The body's
-	// done item has to be among them, and every open item has to be its words.
-	items := make([]string, 0, cleanup.MaxChecklistItems+1)
-	for i := 0; i < cleanup.MaxChecklistItems-1; i++ {
-		items = append(items, "- [ ] roofer")
-	}
-	items = append(items, "- [x] passport")
-	ok(strings.Join(items, "\n"), strings.Join(items, "\n"))
-	refused("501 items", strings.Join(append([]string{"- [ ] call"}, items...), "\n"))
-
-	// Nothing at all is still the empty verdict, not a task-list one.
-	if _, _, err := cleanup.NoteOutput(model.NoteCleanTasks, "\n\n", body); !errors.Is(err, cleanup.ErrEmptyNoteOutput) {
-		t.Errorf("NoteOutput(tasks, blank) = %v, want ErrEmptyNoteOutput", err)
-	}
-	// The other modes are not held to the list format.
-	if got, _, err := cleanup.NoteOutput(model.NoteCleanStructured, "# Roof\n\nprose", "roof prose"); err != nil || got != "# Roof\n\nprose" {
-		t.Errorf("structured output was reshaped: %q, %v", got, err)
+	// The old shape still splits.
+	got, _, err = cleanup.SplitOutput(`{"items":["Milk","Eggs"]}`, "- [ ] milk and eggs")
+	if err != nil || got != "- [ ] Milk\n- [ ] Eggs" {
+		t.Errorf("SplitOutput(strings) = %q, %v", got, err)
 	}
 }
 
-// The prompt's two promises that adoption depends on are checked, not
-// trusted. Done items come back verbatim and in order or the answer is
-// refused; an open item whose words are not the body's is dropped and
-// counted, and the split the model got right is kept (owner feedback
-// 2026-09-26: "- [x] Make a list." invented beside two correct splits).
-func TestNoteOutputInTasksModeKeepsTicksAndDropsInventedItems(t *testing.T) {
-	const body = "- [ ] Add chickpeas and green gram into it.\n\n- [x] passport\n\n- [x] roof sealant"
-
-	got, dropped, err := cleanup.NoteOutput(model.NoteCleanTasks,
-		"- [ ] Add chickpeas into it.\n- [ ] Add green gram into it.\n- [x] Make a list.\n- [x] passport\n- [x] roof sealant", body)
-	if !errors.Is(err, cleanup.ErrNotATaskList) {
-		t.Errorf("an invented done item was accepted: %q, %d, %v", got, dropped, err)
-	}
-
-	got, dropped, err = cleanup.NoteOutput(model.NoteCleanTasks,
-		"- [ ] Add chickpeas into it.\n- [ ] Add green gram into it.\n- [ ] Make a list.\n- [x] passport\n- [x] roof sealant", body)
-	if err != nil || dropped != 1 || got != "- [ ] Add chickpeas into it.\n- [ ] Add green gram into it.\n- [x] passport\n- [x] roof sealant" {
+// An item whose words are not the body's is the model's: dropped and
+// counted, a dropped parent's children lifted, the split beside it kept.
+// Nothing left is the empty verdict.
+func TestSplitOutputDropsInventedItemsAndLiftsADroppedParentsChildren(t *testing.T) {
+	const body = "- [ ] Add chickpeas and green gram into it.\n\n- [x] passport"
+	got, dropped, err := cleanup.SplitOutput(`{"items":[{"text":"Chickpeas"},{"text":"Green gram"},{"text":"Make a list"},{"text":"passport","done":true}]}`, body)
+	if err != nil || dropped != 1 || got != "- [ ] Chickpeas\n- [ ] Green gram\n- [x] passport" {
 		t.Errorf("an invented open item was not dropped alone: %q, %d, %v", got, dropped, err)
 	}
-
-	for name, raw := range map[string]string{
-		"a tick lost":          "- [ ] Add chickpeas into it.\n- [ ] passport\n- [x] roof sealant",
-		"a tick invented":      "- [x] Add chickpeas into it.\n- [x] passport\n- [x] roof sealant",
-		"done items reordered": "- [ ] Add chickpeas into it.\n- [x] roof sealant\n- [x] passport",
-		"a done item reworded": "- [ ] Add chickpeas into it.\n- [x] passport renewed\n- [x] roof sealant",
-		"a done item missing":  "- [ ] Add chickpeas into it.\n- [x] passport",
-	} {
-		if got, _, err := cleanup.NoteOutput(model.NoteCleanTasks, raw, body); !errors.Is(err, cleanup.ErrNotATaskList) {
-			t.Errorf("%s: NoteOutput = %q, %v; want ErrNotATaskList", name, got, err)
-		}
+	got, dropped, err = cleanup.SplitOutput(`{"items":[{"text":"Pantry","children":[{"text":"Chickpeas"},{"text":"Green gram"}]},{"text":"passport","done":true}]}`, body)
+	if err != nil || dropped != 1 || got != "- [ ] Chickpeas\n- [ ] Green gram\n- [x] passport" {
+		t.Errorf("a dropped parent did not lift its children: %q, %d, %v", got, dropped, err)
 	}
-
-	// A tick typed as "[X]" is a tick: read as the body's done item, written
-	// back as the worker's "[x]".
-	if got, _, err := cleanup.NoteOutput(model.NoteCleanTasks, "- [ ] Chickpeas\n- [X] passport", "- [ ] chickpeas\n- [X] passport"); err != nil || got != "- [ ] Chickpeas\n- [x] passport" {
-		t.Errorf("NoteOutput(tasks, typed [X]) = %q, %v; want the tick kept as [x]", got, err)
-	}
-
-	// Every open item invented and nothing done: nothing usable.
-	if _, dropped, err := cleanup.NoteOutput(model.NoteCleanTasks, "- [ ] Make a list.\n- [ ] Buy a pen.", "- [ ] chickpeas"); !errors.Is(err, cleanup.ErrEmptyNoteOutput) || dropped != 2 {
+	if _, dropped, err := cleanup.SplitOutput(`{"items":["Make a list","Buy a pen"]}`, "- [ ] chickpeas"); !errors.Is(err, cleanup.ErrEmptyNoteOutput) || dropped != 2 {
 		t.Errorf("all-invented answer = %d dropped, %v; want 2 and ErrEmptyNoteOutput", dropped, err)
 	}
-	// Casing and punctuation are not rewriting, and a done item whose inner
-	// whitespace the model re-ran is still the body's done item.
-	got, dropped, err = cleanup.NoteOutput(model.NoteCleanTasks, "- [ ] add Chickpeas, into it\n- [x] passport\n- [x] roof  sealant", body)
-	if err != nil || dropped != 0 || got != "- [ ] add Chickpeas, into it\n- [x] passport\n- [x] roof  sealant" {
-		t.Errorf("a re-cased, re-spaced answer was not kept: %q, %d, %v", got, dropped, err)
+}
+
+// Tick safety: every done body line is accounted for by a done answer item
+// with its words (or a tidied sub-sequence of them); an open answer item
+// with a done line's words is refused unless the body also had it open; a
+// done answer item with no done line's words is a tick the model added.
+func TestSplitOutputRefusesALostReopenedOrInventedTick(t *testing.T) {
+	const body = "- [ ] call the roofer and buy sealant\n- [x] passport.\n- [x] pay the electricity bill"
+	for name, reply := range map[string]string{
+		"a done item lost":       `{"items":["Call the roofer","Buy sealant",{"text":"pay the electricity bill","done":true}]}`,
+		"a done item reopened":   `{"items":["Call the roofer","Buy sealant","Passport",{"text":"pay the electricity bill","done":true}]}`,
+		"a done item reworded":   `{"items":["Call the roofer","Buy sealant",{"text":"passport renewed","done":true},{"text":"pay the electricity bill","done":true}]}`,
+		"a done item invented":   `{"items":[{"text":"Call the roofer","done":true},"Buy sealant",{"text":"passport","done":true},{"text":"pay the electricity bill","done":true}]}`,
+		"not a list":             "Call the roofer, then buy sealant.",
+		"a done sub-item opened": `{"items":["Call the roofer","Buy sealant",{"text":"Errands","children":[{"text":"passport"},{"text":"pay the electricity bill","done":true}]}]}`,
+	} {
+		if got, _, err := cleanup.SplitOutput(reply, body); !errors.Is(err, cleanup.ErrNotATaskList) {
+			t.Errorf("%s: SplitOutput = %q, %v; want ErrNotATaskList", name, got, err)
+		}
+	}
+	// A done line tidied — its words a sub-sequence of the line's — is still
+	// accounted for; casing and punctuation are not rewriting; a typed [X]
+	// is a tick.
+	got, dropped, err := cleanup.SplitOutput(`{"items":["Chickpeas",{"text":"Passport","done":true},{"text":"Electricity bill","done":true}]}`, "- [ ] chickpeas\n- [X] passport.\n- [x] pay the  electricity bill")
+	if err != nil || dropped != 0 || got != "- [ ] Chickpeas\n- [x] Passport\n- [x] Electricity bill" {
+		t.Errorf("a tidied done item was refused: %q, %d, %v", got, dropped, err)
+	}
+	// Duplicates merge and open wins: an open Milk over "- [x] milk" is fine
+	// when the body also has an open Milk.
+	got, _, err = cleanup.SplitOutput(`{"items":["Milk","Eggs"]}`, "- [ ] Milk\n- [x] milk\n- [ ] Eggs")
+	if err != nil || got != "- [ ] Milk\n- [ ] Eggs" {
+		t.Errorf("open did not win over a done duplicate: %q, %v", got, err)
+	}
+	// A "[x]" inside an item's text is text.
+	if got, _, err := cleanup.SplitOutput(`{"items":["a [x] inside the text is fine"]}`, "- [ ] a [x] inside the text is fine"); err != nil || got != "- [ ] a [x] inside the text is fine" {
+		t.Errorf("SplitOutput([x] in text) = %q, %v", got, err)
+	}
+}
+
+// The item cap counts sub-items: five hundred is stored, one more is refused.
+// Nothing at all is the empty verdict, not a task-list one.
+func TestSplitOutputCapsTheListAndRefusesNothing(t *testing.T) {
+	items := make([]string, 0, cleanup.MaxChecklistItems+1)
+	for i := 0; i < cleanup.MaxChecklistItems-1; i++ {
+		items = append(items, `"roofer"`)
+	}
+	items = append(items, `{"text":"passport","done":true}`)
+	const body = "- [ ] roofer\n- [x] passport"
+	if got, _, err := cleanup.SplitOutput(`{"items":[`+strings.Join(items, ",")+`]}`, body); err != nil || strings.Count(got, "\n") != cleanup.MaxChecklistItems-1 {
+		t.Errorf("500 items: %v, %d lines", err, strings.Count(got, "\n")+1)
+	}
+	if _, _, err := cleanup.SplitOutput(`{"items":[{"text":"roofer","children":["roofer"]},`+strings.Join(items, ",")+`]}`, body); !errors.Is(err, cleanup.ErrNotATaskList) {
+		t.Errorf("501 items counting a sub-item: %v, want ErrNotATaskList", err)
+	}
+	for _, raw := range []string{"", "\n\n", llm.FenceMarker + "\n\n" + llm.FenceMarker} {
+		if _, _, err := cleanup.SplitOutput(raw, body); !errors.Is(err, cleanup.ErrEmptyNoteOutput) {
+			t.Errorf("SplitOutput(%q) = %v, want ErrEmptyNoteOutput", raw, err)
+		}
+	}
+}
+
+func TestTasksMaxTokensIsThreeTimesTheInputFromAFloor(t *testing.T) {
+	if got := cleanup.TasksMaxTokens("- [ ] milk"); got != 512 {
+		t.Errorf("TasksMaxTokens(short) = %d, want the floor", got)
+	}
+	if got := cleanup.TasksMaxTokens(strings.Repeat("x", 4_000)); got != 3*1001 {
+		t.Errorf("TasksMaxTokens(4 KB) = %d, want 3,003", got)
 	}
 }

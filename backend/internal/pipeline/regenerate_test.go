@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -172,7 +173,7 @@ func TestRegenerateAChecklistReplacesEachRecordingsItemsByTheirWordsAndKeepsTick
 // A recording whose transcript, extracted again, names nothing to add is
 // no_content, and its earlier items come out of the list.
 func TestRegenerateWithdrawsTheItemsOfARecordingThatNowAddsNothing(t *testing.T) {
-	h := newHarness(t, harnessOpts{llm: &fake.LLM{ItemsResponse: []string{}}})
+	h := newHarness(t, harnessOpts{llm: &fake.LLM{ItemsResponse: []cleanup.Item{}}})
 	ctx := context.Background()
 	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
 		ID: "list1", Title: "Shopping list", Kind: model.NoteKindChecklist, UpdatedAt: model.Now(),
@@ -333,7 +334,7 @@ func seedChecklistForRegenerate(t *testing.T, h *harness, noteKey string) model.
 func TestAChecklistAppendResumedAfterAFailureReplacesTheOldItemsExactlyOnce(t *testing.T) {
 	const noteKey = "tenants/user1/notes/list1/note.md"
 	objects := &failOnceOnPutIfMatch{Objects: memory.NewObjects(), key: noteKey}
-	h := newHarness(t, harnessOpts{objects: objects, llm: &fake.LLM{ItemsResponse: []string{"eggs", "milk", "butter"}}})
+	h := newHarness(t, harnessOpts{objects: objects, llm: &fake.LLM{ItemsResponse: []cleanup.Item{{Text: "eggs"}, {Text: "milk"}, {Text: "butter"}}}})
 	ctx := context.Background()
 	note := seedChecklistForRegenerate(t, h, noteKey)
 	seedTranscribedInto(t, h, note, "c_1", "eggs and milk and butter", "", "Milk\nEggs")
@@ -495,5 +496,37 @@ func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
 				t.Errorf("got:\n%s\nwant:\n%s", got, tc.want)
 			}
 		})
+	}
+}
+
+// A recording whose first append merged its child under a parent the list
+// already had (the child under c_0's Costco, c_1's marker bare) is
+// regenerated: its items are found by their words wherever they stand, so
+// the child is not added a second time and the parent's other child keeps
+// its place; the marker stays where it was.
+func TestRegenerateARecordingWhoseChildrenSitUnderAnExistingParentDoesNotDoubleThem(t *testing.T) {
+	h := newHarness(t, harnessOpts{llm: &fake.LLM{ItemsResponse: []cleanup.Item{{Text: "Costco", Children: []cleanup.Item{{Text: "Chicken"}}}}}})
+	ctx := context.Background()
+	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
+		ID: "list1", Title: "Shopping list", Kind: model.NoteKindChecklist, UpdatedAt: model.Now(),
+		S3MarkdownKey: "tenants/user1/notes/list1/note.md",
+		S3MetaKey:     "tenants/user1/notes/list1/meta.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedTranscribedInto(t, h, note, "c_1", "chicken from costco", "", "Costco\n  Chicken")
+	body := service.CaptureMarker("c_0") + "\n- [ ] Costco\n  - [ ] Meat\n  - [x] Chicken\n- [ ] Milk\n" + service.CaptureMarker("c_1")
+	if err := h.objects.Put(ctx, note.S3MarkdownKey, []byte(body), "text/markdown"); err != nil {
+		t.Fatal(err)
+	}
+
+	if n := regenerate(t, h, "list1"); n != 1 {
+		t.Fatalf("regenerated %d recordings, want 1", n)
+	}
+	got, _ := h.objects.Get(ctx, note.S3MarkdownKey)
+	want := service.CaptureMarker("c_0") + "\n- [ ] Costco\n  - [x] Chicken\n  - [ ] Meat\n- [ ] Milk\n" + service.CaptureMarker("c_1")
+	if string(got) != want {
+		t.Fatalf("checklist after regeneration:\n%s\nwant:\n%s", got, want)
 	}
 }

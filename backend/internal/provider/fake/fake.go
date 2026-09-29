@@ -6,12 +6,14 @@ package fake
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
 
 	"github.com/vppillai/chintan/backend/internal/ask"
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/routing"
@@ -126,10 +128,10 @@ type LLM struct {
 	NoteHang  int
 
 	// ItemsResponse, when set, is what Items answers verbatim; otherwise the
-	// fake splits the transcript on " and " and commas, one item each, so a
-	// harness test can assert the shape of an append without scripting the
-	// reply. ItemsErr fails Items alone.
-	ItemsResponse []string
+	// fake splits the transcript on " and " and commas, one top-level item
+	// each, so a harness test can assert the shape of an append without
+	// scripting the reply. ItemsErr fails Items alone.
+	ItemsResponse []cleanup.Item
 	ItemsErr      error
 
 	mu    sync.Mutex
@@ -166,12 +168,12 @@ func (f *LLM) Items(ctx context.Context, transcript, listTitle, language string)
 	}
 	usage := provider.TokenUsage{InputTokens: len(strings.Fields(transcript)), OutputTokens: 8}
 	if f.ItemsResponse != nil {
-		return provider.ChecklistItems{Items: append([]string(nil), f.ItemsResponse...), Usage: usage}, nil
+		return provider.ChecklistItems{Items: append([]cleanup.Item(nil), f.ItemsResponse...), Usage: usage}, nil
 	}
-	var items []string
+	var items []cleanup.Item
 	for _, part := range strings.Split(strings.ReplaceAll(transcript, " and ", ","), ",") {
 		if part = strings.TrimSpace(part); part != "" {
-			items = append(items, part)
+			items = append(items, cleanup.Item{Text: part})
 		}
 	}
 	return provider.ChecklistItems{Items: items, Usage: usage}, nil
@@ -240,11 +242,12 @@ type NoteCall struct {
 	Mode     model.NoteCleanMode
 	Body     string
 	Language string
+	Title    string
 }
 
-func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language string) (provider.Cleaned, error) {
+func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language, title string) (provider.Cleaned, error) {
 	f.mu.Lock()
-	f.noteCalls = append(f.noteCalls, NoteCall{Mode: mode, Body: body, Language: language})
+	f.noteCalls = append(f.noteCalls, NoteCall{Mode: mode, Body: body, Language: language, Title: title})
 	call := len(f.noteCalls) - 1
 	f.mu.Unlock()
 
@@ -266,21 +269,18 @@ func (f *LLM) CleanNote(ctx context.Context, mode model.NoteCleanMode, body, lan
 		return provider.Cleaned{Text: f.NoteResponse, Usage: usage}, nil
 	}
 	if mode == model.NoteCleanTasks {
-		// A valid task list from any body: item lines kept as they are, every
-		// other non-blank line made an open item. Splitting is the real
-		// model's judgement; a test that wants a split sets NoteResponse.
-		var items []string
-		for _, line := range strings.Split(body, "\n") {
-			line = strings.TrimSpace(line)
-			switch {
-			case line == "":
-			case strings.HasPrefix(line, "- [ ] "), strings.HasPrefix(line, "- [x] "):
-				items = append(items, line)
-			default:
-				items = append(items, "- [ ] "+line)
-			}
+		// A valid reply from any body: the body's lines as they are, box
+		// read as done, indent as a sub-item, in the JSON shape the real
+		// model answers. Splitting is the real model's judgement; a test
+		// that wants a split sets NoteResponse.
+		items := cleanup.ItemsFromLines(body)
+		if items == nil {
+			items = []cleanup.Item{}
 		}
-		return provider.Cleaned{Text: strings.Join(items, "\n"), Usage: usage}, nil
+		reply, _ := json.Marshal(struct {
+			Items []cleanup.Item `json:"items"`
+		}{items})
+		return provider.Cleaned{Text: string(reply), Usage: usage}, nil
 	}
 	if mode == model.NoteCleanPolished {
 		return provider.Cleaned{Text: strings.Join(strings.Fields(body), " "), Usage: usage}, nil

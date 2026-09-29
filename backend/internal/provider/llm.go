@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/vppillai/chintan/backend/internal/ask"
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
@@ -23,9 +24,10 @@ type Cleaned struct {
 }
 
 // ChecklistItems is the result of an Items call: the items to append, in
-// the order spoken, none when the recording only told the app what to do.
+// the order spoken and grouped as spoken (a one-level tree), none when the
+// recording only told the app what to do.
 type ChecklistItems struct {
-	Items []string
+	Items []cleanup.Item
 	Usage TokenUsage
 }
 
@@ -49,9 +51,11 @@ type LLM interface {
 	// CleanNote rewrites a whole note body (append markers already stripped)
 	// as one document in the given mode. language is the note row's Language
 	// ("" or "auto" when it asks for none), which the prompt names so the
-	// model keeps the script it was given. The caller bounds the body and
-	// checks the answer with cleanup.NoteOutput.
-	CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language string) (Cleaned, error)
+	// model keeps the script it was given; title is the note's title, which
+	// only the tasks mode uses (cleanup.TasksPrompt: the list's own name is
+	// not an item). The caller bounds the body and checks the answer with
+	// cleanup.NoteOutput, or cleanup.SplitOutput for tasks.
+	CleanNote(ctx context.Context, mode model.NoteCleanMode, body, language, title string) (Cleaned, error)
 	// Items turns one raw transcript into the items to add to the checklist
 	// titled listTitle (cleanup.ItemsPrompt). It replaces Cleanup for a
 	// recording filed into a checklist: the transcript is the raw one, the
