@@ -98,6 +98,51 @@ func RemoveSpans(transcript string, spans []Span) (string, error) {
 	return strings.Join(kept, " "), nil
 }
 
+// ExtendSpans closes the two gaps the router leaves most often at the end of
+// an instruction span, both deterministic once the span and the title are
+// known (production battery 2026-09-29, rows 2 and 13, three of three each):
+// a span that stops just before the spoken title ("0:title 1:this" with the
+// title "staging smoke" following) grows over the title's words, and a span
+// followed by the word "note" ("put that in my roof" + "note") grows over
+// it, since "note" after a filing phrase is the noun of the phrase and not
+// dictation. Spans that do not fit the transcript are returned as they are,
+// so RemoveSpans still refuses them. The result is still only words deleted
+// from the transcript; nothing here can add a word.
+//
+// ponytail: "note" is the one trailing noun the battery showed; "list" is the
+// same shape and joins it the day a battery row shows it.
+func ExtendSpans(words []string, spans []Span, title string) []Span {
+	titleWords := strings.Fields(NormalizeSpeech(title))
+	out := make([]Span, len(spans))
+	for i, s := range spans {
+		out[i] = s
+		if s.StartWord < 0 || s.EndWord > len(words) || s.StartWord >= s.EndWord {
+			continue
+		}
+		end := s.EndWord
+		if n := len(titleWords); n > 0 && end+n <= len(words) &&
+			NormalizeSpeech(strings.Join(words[end:end+n], " ")) == strings.Join(titleWords, " ") {
+			end += n
+		}
+		if end < len(words) && NormalizeSpeech(words[end]) == "note" {
+			end++
+		}
+		out[i].EndWord = end
+	}
+	return out
+}
+
+// NormalizeSpeech is the comparison form of spoken words: lowercased, with
+// everything but letters, digits and apostrophes dropped, one space between
+// words. Speech-to-text punctuates and capitalises as it likes, so a name
+// heard in a transcript is compared to a note's name in this form.
+func NormalizeSpeech(s string) string {
+	words := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
+	})
+	return strings.Join(words, " ")
+}
+
 // instructionCues are the openings of the two app instructions the router
 // honours (systemPrompt), as people say them. A transcript containing none of
 // them has no span to remove, so MentionsInstruction lets the pipeline skip the
@@ -118,10 +163,7 @@ var instructionCues = []string{
 // as whole words, case-insensitively and ignoring punctuation, so "Create a
 // note with the title Staging Smoke." is caught and "the gutter leaks" is not.
 func MentionsInstruction(transcript string) bool {
-	words := strings.FieldsFunc(strings.ToLower(transcript), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '\''
-	})
-	padded := " " + strings.Join(words, " ") + " "
+	padded := " " + NormalizeSpeech(transcript) + " "
 	for _, cue := range instructionCues {
 		if strings.Contains(padded, " "+cue+" ") {
 			return true

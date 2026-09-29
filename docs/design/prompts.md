@@ -117,14 +117,28 @@ refused; a `kind` that is not exactly `checklist` is a plain note, and a
 (`RouteDecision.Checklist`); no `instruction_spans` field at all, spans
 that do not fit the transcript, a fractional or missing position, or spans
 removing more than 24 words in total (`routing.MaxInstructionWords`) each
-discard the spans and keep every word; spans that leave no content are
+discard the spans and keep every word; before they are applied, a span is
+grown over the spoken title it stopped short of and over a "note" that
+follows it (`routing.ExtendSpans` — the production battery of 2026-09-29 had
+the title words opening the body on row 13 and a trailing "Note:" on row 2,
+three of three each); spans that leave no content are
 believed only for a transcript of at most 20 words with a title of at most
 8 words, since a longer one means the router swallowed dictation into the
 title; the derived content is re-checked as a sub-sequence of the transcript
 (`llm.VerifySubsequence`); the title is one line of at most 120 runes;
 confidence is clamped. Then the pipeline: a `new` decision whose title names
 an active candidate, by title, alias or tag, becomes an append to it
-(`preferExistingTitle`); a `new` checklist is created as one, `Kind` written
+(`preferExistingTitle`, `matched_by` title|alias|tag on its log line); so
+does a `new` decision, or an append under the confidence bar, whose title or
+whose transcript *opens with* a listed name as whole words
+(`prefix_title`|`prefix_transcript`) — the name-first shape the owner's ring
+speaks, "App feedback checklist move seems to be good", which the model twice
+titled as a new note on 2026-09-27; the name must be two words or eight
+letters, the longest match wins, and the derived content is kept as the model
+left it (R6-RT-1, decision R6-RT-OD1). On the path that is about to create a
+note the active list is read once more and the same rule run over it, so two
+same-second ring captures naming a list nobody has yet make one list, not
+two (R6-RT-3; `RouterCreateDeduped`); a `new` checklist is created as one, `Kind` written
 on the row in the same `PutNote` as the language, so the same run extracts
 its items rather than cleaning the sentence into a plain note — the owner's
 "add milk to the shopping list" with no such list had become the item "Add
@@ -141,7 +155,22 @@ the count should fall to near zero under the new one),
 `RouterNewNoteKind{Kind=note|checklist}` (how often the model answers
 `checklist` for a new note, without a battery run),
 `RouterRetried{Reason}`, `RouterTimedOut{Attempt}`,
+`RouterCreateDeduped` (the pre-create re-check found the note a sibling
+capture had just made),
 `TargetedInstructionCheck{Outcome=no_cue|removed|nothing_removed|failed}`.
+
+**The decision line.** `decideTarget` logs one INFO line `routing decided`
+per routed capture, counts and enumerations only, so a week of routes can be
+judged from the log alone (until 2026-09-29 that took the DynamoDB row, the
+S3 transcript and the log together, and a route whose note was since purged
+could not be judged at all): `action` (append|new), `confidence`,
+`matched_by` (model|title|alias|tag|prefix_title|prefix_transcript|none —
+`model` when the model itself chose the append, `none` for a new note nothing
+matched), `candidates`, `transcript_words`, `title_words` (0 for an append),
+`spans` (as the reply carried them), `removed_words`, `checklist` (the
+reply's kind) and `source` (app|device, never the device id). The correlation
+id rides the context; no title and no transcript word is on the line, so the
+README's "nothing derived from speech reaches a log" holds.
 
 ### Cleanup
 

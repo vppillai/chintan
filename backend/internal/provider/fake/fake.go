@@ -388,6 +388,7 @@ func (f *Router) Route(ctx context.Context, transcript string, candidates []rout
 		decision.Title = "Fake routed note"
 		decision.Confidence = 1
 	}
+	decision.Spans = len(f.Spans)
 	if decision.Content == "" && f.Spans != nil {
 		content, err := routing.RemoveSpans(transcript, f.Spans)
 		if err != nil {

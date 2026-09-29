@@ -68,6 +68,9 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		return RouteDecision{}, err
 	}
 	decision.Usage = usage
+	if reply.Spans != nil {
+		decision.Spans = len(*reply.Spans)
+	}
 	decision.Content = routedContent(ctx, transcript, decision.Title, reply)
 	return decision, nil
 }
@@ -82,8 +85,10 @@ type routeReply struct {
 }
 
 // routedContent derives the note content from the transcript and the router's
-// spans. Every failure keeps the whole transcript; nothing here can lose a word
-// the speaker said. Logs carry counts only: note text does not belong in logs.
+// spans, each span first grown over a spoken title or a trailing "note" it
+// stopped short of (routing.ExtendSpans). Every failure keeps the whole
+// transcript; nothing here can lose a word the speaker said. Logs carry counts
+// only: note text does not belong in logs.
 func routedContent(ctx context.Context, transcript, title string, reply routeReply) string {
 	discard := func(reason, msg string, attrs ...any) string {
 		obs.Log(ctx).Warn(msg, attrs...)
@@ -97,7 +102,7 @@ func routedContent(ctx context.Context, transcript, title string, reply routeRep
 		return discard("missing_field", "router returned no instruction_spans; keeping the dictation")
 	}
 
-	content, err := routing.RemoveSpans(transcript, *reply.Spans)
+	content, err := routing.RemoveSpans(transcript, routing.ExtendSpans(routing.Words(transcript), *reply.Spans, title))
 	switch {
 	case errors.Is(err, routing.ErrSpansTooLong):
 		return discard("too_long", "router spans would remove more words than an instruction holds; keeping the dictation",
