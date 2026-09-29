@@ -176,15 +176,23 @@ the count should fall to near zero under the new one),
 capture had just made),
 `TargetedInstructionCheck{Outcome=no_cue|removed|nothing_removed|failed}`.
 
-**The decision line.** `decideTarget` logs one INFO line `routing decided`
-per routed capture, counts and enumerations only, so a week of routes can be
-judged from the log alone (until 2026-09-29 that took the DynamoDB row, the
-S3 transcript and the log together, and a route whose note was since purged
-could not be judged at all): `action` (append|new), `confidence`,
+**The decision line.** `route` logs one INFO line `routing decided` per
+routed capture (`logRoutingDecision`), counts and enumerations only, so a
+week of routes can be judged from the log alone (until 2026-09-29 that took
+the DynamoDB row, the S3 transcript and the log together, and a route whose
+note was since purged could not be judged at all). It is written once the
+branch is final — `decideTarget` wrote it before the same-second re-check
+until the same day, so a deduped capture read as a new note nothing matched
+(DB6-13) — and carries: `action` (append|new), `confidence`,
 `matched_by` (model|title|alias|tag|prefix_title|prefix_transcript|spoken_name|none
 — `model` when the model itself chose the append, `spoken_name` when the
 code took the model's unsure suggestion because its name was spoken as one,
-`none` for a new note nothing matched), `candidates`, `transcript_words`, `title_words` (0 for an append),
+`none` for a new note nothing matched), `outcome` — what `route` did with
+the decision: append, needs_target, new, deduped (the pre-create re-check
+found the note a sibling capture had just made; counted as
+`RouterCreateDeduped` alone, never as `RouterTitleMatchedExistingNote` too)
+or new_after_missing (the model's note was archived or gone by the time it
+was read) — `candidates`, `transcript_words`, `title_words` (0 for an append),
 `spans` (as the reply carried them), `removed_words`, `checklist` (the
 reply's kind) and `source` (app|device, never the device id). The correlation
 id rides the context; no title and no transcript word is on the line, so the

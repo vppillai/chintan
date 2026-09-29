@@ -59,7 +59,7 @@ func TestAskAndRoutingReadTheNotesInOneDrainNotPerPage(t *testing.T) {
 
 	// Routing candidates: the same one read.
 	counting.drains, counting.lists = 0, 0
-	if _, err := h.pipeline.decideTarget(context.Background(), "user1", "c1", "a transcript to route", "", "app"); err != nil {
+	if _, err := h.pipeline.decideTarget(context.Background(), "user1", "c1", "a transcript to route", ""); err != nil {
 		t.Fatalf("decideTarget: %v", err)
 	}
 	if counting.drains != 1 || counting.lists != 0 {

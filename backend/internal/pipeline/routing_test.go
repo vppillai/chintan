@@ -661,17 +661,12 @@ func (s *staleDrain) DrainNotes(ctx context.Context, tenantID string, opts repos
 	return s.Store.DrainNotes(ctx, tenantID, opts)
 }
 
-// The ring posts several recordings in the same second, and the candidate
-// list is read before the model call, so two captures naming a list nobody
-// has yet were each told "new". The path that is about to create a note reads
-// the list once more; the second capture finds its sibling's note and appends.
-func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.T) {
-	var metrics bytes.Buffer
-	defer obs.SetMetricOutput(&metrics)()
-	f := newRoutingFixture(t, "add milk to the shopping list",
-		provider.RouteDecision{Action: provider.RouteNew, Title: "Shopping list", Confidence: 1}, false)
-	ctx := context.Background()
-	before, _, err := f.store.DrainNotes(ctx, f.userID, repository.DrainOptions{})
+// stalePipeline is a pipeline over f's store whose next drains, once armed
+// through stale.remaining, answer with the candidate list as it stands now:
+// before the note a sibling capture is about to create.
+func (f *routingFixture) stalePipeline(t *testing.T) (*Pipeline, *staleDrain) {
+	t.Helper()
+	before, _, err := f.store.DrainNotes(context.Background(), f.userID, repository.DrainOptions{})
 	if err != nil {
 		t.Fatalf("DrainNotes: %v", err)
 	}
@@ -684,6 +679,38 @@ func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	return p, stale
+}
+
+// addTranscribedCapture puts a device capture that is already transcribed,
+// so a run of it starts at routing.
+func (f *routingFixture) addTranscribedCapture(t *testing.T, id, transcript string) {
+	t.Helper()
+	ctx := context.Background()
+	rawKey := "tenants/user1/captures/" + id + "/raw.txt"
+	if err := f.objects.Put(ctx, rawKey, []byte(transcript), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PutCapture(ctx, model.CaptureIndex{
+		ID: id, UserID: f.userID, Status: model.StatusTranscribed, CreatedAt: model.Now(),
+		RawKey: rawKey, Source: model.DeviceSource("dev_1"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The ring posts several recordings in the same second, and the candidate
+// list is read before the model call, so two captures naming a list nobody
+// has yet were each told "new". The path that is about to create a note reads
+// the list once more; the second capture finds its sibling's note and appends.
+// The dedupe is counted as itself and not as a title match too (DB6-13).
+func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.T) {
+	var metrics bytes.Buffer
+	defer obs.SetMetricOutput(&metrics)()
+	f := newRoutingFixture(t, "add milk to the shopping list",
+		provider.RouteDecision{Action: provider.RouteNew, Title: "Shopping list", Confidence: 1}, false)
+	ctx := context.Background()
+	p, stale := f.stalePipeline(t)
 
 	first, err := p.Run(ctx, f.userID, "c_1")
 	if err != nil || first.Status != model.StatusAppended {
@@ -692,15 +719,7 @@ func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.
 
 	// The second capture was already at the model when the first created the
 	// note: its candidate list predates it.
-	if err := f.objects.Put(ctx, "tenants/user1/captures/c_2/raw.txt", []byte("add eggs to the shopping list"), "text/plain"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.PutCapture(ctx, model.CaptureIndex{
-		ID: "c_2", UserID: f.userID, Status: model.StatusTranscribed, CreatedAt: model.Now(),
-		RawKey: "tenants/user1/captures/c_2/raw.txt", Source: model.DeviceSource("dev_1"),
-	}); err != nil {
-		t.Fatal(err)
-	}
+	f.addTranscribedCapture(t, "c_2", "add eggs to the shopping list")
 	stale.mu.Lock()
 	stale.remaining = 1
 	stale.mu.Unlock()
@@ -724,12 +743,17 @@ func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.
 	if !strings.Contains(metrics.String(), `"RouterCreateDeduped"`) {
 		t.Error("RouterCreateDeduped was not counted")
 	}
+	if strings.Contains(metrics.String(), `"RouterTitleMatchedExistingNote"`) {
+		t.Error("the dedupe was also counted as RouterTitleMatchedExistingNote, which inflates the metric the prompt change is judged by")
+	}
 }
 
 // One "routing decided" line per decision, counts and enumerations only, so
 // the log alone says what routing did — until now that took the DynamoDB row,
 // the S3 transcript and the log together, and a route whose note was purged
-// could not be judged at all. No title and no transcript word reaches it.
+// could not be judged at all. No title and no transcript word reaches it. It
+// is written once route() has taken its final branch, which the outcome
+// names, so a deduped capture or a park reads as what it was (DB6-13).
 func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 	var logs bytes.Buffer
 	prev := slog.Default()
@@ -738,23 +762,26 @@ func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 
 	decided := func(t *testing.T, id string) map[string]any {
 		t.Helper()
+		var rec map[string]any
+		lines := 0
 		for _, line := range strings.Split(logs.String(), "\n") {
 			if !strings.Contains(line, `"routing decided"`) || !strings.Contains(line, `"correlation_id":"`+id+`"`) {
 				continue
 			}
-			for _, leak := range []string{"roof", "gutter", "leaking", "checklist move"} {
+			lines++
+			for _, leak := range []string{"roof", "gutter", "leaking", "checklist move", "shopping", "eggs"} {
 				if strings.Contains(strings.ToLower(line), leak) {
 					t.Errorf("the decision line carries %q: %s", leak, line)
 				}
 			}
-			var rec map[string]any
 			if err := json.Unmarshal([]byte(line), &rec); err != nil {
 				t.Fatalf("log line is not JSON: %v", err)
 			}
-			return rec
 		}
-		t.Fatalf("no routing decided line for %s:\n%s", id, logs.String())
-		return nil
+		if lines != 1 {
+			t.Fatalf("%d routing decided lines for %s, want one:\n%s", lines, id, logs.String())
+		}
+		return rec
 	}
 	want := func(t *testing.T, rec map[string]any, fields map[string]any) {
 		t.Helper()
@@ -774,9 +801,21 @@ func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 			t.Fatalf("run: %v", err)
 		}
 		want(t, decided(t, "corr-append"), map[string]any{
-			"action": "append", "confidence": 0.95, "matched_by": "model", "candidates": 1.0,
+			"action": "append", "confidence": 0.95, "matched_by": "model", "outcome": "append", "candidates": 1.0,
 			"transcript_words": 12.0, "title_words": 0.0, "spans": 1.0, "removed_words": 7.0,
 			"checklist": false, "source": "app",
+		})
+	})
+
+	t.Run("an append the model was unsure of is parked", func(t *testing.T) {
+		f := newRoutingFixture(t, "the gutter is also leaking",
+			provider.RouteDecision{Action: provider.RouteAppend, NoteID: "n1", Confidence: 0.4}, false)
+		ctx := obs.WithCorrelationID(context.Background(), "corr-park")
+		if _, err := f.run(ctx, "c_1"); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		want(t, decided(t, "corr-park"), map[string]any{
+			"action": "append", "confidence": 0.4, "matched_by": "model", "outcome": "needs_target",
 		})
 	})
 
@@ -788,7 +827,7 @@ func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 			t.Fatalf("run: %v", err)
 		}
 		want(t, decided(t, "corr-prefix"), map[string]any{
-			"action": "append", "confidence": 1.0, "matched_by": "prefix_title", "candidates": 1.0,
+			"action": "append", "confidence": 1.0, "matched_by": "prefix_title", "outcome": "append", "candidates": 1.0,
 			"transcript_words": 8.0, "title_words": 0.0, "spans": 0.0, "removed_words": 0.0,
 			"checklist": true, "source": "app",
 		})
@@ -801,7 +840,26 @@ func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 		if _, err := f.run(ctx, "c_1"); err != nil {
 			t.Fatalf("run: %v", err)
 		}
-		want(t, decided(t, "corr-new"), map[string]any{"action": "new", "matched_by": "none", "title_words": 2.0})
+		want(t, decided(t, "corr-new"), map[string]any{"action": "new", "matched_by": "none", "outcome": "new", "title_words": 2.0})
+	})
+
+	t.Run("a new note deduped against the sibling's", func(t *testing.T) {
+		f := newRoutingFixture(t, "add milk to the shopping list",
+			provider.RouteDecision{Action: provider.RouteNew, Title: "Shopping list", Confidence: 1}, false)
+		p, stale := f.stalePipeline(t)
+		if first, err := p.Run(obs.WithCorrelationID(context.Background(), "corr-first"), f.userID, "c_1"); err != nil || first.Status != model.StatusAppended {
+			t.Fatalf("first run = %s, %v", first.Status, err)
+		}
+		f.addTranscribedCapture(t, "c_2", "add eggs to the shopping list")
+		stale.mu.Lock()
+		stale.remaining = 1
+		stale.mu.Unlock()
+		if _, err := p.Run(obs.WithCorrelationID(context.Background(), "corr-dedupe"), f.userID, "c_2"); err != nil {
+			t.Fatalf("second run: %v", err)
+		}
+		want(t, decided(t, "corr-dedupe"), map[string]any{
+			"action": "append", "confidence": 1.0, "matched_by": "title", "outcome": "deduped", "title_words": 0.0, "source": "device",
+		})
 	})
 }
 
