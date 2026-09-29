@@ -24,6 +24,13 @@ const (
 	// maxSpokenTitleWords is the longest title that still reads as a name rather than a
 	// sentence the router mistook for one.
 	maxSpokenTitleWords = 8
+	// maxNameWords is the prompt's own bound on a name: its Titles rule says "a
+	// name is a short noun phrase of one to five words, never a whole sentence"
+	// (R6-RT-8). A title within it is a name the speaker may have said in full,
+	// so a span grown over it removes instruction; a title past it is the
+	// dictation the model mistook for a name, and growing over it removes the
+	// note.
+	maxNameWords = 5
 	// routeMaxTokens caps the routing completion. A well-formed reply is an action, an
 	// id or a short title, a confidence and a span or two — under fifty tokens — so the
 	// cap never shortens a real answer; it bounds a runaway one, which then fails to
@@ -131,16 +138,22 @@ func routedContent(ctx context.Context, transcript, title string, action RouteAc
 			slog.Int("dictated_words", dictated), slog.Int("spans", len(*reply.Spans)))
 	}
 
-	if strings.TrimSpace(content) == "" && action == RouteNew {
+	if strings.TrimSpace(content) == "" && action == RouteNew && len(routing.Words(title)) > maxNameWords {
 		// "make a note the dog is having his dinner", titled by the model "The
 		// dog is having his dinner" (the owner's ring, 2026-09-27): the span
 		// {0,3} grown over that title covers every word, and the note was
 		// created empty (DB6-4, review 2026-09-29). The growth is a
 		// convenience and must never be what empties the body, so when the
 		// model's own spans leave content, that is the content, title
-		// duplicated or not. An append's title is the destination's name
-		// spoken as the instruction's last words, so there a recording that is
-		// nothing but the instruction may legitimately end empty.
+		// duplicated or not. Only a title longer than a name (maxNameWords)
+		// takes this path: a naming-only recording whose span stopped before
+		// or inside a real name ("Create a note with the title test123",
+		// "title this staging smoke" — the battery of 2026-09-29 showed the
+		// span stopping short on rows 2 and 13 three of three) is emptied by
+		// the growth on purpose, and the un-grown result would hand the name
+		// or its tail back as body. An append's title is the destination's
+		// name spoken as the instruction's last words, so there a recording
+		// that is nothing but the instruction may legitimately end empty.
 		if own, err := routing.RemoveSpans(transcript, *reply.Spans); err == nil && strings.TrimSpace(own) != "" {
 			content = own
 		}

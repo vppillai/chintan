@@ -137,10 +137,16 @@ discard the spans and keep every word; before they are applied, a span is
 grown over the spoken title it stopped short of and over a "note" that
 follows it (`routing.ExtendSpans` — the production battery of 2026-09-29 had
 the title words opening the body on row 13 and a trailing "Note:" on row 2,
-three of three each); spans that leave no content are
-believed only for a transcript of at most 20 words with a title of at most
-8 words, since a longer one means the router swallowed dictation into the
-title; the derived content is re-checked as a sub-sequence of the transcript
+three of three each); on a new note whose title is longer than a name —
+more than five words, the Titles rule's own bound — a growth that would
+leave nothing is undone and the model's own spans decide, so "make a note
+the dog is having his dinner" titled with the sentence keeps it as body
+(DB6-4), while a naming-only recording whose span stopped before or inside
+a real name ("title this staging smoke", "create a note with the title
+test123") still ends empty rather than keeping the name's tail; spans that
+leave no content are believed only for a transcript of at most 20 words
+with a title of at most 8 words, since a longer one means the router
+swallowed dictation into the title; the derived content is re-checked as a sub-sequence of the transcript
 (`llm.VerifySubsequence`); the title is one line of at most 120 runes;
 confidence is clamped. Then the pipeline: a `new` decision whose title names
 an active candidate, by title, alias or tag, compared in `NormalizeSpeech`
