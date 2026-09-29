@@ -69,7 +69,7 @@ export function AppShell() {
 
   useBackGuard();
   // Where the on-screen keyboard is, for the scroll container's padding
-  // (`shell.css` `.app__main`) and the note's drawer.
+  // (`shell.css` `.app__main`) and the note sheet's cap (`notes.css`).
   useKeyboardInset();
   usePasskeyReturn();
   useRouteFocus(mainRef);

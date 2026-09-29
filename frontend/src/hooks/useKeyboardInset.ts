@@ -11,7 +11,16 @@ import { useEffect } from 'react';
  * caret reveal scrolls only as far as that edge — the caret line lands flush
  * against the keyboard's top or under it (R6-NAV-2, K3). `shell.css` gives
  * the scroll container this much `padding-block-end` and
- * `scroll-padding-block-end`, and `notes.css` lifts the note's drawer by it.
+ * `scroll-padding-block-end`; the note's sheet (`notes.css` `.note-panel`)
+ * caps its height by it and needs no lift of its own, since a sticky foot
+ * rests above the region's padding.
+ *
+ * The inset is the window's. Where the tab bar is rendered `.app__main` ends
+ * a bar's height above the window's bottom, so the padding overshoots by
+ * that much; the bar is not on every screen, so it is not subtracted. The
+ * `scroll` listener rewrites the property while iOS pans the visual viewport
+ * under the keyboard, which resizes the padding mid-pan — the iPhone check
+ * watches the scroll position while panning.
  *
  * `innerHeight − visualViewport.height − visualViewport.offsetTop` is the part
  * of the layout viewport below the visual viewport's bottom: the keyboard,

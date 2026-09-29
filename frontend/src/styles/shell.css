@@ -107,7 +107,11 @@
    * the room to scroll the end of the note above the keyboard, the
    * scroll-padding moves the reveal target above it — together the caret
    * line lands at 822 − 400 + 2; scroll-padding alone stuck at 798 (no room),
-   * padding alone stayed at 835 (target unchanged). The meta
+   * padding alone stayed at 835 (target unchanged). The inset is the
+   * window's, and with the tab bar rendered this region ends 93 px above the
+   * window's bottom, so the padding overshoots by that much — the caret
+   * rests a bar's height above the keyboard, not flush against it; the bar
+   * is not on every screen, so it is not subtracted. The meta
    * `interactive-widget=resizes-content` would shrink the layout viewport
    * instead, but it is Android-only and would put the tab bar's 92 px record
    * disc on top of the keyboard, a fifth of what is left of the screen.
