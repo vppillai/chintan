@@ -229,16 +229,3 @@
   font-weight: var(--font-weight-semibold);
   color: var(--color-ink);
 }
-
-/* Grows to fill the column, so the recordings' selection bar — rendered
-   inside the panel — reaches the foot as the action bar does. */
-.note-tabpanel {
-  display: flex;
-  flex: 1 0 auto;
-  flex-direction: column;
-  padding-block-start: var(--space-3);
-}
-
-.note-tabpanel > .selection-bar {
-  margin-block-start: auto;
-}

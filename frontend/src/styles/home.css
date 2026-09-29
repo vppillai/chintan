@@ -470,26 +470,30 @@
   color: var(--color-faint);
 }
 
-/* The passkey nudge as one 44 px row: the sentence, then two text actions.
-   The shell's rules made it a card with a second line of prose. */
+/* The passkey nudge as one 44 px row at the top of the library, the width
+   of the note rows: the sentence, then two text actions under a hairline.
+   Not a card and not a filled primary, because this is a suggestion, not a
+   recording at risk. */
 .passkey-nudge {
-  flex-wrap: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
+  inline-size: 100%;
   min-block-size: var(--layout-touch-target-min);
+  margin-block-end: var(--space-3);
   padding: 0 var(--space-1);
-  background-color: transparent;
-  border: 0;
   border-block-end: 1px solid var(--color-line);
-  border-radius: 0;
-  box-shadow: none;
 }
 
 .passkey-nudge__title {
+  font-size: var(--font-size-sm);
   font-weight: var(--font-weight-regular);
   color: var(--color-muted);
 }
 
 .passkey-nudge__actions {
+  display: flex;
   flex: none;
   align-items: center;
   gap: var(--space-1);
@@ -499,20 +503,16 @@
   color: var(--color-faint);
 }
 
-.passkey-nudge__action,
-.passkey-nudge__action--primary,
-.passkey-nudge__action--primary:active {
-  padding-inline: var(--space-2);
-  background-color: transparent;
-  border: 0;
+.passkey-nudge__action {
+  min-block-size: var(--layout-touch-target-min);
+  padding: var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-muted);
 }
 
-.passkey-nudge__action--primary,
-.passkey-nudge__action--primary:active {
-  /* Off the shell's filled-primary list too: its lift and shadow drew a faint pill around the underlined word in Nocturne. */
-  background-image: none;
-  box-shadow: none;
+.passkey-nudge__action--primary {
   color: var(--color-ink);
   text-decoration: underline;
   text-underline-offset: 0.18em;

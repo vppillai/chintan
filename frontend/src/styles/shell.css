@@ -694,7 +694,6 @@
 .signed-out__action,
 .resume-prompt__action--primary,
 .settings-status__action--primary,
-.passkey-nudge__action--primary,
 .cleaned__action--primary,
 .update-prompt__action,
 .review-player__play,
@@ -710,7 +709,6 @@
 .signed-out__action:active,
 .resume-prompt__action--primary:active,
 .settings-status__action--primary:active,
-.passkey-nudge__action--primary:active,
 .cleaned__action--primary:active,
 .update-prompt__action:active,
 .review-player__play:active,
@@ -1433,69 +1431,6 @@
 }
 
 /* --------------------------------------------------------------------------
-   Note panel — the body of the Details and Share drawer (notes.css)
-   -------------------------------------------------------------------------- */
-
-.note-panel {
-  display: grid;
-  gap: var(--space-3);
-}
-
-/* The editors carry a top padding for the inline layout they came from. */
-.note-panel .tag-editor {
-  padding-block-start: 0;
-}
-
-/* --------------------------------------------------------------------------
-   Passkeys — the library nudge and the You screen's outcome line
-   -------------------------------------------------------------------------- */
-
-/* The same shape as the resume prompt: a row at the top of the library, the
-   width of the note rows. A hairline rather than the accent border, because
-   this is a suggestion, not a recording at risk. */
-.passkey-nudge {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  inline-size: 100%;
-  margin-block-end: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background-color: var(--color-raised);
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xs);
-}
-
-.passkey-nudge__title {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-ink);
-}
-
-.passkey-nudge__actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.passkey-nudge__action {
-  min-block-size: var(--layout-touch-target-min);
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-ink);
-}
-
-.passkey-nudge__action--primary {
-  background-color: var(--color-ink);
-  border-color: var(--color-ink);
-  color: var(--color-ground);
-}
-
-/* --------------------------------------------------------------------------
    Language controls — the note's, in the Tags disclosure, and the default on You
    -------------------------------------------------------------------------- */
 
@@ -1511,10 +1446,21 @@
   color: var(--color-ink);
 }
 
+/* The select fits its column. A select is as wide as its longest option,
+   and "Bahasa Indonesia · Indonesian" is wider than a 320 px phone's column;
+   a grid or flex item does not shrink below its content unless its minimum
+   size says it may, so the group scrolled sideways by eleven pixels (e2e
+   layout check). Zero minimums on the select and on the field it lives in
+   let `.settings-select`'s `max-inline-size: 100%` take effect. */
+.language-select {
+  min-inline-size: 0;
+}
+
 .language-field {
   display: grid;
   gap: var(--space-2);
   justify-items: start;
+  min-inline-size: 0;
 }
 
 .language-field__hint {
