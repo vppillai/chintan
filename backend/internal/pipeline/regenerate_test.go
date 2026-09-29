@@ -468,7 +468,8 @@ func TestRegenerateTaskRetryFinishesTheRecordingsLeftMidWay(t *testing.T) {
 // rewrote returns it unchanged, whatever words the old and new items share;
 // the person's deletion of a recording's items stands even when they typed
 // one of the new words; a sub-item is found by its words and the block goes
-// back at the top level; a parent the recording shares is left standing.
+// back at the top level; a parent the recording shares is left standing; a
+// sub-item of a block that stays is left in it.
 // Every case is run twice, the second pass over the first's result, since
 // paragraphInNote asks exactly that of an interrupted attempt.
 func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
@@ -499,6 +500,14 @@ func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
 		{"the same words again keep the block's order and the tick", m + "\n- [ ] Costco\n  - [ ] Meat\n  - [x] Chicken\n  - [ ] Beef\n" + m2, shared, "- [ ] Costco\n  - [ ] Chicken", m + "\n- [ ] Costco\n  - [ ] Meat\n  - [x] Chicken\n  - [ ] Beef\n" + m2},
 		{"a done shared parent stays done when its carried child is done", m + "\n- [x] Costco\n  - [x] Meat\n  - [x] Chicken\n" + m2, shared, "- [ ] Costco\n  - [ ] Chicken", m + "\n- [x] Costco\n  - [x] Meat\n  - [x] Chicken\n" + m2},
 		{"a new child beside the carried one reopens the done shared parent", m + "\n- [x] Costco\n  - [x] Meat\n  - [x] Chicken\n" + m2, shared, "- [ ] Costco\n  - [ ] Chicken\n  - [ ] Beef", m + "\n- [ ] Costco\n  - [x] Meat\n  - [x] Chicken\n  - [ ] Beef\n" + m2},
+		// A sub-item with a new item's words under a parent that stays —
+		// typed there, or another recording's — is that block's line: the
+		// merge finds it in place, and it is not pulled out and written flat
+		// in the recording's block above its own marker (review 2026-09-29,
+		// DB6-8). Under the recording's own parent it comes out with the
+		// parent and goes back in the block, not doubled.
+		{"a fresh word under a parent the recording does not own stays in its block", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + m + "\n- [ ] Milk", []string{"Milk"}, "- [ ] Rice\n- [ ] Milk", "- [ ] Costco\n  - [ ] Meat\n  - [ ] Rice\n\n" + m + "\n- [ ] Milk"},
+		{"a fresh word under the recording's own parent comes out with it", m + "\n- [ ] Costco\n  - [ ] Chicken\n  - [ ] Rice", shared, "- [ ] Costco\n  - [ ] Chicken\n  - [ ] Rice", m + "\n- [ ] Costco\n  - [ ] Chicken\n  - [ ] Rice"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

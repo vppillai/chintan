@@ -464,9 +464,15 @@ func parseChecklistLine(line string) (text string, done bool, depth int, ok bool
 // attempt that wrote the block and died before it could say so is finished,
 // not repeated (append's claim-held branch, paragraphInNote) — and it means
 // a typed line with the same words as a new item is folded into the block
-// rather than kept as a duplicate. Indent is not read: a sub-item is matched
-// by its words like any line, and the block is written with the recording's
-// own indent (checklists.md, "indent-blind").
+// rather than kept as a duplicate. Indent is read for one thing only: a
+// sub-item with a new item's words under a parent that is not coming out —
+// typed there, or another recording's — is that block's line and stays in
+// it for the merge to find (mergeLeaf drops the open duplicate, reopens a
+// done one), rather than being pulled out and written flat in the
+// recording's block where it stood, above the recording's own marker, left
+// bare (review 2026-09-29, DB6-8). Otherwise a sub-item is matched by its
+// words like any line, and the block is written with the recording's own
+// indent (checklists.md, "indent-blind").
 //
 // An empty text removes the recording's items and writes nothing in their
 // place: the recording, extracted again, named nothing to add.
@@ -488,8 +494,12 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 	}
 	lines := strings.Split(body, "\n")
 	take, old := make([]bool, len(lines)), make([]bool, len(lines))
+	parentTaken := func(i int) bool {
+		parent := parentOf(lines, i)
+		return parent >= 0 && take[parent]
+	}
 	for i, line := range lines {
-		t, ok := checklistLineText(line)
+		t, _, depth, ok := parseChecklistLine(line)
 		if !ok {
 			continue
 		}
@@ -497,7 +507,7 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 			wanted[t]--
 			take[i], old[i] = true, true
 		}
-		if fresh[t] > 0 {
+		if fresh[t] > 0 && (depth == 0 || take[i] || parentTaken(i)) {
 			fresh[t]--
 			take[i] = true
 		}
