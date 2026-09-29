@@ -168,6 +168,9 @@ those plus the probes.
   capture says `has_audio: false`, so the recordings row shows the transcript
   and no player.
 
+An untargeted inbox capture is always routed, cue or no cue, and saying the
+note's name first — "App feedback the split up is slow" — is a supported way
+to file into it (`docs/design/prompts.md`, Routing; round 6, R6-RT-1/RT-2).
 Every inbox capture carries `source: device:<id>` (the wire says `app` for
 the app's own, and for every capture from before the field existed), and the
 Recordings tab says "From ⟨device⟩" by name, reading `GET /v1/devices` once a

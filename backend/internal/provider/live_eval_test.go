@@ -160,7 +160,9 @@ func checkRoute(t *testing.T, tc routeCase, d RouteDecision, idOf map[string]str
 	if tc.MinConfidence != nil && d.Confidence < *tc.MinConfidence {
 		t.Errorf("confidence = %.2f, want at least %.2f", d.Confidence, *tc.MinConfidence)
 	}
-	if tc.Title != "" && d.Title != tc.Title {
+	// The Titles rule is about words, not case: "Groceries list" for the
+	// spoken "groceries list" is the prompt's own example.
+	if tc.Title != "" && !strings.EqualFold(d.Title, tc.Title) {
 		t.Errorf("title = %q, want %q", d.Title, tc.Title)
 	}
 	// kind: the parser keeps it for a new note only, so an append passes
