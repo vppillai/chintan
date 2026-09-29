@@ -130,7 +130,7 @@ func TestNamedAfterCue(t *testing.T) {
 		{"Create a new note and add it to Pebble Ring Test", "Pebble Ring Test", true},
 		{"add this to my roof repair note the portugal trip went over budget", "Roof repair", true},
 		{"Put it in the garden beds note please", "Garden beds", true},
-		{"file this under our kitchen rebuild", "Kitchen rebuild", true},
+		{"put this under our kitchen rebuild", "Kitchen rebuild", true},
 		{"add this to my roof repair note the portugal trip went over budget", "Portugal trip", false},
 		{"put this in my journal I was thinking about the roof repair today", "Roof repair", false},
 		{"the roof repair is going to cost a fortune", "Roof repair", false},
