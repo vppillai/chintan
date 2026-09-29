@@ -314,6 +314,78 @@ func TestCompleteCaptureAppendRejectsAnotherHoldersToken(t *testing.T) {
 	}
 }
 
+// Two attempts at one append can both reach the completion: the holder, and
+// a duplicate delivery that found the holder's paragraph already in the note
+// (pipeline.append). Each of the two writes the other attempt can land under
+// this call's read is slipped in here, and neither is a conflict: the same
+// token's completion is the outcome this call wanted, and the duplicate's
+// `appending` status write, which carries the token forward, only moves the
+// version. A conflict here failed a Lambda invocation for nothing (R6-FL-2).
+// A token nobody holds stays a conflict.
+func TestCompleteCaptureAppendIsIdempotentForItsOwnToken(t *testing.T) {
+	cases := []struct {
+		name      string
+		meanwhile func(ctx context.Context, store *repository.DynamoStore) error
+	}{
+		{"the other attempt completed the token first", func(ctx context.Context, store *repository.DynamoStore) error {
+			_, err := store.CompleteCaptureAppend(ctx, "tenant-a", "c1", "token-1")
+			return err
+		}},
+		{"a duplicate's status write moved the version under the token", func(ctx context.Context, store *repository.DynamoStore) error {
+			current, err := store.GetCapture(ctx, "tenant-a", "c1")
+			if err != nil {
+				return err
+			}
+			current.LastProgressAt = model.Now()
+			_, err = store.PutCapture(ctx, current)
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			racer := &captureRacingDynamo{Fake: dynamofake.New()}
+			store := repository.NewDynamoStore(racer, tableName)
+			racer.meanwhile = func(ctx context.Context) error { return tc.meanwhile(ctx, store) }
+			ctx := context.Background()
+
+			if _, err := store.PutCapture(ctx, model.CaptureIndex{
+				ID: "c1", UserID: "tenant-a", NoteID: "n1", CreatedAt: model.Now(), Status: model.StatusAppending,
+			}); err != nil {
+				t.Fatalf("PutCapture: %v", err)
+			}
+			if claimed, _, err := store.ClaimCaptureAppend(ctx, "tenant-a", "c1", "token-1"); err != nil || !claimed {
+				t.Fatalf("claim = (%v, %v), want claimed", claimed, err)
+			}
+
+			// Armed: the other write lands between this call's read and its
+			// conditional PutItem, which therefore fails once.
+			racer.armed = true
+			done, err := store.CompleteCaptureAppend(ctx, "tenant-a", "c1", "token-1")
+			if err != nil {
+				t.Fatalf("CompleteCaptureAppend after a lost write: %v", err)
+			}
+			if racer.armed {
+				t.Fatal("the test did not actually slip a write in under the completion")
+			}
+			if done.Status != model.StatusAppended || done.AppendedAt == 0 || done.AppendToken != "token-1" {
+				t.Fatalf("completed capture = %+v, want appended with a timestamp under token-1", done)
+			}
+			stored, err := store.GetCapture(ctx, "tenant-a", "c1")
+			if err != nil {
+				t.Fatalf("GetCapture: %v", err)
+			}
+			if stored.Version != done.Version || stored.AppendedAt != done.AppendedAt {
+				t.Fatalf("returned (version %d, appended_at %d), stored (version %d, appended_at %d); the row handed back is not the one that landed",
+					done.Version, done.AppendedAt, stored.Version, stored.AppendedAt)
+			}
+
+			if _, err := store.CompleteCaptureAppend(ctx, "tenant-a", "c1", "token-2"); !errors.Is(err, repository.ErrVersionConflict) {
+				t.Fatalf("another token's completion err = %v, want ErrVersionConflict", err)
+			}
+		})
+	}
+}
+
 // ------------------------------------------------------------- list order
 
 // TestCapturesComeBackNewestFirstAcrossPages pins the order the capture ids
@@ -430,7 +502,15 @@ func TestUpdateCaptureStatusLosesToAConcurrentWriter(t *testing.T) {
 	api := dynamofake.New()
 	racer := &captureRacingDynamo{Fake: api}
 	store := repository.NewDynamoStore(racer, tableName)
-	racer.store = store
+	racer.meanwhile = func(ctx context.Context) error {
+		other, err := store.GetCapture(ctx, "tenant-a", "cap1")
+		if err != nil {
+			return err
+		}
+		other.Status = model.StatusAppended
+		_, err = store.PutCapture(ctx, other)
+		return err
+	}
 	ctx := context.Background()
 	if _, err := store.PutCapture(ctx, model.CaptureIndex{ID: "cap1", UserID: "tenant-a", Status: model.StatusCleaning}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -450,12 +530,12 @@ func TestUpdateCaptureStatusLosesToAConcurrentWriter(t *testing.T) {
 	}
 }
 
-// captureRacingDynamo slips another writer's PutCapture in between the
-// store's GetItem and its conditional PutItem, once armed.
+// captureRacingDynamo slips another writer in between the store's GetItem
+// and its conditional PutItem, once armed; meanwhile is that writer.
 type captureRacingDynamo struct {
 	*dynamofake.Fake
-	store *repository.DynamoStore
-	armed bool
+	meanwhile func(ctx context.Context) error
+	armed     bool
 }
 
 func (d *captureRacingDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemInput, opts ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
@@ -464,12 +544,7 @@ func (d *captureRacingDynamo) GetItem(ctx context.Context, in *dynamodb.GetItemI
 		return out, err
 	}
 	d.armed = false
-	other, err := d.store.GetCapture(ctx, "tenant-a", "cap1")
-	if err != nil {
-		return nil, err
-	}
-	other.Status = model.StatusAppended
-	if _, err := d.store.PutCapture(ctx, other); err != nil {
+	if err := d.meanwhile(ctx); err != nil {
 		return nil, err
 	}
 	return out, nil

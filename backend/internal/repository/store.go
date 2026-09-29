@@ -293,7 +293,10 @@ type Store interface {
 	// "in progress".
 	ClaimCaptureAppend(ctx context.Context, tenantID, captureID, token string) (claimed bool, c model.CaptureIndex, err error)
 	// CompleteCaptureAppend flips status to appended and stamps AppendedAt, but
-	// only for the holder of token.
+	// only for the holder of token. It is idempotent for that token: a call
+	// that finds, or loses its write to, the same token's completion returns
+	// the completed row, from whichever attempt made it. Any other token gets
+	// ErrVersionConflict.
 	CompleteCaptureAppend(ctx context.Context, tenantID, captureID, token string) (model.CaptureIndex, error)
 
 	// BeginIdempotent conditionally claims key for this tenant. It returns

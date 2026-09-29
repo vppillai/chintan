@@ -531,51 +531,76 @@ func (s *DynamoStore) ClaimCaptureAppend(ctx context.Context, tenantID, captureI
 	return true, claimed, nil
 }
 
+// completeAppendAttempts bounds CompleteCaptureAppend's retries of a write
+// lost to a concurrent writer of the same row. The writers a capture has are
+// its holder and the odd duplicate delivery carrying the holder's token
+// forward; more lost writes than that inside one call is not a race but
+// something invoking the worker in a loop, and that should surface.
+const completeAppendAttempts = 3
+
+// CompleteCaptureAppend is idempotent for its own token. Two attempts at one
+// append can both reach it: a duplicate delivery that finds the holder's
+// paragraph already in the note finishes the bookkeeping beside the holder
+// (pipeline.append), and one of the two then loses the conditional write
+// below. A lost write is read again rather than reported, because the row
+// says which of two things happened. Either the other attempt's completion
+// landed, which is the outcome this call wanted, so that row is the answer;
+// or a duplicate's `appending` status write moved the version with the token
+// still standing — a duplicate that read the row after the claim carries the
+// token forward in its own persist — which is the read-modify-write retry
+// every other writer of a row makes. Only a row that no longer carries the
+// token is a conflict. Before this the loser failed its invocation for
+// nothing: an ERROR log, a CaptureStageFailures count, and a Lambda retry
+// that found the capture terminal (R6-FL-2).
 func (s *DynamoStore) CompleteCaptureAppend(ctx context.Context, tenantID, captureID, token string) (model.CaptureIndex, error) {
-	if err := ctx.Err(); err != nil {
-		return model.CaptureIndex{}, err
-	}
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return model.CaptureIndex{}, err
+		}
 
-	current, err := s.GetCapture(ctx, tenantID, captureID)
-	if err != nil {
-		return model.CaptureIndex{}, err
-	}
-	if current.AppendToken != token {
-		return model.CaptureIndex{}, ErrVersionConflict
-	}
-	if current.AppendedAt > 0 {
-		return current, nil
-	}
-
-	now := time.Now()
-	done := current
-	done.Status = model.StatusAppended
-	done.Error = ""
-	done.AppendedAt = now.Unix()
-	// The one status the pipeline's persist does not write, so the timing
-	// record's last entry is stamped here.
-	done.StageEntered(model.StatusAppended, model.FormatTime(now))
-	done.Version = current.Version + 1
-
-	item, err := captureItemAttrs(done)
-	if err != nil {
-		return model.CaptureIndex{}, err
-	}
-
-	_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName:           aws.String(s.tableName),
-		Item:                item,
-		ConditionExpression: aws.String("append_token = :token AND (" + versionCondition(current.Version) + ")"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":token":    strAttr(token),
-			":expected": numAttr(current.Version),
-		},
-	})
-	if err != nil {
-		if isConditionalCheckFailed(err) {
+		current, err := s.GetCapture(ctx, tenantID, captureID)
+		if err != nil {
+			return model.CaptureIndex{}, err
+		}
+		if current.AppendToken != token {
 			return model.CaptureIndex{}, ErrVersionConflict
 		}
-		return model.CaptureIndex{}, fmt.Errorf("dynamo complete capture append: %w", err)
+		if current.AppendedAt > 0 {
+			return current, nil
+		}
+
+		now := time.Now()
+		done := current
+		done.Status = model.StatusAppended
+		done.Error = ""
+		done.AppendedAt = now.Unix()
+		// The one status the pipeline's persist does not write, so the timing
+		// record's last entry is stamped here.
+		done.StageEntered(model.StatusAppended, model.FormatTime(now))
+		done.Version = current.Version + 1
+
+		item, err := captureItemAttrs(done)
+		if err != nil {
+			return model.CaptureIndex{}, err
+		}
+
+		_, err = s.client.PutItem(ctx, &dynamodb.PutItemInput{
+			TableName:           aws.String(s.tableName),
+			Item:                item,
+			ConditionExpression: aws.String("append_token = :token AND (" + versionCondition(current.Version) + ")"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":token":    strAttr(token),
+				":expected": numAttr(current.Version),
+			},
+		})
+		if err == nil {
+			return done, nil
+		}
+		if !isConditionalCheckFailed(err) {
+			return model.CaptureIndex{}, fmt.Errorf("dynamo complete capture append: %w", err)
+		}
+		if attempt == completeAppendAttempts {
+			return model.CaptureIndex{}, ErrVersionConflict
+		}
 	}
-	return done, nil
 }
