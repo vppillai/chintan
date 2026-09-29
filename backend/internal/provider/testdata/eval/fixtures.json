@@ -91,7 +91,7 @@
       {"body": "- [ ] two loaves of bread\n- [ ] പാൽ", "want_unchanged": true},
       {"body": "- [ ] buy milk and call the plumber\n- [x] pay the electricity bill\n- [ ] chickpeas", "want": ["- [ ] Milk", "- [ ] Call the plumber", "- [x] pay the electricity bill", "- [ ] chickpeas"], "_note": "casing of split items is not asserted; SplitOutput's subsequence check is"},
       {"body": "- [ ] Milk\n- [x] milk\n- [ ] Eggs", "want": ["- [ ] Milk", "- [ ] Eggs"], "_note": "duplicates merge; open wins"},
-      {"body": "- [ ] Business ideas by Priyanka Doggy daycare with indoor rubberized flooring\n- [ ] Business ideas by Priyanka Seated pool for dogs", "count": 2, "excludes_any": ["business ideas"], "_note": "the ring's spoken title on every line is not an item (list titled 'Business ideas'; pass the title in the tasks user prompt)"},
+      {"body": "- [ ] Business ideas by Priyanka Doggy daycare with indoor rubberized flooring\n- [ ] Business ideas by Priyanka Seated pool for dogs", "list_title": "Business ideas", "count": 2, "excludes_any": ["business ideas"], "_note": "the ring's spoken title on every line is not an item; list_title is the title the tasks user prompt names for this case, since the rule under test never fires under the section's 'Shopping list' (DB6-19)"},
       {"body": "- [ ] book flights and hotel for Lisbon and tell Anu the dates", "count_in": [2, 3]}
     ]
   },
