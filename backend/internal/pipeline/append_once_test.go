@@ -184,17 +184,38 @@ func TestCompletingTwiceAppendsExactlyOnce(t *testing.T) {
 	}
 }
 
-// Two deliveries racing against one note. Run under -race.
+// Two deliveries of the same capture racing each other. Run under -race.
+//
+// Both succeeding was never the contract. The claim is a mutex with one
+// holder. A delivery that loses the `appending` status write concedes (a
+// nil return, see concede); one that gets past it and finds its own token
+// unfinished inside the lease either finishes the bookkeeping, when the
+// holder's paragraph is already in the body, or fails with
+// errAppendClaimHeld when it is not (the comment above that return in
+// append says why failing is right there). Lambda's retry of a failed
+// delivery finds the capture appended and returns without a second append.
+// So the guarantee is: the text lands exactly once, the capture is appended
+// by the time both deliveries have returned, at most one of them errs, and
+// the retry is a no-op. The earlier form of this test demanded two nil
+// returns, which held only when the loser conceded before the claim or read
+// the body after the holder's write.
+//
+// One more error is tolerated, and it is a wart rather than the design: a
+// loser that went into finishAppend beside the holder can lose the
+// completion's conditional write and surface repository.ErrVersionConflict,
+// because CompleteCaptureAppend does not re-read on a lost race to see that
+// its own token was completed by the other attempt. The retry still finds the
+// capture appended, which is asserted below. Under -race -count=200 the
+// earlier form failed three runs in two hundred, every one with this
+// conflict and none with errAppendClaimHeld. When CompleteCaptureAppend
+// learns to return the completed row for its own token, drop
+// ErrVersionConflict from the tolerated pair.
 func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	f := newAppendFixture(t, memory.NewObjects(), nil)
-	// The harness clock is fixed, so a delivery that finds the other's stamp
-	// waits until it clears and not until a wall-clock deadline; a short poll
-	// keeps that wait to milliseconds under -count=50.
-	f.h.pipeline.cfg.AppendStampPoll = 50 * time.Millisecond
-	// The fixed clock also means the wait has no deadline of its own: were
-	// finishAppend ever to stop clearing the stamp, the loser would poll for
-	// ever. The context is the bound, so that regression fails with ctx.Err()
-	// instead of hanging the package to the go test timeout.
+	// Nothing on this path waits on the harness's fixed clock — the only
+	// stamp on the note is this capture's own, so anotherAppendInFlight is
+	// false — but a regression that loops would hang the package to the go
+	// test timeout; the context is the bound.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -212,13 +233,45 @@ func TestConcurrentCompleteCaptureAppendsExactlyOnce(t *testing.T) {
 	close(start)
 	wg.Wait()
 
+	lost := 0
 	for i, err := range errs {
-		if err != nil {
-			t.Fatalf("completion %d failed: %v", i, err)
+		if err == nil {
+			continue
 		}
+		if !errors.Is(err, errAppendClaimHeld) && !errors.Is(err, repository.ErrVersionConflict) {
+			t.Fatalf("completion %d failed with something other than the claim race: %v", i, err)
+		}
+		lost++
+		t.Logf("completion %d lost the claim race, as designed: %v", i, err)
+	}
+	if lost > 1 {
+		t.Fatal("both completions lost; one of them held the claim and should have appended")
+	}
+	settled, err := f.store.GetCapture(ctx, "user1", "capture1")
+	if err != nil {
+		t.Fatalf("GetCapture: %v", err)
+	}
+	if settled.Status != model.StatusAppended || settled.AppendedAt == 0 {
+		t.Fatalf("both deliveries returned with the capture at %s (appended_at %d); the holder did not finish",
+			settled.Status, settled.AppendedAt)
 	}
 	if got := strings.Count(f.body(t), appendedText); got != 1 {
 		t.Fatalf("two concurrent completions wrote the text %d times, want 1:\n%s", got, f.body(t))
+	}
+
+	// Lambda's retry of the loser: a no-op on an appended capture.
+	final, err := f.run(ctx)
+	if err != nil {
+		t.Fatalf("retry after the race: %v", err)
+	}
+	if final.Status != model.StatusAppended {
+		t.Fatalf("status after the retry = %s, want appended", final.Status)
+	}
+	if got := strings.Count(f.body(t), appendedText); got != 1 {
+		t.Fatalf("the retry left the text %d times in the note, want 1:\n%s", got, f.body(t))
+	}
+	if note := mustGetNote(t, f.store, "user1", "note1"); note.AppendingCapture != "" {
+		t.Fatalf("stamp %q left on the note after the race settled", note.AppendingCapture)
 	}
 }
 
