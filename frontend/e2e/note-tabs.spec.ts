@@ -1,4 +1,4 @@
-import { devices, type CDPSession } from '@playwright/test';
+import { devices, type CDPSession, type Page } from '@playwright/test';
 
 import { expect, noteAction, test, type ApiState } from './fixtures.ts';
 
@@ -166,5 +166,109 @@ test.describe('on a phone', () => {
     expect(midPhase).toBe('idle');
     await expect.poll(() => panel.evaluate((sheet) => sheet.scrollTop)).toBeLessThan(before);
     expect(await page.locator('.app__main').evaluate((main) => main.scrollTop)).toBe(0);
+  });
+
+  test.describe('with the keyboard up', () => {
+    /*
+     * CDP cannot raise a keyboard — `visualViewport` ignores the emulated
+     * metrics — so the tests write what `useKeyboardInset` would: a 400 px
+     * keyboard on a 915 px phone (R6-NAV-2). What is measured is what the
+     * property does to the scroll container and the drawer.
+     */
+    const INSET = 400;
+
+    async function raiseKeyboard(page: Page): Promise<void> {
+      await page.evaluate((inset) => {
+        document.documentElement.style.setProperty('--keyboard-inset', `${String(inset)}px`);
+      }, INSET);
+    }
+
+    /** The active element's bottom edge and the scroll region's, in viewport pixels. */
+    async function edges(page: Page): Promise<{ active: number; main: number }> {
+      return page.evaluate(() => {
+        const active = document.activeElement?.getBoundingClientRect().bottom ?? 0;
+        const main = document.querySelector('.app__main')!.getBoundingClientRect().bottom;
+        return { active: Math.round(active), main: Math.round(main) };
+      });
+    }
+
+    test('typing at the end of a long note keeps the caret line above the keyboard', async ({
+      page,
+      api,
+    }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      await raiseKeyboard(page);
+      const body = page.getByRole('textbox', { name: 'Note body' });
+      await body.evaluate((textarea: HTMLTextAreaElement) => {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      });
+      // The end of the note 700 px below the fold: the reveal has to scroll.
+      await page.locator('.app__main').evaluate((main) => {
+        main.scrollTop = main.scrollHeight - main.clientHeight - 700;
+      });
+      await page.keyboard.press('End');
+      await page.keyboard.type('x');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('the last line');
+      // The textarea's bottom is the caret line plus 13 px of padding; the
+      // caret must sit above the keyboard's top edge. Without the inset it
+      // rests at the region's edge, 13 px under the keyboard (E1: 835).
+      await expect
+        .poll(async () => {
+          const { active, main } = await edges(page);
+          return active - 13 <= main - INSET;
+        })
+        .toBe(true);
+    });
+
+    test('Enter in the last item of a long checklist puts the new item above the keyboard', async ({
+      page,
+      api,
+    }) => {
+      const note = api.notes['roof-repair']!;
+      note.kind = 'checklist';
+      note.body = Array.from({ length: 40 }, (_, index) => `- [ ] Item ${String(index + 1)}`).join(
+        '\n',
+      );
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      await raiseKeyboard(page);
+      const last = page.getByRole('list', { name: 'Items' }).locator('textarea.checklist__text').nth(39);
+      await last.evaluate((textarea: HTMLTextAreaElement) => {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      });
+      await page.locator('.app__main').evaluate((main) => {
+        main.scrollTop = main.scrollHeight - main.clientHeight - 600;
+      });
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('new one');
+      await expect
+        .poll(async () => {
+          const { active, main } = await edges(page);
+          return active <= main - INSET;
+        })
+        .toBe(true);
+    });
+
+    test('the Details sheet rises above the keyboard', async ({ page, api }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      await raiseKeyboard(page);
+      await noteAction(page, 'Details');
+      const panel = page.locator('.note-panel');
+      await expect(panel).toBeVisible();
+      const bottom = await panel.evaluate((sheet) => Math.round(sheet.getBoundingClientRect().bottom));
+      const main = await page
+        .locator('.app__main')
+        .evaluate((region) => Math.round(region.getBoundingClientRect().bottom));
+      expect(bottom).toBeLessThanOrEqual(main - INSET);
+      // Lifted by the inset, not twice: the padding is the region's, not the sheet's.
+      expect(bottom).toBeGreaterThan(main - INSET - 2);
+    });
   });
 });

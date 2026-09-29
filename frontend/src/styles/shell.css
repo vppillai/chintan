@@ -97,6 +97,30 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding: calc(var(--layout-focus-ring-width) + var(--layout-focus-ring-offset));
+  /*
+   * The on-screen keyboard (`useKeyboardInset`, `--keyboard-inset` on <html>).
+   * Chrome on Android and iOS shrink only the visual viewport for it, so this
+   * region's bottom edge stays under the keyboard and the browser's caret
+   * reveal scrolls no further than that edge: typing at the end of a note
+   * left the caret line at 835 on a 915 px phone whose keyboard began at 515
+   * (R6-NAV-2, K3). Two rules, both needed (E1, inset 400): the padding is
+   * the room to scroll the end of the note above the keyboard, the
+   * scroll-padding moves the reveal target above it — together the caret
+   * line lands at 822 − 400 + 2; scroll-padding alone stuck at 798 (no room),
+   * padding alone stayed at 835 (target unchanged). The inset is the
+   * window's, and with the tab bar rendered this region ends 93 px above the
+   * window's bottom, so the padding overshoots by that much — the caret
+   * rests a bar's height above the keyboard, not flush against it; the bar
+   * is not on every screen, so it is not subtracted. The meta
+   * `interactive-widget=resizes-content` would shrink the layout viewport
+   * instead, but it is Android-only and would put the tab bar's 92 px record
+   * disc on top of the keyboard, a fifth of what is left of the screen.
+   */
+  padding-block-end: var(--keyboard-inset, 0px);
+  scroll-padding-block-end: calc(
+    var(--keyboard-inset, 0px) + var(--space-4) + var(--layout-focus-ring-width) +
+      var(--layout-focus-ring-offset)
+  );
   /* A shade below the shell: the plane the cards rest on (backlog N10). */
   background-color: var(--color-ground-deep);
 }
