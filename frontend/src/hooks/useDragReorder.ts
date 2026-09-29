@@ -29,6 +29,19 @@ import {
  * that moved: a caller that stores a permutation needs the first, one that
  * rewrites a text body needs to know which line moved to where.
  *
+ * A caller whose rows have levels — the checklist — passes `onShift` and the
+ * pointer's origin to `start`, and the drag then has two axes. The first
+ * `AXIS_SLOP_PX` px of travel decide which: more sideways than up and down and
+ * the row keeps its slot while every `LEVEL_PX` px right or left is one level
+ * in or out (`draftShift`, clamped to one level either way, for the caller to
+ * preview); otherwise it is the reorder above. Release on the sideways axis
+ * calls `onShift` with the levels, or nothing when the pointer came back
+ * under a step. Locked once decided, so a vertical drag that drifts sideways
+ * never changes the level and a sideways one never re-sorts; and a drag past
+ * the slop on either axis is no longer a tap, so a wobble on the handle does
+ * not open its menu. Without `onShift` or an origin — the pinned group —
+ * every move is vertical and there is no slop, as before.
+ *
  * Two things a finger needs. `touch-action` cannot change mid-gesture, so a
  * native non-passive `touchmove` listener cancels the page's scroll only
  * while a row is lifted — before that, a finger that moves is scrolling. And
@@ -40,10 +53,21 @@ import {
  * the capture that click is targeted at the list, not at the handle.
  */
 
+/** Travel before a two-axis drag decides its axis: `useSwipeActions`'s own slop. */
+const AXIS_SLOP_PX = 10;
+/** Sideways travel per level: the indent step, `--space-6` (checklist.css draws it). */
+const LEVEL_PX = 24;
+
+type Levels = -1 | 0 | 1;
+
 interface Drag<T> {
   pointerId: number;
   id: T;
   moved: boolean;
+  /** Where the pointer went down, when the caller said; the axis is decided from here. */
+  origin: { x: number; y: number } | null;
+  axis: 'undecided' | 'x' | 'y';
+  levels: Levels;
 }
 
 export interface DragReorderHandlers {
@@ -59,9 +83,15 @@ export interface DragReorderHandlers {
 export interface DragReorder<T extends string> {
   /** The order while a row is lifted; null when none is. */
   draft: readonly T[] | null;
+  /** The level change a sideways drag would make on release; null when none is on. */
+  draftShift: { id: T; levels: Levels } | null;
   draggingId: T | null;
-  /** Lifts the row `id` under this pointer. A second lift while one is on is ignored. */
-  start: (pointerId: number, id: T) => void;
+  /**
+   * Lifts the row `id` under this pointer. A second lift while one is on is
+   * ignored. `origin` is where the pointer went down; with `onShift`, it is
+   * what makes the drag two-axis.
+   */
+  start: (pointerId: number, id: T, origin?: { x: number; y: number }) => void;
   listHandlers: DragReorderHandlers;
   /** One slot up (-1) or down (+1) for the row, committed at once: the arrow keys, a menu item. */
   step: (id: T, by: -1 | 1) => void;
@@ -74,6 +104,7 @@ export function useDragReorder<T extends string>({
   ids,
   onCommit,
   onTap,
+  onShift,
 }: {
   listRef: RefObject<HTMLElement | null>;
   /** The ids in the order shown, one per row with `data-drag-id`. */
@@ -81,16 +112,26 @@ export function useDragReorder<T extends string>({
   onCommit: (next: T[], moved: T) => void;
   /** A lift that ended where it began: the pointer tapped the handle of row `id`. */
   onTap?: (id: T) => void;
+  /** A sideways drag released one level right (1) or left (-1) of where it began. */
+  onShift?: (id: T, levels: -1 | 1) => void;
 }): DragReorder<T> {
   const [draft, setDraft] = useState<T[] | null>(null);
+  const [draftShift, setDraftShift] = useState<{ id: T; levels: Levels } | null>(null);
   const [draggingId, setDraggingId] = useState<T | null>(null);
   const drag = useRef<Drag<T> | null>(null);
   const live = useRef<T[]>([]);
   const swallowClick = useRef(false);
 
-  const start = (pointerId: number, id: T): void => {
+  const start = (pointerId: number, id: T, origin?: { x: number; y: number }): void => {
     if (drag.current) return;
-    drag.current = { pointerId, id, moved: false };
+    drag.current = {
+      pointerId,
+      id,
+      moved: false,
+      origin: origin ?? null,
+      axis: onShift && origin ? 'undecided' : 'y',
+      levels: 0,
+    };
     live.current = [...ids];
     setDraft([...ids]);
     setDraggingId(id);
@@ -107,6 +148,7 @@ export function useDragReorder<T extends string>({
     drag.current = null;
     setDraggingId(null);
     setDraft(null);
+    setDraftShift(null);
     try {
       listRef.current?.releasePointerCapture(pointerId);
     } catch {
@@ -120,6 +162,10 @@ export function useDragReorder<T extends string>({
     // a tap on what is under it.
     swallowClick.current = true;
     if (cancelled || !current.moved) return;
+    if (current.axis === 'x') {
+      if (current.levels !== 0) onShift?.(current.id, current.levels);
+      return;
+    }
     onCommit(live.current, current.id);
   };
 
@@ -145,6 +191,22 @@ export function useDragReorder<T extends string>({
     onPointerMove: (event) => {
       const current = drag.current;
       if (!current || current.pointerId !== event.pointerId) return;
+      const dx = current.origin ? event.clientX - current.origin.x : 0;
+      const dy = current.origin ? event.clientY - current.origin.y : 0;
+      if (current.axis === 'undecided') {
+        if (Math.hypot(dx, dy) <= AXIS_SLOP_PX) return;
+        current.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+        // Decided is moved: past the slop on either axis, the lift is no tap.
+        current.moved = true;
+      }
+      if (current.axis === 'x') {
+        // `|| 0` folds the -0 a small leftward trunc gives into plain 0.
+        const levels = (Math.max(-1, Math.min(1, Math.trunc(dx / LEVEL_PX))) || 0) as Levels;
+        if (levels === current.levels) return;
+        current.levels = levels;
+        setDraftShift({ id: current.id, levels });
+        return;
+      }
       const rows = Array.from(
         listRef.current?.querySelectorAll<HTMLElement>('[data-drag-id]') ?? [],
       );
@@ -215,5 +277,5 @@ export function useDragReorder<T extends string>({
     };
   });
 
-  return { draft, draggingId, start, listHandlers, step, cancel };
+  return { draft, draftShift, draggingId, start, listHandlers, step, cancel };
 }
