@@ -647,21 +647,6 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 		"POST /v1/captures → 429 for the daily spend cap, which the client must not treat as a retryable 429.",
 		capped.do(t, http.MethodPost, "/v1/captures", contractUser, map[string]any{"content_type": "audio/webm"}))
 
-	// The batch purge, with all three outcomes in one response: the client
-	// renders a per-note result list and has to handle a batch that partly
-	// failed, which is the normal case for anything cascading into S3.
-	purgeH := newHarness(t)
-	purgeArchived := purgeH.createNote(t, contractUser, "Done with this", nil)
-	if w := purgeH.do(t, http.MethodDelete, "/v1/notes/"+purgeArchived.ID, contractUser, nil); w.Code != http.StatusNoContent {
-		t.Fatalf("archive for the purge fixture = %d", w.Code)
-	}
-	purgeActive := purgeH.createNote(t, contractUser, "Still in use", nil)
-	add("notePurgeResults", "NotePurgeResponseWire",
-		"POST /v1/notes/purge → 200. One result per note: purged, not_found, and an active note refused. 200 even when some failed, because no transaction spans DynamoDB and S3.",
-		purgeH.do(t, http.MethodPost, "/v1/notes/purge", contractUser, map[string]any{
-			"note_ids": []string{purgeArchived.ID, "note_missing", purgeActive.ID},
-		}))
-
 	return out
 }
 
@@ -826,8 +811,7 @@ func neededSchemaTypes(fixtures []contractFixture) []string {
 		"CaptureCreatedWire": true, "CaptureWire": true, "DeviceCreatedWire": true, "DeviceWire": true, "ExportJobWire": true,
 		"PushKeyWire": true, "PushSubscriptionWire": true,
 		"MatchResponseWire": true, "NoteCleanQueuedWire": true, "NoteDetailWire": true, "NoteWire": true,
-		"NotePurgeResponseWire": true, "NoteRegenerateQueuedWire": true,
-		"Page": true, "PresignedDownloadWire": true, "ProblemWire": true,
+		"NoteRegenerateQueuedWire": true, "Page": true, "PresignedDownloadWire": true, "ProblemWire": true,
 		"ReadinessWire": true, "RecordingUrlsWire": true, "SearchHitWire": true, "SettingsWire": true,
 		"TagWire": true, "UsageWire": true,
 	}

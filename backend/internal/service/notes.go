@@ -881,7 +881,7 @@ func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID
 		return ErrNoteNotArchived
 	}
 
-	return s.hardDeleteNote(ctx, userID, noteID, note, nil)
+	return s.hardDeleteNote(ctx, userID, noteID, note)
 }
 
 // hardDeleteNote removes a note's captures, its objects, and finally its index.
@@ -890,8 +890,8 @@ func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID
 // permanently orphans audio the UI has reported as purged. Here the index
 // survives any failure, so the note stays visible as archived and the delete
 // can be retried.
-func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex, legacy *unindexedCaptures) error {
-	if err := s.purgeNoteArtifacts(ctx, userID, noteID, note, legacy); err != nil {
+func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
+	if err := s.PurgeNoteArtifacts(ctx, userID, noteID, note); err != nil {
 		return err
 	}
 	return s.store.DeleteNote(ctx, userID, noteID)
@@ -918,13 +918,6 @@ func (s *NotesService) DiscardNote(ctx context.Context, userID string, note mode
 	return s.store.DeleteNote(ctx, userID, note.ID)
 }
 
-// unindexedCaptures is the tenant's captures the note index cannot see (see
-// PurgeNoteArtifacts), read once and shared by every note of one batch. A nil
-// *unindexedCaptures means "read them now", which a single delete does.
-type unindexedCaptures struct {
-	captures []model.CaptureIndex
-}
-
 // PurgeNoteArtifacts unlinks everything a note owns apart from its own index
 // row: every capture filed against it, every S3 object those captures name, and
 // the note's own body and metadata.
@@ -943,15 +936,6 @@ type unindexedCaptures struct {
 // Every failure is returned rather than logged, so a caller that must not
 // declare a purge complete can tell that it is not.
 func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
-	return s.purgeNoteArtifacts(ctx, userID, noteID, note, nil)
-}
-
-// purgeNoteArtifacts is PurgeNoteArtifacts with the base-table read of the
-// unindexed captures supplied by the caller when it has already made it. A
-// batch purge of a hundred notes made that read — the tenant's whole capture
-// partition — a hundred times, once per note, and could not finish inside the
-// API function's 29 seconds (review 2026-09-05, S6).
-func (s *NotesService) purgeNoteArtifacts(ctx context.Context, userID, noteID string, note model.NoteIndex, legacy *unindexedCaptures) error {
 	// Every page, not just the first: a truncated list is how "delete forever"
 	// leaves orphans behind.
 	captures, err := repository.DrainPages(ctx, 0, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
@@ -974,14 +958,11 @@ func (s *NotesService) purgeNoteArtifacts(ctx context.Context, userID, noteID st
 	for _, c := range captures {
 		seen[c.ID] = true
 	}
-	if legacy == nil {
-		unindexed, err := s.store.ListUnindexedCaptures(ctx, userID)
-		if err != nil {
-			return fmt.Errorf("%w: list unindexed captures: %w", ErrPurgeIncomplete, err)
-		}
-		legacy = &unindexedCaptures{captures: unindexed}
+	unindexed, err := s.store.ListUnindexedCaptures(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("%w: list unindexed captures: %w", ErrPurgeIncomplete, err)
 	}
-	for _, c := range legacy.captures {
+	for _, c := range unindexed {
 		if c.NoteID == noteID && !seen[c.ID] {
 			captures = append(captures, c)
 		}
@@ -1014,188 +995,4 @@ func (s *NotesService) purgeNoteArtifacts(ctx context.Context, userID, noteID st
 // purge can make progress.
 func (s *NotesService) deleteObject(ctx context.Context, key string) error {
 	return deleteObjectIfPresent(ctx, s.objects, key)
-}
-
-// MaxPurgeBatch bounds one batch purge by count; purgeTimeBudget bounds it by
-// time, which is the bound that actually holds.
-//
-// A purge is not one delete but a cascade over every capture of every note
-// named, and each capture unlinks six objects. A hundred notes with a handful
-// of captures each is already several hundred S3 calls, and whether that fits
-// the API Lambda's 29 seconds depends on S3's mood, not on the count: the
-// owner's small batch took 5.5 s. So the count bounds the request body and the
-// clock bounds the work — a batch that runs out of time stops and reports the
-// notes it did not reach as failed, "not attempted", for the client to send
-// again, rather than running into the gateway's 504 and leaving the client's
-// idempotency key claimed for the lease. "Clear all" is the client listing its
-// archive and sending it in batches, which is also why there is deliberately
-// no "purge everything" switch — a flag like that is one malformed request
-// away from emptying an account, and nothing here needs it.
-const MaxPurgeBatch = 100
-
-// purgeTimeBudget is how long one PurgeNotes call works before it stops
-// starting notes. The API function's Timeout is 29 s and the gateway's
-// ceiling 30 s; twenty seconds leaves the note in progress time to finish and
-// the response time to be written.
-const purgeTimeBudget = 20 * time.Second
-
-// purgeDeadlineMargin is kept back from the request's own deadline when that
-// is nearer than the budget, so the response is written before the deadline
-// rather than the work running into it.
-const purgeDeadlineMargin = 4 * time.Second
-
-// The fixed sentences a note the batch did not reach carries. They reach the
-// user, and they ask for exactly one thing.
-const (
-	purgeNotAttemptedDetail = "not attempted: this batch ran out of time; send the remaining notes again"
-	purgeLegacyListFailed   = "the account's recordings could not be listed, so nothing was deleted; try again"
-)
-
-// Purge outcomes. They are stable strings because a client branches on them.
-const (
-	// PurgeStatusPurged means the note and everything it owned are gone.
-	PurgeStatusPurged = "purged"
-	// PurgeStatusNotFound means there was no such note. Replaying a batch that
-	// already succeeded reports this, which is what makes a retry safe.
-	PurgeStatusNotFound = "not_found"
-	// PurgeStatusFailed means the note is still there. Either it was not
-	// archived — refusing that is what stops a stale client turning "clear my
-	// archive" into "delete my notes" — or part of its cascade failed, in which
-	// case the index row is deliberately left so the delete can be retried.
-	PurgeStatusFailed = "failed"
-)
-
-// PurgeResult is one note's outcome. Detail is written for a person and never
-// carries infrastructure text.
-type PurgeResult struct {
-	NoteID string `json:"note_id"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
-}
-
-// ErrPurgeBatchTooLarge rejects a batch above MaxPurgeBatch.
-var ErrPurgeBatchTooLarge = errors.New("too many notes in one purge")
-
-// ErrPurgeBatchEmpty rejects a batch naming nothing.
-var ErrPurgeBatchEmpty = errors.New("no notes named")
-
-// PurgeNotes permanently deletes several archived notes and reports each
-// outcome separately.
-//
-// It is not all-or-nothing, and it does not pretend to be. There is no
-// transaction spanning DynamoDB and S3, so a batch that reported a single
-// success or failure would be lying about the notes on the other side of the
-// first problem; the client is told what happened to each and can show what
-// survived.
-//
-// One note's failure never stops the batch. The alternative — abandoning the
-// rest — turns a single unlinkable object into a purge the user has to retry
-// from the beginning, repeatedly, with a different note failing each time.
-func (s *NotesService) PurgeNotes(ctx context.Context, userID string, noteIDs []string) ([]PurgeResult, error) {
-	switch {
-	case len(noteIDs) == 0:
-		return nil, ErrPurgeBatchEmpty
-	case len(noteIDs) > MaxPurgeBatch:
-		return nil, ErrPurgeBatchTooLarge
-	}
-
-	results := make([]PurgeResult, 0, len(noteIDs))
-	// A batch may name the same note twice — a client assembling "clear all"
-	// from overlapping pages will. Purging it once and reporting the second as
-	// already gone is honest; running the cascade twice is wasted work.
-	seen := make(map[string]bool, len(noteIDs))
-
-	// The clock the batch works against. The request's own deadline wins when
-	// it is the nearer, less the margin the response needs.
-	budget := purgeTimeBudget
-	if d, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(d) - purgeDeadlineMargin; remaining < budget {
-			budget = remaining
-		}
-	}
-	stopAt := s.now().Add(budget)
-
-	// The base-table read of the captures the index cannot see, once for the
-	// whole batch rather than once per note.
-	unindexed, err := s.store.ListUnindexedCaptures(ctx, userID)
-	if err != nil {
-		obs.Log(ctx).Error("batch purge could not list the tenant's unindexed captures; nothing was deleted",
-			slog.Int("notes", len(noteIDs)), slog.String("error", err.Error()))
-		for _, noteID := range noteIDs {
-			results = append(results, PurgeResult{NoteID: noteID, Status: PurgeStatusFailed, Detail: purgeLegacyListFailed})
-		}
-		return results, nil
-	}
-	legacy := &unindexedCaptures{captures: unindexed}
-
-	notAttempted := 0
-	for _, noteID := range noteIDs {
-		if seen[noteID] {
-			results = append(results, PurgeResult{
-				NoteID: noteID, Status: PurgeStatusNotFound,
-				Detail: "named more than once in this batch",
-			})
-			continue
-		}
-		seen[noteID] = true
-		if !s.now().Before(stopAt) {
-			notAttempted++
-			results = append(results, PurgeResult{NoteID: noteID, Status: PurgeStatusFailed, Detail: purgeNotAttemptedDetail})
-			continue
-		}
-		results = append(results, s.purgeOne(ctx, userID, noteID, legacy))
-	}
-	if notAttempted > 0 {
-		obs.Log(ctx).Warn("batch purge ran out of time; the remaining notes were reported for retry",
-			slog.Int("notes", len(noteIDs)), slog.Int("not_attempted", notAttempted),
-			slog.Int64("budget_ms", budget.Milliseconds()))
-		obs.Count(ctx, "NotePurgeBatchOutOfTime", nil)
-	}
-	return results, nil
-}
-
-// purgeOne is PermanentlyDeleteNote with its errors turned into an outcome
-// rather than a failure of the whole request.
-func (s *NotesService) purgeOne(ctx context.Context, userID, noteID string, legacy *unindexedCaptures) PurgeResult {
-	note, err := s.store.GetNote(ctx, userID, noteID)
-	switch {
-	case errors.Is(err, repository.ErrNotFound):
-		// Already gone, or never existed, or belongs to another tenant — the
-		// store cannot tell those apart from here and must not, since the
-		// answer would confirm another tenant's identifier.
-		return PurgeResult{NoteID: noteID, Status: PurgeStatusNotFound, Detail: "no such note"}
-	case err != nil:
-		return PurgeResult{
-			NoteID: noteID, Status: PurgeStatusFailed,
-			Detail: "the note could not be read; nothing was deleted",
-		}
-	}
-
-	if NoteIsActive(note) {
-		// The refusal that matters. A client working from a stale archive
-		// listing would otherwise turn "clear my archive" into "delete the
-		// notes I am still using", and a purge is not reversible.
-		return PurgeResult{
-			NoteID: noteID, Status: PurgeStatusFailed,
-			Detail: "this note is not archived, so it was not deleted; archive it first",
-		}
-	}
-
-	if err := s.hardDeleteNote(ctx, userID, noteID, note, legacy); err != nil {
-		// The index row survives a failed cascade by design, so the note is
-		// still listed as archived and the purge can be retried. Reporting
-		// success here would leave audio in the bucket that the UI had already
-		// said was deleted.
-		//
-		// The detail is fixed text: the underlying error carries bucket and
-		// table names, and it is logged rather than returned.
-		obs.Log(ctx).Error("batch purge could not finish a note",
-			slog.String("note_id", noteID), slog.String("error", err.Error()))
-		return PurgeResult{
-			NoteID: noteID, Status: PurgeStatusFailed,
-			Detail: "some of this note's files could not be removed; it is still here and can be deleted again",
-		}
-	}
-
-	return PurgeResult{NoteID: noteID, Status: PurgeStatusPurged}
 }

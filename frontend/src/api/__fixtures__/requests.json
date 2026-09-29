@@ -170,16 +170,6 @@
     "path": "/v1/notes/contract-archived-note/permanent"
   },
   {
-    "name": "purgeNotesBatch",
-    "method": "POST",
-    "path": "/v1/notes/purge",
-    "body": {
-      "note_ids": [
-        "contract-archived-note"
-      ]
-    }
-  },
-  {
     "name": "recordingUrls",
     "method": "GET",
     "path": "/v1/notes/contract-note/recordings/urls"

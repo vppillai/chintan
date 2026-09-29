@@ -32,7 +32,6 @@ func (rt *router) routes() {
 	rt.handle("POST "+p+"/notes/match", rt.matchNotes)
 	// Before "/notes/{noteId}" in the table for readability only: ServeMux
 	// prefers the more specific literal pattern regardless of order.
-	rt.handle("POST "+p+"/notes/purge", rt.purgeNotes, idempotent(), body(MaxNoteRequestBytes))
 	// The Pinned group's order, one request per drag.
 	rt.handle("POST "+p+"/notes/pins", rt.reorderPins, idempotent())
 	rt.handle("GET "+p+"/notes/{noteId}", rt.getNote)
