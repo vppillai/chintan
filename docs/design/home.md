@@ -17,8 +17,7 @@ empty states) — `features/notes/groups.ts`
 `components/ConfirmDialog.tsx` and `components/DeleteConfirm.tsx`, `usePinNote` and `useReorderPins`
 (`api/queries/notes.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
 the rows, chips, field and heading, then the overrides), the drawn checkbox
-(`features/notes/ChecklistEditor.tsx` `Check` / `CheckMark`,
-`styles/checklist.css`).
+(`components/CheckMark.tsx` `Check` / `CheckMark`, `styles/checklist.css`).
 
 ## Header
 
