@@ -161,11 +161,16 @@ titled as a new note on 2026-09-27; the name must be two words or eight
 letters, the longest match wins, and the derived content is kept as the model
 left it (R6-RT-1, decision R6-RT-OD1); and so does an append under the bar
 whose own suggested note is *spoken as a name* — one of its names as whole
-words, two words or eight letters, followed by "note" or "list" or beside an
-instruction cue ("okay so this goes in the roof repair note …", "Create a new
-note and add it to Pebble Ring Test"; `spoken_name`, R6-RT-7) — the model's
-own suggestion confirmed, never a re-pick among the candidates, and never a
-topic mention ("I was thinking about the roof today"); a one-word name of
+words, two words or eight letters, followed by "note" or "list" or spoken as
+the object of an instruction cue, at most "my"/"the"/"our" between
+(`routing.NamedAfterCue`; "okay so this goes in the roof repair note …",
+"Create a new note and add it to Pebble Ring Test"; `spoken_name`, R6-RT-7)
+— the model's own suggestion confirmed, never a re-pick among the
+candidates, and never a topic mention ("I was thinking about the roof
+today", "put this in my journal I was thinking about the roof repair
+today"), nor a cue naming a different note than the model picked ("add this
+to my roof repair note …" with Portugal trip suggested parks, as before);
+a one-word name of
 five to seven letters ("dentist", "house") waits on the owner (triage
 2026-09-29). On the path that is about to create a
 note the active list is read once more and the same rule run over it, so two

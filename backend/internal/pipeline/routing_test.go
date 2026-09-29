@@ -587,6 +587,7 @@ func TestAnUnsureAppendIsTakenWhenTheSuggestedNoteIsSpokenAsAName(t *testing.T) 
 		{ID: "n3", Title: "Dentist"},
 		{ID: "n4", Title: "Kitchen rebuild", Tags: []string{"house", "money"}},
 		{ID: "n5", Title: "Roof repair"}, // the test tenant's bare twin
+		{ID: "n6", Title: "Portugal trip"},
 	}
 	unsure := func(noteID string) provider.RouteDecision {
 		return provider.RouteDecision{Action: provider.RouteAppend, NoteID: noteID, Confidence: 0.5}
@@ -599,6 +600,8 @@ func TestAnUnsureAppendIsTakenWhenTheSuggestedNoteIsSpokenAsAName(t *testing.T) 
 		{"row 14: the title followed by note", "okay so this goes in the roof repair note we need to check the flashing around the chimney", unsure("n1"), "spoken_name"},
 		{"row 9: the title after a filing cue", "Create a new note and add it to Pebble Ring Test", unsure("n2"), "spoken_name"},
 		{"row 8: a topic, not a name", "I was thinking about the roof today and how the Portugal trip went over budget", unsure("n1"), ""},
+		{"a topic mention in a recording whose cue names something else", "put this in my journal I was thinking about the roof repair today", unsure("n1"), ""},
+		{"the cue names a different note than the model suggested", "add this to my roof repair note the portugal trip went over budget", unsure("n6"), ""},
 		{"the name spoken without note, list or a cue is a mention", "the roof repair is going to cost a fortune this year", unsure("n1"), ""},
 		{"row 6: a one-word seven-letter name is the owner's decision", "call this note dentist I need to book a cleaning before December", unsure("n3"), ""},
 		{"row 2: the suggested twin's only name is not spoken", "the gutter is leaking again put that in my roof note", unsure("n5"), ""},

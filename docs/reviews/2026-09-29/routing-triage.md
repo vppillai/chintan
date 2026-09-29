@@ -160,11 +160,16 @@ are in this PR, one commit each.
    whose id is `decision.NoteID` (never a re-pick), one of its names
    (title, aliases, tags) passing `prefixRuleName` (two words or eight
    letters), spoken as whole words, and either followed by "note"/"list" or
-   beside an instruction cue (`routing.MentionsInstruction`); confidence 1
-   as for the prefix rules. Unit table: row 14 and row 9 fire; row 8 run 1
-   ("roof" is a topic), row 6 ("dentist", seven letters — owner decision
-   1), row 2 run 3 (the twin's name not spoken), row 15 ("house") and a
-   bare mention do not. On the owner's tenant it fires only when the model
+   spoken as the object of an instruction cue, at most "my"/"the"/"our"
+   between (`routing.NamedAfterCue` — not `MentionsInstruction`, which
+   only says the recording has a cue somewhere and, in the PR's first
+   draft, filed "put this in my journal I was thinking about the roof
+   repair today" into Roof repair and "add this to my roof repair note …"
+   into a suggested Portugal trip); confidence 1 as for the prefix rules.
+   Unit table: row 14 and row 9 fire; row 8 run 1 ("roof" is a topic), row
+   6 ("dentist", seven letters — owner decision 1), row 2 run 3 (the twin's
+   name not spoken), row 15 ("house"), a bare mention, the journal shape
+   and the cue naming another note do not. On the owner's tenant it fires only when the model
    was unsure, already picked that note, and the full title was spoken next
    to "note"/"list" or with a filing cue — the silent-file-over-ask trade of
    R6-RT-OD1(a), one Move away if wrong. Post-deploy: rows 9 and 14 three
@@ -172,8 +177,9 @@ are in this PR, one commit each.
    testable): 14 → 3/3 into the set-up Roof repair, 9 → 3/3 `no_content`;
    rows 8, 15, 2, 6 unchanged in shape. Over the following two weeks grep
    the owner tenant's log for `matched_by=spoken_name` and expect a handful
-   at most; if it fires on a topic mention, tighten to the "note"/"list"
-   branch only.
+   at most; if it still fires on a topic mention, the fallback is the
+   "note"/"list" branch alone, which loses row 9 run 1 (no "note" after
+   "Pebble Ring Test") and should be said so.
 5. **Prompt: a whole sentence is not a name** — *this PR, R6-RT-8*. One
    Titles sentence after #157's ("A name is a short noun phrase of one to
    five words, never a whole sentence: 'The dog is having his dinner' has

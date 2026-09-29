@@ -480,27 +480,31 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 // name rather than a topic: as whole words, two words or eight letters long
 // (prefixRuleName, for the same reason it exists), and either followed by
 // "note" or "list" ("okay so this goes in the roof repair note …", battery
-// 2026-09-29 row 14, parked twice with that very note suggested) or in a
-// recording that carries an instruction cue ("Create a new note and add it
-// to Pebble Ring Test", row 9, routing.MentionsInstruction). It is the rule
-// for the model's own unsure append (matched_by spoken_name, R6-RT-7): the
-// model picked the note and asked, and the name spoken as a name is what the
-// person would answer with, so the append is taken — the silent-file-over-ask
-// trade of decision R6-RT-OD1 applied to the model's own suggestion. "I was
-// thinking about the roof today" names no note this way, whatever the model
-// suggested. A one-word name of five to seven letters ("dentist", "house")
-// is left to the owner's decision (triage 2026-09-29, owner decision 1): on
-// a tenant with two Dentist notes it turns an ask into a silent file on a
-// name the model was only half sure of.
+// 2026-09-29 row 14, parked twice with that very note suggested) or as the
+// object of an instruction cue ("Create a new note and add it to Pebble
+// Ring Test", row 9, routing.NamedAfterCue). It is the rule for the model's
+// own unsure append (matched_by spoken_name, R6-RT-7): the model picked the
+// note and asked, and the name spoken as a name is what the person would
+// answer with, so the append is taken — the silent-file-over-ask trade of
+// decision R6-RT-OD1 applied to the model's own suggestion. "I was thinking
+// about the roof today" names no note this way, whatever the model
+// suggested; nor does a name mentioned elsewhere in a recording whose cue
+// names something else ("put this in my journal I was thinking about the
+// roof repair today"), nor the cue naming a different note than the model
+// picked ("add this to my roof repair note …" with Portugal trip suggested)
+// — the first PR 170 draft asked routing.MentionsInstruction, a
+// whole-transcript predicate, and filed both. A one-word name of five to
+// seven letters ("dentist", "house") is left to the owner's decision (triage
+// 2026-09-29, owner decision 1): on a tenant with two Dentist notes it turns
+// an ask into a silent file on a name the model was only half sure of.
 func spokenAsName(n model.NoteIndex, transcript string) bool {
 	speech := " " + routing.NormalizeSpeech(transcript) + " "
-	cue := routing.MentionsInstruction(transcript)
 	for _, name := range noteNames(n) {
 		name = routing.NormalizeSpeech(name)
-		if !prefixRuleName(name) || !strings.Contains(speech, " "+name+" ") {
+		if !prefixRuleName(name) {
 			continue
 		}
-		if cue || strings.Contains(speech, " "+name+" note ") || strings.Contains(speech, " "+name+" list ") {
+		if routing.NamedAfterCue(transcript, name) || strings.Contains(speech, " "+name+" note ") || strings.Contains(speech, " "+name+" list ") {
 			return true
 		}
 	}

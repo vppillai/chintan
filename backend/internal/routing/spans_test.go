@@ -117,6 +117,31 @@ func TestMentionsInstruction(t *testing.T) {
 	}
 }
 
+// NamedAfterCue is what spoken_name files on: the name as the object of the
+// filing phrase, not a mention elsewhere in a recording that has a cue
+// somewhere ("put this in my journal I was thinking about the roof repair
+// today" mentions Roof repair and names the journal).
+func TestNamedAfterCue(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		transcript, name string
+		want             bool
+	}{
+		{"Create a new note and add it to Pebble Ring Test", "Pebble Ring Test", true},
+		{"add this to my roof repair note the portugal trip went over budget", "Roof repair", true},
+		{"Put it in the garden beds note please", "Garden beds", true},
+		{"file this under our kitchen rebuild", "Kitchen rebuild", true},
+		{"add this to my roof repair note the portugal trip went over budget", "Portugal trip", false},
+		{"put this in my journal I was thinking about the roof repair today", "Roof repair", false},
+		{"the roof repair is going to cost a fortune", "Roof repair", false},
+		{"add it to the pebble ring test", "", false},
+	} {
+		if got := NamedAfterCue(tc.transcript, tc.name); got != tc.want {
+			t.Errorf("NamedAfterCue(%q, %q) = %v, want %v", tc.transcript, tc.name, got, tc.want)
+		}
+	}
+}
+
 // The router stops a span one word early in two shapes the production battery
 // showed three of three (2026-09-29, rows 13 and 2): before the spoken title,
 // and before the "note" that closes a filing phrase. Both are closed from the

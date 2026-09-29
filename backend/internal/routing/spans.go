@@ -186,3 +186,28 @@ func MentionsInstruction(transcript string) bool {
 	}
 	return false
 }
+
+// NamedAfterCue reports whether name is spoken as the object of an
+// instruction cue in transcript — "add it to Pebble Ring Test", "put this in
+// my roof repair note" — with at most one of "my", "the" or "our" between
+// the cue and the name, both compared in NormalizeSpeech form. It is the
+// precise sibling of MentionsInstruction, which only says a recording
+// carries a cue somewhere: a rule that files silently on a spoken name
+// (spoken_name, R6-RT-7) needs the name to be what the cue names, or "put
+// this in my journal I was thinking about the roof repair today" would file
+// into Roof repair.
+func NamedAfterCue(transcript, name string) bool {
+	name = NormalizeSpeech(name)
+	if name == "" {
+		return false
+	}
+	padded := " " + NormalizeSpeech(transcript) + " "
+	for _, cue := range instructionCues {
+		for _, between := range []string{" ", " my ", " the ", " our "} {
+			if strings.Contains(padded, " "+cue+between+name+" ") {
+				return true
+			}
+		}
+	}
+	return false
+}
