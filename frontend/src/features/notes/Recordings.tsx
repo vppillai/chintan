@@ -324,7 +324,7 @@ export function Recordings({
 
   return (
     <>
-      <section className="recordings" aria-labelledby={headingId} data-selecting={selecting || undefined}>
+      <section className="recordings" aria-labelledby={headingId}>
         {/* The tab above already says it; the heading names the region for a reader. */}
         <h2 id={headingId} className="visually-hidden">
           Recordings

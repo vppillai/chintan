@@ -1,9 +1,9 @@
 import { ConfirmDialog } from './ConfirmDialog.tsx';
 
 /**
- * The "are you sure" before Delete on Home — the row's ⋮ and swipe tray, the
- * note header's ⋮ and the selection bar all ask through this one component,
- * so the question is worded once.
+ * The "are you sure" before Delete on Home — the row's ⋮ and swipe tray and
+ * the note header's ⋮ all ask through this one component, so the question is
+ * worded once, and it always names the note.
  *
  * Delete is the archive, and until 2026-09-27 it happened on the tap with
  * only the toast's Undo as the way back (owner, 2026-09-26: no typed word).
@@ -18,28 +18,20 @@ import { ConfirmDialog } from './ConfirmDialog.tsx';
  */
 export function DeleteConfirm({
   open,
-  count,
   title,
   onConfirm,
   onCancel,
 }: {
   open: boolean;
-  /** How many notes go. One is named by its `title` when it is known. */
-  count: number;
-  title?: string | undefined;
+  title: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const one = count === 1;
   return (
     <ConfirmDialog
       open={open}
-      title={one && title ? `Delete “${title}”?` : `Delete ${String(count)} ${one ? 'note' : 'notes'}?`}
-      body={
-        one
-          ? 'It is kept in the Archive for 30 days, then gone for good.'
-          : 'They are kept in the Archive for 30 days, then gone for good.'
-      }
+      title={`Delete “${title}”?`}
+      body="It is kept in the Archive for 30 days, then gone for good."
       confirmLabel="Delete"
       destructive
       onConfirm={onConfirm}

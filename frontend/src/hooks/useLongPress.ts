@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react';
 
+import { vibrate } from '@/features/capture/feedback.ts';
+
 /**
- * Press and hold to select, the gesture every phone list already teaches.
+ * Press and hold to select a recording row, the gesture every phone list
+ * already teaches.
  *
  * Pointer events rather than touch events, so one implementation serves a
- * finger, a stylus and — since the hover checkbox went (2026-09-24, C) — a
- * mouse: press-and-hold is the one way into selection on every pointer, so
- * nobody has to learn two. Only the primary button: a right-click is the
- * context menu's, and arming on it would suppress that menu below. The press
- * is cancelled the moment the pointer travels more than
- * `LONG_PRESS_TOLERANCE_PX`, which is what keeps a scroll that happens to
- * start on a row from selecting it, and on release, leave or cancel.
+ * finger, a stylus and a mouse: press-and-hold is the one way into selection
+ * on every pointer, so nobody has to learn two. Only the primary button: a
+ * right-click is the context menu's, and arming on it would suppress that
+ * menu below. The press is cancelled the moment the pointer travels more
+ * than `LONG_PRESS_TOLERANCE_PX`, which is what keeps a scroll that happens
+ * to start on a row from selecting it, and on release, leave or cancel.
  *
  * A long press that fires is followed by the browser's own `click` when the
- * finger lifts; the row would open the note it had just selected. `consumeClick`
- * reports and clears that, so the row's click handler can return early once.
+ * finger lifts; the row would take it for a tap on the row it had just
+ * selected. `consumeClick` reports and clears that, so the row's click
+ * handler can return early once.
  * The context menu that Android raises for the same hold is suppressed while
  * a press is armed — that event is also where the platform's text selection
  * begins, so cancelling it is what keeps a held row from turning into a
@@ -77,9 +80,7 @@ export function useLongPress(onLongPress: (() => void) | null, ms: number = LONG
         timer.current = null;
         origin.current = null;
         fired.current = true;
-        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-          navigator.vibrate(10);
-        }
+        vibrate(10);
         callback.current?.();
       }, ms);
     },

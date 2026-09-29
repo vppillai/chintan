@@ -46,7 +46,8 @@ async function tone(context: AudioContext, frequency: number): Promise<void> {
   }
 }
 
-function vibrate(pattern: number | number[]): void {
+/** A haptic tick where the platform offers one; silent where it does not (iOS). */
+export function vibrate(pattern: number | number[]): void {
   try {
     navigator.vibrate?.(pattern);
   } catch {

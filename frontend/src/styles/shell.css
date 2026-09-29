@@ -1019,53 +1019,6 @@
   color: var(--color-ink);
 }
 
-/* --------------------------------------------------------------------------
-   Hold to confirm, for a bulk delete forever of many notes
-   -------------------------------------------------------------------------- */
-
-/*
- * The fill grows across the button for the length of the hold (`--hold-ms`,
- * set by the component), behind the label and above the button's own
- * ground: within the button's stacking context a negative z-index child
- * paints over the background and under the text. Letting go part-way clears
- * `data-holding` and the fill snaps back. Under reduced motion the fill
- * appears whole at once; the second's wait is the gate, the animation only
- * shows it passing.
- *
- * `--color-destructive` rather than `--color-accent-strong`: in Nocturne
- * accent-strong *is* the accent the button is painted with, so the fill was
- * invisible in the dark theme. The destructive token differs from the accent
- * in both themes and stays legible under `--color-on-accent`.
- */
-.dialog__action--hold {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  touch-action: none;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.dialog__hold-fill {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background-color: var(--color-destructive);
-  transform: scaleX(0);
-  transform-origin: left;
-}
-
-.dialog__action--hold[data-holding] .dialog__hold-fill {
-  transform: scaleX(1);
-  transition: transform var(--hold-ms, 1s) linear;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dialog__action--hold[data-holding] .dialog__hold-fill {
-    transition: none;
-  }
-}
-
 /* A disabled confirm has to *look* disabled, or it reads as a broken button. */
 .dialog__action[disabled],
 .dialog__action--destructive[disabled] {

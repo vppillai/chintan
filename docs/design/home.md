@@ -3,17 +3,15 @@
 Home is the notes list: pinned notes first, in the order the person put them,
 then every other note under the day it was last touched, newest first, with a
 search field and a row of filter chips above. Rows act on themselves — swipe,
-the ⋮ menu, press-and-hold to select — so the screen knows nothing of archive
-or pin. This note is the frontend; `pins.md` is the backend of pinning. Code:
+the ⋮ menu — so the screen knows nothing of archive or pin. This note is the
+frontend; `pins.md` is the backend of pinning. Code:
 `frontend/src/screens/NotesScreen.tsx` (the composition) with its parts under
 `screens/library/` — `useLibraryParams.ts` (the filters in the URL),
-`useLibrarySelection.tsx` (bulk select, its bar and confirms), `LibraryField.tsx`
-(the search/ask field and the chips), `LibraryList.tsx` (the rows, captions and
-empty states) — `features/notes/groups.ts`
+`LibraryField.tsx` (the search/ask field and the chips), `LibraryList.tsx` (the
+rows, captions and empty states) — `features/notes/groups.ts`
 (`splitPinned`, `groupByDay`), `features/notes/PinnedGroup.tsx`,
 `components/NoteRow.tsx`, `components/SwipeRow.tsx` with
-`hooks/useSwipeActions.ts`, `hooks/useLongPress.ts`,
-`components/SelectionBar.tsx`, `components/Toast.tsx`,
+`hooks/useSwipeActions.ts`, `components/Toast.tsx`,
 `components/ConfirmDialog.tsx` and `components/DeleteConfirm.tsx`, `usePinNote` and `useReorderPins`
 (`api/queries/notes.ts`), `offline/useNotesCache.ts`, the sheet (`styles/home.css`:
 the rows, chips, field and heading, then the overrides), the drawn checkbox
@@ -68,14 +66,12 @@ last pin) and the note detail, puts them back if the server refuses, and
 refetches `['notes']` either way so what is shown is what was stored. An
 archived note offers no pin.
 
-Reorder is a drag and one request. Where the pointer is fine and nothing is
-being selected, each row wears a grip at its left: a mouse drags it, and the
-arrow keys on a focused grip move the row one step. On a phone there is no
-grip — the row is the phone's width — and the press-and-hold that selects a
-row everywhere else lifts a pinned row instead; Select is still in its ⋮. The
-two holds never arm together: the row's selects exactly where the pointer is
-fine, the list's lifts exactly where it is coarse, so a finger on a
-touchscreen laptop selects and the grip drags. The list owns the gesture
+Reorder is a drag and one request. Where the pointer is fine each row wears a
+grip at its left: a mouse drags it, and the arrow keys on a focused grip move
+the row one step. On a phone there is no grip — the row is the phone's width —
+and a press-and-hold lifts the row instead. Where the pointer is fine the grip
+is the only handle, so a finger on a touchscreen laptop drags the grip and a
+held row stays a row. The list owns the gesture
 (`hooks/useDragReorder.ts`, shared with the Items tab's grip) — one
 hold timer, one pointer capture, a non-passive `touchmove` that blocks the
 scroll only while a row is lifted — and the dragged row takes the slot whose
@@ -85,21 +81,16 @@ which ranks the listed rows `index × 1000` in every cached list, rolls back on
 refusal and refetches. Escape drops the row where it was, and the click the
 browser fires after a drag is swallowed so the note under it does not open.
 
-## Selection and the row's actions
+## The row's actions
 
-The checkbox that slid in at the row's left edge on hover is gone. Selection
-starts from a row: press and hold it — `useLongPress` is pointer events,
-primary button only, so a mouse works exactly as a finger; travel past 10 px
-cancels it, which is also how a scroll or a swipe that begins on a row never
-selects it — or pick Select from the row's ⋮. Once selecting, every row is a
-`<label>` round a real checkbox: click toggles, Shift-click selects the range
-from the last toggled row in on-screen order, Escape or Cancel leaves, and the
-sticky bar above the tab bar carries Delete on Home, and Restore and Delete
-forever in the archive. The click that follows the long press is consumed, so
-the row it just selected is neither deselected nor opened.
+There is no selection mode (owner, 2026-09-29: with the row's own actions and
+Undo, doing things to several notes at once was not needed, and the
+press-and-hold, the checkboxes, the bar and the batch purge went with it).
+Every action is on the row — its ⋮, its swipe tray — or in the note's own
+header menu, and a hold on a plain row does nothing: its release opens the note.
 
-Every row has a ⋮ at its right — Pin or Unpin · Delete · Select, and in the
-archive Restore · Delete forever · Select. Under a fine pointer it is revealed
+Every row has a ⋮ at its right — Pin or Unpin · Delete, and in the archive
+Restore · Delete forever. Under a fine pointer it is revealed
 on hover and on focus-within; under a finger it is always there at the meta
 colour, 44 px. Swipe stays touch-only: with a fine pointer the tray is not
 offered, since a mouse drag would fight text selection. The tray is Pin ·
@@ -112,13 +103,12 @@ the long-press duration is not a swipe. Nothing is only a swipe away.
 
 No typed word anywhere (owner, 2026-09-26: "when I delete, I have to type
 delete. I don't like that UX"). Delete on Home — the row's ⋮, the swipe tray,
-the note header's ⋮ and the selection bar — is the archive (`useArchiveNote`,
-`useBulkArchiveNotes`), and it asks first (owner, 2026-09-27: "When deleting,
-ask are you sure. Don't directly archive"): `components/DeleteConfirm.tsx`, one
-`ConfirmDialog` shared by all four places, titled "Delete “⟨title⟩”?" for one
-note and "Delete N notes?" from the bar, whose body says where the note goes —
-"It is kept in the Archive for 30 days, then gone for good." ("They are kept…"
-for several) — with one destructive Delete button, no field, and focus on
+the note header's ⋮ — is the archive (`useArchiveNote`), and it asks first
+(owner, 2026-09-27: "When deleting, ask are you sure. Don't directly
+archive"): `components/DeleteConfirm.tsx`, one `ConfirmDialog` shared by all
+three places, titled "Delete “⟨title⟩”?", whose body says where the note goes —
+"It is kept in the Archive for 30 days, then gone for good." — with one
+destructive Delete button, no field, and focus on
 Cancel, so Enter and Escape both back out with nothing gone — and back to the
 control that asked, the ⋮ included (`OverflowMenu` hands focus to its trigger
 before a pick runs, so the dialog has it to restore). On the answer the archive
@@ -134,18 +124,13 @@ it. There is no separate Archive item: the
 Archive is where deleted notes wait, thirty days, until the sweep purges them
 or Restore brings them back. The Archived chip and view keep their names.
 
-Delete forever, in the archive only — row, header and bar — is a plain
+Delete forever, in the archive only — row and header — is a plain
 `ConfirmDialog` of its own: the sentence names the note and what goes with it, one
-destructive button, Cancel with focus. For a bulk Delete forever of more than
-ten notes (`HOLD_TO_DELETE_ABOVE`) the button reads "Hold to delete N notes"
-and has to be held for a second (`holdMs`) under a finger or a mouse button —
-the pointer is where the slip is; the fill across it shows the second passing
-and appears whole under reduced motion. Enter or Space, and whatever a screen
-reader or a switch activates a button with, confirm at once: a held keystroke
-is a timing WCAG 2.1.1 forbids, and focus lands on Cancel, so reaching the
-control took a deliberate Tab. Undo re-pins a note that was pinned (the
-server's restore comes back unpinned; `useUndoDelete`). Deleting a recording (`Recordings.tsx`) is
-a plain confirm too. The `requireText` typed gate is gone from `ConfirmDialog`.
+destructive button, Cancel with focus. Undo re-pins a note that was pinned (the
+server's restore comes back unpinned; `useUndoDelete`). Deleting a recording
+(`Recordings.tsx`) is a plain confirm too. The `requireText` typed gate is gone
+from `ConfirmDialog`, and so is the held button (`holdMs`) that gated a bulk
+Delete forever: there is no bulk action left to gate.
 
 ## The chips
 
@@ -195,15 +180,13 @@ the box with ink and draws the tick in ground; the hidden control's focus ring
 lands on the mark. The same label shape — `.checklist__box`, then `CheckMark`
 — is the Items tab's rows (and the Split up tab's, which are the same
 editor), the Details switches
-(Checklist, Word for word), the Cleaned tab's auto-refresh, and the
-bulk-select box on a note row (`NoteRow.tsx`), which is the same drawn
-`CheckMark`.
+(Checklist, Word for word) and the Cleaned tab's auto-refresh.
 
 Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 `NotesScreen.pins.test.tsx`, `NotesScreen.checklist.test.tsx`,
 `components/NoteRow.test.tsx`, `NoteRow.checklist.test.tsx`, `SwipeRow.test.tsx`,
 `components/Toast.test.tsx`, `components/ConfirmDialog.test.tsx`,
-`hooks/useLongPress.test.tsx`, `offline/useNotesCache.test.tsx`,
+`offline/useNotesCache.test.tsx`,
 `offline/notesCache.test.ts`, `features/notes/ChecklistEditor.test.tsx` (the
 rows and the tick; the grip's drag writing one body on release, its tap menu
 and arrow keys, Escape and a body change dropping a lifted row; the sideways
@@ -214,7 +197,9 @@ note; Uncheck all; Delete done with its Undo), `ChecklistNote.test.tsx`
 stale proposal inert),
 `features/notes/checklist.test.ts`, `components/PullToRefresh.test.tsx`; end
 to end, `frontend/e2e/pins.spec.ts` (the group, the grip drag, the phone's
-hold and tray), `swipe.spec.ts`, `archive.spec.ts`, `offline.spec.ts`,
+hold and tray), `swipe.spec.ts`, `archive.spec.ts` (the per-row Delete behind
+its confirm, Undo reached from the keyboard, Delete forever; a held mouse press
+on a row opens it), `offline.spec.ts`,
 `checklist.spec.ts` (the Items tab; the grip's mouse drag and arrow keys, the
 tap menu, a CDP touch drag on a phone up and down to reorder and sideways to
 nest, the Done disclosure across a reload, Delete done undone from the

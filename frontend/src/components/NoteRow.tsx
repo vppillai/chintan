@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { ApiError } from '@/api/problem.ts';
@@ -18,10 +18,8 @@ import {
   progressOf,
   snippetIsCut,
 } from '@/features/notes/checklist.ts';
-import { CheckMark } from '@/features/notes/ChecklistEditor.tsx';
 import { describeRecordings, formatRowTime } from '@/features/notes/groups.ts';
 import { describePurge, purgeCountdown } from '@/features/notes/purge.ts';
-import { useLongPress } from '@/hooks/useLongPress.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 
 import { ConfirmDialog } from './ConfirmDialog.tsx';
@@ -31,28 +29,8 @@ import { Icon } from './Icon.tsx';
 import { OverflowMenu, type OverflowMenuItem } from './OverflowMenu.tsx';
 import { SwipeRow, type SwipeAction } from './SwipeRow.tsx';
 
-export interface SelectOptions {
-  /** Shift was held: select the range from the last toggled row to this one. */
-  range: boolean;
-}
-
 export interface NoteRowProps {
   note: NoteWire;
-  /**
-   * Bulk-select mode. A real `<input type="checkbox">` inside a `<label>`,
-   * not a styled div with a click handler — the row's own doc comment already
-   * makes that argument for the plain case, and a checkbox is the one control
-   * every screen reader and every keyboard already knows how to operate.
-   */
-  selectable?: boolean;
-  selected?: boolean;
-  onToggleSelect?: (noteId: string, options: SelectOptions) => void;
-  /**
-   * Whether pressing and holding the row starts selection. Off for a pinned
-   * row under a finger, where the same hold lifts the row to reorder it
-   * (`PinnedGroup`); Select is still in the row's ⋮ menu there.
-   */
-  holdToSelect?: boolean;
   /**
    * A pinned row's gesture-free way to move one step (`PinnedGroup`), as
    * "Move up" and "Move down" in the ⋮: on a phone nothing announces the
@@ -84,20 +62,17 @@ export interface NoteRowProps {
  * meta line — counted from the snippet, which is the body's first 500 runes,
  * so the total is a floor ("3 of 7+ done") when the snippet was cut.
  *
- * Two ways into selection, the same on every pointer (backlog U2; owner,
- * 2026-09-24: "hover to get a checkbox is not clean UX"). Press and hold the
- * row — a finger or a mouse, `useLongPress` takes both — or pick Select from
- * the row's ⋮ menu. The menu sits at the row's right: revealed on hover and
- * on focus for a pointer that can hover, always there at low emphasis under
- * a finger, where nothing can hover. It holds Pin (or Unpin) and Delete — or
- * Restore and Delete forever, in the archive — then Select and, on a pinned
- * row, Move up and Move down —
- * so every action the swipe tray offers is a click away on the desktop too,
- * and the pinned order can be changed without a drag. The checkbox that slid in at the row's left
- * edge on hover is gone; the "Select" button that sat in the header before it
- * went for the same reason.
+ * There is no selection mode (owner, 2026-09-29: with the row's own actions
+ * and Undo, doing things to several notes at once was not needed), so a hold
+ * on the row does nothing and its release opens the note like a tap. Every
+ * action is on the row. The ⋮ at its right is revealed on hover and on focus
+ * for a pointer that can hover, always there at low emphasis under a finger,
+ * where nothing can hover. It holds Pin (or Unpin) and Delete — or Restore
+ * and Delete forever, in the archive — and, on a pinned row, Move up and
+ * Move down, so every action the swipe tray offers is a click away on the
+ * desktop too, and the pinned order can be changed without a drag.
  *
- * And a third gesture, for a finger only: swipe the row aside for its actions
+ * And a gesture, for a finger only: swipe the row aside for its actions
  * (backlog N8). In the library that is Pin and Delete; in the archive,
  * Restore and Delete forever. The row carries these itself — its own
  * mutations, its own confirmation — so the screen that lists it need know
@@ -116,10 +91,6 @@ export interface NoteRowProps {
  */
 export function NoteRow({
   note,
-  selectable = false,
-  selected = false,
-  onToggleSelect,
-  holdToSelect = true,
   onMoveUp,
   onMoveDown,
   excerpt,
@@ -131,30 +102,12 @@ export function NoteRow({
   // fire with whatever version the cache held; the row does not move meanwhile,
   // so the tap looks lost (review 2026-09-24, R4-11). The pin waits for the network.
   const online = useOnline();
-  const longPress = useLongPress(
-    onToggleSelect && holdToSelect && !selectable
-      ? () => {
-          onToggleSelect(note.id, { range: false });
-        }
-      : null,
-  );
   const archive = useArchiveNote();
   const restore = useRestoreNote();
   const undo = useUndoDelete();
   const purge = useDeleteNoteForever();
   const pin = usePinNote();
   const [confirming, setConfirming] = useState<'delete' | 'purge' | null>(null);
-  // Select from the ⋮ re-renders this row as a label, unmounting the trigger
-  // the menu would hand focus back to, so focus would drop to the body and a
-  // keyboard user would Tab from the top to reach the checkbox they just made.
-  // The checkbox takes it instead — only for the row that asked.
-  const checkboxRef = useRef<HTMLInputElement>(null);
-  const focusCheckbox = useRef(false);
-  useEffect(() => {
-    if (!selectable || !focusCheckbox.current) return;
-    focusCheckbox.current = false;
-    checkboxRef.current?.focus();
-  }, [selectable]);
   const busy =
     archive.isPending || restore.isPending || undo.isPending || purge.isPending || pin.isPending;
   const failure = archive.error ?? restore.error ?? undo.error ?? purge.error ?? pin.error;
@@ -216,51 +169,6 @@ export function NoteRow({
     </>
   );
 
-  if (selectable) {
-    return (
-      <label
-        className="note-row note-row--selectable"
-        data-selected={selected || undefined}
-        data-pinned={note.pinned || undefined}
-        onClick={(event) => {
-          /*
-           * The finger lifting after the long press that started this mode
-           * lands its click here — the row was a button when the press began
-           * and is this label by the time the click arrives — and a label's
-           * click toggles its checkbox, which would deselect the row that was
-           * just selected. The hook survives the swap, so it knows.
-           */
-          if (longPress.consumeClick()) event.preventDefault();
-        }}
-      >
-        {/*
-          The app's drawn box (`CheckMark`, F1), not the browser's: the real
-          control is stretched invisibly over the 44 px wrapper, so it is the
-          thumb's target and meets WCAG 2.5.8 itself, and the mark beside the
-          words is what a finger sees. The whole row is the label, so a tap
-          anywhere toggles it regardless.
-        */}
-        <span className="note-row__check">
-          <input
-            ref={checkboxRef}
-            type="checkbox"
-            className="checklist__box"
-            checked={selected}
-            onClick={(event) => {
-              // `onChange` carries no modifier keys; the click does.
-              onToggleSelect?.(note.id, { range: event.shiftKey });
-            }}
-            onChange={() => {
-              /* Handled on click, above, where Shift is known. */
-            }}
-          />
-          <CheckMark />
-        </span>
-        <span className="note-row__body">{body}</span>
-      </label>
-    );
-  }
-
   const togglePin = (): void => {
     pin.mutate({ note, pinned: !note.pinned });
   };
@@ -280,8 +188,8 @@ export function NoteRow({
     void archive
       .mutateAsync(note.id)
       .then(() => {
-        showDeleted(1, () => {
-          undo.mutate([note]);
+        showDeleted(() => {
+          undo.mutate(note);
         });
       })
       .catch(() => undefined);
@@ -315,17 +223,6 @@ export function NoteRow({
           { label: pinLabel, disabled: busy || !online, onSelect: togglePin },
           { label: 'Delete', destructive: true, disabled: busy, onSelect: remove },
         ]),
-    ...(onToggleSelect
-      ? [
-          {
-            label: 'Select',
-            onSelect: () => {
-              focusCheckbox.current = true;
-              onToggleSelect(note.id, { range: false });
-            },
-          },
-        ]
-      : []),
     ...(onMoveUp ? [{ label: 'Move up', disabled: !online, onSelect: onMoveUp }] : []),
     ...(onMoveDown ? [{ label: 'Move down', disabled: !online, onSelect: onMoveDown }] : []),
   ];
@@ -344,11 +241,8 @@ export function NoteRow({
             className="note-row"
             data-pinned={note.pinned || undefined}
             onClick={() => {
-              // The click that follows a long press is the finger lifting, not a tap.
-              if (longPress.consumeClick()) return;
               void navigate(ROUTES.note(note.id));
             }}
-            {...longPress.handlers}
           >
             {body}
           </button>
@@ -373,7 +267,6 @@ export function NoteRow({
 
       <DeleteConfirm
         open={confirming === 'delete'}
-        count={1}
         title={note.title}
         onCancel={() => {
           setConfirming(null);

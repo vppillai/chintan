@@ -17,15 +17,15 @@ import { Icon, type IconName } from './Icon.tsx';
  *
  * Not for a pointer that can hover and point precisely: the desktop has the
  * row's ⋮ menu, which offers everything the tray does, and a mouse drag on a
- * row would fight text selection and the scrollbar. Off, too, while bulk-select is
- * on — the row is a checkbox then, and one gesture per row is enough.
+ * row would fight text selection and the scrollbar. Off, too, while the row
+ * is busy with a request (`disabled`): one thing at a time.
  *
  * The tray's buttons are real buttons, so a screen reader that lands on them
  * finds controls, but they are `aria-hidden` and `inert` while the tray is
  * closed: a control that is invisible and half a screen off to the right
  * must not be in the tab order. Every action the tray offers is reachable
- * another way — the long press, the overflow menu, the note's own action bar
- * — so nothing is only a swipe away.
+ * another way — the row's ⋮ menu, the note's own header menu — so nothing is
+ * only a swipe away.
  */
 
 export interface SwipeAction {

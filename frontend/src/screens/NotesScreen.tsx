@@ -16,9 +16,8 @@ import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { LibraryField } from './library/LibraryField.tsx';
-import { LibraryList, noteForHit } from './library/LibraryList.tsx';
+import { LibraryList } from './library/LibraryList.tsx';
 import { useLibraryParams } from './library/useLibraryParams.ts';
-import { LibrarySelectionBar, useLibrarySelection } from './library/useLibrarySelection.tsx';
 
 // The screen's parts live under `library/`; the tests keep importing this from here.
 export { chipScrollBy } from './library/LibraryField.tsx';
@@ -51,14 +50,11 @@ const AskPanel = lazy(() =>
  * (`LibraryField`). The mode is in the URL like the filters; the question and
  * the thread are not (`features/ask/thread.ts`).
  *
- * Bulk select carries over from the two screens this replaces
- * (`useLibrarySelection`). Selection starts from a row — press and hold it,
- * with a finger or a mouse alike, or pick Select from its ⋮ (see `NoteRow`).
+ * There is no selection mode: a row acts on itself — swipe, its ⋮ — with the
+ * confirm and Undo it already has (owner, 2026-09-29; see `NoteRow`).
  *
  * This component is the composition: it reads the filters, fetches the lists
- * and the search, and hands the rows to `LibraryList`. What it keeps for
- * itself is what the parts have to share — the rows in screen order, which
- * the selection ranges over.
+ * and the search, and hands the rows to `LibraryList`.
  */
 export function NotesScreen() {
   const params = useLibraryParams();
@@ -202,15 +198,6 @@ export function NotesScreen() {
 
   const { pinned, rest } = useMemo(() => splitPinned(notes), [notes]);
   const groups = useMemo(() => groupByDay(rest), [rest]);
-  // In the order they are on screen, so Shift-click ranges over what the eye sees.
-  const visible: NoteWire[] = useMemo(
-    () =>
-      searching
-        ? hits.map((hit) => noteForHit(hit, notes))
-        : [...pinned, ...groups.flatMap((group) => group.notes)],
-    [searching, hits, notes, pinned, groups],
-  );
-  const selection = useLibrarySelection(visible);
 
   const archivedCount = archived.data?.pages.reduce((sum, page) => sum + page.items.length, 0);
   const checklistCount = checklists.data?.pages.reduce(
@@ -232,7 +219,7 @@ export function NotesScreen() {
   const count = serverNotes !== undefined || fromCache ? notes.length : undefined;
 
   return (
-    <div className="screen library" data-selecting={selection.selecting || undefined}>
+    <div className="screen library">
       <PullToRefresh onRefresh={refresh} />
 
       {/*
@@ -324,13 +311,10 @@ export function NotesScreen() {
           hits={hits}
           serverPending={serverPending}
           serverUnavailable={serverUnavailable}
-          selection={selection}
           loadMore={loadMore}
           archived={{ count: archivedCount, more: archived.hasNextPage }}
         />
       )}
-
-      <LibrarySelectionBar selection={selection} view={view} asking={asking} />
     </div>
   );
 }
