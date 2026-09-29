@@ -129,19 +129,9 @@
   outline-offset: var(--layout-focus-ring-offset);
 }
 
-/* Held while a regeneration is on its way, as the buttons are: the box
-   drops to the tertiary ink and the pointer stops offering. */
-.checklist__box:disabled {
-  cursor: default;
-}
-
-.checklist__box:disabled + .checklist__mark {
-  color: var(--color-faint);
-}
-
 /* The item's words, in the note's serif, as tall as the row. A textarea for an
-   open item, a span for a done or previewed one — the same measure either way
-   so a tick does not reflow the text. */
+   open item, a span for a done one — the same measure either way so a tick
+   does not reflow the text. */
 .checklist__text {
   flex: 1 1 auto;
   min-inline-size: 0;
@@ -215,12 +205,6 @@ textarea.checklist__text {
   background-color: var(--color-surface);
 }
 
-.checklist__delete:disabled {
-  color: var(--color-faint);
-  background-color: transparent;
-  cursor: default;
-}
-
 /* --------------------------------------------------------------------------
    The grip — one control for the order: a drag, the arrow keys, a tap for
    the row's menu
@@ -289,6 +273,34 @@ textarea.checklist__text {
   .checklist__row[data-dragging] {
     transform: none;
   }
+}
+
+/* The sideways drag's preview: the lifted row steps in, or out, to the level
+   it would take on release — the same step a sub-item is set in by — and a
+   bar in the accent at its start says it is the level, not the slot, that is
+   changing. The row is already `position: relative` while lifted. The
+   `data-nest-preview` selectors outrank `[data-depth='1']` by one attribute,
+   so a sub-item drawn a level out really does lose its indent. */
+.checklist__row[data-dragging] {
+  transition: padding-inline-start var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.checklist__row[data-dragging][data-nest-preview='1'] {
+  padding-inline-start: var(--space-6);
+}
+
+.checklist__row[data-dragging][data-nest-preview='-1'] {
+  padding-inline-start: 0;
+}
+
+.checklist__row[data-dragging][data-nest-preview]::before {
+  position: absolute;
+  inset-block: var(--space-1);
+  inset-inline-start: 0;
+  inline-size: 3px;
+  content: '';
+  background-color: var(--color-accent);
+  border-radius: var(--radius-full);
 }
 
 /* --------------------------------------------------------------------------
@@ -365,13 +377,10 @@ textarea.checklist__text {
   color: var(--color-ink);
 }
 
-/* The Split up tab's list lives in the cleaned view's own card; a proposal
-   older than the note is greyed the same way the prose view is. */
-.checklist--preview .checklist__text {
-  cursor: default;
-}
-
-.cleaned__body[data-stale] .checklist--preview .checklist__text {
+/* The Split up tab's editor lives in the cleaned view's own card; a proposal
+   older than the note is greyed the same way the prose view is, and its rows
+   are inert until it is regenerated or taken with Use this list. */
+.cleaned__body[data-stale] .checklist__text {
   color: var(--color-muted);
 }
 

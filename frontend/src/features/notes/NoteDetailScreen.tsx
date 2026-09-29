@@ -630,7 +630,18 @@ function TextPanel({
     );
   }
 
-  if (checklist) return <ChecklistEditor editor={editor} noteId={noteId} />;
+  if (checklist) {
+    return (
+      <ChecklistEditor
+        noteId={noteId}
+        body={body}
+        onChange={(next) => {
+          editor.edit({ body: next });
+        }}
+        onSave={() => void editor.saveNow()}
+      />
+    );
+  }
 
   return (
     <>

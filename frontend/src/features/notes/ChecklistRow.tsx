@@ -16,13 +16,15 @@ import type { ChecklistItem } from './checklist.ts';
 /**
  * One open row of the Items tab: the grip, the box and the item's field.
  *
- * The grip is the one control for the order (2026-09-26, CL-3). A press on
- * it lifts the row (`onLift`, the editor's drag hook); the arrow keys on it
- * move the row one slot (`onStep`); a tap on it — a lift that never moved —
- * opens the row's menu, which the editor builds (`menu`): the path that needs
- * no drag at all (WCAG 2.5.7), and a menu on the grip rather than a ⋮ per
- * row because a phone's width has no room for both beside a dictated
- * sentence.
+ * The grip is the one control for the order and the level (2026-09-26,
+ * CL-3; 2026-09-29, R6-CL-2). A press on it lifts the row (`onLift`, the
+ * editor's drag hook, which reads up and down as a move and sideways as a
+ * level change); the up and down arrows on it move the row one slot
+ * (`onStep`) and the right and left arrows change its level (`onNest`); a
+ * tap on it — a lift that never moved — opens the row's menu, which the
+ * editor builds (`menu`): the path that needs no drag at all (WCAG 2.5.7),
+ * and a menu on the grip rather than a ⋮ per row because a phone's width has
+ * no room for both beside a dictated sentence.
  *
  * The field carries Keep's keys: Tab nests the row under the one above it
  * and Shift+Tab brings it up a level (`onNest`, which says whether anything
@@ -37,6 +39,7 @@ export function ChecklistRow({
   index,
   position,
   dragging,
+  nestPreview,
   hintId,
   fieldHintId,
   menu,
@@ -57,6 +60,8 @@ export function ChecklistRow({
   /** The row's place among the open rows shown, for its name and the grip map. */
   position: number;
   dragging: boolean;
+  /** The level a sideways drag would give the lifted row on release, drawn while it is in the air. */
+  nestPreview: 1 | -1 | undefined;
   hintId: string;
   fieldHintId: string;
   menu: OverflowMenuItem[];
@@ -93,9 +98,17 @@ export function ChecklistRow({
   };
 
   const onGripKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    onStep(event.key === 'ArrowUp' ? -1 : 1);
+    // Up and down move the row a slot; right and left change its level, as
+    // the sideways drag on the same handle does. Taken whether or not the
+    // level could change: a grip is a button, and the arrows mean nothing
+    // else on one.
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      onStep(event.key === 'ArrowUp' ? -1 : 1);
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      onNest(event.key === 'ArrowRight' ? 1 : -1, 'grip');
+    }
   };
 
   return (
@@ -104,6 +117,7 @@ export function ChecklistRow({
       data-depth={item.depth || undefined}
       data-drag-id={id}
       data-dragging={dragging || undefined}
+      data-nest-preview={nestPreview}
     >
       <OverflowMenu
         label={`Move ${item.text || 'item'}`}

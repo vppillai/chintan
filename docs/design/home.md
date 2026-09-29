@@ -193,7 +193,8 @@ sliding its dash on: a transition on the motion tokens, so it plays on a tick
 and not on every render, and is one frame under reduced motion. Checked fills
 the box with ink and draws the tick in ground; the hidden control's focus ring
 lands on the mark. The same label shape — `.checklist__box`, then `CheckMark`
-— is the Items tab's rows, the Split up preview, the Details switches
+— is the Items tab's rows (and the Split up tab's, which are the same
+editor), the Details switches
 (Checklist, Word for word), the Cleaned tab's auto-refresh, and the
 bulk-select box on a note row (`NoteRow.tsx`), which is the same drawn
 `CheckMark`.
@@ -205,12 +206,17 @@ Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 `hooks/useLongPress.test.tsx`, `offline/useNotesCache.test.tsx`,
 `offline/notesCache.test.ts`, `features/notes/ChecklistEditor.test.tsx` (the
 rows and the tick; the grip's drag writing one body on release, its tap menu
-and arrow keys, Escape and a body change dropping a lifted row; the Done
-disclosure remembered per note; Uncheck all; Delete done with its Undo),
+and arrow keys, Escape and a body change dropping a lifted row; the sideways
+drag nesting and un-nesting with its preview, the first row refusing, a
+wobble opening no menu, →/← on the grip; the Done disclosure remembered per
+note; Uncheck all; Delete done with its Undo), `ChecklistNote.test.tsx`
+(Split up as the editor over the proposal: the first act adopts with Undo, a
+stale proposal inert),
 `features/notes/checklist.test.ts`, `components/PullToRefresh.test.tsx`; end
 to end, `frontend/e2e/pins.spec.ts` (the group, the grip drag, the phone's
 hold and tray), `swipe.spec.ts`, `archive.spec.ts`, `offline.spec.ts`,
 `checklist.spec.ts` (the Items tab; the grip's mouse drag and arrow keys, the
-tap menu, a CDP touch drag on a phone, the Done disclosure across a reload,
-Delete done undone from the keyboard, Uncheck all), `a11y.spec.ts` (the Items
-tab with a grip menu open, both themes).
+tap menu, a CDP touch drag on a phone up and down to reorder and sideways to
+nest, the Done disclosure across a reload, Delete done undone from the
+keyboard, Uncheck all, Split up adopting on the first tick with Undo),
+`a11y.spec.ts` (the Items tab with a grip menu open, both themes).
