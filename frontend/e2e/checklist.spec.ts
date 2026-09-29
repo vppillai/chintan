@@ -482,7 +482,9 @@ for (const viewport of SHOT_VIEWPORTS) {
 
       await page.getByRole('tab', { name: 'Split up' }).click();
       await page.getByRole('button', { name: 'Generate' }).click();
-      await expect(page.getByRole('list', { name: 'Split up items' })).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByRole('region', { name: 'Split up' }).getByRole('list', { name: 'Items' })).toBeVisible({
+        timeout: 10_000,
+      });
       await shot('split-up');
     });
   }
