@@ -489,6 +489,17 @@
   box-shadow: var(--shadow-sheet);
 }
 
+/* The note's id in Details: monospace, breakable anywhere (an id has no
+   spaces to wrap at), and one tap selects the whole of it, so a copy by
+   hand takes no dragging. The shape of `.device-key__value` (you.css). */
+.note-id {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+  user-select: all;
+  -webkit-user-select: all;
+}
+
 /* "DETAILS" as an eyebrow, the close control flush with the gutter line.
    Stuck to the sheet's top while the content scrolls beneath it: once the
    sheet was capped, a phone's Details scrolled Close away with the first
