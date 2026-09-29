@@ -35,8 +35,9 @@ import {
  * `usePullToRefresh` stands down by the `defaultPrevented` protocol. The panel
  * follows the finger up to 40 % of the region's width, at a quarter of the
  * distance where there is no neighbour to go to; release steps at 30 % of the
- * width or a 0.4 px/ms flick in the same direction, otherwise the panel snaps
- * back. The follow is written straight to the region's `--tab-swipe-x`, as
+ * width or a 0.4 px/ms flick in the same direction — a flick the finger was
+ * still making as it lifted, not one an earlier move left behind — otherwise
+ * the panel snaps back. The follow is written straight to the region's `--tab-swipe-x`, as
  * `usePullToRefresh` writes `--pull-offset`, not through state: a textarea
  * and a forty-row checklist sit under this region, and a move at input rate
  * must re-render none of it; only `dragging` is state. The property applies
@@ -65,6 +66,8 @@ export const SWIPE_EDGE_PX = 24;
 export const SWIPE_COMMIT_FRACTION = 0.3;
 /** A flick this fast steps however short. */
 export const SWIPE_FLICK_PX_PER_MS = 0.4;
+/** A velocity older than this at the lift is not the lift's. */
+export const SWIPE_FLICK_MAX_AGE_MS = 100;
 /** The panel follows no further than this. */
 const FOLLOW_MAX_FRACTION = 0.4;
 /** How much of the finger's travel the panel follows where there is no neighbour. */
@@ -203,8 +206,13 @@ export function useHorizontalSwipe({
       swallowClick.current = true;
       const direction: SwipeDirection = g.dx < 0 ? 'left' : 'right';
       const far = Math.abs(g.dx) >= widthOf(ref.current) * SWIPE_COMMIT_FRACTION;
+      // A still finger fires no move, so the last fast move's velocity would
+      // outlive the pause and a drag that stopped short would step on the
+      // lift (review 2026-09-29, DB6-23); a flick is what the finger was
+      // doing as it left.
+      const fresh = event.timeStamp - g.lastT <= SWIPE_FLICK_MAX_AGE_MS;
       const flick =
-        Math.abs(g.vx) >= SWIPE_FLICK_PX_PER_MS && Math.sign(g.vx) === Math.sign(g.dx);
+        fresh && Math.abs(g.vx) >= SWIPE_FLICK_PX_PER_MS && Math.sign(g.vx) === Math.sign(g.dx);
       if ((far || flick) && latest.current.canGo(direction)) latest.current.onSwipe(direction);
     },
     [ref],

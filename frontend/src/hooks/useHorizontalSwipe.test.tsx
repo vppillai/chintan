@@ -107,6 +107,24 @@ describe('useHorizontalSwipe', () => {
     expect(onSwipe).toHaveBeenCalledWith('left');
   });
 
+  it('reads no flick from a fast move that a still finger outlived', () => {
+    const onSwipe = vi.fn();
+    render(<Region onSwipe={onSwipe} />);
+    // Four fast moves to 16 % of the width — short of the commit line — then
+    // the finger holds still, which fires no move, and lifts: the velocity
+    // in hand is the last fast move's, and it is not the lift's.
+    const step = -Math.ceil(SWIPE_FLICK_PX_PER_MS * 10 * 10);
+    const moves = [-SWIPE_SLOP_PX - 8, step, step, step, step];
+    drag(screen.getByText('panel'), moves, { ms: 10, lift: false });
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+    const at = 300 + moves.reduce((sum, dx) => sum + dx, 0);
+    fireEvent.pointerUp(region(), { ...touch, clientX: at, clientY: 12 });
+    expect(onSwipe).not.toHaveBeenCalled();
+    expect(region()).not.toHaveAttribute('data-swiping');
+  });
+
   it('snaps back from a short, slow drag', () => {
     const onSwipe = vi.fn();
     render(<Region onSwipe={onSwipe} />);
