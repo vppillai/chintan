@@ -678,21 +678,55 @@ describe('nesting by the grip', () => {
     expect(log.saves).toBe(1);
     expect(screen.getByRole('button', { name: 'Move Bread' })).toHaveFocus();
     expect(screen.getByText('Made a sub-item')).toHaveAttribute('role', 'status');
-    // One level is the limit: a second press changes nothing and writes nothing.
+    // One level is the limit: a second press changes nothing and writes
+    // nothing — and says why, since nothing moved and a screen reader would
+    // otherwise hear nothing at all.
     await user.keyboard('{ArrowRight}');
     expect(body()).toBe('- [ ] Milk\n  - [ ] Bread');
     expect(log.saves).toBe(1);
+    expect(screen.getByText('Already a sub-item')).toHaveAttribute('role', 'status');
 
     await user.keyboard('{ArrowLeft}');
     expect(body()).toBe(TWO);
     expect(log.saves).toBe(2);
     expect(screen.getByRole('button', { name: 'Move Bread' })).toHaveFocus();
+    await user.keyboard('{ArrowLeft}');
+    expect(screen.getByText('Already a top-level item')).toHaveAttribute('role', 'status');
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByText('Already at the bottom')).toHaveAttribute('role', 'status');
 
-    // The first row has nothing to go under.
+    // The first row has nothing to go under, and nowhere up to go.
     screen.getByRole('button', { name: 'Move Milk' }).focus();
     await user.keyboard('{ArrowRight}');
     expect(body()).toBe(TWO);
     expect(log.saves).toBe(2);
+    expect(screen.getByText('Nothing above to nest under')).toHaveAttribute('role', 'status');
+    await user.keyboard('{ArrowUp}');
+    expect(screen.getByText('Already at the top')).toHaveAttribute('role', 'status');
+    expect(body()).toBe(TWO);
+  });
+
+  it('a step is the indent token in the page’s own pixels: a larger root font asks for a longer drag', () => {
+    // As the browser's text-size setting has it: 1.5rem at a 20 px root is
+    // 30 px, and the token itself may move; a drag that would have nested at
+    // 24 px must not, and one past the real step must.
+    document.documentElement.style.setProperty('--space-6', '3rem');
+    document.documentElement.style.fontSize = '20px';
+    try {
+      const { log } = mount(TWO);
+      const list = items();
+      const grip = screen.getByRole('button', { name: 'Move Bread' });
+      fireEvent.pointerDown(grip, { ...mouse, clientX: 10, clientY: 50 });
+      fireEvent.pointerMove(list, { ...mouse, clientX: 50, clientY: 52 });
+      expect(grip.closest('li')).not.toHaveAttribute('data-nest-preview');
+      fireEvent.pointerMove(list, { ...mouse, clientX: 75, clientY: 52 });
+      expect(grip.closest('li')).toHaveAttribute('data-nest-preview', '1');
+      fireEvent.pointerUp(list, { ...mouse, clientX: 75, clientY: 52 });
+      expect(log.bodies).toEqual(['- [ ] Milk\n  - [ ] Bread']);
+    } finally {
+      document.documentElement.style.removeProperty('--space-6');
+      document.documentElement.style.removeProperty('font-size');
+    }
   });
 });
 
@@ -745,6 +779,34 @@ describe('the Done section', () => {
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(2);
     expect(screen.getByRole('heading', { name: /Done \(2\)/ })).toBeInTheDocument();
+  });
+
+  it('Undo after Delete done refuses when the list changed under it meanwhile, and says so', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    expect(body()).toBe('- [ ] Bread');
+    // A recording filed into the list lands by refetch inside the six
+    // seconds: the captured body written back would carry Jam away.
+    act(() => {
+      log.setBody('- [ ] Bread\n- [ ] Jam');
+    });
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(log.bodies).toEqual(['- [ ] Bread']);
+    expect(log.saves).toBe(1);
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+  });
+
+  it('Undo after Delete done still stands after the person’s own next act, and takes that back with it', async () => {
+    const user = userEvent.setup();
+    const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Bread' }));
+    expect(body()).toBe('- [x] Bread');
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
+    expect(log.saves).toBe(3);
   });
 
   it('says "1 done item" for one', async () => {

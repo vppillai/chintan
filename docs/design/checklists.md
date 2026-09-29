@@ -498,13 +498,18 @@ changes over the body in one save. `inert` also removes the rows from the
 accessibility tree — the disabled boxes before round 6 could still be read
 by a screen reader; a stale or pending proposal cannot — so a screen-reader
 user has the stale notice for why, and Use this list and Regenerate as the
-two controls left. One edge: Delete done as the first act shows the adoption
-toast and then the editor's "N done items deleted" toast over it, whose Undo
-restores the proposal as the adopted body; the body before adoption goes
-with the first toast. The editor is `{ noteId, body, onChange,
-onSave }` and knows nothing of whose body it is: the Items tab hands it the
-note editor, Split up hands it `adopt`. The find bar still counts nothing in
-this tab.
+two controls left. Delete done as the first act adopts like any other: the
+editor shows its own "N done items deleted" toast before it writes, so the
+adoption's toast lands last and is the one standing, and its Undo restores
+the list as it stood (DB6-2). Either Undo — the adoption's, and Delete
+done's in the editor — refuses when the body is no longer what that
+component last wrote, saying "The list changed since — nothing undone."
+rather than writing a captured body over a recording that filed in by
+refetch inside the six seconds; the person's own acts since do not block it,
+so Undo still takes back the adoption and the ticks since (DB6-3). The
+editor is `{ noteId, body, onChange, onSave }` and knows nothing of whose
+body it is: the Items tab hands it the note editor, Split up hands it
+`adopt`. The find bar still counts nothing in this tab.
 
 ## Why the body stays the single source of truth
 

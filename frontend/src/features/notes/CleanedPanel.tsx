@@ -8,7 +8,7 @@ import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { CheckMark } from '@/components/CheckMark.tsx';
 import { showToast } from '@/components/Toast.tsx';
 
-import { ChecklistEditor } from './ChecklistEditor.tsx';
+import { ChecklistEditor, UNDO_STALE } from './ChecklistEditor.tsx';
 import {
   CLEAN_POLL_MS,
   CLEAN_POLL_TIMEOUT_MS,
@@ -125,11 +125,25 @@ export function CleanedPanel({
    * a keystroke included — and can be taken back: Undo puts the body as it
    * stood back, saves, and the tab shows the proposal again. The acts after
    * it are ordinary edits, saved as the editor asks (`onSave`).
+   *
+   * Undo only while the body is still what this panel last wrote: the note
+   * polls while a recording is being filed, and one landing by refetch
+   * inside the six seconds resets the settled draft to the server's body —
+   * an Undo that wrote the captured body over it would carry the dictated
+   * item away, silently (`UNDO_STALE`, DB6-3). The person's own acts since
+   * all arrive here, so they never block it: Undo takes back the adoption
+   * and the ticks since.
    */
+  const lastWritten = useRef<string | null>(null);
+  const latestBody = useRef(draft.body);
+  useEffect(() => {
+    latestBody.current = draft.body;
+  });
   const adopt = (body: string): void => {
     const previous = draft.body;
     const first = !adopted;
     if (cleaned) adoptedSplits.set(note.id, cleaned.generated_at);
+    lastWritten.current = body;
     editor.edit({ body });
     if (!first) return;
     // For a discrete act the editor's own `onSave` calls `saveNow` again
@@ -144,6 +158,10 @@ export function CleanedPanel({
       action: {
         label: 'Undo',
         onSelect: () => {
+          if (latestBody.current !== lastWritten.current) {
+            showToast({ message: UNDO_STALE });
+            return;
+          }
           adoptedSplits.delete(note.id);
           editor.edit({ body: previous });
           void editor.saveNow();
@@ -225,7 +243,7 @@ export function CleanedPanel({
                 ? `Your list · split up ${describeAgo(cleaned.generated_at)}`
                 : `Generated ${describeAgo(cleaned.generated_at)} · ${CLEANED_MODE_LABELS[cleaned.mode]}`}
             </p>
-            <div className="checklist-preview__actions">
+            <div className="cleaned__actions">
               {/* Gone once adopted: the body already is this list, and
                   pressing it again would throw away the ticks made since. */}
               {checklist && !adopted && (

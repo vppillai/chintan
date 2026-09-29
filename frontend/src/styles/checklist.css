@@ -52,7 +52,7 @@
 /* The box: a real checkbox stretched invisibly over its 44 px label, so the
    label is the target and the tap lands on the control itself; the mark
    beside the words is the 22 px box a finger sees, drawn by the component in
-   the icon set's pen. No browser draws its own box anywhere in the app. */
+   the icon set's pen (`CheckMark.tsx`). */
 .checklist__check {
   position: relative;
   display: grid;
@@ -258,7 +258,8 @@ textarea.checklist__text {
 
 /* The lifted row: a step up, the way a card lifts under the pointer, above
    its neighbours while it moves between them. The edge is an outline, not a
-   border, so nothing beside it shifts by a pixel. */
+   border, so nothing beside it shifts by a pixel. The indent transition is
+   for the sideways drag's preview below, which steps the padding. */
 .checklist__row[data-dragging] {
   position: relative;
   z-index: var(--z-content);
@@ -267,6 +268,7 @@ textarea.checklist__text {
   outline: 1px solid var(--color-line-strong);
   box-shadow: var(--shadow-md);
   transform: scale(1.01);
+  transition: padding-inline-start var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -281,10 +283,6 @@ textarea.checklist__text {
    changing. The row is already `position: relative` while lifted. The
    `data-nest-preview` selectors outrank `[data-depth='1']` by one attribute,
    so a sub-item drawn a level out really does lose its indent. */
-.checklist__row[data-dragging] {
-  transition: padding-inline-start var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
 .checklist__row[data-dragging][data-nest-preview='1'] {
   padding-inline-start: var(--space-6);
 }
@@ -377,15 +375,21 @@ textarea.checklist__text {
   color: var(--color-ink);
 }
 
-/* The Split up tab's editor lives in the cleaned view's own card; a proposal
-   older than the note is greyed the same way the prose view is, and its rows
-   are inert until it is regenerated or taken with Use this list. */
-.cleaned__body[data-stale] .checklist__text {
-  color: var(--color-muted);
+/* The Split up tab's editor lives in the cleaned view's own card. Its rows
+   are `inert` while a regeneration is pending and while the proposal is
+   older than the note (CleanedPanel), and a browser gives inert content no
+   look of its own, so the words, the boxes and the Done actions take the
+   tertiary ink that disabled controls wear (`.cleaned__action[disabled]`)
+   until Regenerate or Use this list; the grip is that ink at rest already.
+   Both themes follow, since it is the token. */
+.cleaned__body[inert] .checklist__text,
+.cleaned__body[inert] .checklist__mark,
+.cleaned__body[inert] .checklist__done-action {
+  color: var(--color-faint);
 }
 
 /* Use this list · Regenerate, on the header's right. */
-.checklist-preview__actions {
+.cleaned__actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);

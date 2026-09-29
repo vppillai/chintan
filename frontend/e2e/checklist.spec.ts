@@ -189,6 +189,30 @@ test('Split up has no mode picker, and is the Items editor over the proposal: th
   await expect(page.getByRole('button', { name: 'Regenerate' })).toBeVisible();
 });
 
+test('a stale proposal on Split up is drawn as what it is, inert: its words and boxes take the tertiary ink', async ({
+  page,
+  api,
+}) => {
+  seedShopping(api);
+  // Split before the note's last change, as the server marks it.
+  api.notes['shopping']!.cleaned = {
+    body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] butter',
+    mode: 'tasks',
+    generated_at: new Date().toISOString(),
+    stale: true,
+  };
+  await page.goto('/notes/shopping?tab=cleaned');
+  const split = page.getByRole('region', { name: 'Split up' });
+  await expect(split.getByText('The note changed since this was generated.')).toBeVisible();
+  const body = split.locator('.cleaned__body');
+  await expect(body).toHaveAttribute('inert', '');
+  // A browser gives inert content no look of its own (DB6-20): the rows read
+  // as the add row's plus does, the tertiary ink, not as live ink and boxes.
+  const faint = await body.locator('.checklist__add-mark').evaluate((el) => getComputedStyle(el).color);
+  await expect(body.locator('textarea.checklist__text').first()).toHaveCSS('color', faint);
+  await expect(body.locator('.checklist__mark').first()).toHaveCSS('color', faint);
+});
+
 /** The PATCHes the note has received. */
 function saves(api: { requests: { method: string; url: string }[] }): number {
   return api.requests.filter((r) => r.method === 'PATCH' && r.url === '/v1/notes/shopping').length;
