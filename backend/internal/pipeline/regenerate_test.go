@@ -468,10 +468,12 @@ func TestRegenerateTaskRetryFinishesTheRecordingsLeftMidWay(t *testing.T) {
 // rewrote returns it unchanged, whatever words the old and new items share;
 // the person's deletion of a recording's items stands even when they typed
 // one of the new words; a sub-item is found by its words and the block goes
-// back at the top level.
+// back at the top level; a parent the recording shares is left standing.
+// Every case is run twice, the second pass over the first's result, since
+// paragraphInNote asks exactly that of an interrupted attempt.
 func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
-	m := service.CaptureMarker("c_1")
-	prev := []string{"Milk", "Eggs"}
+	m, m2 := service.CaptureMarker("c_1"), service.CaptureMarker("c_2")
+	prev, shared := []string{"Milk", "Eggs"}, []string{"Costco", "  Chicken"}
 	text := "- [ ] eggs\n- [ ] milk\n- [ ] butter"
 	first := replaceChecklistItems("- [x] Milk\n- [ ] Typed\n- [ ] Eggs\n"+m, "c_1", prev, text)
 	if want := "- [ ] eggs\n- [x] milk\n- [ ] butter\n- [ ] Typed\n" + m; first != want {
@@ -489,11 +491,23 @@ func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
 		{"a deletion is not overruled by a typed line with a new item's words", "- [ ] butter\n" + m, prev, text, "- [ ] butter\n" + m},
 		{"a sub-item is matched by its words and the block is written flat", "- [ ] Typed\n  - [x] Milk\n  - [ ] Eggs\n" + m, prev, text, "- [ ] Typed\n- [ ] eggs\n- [x] milk\n- [ ] butter\n" + m},
 		{"a typed duplicate of a new item folds into the block", "- [ ] Milk\n- [ ] butter\n- [ ] Typed\n" + m, prev, text, "- [ ] eggs\n- [ ] milk\n- [ ] butter\n- [ ] Typed\n" + m},
+		// A parent this recording joined (its Costco, another's Meat under
+		// it) is not its to take: the parent and the other child stay,
+		// whatever the recording says now — another grouping, or nothing.
+		{"a shared parent stays when the recording's child leaves it", m + "\n- [ ] Costco\n  - [ ] Meat\n  - [ ] Chicken\n" + m2, shared, "- [ ] Chicken", m + "\n- [ ] Costco\n  - [ ] Meat\n- [ ] Chicken\n" + m2},
+		{"a shared parent stays when the recording now names nothing", m + "\n- [ ] Costco\n  - [ ] Meat\n  - [ ] Chicken\n" + m2, shared, "", m + "\n- [ ] Costco\n  - [ ] Meat\n" + m2},
+		{"the same words again keep the block's order and the tick", m + "\n- [ ] Costco\n  - [ ] Meat\n  - [x] Chicken\n  - [ ] Beef\n" + m2, shared, "- [ ] Costco\n  - [ ] Chicken", m + "\n- [ ] Costco\n  - [ ] Meat\n  - [x] Chicken\n  - [ ] Beef\n" + m2},
+		{"a done shared parent stays done when its carried child is done", m + "\n- [x] Costco\n  - [x] Meat\n  - [x] Chicken\n" + m2, shared, "- [ ] Costco\n  - [ ] Chicken", m + "\n- [x] Costco\n  - [x] Meat\n  - [x] Chicken\n" + m2},
+		{"a new child beside the carried one reopens the done shared parent", m + "\n- [x] Costco\n  - [x] Meat\n  - [x] Chicken\n" + m2, shared, "- [ ] Costco\n  - [ ] Chicken\n  - [ ] Beef", m + "\n- [ ] Costco\n  - [x] Meat\n  - [x] Chicken\n  - [ ] Beef\n" + m2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := replaceChecklistItems(tc.body, "c_1", tc.prev, tc.text); got != tc.want {
+			got := replaceChecklistItems(tc.body, "c_1", tc.prev, tc.text)
+			if got != tc.want {
 				t.Errorf("got:\n%s\nwant:\n%s", got, tc.want)
+			}
+			if again := replaceChecklistItems(got, "c_1", tc.prev, tc.text); again != got {
+				t.Errorf("a second pass changed the list:\n%s", again)
 			}
 		})
 	}
@@ -501,9 +515,11 @@ func TestReplaceChecklistItemsIsIdempotentAndRespectsADeletion(t *testing.T) {
 
 // A recording whose first append merged its child under a parent the list
 // already had (the child under c_0's Costco, c_1's marker bare) is
-// regenerated: its items are found by their words wherever they stand, so
-// the child is not added a second time and the parent's other child keeps
-// its place; the marker stays where it was.
+// regenerated: its items are found by their words wherever they stand and
+// the shared parent is left standing, so the child is not added a second
+// time, keeps its tick and its place in the block, and the parent's other
+// child is untouched; the marker stays where it was. The body is the same
+// body.
 func TestRegenerateARecordingWhoseChildrenSitUnderAnExistingParentDoesNotDoubleThem(t *testing.T) {
 	h := newHarness(t, harnessOpts{llm: &fake.LLM{ItemsResponse: []cleanup.Item{{Text: "Costco", Children: []cleanup.Item{{Text: "Chicken"}}}}}})
 	ctx := context.Background()
@@ -525,8 +541,7 @@ func TestRegenerateARecordingWhoseChildrenSitUnderAnExistingParentDoesNotDoubleT
 		t.Fatalf("regenerated %d recordings, want 1", n)
 	}
 	got, _ := h.objects.Get(ctx, note.S3MarkdownKey)
-	want := service.CaptureMarker("c_0") + "\n- [ ] Costco\n  - [x] Chicken\n  - [ ] Meat\n- [ ] Milk\n" + service.CaptureMarker("c_1")
-	if string(got) != want {
-		t.Fatalf("checklist after regeneration:\n%s\nwant:\n%s", got, want)
+	if string(got) != body {
+		t.Fatalf("checklist after regeneration:\n%s\nwant it unchanged:\n%s", got, body)
 	}
 }

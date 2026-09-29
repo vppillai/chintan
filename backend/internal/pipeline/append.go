@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/cleanup"
+	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -399,10 +401,11 @@ func reopen(line string) string {
 }
 
 // checklistLineText is the words of a task-list line, indent and box aside,
-// whitespace runs collapsed the way checklistItems writes them and case
-// folded, so a line the worker wrote, the same item after the editor's round
-// trip, and the same item as a newer prompt capitalises it all compare
-// equal. ok is false for a line that is not an item.
+// folded the one way every reader folds them (llm.FoldWords: case and
+// punctuation aside, whitespace collapsed), so a line the worker wrote, the
+// same item after the editor's round trip, and the same item as a newer
+// prompt capitalises or punctuates it all compare equal. ok is false for a
+// line that is not an item.
 func checklistLineText(line string) (text string, ok bool) {
 	text, _, _, ok = parseChecklistLine(line)
 	return text, ok
@@ -418,17 +421,11 @@ func parseChecklistLine(line string) (text string, done bool, depth int, ok bool
 	trimmed := strings.TrimLeft(line, " \t")
 	switch {
 	case strings.HasPrefix(trimmed, "- [ ] "):
-		return foldWords(trimmed[len("- [ ] "):]), false, depth, true
+		return llm.FoldWords(trimmed[len("- [ ] "):]), false, depth, true
 	case strings.HasPrefix(trimmed, "- [x] "), strings.HasPrefix(trimmed, "- [X] "):
-		return foldWords(trimmed[len("- [x] "):]), true, depth, true
+		return llm.FoldWords(trimmed[len("- [x] "):]), true, depth, true
 	}
 	return "", false, 0, false
-}
-
-// foldWords is a line's words as they are compared: whitespace runs collapsed
-// the way checklistItems writes them, case folded.
-func foldWords(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // replaceChecklistItems puts text — a recording's items, freshly extracted —
@@ -449,15 +446,27 @@ func foldWords(s string) string {
 // words are left the person deleted that recording's items, and putting
 // them back would overrule that: the body is returned as it was.
 //
+// A previous top-level line with a sub-item still under it that is not
+// being taken is not this recording's to take: it is a parent the recording
+// joined (mergeChecklistItems) — typed by hand, or another recording's —
+// and it stays, with what is under it. The new items then go in the way a
+// first append's do, through the merge over the list without the taken
+// lines: the recording's parent joins that line again, its children after
+// the block's last line, and only the rest is written where the first taken
+// line stood. Before this rule (review of #155) the parent came out with the
+// recording's lines, and a Retranscribe, a Regenerate with other words or a
+// re-extraction that answered nothing (dropReplacedItems) left the other
+// children dangling under whatever line came next, or under nothing.
+//
 // Lines with the NEW items' words are taken up too, each once, and go back
-// as part of the new block. That is what makes a second pass over a list the
-// first pass already rewrote return it unchanged — the attempt that wrote the
-// block and died before it could say so is finished, not repeated (append's
-// claim-held branch, paragraphInNote) — and it means a typed line with the
-// same words as a new item is folded into the block rather than kept as a
-// duplicate. Indent is not read: a sub-item is matched by its words like any
-// line, and the block is written at the top level (checklists.md,
-// "indent-blind").
+// as part of the new block with their ticks. That is what makes a second
+// pass over a list the first pass already rewrote return it unchanged — the
+// attempt that wrote the block and died before it could say so is finished,
+// not repeated (append's claim-held branch, paragraphInNote) — and it means
+// a typed line with the same words as a new item is folded into the block
+// rather than kept as a duplicate. Indent is not read: a sub-item is matched
+// by its words like any line, and the block is written with the recording's
+// own indent (checklists.md, "indent-blind").
 //
 // An empty text removes the recording's items and writes nothing in their
 // place: the recording, extracted again, named nothing to add.
@@ -467,7 +476,7 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 	}
 	wanted := map[string]int{}
 	for _, item := range previous {
-		if t := foldWords(item); t != "" {
+		if t := llm.FoldWords(item); t != "" {
 			wanted[t]++
 		}
 	}
@@ -478,53 +487,84 @@ func replaceChecklistItems(body, captureID string, previous []string, text strin
 		}
 	}
 	lines := strings.Split(body, "\n")
-	kept := make([]string, 0, len(lines))
-	var removed []string
-	at, oldSeen := -1, false
-	for _, line := range lines {
+	take, old := make([]bool, len(lines)), make([]bool, len(lines))
+	for i, line := range lines {
 		t, ok := checklistLineText(line)
-		isOld, isNew := ok && wanted[t] > 0, ok && fresh[t] > 0
-		if !isOld && !isNew {
-			kept = append(kept, line)
+		if !ok {
 			continue
 		}
-		if isOld {
+		if wanted[t] > 0 {
 			wanted[t]--
-			oldSeen = true
+			take[i], old[i] = true, true
 		}
-		if isNew {
+		if fresh[t] > 0 {
 			fresh[t]--
+			take[i] = true
 		}
-		removed = append(removed, line)
-		if at < 0 {
-			at = len(kept)
+	}
+	// A taken top-level line with a sub-item left under it is a shared
+	// parent: it stays, and the fresh parent joins it in the merge below.
+	for i := range lines {
+		if _, _, depth, _ := parseChecklistLine(lines[i]); !take[i] || depth != 0 {
+			continue
 		}
+		for j := i + 1; j < len(lines); j++ {
+			if _, _, depth, ok := parseChecklistLine(lines[j]); !ok || depth != 1 {
+				break
+			}
+			if !take[j] {
+				take[i] = false
+				break
+			}
+		}
+	}
+	oldSeen := false
+	for i := range lines {
+		oldSeen = oldSeen || (take[i] && old[i])
 	}
 	if !oldSeen {
 		return body
 	}
-	out := make([]string, 0, len(kept)+len(lines))
-	out = append(out, kept[:at]...)
-	if text = keepTick(strings.Join(removed, "\n"), text); text != "" {
-		out = append(out, strings.Split(text, "\n")...)
+	// The place the block goes back is held by a line that is not an item,
+	// so the merge's insertions above it cannot move it and a parent's block
+	// ends at it, as it ends at a marker.
+	const placeholder = "\x00"
+	kept := make([]string, 0, len(lines)+1)
+	var removed []string
+	for i, line := range lines {
+		if !take[i] {
+			kept = append(kept, line)
+			continue
+		}
+		if removed == nil {
+			kept = append(kept, placeholder)
+		}
+		removed = append(removed, line)
 	}
-	out = append(out, kept[at:]...)
-	return strings.Join(out, "\n")
+	text = keepTick(strings.Join(removed, "\n"), text)
+	merged, rest, _ := mergeChecklistItems(strings.Join(kept, "\n"), cleanup.ItemsFromLines(text))
+	out := strings.Split(merged, "\n")
+	var block []string
+	if rendered := cleanup.RenderTaskList(rest); rendered != "" {
+		block = strings.Split(rendered, "\n")
+	}
+	at := slices.Index(out, placeholder)
+	return strings.Join(slices.Concat(out[:at], block, out[at+1:]), "\n")
 }
 
 // checklistItems renders a recording's items — one per line of the cleaned
 // text — as open task-list lines: each with its whitespace runs collapsed to
 // single spaces, trimmed, cut to cleanup.MaxChecklistItemRunes; blank lines
-// dropped. A line that opens with two spaces is a sub-item
-// (cleanup.RenderItems) and keeps that indent ahead of its box, which is how
-// the frontend reads and writes one. Text with no words stays empty — an
-// empty paragraph, as a plain note would get — rather than becoming an item
-// with nothing in it.
+// and lines with no letter or digit dropped. A line that opens with two
+// spaces is a sub-item (cleanup.RenderItems) and keeps that indent ahead of
+// its box, which is how the frontend reads and writes one. Text with no
+// words stays empty — an empty paragraph, as a plain note would get — rather
+// than becoming an item with nothing in it.
 func checklistItems(text string) string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		collapsed := strings.Join(strings.Fields(line), " ")
-		if collapsed == "" {
+		if llm.FoldWords(collapsed) == "" {
 			continue
 		}
 		if runes := []rune(collapsed); len(runes) > cleanup.MaxChecklistItemRunes {
@@ -559,10 +599,14 @@ type mergeCounts struct{ joined, deduped, reopened int }
 //   - everything else is returned in rest, in the recording's order, for the
 //     caller to render under the marker as before.
 //
-// Matching is by folded words (whitespace collapsed, case folded), never by
-// indent. Marker lines and blank lines are left where they stand; an
-// insertion never crosses a marker, because a marker opens the next
-// recording's paragraph. Ticks are never added; only [x] → [ ] happens.
+// Matching is by folded words (llm.FoldWords), never by indent. Marker
+// lines and blank lines are left where they stand; an insertion never
+// crosses a marker, because a marker opens the next recording's paragraph.
+// A merge never ticks a line the list has; only [x] → [ ] happens. An item
+// that arrives done is a tick replaceChecklistItems carried from the line it
+// took out, not a request to have the thing again: a done child is written
+// done and does not reopen its parent, and a done leaf goes back as a line
+// of its own (rest) rather than closing or reopening one.
 //
 // Known and documented (checklists.md): a merged sub-item lives under its
 // parent, not under the recording's marker, so deleting the recording
@@ -594,7 +638,10 @@ func mergeChecklistItems(body string, items []cleanup.Item) (string, []cleanup.I
 // mergeLeaf reopens or drops a childless item that is already a line, at any
 // depth. False when no line has its words.
 func mergeLeaf(lines []string, it cleanup.Item, counts *mergeCounts) bool {
-	want := foldWords(it.Text)
+	if it.Done {
+		return false
+	}
+	want := llm.FoldWords(it.Text)
 	for i, raw := range lines {
 		text, done, depth, ok := parseChecklistLine(raw)
 		if !ok || text != want {
@@ -619,7 +666,7 @@ func mergeLeaf(lines []string, it cleanup.Item, counts *mergeCounts) bool {
 // mergeParent joins an item with children to the top-level line with its
 // words. False when there is none.
 func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string, bool) {
-	want := foldWords(it.Text)
+	want := llm.FoldWords(it.Text)
 	at := -1
 	for i, raw := range lines {
 		if text, _, depth, ok := parseChecklistLine(raw); ok && depth == 0 && text == want {
@@ -642,12 +689,12 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 	}
 	touched := false
 	for _, c := range it.Children {
-		cw := foldWords(c.Text)
+		cw := llm.FoldWords(c.Text)
 		found := false
 		for i := at + 1; i <= end; i++ {
 			if text, done, _, _ := parseChecklistLine(lines[i]); text == cw {
 				found = true
-				if done {
+				if done && !c.Done {
 					counts.reopened++
 					lines[i] = reopen(lines[i])
 					touched = true
@@ -658,9 +705,13 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 		if found {
 			continue
 		}
-		lines = append(lines[:end+1], append([]string{"  - [ ] " + strings.Join(strings.Fields(c.Text), " ")}, lines[end+1:]...)...)
+		box := "  - [ ] "
+		if c.Done {
+			box = "  - [x] "
+		}
+		lines = slices.Insert(lines, end+1, box+strings.Join(strings.Fields(c.Text), " "))
 		end++
-		touched = true
+		touched = touched || !c.Done
 	}
 	if _, done, _, _ := parseChecklistLine(lines[at]); touched && done {
 		lines[at] = reopen(lines[at])
@@ -701,15 +752,17 @@ func parentOf(lines []string, i int) int {
 // in the list joins it (mergeChecklistItems) and only the rest goes under the
 // marker. On its first append that is over the body as it stands; on a
 // takeover of its own earlier attempt, over the body without its paragraph,
-// which finds the merged lines already there and adds nothing twice.
+// which finds the merged lines already there and adds nothing twice. Known
+// and accepted: that re-run reopens again a merged line the person ticked
+// between the interrupted write and the takeover, which needs an attempt
+// dead past the twenty-minute lease and a tick inside that window.
 func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item) error {
+	// counts are the last run's: the write's closure runs again on an ETag
+	// conflict, and only the run whose body landed is counted, below.
+	var counts mergeCounts
 	merge := func(body string) (string, string) {
-		merged, rest, counts := mergeChecklistItems(body, items)
-		for outcome, n := range map[string]int{"joined": counts.joined, "deduped": counts.deduped, "reopened": counts.reopened} {
-			for i := 0; i < n; i++ {
-				obs.Count(ctx, "ChecklistItemsMerged", map[string]string{"Outcome": outcome})
-			}
-		}
+		merged, rest, c := mergeChecklistItems(body, items)
+		counts = c
 		return merged, checklistItems(cleanup.RenderItems(rest))
 	}
 	_, err := service.RewriteNoteBody(ctx, p.cfg.Objects, noteKey, func(existing string) (string, bool) {
@@ -751,6 +804,11 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 	})
 	if err != nil {
 		return fmt.Errorf("pipeline: update note: %w", err)
+	}
+	for outcome, n := range map[string]int{"joined": counts.joined, "deduped": counts.deduped, "reopened": counts.reopened} {
+		for range n {
+			obs.Count(ctx, "ChecklistItemsMerged", map[string]string{"Outcome": outcome})
+		}
 	}
 	return nil
 }

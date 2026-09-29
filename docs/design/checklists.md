@@ -192,11 +192,13 @@ marker, in the recording's order. Three rules:
   again: open, it is a duplicate and dropped; done, it is reopened, and a
   reopened sub-item reopens its parent, because "add milk" over a ticked
   Milk means milk is wanted again;
-- matching folds case and whitespace and never reads indent; a marker line
-  or a blank line is left where it stands and an insertion never crosses a
-  marker; ticks are never added by a merge, only ever flipped `[x]` → `[ ]`.
-  `ChecklistItemsMerged{Outcome=joined|deduped|reopened}` counts what
-  happened.
+- matching folds case, punctuation and whitespace (`llm.FoldWords`, the one
+  fold every reader uses) and never reads indent; a marker line or a blank
+  line is left where it stands and an insertion never crosses a marker; a
+  merge never ticks a line the list has, only ever flips `[x]` → `[ ]` (an
+  item that arrives done is a tick a regeneration carried, written as it
+  came). `ChecklistItemsMerged{Outcome=joined|deduped|reopened}` counts
+  what happened, once per body that landed.
 
 A recording whose every item joined leaves a bare marker as a trailer, the
 way a carried marker stands. The honest limit: a merged child lives under
@@ -208,10 +210,14 @@ rule a plain note has, and the same limit a list already edited has for
 every recording. Regenerating either recording is safe: the earlier items
 are found by their words wherever they stand (`replaceChecklistItems`
 always goes by words for a checklist, since 2026-09-29, for exactly this
-reason), so a child extracted again is not doubled and the other
-recording's child is not lost. The match is exact folded words: "Costco"
-and "Costco wholesale" are two parents (a `ponytail:` ceiling in
-`append.go`; parent-name synonyms are the upgrade if a real list asks).
+reason), a parent with another child still under it is left standing and
+joined again through the same merge, and the rest goes where the first
+removed line stood — so a child extracted again is not doubled, keeps its
+tick and its place, and the other recording's child is not lost, whether
+the recording comes back with the same words, other words or none
+(`regenerate.md`). The match is exact folded words: "Costco" and "Costco
+wholesale" are two parents (a `ponytail:` ceiling in `append.go`;
+parent-name synonyms are the upgrade if a real list asks).
 
 The capture marker keeps its place on the line before the first item
 (`<marker>\n- [ ] A\n- [ ] B`, after `\n\n` when the body has content). A
