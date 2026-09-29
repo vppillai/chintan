@@ -11,6 +11,7 @@ import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
 import { useAuthGate } from '@/features/auth/useAuth.ts';
 import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
 import { useResendOnReconnect } from '@/features/capture/useResendOnReconnect.ts';
+import { useKeyboardInset } from '@/hooks/useKeyboardInset.ts';
 import { OfflineBanner } from '@/offline/OfflineBanner.tsx';
 import { UpdatePrompt } from '@/pwa/UpdatePrompt.tsx';
 import { usePushWakeup } from '@/pwa/usePushWakeup.ts';
@@ -67,6 +68,9 @@ export function AppShell() {
   const queryClient = useQueryClient();
 
   useBackGuard();
+  // Where the on-screen keyboard is, for the scroll container's padding
+  // (`shell.css` `.app__main`) and the note's drawer.
+  useKeyboardInset();
   usePasskeyReturn();
   useRouteFocus(mainRef);
   // A recording sent while offline goes out when the connection returns,

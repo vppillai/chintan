@@ -408,7 +408,11 @@
  * Inside `.app__main` a sticky element is clipped by that region, so it can
  * cover nothing outside the note. Pulled out to the gutters so the sheet
  * runs the width of the screen and the body scrolling beneath shows at
- * neither side.
+ * neither side. With a keyboard up the sheet rises with the region's
+ * `padding-block-end` (`--keyboard-inset`, `shell.css`): a sticky foot rests
+ * on the scroll container's content edge, above its padding, so the drawer
+ * needs no inset of its own (measured at 412×915 with a 400 px inset: the
+ * sheet's bottom at 422, the keyboard's top).
  */
 .note-screen > .note-drawer {
   position: sticky;
@@ -427,8 +431,20 @@
   /* A sheet, not a wall: at most three fifths of the screen, scrolling
      inside itself. Content-height, Details took 715 of a phone's 915 px and
      hid the title, meta and tabs, and on a desktop climbed over the header's
-     Back, Find and ⋮ (QA 2026-09-21, finding 7). */
-  max-block-size: 60dvh;
+     Back, Find and ⋮ (QA 2026-09-21, finding 7). With a keyboard up, what
+     fits above it: the viewport less the keyboard, the tab bar, the banner
+     (a touch target tall) and one more touch target for the borders, the
+     screen's top padding — a sticky box cannot leave its containing block —
+     and a banner grown an offline pill. A sheet taller than that space is
+     pinned to the screen's top with its foot under the keyboard: at 412×915
+     with a 400 px inset there are 359 px, and this gives 335. */
+  max-block-size: min(
+    60dvh,
+    calc(
+      100dvh - var(--keyboard-inset, 0px) - var(--layout-bottom-bar-height) -
+        2 * var(--layout-touch-target-min) - var(--safe-top) - var(--safe-bottom)
+    )
+  );
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--space-2) var(--layout-gutter) var(--space-4);
