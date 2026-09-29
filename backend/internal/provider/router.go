@@ -30,6 +30,10 @@ type RouteDecision struct {
 	// instead of cleaning prose. It is always false for an append — an
 	// existing note keeps the kind it has (owner feedback 2026-09-27).
 	Checklist bool `json:"checklist"`
+	// Spans is how many instruction spans the reply carried, applied or not;
+	// the pipeline's "routing decided" line logs it beside the words removed,
+	// which together say whether the spans were used.
+	Spans int `json:"-"`
 
 	// Usage is what the routing call consumed. It is carried on the decision so
 	// the breaker can reconcile its reservation against the real cost without a

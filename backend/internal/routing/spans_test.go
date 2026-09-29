@@ -116,3 +116,88 @@ func TestMentionsInstruction(t *testing.T) {
 		}
 	}
 }
+
+// The router stops a span one word early in two shapes the production battery
+// showed three of three (2026-09-29, rows 13 and 2): before the spoken title,
+// and before the "note" that closes a filing phrase. Both are closed from the
+// words alone; anything else is left as the router said.
+func TestExtendSpansClosesTheGapBeforeTheTitleAndTheTrailingNote(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name       string
+		transcript string
+		spans      []Span
+		title      string
+		want       []Span
+	}{
+		{
+			name:       "a naming span stopping before the title grows over it",
+			transcript: "title this staging smoke and then the deploy pipeline is green",
+			spans:      []Span{{0, 2}}, title: "Staging smoke",
+			want: []Span{{0, 4}},
+		},
+		{
+			name:       "a filing span stopping before note grows over it",
+			transcript: "the gutter is leaking again put that in my roof note",
+			spans:      []Span{{5, 10}},
+			want:       []Span{{5, 11}},
+		},
+		{
+			name:       "the title and then note, in one span",
+			transcript: "create a note titled roof repair note the gutter leaks",
+			spans:      []Span{{0, 4}}, title: "roof repair",
+			want: []Span{{0, 7}},
+		},
+		{
+			name:       "the next word is neither",
+			transcript: "add this to my roof repair note the gutter leaks",
+			spans:      []Span{{0, 7}}, title: "",
+			want: []Span{{0, 7}},
+		},
+		{
+			name:       "the title elsewhere than right after the span does not count",
+			transcript: "title this and staging smoke follows later",
+			spans:      []Span{{0, 2}}, title: "staging smoke",
+			want: []Span{{0, 2}},
+		},
+		{
+			name:       "a span at the end has nothing to grow over",
+			transcript: "the gutter leaks put that in my roof note",
+			spans:      []Span{{3, 9}}, title: "",
+			want: []Span{{3, 9}},
+		},
+		{
+			name:       "a span that does not fit is left for RemoveSpans to refuse",
+			transcript: "title this staging smoke",
+			spans:      []Span{{-1, 2}, {3, 3}}, title: "staging smoke",
+			want: []Span{{-1, 2}, {3, 3}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ExtendSpans(Words(tc.transcript), tc.spans, tc.title)
+			if len(got) != len(tc.want) {
+				t.Fatalf("spans = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("span %d = %v, want %v", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestNormalizeSpeechKeepsWordsOnly(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"  Roof   Repair. ":          "roof repair",
+		"App Feedback: the split-up": "app feedback the split up",
+		"don't":                      "don't",
+		"test 1,2,3":                 "test 1 2 3",
+		"":                           "",
+	} {
+		if got := NormalizeSpeech(in); got != want {
+			t.Errorf("NormalizeSpeech(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

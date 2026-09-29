@@ -511,3 +511,33 @@ func TestRouteKeepsTranscriptUntouchedWhenNothingToRemove(t *testing.T) {
 		t.Errorf("content = %q, want the transcript byte for byte", decision.Content)
 	}
 }
+
+// Two span endings the production battery of 2026-09-29 got wrong three of
+// three: the span stopping before the spoken title (row 13, "staging smoke"
+// opened the body) and before the "note" of a filing phrase (row 2, a
+// trailing "Note:" in the body). Both are closed in code from the words the
+// router already named; the reply's span count is carried for the log line.
+func TestRouteGrowsASpanOverTheSpokenTitleAndATrailingNote(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := routerServer(t, `{"action":"new","title":"staging smoke","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":2}]}`)
+	decision, err := newRouter(t, srv).Route(context.Background(), "title this staging smoke the deploy pipeline is green", nil, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "the deploy pipeline is green" {
+		t.Errorf("content = %q, want the title words outside it", decision.Content)
+	}
+	if decision.Spans != 1 {
+		t.Errorf("spans = %d, want the reply's one", decision.Spans)
+	}
+
+	srv, _ = routerServer(t, `{"action":"append","note":1,"confidence":1,"instruction_spans":[{"start_word":5,"end_word":10}]}`)
+	decision, err = newRouter(t, srv).Route(context.Background(), "the gutter is leaking again put that in my roof note", []routing.Candidate{{NoteID: "n1", Title: "Roof repair"}}, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "the gutter is leaking again" {
+		t.Errorf("content = %q, want no trailing note", decision.Content)
+	}
+}
