@@ -102,7 +102,7 @@ for (const route of ROUTES) {
  * checkbox is the app's one selection box now: the library's went with note
  * multi-select (owner, 2026-09-29).
  */
-test('the recording checkbox and the playback slider are at least 24 px', async ({ page, api }) => {
+test('the recording checkbox and the playback slider are at least 24 px, inside a 44 px target', async ({ page, api }) => {
   // The plain slider: a capture with no peaks to draw. Seeded before the first
   // visit, because the library prefetches the first page's bodies into the
   // device cache while idle, and the note screen mounts from the device's copy
@@ -133,10 +133,12 @@ test('the recording checkbox and the playback slider are at least 24 px', async 
   const checkbox = await page.getByRole('checkbox').first().boundingBox();
   expect(checkbox?.width ?? 0).toBeGreaterThanOrEqual(24);
   expect(checkbox?.height ?? 0).toBeGreaterThanOrEqual(24);
-  // And the thumb's target around it is at least as large.
-  const target = await page.locator('.recording__select').first().boundingBox();
-  expect(target?.width ?? 0).toBeGreaterThanOrEqual(24);
-  expect(target?.height ?? 0).toBeGreaterThanOrEqual(24);
+  // And the thumb has a 44 px target around it. That target is the box's
+  // wrapper, not the label: the label spans the row, so it would pass at any
+  // wrapper size and pin nothing.
+  const target = await page.locator('.recording__check').first().boundingBox();
+  expect(target?.width ?? 0).toBeGreaterThanOrEqual(44);
+  expect(target?.height ?? 0).toBeGreaterThanOrEqual(44);
 });
 
 /**
