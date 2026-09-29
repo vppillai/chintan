@@ -20,8 +20,6 @@ import (
 	"github.com/vppillai/chintan/backend/internal/repository"
 )
 
-const ArchiveRetention = 30 * 24 * time.Hour
-
 // maxNoteTitleLen bounds a stored title. It matches the OpenAPI document's
 // maxLength for a note title, so a title the API accepts is a title that is
 // stored whole. Two different limits for one field means a request the handler
@@ -37,11 +35,6 @@ var (
 	ErrNoteArchived    = errors.New("note is archived")
 	ErrNoteNotArchived = errors.New("note is not archived")
 	ErrEmptyNoteTitle  = errors.New("note title is empty")
-	// ErrPurgeIncomplete means part of a permanent delete failed. The note index
-	// is deliberately left in place so the delete can be retried, because
-	// reporting "purged" while audio survives in S3 is worse than reporting a
-	// failure.
-	ErrPurgeIncomplete = errors.New("note purge incomplete")
 )
 
 // maxMatchCandidates bounds how many notes note-matching will page through.
@@ -149,18 +142,6 @@ type NoteUpdates struct {
 
 // ErrInvalidNoteKind rejects a kind that is not "" or checklist.
 var ErrInvalidNoteKind = errors.New("kind must be note or checklist")
-
-// Pin errors. The sentences reach the user as written.
-var (
-	// ErrPinLimit refuses the pin that would be one past model.MaxPinnedNotes.
-	ErrPinLimit = errors.New("you can pin up to fifty notes")
-	// ErrPinReorderInvalid refuses a reorder naming a note that is not the
-	// caller's, not pinned, or named twice.
-	ErrPinReorderInvalid = errors.New("every id must be one of your pinned notes")
-	// ErrPinBatchSize refuses a reorder of no notes or of more than can be
-	// pinned.
-	ErrPinBatchSize = errors.New("ids must name between 1 and 50 notes")
-)
 
 // MatchResult represents the result of a note matching operation
 type MatchResult struct {
@@ -314,6 +295,18 @@ func noteListTruncated(ctx context.Context, page repository.Page[model.NoteIndex
 	obs.Count(ctx, "NotesListTruncated", nil)
 }
 
+// ListArchivedNotes returns one page of archived notes that have not passed
+// their purge deadline. Expiry itself belongs to DynamoDB TTL; the filter only
+// keeps an item the table has not collected yet out of the UI.
+func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
+	page, err := s.store.ListArchivedNotes(ctx, userID, opts)
+	if err != nil {
+		return page, err
+	}
+	noteListTruncated(ctx, page, "archived")
+	return page, nil
+}
+
 // GetNote retrieves a specific note
 func (s *NotesService) GetNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
 	return s.store.GetNote(ctx, userID, noteID)
@@ -338,6 +331,56 @@ func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string)
 	// The worker's append markers stay in the object and out of the editor;
 	// UpdateNote puts them back. See note_markers.go.
 	return NoteDetail{NoteIndex: note, Body: StripCaptureMarkers(string(bodyBytes))}, nil
+}
+
+// MatchNotes finds matching notes for a query (only searches active notes)
+func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (MatchResult, error) {
+	// Matching scores against every candidate, so it reads the whole active
+	// set — once — rather than seeing whatever fitted in one page.
+	notes, err := s.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxMatchCandidates})
+	if err != nil {
+		return MatchResult{}, err
+	}
+
+	// Rank all candidates first (following binding decision #1)
+	candidates := match.Rank(query, notes, 0) // 0 means no limit, get all
+
+	// Check for high confidence
+	highConfidence := match.HighConfidence(candidates)
+
+	// Limit response to reasonable number for UI
+	if len(candidates) > 10 {
+		candidates = candidates[:10]
+	}
+
+	result := MatchResult{
+		Candidates: candidates,
+	}
+
+	// Set auto_select_id only for high confidence matches
+	if highConfidence && len(candidates) > 0 {
+		result.AutoSelectID = &candidates[0].NoteID
+	}
+
+	return result, nil
+}
+
+// Snippet derives the list snippet from a note body.
+//
+// The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
+// writes invalid UTF-8 into DynamoDB and into the routing prompt.
+//
+// The worker's append markers are removed first: the snippet is shown in the
+// notes list and handed to the router as a summary of the note, and neither
+// wants an HTML comment in it.
+func Snippet(body string) string {
+	const maxRunes = 500
+	body = StripCaptureMarkers(body)
+	runes := []rune(body)
+	if len(runes) <= maxRunes {
+		return body
+	}
+	return string(runes[:maxRunes]) + "..."
 }
 
 // ErrAppendInProgress refuses a body write while the worker is putting a
@@ -615,109 +658,6 @@ func (s *NotesService) writeNoteBody(ctx context.Context, note *model.NoteIndex,
 	return nil
 }
 
-// countPinned is how many of the tenant's active notes are pinned, and the
-// rank a new pin takes to land last: one step past the highest in use, which
-// is count × PinRankStep while the ranks are compact and more once an unpin
-// has left a gap. Count × step would then equal an existing rank, and the
-// order's tie-break (the more recently pinned first) would put the new pin
-// above that note instead of below it. Zero when nothing is pinned.
-func (s *NotesService) countPinned(ctx context.Context, userID string) (count int, nextRank int64, err error) {
-	notes, _, err := s.store.DrainNotes(ctx, userID, repository.DrainOptions{})
-	if err != nil {
-		return 0, 0, fmt.Errorf("failed to list notes: %w", err)
-	}
-	for _, n := range notes {
-		if n.Pinned() {
-			count++
-			nextRank = max(nextRank, n.PinRank+model.PinRankStep)
-		}
-	}
-	return count, nextRank, nil
-}
-
-// ReorderPins writes the listed notes' pin_rank as their position in ids,
-// PinRankStep apart, and returns them in that order. Every id must name one
-// of the caller's pinned, active notes, once; anything else refuses the whole
-// request, since a partial reorder is not an order anyone asked for. One
-// request per drag.
-//
-// Each note is read whole before it is written: a listed note carries no
-// search_text or cleaned_body, and PutNote writes the row it is given, so a
-// note put from a list projection would lose both. A note already at its
-// rank is not rewritten, so a drag that moves one note writes one row.
-func (s *NotesService) ReorderPins(ctx context.Context, userID string, ids []string) ([]model.NoteIndex, error) {
-	if len(ids) == 0 || len(ids) > model.MaxPinnedNotes {
-		return nil, ErrPinBatchSize
-	}
-	seen := make(map[string]bool, len(ids))
-	notes := make([]model.NoteIndex, 0, len(ids))
-	for _, id := range ids {
-		if seen[id] {
-			return nil, ErrPinReorderInvalid
-		}
-		seen[id] = true
-		note, err := s.store.GetNote(ctx, userID, id)
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrPinReorderInvalid
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to get note: %w", err)
-		}
-		if !note.Pinned() || !NoteIsActive(note) {
-			return nil, ErrPinReorderInvalid
-		}
-		notes = append(notes, note)
-	}
-	out := make([]model.NoteIndex, 0, len(notes))
-	for i, note := range notes {
-		stored, err := s.putPinRank(ctx, userID, note, int64(i)*model.PinRankStep)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, stored)
-	}
-	return out, nil
-}
-
-// putPinRank writes rank onto note, re-reading it and writing again when its
-// version moved underneath. A body save or the worker's append stamp landing
-// on a pinned note mid-drag is not a reason to stop part-way through the
-// order — the rank is independent of whatever else changed — and stopping
-// left the earlier notes moved and the later ones not, behind a 409 the
-// client's rollback did not match (review 2026-09-24 R4-9). A note that keeps
-// moving is still that conflict; one unpinned or archived meanwhile is refused
-// as the validation before the loop would have refused it. A note already at
-// its rank is not rewritten, so a drag that moves one note writes one row.
-//
-// The row a conflict hands back is the one now stored (putCarryingStamp read
-// it to tell a stamp from a moved version), so the next attempt starts from
-// it rather than reading again. A returned row whose version did not move is
-// the exception: it is the copy just offered, carrying the rank as if it had
-// landed, because the read inside failed or a second writer got in behind it;
-// the winner is unknown, and the conflict is reported as it stands.
-func (s *NotesService) putPinRank(ctx context.Context, userID string, note model.NoteIndex, rank int64) (model.NoteIndex, error) {
-	var err error
-	for attempt := 0; attempt < maxIndexRefreshAttempts; attempt++ {
-		if attempt > 0 && (!note.Pinned() || !NoteIsActive(note)) {
-			return model.NoteIndex{}, ErrPinReorderInvalid
-		}
-		if note.PinRank == rank {
-			return note, nil
-		}
-		note.PinRank = rank
-		var stored model.NoteIndex
-		stored, err = s.putCarryingStamp(ctx, userID, note)
-		if !errors.Is(err, repository.ErrVersionConflict) {
-			return stored, err
-		}
-		if stored.Version == note.Version {
-			return model.NoteIndex{}, err
-		}
-		note = stored
-	}
-	return model.NoteIndex{}, err
-}
-
 // putCarryingStamp is PutNote for a write that did not touch the clean stamp.
 //
 // PutNote pins the stamp beside the version because a Clean tap
@@ -752,247 +692,4 @@ func (s *NotesService) putCarryingStamp(ctx context.Context, userID string, note
 		return fresh, err
 	}
 	return stored, err
-}
-
-// DeleteNote archives a note (soft delete)
-func (s *NotesService) DeleteNote(ctx context.Context, userID, noteID string) error {
-	_, err := s.ArchiveNote(ctx, userID, noteID)
-	return err
-}
-
-// MatchNotes finds matching notes for a query (only searches active notes)
-func (s *NotesService) MatchNotes(ctx context.Context, userID, query string) (MatchResult, error) {
-	// Matching scores against every candidate, so it reads the whole active
-	// set — once — rather than seeing whatever fitted in one page.
-	notes, err := s.DrainNotes(ctx, userID, repository.DrainOptions{MaxItems: maxMatchCandidates})
-	if err != nil {
-		return MatchResult{}, err
-	}
-
-	// Rank all candidates first (following binding decision #1)
-	candidates := match.Rank(query, notes, 0) // 0 means no limit, get all
-
-	// Check for high confidence
-	highConfidence := match.HighConfidence(candidates)
-
-	// Limit response to reasonable number for UI
-	if len(candidates) > 10 {
-		candidates = candidates[:10]
-	}
-
-	result := MatchResult{
-		Candidates: candidates,
-	}
-
-	// Set auto_select_id only for high confidence matches
-	if highConfidence && len(candidates) > 0 {
-		result.AutoSelectID = &candidates[0].NoteID
-	}
-
-	return result, nil
-}
-
-// Snippet derives the list snippet from a note body.
-//
-// The cut is by rune, not byte. A byte slice cuts multi-byte runes in half and
-// writes invalid UTF-8 into DynamoDB and into the routing prompt.
-//
-// The worker's append markers are removed first: the snippet is shown in the
-// notes list and handed to the router as a summary of the note, and neither
-// wants an HTML comment in it.
-func Snippet(body string) string {
-	const maxRunes = 500
-	body = StripCaptureMarkers(body)
-	runes := []rune(body)
-	if len(runes) <= maxRunes {
-		return body
-	}
-	return string(runes[:maxRunes]) + "..."
-}
-
-// ArchiveNote archives a note (soft delete with retention period)
-func (s *NotesService) ArchiveNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
-	note, err := s.store.GetNote(ctx, userID, noteID)
-	if err != nil {
-		return model.NoteIndex{}, err
-	}
-
-	// If already archived, return as-is (idempotent)
-	if !NoteIsActive(note) {
-		return note, nil
-	}
-
-	// Set archive timestamps. PurgeAfterEpoch is the deadline the archived list
-	// filters on and the weekly expiry sweep (internal/purge) collects on; the
-	// store derives the DynamoDB TTL backstop from it. Nothing sweeps on read.
-	now := time.Now().UTC()
-	purgeAt := now.Add(ArchiveRetention)
-	note.DeletedAt = model.FormatTime(now)
-	note.PurgeAfter = model.FormatTime(purgeAt)
-	note.PurgeAfterEpoch = purgeAt.Unix()
-	// The archive is never pinned, and a restore comes back unpinned: the
-	// pin was a place on Home, and the note has left Home.
-	note.PinnedAt, note.PinRank = "", 0
-
-	return s.putCarryingStamp(ctx, userID, note)
-}
-
-// RestoreNote restores an archived note to active status
-func (s *NotesService) RestoreNote(ctx context.Context, userID, noteID string) (model.NoteIndex, error) {
-	note, err := s.store.GetNote(ctx, userID, noteID)
-	if err != nil {
-		return model.NoteIndex{}, err
-	}
-
-	// If already active, return as-is (idempotent)
-	if NoteIsActive(note) {
-		return note, nil
-	}
-
-	// Clear archive fields, including the TTL, so the table stops counting down.
-	note.DeletedAt = ""
-	note.PurgeAfter = ""
-	note.PurgeAfterEpoch = 0
-
-	return s.putCarryingStamp(ctx, userID, note)
-}
-
-// ListArchivedNotes returns one page of archived notes that have not passed
-// their purge deadline. Expiry itself belongs to DynamoDB TTL; the filter only
-// keeps an item the table has not collected yet out of the UI.
-func (s *NotesService) ListArchivedNotes(ctx context.Context, userID string, opts repository.ListOptions) (repository.Page[model.NoteIndex], error) {
-	page, err := s.store.ListArchivedNotes(ctx, userID, opts)
-	if err != nil {
-		return page, err
-	}
-	noteListTruncated(ctx, page, "archived")
-	return page, nil
-}
-
-// PermanentlyDeleteNote permanently deletes an archived note and all its captures
-func (s *NotesService) PermanentlyDeleteNote(ctx context.Context, userID, noteID string) error {
-	note, err := s.store.GetNote(ctx, userID, noteID)
-	if err != nil {
-		return err
-	}
-
-	// Must be archived first
-	if NoteIsActive(note) {
-		return ErrNoteNotArchived
-	}
-
-	return s.hardDeleteNote(ctx, userID, noteID, note)
-}
-
-// hardDeleteNote removes a note's captures, its objects, and finally its index.
-//
-// It fails loudly. Logging a cascade failure and deleting the index anyway
-// permanently orphans audio the UI has reported as purged. Here the index
-// survives any failure, so the note stays visible as archived and the delete
-// can be retried.
-func (s *NotesService) hardDeleteNote(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
-	if err := s.PurgeNoteArtifacts(ctx, userID, noteID, note); err != nil {
-		return err
-	}
-	return s.store.DeleteNote(ctx, userID, noteID)
-}
-
-// DiscardNote removes a note nothing references — one CreateNote made for a
-// move whose write into it never landed. The body and the metadata go first
-// and the index row last, as in hardDeleteNote, so a failure leaves the note
-// visible and deletable rather than as objects nobody can reach.
-//
-// It deliberately runs none of hardDeleteNote's capture cascade. That cascade
-// deletes every capture row filed against the note together with its audio
-// and transcripts, and the caller cannot prove that no row points here: a
-// re-point that reported a fault may still have landed. A note left behind by
-// mistake costs two empty objects; a cascade that guessed wrong costs a
-// recording.
-func (s *NotesService) DiscardNote(ctx context.Context, userID string, note model.NoteIndex) error {
-	if err := s.deleteObject(ctx, note.S3MarkdownKey); err != nil {
-		return fmt.Errorf("failed to delete the note body: %w", err)
-	}
-	if err := s.deleteObject(ctx, note.S3MetaKey); err != nil {
-		return fmt.Errorf("failed to delete the note meta: %w", err)
-	}
-	return s.store.DeleteNote(ctx, userID, note.ID)
-}
-
-// PurgeNoteArtifacts unlinks everything a note owns apart from its own index
-// row: every capture filed against it, every S3 object those captures name, and
-// the note's own body and metadata.
-//
-// It is separate from hardDeleteNote because the same cascade runs from two
-// places. A user asking to delete forever arrives through hardDeleteNote, which
-// removes the row last so a failed cascade leaves the note visible and
-// retryable. The weekly sweep in internal/purge finds notes past their
-// purge_after_epoch, runs this, and then deletes the row itself; DynamoDB TTL
-// is only the backstop fourteen days behind it (repository.ttlGraceSeconds).
-// Before the sweep existed, TTL removed the index row and left the audio, raw
-// transcript, routed transcript, cleaned text, segments and peaks in the
-// bucket, billed and unreachable, with `chintanctl reconcile` as the only way
-// to find them.
-//
-// Every failure is returned rather than logged, so a caller that must not
-// declare a purge complete can tell that it is not.
-func (s *NotesService) PurgeNoteArtifacts(ctx context.Context, userID, noteID string, note model.NoteIndex) error {
-	// Every page, not just the first: a truncated list is how "delete forever"
-	// leaves orphans behind.
-	captures, err := repository.DrainPages(ctx, 0, func(ctx context.Context, opts repository.ListOptions) (repository.Page[model.CaptureIndex], error) {
-		return s.store.ListCapturesByNote(ctx, userID, noteID, opts)
-	})
-	if err != nil {
-		return fmt.Errorf("%w: list captures: %w", ErrPurgeIncomplete, err)
-	}
-
-	// And the captures the index cannot see. A row written before the index
-	// keys were promoted (August 2026) is not in GSI1 at all, so the query
-	// above is complete only for rows the current code wrote. In production
-	// this is how "delete forever" removed every note and left thirteen filed
-	// captures pointing at them, each still answering GET /v1/captures as a
-	// receipt. The base-table read is the honest fix rather than promoting
-	// the keys on read: it finds the rows now, for this purge, instead of
-	// repairing the index for a later one that may never come — and a purge
-	// is rare enough to afford one partition read per note.
-	seen := make(map[string]bool, len(captures))
-	for _, c := range captures {
-		seen[c.ID] = true
-	}
-	unindexed, err := s.store.ListUnindexedCaptures(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("%w: list unindexed captures: %w", ErrPurgeIncomplete, err)
-	}
-	for _, c := range unindexed {
-		if c.NoteID == noteID && !seen[c.ID] {
-			captures = append(captures, c)
-		}
-	}
-
-	for _, c := range captures {
-		// Every object the capture may own, including a peaks key the row no
-		// longer records; see captureObjectKeys.
-		for _, key := range captureObjectKeys(userID, c) {
-			if err := s.deleteObject(ctx, key); err != nil {
-				return fmt.Errorf("%w: capture %s object: %w", ErrPurgeIncomplete, c.ID, err)
-			}
-		}
-		if err := s.store.DeleteCapture(ctx, userID, c.ID); err != nil && !errors.Is(err, repository.ErrNotFound) {
-			return fmt.Errorf("%w: capture %s index: %w", ErrPurgeIncomplete, c.ID, err)
-		}
-	}
-
-	if err := s.deleteObject(ctx, note.S3MarkdownKey); err != nil {
-		return fmt.Errorf("%w: note body: %w", ErrPurgeIncomplete, err)
-	}
-	if err := s.deleteObject(ctx, note.S3MetaKey); err != nil {
-		return fmt.Errorf("%w: note meta: %w", ErrPurgeIncomplete, err)
-	}
-
-	return nil
-}
-
-// deleteObject removes a key, treating "already gone" as success so a retried
-// purge can make progress.
-func (s *NotesService) deleteObject(ctx context.Context, key string) error {
-	return deleteObjectIfPresent(ctx, s.objects, key)
 }
