@@ -68,6 +68,8 @@ interface Drag<T> {
   origin: { x: number; y: number } | null;
   axis: 'undecided' | 'x' | 'y';
   levels: Levels;
+  /** The order when the row was lifted; a release that leaves it commits nothing. */
+  order: T[];
 }
 
 export interface DragReorderHandlers {
@@ -131,6 +133,7 @@ export function useDragReorder<T extends string>({
       origin: origin ?? null,
       axis: onShift && origin ? 'undecided' : 'y',
       levels: 0,
+      order: [...ids],
     };
     live.current = [...ids];
     setDraft([...ids]);
@@ -166,6 +169,10 @@ export function useDragReorder<T extends string>({
       if (current.levels !== 0) onShift?.(current.id, current.levels);
       return;
     }
+    // Past the slop is moved, so a tap it is not; but a vertical drag that
+    // crossed no midpoint left the order as it was, and the caller is not
+    // asked to write what it already has.
+    if (live.current.every((id, index) => id === current.order[index])) return;
     onCommit(live.current, current.id);
   };
 

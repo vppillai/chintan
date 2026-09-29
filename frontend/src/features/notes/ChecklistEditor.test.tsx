@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Toast, dismissToast } from '@/components/Toast.tsx';
@@ -16,14 +16,21 @@ import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
  * is the outside world changing the note under the editor, as a refetch does.
  * A save re-renders once it has settled, as the real editor's does
  * (`performSave` → `commit` → `dispatch`), so a focus target left armed past
- * the render it was set for shows up here as it would in the app.
+ * the render it was set for shows up here as it would in the app. That render
+ * comes from an effect after the one the act rendered, inside the same `act`
+ * scope, rather than from a detached microtask no test's scope covers.
  */
 function mount(initial: string, noteId = 'shopping') {
   const log = { bodies: [] as string[], saves: 0, setBody: (_next: string): void => {} };
   function Harness() {
     const [body, setBody] = useState(initial);
-    const [, setSettled] = useState(0);
+    const [settled, setSettled] = useState(0);
     log.setBody = setBody;
+    // The body is the trigger: the editor asks to save in the handler that
+    // changed it, so the render after that handler is the one to settle from.
+    useEffect(() => {
+      if (settled !== log.saves) setSettled(log.saves);
+    }, [body, settled]);
     return (
       <ChecklistEditor
         noteId={noteId}
@@ -34,11 +41,6 @@ function mount(initial: string, noteId = 'shopping') {
         }}
         onSave={() => {
           log.saves += 1;
-          void Promise.resolve().then(() => {
-            act(() => {
-              setSettled(log.saves);
-            });
-          });
         }}
       />
     );

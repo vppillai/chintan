@@ -84,13 +84,20 @@ function server(initial: NoteDetailWire) {
     if (method === 'PATCH') {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       state.patches.push(body);
+      const nextBody = typeof body['body'] === 'string' ? body['body'] : state.note.body;
+      const cleaned = state.note.cleaned;
       state.note = {
         ...state.note,
         version: state.note.version + 1,
-        ...(typeof body['body'] === 'string' ? { body: body['body'] } : {}),
+        body: nextBody,
         ...(body['kind'] === 'note' || body['kind'] === 'checklist' ? { kind: body['kind'] } : {}),
+        // As the server (`service/notes.go`): a body that is the view,
+        // trailing whitespace aside, is current; any other leaves it stale.
+        ...(cleaned ? { cleaned: { ...cleaned, stale: nextBody.trimEnd() !== cleaned.body.trimEnd() } } : {}),
       };
-      const { body: _body, captures: _captures, ...row } = state.note;
+      // The answer is a list row — no body, captures or cleaned view — so
+      // the client keeps the view it holds until the note refetches.
+      const { body: _body, captures: _captures, cleaned: _cleaned, ...row } = state.note;
       return json(row);
     }
     if (url.pathname.endsWith('/v1/settings')) {
@@ -109,7 +116,12 @@ function server(initial: NoteDetailWire) {
       <Toast />
     </TestProviders>,
   );
-  return { ...state, router, get patches() { return state.patches; }, get cleans() { return state.cleans; } };
+  return {
+    router,
+    get note() { return state.note; },
+    get patches() { return state.patches; },
+    get cleans() { return state.cleans; },
+  };
 }
 
 function tabNames(): string[] {
@@ -250,12 +262,16 @@ describe('a checklist note', () => {
     expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
 
     // Undo puts the body as it stood back, in a second save, and the tab
-    // shows the proposal again, ready to be taken another way.
+    // shows the proposal again until the note refetches: neither save wrote
+    // the view itself, so both left it stale on the server, and from the
+    // next refetch the tab shows the stale notice over inert rows, where Use
+    // this list still takes it (the case below).
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => {
       expect(api.patches).toHaveLength(2);
     });
     expect(api.patches[1]).toEqual(expect.objectContaining({ body: SHOPPING.body }));
+    expect(api.note.cleaned?.stale).toBe(true);
     expect(panel().getByText(caption)).toBeInTheDocument();
     expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
     expect(rows().getByRole('textbox', { name: 'Item 3' })).toHaveValue('Butter');
@@ -325,9 +341,11 @@ describe('a checklist note', () => {
     const caption = 'Ticking, moving or editing here replaces your list with the split version.';
     expect(panel().getByText(stale)).toBeInTheDocument();
     expect(panel().queryByText(caption)).toBeNull();
-    // The rows are drawn — the proposal can be read — but inert: one act
-    // there would have put the old proposal over the body and lost the item
-    // added since. (jsdom does not enforce `inert`; the browser does.)
+    // The rows are drawn — the proposal can be seen, though `inert` also
+    // takes it out of the accessibility tree — and nothing in them can be
+    // reached: one act there would have put the old proposal over the body
+    // and lost the item added since. (jsdom does not enforce `inert`; the
+    // browser does.)
     expect(rows().getAllByRole('button', { name: /^Move / })).toHaveLength(3);
     expect(document.querySelector('.cleaned__body')).toHaveAttribute('inert');
     expect(document.querySelector('.cleaned__body')).toHaveAttribute('data-stale');

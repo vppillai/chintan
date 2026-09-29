@@ -387,14 +387,26 @@ applies that act in the same save; the caption above the rows says so
 version."), Use this list takes it outright, and either way the shell's
 toast offers Undo for six seconds (the OF-DEL pattern: no question first for
 what can be undone), which writes the body as it stood back, saves, and
-shows the proposal again. From then on the tab shows the body — the split
+shows the proposal again until the note refetches: neither save wrote the
+view itself (`service/notes.go` clears `stale` only for a body byte-equal to
+it, trailing whitespace aside, and the adopted body has the act applied), so
+from the next refetch — the detail query's 30 s `staleTime`, or reopening
+the note — the tab shows the stale notice over inert rows, and Use this list
+still takes the proposal. From then on the tab shows the body — the split
 list with the changes made since (`adoptedSplits`, per proposal) — and an
 act there is an ordinary edit, saved as the Items tab saves it. A proposal
 older than the note, and one a regeneration is about to replace, is drawn
 `inert` (one attribute on the wrapper, not a prop through every control)
 with the stale notice above it, until Regenerate or Use this list; a stale
 proposal taken by an act would put a list that predates the note's later
-changes over the body in one save. The editor is `{ noteId, body, onChange,
+changes over the body in one save. `inert` also removes the rows from the
+accessibility tree — the disabled boxes before round 6 could still be read
+by a screen reader; a stale or pending proposal cannot — so a screen-reader
+user has the stale notice for why, and Use this list and Regenerate as the
+two controls left. One edge: Delete done as the first act shows the adoption
+toast and then the editor's "N done items deleted" toast over it, whose Undo
+restores the proposal as the adopted body; the body before adoption goes
+with the first toast. The editor is `{ noteId, body, onChange,
 onSave }` and knows nothing of whose body it is: the Items tab hands it the
 note editor, Split up hands it `adopt`. The find bar still counts nothing in
 this tab.

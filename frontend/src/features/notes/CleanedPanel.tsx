@@ -132,6 +132,10 @@ export function CleanedPanel({
     if (cleaned) adoptedSplits.set(note.id, cleaned.generated_at);
     editor.edit({ body });
     if (!first) return;
+    // For a discrete act the editor's own `onSave` calls `saveNow` again
+    // right after this one; `useNoteEditor` (`inFlight`, `dirtyAgain`) folds
+    // the two into one PATCH. This one is for the keystroke, which the editor
+    // saves only on blur.
     void editor.saveNow();
     const message = 'Your list is now the split version.';
     setAnnouncement(message);
