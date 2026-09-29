@@ -1,4 +1,6 @@
-import { expect, noteAction, test } from './fixtures.ts';
+import { devices, type CDPSession } from '@playwright/test';
+
+import { expect, noteAction, test, type ApiState } from './fixtures.ts';
 
 /**
  * The note as panels under one strip: Text · Cleaned · Recordings (N).
@@ -8,6 +10,14 @@ import { expect, noteAction, test } from './fixtures.ts';
  * tab is remembered for the session and named in the URL, and a deep link can
  * open a note on its recordings.
  */
+
+/** Eighty paragraphs: a note that scrolls on any phone. */
+function longBody(api: ApiState): void {
+  api.notes['roof-repair']!.body = Array.from(
+    { length: 80 },
+    (_, index) => `Paragraph ${String(index + 1)}. The flashing around the chimney needs replacing.`,
+  ).join('\n\n');
+}
 
 test('opens on the text, and Recordings is one tap away with its count', async ({ page }) => {
   await page.goto('/notes/roof-repair');
@@ -54,10 +64,7 @@ test('the arrow keys move between segments', async ({ page }) => {
 });
 
 test('the strip sticks under the banner while a long note scrolls', async ({ page, api }) => {
-  api.notes['roof-repair']!.body = Array.from(
-    { length: 80 },
-    (_, index) => `Paragraph ${String(index + 1)}. The flashing around the chimney needs replacing.`,
-  ).join('\n\n');
+  longBody(api);
   await page.setViewportSize({ width: 412, height: 915 });
   await page.goto('/notes/roof-repair');
   await expect(page.getByRole('textbox', { name: 'Note body' })).toBeVisible();
@@ -100,4 +107,64 @@ test('the Details sheet keeps Close in reach while its content scrolls', async (
   });
   expect(scrolled).toBeGreaterThan(0);
   await expect(close).toBeInViewport();
+});
+
+test.describe('on a phone', () => {
+  // The descriptor's `defaultBrowserType` cannot be set inside a describe.
+  const { defaultBrowserType: _browser, ...pixel } = devices['Pixel 7']!;
+  test.use({ ...pixel, hasTouch: true, isMobile: true });
+
+  /**
+   * A finger from (x, y), `dx` across and `dy` down, in a dozen moves through
+   * the browser's own touch pipeline (as `swipe.spec.ts`); `beforeEnd` reads
+   * the screen while the finger is still down.
+   */
+  async function drag(
+    cdp: CDPSession,
+    x: number,
+    y: number,
+    dx: number,
+    dy: number,
+    beforeEnd?: () => Promise<void>,
+  ): Promise<void> {
+    const steps = 12;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    for (let i = 1; i <= steps; i += 1) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: x + (dx * i) / steps, y: y + (dy * i) / steps }],
+      });
+    }
+    if (beforeEnd) await beforeEnd();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  }
+
+  test('a drag down on a scrolled Details sheet scrolls the sheet, not the note, and pulls nothing', async ({
+    page,
+    api,
+  }) => {
+    // The note at its top, the sheet scrolled to its end: the one arrangement
+    // where pull-to-refresh used to claim the sheet's drag (R6-NAV-3, T1 —
+    // armed at 90 px with the sheet unmoved, then the note refetched).
+    longBody(api);
+    await page.setViewportSize({ width: 412, height: 700 });
+    await page.goto('/notes/roof-repair');
+    await noteAction(page, 'Details');
+    const panel = page.locator('.note-panel');
+    const before = await panel.evaluate((sheet) => {
+      sheet.scrollTop = sheet.scrollHeight;
+      return sheet.scrollTop;
+    });
+    expect(before, 'the sheet must scroll for this to mean anything').toBeGreaterThan(0);
+
+    const box = (await panel.boundingBox())!;
+    const cdp = await page.context().newCDPSession(page);
+    let midPhase: string | null = null;
+    await drag(cdp, box.x + box.width / 2, box.y + box.height * 0.6, 0, 150, async () => {
+      midPhase = await page.locator('.pull-refresh').getAttribute('data-phase');
+    });
+    expect(midPhase).toBe('idle');
+    await expect.poll(() => panel.evaluate((sheet) => sheet.scrollTop)).toBeLessThan(before);
+    expect(await page.locator('.app__main').evaluate((main) => main.scrollTop)).toBe(0);
+  });
 });
