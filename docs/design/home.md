@@ -179,8 +179,8 @@ and not on every render, and is one frame under reduced motion. Checked fills
 the box with ink and draws the tick in ground; the hidden control's focus ring
 lands on the mark. The same label shape — `.checklist__box`, then `CheckMark`
 — is the Items tab's rows (and the Split up tab's, which are the same
-editor), the Details switches
-(Checklist, Word for word) and the Cleaned tab's auto-refresh.
+editor), the Details switches (Checklist, Word for word;
+`features/notes/NoteDrawer.tsx`) and the Cleaned tab's auto-refresh.
 
 Tests: `features/notes/groups.test.ts`, `screens/NotesScreen.test.tsx`,
 `NotesScreen.pins.test.tsx`, `NotesScreen.checklist.test.tsx`,

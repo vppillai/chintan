@@ -12,8 +12,8 @@ for how an edit and a voice append share the body). Code:
 `frontend/src/features/notes/NoteDetailScreen.tsx` (the composition;
 `NoteViews` holds the strip, the swipe and the panel; `TextPanel` the body
 and its mirror), `NoteTabs.tsx` (`useNoteTab`, `NoteTabList`),
-`NoteActions.tsx` (`NoteMenu`, `NoteDrawer`), `FindBar.tsx` with `find.ts`,
-`CleanedPanel.tsx`, `Recordings.tsx`, `ChecklistEditor.tsx`,
+`NoteActions.tsx` (`NoteMenu`), `NoteDrawer.tsx` (`NoteDrawer`), `FindBar.tsx`
+with `find.ts`, `CleanedPanel.tsx`, `Recordings.tsx`, `ChecklistEditor.tsx`,
 `hooks/useHorizontalSwipe.ts`, `hooks/usePullToRefresh.ts`,
 `hooks/useKeyboardInset.ts` (called once in `components/AppShell.tsx`), the
 sheet (`styles/notes.css`; the scroll region's rules in `styles/shell.css`
@@ -45,8 +45,8 @@ Top to bottom, inside the shell's one scroll region (`.app__main`):
   because the recordings' `<audio>` and the body's autosize measurement each
   belong to the panel on screen; a hidden panel's player would keep playing
   under the text.
-- **The drawer** (`NoteDrawer`): Details or Share, rendered only while one is
-  open. Outside the panels, so it is there on every tab; hidden (not
+- **The drawer** (`NoteDrawer.tsx`): Details or Share, rendered only while one
+  is open. Outside the panels, so it is there on every tab; hidden (not
   unmounted) while recordings are being selected, whose own bar takes the
   foot of the screen.
 

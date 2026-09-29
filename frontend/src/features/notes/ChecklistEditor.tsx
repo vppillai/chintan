@@ -23,10 +23,6 @@ import {
   type ChecklistItem,
 } from './checklist.ts';
 
-// The drawn box lives in components/ now; NoteActions and NoteRow still take
-// it from here until the round-6 wave-2 cleanup points them at it (S8).
-export { CheckMark } from '@/components/CheckMark.tsx';
-
 /**
  * A checklist body as rows to tick off: the Items tab, and the Split up tab
  * over its proposal.
