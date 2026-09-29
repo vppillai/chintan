@@ -922,16 +922,16 @@ func (s *NotesService) DiscardNote(ctx context.Context, userID string, note mode
 // row: every capture filed against it, every S3 object those captures name, and
 // the note's own body and metadata.
 //
-// It is separate from hardDeleteNote because the same cascade has to run from
-// two places that disagree about whether the index row still exists. A user
-// asking to delete forever arrives through hardDeleteNote, which removes the row
-// last so a failed cascade leaves the note visible and retryable. DynamoDB TTL
-// arrives through internal/purge, by which point the row is already gone and
-// there is nothing left to delete — only the objects it named, which is exactly
-// this. Before that handler existed, TTL removed the index row and left the
-// audio, raw transcript, routed transcript, cleaned text, segments and peaks in
-// the bucket, billed and unreachable, with `chintanctl reconcile` as the only
-// way to find them.
+// It is separate from hardDeleteNote because the same cascade runs from two
+// places. A user asking to delete forever arrives through hardDeleteNote, which
+// removes the row last so a failed cascade leaves the note visible and
+// retryable. The weekly sweep in internal/purge finds notes past their
+// purge_after_epoch, runs this, and then deletes the row itself; DynamoDB TTL
+// is only the backstop fourteen days behind it (repository.ttlGraceSeconds).
+// Before the sweep existed, TTL removed the index row and left the audio, raw
+// transcript, routed transcript, cleaned text, segments and peaks in the
+// bucket, billed and unreachable, with `chintanctl reconcile` as the only way
+// to find them.
 //
 // Every failure is returned rather than logged, so a caller that must not
 // declare a purge complete can tell that it is not.

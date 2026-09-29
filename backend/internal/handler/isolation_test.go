@@ -51,6 +51,24 @@ func TestHTTPCrossTenantNoteIsNotDeletable(t *testing.T) {
 	}
 }
 
+// The hard delete is the one path that destroys data, so it is pinned on its
+// own: the batch purge that used to carry this check is gone (R6-MS-3).
+func TestHTTPCrossTenantNoteIsNotPermanentlyDeletable(t *testing.T) {
+	h := newHarness(t)
+	note := h.createNote(t, "alice", "Alice private", nil)
+	if w := h.do(t, http.MethodDelete, "/v1/notes/"+note.ID, "alice", nil); w.Code != http.StatusNoContent {
+		t.Fatalf("archive: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	w := h.do(t, http.MethodDelete, "/v1/notes/"+note.ID+"/permanent", "bob", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("bob's permanent delete of alice's note: status=%d, want 404 — anything else confirms another tenant's id", w.Code)
+	}
+	if _, err := h.store.GetNote(t.Context(), "alice", note.ID); err != nil {
+		t.Fatalf("alice's note was destroyed by bob: %v", err)
+	}
+}
+
 func TestHTTPCrossTenantNoteIsNotEditable(t *testing.T) {
 	h := newHarness(t)
 	note := h.createNote(t, "alice", "Alice private", nil)
