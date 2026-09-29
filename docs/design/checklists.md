@@ -438,9 +438,10 @@ NoteTabs pattern), with Uncheck all and Delete done beside it. Uncheck all
 flips every `[x]` to `[ ]` in place (`uncheckAll`). Delete done drops every
 done line, and a done parent's sub-items with it (`removeDone`), and offers
 Undo in the shell's toast for six seconds — no typed word and no dialog
-(OF-DEL): Undo writes the previous body back and saves. Done rows have no
-grip, because their order is the body's and nothing shows it; a drag among
-them would move lines whose places are invisible.
+(OF-DEL): Undo writes the previous body back and saves, unless the list
+changed since (see Split up). Done rows have no grip, because their order
+is the body's and nothing shows it; a drag among them would move lines
+whose places are invisible.
 
 The capture-marker rule is unchanged by a reorder. Every save from the Items
 tab already carries the markers to the end (`serialiseChecklist` writes no
@@ -502,14 +503,19 @@ two controls left. Delete done as the first act adopts like any other: the
 editor shows its own "N done items deleted" toast before it writes, so the
 adoption's toast lands last and is the one standing, and its Undo restores
 the list as it stood (DB6-2). Either Undo — the adoption's, and Delete
-done's in the editor — refuses when the body is no longer what that
-component last wrote, saying "The list changed since — nothing undone."
-rather than writing a captured body over a recording that filed in by
-refetch inside the six seconds; the person's own acts since do not block it,
-so Undo still takes back the adoption and the ticks since (DB6-3). The
-editor is `{ noteId, body, onChange, onSave }` and knows nothing of whose
-body it is: the Items tab hands it the note editor, Split up hands it
-`adopt`. The find bar still counts nothing in this tab.
+done's in the editor — refuses when the note's body is no longer what that
+Undo's act wrote, saying "The list changed since — nothing undone." rather
+than writing a captured body over a recording that filed in by refetch
+inside the six seconds. The body it compares is read from the note editor's
+own mirror (`NoteEditor.current`, handed to the editor as `currentBody`),
+not from the panel or the editor: the toast is the shell's and stands
+through a tab switch, which unmounts them, so a body they mirrored would
+stay equal to the one they last wrote and the Undo would go through. The
+person's own acts since do not block it, so Undo still takes back the
+adoption and the ticks since (DB6-3). The editor is `{ noteId, body,
+currentBody, onChange, onSave }` and knows nothing of whose body it is: the
+Items tab hands it the note editor, Split up hands it `adopt`. The find bar
+still counts nothing in this tab.
 
 ## Why the body stays the single source of truth
 

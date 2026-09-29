@@ -68,6 +68,14 @@ export interface NoteEditor {
   keepMine: () => void;
   /** Keep my edits and add the newer version's paragraph after them (see `keepBoth`). */
   keepBoth: () => void;
+  /**
+   * The draft as it stands this instant, from the mirror `edit` and `commit`
+   * write synchronously. For a closure that outlives the component that made
+   * it — a toast's Undo pressed after a tab switch — which a prop, or a ref
+   * mirrored inside that component, would leave frozen at the last body it
+   * saw (DB6-3).
+   */
+  current: () => NoteDraft;
 }
 
 /**
@@ -530,5 +538,7 @@ export function useNoteEditor(note: NoteDetailWire | undefined): NoteEditor {
     keepBoth: useCallback(() => {
       commit({ type: 'keepBoth' });
     }, [commit]),
+    // A getter, not a value: the reader is a closure made seconds before.
+    current: () => latest.current.draft,
   };
 }

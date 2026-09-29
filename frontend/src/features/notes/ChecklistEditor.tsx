@@ -83,8 +83,11 @@ import {
  * no dialog for what can be undone). Undo writes the body it captured back
  * only while the body is still what this editor last wrote: a recording
  * filed into the list by refetch inside those six seconds would otherwise
- * leave with it, silently (`UNDO_STALE`). The person's own acts since all
- * pass through `write`, so they never block it.
+ * leave with it, silently (`UNDO_STALE`). The body as it stands is asked of
+ * the caller (`currentBody`), because the toast outlives this component — a
+ * tab switch unmounts it while Undo still shows — and the `body` prop stops
+ * following the note then. The person's own acts since all pass through
+ * `write`, so they never block it.
  *
  * Every change is one `onChange(body)`, and a tick, a move and a delete
  * call `onSave` at once, as a discrete act does, while typing saves on blur.
@@ -104,12 +107,18 @@ import {
 export function ChecklistEditor({
   noteId,
   body,
+  currentBody,
   onChange,
   onSave,
 }: {
   /** For the Done disclosure, remembered per note. */
   noteId: string;
   body: string;
+  /**
+   * The body as it stands this instant, wherever it lives: read by an Undo
+   * that may fire after this component has gone, when `body` is stale.
+   */
+  currentBody: () => string;
   onChange: (body: string) => void;
   /** A discrete act — a tick, a move, a delete, leaving a field — is done; save now. */
   onSave: () => void;
@@ -180,15 +189,10 @@ export function ChecklistEditor({
     field.setSelectionRange(start, end);
   });
 
-  // What this editor last wrote, and the body as it stands now, mirrored
-  // after each render (`useNoteEditor`'s `latest` shape): Undo compares the
-  // two, since a change from elsewhere arrives as a new `body` and nothing
-  // else tells the closure holding the captured one.
+  // What this editor last wrote: Undo compares it with `currentBody()`,
+  // since a change from elsewhere arrives as a new body and nothing else
+  // tells the closure holding the captured one.
   const lastWritten = useRef<string | null>(null);
-  const latestBody = useRef(body);
-  useEffect(() => {
-    latestBody.current = body;
-  });
 
   const write = (next: string, focus?: number, hold: readonly number[] | null = null): void => {
     lastWritten.current = next;
@@ -432,7 +436,7 @@ export function ChecklistEditor({
       action: {
         label: 'Undo',
         onSelect: () => {
-          if (latestBody.current !== lastWritten.current) {
+          if (currentBody() !== lastWritten.current) {
             showToast({ message: UNDO_STALE });
             return;
           }

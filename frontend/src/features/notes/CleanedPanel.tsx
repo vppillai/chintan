@@ -130,15 +130,15 @@ export function CleanedPanel({
    * polls while a recording is being filed, and one landing by refetch
    * inside the six seconds resets the settled draft to the server's body —
    * an Undo that wrote the captured body over it would carry the dictated
-   * item away, silently (`UNDO_STALE`, DB6-3). The person's own acts since
+   * item away, silently (`UNDO_STALE`, DB6-3). The body as it stands is
+   * read from the note editor's own mirror (`editor.current()`), never from
+   * this panel: the toast is the shell's and outlives a tab switch, which
+   * unmounts the panel and would leave a ref here frozen at the body it
+   * last saw — equal to `lastWritten` for good. The person's own acts since
    * all arrive here, so they never block it: Undo takes back the adoption
    * and the ticks since.
    */
   const lastWritten = useRef<string | null>(null);
-  const latestBody = useRef(draft.body);
-  useEffect(() => {
-    latestBody.current = draft.body;
-  });
   const adopt = (body: string): void => {
     const previous = draft.body;
     const first = !adopted;
@@ -158,7 +158,7 @@ export function CleanedPanel({
       action: {
         label: 'Undo',
         onSelect: () => {
-          if (latestBody.current !== lastWritten.current) {
+          if (editor.current().body !== lastWritten.current) {
             showToast({ message: UNDO_STALE });
             return;
           }
@@ -315,6 +315,7 @@ export function CleanedPanel({
               <ChecklistEditor
                 noteId={note.id}
                 body={splitBody}
+                currentBody={() => editor.current().body}
                 onChange={adopt}
                 onSave={() => void editor.saveNow()}
               />

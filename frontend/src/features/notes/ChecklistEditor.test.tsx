@@ -13,7 +13,9 @@ import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
  * `onChange(body)` and counts every `onSave()`, so what these assert is the
  * body the real editor would have been handed — the one thing this component
  * exists to produce — and when it would have been asked to save. `setBody`
- * is the outside world changing the note under the editor, as a refetch does.
+ * is the outside world changing the note under the editor, as a refetch does;
+ * `current` is the body as the note editor's mirror holds it, which Undo asks
+ * for (`currentBody`), so it follows both the editor's writes and `setBody`.
  * A save re-renders once it has settled, as the real editor's does
  * (`performSave` → `commit` → `dispatch`), so a focus target left armed past
  * the render it was set for shows up here as it would in the app. That render
@@ -21,11 +23,14 @@ import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
  * scope, rather than from a detached microtask no test's scope covers.
  */
 function mount(initial: string, noteId = 'shopping') {
-  const log = { bodies: [] as string[], saves: 0, setBody: (_next: string): void => {} };
+  const log = { bodies: [] as string[], saves: 0, current: initial, setBody: (_next: string): void => {} };
   function Harness() {
     const [body, setBody] = useState(initial);
     const [settled, setSettled] = useState(0);
-    log.setBody = setBody;
+    log.setBody = (next) => {
+      log.current = next;
+      setBody(next);
+    };
     // The body is the trigger: the editor asks to save in the handler that
     // changed it, so the render after that handler is the one to settle from.
     useEffect(() => {
@@ -35,8 +40,10 @@ function mount(initial: string, noteId = 'shopping') {
       <ChecklistEditor
         noteId={noteId}
         body={body}
+        currentBody={() => log.current}
         onChange={(next) => {
           log.bodies.push(next);
+          log.current = next;
           setBody(next);
         }}
         onSave={() => {
