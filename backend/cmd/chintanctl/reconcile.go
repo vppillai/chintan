@@ -209,7 +209,11 @@ func (r *reconcileResult) repairPlan() string {
 // runReconcile is the documented backstop for the dual-write window and for
 // the TTL-expiry cascade: S3 objects are written before their index record, so
 // a failed index write orphans data rather than losing it, and something has
-// to find the orphan afterwards. hardDeleteNote's TODO points here.
+// to find the orphan afterwards. The removal side is service.hardDeleteNote
+// (a user's "delete forever") and internal/purge (a note past its purge
+// deadline, found by the weekly sweep) over service.PurgeNoteArtifacts; both
+// unlink objects before rows, so a failure there leaves a row this command
+// reports and the next delete retries.
 //
 // Reporting is the default in both directions. Repair, under --apply, is
 // deliberately narrow: it deletes objects whose owning note or capture has no

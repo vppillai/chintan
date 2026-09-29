@@ -6,7 +6,6 @@ import type {
   NoteCleanQueuedWire,
   NoteCleanedWire,
   NoteDetailWire,
-  NotePurgeResponseWire,
   NoteWire,
   Page as PageWire,
   PresignedDownloadWire,
@@ -677,27 +676,6 @@ export async function installApi(page: Page, state: ApiState): Promise<void> {
       note.purge_after = null;
       note.version += 1;
       await json(route, note);
-      return;
-    }
-
-    /*
-     * The batch purge — "empty the archive". One verdict per note, as the
-     * contract says: an active note is refused rather than deleted, so a stale
-     * listing cannot turn "clear my archive" into "delete my notes".
-     */
-    if (path === '/v1/notes/purge' && method === 'POST') {
-      const body = request.postDataJSON() as { note_ids: string[] };
-      const results = body.note_ids.map((id): NotePurgeResponseWire['results'][number] => {
-        const note = state.notes[id];
-        if (!note) return { note_id: id, status: 'not_found' };
-        if (!note.archived) {
-          return { note_id: id, status: 'failed', detail: 'This note is not archived.' };
-        }
-        state.purged.push(id);
-        delete state.notes[id];
-        return { note_id: id, status: 'purged' };
-      });
-      await json(route, { results } satisfies NotePurgeResponseWire);
       return;
     }
 

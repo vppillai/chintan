@@ -112,10 +112,10 @@ func Correlate(next http.Handler) http.Handler {
 
 		// The matched route pattern, never the raw path: a note id in a log
 		// message is unbounded cardinality and, for search queries, user
-		// content. The pattern is the whole route — "POST /v1/notes/purge",
-		// "GET /v1/captures/{id}/download" — where the old two-segment prefix
+		// content. The pattern is the whole route — "POST /v1/notes/{noteId}/regenerate",
+		// "GET /v1/captures/{captureId}/download" — where the old two-segment prefix
 		// logged both of those as "/v1/notes" and "/v1/captures" and could not
-		// tell a purge from a create or a download from a list. The pattern
+		// tell a regenerate from a create or a download from a list. The pattern
 		// carries the method, so there is no separate `method` field: with
 		// both, `stats count() by method, route` read "GET GET /v1/notes".
 		Log(ctx).Info("request",

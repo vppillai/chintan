@@ -190,7 +190,6 @@ describe('the requests the frontend actually sends', () => {
     await call('archiveNote', () => api.archiveNote(NOTE_ID));
     await call('restoreNote', () => api.restoreNote(ARCHIVED_NOTE_ID));
     await call('deleteNoteForever', () => api.deleteNoteForever(ARCHIVED_NOTE_ID));
-    await call('purgeNotesBatch', () => api.purgeNotesBatch([ARCHIVED_NOTE_ID]));
     await call('recordingUrls', () => api.recordingUrls(NOTE_ID));
     await call('listTags', () => api.listTags());
 

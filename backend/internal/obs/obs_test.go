@@ -104,9 +104,9 @@ func captureLogs(t *testing.T, run func()) []map[string]any {
 	return lines
 }
 
-// The access line names the matched ServeMux pattern, so POST /v1/notes/purge
-// is distinguishable from POST /v1/notes and GET /v1/captures/{id}/download from
-// the list — which the old two-segment prefix could not do. The pattern is
+// The access line names the matched ServeMux pattern, so POST /v1/notes/{noteId}/regenerate
+// is distinguishable from POST /v1/notes and GET /v1/captures/{captureId}/download
+// from the list — which the old two-segment prefix could not do. The pattern is
 // recorded from inside the mux, because outside it r.Pattern is empty.
 func TestCorrelateLogsTheMatchedRoutePattern(t *testing.T) {
 	// Without Correlate upstream there is no label to set; the call must be a
@@ -114,7 +114,7 @@ func TestCorrelateLogsTheMatchedRoutePattern(t *testing.T) {
 	SetRoutePattern(context.Background(), "GET /x")
 
 	mux := http.NewServeMux()
-	for _, pattern := range []string{"POST /v1/notes", "POST /v1/notes/purge", "GET /v1/captures/{id}/download"} {
+	for _, pattern := range []string{"POST /v1/notes", "POST /v1/notes/{noteId}/regenerate", "GET /v1/captures/{captureId}/download"} {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			SetRoutePattern(r.Context(), r.Pattern)
 			w.WriteHeader(http.StatusNoContent)
@@ -131,8 +131,8 @@ func TestCorrelateLogsTheMatchedRoutePattern(t *testing.T) {
 		method, path, want string
 	}{
 		{http.MethodPost, "/v1/notes", "POST /v1/notes"},
-		{http.MethodPost, "/v1/notes/purge", "POST /v1/notes/purge"},
-		{http.MethodGet, "/v1/captures/c_18d1eef7f15ea266/download?kind=peaks", "GET /v1/captures/{id}/download"},
+		{http.MethodPost, "/v1/notes/note_18d1eef7f15ea266/regenerate", "POST /v1/notes/{noteId}/regenerate"},
+		{http.MethodGet, "/v1/captures/c_18d1eef7f15ea266/download?kind=peaks", "GET /v1/captures/{captureId}/download"},
 	}
 	for _, tt := range tests {
 		lines := captureLogs(t, func() {
