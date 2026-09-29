@@ -413,12 +413,15 @@ func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, t
 }
 
 // filedInto is decision turned into an append to noteID by a rule of the
-// code's: confidence 1, since the rule is mechanical, and no title, since
-// the note has one.
+// code's: confidence 1, since the rule is mechanical, and no title and no
+// kind, since the note has both — Checklist is always false for an append
+// (provider.RouteDecision), and a rescued "new checklist" kept it, so the
+// decision line counted appends into checklists (DB6-39).
 func filedInto(decision provider.RouteDecision, noteID string) provider.RouteDecision {
 	decision.Action = provider.RouteAppend
 	decision.NoteID = noteID
 	decision.Title = ""
+	decision.Checklist = false
 	decision.Confidence = 1
 	return decision
 }
@@ -437,16 +440,14 @@ func existingNoteNamed(decision provider.RouteDecision, transcript string, activ
 	if decision.Action != provider.RouteNew && decision.Action != provider.RouteAppend {
 		return "", ""
 	}
-	if decision.Action == provider.RouteNew {
-		if want := normalizeTitle(decision.Title); want != "" {
-			for _, n := range active {
-				if kind := titleNames(n, want); kind != "" {
-					return n.ID, kind
-				}
+	title := routing.NormalizeSpeech(decision.Title)
+	if decision.Action == provider.RouteNew && title != "" {
+		for _, n := range active {
+			if kind := titleNames(n, title); kind != "" {
+				return n.ID, kind
 			}
 		}
 	}
-	title := routing.NormalizeSpeech(decision.Title)
 	speech := routing.NormalizeSpeech(transcript)
 	bestID, bestBy, bestLen := "", "", 0
 	for _, n := range active {
@@ -519,30 +520,28 @@ func prefixRuleName(name string) bool {
 	return strings.Contains(name, " ") || utf8.RuneCountInString(name) >= 8
 }
 
-// titleNames reports which of n's names want, already normalised, is — its
-// title, one of its aliases or one of its tags, the names the router was shown
-// for it — or "" when none.
+// titleNames reports which of n's names want, already in NormalizeSpeech
+// form, is — its title, one of its aliases or one of its tags, the names the
+// router was shown for it — or "" when none. The comparison ignores
+// punctuation as the prefix rules do: a model that answers new "Roof
+// repair." for the note "Roof repair" named it (DB6-40; until 2026-09-29
+// the exact rule kept the full stop and the prefix rule needed a following
+// word, so a duplicate note was created).
 func titleNames(n model.NoteIndex, want string) string {
-	if normalizeTitle(n.Title) == want {
+	if routing.NormalizeSpeech(n.Title) == want {
 		return "title"
 	}
 	for _, a := range n.Aliases {
-		if normalizeTitle(a) == want {
+		if routing.NormalizeSpeech(a) == want {
 			return "alias"
 		}
 	}
 	for _, t := range n.Tags {
-		if normalizeTitle(t) == want {
+		if routing.NormalizeSpeech(t) == want {
 			return "tag"
 		}
 	}
 	return ""
-}
-
-// normalizeTitle is the comparison form of a title: lowercased, one space
-// between words, none around them.
-func normalizeTitle(s string) string {
-	return strings.ToLower(strings.Join(strings.Fields(s), " "))
 }
 
 // routeWithRetries asks the router, with one retry on a stall or a 5xx. It

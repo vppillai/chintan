@@ -136,8 +136,10 @@ believed only for a transcript of at most 20 words with a title of at most
 title; the derived content is re-checked as a sub-sequence of the transcript
 (`llm.VerifySubsequence`); the title is one line of at most 120 runes;
 confidence is clamped. Then the pipeline: a `new` decision whose title names
-an active candidate, by title, alias or tag, becomes an append to it
-(`preferExistingTitle`, `matched_by` title|alias|tag on its log line); so
+an active candidate, by title, alias or tag, compared in `NormalizeSpeech`
+form so "Roof repair." names "Roof repair" (DB6-40), becomes an append to it
+(`preferExistingTitle`, `matched_by` title|alias|tag on its log line; the
+rescued decision carries no title and no kind, DB6-39); so
 does a `new` decision, or an append under the confidence bar, whose title or
 whose transcript *opens with* a listed name as whole words
 (`prefix_title`|`prefix_transcript`) — the name-first shape the owner's ring

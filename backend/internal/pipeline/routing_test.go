@@ -484,11 +484,12 @@ func TestCompleteCaptureIgnoresRoutingForExplicitTarget(t *testing.T) {
 // The prompt says an existing note with the same title is the destination;
 // the model did not always honour it and started a second note with the same
 // title (live QA 2026-09-05 §5b). The rule now holds in code: a "new" decision
-// whose title names an active candidate — title or alias, whatever the case
-// and spacing — appends to that note.
+// whose title names an active candidate — title or alias, whatever the case,
+// spacing and punctuation — appends to that note.
 func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 	for name, title := range map[string]string{
 		"the title, in another case and spacing": "  ROOF   Repair ",
+		"the title with a trailing full stop":    "Roof repair.",
 		"an alias":                               "Roof",
 		"a title that opens with the title":      "Roof repair checklist",
 	} {
@@ -826,10 +827,11 @@ func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
 		if _, err := f.run(ctx, "c_1"); err != nil {
 			t.Fatalf("run: %v", err)
 		}
+		// A rescued append carries no kind: the note has one (DB6-39).
 		want(t, decided(t, "corr-prefix"), map[string]any{
 			"action": "append", "confidence": 1.0, "matched_by": "prefix_title", "outcome": "append", "candidates": 1.0,
 			"transcript_words": 8.0, "title_words": 0.0, "spans": 0.0, "removed_words": 0.0,
-			"checklist": true, "source": "app",
+			"checklist": false, "source": "app",
 		})
 	})
 
