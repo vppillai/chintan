@@ -29,6 +29,13 @@ const (
 	// cap never shortens a real answer; it bounds a runaway one, which then fails to
 	// parse and takes the pipeline's fallback instead of billing a page of output.
 	routeMaxTokens = 200
+	// routeKindChecklist is the one `kind` value in a routing reply that
+	// makes a new note a checklist, read without regard to case or
+	// surrounding space so a model that writes "Checklist" does not hand the
+	// owner the sentence-as-item bug back. Any other value — "note", a
+	// misspelling, nothing — is a plain note: a checklist the speaker did not
+	// ask for turns their prose into items, a plain note they can convert.
+	routeKindChecklist = "checklist"
 )
 
 // Route asks the LLM which note the transcript belongs to.
@@ -41,8 +48,12 @@ const (
 // transcript with words deleted, by construction. Spans that do not fit the
 // transcript are ignored and every word is kept — a stray instruction word in
 // the note is trivial to fix, dictation left out of it is lost.
-func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (RouteDecision, error) {
-	userPrompt, err := routing.UserPrompt(transcript, candidates)
+//
+// language is the code the transcript is known to be in, or "" (the pipeline's
+// cleanupLanguage); the user prompt names it so an invented title stays in the
+// speaker's script.
+func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates []routing.Candidate, language string) (RouteDecision, error) {
+	userPrompt, err := routing.UserPrompt(transcript, candidates, language)
 	if err != nil {
 		return RouteDecision{}, err
 	}
@@ -52,16 +63,11 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 		return RouteDecision{}, err
 	}
 
-	decision, reply, err := parseRouteDecision(out)
+	decision, reply, err := parseRouteDecision(out, candidates)
 	if err != nil {
 		return RouteDecision{}, err
 	}
 	decision.Usage = usage
-
-	// The model may return an id that is not on the list; refuse to trust it.
-	if decision.Action == RouteAppend && !containsNoteID(candidates, decision.NoteID) {
-		return RouteDecision{}, fmt.Errorf("provider: router returned unknown note id")
-	}
 	decision.Content = routedContent(ctx, transcript, decision.Title, reply)
 	return decision, nil
 }
@@ -143,7 +149,16 @@ func sanitizeTitle(title string) string {
 // parseRouteDecision tolerates markdown fences and surrounding prose. The reply
 // carries the span list as the model gave it, so routedContent can tell
 // "nothing to remove" from "ignored the format".
-func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
+//
+// An append names its note by the 1-based number of its line in the prompt
+// (`note`), which is mapped back to the id here; a `note_id` string is still
+// accepted when it is one of the listed ids, so a model that answers in the
+// pre-2026-09-27 shape is not refused. Anything else — a number off the list,
+// a fraction, an id that was not offered — is "unknown note id", which the
+// pipeline answers with its own fallback rather than trusting. A new note's
+// `kind` is read strictly: "checklist" in any case makes one, nothing else
+// does, and it is ignored on an append, whose note already has a kind.
+func parseRouteDecision(raw string, candidates []routing.Candidate) (RouteDecision, routeReply, error) {
 	jsonText, err := llm.ExtractJSONObject(raw)
 	if err != nil {
 		return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router %w", err)
@@ -151,8 +166,10 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 
 	var parsed struct {
 		Action     RouteAction `json:"action"`
+		Note       *float64    `json:"note"`
 		NoteID     string      `json:"note_id"`
 		Title      string      `json:"title"`
+		Kind       string      `json:"kind"`
 		Confidence float64     `json:"confidence"`
 		// Numbers rather than ints: a model that writes 7.0 has still answered.
 		Spans *[]struct {
@@ -166,16 +183,17 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 
 	decision := RouteDecision{
 		Action:     parsed.Action,
-		NoteID:     parsed.NoteID,
 		Title:      parsed.Title,
 		Confidence: parsed.Confidence,
 	}
 	switch decision.Action {
 	case RouteAppend:
-		if strings.TrimSpace(decision.NoteID) == "" {
-			return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router chose append without a note id")
+		decision.NoteID, err = listedNoteID(parsed.Note, parsed.NoteID, candidates)
+		if err != nil {
+			return RouteDecision{}, routeReply{}, err
 		}
 	case RouteNew:
+		decision.Checklist = strings.EqualFold(strings.TrimSpace(parsed.Kind), routeKindChecklist)
 	default:
 		return RouteDecision{}, routeReply{}, fmt.Errorf("provider: router returned unknown action %q", decision.Action)
 	}
@@ -207,19 +225,32 @@ func parseRouteDecision(raw string) (RouteDecision, routeReply, error) {
 	return decision, reply, nil
 }
 
+// listedNoteID resolves an append's destination: the 1-based line number the
+// prompt showed, else a listed id. The model may name a note that is not on
+// the list; refuse to trust it.
+func listedNoteID(note *float64, noteID string, candidates []routing.Candidate) (string, error) {
+	if note != nil {
+		n, ok := wordIndex(note)
+		if !ok || n < 1 || n > len(candidates) {
+			return "", fmt.Errorf("provider: router returned unknown note id")
+		}
+		return candidates[n-1].NoteID, nil
+	}
+	if strings.TrimSpace(noteID) == "" {
+		return "", fmt.Errorf("provider: router chose append without a note id")
+	}
+	for _, c := range candidates {
+		if c.NoteID == noteID {
+			return noteID, nil
+		}
+	}
+	return "", fmt.Errorf("provider: router returned unknown note id")
+}
+
 // wordIndex accepts a JSON number as a word position only when it is a whole number.
 func wordIndex(v *float64) (int, bool) {
 	if v == nil || math.IsNaN(*v) || math.IsInf(*v, 0) || *v != math.Trunc(*v) || math.Abs(*v) > math.MaxInt32 {
 		return 0, false
 	}
 	return int(*v), true
-}
-
-func containsNoteID(candidates []routing.Candidate, noteID string) bool {
-	for _, c := range candidates {
-		if c.NoteID == noteID {
-			return true
-		}
-	}
-	return false
 }

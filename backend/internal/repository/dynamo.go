@@ -1178,7 +1178,6 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		"append_claimed_at": numAttr(c.AppendClaimedAt),
 		"appended_at":       numAttr(c.AppendedAt),
 		"duration_ms":       numAttr(c.DurationMS),
-		"mode":              strAttr(string(c.Mode)),
 		"error":             strAttr(c.Error),
 		// Top-level for the same reason as the keys: the by-note page reads
 		// them back with one BatchGetItem (hydrateUnprojectedCaptureFields)
@@ -1233,9 +1232,6 @@ func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, err
 	c.PeaksKey = readString(m, "peaks_key")
 	// Only overwrite what the read actually projected, so a partial projection
 	// never blanks a field the blob already supplied.
-	if _, ok := m["mode"]; ok {
-		c.Mode = model.CleanupMode(readString(m, "mode"))
-	}
 	if _, ok := m["source"]; ok {
 		c.Source = readString(m, "source")
 	}

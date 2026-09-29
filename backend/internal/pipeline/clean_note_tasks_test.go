@@ -166,7 +166,7 @@ func TestAppendToAnAutoCleanChecklistCleansInTasksMode(t *testing.T) {
 	})
 	const cleanKey = "tenants/user1/captures/c_1/clean.txt"
 	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
-		ID: "c_1", UserID: "user1", NoteID: "l1", Status: model.StatusCleaned, Mode: model.CleanupFaithful,
+		ID: "c_1", UserID: "user1", NoteID: "l1", Status: model.StatusCleaned,
 		CleanKey: cleanKey, CreatedAt: model.Now(),
 		AudioKey: "tenants/user1/captures/c_1/audio.webm", RawKey: "tenants/user1/captures/c_1/raw.txt",
 	}); err != nil {

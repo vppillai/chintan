@@ -1,7 +1,7 @@
 import { useCallback, useId, useRef, useState } from 'react';
 
 import { useSaveSettings, useSettings, useUsage } from '@/api/queries.ts';
-import type { CleanupMode, SettingsWire } from '@/api/schema.ts';
+import type { SettingsWire } from '@/api/schema.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { Icon } from '@/components/Icon.tsx';
 import { LanguageSelect } from '@/components/LanguageSelect.tsx';
@@ -19,12 +19,6 @@ import { RowLink, Segmented, SettingsCard, SettingsRow } from './SettingsCard.ts
 import { VersionFootnote } from './VersionFootnote.tsx';
 import { AUTO_LANGUAGE, languageName } from './languages.ts';
 import { formatDollars } from './usage.ts';
-
-/** The two cleanup modes as segments, and what each one means, said under the row. */
-const CLEANUP_MODES: readonly { value: CleanupMode; label: string; hint: string }[] = [
-  { value: 'faithful', label: 'Faithful', hint: 'Fix only what was clearly misheard' },
-  { value: 'polished', label: 'Polished', hint: 'Tidy the wording as well' },
-];
 
 /**
  * The retention tiers the server stores. `settings_validate.go` rounds any
@@ -46,7 +40,6 @@ const THEME_SEGMENT_LABELS: Record<ThemePreference, string> = {
 };
 
 const DEFAULTS: SettingsWire = {
-  cleanup_mode: 'faithful',
   retention_days: 0,
   theme: 'ink',
   default_language: 'en',
@@ -69,7 +62,7 @@ const SAVED_TICK_MS = 2_500;
  * card alone was a third of a three-screen page, and now sits behind one row
  * that opens `/usage`).
  *
- * Every control saves itself the moment it is changed — a tap on Polished is
+ * Every control saves itself the moment it is changed — a tap on Nocturne is
  * a PUT, a theme is applied and then saved. There is no Save button and
  * nothing is ever "unsaved": the screen used to hold a draft behind a
  * Save/Discard pair, and tapping another tab with the draft dirty lost it
@@ -127,12 +120,10 @@ export function SettingsScreen() {
   };
 
   const themeLabelId = useId();
-  const cleanupLabelId = useId();
   const retentionId = useId();
   const languageId = useId();
 
   const language = draft.default_language ?? 'en';
-  const cleanup = CLEANUP_MODES.find((mode) => mode.value === draft.cleanup_mode) ?? CLEANUP_MODES[0]!;
   const retention = draft.retention_days;
 
   return (
@@ -241,18 +232,6 @@ export function SettingsScreen() {
           Mix Malayalam and English in one recording? Choose Malayalam. Auto-detect picks one
           language per recording and drops or re-scripts the other.
         </p>
-
-        <SettingsRow label="Cleanup" hint={cleanup.hint} labelId={cleanupLabelId}>
-          <Segmented
-            options={CLEANUP_MODES}
-            value={draft.cleanup_mode}
-            disabled={!stored}
-            labelledBy={cleanupLabelId}
-            onChange={(cleanup_mode) => {
-              change({ cleanup_mode });
-            }}
-          />
-        </SettingsRow>
 
         <SettingsRow label="Keep recordings for" labelFor={`${retentionId}-select`}>
           <select

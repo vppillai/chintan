@@ -114,9 +114,11 @@ export function AboutScreen() {
             start a new one.
           </p>
           <p>
-            Cleanup follows the note: <em>Faithful</em> fixes only what was clearly misheard,{' '}
-            <em>Polished</em> tidies the wording as well, and a note marked verbatim is left
-            exactly as spoken. When the cleanup itself improves, a note&rsquo;s menu offers{' '}
+            Cleanup keeps your words: each recording has only what was clearly misheard fixed, and
+            a note marked verbatim is left exactly as spoken. For a tidier read, the note&rsquo;s{' '}
+            <em>Cleaned</em> tab rewrites the whole of it as <em>Structured</em> or{' '}
+            <em>Polished</em>, on request or after every recording; a checklist&rsquo;s recordings
+            become its items instead. When the cleanup itself improves, a note&rsquo;s menu offers{' '}
             <em>Regenerate from recordings</em>: every recording in it is cleaned again from its
             transcript with the current settings, without being transcribed again.
           </p>

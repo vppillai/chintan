@@ -11,7 +11,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/routing"
 )
 
@@ -19,22 +18,44 @@ func TestParseRouteDecision(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		raw        string
-		wantAction RouteAction
-		wantNoteID string
-		wantConf   float64
-		wantSpans  []routing.Span
-		wantErr    bool
+		name          string
+		raw           string
+		wantAction    RouteAction
+		wantNoteID    string
+		wantConf      float64
+		wantSpans     []routing.Span
+		wantChecklist bool
+		wantErr       bool
 	}{
 		{
-			name:       "plain json append",
+			name:       "append by the line number",
+			raw:        `{"action":"append","note":2,"confidence":0.9,"instruction_spans":[{"start_word":0,"end_word":4}]}`,
+			wantAction: RouteAppend,
+			wantNoteID: "n2",
+			wantConf:   0.9,
+			wantSpans:  []routing.Span{{StartWord: 0, EndWord: 4}},
+		},
+		{
+			name:       "a whole-number float is a line number",
+			raw:        `{"action":"append","note":1.0,"confidence":1,"instruction_spans":[]}`,
+			wantAction: RouteAppend,
+			wantNoteID: "n1",
+			wantConf:   1,
+			wantSpans:  []routing.Span{},
+		},
+		{
+			// The pre-2026-09-27 shape: still read when the id was offered.
+			name:       "legacy note_id string",
 			raw:        `{"action":"append","note_id":"n1","confidence":0.9,"instruction_spans":[{"start_word":0,"end_word":4}]}`,
 			wantAction: RouteAppend,
 			wantNoteID: "n1",
 			wantConf:   0.9,
 			wantSpans:  []routing.Span{{StartWord: 0, EndWord: 4}},
 		},
+		{name: "line number zero", raw: `{"action":"append","note":0,"confidence":1,"instruction_spans":[]}`, wantErr: true},
+		{name: "line number off the list", raw: `{"action":"append","note":99,"confidence":1,"instruction_spans":[]}`, wantErr: true},
+		{name: "fractional line number", raw: `{"action":"append","note":1.5,"confidence":1,"instruction_spans":[]}`, wantErr: true},
+		{name: "legacy note_id not offered", raw: `{"action":"append","note_id":"n9","confidence":1,"instruction_spans":[]}`, wantErr: true},
 		{
 			name:       "fenced json",
 			raw:        "```json\n{\"action\":\"new\",\"title\":\"Dentist\",\"confidence\":1,\"instruction_spans\":[]}\n```",
@@ -77,6 +98,39 @@ func TestParseRouteDecision(t *testing.T) {
 			wantConf:   1,
 			wantSpans:  []routing.Span{{StartWord: -1, EndWord: -1}},
 		},
+		{
+			name:          "a new checklist",
+			raw:           `{"action":"new","title":"Groceries","kind":"checklist","confidence":1,"instruction_spans":[]}`,
+			wantAction:    RouteNew,
+			wantConf:      1,
+			wantSpans:     []routing.Span{},
+			wantChecklist: true,
+		},
+		{
+			name:          "the kind's case and padding do not matter",
+			raw:           `{"action":"new","title":"Groceries","kind":" Checklist ","confidence":1,"instruction_spans":[]}`,
+			wantAction:    RouteNew,
+			wantConf:      1,
+			wantSpans:     []routing.Span{},
+			wantChecklist: true,
+		},
+		{
+			// Strict: only the one word makes a checklist; a near miss is a
+			// plain note the person can convert.
+			name:       "an unknown kind is a plain note",
+			raw:        `{"action":"new","title":"Groceries","kind":"list","confidence":1,"instruction_spans":[]}`,
+			wantAction: RouteNew,
+			wantConf:   1,
+			wantSpans:  []routing.Span{},
+		},
+		{
+			name:       "kind is ignored on an append",
+			raw:        `{"action":"append","note":2,"kind":"checklist","confidence":1,"instruction_spans":[]}`,
+			wantAction: RouteAppend,
+			wantNoteID: "n2",
+			wantConf:   1,
+			wantSpans:  []routing.Span{},
+		},
 		{name: "append without note id", raw: `{"action":"append","confidence":1,"instruction_spans":[]}`, wantErr: true},
 		{name: "unknown action", raw: `{"action":"delete","instruction_spans":[]}`, wantErr: true},
 		{name: "no json at all", raw: `I could not decide.`, wantErr: true},
@@ -87,7 +141,7 @@ func TestParseRouteDecision(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, reply, err := parseRouteDecision(tt.raw)
+			got, reply, err := parseRouteDecision(tt.raw, []routing.Candidate{{NoteID: "n1", Title: "Roof"}, {NoteID: "n2", Title: "Shopping"}})
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("expected error, got %+v", got)
@@ -105,6 +159,9 @@ func TestParseRouteDecision(t *testing.T) {
 			}
 			if got.Confidence != tt.wantConf {
 				t.Errorf("confidence = %v, want %v", got.Confidence, tt.wantConf)
+			}
+			if got.Checklist != tt.wantChecklist {
+				t.Errorf("checklist = %v, want %v", got.Checklist, tt.wantChecklist)
 			}
 			if reply.Spans == nil {
 				t.Fatal("spans field was given but parsed as absent")
@@ -124,14 +181,14 @@ func TestParseRouteDecision(t *testing.T) {
 func TestParseRouteDecisionDistinguishesAbsentSpansFromEmpty(t *testing.T) {
 	t.Parallel()
 
-	_, reply, err := parseRouteDecision(`{"action":"new","title":"T","confidence":1}`)
+	_, reply, err := parseRouteDecision(`{"action":"new","title":"T","confidence":1}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if reply.Spans != nil {
 		t.Errorf("spans = %+v, want absent", *reply.Spans)
 	}
-	_, reply, err = parseRouteDecision(`{"action":"new","title":"T","confidence":1,"instruction_spans":[]}`)
+	_, reply, err = parseRouteDecision(`{"action":"new","title":"T","confidence":1,"instruction_spans":[]}`, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,18 +254,22 @@ func newRouter(t *testing.T, srv *httptest.Server) *OpenAICleanup {
 func TestRouteRejectsUnknownNoteID(t *testing.T) {
 	t.Parallel()
 
-	srv, _ := routerServer(t, `{"action":"append","note_id":"does-not-exist","confidence":1,"instruction_spans":[]}`)
-	_, err := newRouter(t, srv).Route(context.Background(), "some words", []routing.Candidate{{NoteID: "n1", Title: "Roof"}})
-	if err == nil {
-		t.Fatal("expected error for a note id that was not offered")
+	for name, reply := range map[string]string{
+		"a line number off the list": `{"action":"append","note":2,"confidence":1,"instruction_spans":[]}`,
+		"an id that was not offered": `{"action":"append","note_id":"does-not-exist","confidence":1,"instruction_spans":[]}`,
+	} {
+		srv, _ := routerServer(t, reply)
+		if _, err := newRouter(t, srv).Route(context.Background(), "some words", []routing.Candidate{{NoteID: "n1", Title: "Roof"}}, ""); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
 	}
 }
 
 func TestRouteAcceptsOfferedNoteIDAndRemovesTheInstruction(t *testing.T) {
 	t.Parallel()
 
-	srv, reqs := routerServer(t, `{"action":"append","note_id":"n1","confidence":0.88,"instruction_spans":[{"start_word":0,"end_word":4}]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), "add to roof note the gutter leaks", []routing.Candidate{{NoteID: "n1", Title: "Roof"}})
+	srv, reqs := routerServer(t, `{"action":"append","note":1,"confidence":0.88,"instruction_spans":[{"start_word":0,"end_word":4}]}`)
+	decision, err := newRouter(t, srv).Route(context.Background(), "add to roof note the gutter leaks", []routing.Candidate{{NoteID: "n1", Title: "Roof", Tags: []string{"house"}}}, "en")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -226,8 +287,14 @@ func TestRouteAcceptsOfferedNoteIDAndRemovesTheInstruction(t *testing.T) {
 		t.Fatalf("messages = %v", payload["messages"])
 	}
 	user, _ := messages[1].(map[string]any)
-	if text, _ := user["content"].(string); !strings.Contains(text, "0:add 1:to 2:roof 3:note 4:the 5:gutter 6:leaks") {
+	text, _ := user["content"].(string)
+	if !strings.Contains(text, "0:add 1:to 2:roof 3:note 4:the 5:gutter 6:leaks") {
 		t.Errorf("user prompt does not number the transcript:\n%s", text)
+	}
+	// The candidate is a numbered line with its tag among its other names,
+	// and the language opens the prompt; the id never leaves the server.
+	if !strings.HasPrefix(text, "The transcript is in English (en).\nExisting notes:\n1 | Roof | also: house\n") || strings.Contains(text, "n1") {
+		t.Errorf("user prompt does not list the candidate by number:\n%s", text)
 	}
 }
 
@@ -239,7 +306,7 @@ func TestRouteCapsCompletionTokensAndCleanupDoesNot(t *testing.T) {
 
 	srv, reqs := routerServer(t, `{"action":"new","title":"T","confidence":1,"instruction_spans":[]}`)
 	llm := newRouter(t, srv)
-	if _, err := llm.Route(context.Background(), "some words", nil); err != nil {
+	if _, err := llm.Route(context.Background(), "some words", nil, ""); err != nil {
 		t.Fatalf("Route: %v", err)
 	}
 	if got, ok := reqs.last(t)["max_tokens"].(float64); !ok || int(got) != routeMaxTokens {
@@ -249,7 +316,7 @@ func TestRouteCapsCompletionTokensAndCleanupDoesNot(t *testing.T) {
 		t.Errorf("routing thinking = %v, want disabled", reqs.last(t)["thinking"])
 	}
 
-	if _, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "some words", ""); err != nil {
+	if _, err := llm.Cleanup(context.Background(), "some words", ""); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 	if _, present := reqs.last(t)["max_tokens"]; present {
@@ -279,7 +346,7 @@ func TestRouteKeepsTranscriptWhenSpansAreUnusable(t *testing.T) {
 			t.Parallel()
 
 			srv, _ := routerServer(t, `{"action":"new","title":"Roof","confidence":1,"instruction_spans":`+tt.spans+`}`)
-			decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil)
+			decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil, "")
 			if err != nil {
 				// A reply whose spans do not even decode is refused outright,
 				// which the pipeline turns into its own fallback. Either way no
@@ -299,7 +366,7 @@ func TestRouteKeepsTranscriptWhenSpansRemoveTooMuch(t *testing.T) {
 	transcript := "title this roof notes " + strings.TrimSpace(strings.Repeat("the gutter leaks ", 20))
 	end := routing.MaxInstructionWords + 4
 	srv, _ := routerServer(t, `{"action":"new","title":"Roof notes","confidence":1,"instruction_spans":[{"start_word":0,"end_word":`+strconv.Itoa(end)+`}]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -312,7 +379,7 @@ func TestRouteKeepsContentWithOnlyTheInstructionRemoved(t *testing.T) {
 	t.Parallel()
 
 	srv, _ := routerServer(t, `{"action":"new","title":"test123","confidence":1,"instruction_spans":[{"start_word":0,"end_word":5}]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), "Title this note as test123. Cyclops lived in caves and herded sheep.", nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), "Title this note as test123. Cyclops lived in caves and herded sheep.", nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -329,8 +396,8 @@ func TestRouteKeepsContentWithOnlyTheInstructionRemoved(t *testing.T) {
 func TestRouteRemovesATrailingInstruction(t *testing.T) {
 	t.Parallel()
 
-	srv, _ := routerServer(t, `{"action":"append","note_id":"n1","confidence":1,"instruction_spans":[{"start_word":5,"end_word":11}]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), "the gutter is leaking again put that in my roof note", []routing.Candidate{{NoteID: "n1"}})
+	srv, _ := routerServer(t, `{"action":"append","note":1,"confidence":1,"instruction_spans":[{"start_word":5,"end_word":11}]}`)
+	decision, err := newRouter(t, srv).Route(context.Background(), "the gutter is leaking again put that in my roof note", []routing.Candidate{{NoteID: "n1"}}, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -345,7 +412,7 @@ func TestRouteAcceptsNoContentForAnInstructionOnlyRecording(t *testing.T) {
 	t.Parallel()
 
 	srv, _ := routerServer(t, `{"action":"new","title":"test123","confidence":1,"instruction_spans":[{"start_word":0,"end_word":7}]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), "Create a note with the title test123", nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), "Create a note with the title test123", nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -370,7 +437,7 @@ func TestRouteKeepsTranscriptWhenTitleSwallowedTheDictation(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv, _ := routerServer(t, string(body))
-	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -386,7 +453,7 @@ func TestRouteKeepsTranscriptWhenSpansWouldLoseDictation(t *testing.T) {
 
 	transcript := "title this roof notes " + strings.TrimSpace(strings.Repeat("leak ", 20))
 	srv, _ := routerServer(t, `{"action":"new","title":"Roof notes","confidence":1,"instruction_spans":[{"start_word":0,"end_word":24}]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -406,7 +473,7 @@ func TestParseRouteDecisionBoundsTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	decision, _, err := parseRouteDecision(string(body))
+	decision, _, err := parseRouteDecision(string(body), nil)
 	if err != nil {
 		t.Fatalf("parseRouteDecision: %v", err)
 	}
@@ -422,7 +489,7 @@ func TestRouteFallsBackToFullTranscriptWhenSpansMissing(t *testing.T) {
 	t.Parallel()
 
 	srv, _ := routerServer(t, `{"action":"new","title":"Dentist","confidence":1}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), "book the dentist", nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), "book the dentist", nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}
@@ -436,7 +503,7 @@ func TestRouteKeepsTranscriptUntouchedWhenNothingToRemove(t *testing.T) {
 
 	transcript := "book the dentist.\n\nAnd  the optician."
 	srv, _ := routerServer(t, `{"action":"new","title":"Appointments","confidence":1,"instruction_spans":[]}`)
-	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil)
+	decision, err := newRouter(t, srv).Route(context.Background(), transcript, nil, "")
 	if err != nil {
 		t.Fatalf("Route: %v", err)
 	}

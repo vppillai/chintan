@@ -90,7 +90,7 @@ function server(initial: NoteDetailWire = NOTE): Server {
       return json(row);
     }
     if (url.pathname.endsWith('/v1/settings')) {
-      return json({ cleanup_mode: 'faithful', retention_days: 0, theme: 'ink' });
+      return json({ retention_days: 0, theme: 'ink' });
     }
     if (url.pathname.endsWith(`/v1/notes/${state.note.id}`)) {
       state.gets += 1;

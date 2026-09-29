@@ -81,15 +81,15 @@ func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
 		}
 		var s handler.Settings
 		decodeInto(t, w, &s)
-		if s.CleanupMode != string(model.CleanupFaithful) {
-			t.Errorf("cleanup_mode = %q", s.CleanupMode)
-		}
 		if s.Theme != string(model.ThemeInk) {
 			t.Errorf("theme = %q, want the default rather than an empty string", s.Theme)
 		}
 	})
 
 	t.Run("stores and reads back", func(t *testing.T) {
+		// cleanup_mode is the pre-2026-09-27 per-capture setting: a client
+		// cached from before the deploy still sends it, so it is accepted,
+		// ignored and never returned, as daily_spend_cap_micros is.
 		w := h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{
 			"cleanup_mode":   "polished",
 			"retention_days": 30,
@@ -102,6 +102,9 @@ func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
 		decodeInto(t, w, &put)
 		if put.RetentionDays != 30 || put.Theme != "nocturne" {
 			t.Fatalf("stored settings = %+v", put)
+		}
+		if strings.Contains(w.Body.String(), "cleanup_mode") {
+			t.Errorf("the response still carries cleanup_mode: %s", w.Body.String())
 		}
 
 		w = h.do(t, http.MethodGet, "/v1/settings", "user1", nil)
@@ -117,7 +120,6 @@ func TestSettingsValidatesStoresAndReturnsWhatWasStored(t *testing.T) {
 	t.Run("an unknown value is refused, not coerced silently", func(t *testing.T) {
 		for _, body := range []map[string]any{
 			{"theme": "purple"},
-			{"cleanup_mode": "creative"},
 			{"retention_days": -1},
 			{"retention_days": 100000},
 		} {
@@ -682,7 +684,7 @@ func TestTranscriptionLanguageOnNotesAndSettings(t *testing.T) {
 	}
 
 	w = h.do(t, http.MethodPut, "/v1/settings", "user1", map[string]any{
-		"cleanup_mode": "faithful", "retention_days": 0, "theme": "ink", "default_language": "auto",
+		"retention_days": 0, "theme": "ink", "default_language": "auto",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("put settings: status = %d body = %s", w.Code, w.Body.String())

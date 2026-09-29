@@ -20,9 +20,9 @@ func TestItemsPromptStatesTheRulesAndNamesTheList(t *testing.T) {
 	}
 	lower := strings.ToLower(system)
 	for _, want := range []string{
-		"noun phrase", "quantity kept", "first letter capitalised", "addressed to the app", "list's own name",
-		`split "x and y"`, "when in doubt, split", "yields no items", "remove, tick off or change", "exactly as spoken",
-		"never invent an item", `{"items":["…","…"]}`, `{"items":[]}`,
+		"noun phrase", "quantity kept", "first letter capitalised", "spoken to the app", "list's own name",
+		`split "x and y"`, "in doubt, split", "yields no items", "remove, tick off or change", "as spoken",
+		"never invent an item", `{"items":["…","…"]}`, `{"items":[]}`, `the list is "shopping list"`,
 	} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("items system prompt lacks %q", want)

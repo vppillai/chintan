@@ -1598,12 +1598,19 @@ components:
 
     Settings:
       type: object
-      required: [cleanup_mode, retention_days, theme]
+      required: [retention_days, theme]
       properties:
         cleanup_mode:
           type: string
-          enum: [faithful, polished]
-          default: faithful
+          deprecated: true
+          description: |
+            The per-recording cleanup mode (`faithful` or `polished`) until
+            2026-09-27. Every recording is now cleaned faithfully — what was
+            clearly misheard is fixed and the speaker's words are kept — and
+            the whole-note `polished` view (`Note.cleaned_mode`) is where a
+            rewrite belongs. Accepted on PUT for compatibility and ignored,
+            never returned; a value stored before the change is dropped on
+            read.
         retention_days:
           type: integer
           minimum: 0
@@ -1909,8 +1916,8 @@ components:
           type: boolean
           description: |
             Bypass cleanup entirely for this note. Dictated content that must not
-            be reworded — a spec, a quote, a prompt — would otherwise be silently
-            rewritten by `polished` mode.
+            be touched — a spec, a quote, a prompt — would otherwise have its
+            garbling and punctuation fixed by the faithful cleanup.
         language:
           type: string
           pattern: '^(auto|[a-z]{2})?$'

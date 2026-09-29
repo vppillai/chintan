@@ -455,7 +455,6 @@ type CaptureCreated struct {
 // show the ceiling that is actually enforced. There is no per-tenant cap: one
 // instance-wide counter is the whole enforcement.
 type Settings struct {
-	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
 	Theme               string `json:"theme"`
 	DefaultLanguage     string `json:"default_language"`
@@ -464,11 +463,13 @@ type Settings struct {
 
 // SettingsUpdate is the PUT /v1/settings request body.
 //
-// It accepts daily_spend_cap_micros and ignores it. decodeJSON refuses unknown
-// fields, so dropping it from the schema would turn every save from a client
-// built against the previous contract into a 400 — and the settings screen
-// still sends it. The response says what was stored, which is how the client
-// learns the value did not take.
+// It accepts daily_spend_cap_micros and cleanup_mode and ignores both.
+// decodeJSON refuses unknown fields, so dropping either from the schema would
+// turn every save from a client built against the previous contract into a
+// 400 — a settings screen cached before the deploy still sends them. The
+// response says what was stored, which is how the client learns the value did
+// not take: the cap is the instance's, and per-capture cleanup has been
+// faithful for everyone since 2026-09-27.
 type SettingsUpdate struct {
 	CleanupMode         string `json:"cleanup_mode"`
 	RetentionDays       int    `json:"retention_days"`
@@ -479,7 +480,6 @@ type SettingsUpdate struct {
 
 func (u SettingsUpdate) settings() model.Settings {
 	return model.Settings{
-		CleanupMode:     model.CleanupMode(u.CleanupMode),
 		RetentionDays:   u.RetentionDays,
 		Theme:           model.Theme(u.Theme),
 		DefaultLanguage: u.DefaultLanguage,
@@ -488,7 +488,6 @@ func (u SettingsUpdate) settings() model.Settings {
 
 func settingsOf(s model.Settings, spendCapMicros int64) Settings {
 	return Settings{
-		CleanupMode:         string(s.CleanupMode),
 		RetentionDays:       s.RetentionDays,
 		Theme:               string(s.Theme),
 		DefaultLanguage:     s.DefaultLanguage,

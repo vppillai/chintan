@@ -59,12 +59,12 @@ func NewOpenAICleanup(apiKey, baseURL, model string, httpClient *http.Client) (*
 // call without keeping a second copy of the name.
 func (c *OpenAICleanup) Model() string { return c.model }
 
-func (c *OpenAICleanup) Cleanup(ctx context.Context, mode model.CleanupMode, raw, language string) (Cleaned, error) {
+func (c *OpenAICleanup) Cleanup(ctx context.Context, raw, language string) (Cleaned, error) {
 	userPrompt, err := cleanup.UserPrompt(raw, language)
 	if err != nil {
 		return Cleaned{}, err
 	}
-	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(mode), userPrompt, 0)
+	text, usage, err := c.complete(ctx, cleanup.SystemPrompt(), userPrompt, 0)
 	if err != nil {
 		return Cleaned{}, err
 	}
@@ -149,6 +149,9 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 		},
 		// MiniMax-M3 enables thinking by default; disable for deterministic cleanup text.
 		"thinking": map[string]string{"type": "disabled"},
+		// Pinned: live QA (2026-09-29) saw one transcript cleaned three
+		// different ways across runs at the provider's default sampling.
+		"temperature": 0,
 	}
 	if maxTokens > 0 {
 		payload["max_tokens"] = maxTokens

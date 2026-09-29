@@ -79,7 +79,6 @@ export const readyDegraded: ProblemWire = {
 
 /** GET /v1/settings → 200, the defaults a new tenant gets */
 export const settings: SettingsWire = {
-  "cleanup_mode": "faithful",
   "daily_spend_cap_micros": 0,
   "default_language": "en",
   "retention_days": 0,
@@ -88,7 +87,6 @@ export const settings: SettingsWire = {
 
 /** PUT /v1/settings → 200. The body is what was STORED, not what was sent, so a coerced value is visible to the client. */
 export const settingsStored: SettingsWire = {
-  "cleanup_mode": "polished",
   "daily_spend_cap_micros": 0,
   "default_language": "en",
   "retention_days": 30,

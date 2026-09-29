@@ -280,7 +280,6 @@ func (s *CaptureService) newCaptureRow(ctx context.Context, userID string, req C
 		UserID:            userID,
 		NoteID:            req.NoteID,
 		Status:            model.StatusUploaded,
-		Mode:              settings.CleanupMode,
 		DurationMS:        req.DurationMS,
 		CreatedAt:         model.Now(),
 		RequestedLanguage: language,

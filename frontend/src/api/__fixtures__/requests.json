@@ -19,7 +19,6 @@
     "method": "PUT",
     "path": "/v1/settings",
     "body": {
-      "cleanup_mode": "polished",
       "retention_days": 30,
       "theme": "nocturne",
       "default_language": "ml",

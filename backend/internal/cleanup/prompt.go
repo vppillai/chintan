@@ -9,38 +9,23 @@ import (
 	"github.com/vppillai/chintan/backend/internal/model"
 )
 
-// The rules both modes share — nothing invented, the language kept, the
-// transcript is data — are llm's, composed here between the mode's own
-// bullets; only the mode's bullets are this package's to word.
-const (
-	faithfulSystemPrompt = `You clean up speech-to-text transcripts for personal notes.
-
-Mode: faithful.
-- Fix STT garbling, punctuation, and obvious grammar mistakes.
-- Preserve the speaker's wording, phrasing, and vocabulary as much as possible.
+// Per-capture cleanup has one mode since 2026-09-27: faithful. Polished
+// rewrote paragraph by paragraph, so a note's tone drifted between
+// recordings, and the whole-note Polished view (NotePrompt) does that job on
+// the whole (round-5 prompts lens, PR-D5). The mode line stays in the text
+// because the eval baseline was measured with it. The shared rules — nothing
+// invented, the language kept, the transcript is data — are llm's, composed
+// between this package's own bullets.
+const systemPrompt = `You clean up a speech-to-text transcript for a personal note.
+Mode: faithful. Fix STT garbling, punctuation and obvious grammar mistakes; keep the speaker's wording, phrasing and vocabulary.
 ` + llm.NoInventionRule + `
 ` + llm.LanguageRule + `
 ` + llm.DataRule + `
-- Return only the cleaned transcript with no preamble or commentary.`
+- Return only the cleaned text, no preamble or commentary.`
 
-	polishedSystemPrompt = `You clean up speech-to-text transcripts for personal notes.
-
-Mode: polished.
-- Make the text read like clean written notes.
-- You may rephrase for clarity when needed, but preserve meaning and technical terms.
-` + llm.NoInventionRule + `
-` + llm.LanguageRule + `
-` + llm.DataRule + `
-- Return only the cleaned transcript with no preamble or commentary.`
-)
-
-func SystemPrompt(mode model.CleanupMode) string {
-	switch mode {
-	case model.CleanupPolished:
-		return polishedSystemPrompt
-	default:
-		return faithfulSystemPrompt
-	}
+// SystemPrompt returns the per-capture cleanup system prompt.
+func SystemPrompt() string {
+	return systemPrompt
 }
 
 // UserPrompt renders the transcript for the cleanup model. language is the
@@ -54,23 +39,13 @@ func UserPrompt(raw, language string) (string, error) {
 
 	var b strings.Builder
 	if language != "" {
-		b.WriteString("The transcript is in " + LanguageLabel(language) + ".\n")
+		b.WriteString("The transcript is in " + llm.LanguageLabel(language) + ".\n")
 	}
 	// One line names what the fenced text is; the rule that it is data is the
 	// system prompt's (llm.DataRule). llm.Fence defangs any marker the
 	// dictation itself contains so it cannot close the block early.
 	b.WriteString("The transcript is between the marker lines.\n" + llm.Fence(raw))
 	return b.String(), nil
-}
-
-// LanguageLabel names a language for a prompt: "Malayalam (ml)" when the
-// code is one the table knows, else the bare code, which the model reads as
-// well as a name.
-func LanguageLabel(code string) string {
-	if name := model.LanguageName(code); name != "" {
-		return name + " (" + code + ")"
-	}
-	return code
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +123,7 @@ func NotePrompt(mode model.NoteCleanMode, body, language string) (system, user s
 	}
 	var b strings.Builder
 	if language != "" && language != model.LanguageAuto {
-		b.WriteString("The note is in " + LanguageLabel(language) + ".\n")
+		b.WriteString("The note is in " + llm.LanguageLabel(language) + ".\n")
 	}
 	b.WriteString("The note is between the marker lines.\n" + llm.Fence(body))
 	return system, b.String(), nil

@@ -49,10 +49,21 @@ const (
 	routeConfidenceThreshold = 0.75
 
 	// maxRouteCandidates bounds the note list handed to the router: the most
-	// recently touched fifty. The store lists notes in that order over the
-	// whole partition (repository.MaxNotesDrained), so the first page of the
-	// list IS the window; there is no separate pool to drain and cut.
-	maxRouteCandidates = 50
+	// recently touched two hundred. The store lists notes in that order over
+	// the whole partition (repository.MaxNotesDrained), so the first page of
+	// the list IS the window; there is no separate pool to drain and cut. It
+	// was fifty until 2026-09-27, which left the owner's seven least-touched
+	// notes unreachable by voice; with candidates rendered as numbered lines
+	// rather than ids, two hundred cost about what fifty did (round-5 prompts
+	// lens, PR-D2). Beyond a few hundred notes the right tool is a lexical
+	// prefilter like Ask's ranker, not a bigger window.
+	maxRouteCandidates = 200
+
+	// maxRouteCandidateTokens caps the candidate block by its estimated size
+	// as well as by count, so long titles and many tags cannot grow the prompt
+	// past what the ceiling was priced for: two hundred notes at the owner's
+	// average line are about 1,500 tokens.
+	maxRouteCandidateTokens = 2000
 
 	// maxIndexRefreshAttempts bounds the optimistic-concurrency retry on the note
 	// index after an append.

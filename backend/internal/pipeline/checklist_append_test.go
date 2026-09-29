@@ -36,7 +36,7 @@ func seedChecklistCapture(t *testing.T, h *harness, noteID string, mutate func(*
 	}
 	if _, err := h.store.PutCapture(ctx, model.CaptureIndex{
 		ID: "c_1", UserID: "user1", NoteID: noteID, Status: model.StatusUploaded,
-		Mode: model.CleanupFaithful, AudioKey: "tenants/user1/captures/c_1/audio.webm", CreatedAt: model.Now(),
+		AudioKey: "tenants/user1/captures/c_1/audio.webm", CreatedAt: model.Now(),
 	}); err != nil {
 		t.Fatalf("seed capture: %v", err)
 	}

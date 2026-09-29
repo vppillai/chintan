@@ -41,7 +41,7 @@ func TestOpenAICleanupRequestShape(t *testing.T) {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
 
-	got, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "raw transcript here", "")
+	got, err := llm.Cleanup(context.Background(), "raw transcript here", "")
 	if err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
@@ -72,6 +72,11 @@ func TestOpenAICleanupRequestShape(t *testing.T) {
 	if !ok || thinking["type"] != "disabled" {
 		t.Errorf("thinking = %#v, want type=disabled", gotBody["thinking"])
 	}
+	// Every call — cleanup, items, routing, whole-note, ask — goes through
+	// complete, so one assertion covers them all.
+	if temp, ok := gotBody["temperature"].(float64); !ok || temp != 0 {
+		t.Errorf("temperature = %#v, want 0", gotBody["temperature"])
+	}
 }
 
 func TestOpenAICleanupHTTPError(t *testing.T) {
@@ -86,7 +91,7 @@ func TestOpenAICleanupHTTPError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
-	_, err = llm.Cleanup(context.Background(), model.CleanupPolished, "hello", "")
+	_, err = llm.Cleanup(context.Background(), "hello", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -101,7 +106,7 @@ func TestOpenAICleanupRejectsEmptyRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
-	_, err = llm.Cleanup(context.Background(), model.CleanupFaithful, "   ", "")
+	_, err = llm.Cleanup(context.Background(), "   ", "")
 	if err == nil {
 		t.Fatal("expected error for empty raw")
 	}
@@ -124,7 +129,7 @@ func TestOpenAIItemsTreatsEmptyContentAsNotAList(t *testing.T) {
 	if _, err := llm.Items(context.Background(), "add milk", "Shopping list", "en"); !errors.Is(err, cleanup.ErrNotAnItemList) {
 		t.Fatalf("Items(empty content) = %v, want ErrNotAnItemList", err)
 	}
-	if _, err := llm.Cleanup(context.Background(), model.CleanupFaithful, "add milk", "en"); err == nil || errors.Is(err, cleanup.ErrNotAnItemList) {
+	if _, err := llm.Cleanup(context.Background(), "add milk", "en"); err == nil || errors.Is(err, cleanup.ErrNotAnItemList) {
 		t.Fatalf("Cleanup(empty content) = %v, want a plain provider error", err)
 	}
 }

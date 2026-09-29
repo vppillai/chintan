@@ -401,9 +401,7 @@ describe('the remaining shapes the app reads', () => {
   });
 
   it('reads the settings that were stored, not the ones that were sent', () => {
-    expect(settings.cleanup_mode).toBe('faithful');
     expect(settings.theme).toBe('ink');
-    expect(settingsStored.cleanup_mode).toBe('polished');
     expect(settingsStored.theme).toBe('nocturne');
     expect(settingsStored.retention_days).toBe(30);
   });

@@ -211,7 +211,6 @@ export function freshState(): ApiState {
     captures: [],
     requests: [],
     settings: {
-      cleanup_mode: 'faithful',
       retention_days: 0,
       theme: 'ink',
       default_language: 'en',

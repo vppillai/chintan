@@ -33,17 +33,13 @@ func ParseTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339Nano, s)
 }
 
-type CleanupMode string
-
-const (
-	CleanupFaithful CleanupMode = "faithful"
-	CleanupPolished CleanupMode = "polished"
-)
-
-// NoteCleanMode is how the whole-note cleaned view is written. It is a
-// different axis from CleanupMode, which governs each recording's transcript
-// as it is appended: the cleaned view is one pass over the entire body after
-// the fact, and its modes describe a document, not a paragraph.
+// NoteCleanMode is how the whole-note cleaned view is written: one pass over
+// the entire body after the fact, and its modes describe a document, not a
+// paragraph. Each recording's transcript is cleaned as it is appended in one
+// fixed way (faithful, cleanup.SystemPrompt); until 2026-09-27 a per-tenant
+// CleanupMode chose between faithful and polished there, and stored settings
+// and capture rows still carry a cleanup_mode / mode field that readers now
+// drop (round-5 prompts lens, PR-D5).
 type NoteCleanMode string
 
 const (
@@ -215,8 +211,7 @@ func ValidLanguage(v string) bool {
 }
 
 type Settings struct {
-	CleanupMode   CleanupMode `json:"cleanup_mode"`
-	RetentionDays int         `json:"retention_days"` // 0 = indefinite
+	RetentionDays int `json:"retention_days"` // 0 = indefinite
 	// Theme is empty on records written before it existed; readers substitute
 	// ThemeInk.
 	Theme Theme `json:"theme,omitempty"`
@@ -228,7 +223,9 @@ type Settings struct {
 	// readers substitute DefaultLanguage.
 	DefaultLanguage string `json:"default_language,omitempty"`
 	// There is no per-tenant spend cap. Records written before 2026-09 may
-	// carry a daily_spend_cap_micros field; encoding/json drops it on read.
+	// carry a daily_spend_cap_micros field, and records written before
+	// 2026-09-27 a cleanup_mode ("faithful" or "polished"; per-capture cleanup
+	// is faithful for everyone now); encoding/json drops both on read.
 }
 
 // NoteKindChecklist is the one non-default NoteIndex.Kind. A checklist body is
@@ -457,7 +454,6 @@ type CaptureIndex struct {
 	NoteID    string        `json:"note_id"`
 	UserID    string        `json:"user_id"`
 	Status    CaptureStatus `json:"status"`
-	Mode      CleanupMode   `json:"cleanup_mode"`
 	AudioKey  string        `json:"audio_key"`
 	RawKey    string        `json:"raw_key"`
 	RoutedKey string        `json:"routed_key,omitempty"`

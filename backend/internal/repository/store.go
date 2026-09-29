@@ -427,8 +427,5 @@ func DrainPages[T any](ctx context.Context, maxItems int, next func(context.Cont
 
 // DefaultSettings is the settings record a tenant has before saving any.
 func DefaultSettings() model.Settings {
-	return model.Settings{
-		CleanupMode:   model.CleanupFaithful,
-		RetentionDays: 0,
-	}
+	return model.Settings{RetentionDays: 0}
 }

@@ -295,7 +295,7 @@ func (f *LLM) NoteCalls() []NoteCall {
 	return append([]NoteCall(nil), f.noteCalls...)
 }
 
-func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw, _ string) (provider.Cleaned, error) {
+func (f *LLM) Cleanup(ctx context.Context, raw, _ string) (provider.Cleaned, error) {
 	f.mu.Lock()
 	f.calls++
 	call := f.calls - 1
@@ -320,19 +320,9 @@ func (f *LLM) Cleanup(ctx context.Context, mode model.CleanupMode, raw, _ string
 		return provider.Cleaned{Text: f.Response, Usage: usage}, nil
 	}
 
-	// Simple fake cleanup based on mode
-	switch mode {
-	case model.CleanupFaithful:
-		return provider.Cleaned{Text: "[faithful] " + strings.ToLower(raw), Usage: usage}, nil
-	case model.CleanupPolished:
-		polished := strings.ToLower(raw)
-		if polished != "" {
-			polished = strings.ToUpper(polished[:1]) + polished[1:]
-		}
-		return provider.Cleaned{Text: "[polished] " + polished, Usage: usage}, nil
-	default:
-		return provider.Cleaned{Text: raw, Usage: usage}, nil
-	}
+	// A visible, deterministic rewrite so a test can tell the cleaned text
+	// from the transcript.
+	return provider.Cleaned{Text: "[faithful] " + strings.ToLower(raw), Usage: usage}, nil
 }
 
 // Calls reports how many cleanups were requested.
@@ -370,7 +360,7 @@ type Router struct {
 	LastCandidates []routing.Candidate
 }
 
-func (f *Router) Route(ctx context.Context, transcript string, candidates []routing.Candidate) (provider.RouteDecision, error) {
+func (f *Router) Route(ctx context.Context, transcript string, candidates []routing.Candidate, _ string) (provider.RouteDecision, error) {
 	f.mu.Lock()
 	f.Calls = append(f.Calls, transcript)
 	call := len(f.Calls) - 1

@@ -59,11 +59,14 @@ export interface ReadinessWire {
   checks: Record<string, { ok?: boolean; latency_ms?: number }>;
 }
 
-export type CleanupMode = 'faithful' | 'polished';
 export type ThemeSetting = 'ink' | 'nocturne' | 'system';
 
+/**
+ * Per-recording cleanup is faithful for everyone since 2026-09-27; the
+ * `cleanup_mode` this carried is accepted and ignored by PUT and never
+ * returned, so it is not in the type.
+ */
 export interface SettingsWire {
-  cleanup_mode: CleanupMode;
   retention_days: number;
   theme: ThemeSetting;
   /**

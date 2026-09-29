@@ -170,7 +170,7 @@ func captureContractFixtures(t *testing.T) []contractFixture {
 	add("settingsStored", "SettingsWire",
 		"PUT /v1/settings → 200. The body is what was STORED, not what was sent, so a coerced value is visible to the client.",
 		h.do(t, http.MethodPut, "/v1/settings", contractUser, map[string]any{
-			"cleanup_mode": "polished", "retention_days": 30, "theme": "nocturne",
+			"retention_days": 30, "theme": "nocturne",
 		}))
 
 	// ---- notes

@@ -22,7 +22,7 @@ func TestGetSettingsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSettings: %v", err)
 	}
-	want := model.Settings{CleanupMode: model.CleanupFaithful, RetentionDays: 0}
+	want := model.Settings{RetentionDays: 0}
 	if got != want {
 		t.Fatalf("got settings %+v, want %+v", got, want)
 	}
@@ -32,7 +32,7 @@ func TestPutGetSettings(t *testing.T) {
 	store, _ := newTestStore(t)
 	ctx := context.Background()
 
-	want := model.Settings{CleanupMode: model.CleanupPolished, RetentionDays: 30}
+	want := model.Settings{Theme: model.ThemeNocturne, RetentionDays: 30}
 	if err := store.PutSettings(ctx, "user1", want); err != nil {
 		t.Fatalf("PutSettings: %v", err)
 	}
@@ -133,7 +133,6 @@ func TestCaptureCRUD(t *testing.T) {
 		NoteID:    "n1",
 		UserID:    "user1",
 		Status:    model.StatusUploaded,
-		Mode:      model.CleanupFaithful,
 		AudioKey:  "tenants/user1/captures/c1/audio.webm",
 		RawKey:    "tenants/user1/captures/c1/raw.txt",
 		CleanKey:  "tenants/user1/captures/c1/clean.txt",
