@@ -135,8 +135,9 @@ and its chip row scrolls sideways.
 ## The drawer
 
 Details (language, tags, "also called", the verbatim and checklist switches,
-and — once R6-ID-1 lands from stream S5 — the note's id with a copy button,
-for `X-Chintan-Note-Id`) or Share (copy, download). A sheet at the foot of the scroll region: `position:
+and the note's id in monospace with a **Copy note id** button and the
+`X-Chintan-Note-Id` hint — R6-ID-1, #150, in `NoteDrawer.tsx` since #158) or
+Share (copy, download). A sheet at the foot of the scroll region: `position:
 sticky; inset-block-end: 0` inside `.app__main`, not fixed to the viewport —
 the tab bar owns the viewport's bottom row, and a sticky element is clipped by
 the region, so the sheet can cover nothing outside the note. Capped at

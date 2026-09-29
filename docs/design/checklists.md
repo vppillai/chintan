@@ -176,9 +176,10 @@ applied as a body edit under the recording's marker, and it is not built.
 ### Merging into what the list has
 
 A recording's items are not simply appended: what already has a line in the
-list joins it first (`mergeChecklistItems`, `pipeline/append.go`; the
-oracle is the round-6 checklist lens's `merge.go`, its twelve cases in
-`checklist_append_test.go`), and only the rest goes under the recording's
+list joins it first (`mergeChecklistItems`, `pipeline/append.go`, ported
+from the round-6 checklist lens's merge oracle; the twelve cases that pin it
+are `TestMergeChecklistItems` in `pipeline/checklist_append_test.go`), and
+only the rest goes under the recording's
 marker, in the recording's order. Three rules:
 
 - an item **with children** whose words match a **top-level** line, open or
