@@ -1,12 +1,14 @@
 # Prompts
 
-Five prompts put a person's speech or notes in front of a model, all through
+Six prompts put a person's speech or notes in front of a model, all through
 one call (`OpenAICleanup.complete`, `backend/internal/provider/openai_cleanup.go`):
-one system message, one user message, thinking disabled, `max_tokens` where the
-answer is bounded by its input. This page is the one place that says, for each,
-what is sent, what comes back, what checks the answer, and what counts a
-failure. The wording lives in the code; the behaviour is measured by the live
-evaluation at the end.
+one system message, one user message, thinking disabled, `temperature` pinned
+to 0 (since 2026-09-29: live QA saw one transcript cleaned three different
+ways across runs, so every call asks for the model's most likely answer),
+`max_tokens` where the answer is bounded by its input. This page is the one
+place that says, for each, what is sent, what comes back, what checks the
+answer, and what counts a failure. The wording lives in the code; the
+behaviour is measured by the live evaluation at the end.
 
 ## The three shared rules
 
@@ -34,7 +36,7 @@ routing prompt carries the language and data rules in its own sentences,
 because its sections read as one text; every other prompt composes the
 constants.
 
-## The five prompts
+## The six prompts
 
 | Prompt | Purpose | System / user prompt | Reply and parser | Completion cap |
 |---|---|---|---|---|
@@ -42,15 +44,15 @@ constants.
 | Cleanup | Clean one transcript faithfully as it is appended | `cleanup.SystemPrompt()`, `cleanup.UserPrompt` (`backend/internal/cleanup/prompt.go`) | the cleaned text | none (as long as the recording) |
 | Checklist items | The items one recording adds to a checklist | `cleanup.ItemsPrompt` (`backend/internal/cleanup/items.go`) | `{"items":[…]}` → `cleanup.ParseItems` | 3× the input, floor 512 |
 | Whole-note, structured / polished | The Cleaned tab: the whole body as one document | `cleanup.NotePrompt(mode, body, language)` (`cleanup/prompt.go`) | Markdown → `cleanup.NoteOutput` | 1.5× the input, floor 256 |
+| Whole-note, tasks | Split up: a checklist body as granular tasks | `cleanup.NotePrompt(tasks, …)`, `noteTasksSystemPrompt` | task-list lines → `cleanup.NoteOutput` | as above |
 | Ask | Answer a question from the person's notes | `ask.Prompt.Render` (`backend/internal/ask/ask.go`) | `{"answer","sources","grounded"}` → `ask.ParseAnswer` | 3,000 tokens |
 
-Two prompts went on 2026-09-27 (round-5 decisions, PR-D4 and PR-D5): the
-per-capture *polished* variant, which rewrote paragraph by paragraph so a
-note's tone drifted between recordings while the whole-note Polished view
-already does the job on the whole; and the whole-note *tasks* mode (the
-checklist's Split up tab), which re-split a list the items prompt had already
-split at capture time — thirty of the thirty-four whole-note calls in the week
-measured were that mode regenerating a short list after every appended item.
+One prompt went on 2026-09-27 (round-5 decisions, PR-D5): the per-capture
+*polished* variant, which rewrote paragraph by paragraph so a note's tone
+drifted between recordings while the whole-note Polished view already does
+the job on the whole. The whole-note *tasks* mode (the checklist's Split up
+tab) was proposed for deletion in the same round (PR-D4) and the owner
+reversed that on 2026-09-29: it stays, and improving it is a round-6 item.
 
 ### Routing
 
@@ -192,15 +194,27 @@ light touch), then the shared rule block: keep every fact, remove filler,
 `LanguageRule`, `DataRule`, return Markdown. The user prompt names the note
 row's own `language` ("The note is in Malayalam (ml)."; nothing for `""` or
 `auto`) and fences the body. **Reply:** the rewritten note in Markdown.
-A checklist has no cleaned view: `service.CheckCleanMode` answers 400 for
-one, and the worker does nothing for a task queued before 2026-09-27
-(`docs/design/checklists.md`, "No cleaned view").
 **Guards:** `cleanup.NoteOutput` strips an echoed fence and refuses an empty
 answer; the stored view is at most 200 KB (`model.MaxCleanedBodyBytes`),
 refused whole rather than cut; a body that moved during the call marks the
 view stale; a later request in another mode supersedes the run. **Metrics:**
 `NoteCleanRequested{Mode,Trigger}`, `NoteCleanOutcome{Outcome=ok|empty|too_long|unusable|output_too_long|provider|superseded}`,
 `ProviderTimedOut{Stage=clean_note}`.
+
+### Whole-note (tasks)
+
+The checklist's mode (Split up), same call and caps as above, its own system
+prompt: the body is task-list lines and the answer must be too. **Guards**
+(`NoteOutput`, tasks branch): after trimming, every non-blank line is
+`- [ ] text` or `- [x] text` (`checklistItemLine`), at most 500 items
+(`MaxChecklistItems`); the `- [x]` lines must be the body's done items,
+verbatim and in order, or the whole answer is refused; an open item whose
+words are not the body's words in order is dropped and counted
+(`TasksItemsDropped`) — "- [x] Make a list." was the model inventing an
+antecedent (owner feedback 2026-09-26). PR-D4 proposed dropping the mode now
+that items are extracted per recording (30 of 34 whole-note calls in the
+week measured were tasks regenerations after an appended item); the owner
+reversed that on 2026-09-29 — Split up stays and improving it is round 6.
 
 ### Ask
 
@@ -232,7 +246,7 @@ list price $0.30/M in, $1.20/M out; tokens counted with cl100k as a stand-in):
 |---|---|---|---|---|---|
 | Routing | 86 | 3,223 / 3,313 / 10,781 | 31 | 995 µ$ | 1,433 → 987 |
 | Cleanup | 180 | 377 / 855 / 2,580 | 22 | 143 µ$ | 170 / 166 → 191 (one) |
-| Whole-note (30 of 34 tasks) | 34 | 505 / 677 / 3,279 | 76 | 246 µ$ | 163 / 176; tasks 306 (gone) |
+| Whole-note (30 of 34 tasks) | 34 | 505 / 677 / 3,279 | 76 | 246 µ$ | 163 / 176; tasks 306 |
 | Items | — (new) | — | — | — | 643 → 480 |
 | Ask | 13 | 1,470 / 2,008 / 2,112 | 337 | 836 µ$ | 350 |
 
@@ -250,14 +264,15 @@ figures after the rewrite are the production battery's to confirm
 ## Changing a prompt
 
 The unit tests (`routing/prompt_test.go`, `cleanup/prompt_test.go`,
-`cleanup/items_test.go`, `ask/ask_test.go`) pin the wording: that a rule is present, that the fence is intact, that the language
+`cleanup/items_test.go`, `cleanup/tasks_test.go`, `ask/ask_test.go`) pin the
+wording: that a rule is present, that the fence is intact, that the language
 is named. They cannot say whether the model does what the rule asks. That is
 the live evaluation, `TestLiveEval` in `backend/internal/provider/live_eval_test.go`
 over `backend/internal/provider/testdata/eval/fixtures.json`: one sub-test
-per prompt (`route`, `cleanup`, `items`, `ask`) and per case, each case one
-model call with its expectations beside it — the destination and content for
-a routing phrasing, a phrase the cleaned text must keep or lose, the exact
-items, whether an answer is grounded. It is skipped
+per prompt (`route`, `cleanup`, `items`, `tasks`, `ask`) and per case, each
+case one model call with its expectations beside it — the destination and
+content for a routing phrasing, a phrase the cleaned text must keep or lose,
+the exact items, the task lines, whether an answer is grounded. It is skipped
 unless asked for, because it costs cents and needs the instance's key, which
 only the owner can read:
 

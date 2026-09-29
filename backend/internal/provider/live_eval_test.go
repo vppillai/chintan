@@ -11,7 +11,9 @@ import (
 	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/ask"
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/llm"
+	"github.com/vppillai/chintan/backend/internal/model"
 )
 
 // TestLiveEval runs every prompt against the real model over the cases in
@@ -83,7 +85,7 @@ func TestLiveEval(t *testing.T) {
 				}
 				joined := strings.Join(out.Items, " · ")
 				t.Logf("%s | %s", tc.Transcript, joined)
-				if tc.Want != nil && !equalLines(out.Items, tc.Want) {
+				if tc.Want != nil && !equalLines(out.Items, tc.Want, false) {
 					t.Errorf("items = %s, want %s", joined, strings.Join(tc.Want, " · "))
 				}
 				checkCount(t, "items", len(out.Items), tc.Count, tc.CountIn)
@@ -92,6 +94,30 @@ func TestLiveEval(t *testing.T) {
 				}
 				checkText(t, "items", joined, nil, tc.ExcludesAny)
 				checkScript(t, "items", joined, tc.Script)
+			})
+		}
+	})
+	t.Run("tasks", func(t *testing.T) {
+		for i, tc := range fx.Tasks.Cases {
+			t.Run(caseName(i), func(t *testing.T) {
+				out, err := c.CleanNote(ctx, model.NoteCleanTasks, tc.Body, "")
+				if err != nil {
+					t.Fatalf("%q | ERROR %v", tc.Body, err)
+				}
+				text, dropped, err := cleanup.NoteOutput(model.NoteCleanTasks, out.Text, tc.Body)
+				t.Logf("%q | %q dropped=%d", tc.Body, out.Text, dropped)
+				if err != nil {
+					t.Fatalf("NoteOutput refused the reply: %v", err)
+				}
+				lines := strings.Split(text, "\n")
+				// Casing of a split item is the model's; the words are asserted.
+				if tc.Want != nil && !equalLines(lines, tc.Want, true) {
+					t.Errorf("tasks = %q, want %q", lines, tc.Want)
+				}
+				if tc.WantUnchanged && text != strings.TrimSpace(tc.Body) {
+					t.Errorf("tasks = %q, want the body unchanged", text)
+				}
+				checkCount(t, "tasks", len(lines), tc.Count, nil)
 			})
 		}
 	})
@@ -206,13 +232,14 @@ func checkCount(t *testing.T, what string, got int, want *int, wantIn []int) {
 	}
 }
 
-// equalLines compares two lists line for line.
-func equalLines(got, want []string) bool {
+// equalLines compares two lists line for line, case-insensitively when fold
+// is set.
+func equalLines(got, want []string, fold bool) bool {
 	if len(got) != len(want) {
 		return false
 	}
 	for i := range got {
-		if got[i] != want[i] {
+		if got[i] != want[i] && (!fold || !strings.EqualFold(got[i], want[i])) {
 			return false
 		}
 	}

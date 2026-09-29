@@ -149,7 +149,7 @@ func TestNotePromptNamesTheNotesLanguageWhenKnown(t *testing.T) {
 		{"", "The note is between the marker lines.\n"},
 		{model.LanguageAuto, "The note is between the marker lines.\n"},
 	} {
-		for _, mode := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished} {
+		for _, mode := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished, model.NoteCleanTasks} {
 			_, user, err := cleanup.NotePrompt(mode, "നന്ദി", tc.language)
 			if err != nil {
 				t.Fatalf("NotePrompt(%s, %q): %v", mode, tc.language, err)
@@ -186,27 +186,25 @@ func TestNotePromptRefusesAnEmptyBodyAndAnUnknownMode(t *testing.T) {
 	if _, _, err := cleanup.NotePrompt(model.NoteCleanStructured, "  \n", ""); err == nil {
 		t.Error("an empty body was accepted")
 	}
-	for _, mode := range []model.NoteCleanMode{"faithful", "tasks"} {
-		if _, _, err := cleanup.NotePrompt(mode, "words", ""); err == nil {
-			t.Errorf("%q was accepted as a note mode; it must be refused, not defaulted", mode)
-		}
+	if _, _, err := cleanup.NotePrompt(model.NoteCleanMode("faithful"), "words", ""); err == nil {
+		t.Error("a per-capture mode was accepted as a note mode; it must be refused, not defaulted")
 	}
 }
 
 func TestNoteOutputRejectsNothingAndStripsAnEchoedFence(t *testing.T) {
 	for _, raw := range []string{"", "   \n", llm.FenceMarker, llm.FenceMarker + "\n\n" + llm.FenceMarker} {
-		if _, err := cleanup.NoteOutput(raw); err == nil {
+		if _, _, err := cleanup.NoteOutput(model.NoteCleanStructured, raw, "roof"); err == nil {
 			t.Errorf("NoteOutput(%q) accepted nothing usable", raw)
 		}
 	}
-	got, err := cleanup.NoteOutput(llm.FenceMarker + "\n# Roof\n\n- call the roofer\n" + llm.FenceMarker)
+	got, _, err := cleanup.NoteOutput(model.NoteCleanStructured, llm.FenceMarker+"\n# Roof\n\n- call the roofer\n"+llm.FenceMarker, "roof")
 	if err != nil {
 		t.Fatalf("NoteOutput: %v", err)
 	}
 	if got != "# Roof\n\n- call the roofer" {
 		t.Errorf("NoteOutput = %q", got)
 	}
-	plain, err := cleanup.NoteOutput("  # Roof\n")
+	plain, _, err := cleanup.NoteOutput(model.NoteCleanStructured, "  # Roof\n", "roof")
 	if err != nil || plain != "# Roof" {
 		t.Errorf("NoteOutput(plain) = %q, %v", plain, err)
 	}

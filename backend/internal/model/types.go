@@ -49,17 +49,21 @@ const (
 	// NoteCleanStructured rewrites the body as an organised Markdown document:
 	// short headings, lists for enumerations, filler and repetition removed.
 	NoteCleanStructured NoteCleanMode = "structured"
-	// DefaultNoteCleanMode is what a note cleans in until it says otherwise.
+	// NoteCleanTasks rewrites a checklist as granular, actionable tasks: an
+	// item holding several actions becomes one item per action, done items are
+	// kept verbatim and in place, order is otherwise kept, nothing is invented
+	// or merged. It is the only mode a checklist cleans in and means nothing
+	// for a plain note (service.CheckCleanMode).
+	NoteCleanTasks NoteCleanMode = "tasks"
+	// DefaultNoteCleanMode is what a plain note cleans in until it says
+	// otherwise.
 	DefaultNoteCleanMode = NoteCleanStructured
 )
 
-// ValidNoteCleanMode reports whether m names a whole-note cleanup mode. A
-// "tasks" value on a row from before 2026-09-27 — the checklist mode that was
-// deleted with the Split up tab (PR-D4) — is not one, and readers treat it as
-// the default. Whether a given note may be cleaned at all is
-// service.CheckCleanMode's question.
+// ValidNoteCleanMode reports whether m names a whole-note cleanup mode. Which
+// modes a given note may use is service.CheckCleanMode's question.
 func ValidNoteCleanMode(m NoteCleanMode) bool {
-	return m == NoteCleanPolished || m == NoteCleanStructured
+	return m == NoteCleanPolished || m == NoteCleanStructured || m == NoteCleanTasks
 }
 
 // Bounds on the whole-note cleaned view. Both exist to keep the note row
@@ -228,7 +232,7 @@ type Settings struct {
 // GitHub task-list syntax, one item per line: "- [ ] text" open, "- [x] text"
 // done; blank lines are ignored by every reader. The worker appends each
 // recording as the open items it named, one line each under the recording's
-// marker. A checklist has no cleaned view (service.CheckCleanMode).
+// marker, and the cleaned view runs in NoteCleanTasks.
 const NoteKindChecklist = "checklist"
 
 // ValidNoteKind reports whether k is a stored note kind.

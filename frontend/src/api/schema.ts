@@ -155,11 +155,11 @@ export interface NoteWire {
 }
 
 /**
- * The whole-note view's two modes. A checklist has no cleaned view (the
- * `tasks` mode that split one after the fact went on 2026-09-27; items are
- * extracted per recording instead) and `POST …/clean` is 400 for one.
+ * `tasks` is the one mode a checklist is cleaned in — the list rewritten as
+ * granular, actionable items — and the server refuses it for a plain note and
+ * the other two for a checklist.
  */
-export type NoteCleanMode = 'polished' | 'structured';
+export type NoteCleanMode = 'polished' | 'structured' | 'tasks';
 
 /**
  * The whole-note cleaned view: one pass of the cleanup model over the entire

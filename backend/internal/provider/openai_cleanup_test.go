@@ -72,6 +72,11 @@ func TestOpenAICleanupRequestShape(t *testing.T) {
 	if !ok || thinking["type"] != "disabled" {
 		t.Errorf("thinking = %#v, want type=disabled", gotBody["thinking"])
 	}
+	// Every call — cleanup, items, routing, whole-note, ask — goes through
+	// complete, so one assertion covers them all.
+	if temp, ok := gotBody["temperature"].(float64); !ok || temp != 0 {
+		t.Errorf("temperature = %#v, want 0", gotBody["temperature"])
+	}
 }
 
 func TestOpenAICleanupHTTPError(t *testing.T) {

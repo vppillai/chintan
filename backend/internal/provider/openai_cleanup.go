@@ -149,6 +149,9 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 		},
 		// MiniMax-M3 enables thinking by default; disable for deterministic cleanup text.
 		"thinking": map[string]string{"type": "disabled"},
+		// Pinned: live QA (2026-09-29) saw one transcript cleaned three
+		// different ways across runs at the provider's default sampling.
+		"temperature": 0,
 	}
 	if maxTokens > 0 {
 		payload["max_tokens"] = maxTokens

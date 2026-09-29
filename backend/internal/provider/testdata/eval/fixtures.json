@@ -67,6 +67,13 @@
       {"transcript": "Buy a birthday card for Anu and post it by Friday", "count_in": [1, 2], "contains_any": ["birthday card"]}
     ]
   },
+  "tasks": {
+    "cases": [
+      {"body": "- [ ] buy milk and call the plumber\n- [x] pay the electricity bill\n- [ ] chickpeas", "want": ["- [ ] Buy milk", "- [ ] Call the plumber", "- [x] pay the electricity bill", "- [ ] chickpeas"], "_note": "casing of split items is not asserted; NoteOutput's subsequence check is"},
+      {"body": "- [ ] two loaves of bread\n- [ ] പാൽ", "want_unchanged": true},
+      {"body": "- [ ] book flights and hotel for Lisbon and tell Anu the dates", "count": 3}
+    ]
+  },
   "ask": {
     "notes": [
       {"title": "Roof repair", "updated": "2026-09-20", "text": "The gutter on the north side started leaking on 12 September. The roofer, Suresh, quoted 8,000 for the bracket and flashing."},

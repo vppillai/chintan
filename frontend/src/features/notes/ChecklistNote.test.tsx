@@ -1,19 +1,21 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { NoteDetailWire } from '@/api/schema.ts';
+import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
 import { NoteDetailScreen } from './NoteDetailScreen.tsx';
+import { CLEAN_POLL_MS } from './cleaned.ts';
 
 /**
  * The note screen for a checklist, against a small server that stores what
- * PATCH sends. What these prove is the contract's frontend half: the tabs are
- * Items and Recordings — a checklist has no Cleaned tab since 2026-09-27, its
- * recordings became items as they were filed — the meta line counts items,
- * and the Details switch converts the body and sends `kind` with it.
+ * PATCH sends and answers `POST …/clean` with 202 and a `tasks` view a beat
+ * later. What these prove is the 2026-09-21 contract's frontend half: the
+ * tabs are Items and Split up, the meta line counts items, the Details switch
+ * converts the body and sends `kind` with it, and the Split up tab has no
+ * mode to pick.
  */
 
 const SHOPPING: NoteDetailWire = {
@@ -46,6 +48,14 @@ const ROOF: NoteDetailWire = {
   auto_clean: false,
 };
 
+/** What the cleanup model writes for the shopping list in `tasks` mode. */
+const SPLIT: CleanedWire = {
+  body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [ ] Butter',
+  mode: 'tasks',
+  generated_at: '2026-08-06T09:20:00.000Z',
+  stale: false,
+};
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -53,14 +63,22 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-function server(initial: NoteDetailWire, path = `/notes/${initial.id}`) {
+function server(initial: NoteDetailWire) {
   const state = {
     note: structuredClone(initial),
     patches: [] as Record<string, unknown>[],
+    cleans: [] as (Record<string, unknown> | null)[],
   };
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     const method = init?.method ?? 'GET';
+    if (url.pathname.endsWith('/clean') && method === 'POST') {
+      state.cleans.push(init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null);
+      setTimeout(() => {
+        state.note = { ...state.note, cleaned: { ...SPLIT, generated_at: new Date().toISOString() } };
+      }, 50);
+      return json({ status: 'queued', mode: 'tasks' }, 202);
+    }
     if (method === 'PATCH') {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       state.patches.push(body);
@@ -80,14 +98,14 @@ function server(initial: NoteDetailWire, path = `/notes/${initial.id}`) {
     return json({ items: [] });
   });
   const router = createMemoryRouter([{ path: '/notes/:id', Component: NoteDetailScreen }], {
-    initialEntries: [path],
+    initialEntries: [`/notes/${initial.id}`],
   });
   render(
     <TestProviders api={testApiContext(fetchImpl)}>
       <RouterProvider router={router} />
     </TestProviders>,
   );
-  return { ...state, router, get patches() { return state.patches; } };
+  return { ...state, router, get patches() { return state.patches; }, get cleans() { return state.cleans; } };
 }
 
 function tabNames(): string[] {
@@ -96,12 +114,22 @@ function tabNames(): string[] {
     .map((tab) => tab.textContent ?? '');
 }
 
+// The Split up poll on a fake clock that still moves with real time, as
+// CleanedPanel.test.tsx: a test advances CLEAN_POLL_MS rather than waiting it.
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('a checklist note', () => {
-  it('has Items and Recordings for tabs, the editor for a body, and the count in the meta line', async () => {
+  it('has Items and Split up for tabs, the editor for a body, and the count in the meta line', async () => {
     const user = userEvent.setup();
     const api = server(SHOPPING);
     await screen.findByRole('textbox', { name: 'Item 1' });
-    expect(tabNames()).toEqual(['Items', 'Recordings (0)']);
+    expect(tabNames()).toEqual(['Items', 'Split up', 'Recordings (0)']);
     expect(screen.queryByRole('textbox', { name: 'Note body' })).toBeNull();
     expect(screen.getByText(/1 of 3 done/)).toBeInTheDocument();
     expect(screen.queryByText(/\d+ words/)).toBeNull();
@@ -131,9 +159,8 @@ describe('a checklist note', () => {
     expect(toggle).not.toBeChecked();
     await user.click(toggle);
 
-    // The screen is a checklist's at once, before the save lands, and the
-    // Cleaned tab is gone with the prose.
-    expect(tabNames()).toEqual(['Items', 'Recordings (0)']);
+    // The screen is a checklist's at once, before the save lands.
+    expect(tabNames().slice(0, 2)).toEqual(['Items', 'Split up']);
     expect(screen.getByRole('textbox', { name: 'Item 1' })).toHaveValue('Ridge tiles have slipped.');
     expect(screen.getByRole('textbox', { name: 'Item 2' })).toHaveValue('Get two quotes.');
     expect(screen.getByText(/0 of 2 done/)).toBeInTheDocument();
@@ -148,7 +175,7 @@ describe('a checklist note', () => {
     );
 
     await user.click(screen.getByRole('checkbox', { name: 'This note is a checklist' }));
-    expect(tabNames()).toEqual(['Text', 'Cleaned', 'Recordings (0)']);
+    expect(tabNames()[0]).toBe('Text');
     expect(await screen.findByRole('textbox', { name: 'Note body' })).toHaveValue(
       'Ridge tiles have slipped.\n\nGet two quotes.',
     );
@@ -160,13 +187,129 @@ describe('a checklist note', () => {
     );
   });
 
-  // A link or a remembered tab that names Cleaned opens a checklist on its
-  // items: the tab does not exist for one, and a view stored by the deleted
-  // tasks mode is not the note's.
-  it('opens a checklist linked to ?tab=cleaned on its items', async () => {
-    server(SHOPPING, '/notes/shopping?tab=cleaned');
+  it('Split up has no mode to pick, and its list is live: the first tick adopts the split list, the next edits it', async () => {
+    const user = userEvent.setup();
+    const api = server(SHOPPING);
     await screen.findByRole('textbox', { name: 'Item 1' });
-    expect(screen.getByRole('tab', { name: 'Items' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.queryByRole('tab', { name: /split up|cleaned/i })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Split up' }));
+
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    expect(panel().queryByRole('group', { name: 'Cleaned view mode' })).toBeNull();
+    expect(panel().getByText('Not split up yet')).toBeInTheDocument();
+    expect(panel().getByText(/one task per action/i)).toBeInTheDocument();
+    // The auto-refresh switch stays.
+    expect(panel().getByRole('checkbox', { name: /keep it updated/i })).toBeInTheDocument();
+
+    await user.click(panel().getByRole('button', { name: 'Generate' }));
+    // No mode named: the server applies `tasks` itself.
+    expect(api.cleans).toEqual([null]);
+
+    const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => panel().getByRole('list', { name: 'Split up items' }));
+    const boxes = preview().getAllByRole('checkbox');
+    expect(boxes.map((box) => (box as HTMLInputElement).checked)).toEqual([false, true, false, false]);
+    for (const box of boxes) expect(box).toBeEnabled();
+    expect(preview().queryByRole('textbox')).toBeNull();
+    expect(panel().getByText(/^Generated .* · Split up$/)).toBeInTheDocument();
+    const caption = 'Ticking here replaces your list with the split version.';
+    expect(panel().getByText(caption)).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
+
+    // The first tick: the body becomes the split list with Butter done, in
+    // one save; the caption has done its job.
+    await user.click(preview().getByRole('checkbox', { name: 'Butter' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    expect(api.patches[0]).toEqual(
+      expect.objectContaining({ body: '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter' }),
+    );
+    expect(api.patches[0]).not.toHaveProperty('cleaned_mode');
+    expect(preview().getByRole('checkbox', { name: 'Butter' })).toBeChecked();
+    expect(panel().queryByText(caption)).toBeNull();
+    // The rows are the body now, and the header, the live region and the
+    // missing button all say so: pressing Use this list again would have put
+    // the un-ticked proposal back over the tick just made.
+    expect(panel().getByText(/^Your list · split up /)).toBeInTheDocument();
+    expect(panel().getByRole('status')).toHaveTextContent('Your list is now the split version.');
+    expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
+
+    // The next act edits the body it made — Eggs reopened, Butter kept done —
+    // rather than replacing it with the proposal again.
+    await user.click(preview().getByRole('checkbox', { name: 'Eggs' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    expect(api.patches[1]).toEqual(
+      expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread\n- [x] Butter' }),
+    );
+
+    // A done item's × deletes it, as under Done.
+    await user.click(preview().getByRole('button', { name: 'Delete Butter' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(3);
+    });
+    expect(api.patches[2]).toEqual(expect.objectContaining({ body: '- [ ] Milk\n- [ ] Eggs\n- [ ] Bread' }));
+
+    // Away and back — the panel is remounted — the tab still shows the body,
+    // not the proposal; Regenerate is still there and Use this list is not.
+    await user.click(screen.getByRole('tab', { name: 'Items' }));
+    expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Bread');
+    expect(screen.queryByRole('checkbox', { name: 'Butter' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Split up' }));
+    expect(preview().getAllByRole('checkbox')).toHaveLength(3);
+    expect(panel().queryByText(caption)).toBeNull();
+    expect(panel().queryByRole('button', { name: 'Use this list' })).toBeNull();
+    expect(panel().getByRole('button', { name: 'Regenerate' })).toBeInTheDocument();
+
+    // Regenerate holds the rows with the buttons while the worker is at it —
+    // a tick now would adopt a proposal about to be replaced — and what
+    // arrives is a new proposal: the caption and Use this list are back.
+    await user.click(panel().getByRole('button', { name: 'Regenerate' }));
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    await waitFor(() => {
+      expect(preview().getAllByRole('checkbox')).toHaveLength(4);
+    });
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
+    expect(panel().getByText(caption)).toBeInTheDocument();
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeEnabled();
+    expect(api.patches).toHaveLength(3);
+  });
+
+  it('a stale proposal holds its rows: a tick writes nothing, Use this list still takes it', async () => {
+    const user = userEvent.setup();
+    // The list changed (a recording appended an item, say) after it was split.
+    const api = server({ ...SHOPPING, cleaned: { ...SPLIT, stale: true } });
+    // The note opens on the tab it was left on (sessionStorage), which the
+    // case before this one left at Split up; so wait for the strip, not Items.
+    await user.click(await screen.findByRole('tab', { name: 'Split up' }));
+
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    const preview = () => within(panel().getByRole('list', { name: 'Split up items' }));
+    const stale = 'The note changed since this was generated.';
+    const caption = 'Ticking here replaces your list with the split version.';
+    expect(panel().getByText(stale)).toBeInTheDocument();
+    expect(panel().queryByText(caption)).toBeNull();
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeDisabled();
+    expect(preview().getByRole('button', { name: 'Delete Eggs' })).toBeDisabled();
+
+    // A tick or × on a held row writes nothing: one PATCH there would have
+    // put the old proposal over the body and lost the item added since.
+    await user.click(preview().getByRole('checkbox', { name: 'Butter' }));
+    await user.click(preview().getByRole('button', { name: 'Delete Eggs' }));
+    expect(api.patches).toHaveLength(0);
+
+    // Use this list is the explicit overwrite, and still is one: the body
+    // becomes the proposal as it stands, Butter unticked and Eggs kept.
+    await user.click(panel().getByRole('button', { name: 'Use this list' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: SPLIT.body }));
+    // The rows are the body now and free again; the stale notice has gone.
+    for (const box of preview().getAllByRole('checkbox')) expect(box).toBeEnabled();
+    expect(panel().queryByText(stale)).toBeNull();
   });
 });

@@ -1,7 +1,8 @@
 /*
  * The Cleaned view — the worker's rewrite of the whole note, read-only — and
- * the tab panel it sits in. Moved whole from shell.css (round 5, CH-6).
- * Tokens only — no literal colour or font size lives here.
+ * the tab panel it sits in. Moved whole from shell.css (round 5, CH-6);
+ * checklist.css restyles it as Split up. Tokens only — no literal colour or
+ * font size lives here.
  */
 
 /* --------------------------------------------------------------------------

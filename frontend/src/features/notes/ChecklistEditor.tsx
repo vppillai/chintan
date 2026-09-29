@@ -673,8 +673,8 @@ function Check({
 /**
  * The box a finger sees, on its own: the `.checklist__box` input before it
  * in the same label is what the stylesheet reads the state from, so any
- * label built that way — the Items rows, the switches in the Cleaned tab and
- * Details — shows the one drawn box.
+ * label built that way — the Items rows, the Split up rows, the switches in
+ * the Cleaned tab and Details — shows the one drawn box.
  */
 export function CheckMark() {
   return (
@@ -749,5 +749,59 @@ function ItemField({
       autoComplete="off"
       {...rest}
     />
+  );
+}
+
+/**
+ * The Split up tab's list: the same rows, ticking and deleting through the
+ * caller, which decides what body they change — `CleanedPanel` makes the
+ * first act adopt the split list as the note's body. Items stay in body
+ * order and a done one fills in where it stands rather than moving down,
+ * because this list is a reading of a proposal, not the editor; a done item
+ * still has its × as it does under Done. `disabled` holds every row while a
+ * regeneration is on its way, as the buttons are held: a tick then would
+ * adopt a proposal about to be replaced. A row is keyed by its words as
+ * well as its place, so a delete above it remounts it (no transition) rather
+ * than sliding the tick of the row that stood there.
+ */
+export function ChecklistPreview({
+  body,
+  label,
+  disabled = false,
+  onToggle,
+  onDelete,
+}: {
+  body: string;
+  label: string;
+  disabled?: boolean;
+  onToggle: (index: number) => void;
+  onDelete: (index: number) => void;
+}) {
+  const items = parseChecklist(body);
+  return (
+    <ul className="checklist checklist--preview" role="list" aria-label={label}>
+      {items.map((item, index) => (
+        <li key={`${String(index)}:${item.text}`} className={rowClass(item)}>
+          <Check
+            checked={item.done}
+            name={item.text || `Item ${String(index + 1)}`}
+            disabled={disabled}
+            onChange={() => {
+              onToggle(index);
+            }}
+          />
+          <span className="checklist__text">{item.text}</span>
+          {item.done && (
+            <DeleteItem
+              text={item.text}
+              disabled={disabled}
+              onClick={() => {
+                onDelete(index);
+              }}
+            />
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }

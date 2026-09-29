@@ -7,8 +7,9 @@ view differs — and why the body stays the single source of truth. Code:
 `model.NoteIndex.Kind` (`backend/internal/model/types.go`),
 `Pipeline.extractItems` (`backend/internal/pipeline/clean.go`), `checklistItems` in
 `Pipeline.append` (`backend/internal/pipeline/append.go`), the items prompt and `ParseItems`
-(`backend/internal/cleanup/items.go`), `service.CheckCleanMode`
-(`backend/internal/service/note_clean.go`). The frontend
+(`backend/internal/cleanup/items.go`), `service.CheckCleanMode` /
+`EffectiveCleanMode` (`backend/internal/service/note_clean.go`), the `tasks`
+prompt and `NoteOutput` (`backend/internal/cleanup/prompt.go`). The frontend
 half — the parser, the Items tab, the grip's drag — is
 `frontend/src/features/notes/checklist.ts`, `ChecklistEditor.tsx` and
 `frontend/src/hooks/useDragReorder.ts`, and "Editing the list" below.
@@ -173,30 +174,44 @@ a tick follows its item's words, and line for line only when no words match
 and the count holds (`keepTick`). Each item is cut at 2,000 runes. Snippet and search text
 see the raw lines.
 
-## No cleaned view
+## The `tasks` clean mode
 
-A checklist has no cleaned view. `CheckCleanMode` answers
-`ErrChecklistCleanMode` — 400 `a checklist has no cleaned view` — for `PATCH
-cleaned_mode` and `POST …/clean` in any mode or none, and nothing is stamped
-on the row or handed to the worker; `auto_clean` kept from before a note
-became a checklist asks for nothing after an append or a body write; the
-worker's `CleanNote` does nothing for a checklist task queued before the
-deploy; `cleanedOf` renders `cleaned` as null for one, so a view stored
-earlier is never shown, and the export leaves it out. A `cleaned_mode`
-preference chosen while the note was prose is kept and reported, and applies
-again when it is switched back. The frontend shows Items and Recordings only;
-a link or a remembered tab naming Cleaned opens the items.
+A checklist cleans in `tasks` and in nothing else. `EffectiveCleanMode`
+answers `tasks` for every checklist, whatever preference the row held before
+it became one, so auto-clean and an unspecified `POST …/clean` run it without
+being told. `CheckCleanMode` is the one rule for `PATCH cleaned_mode` and
+`POST …/clean {mode}`: a checklist takes anything but `tasks` as 400
+`cleaned_mode must be tasks for a checklist`; a plain note takes `tasks` as
+400 `cleaned_mode must be polished or structured`. The check runs against the
+kind as the PATCH leaves it, so `{kind: checklist, cleaned_mode: tasks}` is one
+request. A `tasks` preference left on a note switched back to plain is ignored,
+not run, and comes back into force if the note becomes a checklist again.
 
-Until 2026-09-27 a checklist cleaned in a `tasks` mode — the Split up tab: the
-whole list re-split into one task per action, with a done-item check and a
-subsequence check on the answer, adopted over the body by the first tick.
-Thirty of the thirty-four whole-note calls in the week measured were that
-mode regenerating a 10–780-byte list after every appended item, and since the
-items prompt splits "chickpeas and green gram" at capture time the tab mostly
-re-answered a solved question (round-5 prompts lens, PR-D4). Items per
-recording, and editing the list by hand, are the way; a one-shot "split this
-long item" later would be a button that calls the items prompt on one line,
-not a mode.
+The prompt asks for the items rewritten as granular, actionable tasks — one
+item per action, an item that is already one thing left exactly as written
+with no verb added, the person's words, done items verbatim and in place,
+order otherwise kept, nothing invented or merged — and for task-list lines as
+the whole answer. The answer is held to that, and two of the promises are
+checked against the body rather than trusted, because adopting the view (the
+first tick in Split up, or Use this list) writes it over the body:
+
+- every non-blank line must match `^- \[( |x)\] \S`, blank lines are
+  dropped, at most 500 items — else the fixed verdict `the cleanup model
+  returned nothing usable` and the previous view is kept;
+- the `- [x]` lines must be the body's `- [x]` lines, verbatim (whitespace
+  runs aside) and in order — else the same verdict, because a view that lost
+  or invented a tick is worse than the view it would replace;
+- an open item whose words are not the body's words, in order
+  (`llm.VerifySubsequence`), is dropped and `TasksItemsDropped` counts it;
+  the rest of the answer is stored. This is what catches `- [x] Make a list.`
+  — the model inventing an antecedent for "it" — while keeping the two
+  splits beside it. A reply with nothing left is `nothing usable`.
+
+Stored in `cleaned_body` as today; `stale` and `auto_clean` are unchanged.
+With items now extracted per recording, the split has less to do. The owner
+decided on 2026-09-29 to keep Split up and improve it — round 6
+(`docs/backlog.md`, "Owner feedback 2026-09-27", PR-D4 reversed); the
+round-5 proposal to drop it (PR-D4) was reversed before it merged.
 
 ## Editing the list
 
@@ -292,8 +307,8 @@ together on release; a parent dropped one slot down stands on its own
 sub-item's slot, which the draft can show but nothing can mean, and it goes
 back where it was rather than past the next row as the menu's step would
 (a drag is placed by eye, and a jump past what the eye placed it on is the
-surprise). `extractItems` appends at depth 0 as before; export and the
-search text are unchanged. A third
+surprise). Split up (`extractItems`, the `tasks` prompt) appends and proposes
+at depth 0 as before; export and the search text are unchanged. A third
 level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
 
 Done items keep their line where it stands; the Done section is the view's

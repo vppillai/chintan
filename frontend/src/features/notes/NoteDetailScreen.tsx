@@ -93,7 +93,7 @@ export function NoteDetailScreen() {
   const offlineCopy = !served && Boolean(cached.data);
   const editor = useNoteEditor(note);
   // The draft's, not the server's: the Details switch changes what this
-  // screen is — Items for Text, and no Cleaned tab — the moment it is
+  // screen is — Items for Text, Split up for Cleaned — the moment it is
   // flipped, not after the save lands.
   const checklist = (editor.model.draft.kind ?? note?.kind ?? 'note') === 'checklist';
   const [selectingRecordings, setSelectingRecordings] = useState(false);
@@ -388,17 +388,13 @@ function NoteViews({
   findBarId: string;
   findInputRef: RefObject<HTMLInputElement | null>;
 }) {
-  const [chosen, selectTab] = useNoteTab(note.id);
-  // A checklist's text is its items, and it has no cleaned view: its
-  // recordings became items as they were filed, so there is nothing to
-  // rewrite (until 2026-09-27 a Split up tab re-split them after the fact).
-  // A remembered or linked Cleaned tab on a checklist shows the items.
-  const tab: NoteTab = checklist && chosen === 'cleaned' ? 'text' : chosen;
+  const [tab, selectTab] = useNoteTab(note.id);
   // The upload on its way counts: it is a row on the tab already.
   const count = (note.captures?.length ?? 0) + (localUpload ? 1 : 0);
+  // A checklist's text is its items, and its cleaned view splits them up.
   const tabs: NoteTabDescriptor[] = [
     { id: 'text', label: checklist ? 'Items' : 'Text' },
-    ...(checklist ? [] : [{ id: 'cleaned', label: 'Cleaned' } satisfies NoteTabDescriptor]),
+    { id: 'cleaned', label: checklist ? 'Split up' : 'Cleaned' },
     { id: 'recordings', label: 'Recordings', count },
   ];
 

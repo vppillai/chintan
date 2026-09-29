@@ -100,10 +100,9 @@ type NoteCleaned struct {
 }
 
 // cleanedOf renders the view, or nil for a note that has never been cleaned
-// and never failed to be. A checklist has none: a view stored on one before
-// 2026-09-27 is the deleted tasks mode's and is not shown.
+// and never failed to be.
 func cleanedOf(n model.NoteIndex) *NoteCleaned {
-	if n.Kind == model.NoteKindChecklist || (n.CleanedBody == "" && n.CleanedError == "") {
+	if n.CleanedBody == "" && n.CleanedError == "" {
 		return nil
 	}
 	// The mode the view WAS generated in, read from the row; a view written
@@ -164,9 +163,9 @@ func noteOf(n model.NoteIndex) Note {
 		rank := n.PinRank
 		out.PinRank = &rank
 	}
-	// The stored preference when it is a mode; a stale "tasks" preference from
-	// before 2026-09-27 is absent, as a note that never chose reads.
-	if model.ValidNoteCleanMode(n.CleanMode) {
+	// A checklist always says tasks; a plain note says its stored preference,
+	// which for a stale tasks preference is the default it actually runs in.
+	if n.Kind == model.NoteKindChecklist || model.ValidNoteCleanMode(n.CleanMode) {
 		out.CleanedMode = string(service.EffectiveCleanMode(n))
 	}
 	if out.Aliases == nil {

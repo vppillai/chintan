@@ -1,5 +1,5 @@
 /* --------------------------------------------------------------------------
-   Checklist notes — the Items tab, the row's progress
+   Checklist notes — the Items tab, the Split up list, the row's progress
    -------------------------------------------------------------------------- */
 
 /* The same card the body textarea is: a recess in the page, holding rows. The
@@ -140,7 +140,7 @@
 }
 
 /* The item's words, in the note's serif, as tall as the row. A textarea for an
-   open item, a span for a done one — the same measure either way
+   open item, a span for a done or previewed one — the same measure either way
    so a tick does not reflow the text. */
 .checklist__text {
   flex: 1 1 auto;
@@ -363,6 +363,23 @@ textarea.checklist__text {
 .checklist__done-action:hover,
 .checklist__done-action:focus-visible {
   color: var(--color-ink);
+}
+
+/* The Split up tab's list lives in the cleaned view's own card; a proposal
+   older than the note is greyed the same way the prose view is. */
+.checklist--preview .checklist__text {
+  cursor: default;
+}
+
+.cleaned__body[data-stale] .checklist--preview .checklist__text {
+  color: var(--color-muted);
+}
+
+/* Use this list · Regenerate, on the header's right. */
+.checklist-preview__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 /* The library row: the glyph before the title, the progress in the meta line. */

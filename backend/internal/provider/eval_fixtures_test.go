@@ -53,7 +53,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	}
 
 	// Every case has to assert something, or it only spends money.
-	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "question": true, "_note": true}
+	inputs := map[string]bool{"transcript": true, "language": true, "raw": true, "body": true, "question": true, "_note": true}
 	raw, err := os.ReadFile(evalFixturesPath)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestEvalFixturesParse(t *testing.T) {
 	if err := json.Unmarshal(raw, &sections); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"route", "cleanup", "items", "ask"} {
+	for _, name := range []string{"route", "cleanup", "items", "tasks", "ask"} {
 		var sec struct {
 			Cases []map[string]json.RawMessage `json:"cases"`
 		}
@@ -109,6 +109,9 @@ type evalFixtures struct {
 		ListTitle string      `json:"list_title"`
 		Cases     []itemsCase `json:"cases"`
 	} `json:"items"`
+	Tasks struct {
+		Cases []tasksCase `json:"cases"`
+	} `json:"tasks"`
 	Ask struct {
 		Notes []struct {
 			Title   string `json:"title"`
@@ -159,6 +162,14 @@ type itemsCase struct {
 	ContainsAny []string `json:"contains_any"`
 	ExcludesAny []string `json:"excludes_any"`
 	Script      string   `json:"script"`
+}
+
+type tasksCase struct {
+	Body          string   `json:"body"`
+	Comment       string   `json:"_note"`
+	Want          []string `json:"want"`
+	WantUnchanged bool     `json:"want_unchanged"`
+	Count         *int     `json:"count"`
 }
 
 type askCase struct {

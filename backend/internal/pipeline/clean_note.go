@@ -86,13 +86,6 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		log.Info("clean-note: the note is archived; nothing to do")
 		return nil
 	}
-	if note.Kind == model.NoteKindChecklist {
-		// A checklist has no cleaned view since 2026-09-27; a task queued
-		// before the deploy, or by a client that has not reloaded, is done
-		// by doing nothing (service.CheckCleanMode refuses new requests).
-		log.Info("clean-note: a checklist has no cleaned view; nothing to do")
-		return nil
-	}
 	if !model.ValidNoteCleanMode(mode) {
 		mode = service.EffectiveCleanMode(note)
 	}
@@ -179,7 +172,12 @@ func (p *Pipeline) CleanNote(ctx context.Context, tenantID, noteID string, mode 
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteProviderVerdict(ctx, log, err), "provider")
 	}
 
-	text, err := cleanup.NoteOutput(cleaned.Text)
+	text, dropped, err := cleanup.NoteOutput(mode, cleaned.Text, body)
+	if dropped > 0 {
+		// Counts only: the dropped lines are the model's words about the note.
+		log.Warn("clean-note: dropped tasks whose words are not in the note", slog.Int("dropped", dropped))
+		obs.Count(ctx, "TasksItemsDropped", nil)
+	}
 	if err != nil {
 		log.Warn("clean-note: the model returned nothing usable")
 		return p.recordCleanNoteVerdict(ctx, tenantID, noteID, mode, stamp, cleanNoteUnusable, "unusable")
@@ -357,9 +355,7 @@ func (p *Pipeline) updateNoteRow(ctx context.Context, tenantID, noteID string, c
 // other hand-off, so a run already in flight over the older body yields to
 // this one. note is the row the index refresh just stored.
 func (p *Pipeline) autoCleanAfterAppend(ctx context.Context, tenantID string, note model.NoteIndex) {
-	// A checklist has no cleaned view, whatever auto_clean it kept from
-	// before it was one.
-	if !note.AutoClean || note.Kind == model.NoteKindChecklist {
+	if !note.AutoClean {
 		return
 	}
 	p.cleanNoteAfter(ctx, tenantID, note, "append")
