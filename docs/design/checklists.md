@@ -5,11 +5,12 @@ ticked, crossed items sink, and all checklists are one filter away. This note
 is the backend half — what is stored, what the worker writes, how the cleaned
 view differs — and why the body stays the single source of truth. Code:
 `model.NoteIndex.Kind` (`backend/internal/model/types.go`),
-`Pipeline.extractItems` (`backend/internal/pipeline/clean.go`), `checklistItems` in
-`Pipeline.append` (`backend/internal/pipeline/append.go`), the items prompt and `ParseItems`
+`Pipeline.extractItems` (`backend/internal/pipeline/clean.go`), `checklistItems` and
+`mergeChecklistItems` in `Pipeline.append` (`backend/internal/pipeline/append.go`), the
+shared item rules, the items prompt, `cleanup.Item` and `ParseItems`
 (`backend/internal/cleanup/items.go`), `service.CheckCleanMode` /
 `EffectiveCleanMode` (`backend/internal/service/note_clean.go`), the `tasks`
-prompt and `NoteOutput` (`backend/internal/cleanup/prompt.go`). The frontend
+prompt, `TasksPrompt` and `SplitOutput` (`backend/internal/cleanup/prompt.go`). The frontend
 half — the parser, the Items tab, the grip's drag — is
 `frontend/src/features/notes/checklist.ts`, `ChecklistEditor.tsx` and
 `frontend/src/hooks/useDragReorder.ts`, and "Editing the list" below.
@@ -44,38 +45,57 @@ and writes it back as two spaces per level, so a one-level body indented in
 another editor round-trips byte for byte. Until 2026-09-26 such a line
 missed the item pattern altogether: it showed as an open row whose text was
 the raw syntax and was rewritten to `- [ ]   - [x] Candles` on the first
-save. The worker appends at the end of the body with no indent, so a filed
-item is top level by construction, and `extractItems` and the `tasks` prompt
-know nothing of depth; the editor gives a new item the depth of the item it
-follows, nests and un-nests on request ("Sub-items" below), and a moved item
-takes the depth of the slot it lands in and carries its sub-items with it
-(`blockOf`, `moveItem`). The backend is indent-blind, in four places, and
-stays so: `keepTick` (`pipeline/append.go`) carries a tick only from a line
-that begins `- [x] `, which every worker-written line does; `lowerTick` and
-`checklistItemLine` (`cleanup/prompt.go`) trim a line before reading it, so a
-`tasks` answer over a nested body is checked and stored flat — adopting the
-view drops the indent, never a tick; `replaceChecklistItems`
-(`pipeline/append.go`, `regenerate.md`) finds a recording's earlier items by
-their words whatever their indent and writes the new block at the top level,
-so a regeneration or a retranscription brings an item the person had nested
-back to the top and a typed sub-item that followed a removed parent nests
-under the line now above it (the parser clamps an orphan, so nothing breaks);
-and the row's "3 of 7 done" counts every item whatever its depth, as Keep's
-count does. Export and the search text see
-the raw lines, indent and all, which is Markdown.
+save. The worker used to append at the end of the body with no indent, so
+a filed item was top level by construction; since 2026-09-29 it writes a
+group the person spoke — "eggs from Walmart" — as a parent line with its
+things two spaces in ("The append rule" below), and Split up proposes the
+list in the same shape. The editor gives a new item the depth of the item
+it follows, nests and un-nests on request ("Sub-items" below), and a moved
+item takes the depth of the slot it lands in and carries its sub-items with
+it (`blockOf`, `moveItem`). The backend reads the indent where it writes
+lines and folds it away where it matches words: `checklistItems`
+(`pipeline/append.go`) keeps a leading two-space indent ahead of the box;
+`keepTick` carries a tick to the line with the same words at whatever depth
+and keeps that line's indent; `SplitOutput` (`cleanup/prompt.go`) reads a
+nested body as items and writes the answer's tree with the indent, so
+adopting the view keeps sub-items and never drops a tick;
+`replaceChecklistItems` (`pipeline/append.go`, `regenerate.md`) and the
+merge find a recording's earlier items by their words whatever their indent,
+and a regenerated block is written with the recording's own indent — a
+sub-item the person made by hand comes back at the depth the recording gives
+it, and a typed sub-item that followed a removed parent nests under the line
+now above it (the parser clamps an orphan, so nothing breaks); and the row's
+"3 of 7 done" counts every item whatever its depth, as Keep's count does.
+Export and the search text see the raw lines, indent and all, which is
+Markdown.
 
 ## The append rule
 
 When the destination note is a checklist, the recording becomes the items it
-named, one open line each — `- [ ] Chickpeas`, `- [ ] Green gram` — and
-nothing else. The items come from one model call in place of the transcript
-cleanup (`Pipeline.extractItems`, `cleanup.ItemsPrompt`): the prompt reads
-the **raw** transcript with the list's title beside it and answers
-`{"items":[…]}` — short noun phrases in the speaker's words, language and
-script, quantities kept, the words addressed to the app left out ("add",
-"into it", "to my list", the list's own name), "X and Y" split into two. It
-runs in the `cleaning` status, under the cleanup op and deadline, and stores
-the items one per line at `clean_key`, so a retry does not call again.
+named, one open line each — `- [ ] Chickpeas`, `- [ ] Green gram` — grouped
+as the person grouped them, and nothing else. The items come from one model
+call in place of the transcript cleanup (`Pipeline.extractItems`,
+`cleanup.ItemsPrompt`): the prompt reads the **raw** transcript with the
+list's title beside it and answers a one-level tree,
+`{"items":[{"text":"Walmart","children":[{"text":"Eggs"}]},{"text":"Milk"}]}`.
+What an item is lives in one rule block, `cleanup.checklistItemRules`,
+shared with Split up's prompt (`docs/design/prompts.md`): one thing the
+person wants, in their own words, language and script, quantity kept; every
+word about the list rather than on it left out — "add", "to my list", the
+list's own name, also when the recording opens with that name to file it
+("Shopping list eggs from Walmart" → Walmart › Eggs) — so "Add milk, eggs
+and protein powder to the shopping list" is Milk, Eggs, Protein powder and
+never "Add milk" (owner, 2026-09-29); "X and Y" split; **group as the person
+grouped** — a place, a person, an occasion or a category the things are
+named under is the parent, the things its children, one level, never
+invented and never the list's own name; a remove/tick/change request
+returned as spoken; garbling fixed and fillers dropped, nothing else
+changed, nothing lost. A model that answers the old shape, bare strings,
+still parses as flat items; a grandchild is clamped to a child of the
+top-level item (CL-D1). It runs in the `cleaning` status, under the cleanup
+op and deadline, and stores the tree one line per item at `clean_key`, a
+child's line two spaces in (`cleanup.RenderItems`), so a retry does not call
+again.
 
 Until 2026-09-26 the item was the cleaned transcript on one line, and which
 words those were depended on the router's span removal, which knows filing
@@ -124,8 +144,8 @@ Three outcomes besides items:
   instruction-only recording is for a plain note; the note exists and gets
   no item.
 - **Not a list** (no JSON object, no `items` array, an empty completion, more
-  than 100 items): the recording is appended as one item with its line
-  breaks collapsed, the pre-2026-09-26 behaviour, and
+  than 100 items counting sub-items): the recording is appended as one item
+  with its line breaks collapsed, the pre-2026-09-26 behaviour, and
   `ChecklistItemsDiscarded{Reason=unusable}` counts it. Dictation is never
   lost to a bad reply.
 - **Verbatim checklist**: no model call; the raw transcript — the recording
@@ -133,8 +153,9 @@ Three outcomes besides items:
   span-cut text — is one item with its line breaks collapsed.
 
 The prompt is the only guard on what an item is. `ParseItems` checks the
-shape (a JSON object with an `items` array, at most 100, each at most 2,000
-runes) and nothing about the words: a subsequence check against the
+shape (a JSON object with an `items` array of objects or strings, at most
+100 counting sub-items, each text at most 2,000 runes, an item with no text
+dropped and its children lifted) and nothing about the words: a subsequence check against the
 transcript would refuse the STT-garbling fix the prompt asks for, and a rule
 dropping an item equal to the title would silently lose "add batteries" to a
 list titled Batteries. An item the prompt should not have produced is visible
@@ -152,10 +173,51 @@ never turned into an add of the thing named. Applying such a request to the
 list is future work; its shape would be `{"add":[…],"remove":[…],"done":[…]}`
 applied as a body edit under the recording's marker, and it is not built.
 
+### Merging into what the list has
+
+A recording's items are not simply appended: what already has a line in the
+list joins it first (`mergeChecklistItems`, `pipeline/append.go`; the
+oracle is the round-6 checklist lens's `merge.go`, its twelve cases in
+`checklist_append_test.go`), and only the rest goes under the recording's
+marker, in the recording's order. Three rules:
+
+- an item **with children** whose words match a **top-level** line, open or
+  done, joins that block: each child not already under it is added after
+  the block's last line, a child already there and done is reopened, and a
+  done parent that gained or reopened a child is reopened (a parent with an
+  open part is not done — the editor's own rule). "chicken from Costco" over
+  a list that has Costco › Meat gives Costco › Meat, Chicken, not a second
+  Costco;
+- an item **without children** whose words match **any** line is not added
+  again: open, it is a duplicate and dropped; done, it is reopened, and a
+  reopened sub-item reopens its parent, because "add milk" over a ticked
+  Milk means milk is wanted again;
+- matching folds case and whitespace and never reads indent; a marker line
+  or a blank line is left where it stands and an insertion never crosses a
+  marker; ticks are never added by a merge, only ever flipped `[x]` → `[ ]`.
+  `ChecklistItemsMerged{Outcome=joined|deduped|reopened}` counts what
+  happened.
+
+A recording whose every item joined leaves a bare marker as a trailer, the
+way a carried marker stands. The honest limit: a merged child lives under
+its parent, inside whatever paragraph that parent's line is in, not under
+the recording that spoke it. So deleting or moving that recording takes
+what is under its own marker only, and deleting the recording that owns the
+parent's paragraph takes the merged child with it — the same paragraph
+rule a plain note has, and the same limit a list already edited has for
+every recording. Regenerating either recording is safe: the earlier items
+are found by their words wherever they stand (`replaceChecklistItems`
+always goes by words for a checklist, since 2026-09-29, for exactly this
+reason), so a child extracted again is not doubled and the other
+recording's child is not lost. The match is exact folded words: "Costco"
+and "Costco wholesale" are two parents (a `ponytail:` ceiling in
+`append.go`; parent-name synonyms are the upgrade if a real list asks).
+
 The capture marker keeps its place on the line before the first item
 (`<marker>\n- [ ] A\n- [ ] B`, after `\n\n` when the body has content). A
 paragraph runs to the next marker, so `CutCaptureParagraph` finds exactly
-this recording's items: deleting or moving the recording removes them and
+this recording's items (and, after a merge, a child another recording put
+under one of them): deleting or moving the recording removes them and
 nothing else — a typed item with no marker and an item the person has since
 ticked are untouched — and a moved recording lands in the target in
 chronological position, its items still ticked if they were. That holds
@@ -167,12 +229,12 @@ checklist regression — a plain note's marker moves the same way once its
 paragraph is edited — but a checklist is edited far more often than it is
 dictated into, so in practice the per-recording delete works for a list that
 has only been spoken to. Transcribing a
-recording again — or regenerating the note, `regenerate.md` — replaces its
-items where they stand, or, on a list whose markers have been carried,
-finds them by their words and swaps them in place (`replaceChecklistItems`);
-a tick follows its item's words, and line for line only when no words match
-and the count holds (`keepTick`). Each item is cut at 2,000 runes. Snippet and search text
-see the raw lines.
+recording again — or regenerating the note, `regenerate.md` — finds its
+earlier items by their words, under its marker or anywhere a save has
+carried them, and swaps the new ones in where the first of them stood
+(`replaceChecklistItems`); a tick follows its item's words, and line for
+line only when no words match and the count holds (`keepTick`). Each item
+is cut at 2,000 runes. Snippet and search text see the raw lines.
 
 ## The `tasks` clean mode
 
@@ -187,31 +249,52 @@ kind as the PATCH leaves it, so `{kind: checklist, cleaned_mode: tasks}` is one
 request. A `tasks` preference left on a note switched back to plain is ignored,
 not run, and comes back into force if the note becomes a checklist again.
 
-The prompt asks for the items rewritten as granular, actionable tasks — one
-item per action, an item that is already one thing left exactly as written
-with no verb added, the person's words, done items verbatim and in place,
-order otherwise kept, nothing invented or merged — and for task-list lines as
-the whole answer. The answer is held to that, and two of the promises are
-checked against the body rather than trusted, because adopting the view (the
-first tick in Split up, or Use this list) writes it over the body:
+The prompt (`cleanup.TasksPrompt`, `noteTasksSystemPrompt`) is "the list
+as it stands → the list it was meant to be": it composes the shared item
+rules above and adds the three a whole list needs — every line's meaning is
+kept, a line that is already one thing word for word, a line holding
+several things one item each, a sentence spoken to the app the things it
+named; the groups the list has are kept and an item joins an existing group
+when its own words say so ("chicken from Costco" under Costco), two lines
+naming one thing are one item; done stays done, an open line is never
+marked done, and a duplicate merges into an open item if either was open.
+Its user prompt names the list's title first, so the list's own name is
+never an item — the ring speaks the title before every line ("Business
+ideas by Priyanka Seated pool for dogs", owner tenant). The answer is JSON,
+`{"items":[{"text":…,"done":…,"children":[…]}]}`, in the list's order.
+Until 2026-09-29 the prompt asked for "granular, actionable tasks" in the
+person's words with done lines verbatim and in order, which is what turned
+the owner's `Add milk, eggs and protein powder to the shopping list` into
+"Add milk to…", "Add eggs to…", "Add protein powder…" (live Split up,
+2026-09-29).
 
-- every non-blank line must match `^- \[( |x)\] \S`, blank lines are
-  dropped, at most 500 items — else the fixed verdict `the cleanup model
-  returned nothing usable` and the previous view is kept;
-- the `- [x]` lines must be the body's `- [x]` lines, verbatim (whitespace
-  runs aside) and in order — else the same verdict, because a view that lost
-  or invented a tick is worse than the view it would replace;
-- an open item whose words are not the body's words, in order
-  (`llm.VerifySubsequence`), is dropped and `TasksItemsDropped` counts it;
-  the rest of the answer is stored. This is what catches `- [x] Make a list.`
-  — the model inventing an antecedent for "it" — while keeping the two
-  splits beside it. A reply with nothing left is `nothing usable`.
+The answer is checked against the body rather than trusted
+(`cleanup.SplitOutput`), because adopting the view (the first act in Split
+up, or Use this list) writes it over the body:
 
-Stored in `cleaned_body` as today; `stale` and `auto_clean` are unchanged.
-With items now extracted per recording, the split has less to do. The owner
-decided on 2026-09-29 to keep Split up and improve it — round 6
-(`docs/backlog.md`, "Owner feedback 2026-09-27", PR-D4 reversed); the
-round-5 proposal to drop it (PR-D4) was reversed before it merged.
+- it must parse as items (`ParseItems`' shape, at most 500 counting
+  sub-items) — else the fixed verdict `the cleanup model returned nothing
+  usable` and the previous view is kept;
+- an item whose words are not the body's words, in order
+  (`llm.VerifySubsequence`; a group's name — Walmart, Party — is a body
+  word), is dropped and `TasksItemsDropped` counts it, a dropped parent's
+  children lifted to the top level; the rest of the answer is stored. This
+  is what catches `Make a list` — the model inventing an antecedent for
+  "it" — while keeping the split beside it. A reply with nothing left is
+  `nothing usable`;
+- **tick safety**, refused whole: a `- [x]` body line with no done answer
+  item whose words are the line's or a sub-sequence of them (a done line
+  tidied) is a lost tick; an open answer item with a done body line's words
+  is a reopened one, unless the body also had an open line with those words
+  (they merge, open wins); a done answer item with no done body line's
+  words is an invented one. A view that changed a tick is worse than the
+  view it would replace.
+
+The stored view is task-list lines, a sub-item indented two spaces, in
+`cleaned_body` as before; `stale` and `auto_clean` are unchanged. The owner
+decided on 2026-09-29 to keep Split up and improve it — this is round 6's
+half of that (`docs/backlog.md`, "Round 6"); the round-5 proposal to drop it
+(PR-D4) was reversed before it merged.
 
 ## Editing the list
 
@@ -331,9 +414,9 @@ together on release; a parent dropped one slot down stands on its own
 sub-item's slot, which the draft can show but nothing can mean, and it goes
 back where it was rather than past the next row as the menu's step would
 (a drag is placed by eye, and a jump past what the eye placed it on is the
-surprise). Split up (`extractItems`, the `tasks` prompt) appends and proposes
-at depth 0 as before; export and the search text are unchanged. A third
-level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
+surprise). The worker and Split up write the person's own groups as
+sub-items ("The append rule"); export and the search text are unchanged. A
+third level is `MAX_DEPTH` plus one `data-depth` rule in `checklist.css`.
 
 Done items keep their line where it stands; the Done section is the view's
 grouping, not the body's. It is a disclosure — the `<h2>` holds a button
