@@ -117,9 +117,9 @@ test.describe('on a phone', () => {
   /**
    * A finger from (x, y), `dx` across and `dy` down, in a dozen moves through
    * the browser's own touch pipeline (as `swipe.spec.ts`). `rest` is a finger
-   * that stops before it lifts — a pause before the last move, so the swipe
-   * reads no flick from it; `beforeEnd` reads the screen while the finger is
-   * still down.
+   * that stops before it lifts — a pause after the last move, which fires no
+   * move of its own, so the swipe must read no flick from the moves before
+   * it (DB6-23); `beforeEnd` reads the screen while the finger is still down.
    */
   async function drag(
     cdp: CDPSession,
@@ -132,12 +132,12 @@ test.describe('on a phone', () => {
     const steps = 12;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
     for (let i = 1; i <= steps; i += 1) {
-      if (rest && i === steps) await new Promise((resolve) => setTimeout(resolve, 150));
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchMove',
         touchPoints: [{ x: x + (dx * i) / steps, y: y + (dy * i) / steps }],
       });
     }
+    if (rest) await new Promise((resolve) => setTimeout(resolve, 150));
     if (beforeEnd) await beforeEnd();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   }

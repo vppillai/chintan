@@ -32,8 +32,9 @@ import {
  * A caller whose rows have levels — the checklist — passes `onShift` and the
  * pointer's origin to `start`, and the drag then has two axes. The first
  * `AXIS_SLOP_PX` px of travel decide which: more sideways than up and down and
- * the row keeps its slot while every `LEVEL_PX` px right or left is one level
- * in or out (`draftShift`, clamped to one level either way, for the caller to
+ * the row keeps its slot while every indent step right or left (`levelPx`:
+ * `--space-6` in the page's own pixels) is one level in or out
+ * (`draftShift`, clamped to one level either way, for the caller to
  * preview); otherwise it is the reorder above. Release on the sideways axis
  * calls `onShift` with the levels, or nothing when the pointer came back
  * under a step. Locked once decided, so a vertical drag that drifts sideways
@@ -55,8 +56,20 @@ import {
 
 /** Travel before a two-axis drag decides its axis: `useSwipeActions`'s own slop. */
 const AXIS_SLOP_PX = 10;
-/** Sideways travel per level: the indent step, `--space-6` (checklist.css draws it). */
-const LEVEL_PX = 24;
+/**
+ * Sideways travel per level: the indent step `--space-6` (checklist.css
+ * draws it) in CSS pixels, read when the row is lifted. The token is in rem,
+ * so under the browser's text-size setting the real indent is wider than 24
+ * device pixels and the preview must move by the same amount (DB6-32). The
+ * token's own value when the sheet cannot be read (tests).
+ */
+function levelPx(): number {
+  const root = getComputedStyle(document.documentElement);
+  const value = root.getPropertyValue('--space-6').trim();
+  const n = Number.parseFloat(value);
+  if (!Number.isFinite(n) || n <= 0) return 24;
+  return value.endsWith('rem') ? n * (Number.parseFloat(root.fontSize) || 16) : n;
+}
 
 type Levels = -1 | 0 | 1;
 
@@ -68,6 +81,8 @@ interface Drag<T> {
   origin: { x: number; y: number } | null;
   axis: 'undecided' | 'x' | 'y';
   levels: Levels;
+  /** One level's worth of sideways travel, as the sheet had it at the lift. */
+  levelPx: number;
   /** The order when the row was lifted; a release that leaves it commits nothing. */
   order: T[];
 }
@@ -133,6 +148,7 @@ export function useDragReorder<T extends string>({
       origin: origin ?? null,
       axis: onShift && origin ? 'undecided' : 'y',
       levels: 0,
+      levelPx: levelPx(),
       order: [...ids],
     };
     live.current = [...ids];
@@ -208,7 +224,7 @@ export function useDragReorder<T extends string>({
       }
       if (current.axis === 'x') {
         // `|| 0` folds the -0 a small leftward trunc gives into plain 0.
-        const levels = (Math.max(-1, Math.min(1, Math.trunc(dx / LEVEL_PX))) || 0) as Levels;
+        const levels = (Math.max(-1, Math.min(1, Math.trunc(dx / current.levelPx))) || 0) as Levels;
         if (levels === current.levels) return;
         current.levels = levels;
         setDraftShift({ id: current.id, levels });

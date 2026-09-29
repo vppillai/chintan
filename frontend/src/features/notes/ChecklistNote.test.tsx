@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CleanedWire, NoteDetailWire } from '@/api/schema.ts';
+import { CAPTURE_POLL_FAST_MS } from '@/api/queries/captures.ts';
+import type { CaptureWire, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 import { TestProviders, testApiContext } from '@/test/providers.tsx';
 
@@ -119,8 +120,34 @@ function server(initial: NoteDetailWire) {
   return {
     router,
     get note() { return state.note; },
+    /** The note changing on the server by another hand: a recording filed in. */
+    set note(next: NoteDetailWire) { state.note = next; },
     get patches() { return state.patches; },
     get cleans() { return state.cleans; },
+  };
+}
+
+/** A recording still being transcribed, which keeps the note polling, as in the app. */
+function transcribing(): CaptureWire {
+  return {
+    id: 'cap-9',
+    status: 'transcribing',
+    created_at: new Date().toISOString(),
+    version: 1,
+    note_id: 'shopping',
+    duration_ms: 3_000,
+    has_peaks: false,
+    has_segments: false,
+  };
+}
+
+/** The recording filed in: its item at the end, a version up, the capture appended. */
+function landed(api: { note: NoteDetailWire }, capture: CaptureWire, body: string): void {
+  api.note = {
+    ...api.note,
+    body,
+    version: api.note.version + 1,
+    captures: [{ ...capture, status: 'appended' }],
   };
 }
 
@@ -325,6 +352,133 @@ describe('a checklist note', () => {
     ]);
     expect(panel().getByRole('button', { name: 'Use this list' })).toBeEnabled();
     expect(api.patches).toHaveLength(4);
+  });
+
+  it('Delete done as the first act adopts too, and the adoption toast is the one left standing: its Undo restores the list as it stood', async () => {
+    const user = userEvent.setup();
+    // Its own `generated_at`: what a case adopts is remembered by it for the session (`adoptedSplits`).
+    const api = server({ ...SHOPPING, cleaned: { ...SPLIT, generated_at: '2026-08-06T09:21:00.000Z' } });
+    await user.click(await screen.findByRole('tab', { name: 'Split up' }));
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    await user.click(panel().getByRole('button', { name: 'Delete done' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    // The proposal without Eggs, in one save.
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: '- [ ] Milk\n- [ ] Bread\n- [ ] Butter' }));
+    // The editor's own "1 done item deleted" toast could only put the
+    // proposal back; the body before the adoption has no other way home.
+    expect(screen.getByText('Your list is now the split version.', { selector: '.toast__text' })).toBeInTheDocument();
+    expect(screen.queryByText('1 done item deleted', { selector: '.toast__text' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(2);
+    });
+    expect(api.patches[1]).toEqual(expect.objectContaining({ body: SHOPPING.body }));
+    expect(panel().getByRole('button', { name: 'Use this list' })).toBeInTheDocument();
+  });
+
+  it('the adoption’s Undo refuses once a recording has landed in the list meanwhile, and says so', async () => {
+    const user = userEvent.setup();
+    const filing = transcribing();
+    const api = server({
+      ...SHOPPING,
+      cleaned: { ...SPLIT, generated_at: '2026-08-06T09:22:00.000Z' },
+      captures: [filing],
+    });
+    await user.click(await screen.findByRole('tab', { name: 'Split up' }));
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    const rows = () => within(panel().getByRole('list', { name: 'Items' }));
+
+    await user.click(rows().getByRole('checkbox', { name: 'Butter' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    // The recording files in and the poll brings it to the settled editor
+    // inside the toast's six seconds.
+    const withJam = '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter\n- [ ] Jam';
+    landed(api, filing, withJam);
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    await waitFor(() => {
+      expect(rows().getByRole('textbox', { name: 'Item 3' })).toHaveValue('Jam');
+    });
+
+    // Undo would have written the body without Jam over it, with the new
+    // version, and been accepted. Nothing is written, and the toast says so.
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    expect(api.patches).toHaveLength(1);
+    expect(api.note.body).toBe(withJam);
+    expect(rows().getByRole('textbox', { name: 'Item 3' })).toHaveValue('Jam');
+  });
+
+  it('the adoption’s Undo refuses the same way after a tab switch: the panel is gone, the toast is not, and it reads the note’s body', async () => {
+    const user = userEvent.setup();
+    const filing = transcribing();
+    const api = server({
+      ...SHOPPING,
+      cleaned: { ...SPLIT, generated_at: '2026-08-06T09:23:00.000Z' },
+      captures: [filing],
+    });
+    await user.click(await screen.findByRole('tab', { name: 'Split up' }));
+    const panel = () => within(screen.getByRole('region', { name: 'Split up' }));
+    await user.click(within(panel().getByRole('list', { name: 'Items' })).getByRole('checkbox', { name: 'Butter' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+
+    // A swipe to Items inside the six seconds: the panel that wrote unmounts,
+    // the shell's toast stays. The recording lands, and the Items editor
+    // shows it — a body mirrored in the unmounted panel would not.
+    await user.click(screen.getByRole('tab', { name: 'Items' }));
+    expect(screen.queryByRole('region', { name: 'Split up' })).toBeNull();
+    const withJam = '- [ ] Milk\n- [x] Eggs\n- [ ] Bread\n- [x] Butter\n- [ ] Jam';
+    landed(api, filing, withJam);
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Item 3' })).toHaveValue('Jam');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    expect(api.patches).toHaveLength(1);
+    expect(api.note.body).toBe(withJam);
+  });
+
+  it('Delete done’s Undo on Items refuses from the Split up tab too, once a recording has landed', async () => {
+    const user = userEvent.setup();
+    const filing = transcribing();
+    const api = server({
+      ...SHOPPING,
+      cleaned: { ...SPLIT, generated_at: '2026-08-06T09:24:00.000Z' },
+      captures: [filing],
+    });
+    // The note opens on the tab it was left on (sessionStorage); this one starts on Items.
+    await user.click(await screen.findByRole('tab', { name: 'Items' }));
+    await user.click(screen.getByRole('button', { name: 'Delete done' }));
+    await waitFor(() => {
+      expect(api.patches).toHaveLength(1);
+    });
+    expect(api.patches[0]).toEqual(expect.objectContaining({ body: '- [ ] Milk\n- [ ] Bread' }));
+    expect(screen.getByText('1 done item deleted', { selector: '.toast__text' })).toBeInTheDocument();
+
+    // Over to Split up, which unmounts the editor that wrote; the recording
+    // lands. The meta line counts the body's items whichever tab is open.
+    await user.click(screen.getByRole('tab', { name: 'Split up' }));
+    const withJam = '- [ ] Milk\n- [ ] Bread\n- [ ] Jam';
+    landed(api, filing, withJam);
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    await waitFor(() => {
+      expect(screen.getByText(/0 of 3 done/)).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+    await vi.advanceTimersByTimeAsync(CLEAN_POLL_MS);
+    expect(api.patches).toHaveLength(1);
+    expect(api.note.body).toBe(withJam);
   });
 
   it('a stale proposal is shown inert: nothing in its rows can be reached, and Use this list still takes it', async () => {

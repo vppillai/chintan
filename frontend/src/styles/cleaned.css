@@ -150,6 +150,9 @@
   color: var(--color-ink);
 }
 
+/* The prose view older than the note: muted until Regenerate. The Split up
+   editor's wrapper carries the attribute too, but its rows are inert then
+   and take checklist.css's `[inert]` rule over this. */
 .cleaned__body[data-stale] {
   color: var(--color-muted);
 }

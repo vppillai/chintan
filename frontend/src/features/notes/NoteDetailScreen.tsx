@@ -635,6 +635,7 @@ function TextPanel({
       <ChecklistEditor
         noteId={noteId}
         body={body}
+        currentBody={() => editor.current().body}
         onChange={(next) => {
           editor.edit({ body: next });
         }}

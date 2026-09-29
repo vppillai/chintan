@@ -338,16 +338,17 @@ A drag on the grip sideways changes the row's level instead (owner,
 across than along and the drag is sideways, else it is the reorder above —
 and the axis is locked from then on, so a vertical drag that drifts never
 changes a level and a sideways one never re-sorts. Sideways, the row keeps
-its slot and every 24 px (`--space-6`, the indent step) to the right is one
-level in, to the left one level out, clamped to the one level there is; the
-lifted row previews what release would do — set in or out by the step, with
-a 3 px bar in the accent at its start (`data-nest-preview`) — and shows
-nothing when the move is one `nest` would refuse: the first open row (it
-has nothing to go under), a row already a sub-item, a done neighbour. On
-release the write is the same `nestUnder` / `unnest` Tab and the menu make,
-saved at once and said ("Made a sub-item" / "Moved up a level"); a pointer
-that came back under a step writes nothing. A drag past the slop on either
-axis is no longer a tap, so a wobble on the handle does not open its menu.
+its slot and every indent step (`--space-6`, 24 px at a 16 px root) to the
+right is one level in, to the left one level out, clamped to the one level
+there is; the lifted row previews what release would do — set in or out by
+the step, with a 3 px bar in the accent at its start (`data-nest-preview`)
+— and shows nothing when the move is one `nest` would refuse: the first
+open row (it has nothing to go under), a row already a sub-item, a done
+neighbour. On release the write is the same `nestUnder` / `unnest` Tab and
+the menu make, saved at once and said ("Made a sub-item" / "Moved up a
+level"); a pointer that came back under a step writes nothing. A drag past
+the slop on either axis is no longer a tap, so a wobble on the handle does
+not open its menu.
 The right and left arrow keys on a focused grip do the same as the drag,
 beside the up and down that move it, and the grip's description says so;
 Tab and Shift+Tab in the field are unchanged. The pinned group passes no
@@ -438,9 +439,10 @@ NoteTabs pattern), with Uncheck all and Delete done beside it. Uncheck all
 flips every `[x]` to `[ ]` in place (`uncheckAll`). Delete done drops every
 done line, and a done parent's sub-items with it (`removeDone`), and offers
 Undo in the shell's toast for six seconds — no typed word and no dialog
-(OF-DEL): Undo writes the previous body back and saves. Done rows have no
-grip, because their order is the body's and nothing shows it; a drag among
-them would move lines whose places are invisible.
+(OF-DEL): Undo writes the previous body back and saves, unless the list
+changed since (see Split up). Done rows have no grip, because their order
+is the body's and nothing shows it; a drag among them would move lines
+whose places are invisible.
 
 The capture-marker rule is unchanged by a reorder. Every save from the Items
 tab already carries the markers to the end (`serialiseChecklist` writes no
@@ -498,13 +500,23 @@ changes over the body in one save. `inert` also removes the rows from the
 accessibility tree — the disabled boxes before round 6 could still be read
 by a screen reader; a stale or pending proposal cannot — so a screen-reader
 user has the stale notice for why, and Use this list and Regenerate as the
-two controls left. One edge: Delete done as the first act shows the adoption
-toast and then the editor's "N done items deleted" toast over it, whose Undo
-restores the proposal as the adopted body; the body before adoption goes
-with the first toast. The editor is `{ noteId, body, onChange,
-onSave }` and knows nothing of whose body it is: the Items tab hands it the
-note editor, Split up hands it `adopt`. The find bar still counts nothing in
-this tab.
+two controls left. Delete done as the first act adopts like any other: the
+editor shows its own "N done items deleted" toast before it writes, so the
+adoption's toast lands last and is the one standing, and its Undo restores
+the list as it stood (DB6-2). Either Undo — the adoption's, and Delete
+done's in the editor — refuses when the note's body is no longer what that
+Undo's act wrote, saying "The list changed since — nothing undone." rather
+than writing a captured body over a recording that filed in by refetch
+inside the six seconds. The body it compares is read from the note editor's
+own mirror (`NoteEditor.current`, handed to the editor as `currentBody`),
+not from the panel or the editor: the toast is the shell's and stands
+through a tab switch, which unmounts them, so a body they mirrored would
+stay equal to the one they last wrote and the Undo would go through. The
+person's own acts since do not block it, so Undo still takes back the
+adoption and the ticks since (DB6-3). The editor is `{ noteId, body,
+currentBody, onChange, onSave }` and knows nothing of whose body it is: the
+Items tab hands it the note editor, Split up hands it `adopt`. The find bar
+still counts nothing in this tab.
 
 ## Why the body stays the single source of truth
 

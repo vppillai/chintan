@@ -80,7 +80,14 @@ import {
  * (`sessionStorage`, open by default, the NoteTabs pattern), with Uncheck
  * all and Delete done beside it; Delete done offers Undo in the shell's
  * toast for six seconds rather than asking first (OF-DEL: no typed word,
- * no dialog for what can be undone).
+ * no dialog for what can be undone). Undo writes the body it captured back
+ * only while the body is still what this editor last wrote: a recording
+ * filed into the list by refetch inside those six seconds would otherwise
+ * leave with it, silently (`UNDO_STALE`). The body as it stands is asked of
+ * the caller (`currentBody`), because the toast outlives this component — a
+ * tab switch unmounts it while Undo still shows — and the `body` prop stops
+ * following the note then. The person's own acts since all pass through
+ * `write`, so they never block it.
  *
  * Every change is one `onChange(body)`, and a tick, a move and a delete
  * call `onSave` at once, as a discrete act does, while typing saves on blur.
@@ -100,12 +107,18 @@ import {
 export function ChecklistEditor({
   noteId,
   body,
+  currentBody,
   onChange,
   onSave,
 }: {
   /** For the Done disclosure, remembered per note. */
   noteId: string;
   body: string;
+  /**
+   * The body as it stands this instant, wherever it lives: read by an Undo
+   * that may fire after this component has gone, when `body` is stale.
+   */
+  currentBody: () => string;
   onChange: (body: string) => void;
   /** A discrete act — a tick, a move, a delete, leaving a field — is done; save now. */
   onSave: () => void;
@@ -176,7 +189,13 @@ export function ChecklistEditor({
     field.setSelectionRange(start, end);
   });
 
+  // What this editor last wrote: Undo compares it with `currentBody()`,
+  // since a change from elsewhere arrives as a new body and nothing else
+  // tells the closure holding the captured one.
+  const lastWritten = useRef<string | null>(null);
+
   const write = (next: string, focus?: number, hold: readonly number[] | null = null): void => {
+    lastWritten.current = next;
     onChange(next);
     if (focus !== undefined) focusAfterWrite.current = focus;
     setHeld(hold);
@@ -208,12 +227,24 @@ export function ChecklistEditor({
     const entry = open[position];
     const above = open[position - 1];
     if (!entry) return false;
+    // A refusal is said from the grip, where the key otherwise does nothing
+    // a screen reader can tell (DB6-22); from the field the key keeps its
+    // meaning and the browser's focus move is the answer.
+    const refuse = (why: string): false => {
+      if (focus === 'grip') setAnnouncement(why);
+      return false;
+    };
     let next: string;
     if (by > 0) {
-      if (!above || !canNest(items, entry.index, above.index)) return false;
+      if (!above) return refuse('Nothing above to nest under');
+      // A top-level row `canNest` refuses has a done row above it: the one
+      // just ticked, held for the beat, or a parent under a done grandparent.
+      if (!canNest(items, entry.index, above.index)) {
+        return refuse(entry.item.depth > 0 ? 'Already a sub-item' : 'Cannot nest under a done item');
+      }
       next = nestUnder(body, entry.index, above.index);
     } else {
-      if (entry.item.depth === 0) return false;
+      if (entry.item.depth === 0) return refuse('Already a top-level item');
       next = unnest(body, entry.index);
     }
     if (focus === 'grip') {
@@ -276,7 +307,12 @@ export function ChecklistEditor({
     let at = position;
     while (at > current && block.includes(at)) at += 1;
     const target = open[at];
-    if (!target || target.index === index) return;
+    if (!target || target.index === index) {
+      // The arrow keys at either end: said, since nothing moved and nothing
+      // else says why (the menu disables its items there).
+      if (focusGrip) setAnnouncement(position < current ? 'Already at the top' : 'Already at the bottom');
+      return;
+    }
     const next = moveItem(body, index, target.index);
     write(next);
     // Moving down, the block's own rows have left the list above the slot.
@@ -390,20 +426,30 @@ export function ChecklistEditor({
   const deleteDone = (): void => {
     const previous = body;
     const count = done.length;
-    write(removeDone(body));
-    save();
     const message = `${String(count)} done item${count === 1 ? '' : 's'} deleted`;
-    setAnnouncement(message);
+    // The toast before the write. In Split up the write is the adoption,
+    // whose own toast then lands last and is the one left standing: its
+    // Undo restores the list as it stood before the proposal, which this
+    // one cannot, and `showToast` replaces whatever was showing, so shown
+    // after it this one would have hidden it (DB6-2). In the Items tab the
+    // order is invisible.
     showToast({
       message,
       action: {
         label: 'Undo',
         onSelect: () => {
+          if (currentBody() !== lastWritten.current) {
+            showToast({ message: UNDO_STALE });
+            return;
+          }
           write(previous);
           save();
         },
       },
     });
+    setAnnouncement(message);
+    write(removeDone(body));
+    save();
   };
 
   return (
@@ -530,6 +576,9 @@ export function ChecklistEditor({
 
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
+
+/** What an Undo says instead of writing over a list that changed under it. */
+export const UNDO_STALE = 'The list changed since — nothing undone.';
 
 /**
  * `--motion-duration-base` in milliseconds, read from the sheet so the hold
