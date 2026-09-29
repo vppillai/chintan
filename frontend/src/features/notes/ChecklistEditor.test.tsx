@@ -713,6 +713,19 @@ describe('nesting by the grip', () => {
     expect(body()).toBe(TWO);
   });
 
+  it('says a done row above cannot be nested under, while the tick holds it there for the beat', async () => {
+    const user = userEvent.setup();
+    const { body } = mount(TWO);
+    // Milk just ticked stays in the open list for the beat, done; the right
+    // arrow on Bread finds it above and refuses for that reason, not for
+    // want of a row above (DB6-22).
+    await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
+    screen.getByRole('button', { name: 'Move Bread' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(body()).toBe('- [x] Milk\n- [ ] Bread');
+    expect(screen.getByText('Cannot nest under a done item')).toHaveAttribute('role', 'status');
+  });
+
   it('a step is the indent token in the page’s own pixels: a larger root font asks for a longer drag', () => {
     // As the browser's text-size setting has it: 1.5rem at a 20 px root is
     // 30 px, and the token itself may move; a drag that would have nested at

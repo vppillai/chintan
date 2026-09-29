@@ -237,8 +237,10 @@ export function ChecklistEditor({
     let next: string;
     if (by > 0) {
       if (!above) return refuse('Nothing above to nest under');
+      // A top-level row `canNest` refuses has a done row above it: the one
+      // just ticked, held for the beat, or a parent under a done grandparent.
       if (!canNest(items, entry.index, above.index)) {
-        return refuse(entry.item.depth > 0 ? 'Already a sub-item' : 'Nothing above to nest under');
+        return refuse(entry.item.depth > 0 ? 'Already a sub-item' : 'Cannot nest under a done item');
       }
       next = nestUnder(body, entry.index, above.index);
     } else {
