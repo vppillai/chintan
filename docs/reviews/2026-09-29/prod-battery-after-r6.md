@@ -467,3 +467,36 @@ deleted (`DELETE /v1/notes/{id}/permanent`, 204 × 11) and the 25 notes the
 router created were each deleted and purged in their own step (204 × 25,
 404 on the teardown's second pass). The tenant lists 57 active notes, the
 pre-existing set, and no device key.
+
+### Confirmation after the R6-RT-8 revert (#172)
+
+The row-32 regression above triggered the pre-agreed revert of the prompt
+commit `75c7b1d` alone: #172 (`5dd1db6`, `Deploy Backend` green
+13:29:59Z). Rows 32 and 30 three times each and rows 9, 14, 13 once, on
+the same tenant with the same eleven set-up notes and a fresh key "R6B
+battery", nine captures 13:31:23Z–13:32:28Z, every capture undone before
+the next (`unchanged` on both appends into set-up notes, in-run purges 204
+each). Statuses: appended 8, no_content 1, needs_target 0, failed 0;
+settle 2.4–8.7 s. Raw: `orb:~/r3/live/r6b-revert.jsonl`.
+
+| Row | Runs | What it did |
+|---|---|---|
+| 32 Groceries list milk eggs and protein powder | 3 | new **checklist "Groceries list"** with `- [ ] Milk / - [ ] Eggs / - [ ] Protein powder`, three of three; the tenant's pre-existing "Grocery list" took none — **recovered** (1/3 under #170, 3/3 before it) |
+| 30 The dog is having his dinner | 3 | new note titled **"The dog is having his dinner"**, body "The dog is having his dinner.", three of three — the pre-#170 shape (which gave "Dog dinner" once and this title twice); the sentence stays as content, as the bounded DB6-4 fallback promises, so nothing is lost, only the title is long |
+| 9 Create a new note and add it to Pebble Ring Test | 1 | `no_content` into the set-up Pebble Ring Test, nothing appended — gate holds |
+| 14 okay so this goes in the roof repair note … | 1 | into the set-up Roof repair, "we need to check the flashing around the chimney" — gate holds |
+| 13 title this staging smoke and then … | 1 | new "staging smoke", body "and then the actual content of the note is that the deploy pipeline is green." — gate holds |
+
+**Verdict: row 32 recovered — yes.** The three code gates (9, 14, 13) hold
+without the sentence, so the R6-RT-6/R6-RT-7/DB6-4 changes stand on their
+own. Row 30 goes back to the whole sentence as title on every run: the
+R6-RT-8 sentence was what fixed it, and a second attempt needs a wording
+that shortens a title without lifting a near-name at word 0 to a
+destination, with row 32 (on a tenant that has no "Grocery list", or
+after the owner's do-now 1 purge) beside row 30 as its gate.
+
+Clean-up: key revoked (204); the eleven set-up notes permanently deleted
+(204 × 11); the seven notes the router created were each deleted and
+purged in their own step (404 on the teardown's second pass). 57 active
+notes, the pre-existing set; no device key.
+
