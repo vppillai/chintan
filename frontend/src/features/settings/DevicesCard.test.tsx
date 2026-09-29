@@ -420,7 +420,7 @@ describe('the devices card on You', () => {
     expect(outside).not.toContain('/v1/inbox');
     expect(outside).not.toContain('X-Chintan-Note-Id');
 
-    const other = within(card).getByText('Other apps, and filing into one note').closest('details') as HTMLDetailsElement;
+    const other = within(card).getByText('Other apps, and filing into a specific note').closest('details') as HTMLDetailsElement;
     expect(other.open).toBe(false);
     expect(other).toHaveTextContent(/anything that can POST a file with one header/i);
     expect(other).toHaveTextContent(inboxAudioUrl());
@@ -430,7 +430,7 @@ describe('the devices card on You', () => {
     expect(readme).toHaveAttribute('target', '_blank');
     expect(readme).toHaveAttribute('rel', 'noopener noreferrer');
 
-    await user.click(within(other).getByText('Other apps, and filing into one note'));
+    await user.click(within(other).getByText('Other apps, and filing into a specific note'));
     expect(other.open).toBe(true);
   });
 

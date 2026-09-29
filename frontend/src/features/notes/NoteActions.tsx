@@ -380,6 +380,26 @@ export function NoteDrawer({
                 void editor.saveNow();
               }}
             />
+            {/*
+              Last, because a note's id is a fact rarely needed: it is what a
+              device's `X-Chintan-Note-Id` header carries to file into this
+              note, and until now the only way to it was the address bar
+              (owner, 2026-09-29). `CopyButton` handles the clipboard fallback
+              and says Copied or failed.
+            */}
+            <section className="language-field">
+              <h2 className="tag-editor__label">Note id</h2>
+              <code className="note-id">{note.id}</code>
+              <CopyButton
+                label="Copy note id"
+                text={() => note.id}
+                className="settings-status__action"
+              />
+              <p className="language-field__hint">
+                For <code>X-Chintan-Note-Id</code>: a device that sends this header files
+                everything into this note (You → Devices &amp; shortcuts).
+              </p>
+            </section>
           </>
         ) : (
           /*

@@ -512,15 +512,16 @@ function Recipes() {
         </div>
       </Recipe>
 
-      <Recipe title="Other apps, and filing into one note">
+      <Recipe title="Other apps, and filing into a specific note">
         <p className="recipes__note">
           Watches, rings and other apps: anything that can POST a file with one header works. Send
           audio to <code>{audioUrl}</code>, or text as <code>{'{"text": "…"}'}</code> to{' '}
           <code>{inboxTextUrl()}</code>, with <code>Authorization: Bearer {KEY_PLACEHOLDER}</code>.
         </p>
         <p className="recipes__note">
-          To file into one note every time, from any of these, add the header{' '}
-          <code>X-Chintan-Note-Id</code> with the note&rsquo;s id (the last part of its address).
+          To file everything from a device into one specific note, add the header{' '}
+          <code>X-Chintan-Note-Id</code> with the note&rsquo;s id &mdash; copy it from the
+          note&rsquo;s &#8942; &rarr; Details, or take the last part of its address.
         </p>
         <p className="recipes__note">
           Text shortcuts, Tasker and the two-step upload for long recordings are in the{' '}

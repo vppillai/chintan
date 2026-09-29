@@ -609,6 +609,29 @@ describe('the note is panels under one strip', () => {
     expect(screen.getByRole('heading', { name: 'Details' })).toBeInTheDocument();
   });
 
+  it('shows the note id in Details, copyable, with the header it is for', async () => {
+    // The id is what a device's `X-Chintan-Note-Id` carries; until now the
+    // address bar was the only place to read it (owner, 2026-09-29).
+    const user = userEvent.setup();
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      const api = server([withRecording]);
+      mount(api.fetchImpl, '/notes/roof-repair');
+      await loaded();
+      await openPanel(user, 'Details');
+
+      const section = screen.getByRole('heading', { name: 'Note id' }).closest('section')!;
+      expect(within(section).getByText('roof-repair')).toHaveClass('note-id');
+      expect(section).toHaveTextContent('X-Chintan-Note-Id');
+      await user.click(within(section).getByRole('button', { name: 'Copy note id' }));
+      expect(writeText).toHaveBeenCalledWith('roof-repair');
+      expect(await within(section).findByRole('button', { name: 'Copied' })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    }
+  });
+
   it('sends focus into the drawer it opens, and back to the menu when it closes', async () => {
     // The menuitem that opened the drawer unmounts on select, and the drawer
     // is at the far end of the screen: without this a keyboard user is left
