@@ -110,7 +110,8 @@ type evalFixtures struct {
 		Cases     []itemsCase `json:"cases"`
 	} `json:"items"`
 	Tasks struct {
-		Cases []tasksCase `json:"cases"`
+		ListTitle string      `json:"list_title"`
+		Cases     []tasksCase `json:"cases"`
 	} `json:"tasks"`
 	Ask struct {
 		Notes []struct {
@@ -152,6 +153,8 @@ type cleanupCase struct {
 	Script        string   `json:"script"`
 }
 
+// itemsCase: want is the tree as RenderItems writes it, two spaces before a
+// child; count and count_in count children; top_level counts parents alone.
 type itemsCase struct {
 	Transcript  string   `json:"transcript"`
 	Language    string   `json:"language"`
@@ -159,17 +162,22 @@ type itemsCase struct {
 	Want        []string `json:"want"`
 	Count       *int     `json:"count"`
 	CountIn     []int    `json:"count_in"`
+	TopLevel    *int     `json:"top_level"`
 	ContainsAny []string `json:"contains_any"`
 	ExcludesAny []string `json:"excludes_any"`
 	Script      string   `json:"script"`
 }
 
+// tasksCase: want is task-list lines, indent included, as SplitOutput
+// stores them.
 type tasksCase struct {
 	Body          string   `json:"body"`
 	Comment       string   `json:"_note"`
 	Want          []string `json:"want"`
 	WantUnchanged bool     `json:"want_unchanged"`
 	Count         *int     `json:"count"`
+	CountIn       []int    `json:"count_in"`
+	ExcludesAny   []string `json:"excludes_any"`
 }
 
 type askCase struct {

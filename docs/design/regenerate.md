@@ -137,20 +137,28 @@ happened.
 ## Checklists: items found by their words
 
 A list only ever spoken to keeps each recording's items under its marker,
-and they are replaced there. But every save from the Items tab — a tick, a
-drag — carries every marker to the end of the body with nothing under it
+but even there they are found by their words, not taken as the paragraph:
+since 2026-09-29 a later recording's child can stand in that paragraph,
+merged under a parent this recording named (`checklists.md`, "Merging into
+what the list has"). And every save from the Items tab — a tick, a drag —
+carries every marker to the end of the body with nothing under it
 (`checklists.md`, "The append rule"), so on any list that has been used the
 marker says which recordings the list has and nothing about which lines are
 theirs. Regeneration therefore finds a recording's previous items by their
 words: `extractItems` reads the recording's clean artefact — one item per
 line, exactly what the last append rendered — before overwriting it, and
-`replaceChecklistItems` removes those lines from the list, each once, case
-and whitespace aside, and writes the new items where the first of them stood.
-Everything else keeps its order, typed items included. The marker stays
-where it was: put back above the new lines it would claim every line down
-to the next marker, typed ones too, for the next delete or move. When none
-of the old words are left the person deleted that recording's items, and
-nothing is put back. A recording whose transcript, extracted again, names
+`replaceChecklistItems` removes those lines from the list, each once, case,
+punctuation and whitespace aside (`llm.FoldWords`), and writes the new items
+where the first of them stood. A previous top-level line with a sub-item
+still under it that the recording is not taking is a parent the recording
+shares — typed by hand, or another recording's — and it stays with what is
+under it; the new items then go in through the same merge a first append
+uses, so the recording's parent joins that line again and only the rest is
+written at the place. Everything else keeps its order, typed items
+included. The marker stays where it was: put back above the new lines it
+would claim every line down to the next marker, typed ones too, for the
+next delete or move. When none of the old words are left the person deleted
+that recording's items, and nothing is put back. A recording whose transcript, extracted again, names
 nothing to add — "create a shopping list" — becomes `no_content` and its old
 items come out (`dropReplacedItems`), since a `no_content` recording owns no
 lines.

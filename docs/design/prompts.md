@@ -42,9 +42,9 @@ constants.
 |---|---|---|---|---|
 | Routing | Which note a dictated capture belongs to, what kind a new one is, and which words were spoken to the app | `routing.SystemPrompt`, `routing.UserPrompt(transcript, candidates, language)` (`backend/internal/routing/prompt.go`) | `{"action","note"\|"title","kind","confidence","instruction_spans"}` → `parseRouteDecision` (`provider/openai_router.go`) | 200 tokens |
 | Cleanup | Clean one transcript faithfully as it is appended | `cleanup.SystemPrompt()`, `cleanup.UserPrompt` (`backend/internal/cleanup/prompt.go`) | the cleaned text | none (as long as the recording) |
-| Checklist items | The items one recording adds to a checklist | `cleanup.ItemsPrompt` (`backend/internal/cleanup/items.go`) | `{"items":[…]}` → `cleanup.ParseItems` | 3× the input, floor 512 |
+| Checklist items | The items one recording adds to a checklist, grouped as spoken | `cleanup.ItemsPrompt` (`backend/internal/cleanup/items.go`), composing the shared `checklistItemRules` | `{"items":[{"text","children"}]}` → `cleanup.ParseItems` (a one-level tree, `cleanup.Item`) | 4× the input, floor 768 |
 | Whole-note, structured / polished | The Cleaned tab: the whole body as one document | `cleanup.NotePrompt(mode, body, language)` (`cleanup/prompt.go`) | Markdown → `cleanup.NoteOutput` | 1.5× the input, floor 256 |
-| Whole-note, tasks | Split up: a checklist body as granular tasks | `cleanup.NotePrompt(tasks, …)`, `noteTasksSystemPrompt` | task-list lines → `cleanup.NoteOutput` | as above |
+| Whole-note, tasks | Split up: the list as it stands → the list it was meant to be | `cleanup.TasksPrompt(body, title, language)`, `noteTasksSystemPrompt`, composing `checklistItemRules` | `{"items":[{"text","done","children"}]}` → `cleanup.SplitOutput` | 3× the input, floor 512 |
 | Ask | Answer a question from the person's notes | `ask.Prompt.Render` (`backend/internal/ask/ask.go`) | `{"answer","sources","grounded"}` → `ask.ParseAnswer` | 3,000 tokens |
 
 One prompt went on 2026-09-27 (round-5 decisions, PR-D5): the per-capture
@@ -204,22 +204,42 @@ Runs instead of cleanup for a non-verbatim capture into a checklist
 (`Pipeline.extractItems`, `pipeline/clean.go`), over the **raw** transcript,
 because the prompt handles the words spoken to the app itself; the router's
 spans and the targeted strip are not applied (`docs/design/checklists.md`,
-"The append rule"). **Sent:** the rules for what an item is (480 tokens; 643
-until 2026-09-27, PR-4 — the two "leave out" bullets merged, the "X and Y"
-rule and the six owner-acceptance examples kept verbatim, the previously
-unstated exception made explicit: a remove/tick/change request is returned
-as spoken), the shared language and data rules; the user prompt: `The list
-is titled: <title>`, the language line, the fenced transcript. **Reply:**
-`{"items":[…]}`, `[]` when the recording only told the app what to do.
-**Guards** (`cleanup.ParseItems`): a JSON object with an `items` array, at
-most 100 items (`MaxItemsPerRecording`), each collapsed to one line and cut
-at 2,000 runes (`MaxChecklistItemRunes`); nothing checks the words against
-the transcript or the title, since a sub-sequence rule would refuse the
-garbling fix and a title rule would lose "add batteries" to a list titled
-Batteries — visible beats lost. A reply that is not a list, or an empty
-completion, appends the recording as one item. **Metrics:**
+"The append rule"). **Sent:** one sentence naming the job, then the shared
+rule block `checklistItemRules` (`cleanup/items.go`, about 330 tokens),
+which is what an item is for both this prompt and Split up's: one thing the
+person wants, in their own words, quantity kept, a task keeping its verb;
+every word about the list rather than on it left out, the list's own name
+included and also as a spoken prefix that files the recording ("Shopping
+list eggs from Walmart"); "X and Y" split, in doubt split; **group as the
+person grouped** — a place, a person, an occasion or a category the things
+are named under is the parent, one level, never invented, never the list's
+own name; a remove/tick/change request returned as spoken; garbling fixed
+and fillers dropped, nothing invented, nothing lost; `LanguageRule`,
+`DataRule`. Then the reply shape and six examples (about 170 tokens), the
+owner's two sentences of 2026-09-29 first: "Add milk, eggs and protein
+powder to the shopping list" → Milk, Eggs, Protein powder; "add buying eggs
+from Walmart and meat from Costco in the shopping list" → Walmart › Eggs,
+Costco › Meat. The user prompt is unchanged: `The list is titled: <title>`,
+the language line, the fenced transcript. **Reply:**
+`{"items":[{"text":"…","children":[{"text":"…"}]},…]}`, `children` left
+out when there are none, `[]` when the recording only told the app what to
+do. **Guards** (`cleanup.ParseItems`): a JSON object with an `items` array
+whose elements are objects `{text, children?, done?}` or bare strings (the
+pre-2026-09-29 shape, so a model that answers the old way degrades to flat
+items, never to unusable); a grandchild clamped to a child of the top-level
+item (CL-D1); at most 100 items counting children (`MaxItemsPerRecording`);
+each text collapsed to one line and cut at 2,000 runes
+(`MaxChecklistItemRunes`), an item with no text dropped and its children
+lifted; nothing checks the words against the transcript or the title, since
+a sub-sequence rule would refuse the garbling fix and a title rule would
+lose "add batteries" to a list titled Batteries — visible beats lost. A
+reply that is not a list, or an empty completion, appends the recording as
+one item. The tree is stored as lines, a child two spaces in
+(`RenderItems`), and appended through the merge (`checklists.md`, "Merging
+into what the list has"). **Metrics:**
 `ChecklistItemsExtracted{Outcome=items|none}`,
-`ChecklistItemsDiscarded{Reason=unusable}`.
+`ChecklistItemsDiscarded{Reason=unusable}`,
+`ChecklistItemsMerged{Outcome=joined|deduped|reopened}`.
 
 ### Whole-note (structured / polished)
 
@@ -241,18 +261,41 @@ view stale; a later request in another mode supersedes the run. **Metrics:**
 
 ### Whole-note (tasks)
 
-The checklist's mode (Split up), same call and caps as above, its own system
-prompt: the body is task-list lines and the answer must be too. **Guards**
-(`NoteOutput`, tasks branch): after trimming, every non-blank line is
-`- [ ] text` or `- [x] text` (`checklistItemLine`), at most 500 items
-(`MaxChecklistItems`); the `- [x]` lines must be the body's done items,
-verbatim and in order, or the whole answer is refused; an open item whose
-words are not the body's words in order is dropped and counted
-(`TasksItemsDropped`) — "- [x] Make a list." was the model inventing an
-antecedent (owner feedback 2026-09-26). PR-D4 proposed dropping the mode now
-that items are extracted per recording (30 of 34 whole-note calls in the
-week measured were tasks regenerations after an appended item); the owner
-reversed that on 2026-09-29 — Split up stays and improving it is round 6.
+The checklist's mode (Split up), the same call path as above
+(`Pipeline.CleanNote`) with its own prompt, user prompt and cap. **Sent:**
+"the list as it stands → the list it was meant to be": the body's format
+(one item a line, `- [ ] ` / `- [x] `, a sub-item two spaces in), the shared
+`checklistItemRules` above, and three rules a whole list needs — every
+line's meaning kept (a line already one thing word for word, a line holding
+several things one item each, a sentence spoken to the app the things it
+named); the list's groups kept and an item put under an existing group when
+its words say so ("chicken from Costco" under Costco), two lines naming one
+thing one item; done stays done, an open line never marked done, a
+duplicate merged into an open item if either was open — then the reply
+shape and one worked example, the owner's live case beside an existing
+Costco (about 540 tokens in all). The user prompt opens `The list is
+titled: <title>` (sanitised as the items prompt's is), because the rule
+that the list's own name is not an item needs a name — the ring speaks the
+title before every line — then the note's language line and the fenced
+body. **Reply:** `{"items":[{"text":"…","done":false,"children":[…]},…]}` in
+the list's order, `done` and `children` left out when false or empty.
+**Cap:** 3× the input, floor 512 (`TasksMaxTokens`): a JSON object per
+line. **Guards** (`cleanup.SplitOutput`): `ParseItems`' shape at most 500
+counting sub-items (`MaxChecklistItems`); an item whose words are not the
+body's words in order (`llm.VerifySubsequence`) is dropped and counted
+(`TasksItemsDropped`), a dropped parent's children lifted — "- [x] Make a
+list." was the model inventing an antecedent (owner feedback 2026-09-26);
+tick safety, the whole answer refused: a `- [x]` body line with no done
+answer item whose words equal it or are a sub-sequence of it, an open
+answer item equal to a done body line unless the body also had it open
+(duplicates merge, open wins) or, childless, a sub-sequence of a done line
+and of no open one, a done answer item equal to no done body line, a done
+answer item equal to an open body line when no open answer item is. The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
+words, done lines verbatim and in order) is what split the owner's `Add
+milk, eggs and protein powder to the shopping list` into "Add milk to…",
+"Add eggs to…", "Add protein powder…"; PR-D4 had proposed dropping the mode
+and the owner reversed that on 2026-09-29 — Split up stays, and this is the
+improvement.
 
 ### Ask
 
@@ -284,8 +327,8 @@ list price $0.30/M in, $1.20/M out; tokens counted with cl100k as a stand-in):
 |---|---|---|---|---|---|
 | Routing | 86 | 3,223 / 3,313 / 10,781 | 31 | 995 µ$ | 1,433 → 987 |
 | Cleanup | 180 | 377 / 855 / 2,580 | 22 | 143 µ$ | 170 / 166 → 191 (one) |
-| Whole-note (30 of 34 tasks) | 34 | 505 / 677 / 3,279 | 76 | 246 µ$ | 163 / 176; tasks 306 |
-| Items | — (new) | — | — | — | 643 → 480 |
+| Whole-note (30 of 34 tasks) | 34 | 505 / 677 / 3,279 | 76 | 246 µ$ | 163 / 176; tasks 306 → ~540 (rules 330 + wrapper 210) |
+| Items | — (new) | — | — | — | 643 → 480 → ~500 (rules 330 + wrapper 170) |
 | Ask | 13 | 1,470 / 2,008 / 2,112 | 337 | 836 µ$ | 350 |
 
 Routing was 52 % of LLM spend and 40 % of all provider spend; a Home

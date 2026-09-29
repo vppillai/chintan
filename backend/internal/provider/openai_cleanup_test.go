@@ -159,7 +159,7 @@ func TestOpenAICleanNoteCapsTheCompletionAndFencesTheBody(t *testing.T) {
 		t.Fatalf("NewOpenAICleanup: %v", err)
 	}
 	body := strings.Repeat("the roof leaks and the roofer comes on the fourteenth. ", 100) // ~5.5 KB
-	got, err := llm.CleanNote(context.Background(), model.NoteCleanStructured, body, "ml")
+	got, err := llm.CleanNote(context.Background(), model.NoteCleanStructured, body, "ml", "Roof")
 	if err != nil {
 		t.Fatalf("CleanNote: %v", err)
 	}
@@ -189,5 +189,50 @@ func TestOpenAICleanNoteCapsTheCompletionAndFencesTheBody(t *testing.T) {
 	system := messages[0].(map[string]any)["content"].(string)
 	if !strings.Contains(strings.ToLower(system), "short headings") {
 		t.Errorf("system prompt is not the structured brief: %q", system[:60])
+	}
+}
+
+// Tasks mode is its own prompt and cap: the user prompt names the list
+// first, and max_tokens is three times the input where a document gets one
+// and a half.
+func TestOpenAICleanNoteInTasksModeNamesTheListAndCapsAtThreeTimes(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(b, &gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"items\":[\"Milk\"]}"}}],"usage":{"prompt_tokens":120,"completion_tokens":20}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	llm, err := NewOpenAICleanup("test-llm-key", srv.URL, "MiniMax-M3", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAICleanup: %v", err)
+	}
+	body := strings.Repeat("- [ ] add milk to the shopping list\n", 100)
+	got, err := llm.CleanNote(context.Background(), model.NoteCleanTasks, body, "", "Shopping list")
+	if err != nil {
+		t.Fatalf("CleanNote: %v", err)
+	}
+	if got.Text != `{"items":["Milk"]}` {
+		t.Fatalf("text = %q", got.Text)
+	}
+	maxTokens, _ := gotBody["max_tokens"].(float64)
+	if estimate := float64(len(body)/4 + 1); maxTokens != 3*estimate {
+		t.Errorf("max_tokens = %v for a %d-byte body; want three times the estimate (%v)", maxTokens, len(body), 3*estimate)
+	}
+	messages := gotBody["messages"].([]any)
+	if user := messages[1].(map[string]any)["content"].(string); !strings.HasPrefix(user, "The list is titled: Shopping list\nThe note is between the marker lines.\n") {
+		t.Errorf("the user prompt does not open with the list's title: %q", user[:80])
+	}
+	if system := messages[0].(map[string]any)["content"].(string); !strings.Contains(strings.ToLower(system), "the list it was meant to be") {
+		t.Errorf("system prompt is not the Split up brief: %q", system[:60])
 	}
 }

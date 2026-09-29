@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vppillai/chintan/backend/internal/cleanup"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/routing"
@@ -104,7 +105,7 @@ func TestARouterFailureOnARecordingIntoANoteKeepsTheWordsAsSpoken(t *testing.T) 
 func TestARecordingIntoAChecklistMakesNoRouterCallAndYieldsItems(t *testing.T) {
 	h := newHarness(t, harnessOpts{
 		stt: &fake.STT{Response: "Add this to my list. Add umbrella to shopping list"},
-		llm: &fake.LLM{ItemsResponse: []string{"Umbrella"}},
+		llm: &fake.LLM{ItemsResponse: []cleanup.Item{{Text: "Umbrella"}}},
 	})
 	ctx := context.Background()
 	seedUploadedCapture(t, h, "note1")

@@ -149,7 +149,7 @@ func TestNotePromptNamesTheNotesLanguageWhenKnown(t *testing.T) {
 		{"", "The note is between the marker lines.\n"},
 		{model.LanguageAuto, "The note is between the marker lines.\n"},
 	} {
-		for _, mode := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished, model.NoteCleanTasks} {
+		for _, mode := range []model.NoteCleanMode{model.NoteCleanStructured, model.NoteCleanPolished} {
 			_, user, err := cleanup.NotePrompt(mode, "നന്ദി", tc.language)
 			if err != nil {
 				t.Fatalf("NotePrompt(%s, %q): %v", mode, tc.language, err)
@@ -193,18 +193,18 @@ func TestNotePromptRefusesAnEmptyBodyAndAnUnknownMode(t *testing.T) {
 
 func TestNoteOutputRejectsNothingAndStripsAnEchoedFence(t *testing.T) {
 	for _, raw := range []string{"", "   \n", llm.FenceMarker, llm.FenceMarker + "\n\n" + llm.FenceMarker} {
-		if _, _, err := cleanup.NoteOutput(model.NoteCleanStructured, raw, "roof"); err == nil {
+		if _, err := cleanup.NoteOutput(raw); err == nil {
 			t.Errorf("NoteOutput(%q) accepted nothing usable", raw)
 		}
 	}
-	got, _, err := cleanup.NoteOutput(model.NoteCleanStructured, llm.FenceMarker+"\n# Roof\n\n- call the roofer\n"+llm.FenceMarker, "roof")
+	got, err := cleanup.NoteOutput(llm.FenceMarker + "\n# Roof\n\n- call the roofer\n" + llm.FenceMarker)
 	if err != nil {
 		t.Fatalf("NoteOutput: %v", err)
 	}
 	if got != "# Roof\n\n- call the roofer" {
 		t.Errorf("NoteOutput = %q", got)
 	}
-	plain, _, err := cleanup.NoteOutput(model.NoteCleanStructured, "  # Roof\n", "roof")
+	plain, err := cleanup.NoteOutput("  # Roof\n")
 	if err != nil || plain != "# Roof" {
 		t.Errorf("NoteOutput(plain) = %q, %v", plain, err)
 	}

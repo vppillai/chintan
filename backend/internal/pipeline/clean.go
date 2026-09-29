@@ -102,7 +102,8 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 
 // extractItems is clean for a checklist: one model call over the RAW
 // transcript that answers with the items to add (cleanup.ItemsPrompt), stored
-// one per line at CleanKey for the append to render. It runs in the cleaning
+// one per line at CleanKey — a sub-item's line indented two spaces
+// (cleanup.RenderItems) — for the append to render. It runs in the cleaning
 // status and under the cleanup op and deadline, because it is the cleanup
 // call for this kind of note — one call replaces one call, and a retry that
 // finds CleanKey set does not make it again.
@@ -213,7 +214,7 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 			slog.String("capture_id", capture.ID),
 			slog.String("error", unusable.Error()))
 		obs.Count(ctx, "ChecklistItemsDiscarded", map[string]string{"Reason": "unusable"})
-		items = []string{strings.Join(strings.Fields(transcript), " ")}
+		items = []cleanup.Item{{Text: strings.Join(strings.Fields(transcript), " ")}}
 	case len(items) == 0:
 		// The speaker only told the app what to do.
 		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "none"})
@@ -224,7 +225,7 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 		obs.Count(ctx, "ChecklistItemsExtracted", map[string]string{"Outcome": "items"})
 	}
 
-	if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(strings.Join(items, "\n")), "text/plain"); err != nil {
+	if err := p.cfg.Objects.Put(ctx, cleanKey, []byte(cleanup.RenderItems(items)), "text/plain"); err != nil {
 		return previous, fmt.Errorf("pipeline: store clean text: %w", err)
 	}
 	capture.CleanKey = cleanKey
@@ -236,7 +237,8 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 // previousItems reads the copy extractItems kept of a checklist recording's
 // earlier items, for an append resumed after the extraction has already
 // overwritten the artefact at CleanKey. Nil when there is none: the
-// recording's first append.
+// recording's first append. The lines keep their indent; every reader folds
+// it away with the whitespace and the punctuation (llm.FoldWords).
 func (p *Pipeline) previousItems(ctx context.Context, tenantID, captureID string) ([]string, error) {
 	key, err := keys.CaptureCleanPrevious(tenantID, captureID)
 	if err != nil {

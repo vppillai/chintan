@@ -83,12 +83,21 @@ func TestLiveEval(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
 				}
-				joined := strings.Join(out.Items, " · ")
+				// The tree as lines, two spaces before a child; the case's
+				// want is written the same way. Casing is the model's.
+				var lines []string
+				if rendered := cleanup.RenderItems(out.Items); rendered != "" {
+					lines = strings.Split(rendered, "\n")
+				}
+				joined := strings.Join(lines, " · ")
 				t.Logf("%s | %s", tc.Transcript, joined)
-				if tc.Want != nil && !equalLines(out.Items, tc.Want, false) {
+				if tc.Want != nil && !equalLines(lines, tc.Want, true) {
 					t.Errorf("items = %s, want %s", joined, strings.Join(tc.Want, " · "))
 				}
-				checkCount(t, "items", len(out.Items), tc.Count, tc.CountIn)
+				checkCount(t, "items", len(lines), tc.Count, tc.CountIn)
+				if tc.TopLevel != nil && len(out.Items) != *tc.TopLevel {
+					t.Errorf("%d top-level items, want %d: %s", len(out.Items), *tc.TopLevel, joined)
+				}
 				if len(tc.ContainsAny) > 0 && !containsAny(joined, tc.ContainsAny) {
 					t.Errorf("no item contains any of %q", tc.ContainsAny)
 				}
@@ -100,24 +109,25 @@ func TestLiveEval(t *testing.T) {
 	t.Run("tasks", func(t *testing.T) {
 		for i, tc := range fx.Tasks.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
-				out, err := c.CleanNote(ctx, model.NoteCleanTasks, tc.Body, "")
+				out, err := c.CleanNote(ctx, model.NoteCleanTasks, tc.Body, "", fx.Tasks.ListTitle)
 				if err != nil {
 					t.Fatalf("%q | ERROR %v", tc.Body, err)
 				}
-				text, dropped, err := cleanup.NoteOutput(model.NoteCleanTasks, out.Text, tc.Body)
+				text, dropped, err := cleanup.SplitOutput(out.Text, tc.Body)
 				t.Logf("%q | %q dropped=%d", tc.Body, out.Text, dropped)
 				if err != nil {
-					t.Fatalf("NoteOutput refused the reply: %v", err)
+					t.Fatalf("SplitOutput refused the reply: %v", err)
 				}
 				lines := strings.Split(text, "\n")
 				// Casing of a split item is the model's; the words are asserted.
 				if tc.Want != nil && !equalLines(lines, tc.Want, true) {
 					t.Errorf("tasks = %q, want %q", lines, tc.Want)
 				}
-				if tc.WantUnchanged && text != strings.TrimSpace(tc.Body) {
+				if tc.WantUnchanged && !equalLines(lines, strings.Split(strings.TrimSpace(tc.Body), "\n"), true) {
 					t.Errorf("tasks = %q, want the body unchanged", text)
 				}
-				checkCount(t, "tasks", len(lines), tc.Count, nil)
+				checkCount(t, "tasks", len(lines), tc.Count, tc.CountIn)
+				checkText(t, "tasks", text, nil, tc.ExcludesAny)
 			})
 		}
 	})

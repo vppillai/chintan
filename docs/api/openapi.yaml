@@ -1798,7 +1798,8 @@ components:
           description: |
             The mode `body` was generated in, or of the failed attempt when
             there is no body. In `tasks` mode `body` is a checklist body: one
-            `- [ ] ` / `- [x] ` item per line and nothing else.
+            `- [ ] ` / `- [x] ` item per line, a sub-item indented two
+            spaces under its parent, and nothing else.
         generated_at:
           type: string
           format: date-time
