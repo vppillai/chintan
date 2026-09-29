@@ -128,11 +128,12 @@ export function useSwipeActions({
 
   // Disabled while open — the row went busy, the pointer changed to one that
   // hovers — means closed: a tray left uncovered under a row that cannot act
-  // is a control that does nothing. The row's own state is derived while rendering from the previous
-  // value, React's own pattern for state that follows a prop, rather than in
-  // an effect that would paint the open row once more first. The registry is
-  // module state and is not touched during render: the effect below lets go
-  // of it once the disabled row has committed, and when a row unmounts open.
+  // is a control that does nothing. The row's own state is derived while
+  // rendering from the previous value, React's own pattern for state that
+  // follows a prop, rather than in an effect that would paint the open row
+  // once more first. The registry is module state and is not touched during
+  // render: the effect below lets go of it once the disabled row has
+  // committed, and when a row unmounts open.
   const [wasEnabled, setWasEnabled] = useState(enabled);
   if (enabled !== wasEnabled) {
     setWasEnabled(enabled);

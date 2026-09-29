@@ -36,8 +36,8 @@ export interface ConfirmDialogProps {
  * The open/closed switch, and nothing else.
  *
  * The panel is a separate component so that everything inside it — the focus
- * trap, the key listener — exists only while the dialog is on screen, and a dialog that was cancelled unmounts rather than having
- * to reset itself.
+ * trap, the key listener — exists only while the dialog is on screen, and a
+ * dialog that was cancelled unmounts rather than having to reset itself.
  */
 export function ConfirmDialog({ open, ...rest }: ConfirmDialogProps) {
   if (!open) return null;
