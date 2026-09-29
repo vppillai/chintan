@@ -4,10 +4,11 @@ import { useCallback, useSyncExternalStore } from 'react';
  * Whether a CSS media query matches, kept current as it changes.
  *
  * For the one decision CSS alone cannot make: whether to *render* a control.
- * The library's hover-to-select checkbox is drawn for a pointer that can hover
- * and not otherwise — a phone user has a long press instead, and a checkbox
- * on every row that only ever shows on hover would still be in the tab order
- * and the accessibility tree of a device that can never hover it.
+ * A pinned row's grip is drawn for a pointer that is fine and not otherwise —
+ * a phone user has a press-and-hold instead, and a grip on every pinned row
+ * that CSS merely hid would still be in the tab order and the accessibility
+ * tree of a device that never shows it; the swipe tray is the same decision
+ * the other way round.
  *
  * `useSyncExternalStore`, because a `MediaQueryList` is exactly an external
  * store: subscribe to its `change`, read `matches` for the snapshot. On the

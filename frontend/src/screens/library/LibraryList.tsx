@@ -13,7 +13,6 @@ import type { MergedHit } from '@/features/search/localSearch.ts';
 
 import type { ChipCount } from './LibraryField.tsx';
 import type { LibraryParams } from './useLibraryParams.ts';
-import type { LibrarySelection } from './useLibrarySelection.tsx';
 
 interface LibraryListProps extends Pick<LibraryParams, 'view' | 'tag' | 'kind'> {
   /** The list's element id, which the field's `aria-controls` names. */
@@ -38,7 +37,6 @@ interface LibraryListProps extends Pick<LibraryParams, 'view' | 'tag' | 'kind'> 
   serverPending: boolean;
   /** The server search did not run, or ran and failed. */
   serverUnavailable: boolean;
-  selection: Pick<LibrarySelection, 'selecting' | 'selectedIds' | 'toggleSelect'>;
   loadMore: () => void;
   archived: ChipCount;
 }
@@ -69,14 +67,12 @@ export function LibraryList({
   hits,
   serverPending,
   serverUnavailable,
-  selection,
   loadMore,
   archived,
 }: LibraryListProps) {
   const nothingToShow = searching
     ? hits.length === 0
     : pinned.length === 0 && groups.every((group) => group.notes.length === 0);
-  const { selecting, selectedIds, toggleSelect } = selection;
 
   return (
     <>
@@ -175,9 +171,6 @@ export function LibraryList({
                 note={noteForHit(hit, notes)}
                 excerpt={hit.excerpt}
                 highlight={trimmed}
-                selectable={selecting}
-                selected={selectedIds.has(hit.noteId)}
-                onToggleSelect={toggleSelect}
               />
             </li>
           ))}
@@ -187,12 +180,9 @@ export function LibraryList({
           {pinned.length > 0 && (
             <PinnedGroup
               notes={pinned}
-              selectable={selecting}
               // Under a tag or Checklists chip the group is a subset of the
               // pinned notes, and re-ranking a subset from 0 scrambles the rest.
               reorderable={!tag && !kind}
-              selectedIds={selectedIds}
-              onToggleSelect={toggleSelect}
             />
           )}
           {groups.map((group) => (
@@ -201,12 +191,7 @@ export function LibraryList({
               <ul className="note-list" role="list">
                 {group.notes.map((note) => (
                   <li key={note.id}>
-                    <NoteRow
-                      note={note}
-                      selectable={selecting}
-                      selected={selectedIds.has(note.id)}
-                      onToggleSelect={toggleSelect}
-                    />
+                    <NoteRow note={note} />
                   </li>
                 ))}
               </ul>

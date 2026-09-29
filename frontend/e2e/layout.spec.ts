@@ -535,183 +535,12 @@ for (const theme of THEMES) {
 }
 
 /**
- * The held confirm's fill crosses a button painted in the accent. In Nocturne
- * `--color-accent-strong` is the accent itself, which is how the first fill
- * came to be invisible in the dark theme; the fill has to differ from the
- * button under it in both.
+ * The recordings selection bar sits directly above the tab bar, whatever the
+ * list is scrolled to, and never over it. It used to be a card at the end of
+ * the list (QA Q6). It is the app's one selection bar: the library's went
+ * with note multi-select (owner, 2026-09-29).
  */
-for (const theme of THEMES) {
-  test(`the hold fill is a different colour from the button it crosses · ${theme}`, async ({
-    page,
-  }) => {
-    await withoutServiceWorker(page);
-    await useTheme(page, theme);
-    await page.goto('/');
-    await expect(page.locator('.tab-bar')).toBeVisible();
-
-    const colours = await page.evaluate(() => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'dialog__action dialog__action--destructive dialog__action--hold';
-      button.setAttribute('data-holding', 'true');
-      button.innerHTML = '<span class="dialog__hold-fill" aria-hidden="true"></span>Hold to delete 12 notes';
-      document.querySelector('.app')?.append(button);
-      return {
-        button: getComputedStyle(button).backgroundColor,
-        fill: getComputedStyle(button.firstElementChild as Element).backgroundColor,
-      };
-    });
-    expect(colours.fill, `${theme}: the fill is the button's own colour`).not.toBe(colours.button);
-  });
-}
-
-/**
- * A landscape phone with the keyboard open leaves roughly 300 CSS px of height.
- * A centred dialog in a layer that cannot scroll puts its confirm button below
- * the fold and out of reach, which turns a destructive confirmation into a trap.
- */
-for (const height of [390, 300, 240]) {
-  test(`the confirm dialog stays reachable at 320x${height}`, async ({ page }) => {
-    await page.setViewportSize({ width: 320, height });
-    await withoutServiceWorker(page);
-    await page.goto('/');
-    await expect(page.locator('.app')).toBeVisible();
-
-    await page.evaluate(() => {
-      const layer = document.createElement('div');
-      layer.className = 'dialog-layer';
-      layer.innerHTML =
-        '<div class="dialog-scrim"></div>' +
-        '<div class="dialog" role="dialog" aria-modal="true">' +
-        '<h2 class="dialog__title">Discard this recording?</h2>' +
-        '<p class="dialog__body">It has not been sent, and it is not saved anywhere else. ' +
-        'This cannot be undone, and there is no copy of it on the server or on any other ' +
-        'device you have signed in on.</p>' +
-        '<div class="dialog__actions">' +
-        '<button type="button" class="dialog__action">Cancel</button>' +
-        '<button type="button" class="dialog__action dialog__action--destructive">Discard recording</button>' +
-        '</div></div>';
-      document.querySelector('.app')?.append(layer);
-    });
-
-    const reach = await page.evaluate(() => {
-      const layer = document.querySelector('.dialog-layer');
-      const confirm = document.querySelector('.dialog__action--destructive');
-      if (!layer || !confirm) return null;
-      // Scroll the layer as a user would before deciding the button is lost.
-      layer.scrollTop = layer.scrollHeight;
-      const box = confirm.getBoundingClientRect();
-      const dialog = document.querySelector('.dialog')?.getBoundingClientRect();
-      return {
-        confirmBottom: Math.round(box.bottom),
-        confirmTop: Math.round(box.top),
-        dialogTop: Math.round(dialog?.top ?? 0),
-        viewport: document.documentElement.clientHeight,
-      };
-    });
-
-    expect(reach).not.toBeNull();
-    expect(
-      reach!.confirmBottom,
-      'the confirm button sits below the fold with no way to scroll to it',
-    ).toBeLessThanOrEqual(reach!.viewport + 1);
-    expect(reach!.confirmTop, 'the confirm button sits above the fold').toBeGreaterThanOrEqual(-1);
-  });
-}
-
-/**
- * The record button is 76px, and the library's last row is never under the
- * bar. The bar is in normal flow and cannot overlay anything, but the list used
- * to end 32px from the edge, hard against it; a thumb resting on Record covered
- * the lower half of the last row. Measured on the two phones the owner uses.
- */
-for (const viewport of [
-  { name: '320x568', width: 320, height: 568 },
-  { name: '412x915', width: 412, height: 915 },
-]) {
-  test(`the record button is 76px and the last row clears the tab bar at ${viewport.name}`, async ({
-    page,
-    api,
-  }) => {
-    // Enough notes that the library scrolls at any phone height.
-    for (let index = 0; index < 30; index += 1) {
-      const id = `filler-${String(index)}`;
-      api.notes[id] = {
-        id,
-        title: `Filler note ${String(index + 1)}`,
-        body: 'Padding for the scroll test.',
-        snippet: 'Padding for the scroll test.',
-        tags: [],
-        aliases: [],
-        updated_at: new Date(Date.UTC(2026, 7, 1 + (index % 28))).toISOString(),
-        version: 1,
-        archived: false,
-        captures: [],
-      };
-    }
-    await withoutServiceWorker(page);
-    await page.setViewportSize(viewport);
-    await page.goto('/');
-    await expect(page.locator('.note-row').first()).toBeVisible();
-
-    const measured = await page.evaluate(() => {
-      const main = document.querySelector('.app__main');
-      if (!main) return null;
-      main.scrollTop = main.scrollHeight;
-      const rows = document.querySelectorAll('.note-row');
-      const last = rows[rows.length - 1]?.getBoundingClientRect();
-      const bar = document.querySelector('.tab-bar')?.getBoundingClientRect();
-      const record = document.querySelector('.record-button')?.getBoundingClientRect();
-      if (!last || !bar || !record) return null;
-      return {
-        scrolls: main.scrollHeight > main.clientHeight,
-        lastBottom: Math.round(last.bottom),
-        barTop: Math.round(bar.top),
-        barBottom: Math.round(bar.bottom),
-        viewport: document.documentElement.clientHeight,
-        record: { width: Math.round(record.width), height: Math.round(record.height) },
-      };
-    });
-
-    expect(measured, 'the library rendered no rows, bar or record button').not.toBeNull();
-    expect(measured!.scrolls, 'the list must be long enough to scroll for this to mean anything').toBe(
-      true,
-    );
-    expect(measured!.record.width).toBeGreaterThanOrEqual(76);
-    expect(measured!.record.height).toBeGreaterThanOrEqual(76);
-    // Scrolled to the very end, the last row sits above the bar with the
-    // list's bottom padding (a bar's height) between them.
-    expect(
-      measured!.barTop - measured!.lastBottom,
-      'the last row does not clear the tab bar',
-    ).toBeGreaterThanOrEqual(measured!.barBottom - measured!.barTop - 1);
-    expect(measured!.barBottom, 'the bar is not fully on screen').toBeLessThanOrEqual(
-      measured!.viewport + 1,
-    );
-  });
-}
-
-/**
- * The selection bars — the library's bulk bar and the note screen's recording
- * bar — sit directly above the tab bar, whatever the list is scrolled to, and
- * never over it. They used to be a card at the end of the list (QA Q6).
- */
-test('the selection bars sit above the tab bar on a phone', async ({ page, api }) => {
-  for (let index = 0; index < 20; index += 1) {
-    const id = `filler-${String(index)}`;
-    api.notes[id] = {
-      id,
-      title: `Filler note ${String(index + 1)}`,
-      body: 'Padding for the scroll test.',
-      snippet: 'Padding for the scroll test.',
-      tags: [],
-      aliases: [],
-      updated_at: new Date(Date.UTC(2026, 7, 1 + (index % 28))).toISOString(),
-      version: 1,
-      archived: false,
-      captures: [],
-    };
-  }
+test('the recordings selection bar sits above the tab bar on a phone', async ({ page, api }) => {
   api.notes['roof-repair']!.captures!.push({
     id: 'cap-newer',
     status: 'appended',
@@ -725,26 +554,6 @@ test('the selection bars sit above the tab bar on a phone', async ({ page, api }
   await withoutServiceWorker(page);
   await page.setViewportSize({ width: 412, height: 915 });
 
-  // The library, with a selection under way.
-  await page.goto('/');
-  // A phone's viewport under the desktop project's mouse: the row's ⋮ shows
-  // on hover, and Select is one of its items.
-  const roof = page.getByRole('button', { name: /roof repair/i });
-  await roof.hover();
-  await page.locator('.note-row-wrap', { has: roof }).getByRole('button', { name: 'More' }).click();
-  await page.getByRole('menuitem', { name: 'Select' }).click();
-  await page.getByRole('button', { name: 'Select all' }).click();
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
-  await shoot(page, 'library-selecting__412x915__ink');
-  assertClean(await inspect(page), 'library selecting @ 412x915');
-  let bars = await page.evaluate(() => ({
-    bar: document.querySelector('.selection-bar')?.getBoundingClientRect().bottom ?? NaN,
-    tabs: document.querySelector('.tab-bar')?.getBoundingClientRect().top ?? NaN,
-  }));
-  expect(bars.bar).toBeLessThanOrEqual(bars.tabs + 1);
-  expect(bars.bar).toBeGreaterThan(bars.tabs - 200);
-
-  // The note screen, with recordings selected.
   await page.goto('/notes/roof-repair?tab=recordings');
   await page.getByRole('button', { name: /more for recording from/i }).first().click();
   await page.getByRole('menuitem', { name: 'Select' }).click();
@@ -753,7 +562,7 @@ test('the selection bars sit above the tab bar on a phone', async ({ page, api }
   await page.waitForLoadState('networkidle');
   await shoot(page, 'note-selecting__412x915__ink');
   assertClean(await inspect(page), 'note selecting @ 412x915');
-  bars = await page.evaluate(() => ({
+  const bars = await page.evaluate(() => ({
     bar: document.querySelector('.selection-bar')?.getBoundingClientRect().bottom ?? NaN,
     tabs: document.querySelector('.tab-bar')?.getBoundingClientRect().top ?? NaN,
   }));

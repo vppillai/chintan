@@ -202,8 +202,8 @@ export function NoteMenu({
       // mounted; handed the note as it was, it re-pins a pinned one
       // (`useUndoDelete`).
       onSuccess: () => {
-        showDeleted(1, () => {
-          undo.mutate([note]);
+        showDeleted(() => {
+          undo.mutate(note);
         });
         void navigate(ROUTES.notes, { replace: true });
       },
@@ -227,7 +227,6 @@ export function NoteMenu({
 
       <DeleteConfirm
         open={confirming === 'delete'}
-        count={1}
         title={note.title}
         onCancel={() => {
           setConfirming(null);

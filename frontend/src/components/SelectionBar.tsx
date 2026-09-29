@@ -30,7 +30,7 @@ export function SelectionBar({
   status,
   children,
 }: {
-  /** The toolbar's accessible name: "Bulk actions", "Recording actions". */
+  /** The toolbar's accessible name: "Recording actions". */
   label: string;
   count: number;
   allSelected: boolean;

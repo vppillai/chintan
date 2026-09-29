@@ -16,7 +16,7 @@ import { Toast, dismissToast } from './Toast.tsx';
  * "Delete “<title>”?" (owner, 2026-09-27: "ask are you sure"), Delete forever
  * behind its own plain confirm in the archive. The gesture itself is
  * SwipeRow's test. And the ⋮ at the row's right, which offers the same
- * actions plus Select to a pointer that cannot swipe (2026-09-24, C).
+ * actions to a pointer that cannot swipe (2026-09-24, C).
  */
 
 const ACTIVE: NoteWire = TEST_NOTES[0] as NoteWire;
@@ -26,10 +26,9 @@ const ARCHIVED: NoteWire = {
   purge_after: new Date(Date.now() + 10 * 86_400_000).toISOString(),
 };
 
-function mount(note: NoteWire, { selectable = false } = {}) {
+function mount(note: NoteWire) {
   const calls: string[] = [];
   const bodies: unknown[] = [];
-  const onToggleSelect = vi.fn();
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
     calls.push(`${init?.method ?? 'GET'} ${url.pathname}`);
@@ -43,13 +42,13 @@ function mount(note: NoteWire, { selectable = false } = {}) {
   const { unmount } = render(
     <TestProviders api={testApiContext(fetchImpl)}>
       <MemoryRouter>
-        <NoteRow note={note} selectable={selectable} onToggleSelect={onToggleSelect} />
+        <NoteRow note={note} />
         {/* The shell's, in the app; here so the Undo the row offers can be pressed. */}
         <Toast />
       </MemoryRouter>
     </TestProviders>,
   );
-  return { calls, bodies, onToggleSelect, unmount };
+  return { calls, bodies, unmount };
 }
 
 const touch = { pointerId: 1, pointerType: 'touch', button: 0 };
@@ -109,9 +108,9 @@ describe('NoteRow swipe actions', () => {
     ).toEqual(['Restore', 'Delete forever']);
   });
 
-  it('offers the same actions and Select behind the ⋮, for a pointer that cannot swipe', async () => {
+  it('offers the same actions behind the ⋮, for a pointer that cannot swipe', async () => {
     const user = userEvent.setup();
-    const { calls, onToggleSelect, unmount } = mount(ACTIVE);
+    const { calls, unmount } = mount(ACTIVE);
     expect(screen.queryByRole('checkbox')).toBeNull();
 
     const more = screen.getByRole('button', { name: 'More' });
@@ -121,12 +120,7 @@ describe('NoteRow swipe actions', () => {
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Pin',
       'Delete',
-      'Select',
     ]);
-    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
-    expect(onToggleSelect).toHaveBeenCalledWith('roof-repair', { range: false });
-
-    await user.click(screen.getByRole('button', { name: 'More' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
     // The menu's Delete asks the same question the tray's does.
     const dialog = await screen.findByRole('dialog', { name: 'Delete “Roof repair”?' });
@@ -142,37 +136,7 @@ describe('NoteRow swipe actions', () => {
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Restore',
       'Delete forever',
-      'Select',
     ]);
-  });
-
-  it('Select from the ⋮ hands focus to the checkbox that replaces the row', async () => {
-    // The menu's trigger unmounts with the row it sat on, so the checkbox is
-    // what a keyboard user should land on, not the body.
-    const user = userEvent.setup();
-    const api = testApiContext(vi.fn<typeof fetch>(async () => new Response('{}', { status: 200 })));
-    const tree = (selectable: boolean) => (
-      <TestProviders api={api}>
-        <MemoryRouter>
-          <NoteRow note={ACTIVE} selectable={selectable} onToggleSelect={() => {}} />
-        </MemoryRouter>
-      </TestProviders>
-    );
-    const { rerender } = render(tree(false));
-    await user.click(screen.getByRole('button', { name: 'More' }));
-    await user.click(screen.getByRole('menuitem', { name: 'Select' }));
-    rerender(tree(true));
-    expect(screen.getByRole('checkbox')).toHaveFocus();
-  });
-
-  it('draws the app’s own box while bulk-select is on, over the real checkbox', () => {
-    // Every other box in the app is drawn (F1); the browser's square tick
-    // beside them was the odd one out (review 2026-09-24, R4-12).
-    mount(ACTIVE, { selectable: true });
-    const box = screen.getByRole('checkbox');
-    expect(box).toHaveClass('checklist__box');
-    // Adjacent, as `.checklist__box:checked + .checklist__mark` needs.
-    expect(box.nextElementSibling).toHaveClass('checklist__mark');
   });
 
   it('leaves Pin out of the tray while offline, where the PATCH would only queue', () => {
@@ -188,11 +152,7 @@ describe('NoteRow swipe actions', () => {
     ).toEqual(['Delete']);
   });
 
-  it('has no tray while bulk-select is on, nor for a pointer that can hover', () => {
-    const { unmount } = mount(ACTIVE, { selectable: true });
-    expect(screen.queryByRole('group', { hidden: true })).toBeNull();
-    unmount();
-
+  it('has no tray for a pointer that can hover', () => {
     setCanHover(true);
     mount(ACTIVE);
     expect(screen.queryByRole('group', { hidden: true })).toBeNull();

@@ -126,9 +126,9 @@ export function useSwipeActions({
     [close, containerRef],
   );
 
-  // Disabled while open — bulk-select started, the pointer changed — means
-  // closed: a tray left uncovered under a checkbox row is two controls in one
-  // place. The row's own state is derived while rendering from the previous
+  // Disabled while open — the row went busy, the pointer changed to one that
+  // hovers — means closed: a tray left uncovered under a row that cannot act
+  // is a control that does nothing. The row's own state is derived while rendering from the previous
   // value, React's own pattern for state that follows a prop, rather than in
   // an effect that would paint the open row once more first. The registry is
   // module state and is not touched during render: the effect below lets go

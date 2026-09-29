@@ -55,14 +55,14 @@ export function dismissToast(): void {
 }
 
 /**
- * The Undo toast after a delete on Home, which is an archive: the note (or
- * the notes) can be had back for the purge window, and this is the one place
- * the app says so at the moment it matters. `undo` restores them; the caller
- * knows which mutation that is.
+ * The Undo toast after a delete on Home, which is an archive: the note can be
+ * had back for the purge window, and this is the one place the app says so at
+ * the moment it matters. `undo` restores it; the caller knows which mutation
+ * that is.
  */
-export function showDeleted(count: number, undo: () => void): void {
+export function showDeleted(undo: () => void): void {
   showToast({
-    message: `${count === 1 ? 'Deleted' : `${String(count)} notes deleted`} · kept in Archive for 30 days`,
+    message: 'Deleted · kept in Archive for 30 days',
     action: { label: 'Undo', onSelect: undo },
   });
 }

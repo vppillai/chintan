@@ -10,8 +10,9 @@ import {
 import { useReorderPins } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
-import { NoteRow, type SelectOptions } from '@/components/NoteRow.tsx';
+import { NoteRow } from '@/components/NoteRow.tsx';
 import { FINE_POINTER_QUERY } from '@/components/SwipeRow.tsx';
+import { vibrate } from '@/features/capture/feedback.ts';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
 import { LONG_PRESS_MS, LONG_PRESS_TOLERANCE_PX } from '@/hooks/useLongPress.ts';
 import { useMediaQuery } from '@/hooks/useMediaQuery.ts';
@@ -24,11 +25,10 @@ import { useOnline } from '@/hooks/useOnline.ts';
  * Reordering is a drag, and one request. Where the pointer is fine each row
  * wears a grip at its left edge and a mouse — or a finger on a touchscreen
  * laptop — drags it; on a phone there is no grip — the row's width is the
- * phone's — and the press-and-hold that selects a row everywhere else lifts a
- * pinned row instead, to be dragged (Select is still in the row's ⋮ menu).
- * The two holds never arm together: the row's selects exactly where
- * `holdToSelect` is on, and the list's lifts exactly where it is off, so a
- * finger on a hybrid device is not selected and lifted at once (review
+ * phone's — and a press-and-hold lifts the row instead, to be dragged (there
+ * is no selection mode for the hold to belong to; owner, 2026-09-29). Where
+ * the pointer is fine the grip is the only handle, so a finger on a hybrid
+ * device is not lifted by a hold that was heading for a scroll (review
  * 2026-09-24). The dragged row takes the slot whose midpoint the
  * pointer crosses, so the list re-sorts under the pointer as it moves; the
  * order is held here as a draft until the pointer lifts, then sent as one
@@ -67,18 +67,12 @@ interface Hold {
 
 export function PinnedGroup({
   notes,
-  selectable = false,
   reorderable = true,
-  selectedIds,
-  onToggleSelect,
 }: {
   /** The pinned notes, already in `pin_rank` order (`splitPinned`). */
   notes: readonly NoteWire[];
-  selectable?: boolean;
   /** Whether `notes` is every pinned note, so an order made here is the whole order. */
   reorderable?: boolean;
-  selectedIds: ReadonlySet<string>;
-  onToggleSelect: (noteId: string, options: SelectOptions) => void;
 }) {
   const reorder = useReorderPins();
   const finePointer = useMediaQuery(FINE_POINTER_QUERY);
@@ -92,10 +86,9 @@ export function PinnedGroup({
   const ids = notes.map((note) => note.id);
   const shown = pending ?? ids;
   const byId = new Map(notes.map((note) => [note.id, note]));
-  const grips = finePointer && !selectable && reorderable;
-  const movable = reorderable && !selectable;
+  const grips = finePointer && reorderable;
   /** Whether a pointer can lift a row at all right now. */
-  const lifts = movable && online;
+  const lifts = reorderable && online;
 
   const commit = (next: string[]): void => {
     if (next.join('\n') === ids.join('\n')) {
@@ -148,9 +141,9 @@ export function PinnedGroup({
     // The hold lifts the row itself, never its ⋮ or its swipe tray: a slow
     // press on the menu button must still open the menu when it lifts.
     if (!target.closest('.note-row')) return;
-    // A mouse on the row is the row's: a hold there selects. So is a finger
-    // wherever the pointer is fine (a touchscreen laptop): the row arms its
-    // own hold there (`holdToSelect`), and the grip is the handle for both.
+    // A mouse on the row is the row's, and so is a finger wherever the
+    // pointer is fine (a touchscreen laptop): the grip is the handle for
+    // both, and a held row there is a row that opens when the pointer lifts.
     if (event.pointerType === 'mouse' || finePointer) return;
     cancelHold();
     hold.current = {
@@ -160,9 +153,7 @@ export function PinnedGroup({
       y: event.clientY,
       timer: setTimeout(() => {
         hold.current = null;
-        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-          navigator.vibrate(10);
-        }
+        vibrate(10);
         start(event.pointerId, id);
       }, LONG_PRESS_MS),
     };
@@ -252,15 +243,8 @@ export function PinnedGroup({
             )}
             <NoteRow
               note={note}
-              selectable={selectable}
-              selected={selectedIds.has(note.id)}
-              onToggleSelect={onToggleSelect}
-              // Under a finger the hold lifts the row; with a mouse it selects,
-              // and the grip is the handle. Where nothing lifts — a filter is
-              // on, or the device is offline — the hold selects, as everywhere.
-              holdToSelect={finePointer || !lifts}
-              {...(movable && index > 0 ? { onMoveUp: () => drag.step(note.id, -1) } : {})}
-              {...(movable && index < rows.length - 1
+              {...(reorderable && index > 0 ? { onMoveUp: () => drag.step(note.id, -1) } : {})}
+              {...(reorderable && index < rows.length - 1
                 ? { onMoveDown: () => drag.step(note.id, 1) }
                 : {})}
             />

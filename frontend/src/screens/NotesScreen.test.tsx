@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SERVER_SEARCH_DEBOUNCE_MS } from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
-import { LONG_PRESS_MS } from '@/hooks/useLongPress.ts';
 import { onAFakeClock } from '@/test/clock.ts';
 import { TEST_NOTES, TestProviders, testApiContext } from '@/test/providers.tsx';
 import { setCanHover } from '@/test/setup.ts';
@@ -14,7 +13,6 @@ import { setCanHover } from '@/test/setup.ts';
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 
 import { NotesScreen, chipScrollBy } from './NotesScreen.tsx';
-import { HOLD_TO_DELETE_MS } from './library/holdToDelete.ts';
 
 const ARCHIVED_NOTES = TEST_NOTES.map((note) => ({
   ...note,
@@ -84,17 +82,22 @@ afterEach(() => {
 });
 
 /**
- * One way into selection without a hold: Select in the row's ⋮ menu, which
- * a mouse reveals by resting on the row (the hover checkbox is gone, C).
+ * Delete through the row's ⋮, which a mouse reveals by resting on the row,
+ * and answer the confirm that names the note (owner, 2026-09-27).
  */
-async function startSelecting(
+async function deleteFromRow(
   user: ReturnType<typeof userEvent.setup>,
   title: string,
 ): Promise<void> {
   await screen.findByRole('button', { name: new RegExp(title, 'i') });
   await user.click(screen.getByRole('button', { name: 'More', description: new RegExp(`^${title}`) }));
-  await user.click(screen.getByRole('menuitem', { name: 'Select' }));
-  await screen.findByRole('toolbar', { name: 'Bulk actions' });
+  await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+  const dialog = await screen.findByRole('dialog', { name: `Delete “${title}”?` });
+  expect(dialog).toHaveTextContent('It is kept in the Archive for 30 days, then gone for good.');
+  await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
 }
 
 describe('the heading is Notes with the count beside it; the brand leads the row', () => {
@@ -490,243 +493,14 @@ describe('the chips filter the list', () => {
   });
 });
 
-describe('doing something to several notes at once', () => {
-  it('has no Select button in the header; a row is where selection starts', async () => {
-    mount(library());
-    await screen.findByRole('button', { name: /roof repair/i });
-    expect(screen.queryByRole('button', { name: 'Select' })).toBeNull();
-    expect(screen.queryByRole('toolbar')).toBeNull();
-  });
-
-  it('Delete asks first, then archives every selected note, and Undo brings them back', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    const archived = new Set<string>();
-    const restored: string[] = [];
-    const base = library();
-    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      const url = new URL(String(input));
-      const method = init?.method ?? 'GET';
-      if (method === 'DELETE' && url.pathname.includes('/v1/notes/')) {
-        archived.add(decodeURIComponent(url.pathname.split('/v1/notes/')[1] ?? ''));
-        return json({});
-      }
-      if (method === 'POST' && url.pathname.endsWith('/restore')) {
-        const id = decodeURIComponent(url.pathname.split('/v1/notes/')[1]?.split('/restore')[0] ?? '');
-        archived.delete(id);
-        restored.push(id);
-        return json({});
-      }
-      // The two lists move as the server's would, and the device's copy —
-      // which keys a note by its `archived` flag — follows the archived page.
-      if (url.pathname.endsWith('/v1/notes')) {
-        const wantArchived = url.searchParams.get('state') === 'archived';
-        return json({
-          items: TEST_NOTES.filter((note) => archived.has(note.id) === wantArchived).map((note) => ({
-            ...note,
-            archived: wantArchived,
-          })),
-        });
-      }
-      return base(input, init);
-    });
-    mount(fetchImpl);
-
-    await startSelecting(user, 'Roof repair');
-    // Every row is a checkbox now, and the one that started it is checked.
-    const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes).toHaveLength(TEST_NOTES.length);
-    expect(checkboxes[0]).toBeChecked();
-
-    const bar = screen.getByRole('toolbar', { name: 'Bulk actions' });
-    expect(
-      within(bar).getByText((_content, el) => el?.textContent === '1 selected'),
-    ).toBeInTheDocument();
-    // Count · Select all · Delete · Cancel, in that order: one destructive
-    // action on Home, and no separate Archive (owner, 2026-09-26).
-    expect(within(bar).getAllByRole('button').map((el) => el.textContent)).toEqual([
-      'Select all',
-      'Delete',
-      'Cancel',
-    ]);
-
-    await user.click(within(bar).getByRole('button', { name: 'Delete' }));
-
-    // One selected note is named, as the row's own confirm names it; nothing
-    // has gone until the question is answered (owner, 2026-09-27).
-    const dialog = screen.getByRole('dialog', { name: 'Delete “Roof repair”?' });
-    expect(dialog).toHaveTextContent('It is kept in the Archive for 30 days, then gone for good.');
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
-    expect(archived.size).toBe(0);
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    await waitFor(() => {
-      expect([...archived]).toEqual([TEST_NOTES[0]?.id]);
-    });
-    // Back to the plain list: no bar, no row checkboxes, and the row is gone.
-    await waitFor(() => {
-      expect(screen.queryByRole('toolbar')).toBeNull();
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
-    });
-
-    // The toast offers Undo, which restores the note and the row returns.
-    const undo = screen.getByRole('button', { name: 'Undo' });
-    expect(undo.closest('.toast')).toHaveTextContent('Deleted · kept in Archive for 30 days');
-    await user.click(undo);
-    await waitFor(() => {
-      expect(restored).toEqual([TEST_NOTES[0]?.id]);
-    });
-    expect(await screen.findByRole('button', { name: /roof repair/i })).toBeInTheDocument();
-  });
-
-  it('starts selecting on a long press, with a haptic tick', async () => {
-    const vibrate = vi.fn();
-    Object.defineProperty(navigator, 'vibrate', { value: vibrate, configurable: true });
-    mount(library());
-    const row = await screen.findByRole('button', { name: /reading list/i });
-
-    await onAFakeClock(async () => {
-      fireEvent.pointerDown(row, { pointerType: 'touch', clientX: 12, clientY: 12 });
-      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-      fireEvent.pointerUp(row, { pointerType: 'touch' });
-    });
-    fireEvent.click(row);
-
-    const bar = await screen.findByRole('toolbar', { name: 'Bulk actions' });
-    expect(
-      within(bar).getByText((_content, el) => el?.textContent === '1 selected'),
-    ).toBeInTheDocument();
-    expect(vibrate).toHaveBeenCalledWith(10);
-    // There is no checkbox before the press, and the press did not also open the note.
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-  });
-
-  it('starts selecting on a held mouse button too — no hover checkbox any more', async () => {
-    setCanHover(true);
-    mount(library());
-    const row = await screen.findByRole('button', { name: /reading list/i });
-    expect(screen.queryByRole('checkbox')).toBeNull();
-
-    await onAFakeClock(async () => {
-      fireEvent.pointerDown(row, { pointerType: 'mouse', button: 0, clientX: 12, clientY: 12 });
-      await act(() => vi.advanceTimersByTimeAsync(LONG_PRESS_MS + 60));
-      fireEvent.pointerUp(row, { pointerType: 'mouse', button: 0 });
-    });
-    fireEvent.click(row);
-
-    await screen.findByRole('toolbar', { name: 'Bulk actions' });
-    expect(screen.getByRole('checkbox', { checked: true })).toBeInTheDocument();
-  });
-
-  it('Shift-click on a checkbox selects the range since the last one', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    const now = Date.now();
-    const notes: NoteWire[] = ['One', 'Two', 'Three', 'Four'].map((title, index) => ({
-      ...TEST_NOTES[0]!,
-      id: title.toLowerCase(),
-      title,
-      updated_at: new Date(now - index * 60_000).toISOString(),
-    }));
-    mount(library({ active: notes, tags: [] }));
-
-    await startSelecting(user, 'One');
-    const boxes = screen.getAllByRole('checkbox');
-    await user.keyboard('{Shift>}');
-    await user.click(boxes[2]!);
-    await user.keyboard('{/Shift}');
-
-    expect(boxes.slice(0, 3).map((box) => (box as HTMLInputElement).checked)).toEqual([
-      true,
-      true,
-      true,
-    ]);
-    expect(boxes[3]).not.toBeChecked();
-    expect(
-      screen.getByText((_content, el) => el?.textContent === '3 selected'),
-    ).toBeInTheDocument();
-  });
-
-  it('Escape leaves selection mode', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    mount(library());
-    await startSelecting(user, 'Roof repair');
-
-    await user.keyboard('{Escape}');
-
-    await waitFor(() => {
-      expect(screen.queryByRole('toolbar')).toBeNull();
-    });
-  });
-
-  it('names the one selected note in the delete-forever dialog, as the row’s own dialog does (QA 2026-09-21, finding 14)', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    mount(library(), '/?view=archived');
-
-    await startSelecting(user, 'Roof repair');
-    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
-
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Delete 1 note forever?');
-    expect(dialog).toHaveTextContent('“Roof repair” and its recordings and transcripts are destroyed.');
-    // Nothing to type: the sentence is the warning, and the button works at once.
-    expect(within(dialog).queryByRole('textbox')).toBeNull();
-    expect(within(dialog).getByRole('button', { name: 'Delete it forever' })).toBeEnabled();
-    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
-  });
-
-  it('deleting more than ten notes forever takes a press held for a second, not a tap', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    const many: NoteWire[] = Array.from({ length: 11 }, (_unused, i) => ({
-      ...TEST_NOTES[0]!,
-      id: `archived-${String(i)}`,
-      title: `Archived ${String(i)}`,
-      archived: true,
-    }));
-    let purged: string[] | null = null;
-    const base = library({ archived: many });
-    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      const url = String(input);
-      if ((init?.method ?? 'GET') === 'POST' && url.endsWith('/v1/notes/purge')) {
-        const body = JSON.parse(String(init?.body)) as { note_ids: string[] };
-        purged = body.note_ids;
-        return json({ results: purged.map((id) => ({ note_id: id, status: 'purged' })) });
-      }
-      return base(input, init);
-    });
-    mount(fetchImpl, '/?view=archived');
-
-    await startSelecting(user, 'Archived 0');
-    await user.click(screen.getByRole('button', { name: 'Select all' }));
-    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
-
-    const confirm = await screen.findByRole('button', { name: 'Hold to delete 11 notes' });
-    // A tap is not enough.
-    await user.click(confirm);
-    expect(purged).toBeNull();
-
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    fireEvent.pointerDown(confirm, { button: 0 });
-    await act(async () => {
-      vi.advanceTimersByTime(HOLD_TO_DELETE_MS);
-    });
-    await waitFor(() => {
-      expect(purged).toEqual(many.map((note) => note.id));
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole('toolbar')).toBeNull();
-    });
-  });
-
+describe('deleting from the library', () => {
   it('drops the chip of a tag whose last note was deleted', async () => {
     /*
-     * QA D16: two notes tagged `bulkmobile`, select all, delete. The notes
-     * went, the chip stayed, and pressing it said "No notes are tagged
-     * bulkmobile" until a reload — `['tags']` was never invalidated.
+     * QA D16: two notes tagged `bulkmobile`, both deleted. The notes went,
+     * the chip stayed, and pressing it said "No notes are tagged bulkmobile"
+     * until a reload — `['tags']` was never invalidated. One row at a time
+     * now (there is no multi-select; owner, 2026-09-29), and the
+     * invalidation is the same.
      */
     const user = userEvent.setup();
     setCanHover(true);
@@ -755,15 +529,9 @@ describe('doing something to several notes at once', () => {
     mount(fetchImpl);
 
     expect(await screen.findByRole('button', { name: 'bulkmobile' })).toBeInTheDocument();
-    await startSelecting(user, 'Roof repair');
-    await user.click(screen.getByRole('button', { name: 'Select all' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
-    // Several notes are counted, not named.
-    const dialog = screen.getByRole('dialog', {
-      name: `Delete ${String(TEST_NOTES.length)} notes?`,
-    });
-    expect(dialog).toHaveTextContent('They are kept in the Archive for 30 days, then gone for good.');
-    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    for (const note of TEST_NOTES) {
+      await deleteFromRow(user, note.title);
+    }
 
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: /roof repair/i })).toBeNull();
@@ -771,104 +539,6 @@ describe('doing something to several notes at once', () => {
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'bulkmobile' })).toBeNull();
     });
-  });
-
-  it('selects and deselects everything with one control', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    mount(library());
-
-    await startSelecting(user, 'Roof repair');
-    await user.click(screen.getByRole('button', { name: 'Select all' }));
-    expect(
-      await screen.findByText(
-        (_content, el) => el?.textContent === `${String(TEST_NOTES.length)} selected`,
-      ),
-    ).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Deselect all' }));
-    expect(
-      await screen.findByText((_content, el) => el?.textContent === '0 selected'),
-    ).toBeInTheDocument();
-  });
-
-  it('restores every selected archived note', async () => {
-    const user = userEvent.setup();
-    setCanHover(true);
-    const restored: string[] = [];
-    const base = library();
-    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      const url = String(input);
-      if ((init?.method ?? 'GET') === 'POST' && url.endsWith('/restore')) {
-        const id = url.split('/v1/notes/')[1]?.split('/restore')[0] ?? '';
-        restored.push(decodeURIComponent(id));
-        return json({});
-      }
-      return base(input, init);
-    });
-    mount(fetchImpl, '/?view=archived');
-
-    await startSelecting(user, 'Roof repair');
-    for (const checkbox of screen.getAllByRole('checkbox')) {
-      if (!(checkbox as HTMLInputElement).checked) await user.click(checkbox);
-    }
-    // The active list's action is not offered here.
-    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull();
-
-    await user.click(screen.getByRole('button', { name: 'Restore' }));
-    await user.click(await screen.findByRole('button', { name: 'Restore them' }));
-
-    await waitFor(() => {
-      expect(restored.sort()).toEqual(ARCHIVED_NOTES.map((n) => n.id).sort());
-    });
-  });
-
-  it('empties the archive: select all, then delete forever, in one batch call', async () => {
-    // The feature request this closes: no way to clear the whole archive at
-    // once. "Select all" plus this is that, using the real batch endpoint —
-    // one POST /v1/notes/purge naming every id, not N individual calls.
-    const user = userEvent.setup();
-    setCanHover(true);
-    let purgeBody: unknown = null;
-    const base = library();
-    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
-      const url = String(input);
-      if ((init?.method ?? 'GET') === 'POST' && url.endsWith('/v1/notes/purge')) {
-        purgeBody = JSON.parse(String(init?.body));
-        return json({
-          results: ARCHIVED_NOTES.map((n) => ({ note_id: n.id, status: 'purged' })),
-        });
-      }
-      return base(input, init);
-    });
-    mount(fetchImpl, '/?view=archived');
-
-    await startSelecting(user, 'Roof repair');
-    await user.click(await screen.findByRole('button', { name: 'Select all' }));
-    await user.click(screen.getByRole('button', { name: 'Delete forever' }));
-
-    const dialog = await screen.findByRole('dialog');
-    // Two notes: a plain confirm, nothing to type and nothing to hold.
-    expect(within(dialog).queryByRole('textbox')).toBeNull();
-    await user.click(within(dialog).getByRole('button', { name: 'Delete them forever' }));
-
-    await waitFor(() => {
-      expect(purgeBody).toEqual({ note_ids: ARCHIVED_NOTES.map((n) => n.id) });
-    });
-    expect(dialog).not.toBeInTheDocument();
-  });
-
-  it('leaves the plain list untouched when not selecting', async () => {
-    // The default path — a real <button> that navigates — must still be what
-    // renders until a row is selected, and there is no checkbox at all until
-    // then, on any pointer.
-    setCanHover(true);
-    mount(library());
-    await screen.findByText(TEST_NOTES[0]?.title ?? '');
-    expect(screen.queryByRole('checkbox')).toBeNull();
-    expect(screen.getAllByRole('button').some((el) => el.className.includes('note-row'))).toBe(
-      true,
-    );
   });
 });
 

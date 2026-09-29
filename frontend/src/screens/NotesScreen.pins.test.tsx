@@ -327,7 +327,7 @@ describe('pinned notes on Home', () => {
     expect(pinnedTitles()).toEqual(['Two', 'One']);
   });
 
-  it('on a phone, holding a pinned row lifts it rather than selecting it, and dragging reorders', async () => {
+  it('on a phone, holding a pinned row lifts it, and dragging reorders', async () => {
     const api = server(THREE);
     mount(api.fetchImpl);
     await screen.findByRole('button', { name: /^Three/ });
@@ -345,8 +345,6 @@ describe('pinned notes on Home', () => {
     } finally {
       vi.useRealTimers();
     }
-    // Lifted, not selected.
-    expect(screen.queryByRole('toolbar')).toBeNull();
     fireEvent.pointerMove(list, { ...touch, clientX: 10, clientY: 40 });
     expect(pinnedTitles()).toEqual(['Two', 'One']);
     fireEvent.pointerUp(list, { ...touch, clientX: 10, clientY: 40 });
@@ -356,9 +354,9 @@ describe('pinned notes on Home', () => {
     });
   });
 
-  it('on a touchscreen laptop, holding a pinned row selects it and does not also lift it', async () => {
-    // A fine pointer is present, so the row arms its own hold (`holdToSelect`)
-    // and the list must not arm a second one for the same finger.
+  it('on a touchscreen laptop, holding a pinned row does not lift it: the grip is the handle', async () => {
+    // A fine pointer is present, so the grip is drawn and a held row is just
+    // a row: the list must not arm a hold for the finger.
     setCanHover(true);
     const api = server(THREE);
     mount(api.fetchImpl);
@@ -376,7 +374,6 @@ describe('pinned notes on Home', () => {
       vi.useRealTimers();
     }
 
-    await screen.findByRole('toolbar');
     expect(list).not.toHaveAttribute('data-dragging');
     expect(pinnedTitles()).toEqual(['One', 'Two']);
     fireEvent.pointerMove(list, { ...touch, clientX: 10, clientY: 40 });
@@ -424,7 +421,6 @@ describe('pinned notes on Home', () => {
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Unpin',
       'Delete',
-      'Select',
       'Move down',
     ]);
     await user.keyboard('{Escape}');
@@ -457,7 +453,7 @@ describe('pinned notes on Home', () => {
     expect(screen.queryByRole('menuitem', { name: /^Move/ })).toBeNull();
   });
 
-  it('under a tag chip on a phone, holding a pinned row selects it and lifts nothing', async () => {
+  it('under a tag chip on a phone, holding a pinned row lifts nothing', async () => {
     const api = server(THREE);
     mount(api.fetchImpl, '/?tag=house');
     await screen.findByRole('button', { name: /^Three/ });
@@ -474,7 +470,6 @@ describe('pinned notes on Home', () => {
       vi.useRealTimers();
     }
 
-    await screen.findByRole('toolbar');
     expect(list).not.toHaveAttribute('data-dragging');
     fireEvent.pointerMove(list, { ...touch, clientX: 10, clientY: 40 });
     fireEvent.pointerUp(list, { ...touch, clientX: 10, clientY: 40 });
@@ -551,7 +546,7 @@ describe('pinned notes on Home', () => {
     expect(screen.getByRole('menuitem', { name: 'Move down' })).toBeDisabled();
   });
 
-  it('offline on a phone, holding a pinned row selects it instead of lifting it', async () => {
+  it('offline on a phone, holding a pinned row lifts nothing', async () => {
     const api = server(THREE);
     mount(api.fetchImpl);
     await screen.findByRole('button', { name: /^Three/ });
@@ -569,7 +564,6 @@ describe('pinned notes on Home', () => {
       vi.useRealTimers();
     }
 
-    await screen.findByRole('toolbar');
     expect(list).not.toHaveAttribute('data-dragging');
     fireEvent.pointerMove(list, { ...touch, clientX: 10, clientY: 40 });
     fireEvent.pointerUp(list, { ...touch, clientX: 10, clientY: 40 });

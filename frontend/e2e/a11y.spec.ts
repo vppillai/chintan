@@ -98,9 +98,11 @@ for (const route of ROUTES) {
 
 /**
  * WCAG 2.5.8: every control at least 24 by 24 CSS pixels. The selection
- * checkboxes were 20 and the plain playback slider 16 tall.
+ * checkboxes were 20 and the plain playback slider 16 tall. The recordings'
+ * checkbox is the app's one selection box now: the library's went with note
+ * multi-select (owner, 2026-09-29).
  */
-test('selection checkboxes and the playback slider are at least 24 px', async ({ page, api }) => {
+test('the recording checkbox and the playback slider are at least 24 px', async ({ page, api }) => {
   // The plain slider: a capture with no peaks to draw. Seeded before the first
   // visit, because the library prefetches the first page's bodies into the
   // device cache while idle, and the note screen mounts from the device's copy
@@ -120,23 +122,21 @@ test('selection checkboxes and the playback slider are at least 24 px', async ({
   ];
 
   await page.goto('/');
-  const roof = page.getByRole('button', { name: /roof repair/i });
-  await roof.hover();
-  await page.locator('.note-row-wrap', { has: roof }).getByRole('button', { name: 'More' }).click();
-  await page.getByRole('menuitem', { name: 'Select' }).click();
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
-  const box = page.getByRole('checkbox').first();
-  const checkbox = await box.boundingBox();
-  expect(checkbox?.width ?? 0).toBeGreaterThanOrEqual(24);
-  expect(checkbox?.height ?? 0).toBeGreaterThanOrEqual(24);
-  // And the thumb has a 44 px target around it, without the row growing.
-  const target = await page.locator('.note-row__check').first().boundingBox();
-  expect(target?.width ?? 0).toBeGreaterThanOrEqual(44);
-  expect(target?.height ?? 0).toBeGreaterThanOrEqual(44);
-
+  await expect(page.getByRole('button', { name: /reading list/i })).toBeVisible();
   await page.goto('/notes/reading-list?tab=recordings');
   const slider = await page.getByRole('slider', { name: 'Playback position' }).boundingBox();
   expect(slider?.height ?? 0).toBeGreaterThanOrEqual(24);
+
+  await page.getByRole('button', { name: /more for recording/i }).first().click();
+  await page.getByRole('menuitem', { name: 'Select' }).click();
+  await expect(page.getByRole('toolbar', { name: 'Recording actions' })).toBeVisible();
+  const checkbox = await page.getByRole('checkbox').first().boundingBox();
+  expect(checkbox?.width ?? 0).toBeGreaterThanOrEqual(24);
+  expect(checkbox?.height ?? 0).toBeGreaterThanOrEqual(24);
+  // And the thumb's target around it is at least as large.
+  const target = await page.locator('.recording__select').first().boundingBox();
+  expect(target?.width ?? 0).toBeGreaterThanOrEqual(24);
+  expect(target?.height ?? 0).toBeGreaterThanOrEqual(24);
 });
 
 /**

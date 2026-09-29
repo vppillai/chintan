@@ -415,34 +415,23 @@ export function useRestoreNote() {
 }
 
 /**
- * Undo of a delete, which is an archive: restore the notes, and pin again
- * the ones that were pinned. The server clears the pin on archive and
- * `restoreNote` comes back unpinned — a pin was a place on Home, and the
- * note had left Home — which is right for Restore in the archive and wrong
- * for Undo, whose promise is the note back as it was. Restore returns the
- * row with its new version, which is what the re-pin has to carry.
- * `allSettled`, as the bulk hooks are: one note already gone should not stop
- * the rest coming back.
- *
- * ponytail: several pinned notes are re-pinned as the requests land, so
- * their order among the pins is not kept; a `POST /v1/notes/pins` afterwards
- * would restore it if anyone notices.
+ * Undo of a delete, which is an archive: restore the note, and pin it again
+ * if it was pinned. The server clears the pin on archive and `restoreNote`
+ * comes back unpinned — a pin was a place on Home, and the note had left
+ * Home — which is right for Restore in the archive and wrong for Undo, whose
+ * promise is the note back as it was. Restore returns the row with its new
+ * version, which is what the re-pin has to carry.
  */
 export function useUndoDelete() {
   const api = useApi();
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (notes: Pick<NoteWire, 'id' | 'pinned'>[]) =>
-      Promise.allSettled(
-        notes.map(async ({ id, pinned }) => {
-          const restored = await api.restoreNote(id);
-          if (pinned) await api.updateNote(id, { version: restored.version, pinned: true });
-        }),
-      ),
-    onSuccess: (_results, notes) => {
-      for (const { id } of notes) {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.note(id) });
-      }
+    mutationFn: async ({ id, pinned }: Pick<NoteWire, 'id' | 'pinned'>) => {
+      const restored = await api.restoreNote(id);
+      if (pinned) await api.updateNote(id, { version: restored.version, pinned: true });
+    },
+    onSuccess: (_result, { id }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.note(id) });
       invalidateNoteLists(queryClient);
     },
   });
@@ -461,70 +450,6 @@ export function useDeleteNoteForever() {
       // Removed, not invalidated: there is nothing left on the server to
       // refetch, and a refetch would 404 into an error the user cannot act on.
       queryClient.removeQueries({ queryKey: queryKeys.note(noteId) });
-      invalidateNoteLists(queryClient);
-    },
-  });
-}
-
-/**
- * Bulk archive and bulk restore, for a multi-select list.
- *
- * Neither operation has a batch endpoint — only purge does, because only
- * purge is destructive enough to need one call instead of N (see
- * `purgeNotesBatch`'s doc comment). Archiving or restoring several notes is
- * just several ordinary archive/restore calls run together; `allSettled`
- * rather than `all` so one note that is already gone does not stop the rest
- * from moving.
- */
-export function useBulkArchiveNotes() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (noteIds: string[]) =>
-      Promise.allSettled(noteIds.map((id) => api.archiveNote(id))),
-    onSuccess: () => {
-      invalidateNoteLists(queryClient);
-    },
-  });
-}
-
-export function useBulkRestoreNotes() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (noteIds: string[]) =>
-      Promise.allSettled(noteIds.map((id) => api.restoreNote(id))),
-    onSuccess: () => {
-      invalidateNoteLists(queryClient);
-    },
-  });
-}
-
-/**
- * Bulk purge — "empty the archive" is this, given every archived note's id.
- * Chunked at `MAX_PURGE_BATCH` because the server refuses a single request
- * naming more (`service.MaxPurgeBatch`), not because this client paginates on
- * its own initiative.
- */
-const MAX_PURGE_BATCH = 100;
-
-export function useBulkPurgeNotes() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (noteIds: string[]) => {
-      const results = [];
-      for (let start = 0; start < noteIds.length; start += MAX_PURGE_BATCH) {
-        const chunk = noteIds.slice(start, start + MAX_PURGE_BATCH);
-        const response = await api.purgeNotesBatch(chunk);
-        results.push(...response.results);
-      }
-      return results;
-    },
-    onSuccess: (results) => {
-      for (const result of results) {
-        queryClient.removeQueries({ queryKey: queryKeys.note(result.note_id) });
-      }
       invalidateNoteLists(queryClient);
     },
   });

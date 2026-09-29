@@ -1,7 +1,6 @@
 import type { Page } from '@playwright/test';
 
 import { LONG_PRESS_MS } from '../src/hooks/useLongPress.ts';
-import { HOLD_TO_DELETE_MS } from '../src/screens/library/holdToDelete.ts';
 
 import { expect, noteAction, test } from './fixtures.ts';
 
@@ -80,8 +79,8 @@ test('Delete on a row archives it, and Undo is reached from the keyboard', async
   const row = page.getByRole('button', { name: /roof repair/i });
   await row.hover();
   await page.locator('.note-row-wrap', { has: row }).getByRole('button', { name: 'More' }).click();
-  // The row's ⋮ has Pin, Delete and Select — no separate Archive on Home.
-  await expect(page.getByRole('menuitem')).toHaveText(['Pin', 'Delete', 'Select']);
+  // The row's ⋮ has Pin and Delete — no separate Archive on Home, and no Select.
+  await expect(page.getByRole('menuitem')).toHaveText(['Pin', 'Delete']);
   await page.getByRole('menuitem', { name: 'Delete' }).click();
   await page.getByRole('dialog', { name: 'Delete “Roof repair”?' }).getByRole('button', { name: 'Delete' }).click();
 
@@ -172,67 +171,6 @@ test('delete forever is a plain confirm with focus on Cancel, and cascades', asy
   await expect(page.getByRole('button', { name: /old fence/i })).toHaveCount(0);
 });
 
-/**
- * Bulk select, the same bar in both views: Delete from the library (the
- * archive, with Undo), Restore and Delete forever from the archive.
- *
- * There is no Select button and no hover checkbox (owner, 2026-09-24: "not
- * clean UX"). A press-and-hold on a row starts the selection with a mouse
- * as with a finger (the last two tests here), and so does Select in the
- * row's ⋮ menu, which a mouse reveals by resting on the row. The bar sits
- * above the tab bar rather than at the end of the list (backlog U2, Q6).
- */
-async function startSelecting(page: Page, title: RegExp): Promise<void> {
-  const row = page.getByRole('button', { name: title });
-  await row.hover();
-  // The ⋮ is named "More" and described by the title, so it is found from its row.
-  await page.locator('.note-row-wrap', { has: row }).getByRole('button', { name: 'More' }).click();
-  await page.getByRole('menuitem', { name: 'Select' }).click();
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
-}
-
-test('several notes can be deleted at once from the library, and Undo brings them all back', async ({
-  page,
-  api,
-}) => {
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Select' })).toHaveCount(0);
-
-  await startSelecting(page, /roof repair/i);
-  await expect(page.getByText('1 selected')).toBeVisible();
-  await page.getByRole('button', { name: 'Select all' }).click();
-  await expect(page.getByText('2 selected')).toBeVisible();
-
-  // The bar is directly above the tab bar, not at the end of the list.
-  const bar = await page.locator('.selection-bar').boundingBox();
-  const tabs = await page.locator('.tab-bar').boundingBox();
-  expect(bar!.y + bar!.height).toBeLessThanOrEqual(tabs!.y + 1);
-
-  // One destructive action, behind a count.
-  const toolbar = page.getByRole('toolbar', { name: 'Bulk actions' });
-  await expect(toolbar.getByRole('button')).toHaveText(['Deselect all', 'Delete', 'Cancel']);
-  await toolbar.getByRole('button', { name: 'Delete' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Delete 2 notes?' });
-  await expect(dialog).toContainText('They are kept in the Archive for 30 days, then gone for good.');
-  await dialog.getByRole('button', { name: 'Delete' }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-
-  await expect(page.getByText(/tap Record to start your first note/i)).toBeVisible();
-  expect(api.notes['roof-repair']?.archived).toBe(true);
-  expect(api.notes['reading-list']?.archived).toBe(true);
-  // And the chip now counts them.
-  await expect(page.getByRole('button', { name: 'Archived · 4' })).toBeVisible();
-
-  const toast = page.locator('.toast');
-  await expect(toast).toContainText('2 notes deleted · kept in Archive for 30 days');
-  await toast.getByRole('button', { name: 'Undo' }).click();
-  await expect(page.getByRole('button', { name: /roof repair/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: /reading list/i })).toBeVisible();
-  expect(api.notes['roof-repair']?.archived).toBe(false);
-  expect(api.notes['reading-list']?.archived).toBe(false);
-});
-
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 412, height: 915 } });
 
@@ -256,75 +194,6 @@ test.describe('on a phone', () => {
   });
 });
 
-test('the archive can be emptied: select all, delete forever, confirm', async ({ page, api }) => {
-  await page.goto('/?view=archived');
-  await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
-
-  await startSelecting(page, /old fence/i);
-  await page.getByRole('button', { name: 'Select all' }).click();
-  await page.getByRole('button', { name: 'Delete forever' }).click();
-
-  // A handful of notes: a plain confirm. More than ten would be a held press.
-  const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('textbox')).toHaveCount(0);
-  await dialog.getByRole('button', { name: 'Delete them forever' }).click();
-
-  await expect(page.getByText(/nothing is archived/i)).toBeVisible();
-  expect(api.notes['old-fence']).toBeUndefined();
-  expect(api.notes['stray-thought']).toBeUndefined();
-  // The active notes were never touched.
-  expect(api.notes['roof-repair']).toBeDefined();
-});
-
-test('emptying an archive of more than ten notes takes a held press: a click does nothing, a second held does', async ({
-  page,
-  api,
-}) => {
-  for (let i = 0; i < 11; i += 1) {
-    api.notes[`stale-${String(i)}`] = {
-      id: `stale-${String(i)}`,
-      title: `Stale ${String(i)}`,
-      body: 'Nothing came of it.',
-      snippet: 'Nothing came of it.',
-      tags: [],
-      aliases: [],
-      updated_at: new Date(Date.UTC(2026, 5, 1 + i)).toISOString(),
-      version: 1,
-      archived: true,
-      captures: [],
-    };
-  }
-  await page.goto('/?view=archived');
-  await expect(page.getByRole('button', { name: /old fence/i })).toBeVisible();
-
-  await startSelecting(page, /old fence/i);
-  await page.getByRole('button', { name: 'Select all' }).click();
-  await expect(page.getByText('13 selected')).toBeVisible();
-  await page.getByRole('button', { name: 'Delete forever' }).click();
-
-  const dialog = page.getByRole('dialog');
-  const confirm = dialog.getByRole('button', { name: 'Hold to delete 13 notes' });
-  // A click is a tap, and a tap is not a hold.
-  await confirm.click();
-  await expect(dialog).toBeVisible();
-  expect(api.purged).toEqual([]);
-
-  // A real mouse button, held for the second: `touch-action`, the CSS
-  // variable the fill runs on and the pointer's click afterwards, all in a
-  // browser rather than jsdom.
-  const box = (await confirm.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  await expect(confirm).toHaveAttribute('data-holding', 'true');
-  await page.waitForTimeout(HOLD_TO_DELETE_MS + 100);
-  await page.mouse.up();
-
-  await expect(dialog).toHaveCount(0);
-  await expect(page.getByText(/nothing is archived/i)).toBeVisible();
-  expect(api.purged).toHaveLength(13);
-  expect(api.notes['roof-repair']).toBeDefined();
-});
-
 test('escape closes the delete dialog without deleting anything', async ({ page, api }) => {
   await page.goto('/notes/old-fence');
 
@@ -338,13 +207,17 @@ test('escape closes the delete dialog without deleting anything', async ({ page,
   expect(api.notes['old-fence']).toBeDefined();
 });
 
-test('with a mouse, pressing and holding a row starts the selection; a click still opens it', async ({
+/**
+ * There is no selection mode (owner, 2026-09-29): a row is a plain button on
+ * every pointer, and the actions are on the row — its ⋮, its swipe tray. A
+ * hold on it is not a gesture the app answers, so its release is a click.
+ */
+test('a row is a plain button: a held mouse press opens it, and no checkbox appears', async ({
   page,
 }) => {
   await page.goto('/');
   const row = page.getByRole('button', { name: /reading list/i });
   await expect(row).toBeVisible();
-  // No checkbox waits at the row's edge for the pointer any more.
   await row.hover();
   await expect(page.getByRole('checkbox')).toHaveCount(0);
 
@@ -352,45 +225,10 @@ test('with a mouse, pressing and holding a row starts the selection; a click sti
   await page.mouse.move(box.x + 40, box.y + 20);
   await page.mouse.down();
   await page.waitForTimeout(LONG_PRESS_MS + 100);
+  // Held past the recordings' long-press duration, the row is still a row.
+  await expect(page.getByRole('checkbox')).toHaveCount(0);
+  await expect(page.getByRole('toolbar')).toHaveCount(0);
   await page.mouse.up();
 
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
-  await expect(page.getByText('1 selected')).toBeVisible();
-  await expect(page).toHaveURL(/\/$/);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toHaveCount(0);
-
-  // A plain click is still the way into the note.
-  await page.getByRole('button', { name: /reading list/i }).click();
   await expect(page).toHaveURL(/\/notes\/reading-list$/);
-});
-
-test('on a phone, a long press on a row starts the selection', async ({ page }) => {
-  await page.setViewportSize({ width: 412, height: 915 });
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: /reading list/i })).toBeVisible();
-  // By class and text rather than role: the row is a button until the press
-  // fires and a labelled checkbox afterwards, and the finger is still on it.
-  const row = page.locator('.note-row', { hasText: 'Reading list' });
-
-  // A finger, held: pointer events with a touch pointer type, no click until
-  // it lifts. `page.touchscreen` can only tap, so the gesture is dispatched.
-  await row.dispatchEvent('pointerdown', {
-    pointerType: 'touch',
-    clientX: 40,
-    clientY: 40,
-    isPrimary: true,
-    bubbles: true,
-  });
-  await page.waitForTimeout(LONG_PRESS_MS + 100);
-  await row.dispatchEvent('pointerup', { pointerType: 'touch', bubbles: true });
-  await row.dispatchEvent('click', { bubbles: true });
-
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toBeVisible();
-  await expect(page.getByText('1 selected')).toBeVisible();
-  // The press selected the row; it did not open the note.
-  await expect(page).toHaveURL(/\/$/);
-
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('toolbar', { name: 'Bulk actions' })).toHaveCount(0);
 });

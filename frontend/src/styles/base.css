@@ -22,7 +22,7 @@ body {
    Selection. Controls are not text (backlog N9).
 
    A long press on a row, a chip or a tab is a gesture in this app — it
-   selects the row, it is the way into bulk actions — and on a phone the
+   selects a recording, it lifts a pinned row on a phone — and on a phone the
    browser's answer to the same hold is to select the words under the finger
    and offer Copy. That is what made the app "feel like a website". Every
    control gives up text selection, the iOS callout, and the grey tap flash
@@ -35,7 +35,6 @@ button,
 [role='button'],
 [role='tab'],
 [role='menuitem'],
-label.note-row--selectable,
 .note-row,
 .chip,
 .recording__summary,
