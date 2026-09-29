@@ -16,6 +16,14 @@ import { useSearchParams } from 'react-router';
  * — which is what the capture screen does after "Record into this" — and a
  * reload lands where the user was. Text is the default: the note is the
  * document; the other two are a reading of it and its sources.
+ *
+ * On a phone the panels are also one swipe apart (`useHorizontalSwipe`,
+ * wired in `NoteDetailScreen`'s `NoteViews`): a left or right drag across
+ * the strip or the panel steps to the neighbour through the same change as a
+ * tap, so the URL, the session memory and Find behave identically. The swipe
+ * yields to the screen's edges (system back), to the recording rows' trays,
+ * to the checklist grip and to sliders; the tab buttons here stay the
+ * keyboard and screen-reader path, with the arrow keys, Home and End.
  */
 
 const NOTE_TABS = ['text', 'cleaned', 'recordings'] as const;

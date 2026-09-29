@@ -358,10 +358,43 @@
    must rest on the tab bar, hands it back. */
 .note-tabpanel {
   padding-block-end: var(--space-6);
+  /* The snap back after a swipe that did not step, and the new panel's
+     settle after one that did (`useHorizontalSwipe`); reduced motion
+     collapses it through the token. */
+  transition: transform var(--motion-duration-base) var(--motion-ease-decelerate);
 }
 
 .note-tabpanel > .selection-bar {
   margin-block-end: calc(-1 * var(--space-6));
+}
+
+/*
+ * The strip and the panel, one swipe region (R6-NAV-1). The browser keeps
+ * the vertical scroll and the pinch and never pans sideways; the hook takes
+ * the horizontal drags. No horizontal scroller lives inside the note — the
+ * waveform scrubber that does is the capture screen's — so nothing here
+ * loses a gesture to this. It takes the screen's gutters as its own padding
+ * so the strip, which bleeds into them by its negative margins, still bleeds
+ * into padding rather than past the box: without this the layout sweep read
+ * the region as a container that scrolls sideways by one gutter. And it is
+ * the column the panel used to grow in (`cleaned.css` `.note-tabpanel`), so
+ * the recordings' selection bar still reaches the foot of a short note.
+ */
+.note-views {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  margin-inline: calc(-1 * var(--layout-gutter));
+  padding-inline: var(--layout-gutter);
+  touch-action: pan-y pinch-zoom;
+}
+
+/* The panel follows the finger only while a swipe is committed. At rest
+   there is no transform at all, so a row's menu is not trapped in a
+   stacking context and the layout sweep sees no sideways scroller. */
+.note-views[data-swiping] .note-tabpanel {
+  transform: translateX(var(--tab-swipe-x, 0px));
+  transition: none;
 }
 
 /* --------------------------------------------------------------------------

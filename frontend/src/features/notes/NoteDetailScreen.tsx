@@ -24,6 +24,7 @@ import { useLocalUpload } from '@/features/capture/FilingRow.tsx';
 import type { CaptureModel } from '@/features/capture/machine.ts';
 import { languageName } from '@/features/settings/languages.ts';
 import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
+import { useHorizontalSwipe } from '@/hooks/useHorizontalSwipe.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
 import { useCachedNote } from '@/offline/useNotesCache.ts';
 
@@ -406,6 +407,24 @@ function NoteViews({
   };
 
   /*
+   * A swipe across the strip and the panel steps to the neighbouring tab,
+   * through the same `setTab` as a tap: Find rewinds, the URL and the
+   * session memory follow, focus stays where it was (`useRouteFocus` keys on
+   * the pathname). The tab buttons remain the keyboard and screen-reader
+   * path; nothing is announced for a finger that can see the strip move.
+   */
+  const viewsRef = useRef<HTMLDivElement>(null);
+  const tabIndex = tabs.findIndex((entry) => entry.id === tab);
+  const swipe = useHorizontalSwipe({
+    ref: viewsRef,
+    canGo: (direction) => (direction === 'left' ? tabIndex < tabs.length - 1 : tabIndex > 0),
+    onSwipe: (direction) => {
+      const next = tabs[tabIndex + (direction === 'left' ? 1 : -1)];
+      if (next) setTab(next.id);
+    },
+  });
+
+  /*
    * What the open panel is asked to find. Nothing, unless the bar is open with
    * a query: the Text panel shows its textarea until there is something to
    * mark. `onTotal` is the dispatch, so it is the same function every render
@@ -433,55 +452,64 @@ function NoteViews({
         same Retry — two of them a hundred pixels apart said nothing twice.
       */}
       {tab !== 'recordings' && <FilingBanner note={note} localUpload={localUpload} />}
-      <div className="note-strip">
-        <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
-        {find.open && (
-          <FindBar
-            id={findBarId}
-            query={find.query}
-            active={find.active}
-            total={find.total}
-            inputRef={findInputRef}
-            disabled={!searchable}
-            hint={searchable ? undefined : 'Search works in Text and Cleaned.'}
-            onQueryChange={(query) => {
-              dispatchFind({ type: 'query', query });
-            }}
-            onNext={() => {
-              dispatchFind({ type: 'next' });
-            }}
-            onPrevious={() => {
-              dispatchFind({ type: 'previous' });
-            }}
-            onClose={() => {
-              dispatchFind({ type: 'close' });
-            }}
-          />
-        )}
+      {/* The hook writes `--tab-swipe-x` on this element itself; only
+          `dragging` comes through React, so a move re-renders nothing. */}
+      <div
+        ref={viewsRef}
+        className="note-views"
+        data-swiping={swipe.dragging || undefined}
+        {...swipe.handlers}
+      >
+        <div className="note-strip">
+          <NoteTabList noteId={note.id} tabs={tabs} value={tab} onChange={setTab} />
+          {find.open && (
+            <FindBar
+              id={findBarId}
+              query={find.query}
+              active={find.active}
+              total={find.total}
+              inputRef={findInputRef}
+              disabled={!searchable}
+              hint={searchable ? undefined : 'Search works in Text and Cleaned.'}
+              onQueryChange={(query) => {
+                dispatchFind({ type: 'query', query });
+              }}
+              onNext={() => {
+                dispatchFind({ type: 'next' });
+              }}
+              onPrevious={() => {
+                dispatchFind({ type: 'previous' });
+              }}
+              onClose={() => {
+                dispatchFind({ type: 'close' });
+              }}
+            />
+          )}
+        </div>
+        <NotePanel noteId={note.id} tab={tab}>
+          {tab === 'text' ? (
+            <TextPanel
+              noteId={note.id}
+              editor={editor}
+              checklist={checklist}
+              lang={lang}
+              find={target}
+              onDismissFind={() => {
+                dispatchFind({ type: 'close' });
+              }}
+            />
+          ) : tab === 'cleaned' ? (
+            <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
+          ) : (
+            <Recordings
+              note={note}
+              lang={lang}
+              localUpload={localUpload}
+              onSelectingChange={onSelectingRecordings}
+            />
+          )}
+        </NotePanel>
       </div>
-      <NotePanel noteId={note.id} tab={tab}>
-        {tab === 'text' ? (
-          <TextPanel
-            noteId={note.id}
-            editor={editor}
-            checklist={checklist}
-            lang={lang}
-            find={target}
-            onDismissFind={() => {
-              dispatchFind({ type: 'close' });
-            }}
-          />
-        ) : tab === 'cleaned' ? (
-          <CleanedPanel note={note} editor={editor} lang={lang} find={target} />
-        ) : (
-          <Recordings
-            note={note}
-            lang={lang}
-            localUpload={localUpload}
-            onSelectingChange={onSelectingRecordings}
-          />
-        )}
-      </NotePanel>
     </>
   );
 }

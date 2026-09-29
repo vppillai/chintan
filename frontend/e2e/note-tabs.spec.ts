@@ -1,6 +1,6 @@
 import { devices, type CDPSession, type Page } from '@playwright/test';
 
-import { expect, noteAction, test, type ApiState } from './fixtures.ts';
+import { expect, noteAction, seedChecklist, test, type ApiState } from './fixtures.ts';
 
 /**
  * The note as panels under one strip: Text · Cleaned · Recordings (N).
@@ -116,8 +116,10 @@ test.describe('on a phone', () => {
 
   /**
    * A finger from (x, y), `dx` across and `dy` down, in a dozen moves through
-   * the browser's own touch pipeline (as `swipe.spec.ts`); `beforeEnd` reads
-   * the screen while the finger is still down.
+   * the browser's own touch pipeline (as `swipe.spec.ts`). `rest` is a finger
+   * that stops before it lifts — a pause before the last move, so the swipe
+   * reads no flick from it; `beforeEnd` reads the screen while the finger is
+   * still down.
    */
   async function drag(
     cdp: CDPSession,
@@ -125,11 +127,12 @@ test.describe('on a phone', () => {
     y: number,
     dx: number,
     dy: number,
-    beforeEnd?: () => Promise<void>,
+    { rest = false, beforeEnd }: { rest?: boolean; beforeEnd?: () => Promise<void> } = {},
   ): Promise<void> {
     const steps = 12;
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
     for (let i = 1; i <= steps; i += 1) {
+      if (rest && i === steps) await new Promise((resolve) => setTimeout(resolve, 150));
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchMove',
         touchPoints: [{ x: x + (dx * i) / steps, y: y + (dy * i) / steps }],
@@ -160,12 +163,108 @@ test.describe('on a phone', () => {
     const box = (await panel.boundingBox())!;
     const cdp = await page.context().newCDPSession(page);
     let midPhase: string | null = null;
-    await drag(cdp, box.x + box.width / 2, box.y + box.height * 0.6, 0, 150, async () => {
-      midPhase = await page.locator('.pull-refresh').getAttribute('data-phase');
+    await drag(cdp, box.x + box.width / 2, box.y + box.height * 0.6, 0, 150, {
+      beforeEnd: async () => {
+        midPhase = await page.locator('.pull-refresh').getAttribute('data-phase');
+      },
     });
     expect(midPhase).toBe('idle');
     await expect.poll(() => panel.evaluate((sheet) => sheet.scrollTop)).toBeLessThan(before);
     expect(await page.locator('.app__main').evaluate((main) => main.scrollTop)).toBe(0);
+  });
+
+  test.describe('a swipe between the segments', () => {
+    const selected = (page: Page) =>
+      page.getByRole('tablist', { name: 'Note views' }).locator('[aria-selected="true"]').textContent();
+
+    test('left opens Cleaned and names it in the URL; right comes back; right on Text and a short drag stay', async ({
+      page,
+      api,
+    }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      const cdp = await page.context().newCDPSession(page);
+      const panel = page.locator('.note-tabpanel');
+      let box = (await panel.boundingBox())!;
+      await drag(cdp, 300, box.y + 200, -180, 4);
+      await expect.poll(() => selected(page)).toBe('Cleaned');
+      await expect(page).toHaveURL(/tab=cleaned/);
+      // Lifting over the new panel focused nothing.
+      expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('TEXTAREA');
+      box = (await panel.boundingBox())!;
+      await drag(cdp, 100, box.y + 100, 180, 4);
+      await expect.poll(() => selected(page)).toBe('Text');
+      // Nothing to the right of Text: the panel rubber-bands and stays.
+      await drag(cdp, 100, box.y + 100, 180, 4);
+      await page.waitForTimeout(300);
+      expect(await selected(page)).toBe('Text');
+      // Short of 30 % of the width, and the finger at rest before it lifts: a snap back.
+      await drag(cdp, 300, box.y + 200, -60, 0, { rest: true });
+      await page.waitForTimeout(300);
+      expect(await selected(page)).toBe('Text');
+    });
+
+    test('a vertical drag scrolls the note and switches nothing', async ({ page, api }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      const cdp = await page.context().newCDPSession(page);
+      const main = page.locator('.app__main');
+      await drag(cdp, 200, 700, 8, -300);
+      await expect.poll(() => main.evaluate((region) => region.scrollTop)).toBeGreaterThan(0);
+      expect(await selected(page)).toBe('Text');
+    });
+
+    test('on Recordings a left drag on a head is its tray; a right drag on the open head closes it; a right drag on the closed head goes to Cleaned', async ({
+      page,
+      api,
+    }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair?tab=recordings');
+      const cdp = await page.context().newCDPSession(page);
+      const head = page.locator('.recording__swipe').first();
+      await expect(head).toBeVisible();
+      const box = (await head.boundingBox())!;
+      const y = box.y + box.height / 2;
+      await drag(cdp, box.x + box.width * 0.6, y, -200, 0);
+      await expect(head).toHaveAttribute('data-open');
+      expect(await selected(page)).toContain('Recordings');
+      // An open row owns both directions: a right drag on it is its own close
+      // gesture. The swipe took it (review 2026-09-29): its capture fired the
+      // row's `lostpointercapture`, the tray stayed open and the tab flipped.
+      // x = 200 is on the row however far its tray has shifted it.
+      await drag(cdp, 200, y, 200, 0);
+      await expect(head).not.toHaveAttribute('data-open');
+      await page.waitForTimeout(300);
+      expect(await selected(page)).toContain('Recordings');
+      // Closed again, and trays open leftwards only: a right drag on the head
+      // is the swipe's.
+      await drag(cdp, 200, y, 200, 0);
+      await expect.poll(() => selected(page)).toBe('Cleaned');
+    });
+
+    test('a drag from the screen edge is left to the system', async ({ page, api }) => {
+      longBody(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/roof-repair');
+      const cdp = await page.context().newCDPSession(page);
+      await drag(cdp, 10, 500, 220, 0);
+      await page.waitForTimeout(300);
+      expect(await selected(page)).toBe('Text');
+    });
+
+    test('on Items a left drag on a grip is the row’s, never a tab switch', async ({ page, api }) => {
+      seedChecklist(api);
+      await page.setViewportSize({ width: 412, height: 915 });
+      await page.goto('/notes/shopping');
+      const cdp = await page.context().newCDPSession(page);
+      const grip = (await page.getByRole('button', { name: 'Move Milk' }).boundingBox())!;
+      await drag(cdp, grip.x + grip.width / 2, grip.y + grip.height / 2, -180, 0);
+      await page.waitForTimeout(300);
+      expect(await selected(page)).toBe('Items');
+    });
   });
 
   test.describe('with the keyboard up', () => {
