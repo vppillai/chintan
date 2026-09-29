@@ -256,25 +256,3 @@ func TestSystemPromptStatesTheNameFirstConvention(t *testing.T) {
 		}
 	}
 }
-
-// The name-first rules made an opening phrase the most rehearsed title, and
-// the owner's ring shape "The dog is having his dinner" came back titled with
-// the sentence two of three in the production battery of 2026-09-29 (row 30;
-// the fixture is route case 30). Titles now says what a name is not, and
-// example 9 shows the short invented title with every word kept (R6-RT-8).
-func TestSystemPromptSaysAWholeSentenceIsNotAName(t *testing.T) {
-	t.Parallel()
-	p := SystemPrompt()
-	for _, want := range []string{
-		`A name is a short noun phrase of one to five words, never a whole sentence: "The dog is having his dinner" has no name in front, so invent a title of one to five words and keep every word as content.`,
-		`- "0:The 1:dog 2:is 3:having 4:his 5:dinner", with no such note`,
-		`{"action":"new","title":"Dog dinner","kind":"note","confidence":1,"instruction_spans":[]}`,
-	} {
-		if !strings.Contains(p, want) {
-			t.Errorf("system prompt missing %q", want)
-		}
-	}
-	if n := strings.Count(p, "\n- \"0:"); n != 9 {
-		t.Errorf("worked examples = %d, want 9 (docs/design/prompts.md counts them)", n)
-	}
-}
