@@ -253,7 +253,7 @@ export function LibraryList({
  * has a title and an excerpt but no timestamp, so it renders undated rather
  * than being dropped.
  */
-export function noteForHit(hit: MergedHit, notes: readonly NoteWire[]): NoteWire {
+function noteForHit(hit: MergedHit, notes: readonly NoteWire[]): NoteWire {
   return (
     notes.find((note) => note.id === hit.noteId) ?? {
       id: hit.noteId,
