@@ -338,16 +338,17 @@ A drag on the grip sideways changes the row's level instead (owner,
 across than along and the drag is sideways, else it is the reorder above —
 and the axis is locked from then on, so a vertical drag that drifts never
 changes a level and a sideways one never re-sorts. Sideways, the row keeps
-its slot and every 24 px (`--space-6`, the indent step) to the right is one
-level in, to the left one level out, clamped to the one level there is; the
-lifted row previews what release would do — set in or out by the step, with
-a 3 px bar in the accent at its start (`data-nest-preview`) — and shows
-nothing when the move is one `nest` would refuse: the first open row (it
-has nothing to go under), a row already a sub-item, a done neighbour. On
-release the write is the same `nestUnder` / `unnest` Tab and the menu make,
-saved at once and said ("Made a sub-item" / "Moved up a level"); a pointer
-that came back under a step writes nothing. A drag past the slop on either
-axis is no longer a tap, so a wobble on the handle does not open its menu.
+its slot and every indent step (`--space-6`, 24 px at a 16 px root) to the
+right is one level in, to the left one level out, clamped to the one level
+there is; the lifted row previews what release would do — set in or out by
+the step, with a 3 px bar in the accent at its start (`data-nest-preview`)
+— and shows nothing when the move is one `nest` would refuse: the first
+open row (it has nothing to go under), a row already a sub-item, a done
+neighbour. On release the write is the same `nestUnder` / `unnest` Tab and
+the menu make, saved at once and said ("Made a sub-item" / "Moved up a
+level"); a pointer that came back under a step writes nothing. A drag past
+the slop on either axis is no longer a tap, so a wobble on the handle does
+not open its menu.
 The right and left arrow keys on a focused grip do the same as the drag,
 beside the up and down that move it, and the grip's description says so;
 Tab and Shift+Tab in the field are unchanged. The pinned group passes no

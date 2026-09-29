@@ -67,7 +67,7 @@ export const SWIPE_COMMIT_FRACTION = 0.3;
 /** A flick this fast steps however short. */
 export const SWIPE_FLICK_PX_PER_MS = 0.4;
 /** A velocity older than this at the lift is not the lift's. */
-export const SWIPE_FLICK_MAX_AGE_MS = 100;
+const SWIPE_FLICK_MAX_AGE_MS = 100;
 /** The panel follows no further than this. */
 const FOLLOW_MAX_FRACTION = 0.4;
 /** How much of the finger's travel the panel follows where there is no neighbour. */
