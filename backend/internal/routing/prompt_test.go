@@ -235,3 +235,24 @@ func TestUserPromptRejectsBlankTranscript(t *testing.T) {
 		t.Error("a transcript with no words should be refused")
 	}
 }
+
+// The owner's ring speaks name-first and the prompt has to say what that
+// means (round 6, R6-RT-2): a listed name opening a recording is an append
+// with a span over the name only, an unlisted one is a new note titled with
+// the name only, and a span ends after the name — the shape the owner's
+// 2026-09-26 capture got wrong by one word. Two examples show the two cases.
+func TestSystemPromptStatesTheNameFirstConvention(t *testing.T) {
+	t.Parallel()
+	p := SystemPrompt()
+	for _, want := range []string{
+		`A recording that opens with a listed note's name and runs straight on into content ("App feedback the split up is slow") is filed into that note: "append", with a span over the name only.`,
+		`A recording that opens with an unlisted name followed by content ("Things to talk with Milos appreciation for the team") is a new note titled with the name only; the words after it are content, outside the title.`,
+		`A filing or naming span ends after the note's name: in "0:Create 1:a 2:new 3:note 4:from 5:app 6:feedback 7:and 8:add 9:the 10:fact" the span is {"start_word":0,"end_word":7}, never 6.`,
+		`{"action":"append","note":<the number listed for App feedback>,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":2}]}`,
+		`{"action":"new","title":"Things to talk with Milos","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":5}]}`,
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("system prompt missing %q", want)
+		}
+	}
+}
