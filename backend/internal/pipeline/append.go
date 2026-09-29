@@ -272,13 +272,15 @@ func (p *Pipeline) finishAppend(ctx context.Context, tenantID string, capture *m
 // For a paragraph under captureID's marker that is text standing there; a
 // checklist item the person ticked meanwhile still counts, the words are
 // there and the tick is theirs. For a checklist recording's first append
-// (items set, previousItems not) the text under the marker is what the merge
-// left after the lines the list already had took their share, so the merge
-// is run again over the body without this paragraph — it adds nothing a
-// second time — to know what that was. For a recording whose items live
-// under nobody's marker (previousItems set, see replaceChecklistItems) it is
-// that replacing them would change nothing: the new lines are in, or the
-// person took the old ones out.
+// (items set, previousItems not) whose paragraph is its own (ownItems) it
+// is that replacing its items by their words, the items standing in for the
+// artefact copy it does not have yet, would change nothing; for one whose
+// paragraph is not — a recording with no artefact, transcribed again — the
+// merge is run over the body without this paragraph to know what it would
+// leave under the marker, and that is compared to what stands there. For a
+// recording whose items live under nobody's marker (previousItems set, see
+// replaceChecklistItems) it is that replacing them would change nothing:
+// the new lines are in, or the person took the old ones out.
 func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item) (bool, error) {
 	existing, err := p.cfg.Objects.Get(ctx, noteKey)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -293,8 +295,10 @@ func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text
 		return false, nil
 	}
 	if items != nil && previousItems == nil {
-		_, left, _ := mergeChecklistItems(rest, items)
-		text = checklistItems(cleanup.RenderItems(left))
+		if previousItems = ownItems(old, items); previousItems == nil {
+			_, left, _ := mergeChecklistItems(rest, items)
+			text = checklistItems(cleanup.RenderItems(left))
+		}
 	}
 	if old == keepTick(old, text) {
 		return true, nil
@@ -729,6 +733,38 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 	return lines, true
 }
 
+// ownItems is the lines of a recording's items as its clean artefact holds
+// them (cleanup.RenderItems), for a first append that has no earlier copy
+// of that artefact to stand in as the previous items (replaceChecklistItems)
+// — when the paragraph under the marker is that append's own: bare, every
+// item having joined a line the list had, or holding a line with one of
+// the items' words. Nil when it is not: the paragraph of a recording that
+// never had an artefact (the list was verbatim when it was appended;
+// extractItems keeps none for a verbatim list), transcribed again with
+// words no line under its marker has, which is cut and replaced whole as
+// before. The ceiling is a paragraph the person emptied of the recording's
+// lines and typed a line into that shares a new item's words, read as the
+// recording's own; a paragraph typed into with other words is cut with
+// them, as before this rule (review 2026-09-29, DB6-1).
+func ownItems(paragraph string, items []cleanup.Item) []string {
+	lines := strings.Split(cleanup.RenderItems(items), "\n")
+	if paragraph == "" {
+		return lines
+	}
+	words := map[string]bool{}
+	for _, line := range lines {
+		if t := llm.FoldWords(line); t != "" {
+			words[t] = true
+		}
+	}
+	for _, line := range strings.Split(paragraph, "\n") {
+		if t, ok := checklistLineText(line); ok && words[t] {
+			return lines
+		}
+	}
+	return nil
+}
+
 // parentOf is the index of the top-level item line above line i, or -1.
 func parentOf(lines []string, i int) int {
 	for j := i - 1; j >= 0; j-- {
@@ -760,12 +796,15 @@ func parentOf(lines []string, i int) int {
 //
 // A checklist recording (items set) is merged first: what already has a line
 // in the list joins it (mergeChecklistItems) and only the rest goes under the
-// marker. On its first append that is over the body as it stands; on a
-// takeover of its own earlier attempt, over the body without its paragraph,
-// which finds the merged lines already there and adds nothing twice. Known
-// and accepted: that re-run reopens again a merged line the person ticked
-// between the interrupted write and the takeover, which needs an attempt
-// dead past the twenty-minute lease and a tick inside that window.
+// marker. A takeover of its own earlier attempt finds the items in the note
+// and goes by their words (replaceChecklistItems, the items standing in for
+// the previous ones it has no artefact copy of yet), because the paragraph
+// runs to the next marker and can hold a child a later recording merged
+// under one of them, which cutting it whole dropped (review 2026-09-29,
+// DB6-1); a tick the person made meanwhile follows its words. Only a
+// recording with no artefact at all, transcribed again — the list was
+// verbatim when it was appended — has its paragraph cut and replaced whole
+// (ownItems).
 func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item) error {
 	// counts are the last run's: the write's closure runs again on an ETag
 	// conflict, and only the run whose body landed is counted, below.
@@ -787,8 +826,13 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 			// items are found by their words when the marker no longer
 			// holds them.
 			obs.Count(ctx, "AppendReplacedParagraph", map[string]string{"Stage": string(service.StatusAppending)})
-			if previousItems != nil {
-				next := replaceChecklistItems(existing, captureID, previousItems, text)
+			previous := previousItems
+			if previous == nil && items != nil {
+				_, old, _ := service.CutCaptureParagraph(existing, captureID)
+				previous = ownItems(old, items)
+			}
+			if previous != nil {
+				next := replaceChecklistItems(existing, captureID, previous, text)
 				return next, next != existing
 			}
 			if items != nil {
