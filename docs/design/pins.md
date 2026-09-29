@@ -3,8 +3,9 @@
 A note can be pinned to the top of Home and the pinned notes dragged into an
 order. This note is the backend half. Code: `model.NoteIndex.PinnedAt` /
 `PinRank` (`backend/internal/model/types.go`), `repository.NoteOrderKey`
-(`backend/internal/repository/dynamo.go`), `NotesService.UpdateNote` and
-`ReorderPins` (`backend/internal/service/notes.go`).
+(`backend/internal/repository/dynamo_notes.go`), `NotesService.UpdateNote`
+(`backend/internal/service/notes.go`) and `ReorderPins`
+(`backend/internal/service/notes_pins.go`).
 
 ## Data model
 
