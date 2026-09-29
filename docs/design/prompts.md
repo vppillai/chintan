@@ -62,22 +62,31 @@ target note as the only candidate, for a capture recorded into a note whose
 transcript contains a filing or naming cue (`routing.MentionsInstruction`,
 `routing/spans.go`; no cue, no call).
 
-**Sent.** The system prompt (987 tokens measured before the kind rule of
-2026-09-27, which adds roughly 150 at four characters a token; 1,433 until
-2026-09-27): the two kinds of app instruction (filing, naming), the reply
+**Sent.** The system prompt (about 1,250 tokens at four characters a token
+after the name-first rules of 2026-09-29; 987 measured before the kind rule
+of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
+(filing, naming), the reply
 shape, then four sections — *Destination* (append only when a listed note
 was clearly asked for by its title or one of its other names; a spoken title
 that is a listed note's title or other name is an append to it, which is the
 rule `pipeline.preferExistingTitle` enforces after the reply, and which the
 old prompt stated the other way round, so 13 % of routes were corrected after
-the fact; confidence), *Spans* (positions read off the numbering, the shorter
-span in doubt, the name/content boundary), *Titles* (as spoken, however
-short; invented only when none was spoken; the speaker's script) and *Kind*,
+the fact; a recording that *opens with* a listed name and runs on into
+content — "App feedback the split up is slow", the owner's ring convention
+— is an append with a span over the name only, R6-RT-2; confidence), *Spans*
+(positions read off the numbering, the shorter
+span in doubt, the name/content boundary, and that a filing or naming span
+ends after the note's name — "Create a new note from app feedback and add
+the fact" is `{0,7}`, never 6), *Titles* (as spoken, however
+short; invented only when none was spoken; a recording that opens with an
+unlisted name is a new note titled with the name only; the speaker's script)
+and *Kind*,
 for `new` only (`checklist` when the speaker names a list — shopping list,
 groceries, to-do, packing list, "add X to the Y list" — or dictates things
-to tick off one by one; otherwise, and in doubt, `note`) — and six worked
-examples, the sixth "add milk to my groceries list" with no Groceries note
-listed. The user prompt: the language line when the
+to tick off one by one; otherwise, and in doubt, `note`) — and eight worked
+examples: the sixth "add milk to my groceries list" with no Groceries note
+listed, the seventh and eighth the two name-first shapes (a listed "App
+feedback", an unlisted "Things to talk with Milos"). The user prompt: the language line when the
 capture's language is known (`cleanupLanguage`); `Existing notes:` — one
 numbered line per candidate, `3 | Roof repair | also: gutters, roof, house`,
 the aliases and then the tags after `also:` (either spoken is a request for
@@ -330,6 +339,14 @@ the shopping list": an append when the list is listed, and as "add milk to
 my groceries list" a new note whose `kind` must be `checklist`, with the
 items case yielding "Milk" either way) and an injection attempt per prompt,
 so a rewrite is measured on what the cue list and the unit tests cannot see.
+Since 2026-09-29 the route section also holds ten of the owner's own ring
+phrasings, anonymised to the phrase (R6-RT-4): name-first into a listed note
+and into an unlisted one, a filing phrase without "this", the span-end shape,
+an STT garble of the filing phrase, a topic append without a cue, a short
+no-target sentence and two list shapes — the cases the 2026-09-27 rewrite had
+none of — plus the production battery's failure shapes as expectations
+(`min_confidence` on the tag case, `content_excludes` for the title words and
+the tag word that leaked into a body).
 
 The 2026-09-27 rewrite (round-5 prompts PR B) shipped without that baseline:
 the owner approved measuring it on production instead, since the agent that
