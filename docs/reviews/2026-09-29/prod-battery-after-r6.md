@@ -381,3 +381,89 @@ transcribes, routes and appends as before.
 Record in `docs/backlog.md` under the PR-2 / R6-RT rows: 2026-09-29,
 after `cf46696` + `e296fb5`, routing 22/32 at three of three (4 at two of
 three), items 16/16.
+
+## Re-check after #170 (wave 3)
+
+The post-deploy gate for #170 (`c1f3360`, merged 12:58Z, `Deploy Backend`
+green 13:05:17Z; routing wave 3: `ExtendSpans` grows a span to the end of a
+title it stopped inside and gets the destination title on an append, the
+DB6-4 fallback bounded to titles longer than five words, the `spoken_name`
+rescue for the model's own suggested note, the decision line after the
+re-check, and the prompt sentence "a name is one to five words, never a
+whole sentence" with example 9, `75c7b1d`). Same tenant, same set-up (the
+eleven notes and a fresh key "R6B battery"), same machinery: rows 4, 13, 9,
+14, 8, 30, 25, 32, 22, 12, 27, 7 three times each and rows 23, 24, 26, 29
+once, 40 captures 13:07:03Z–13:12:09Z, every capture undone before the
+next (`unchanged` on every append, in-run purges 204 each). No other
+`Deploy Backend` run fell in the window. Nothing pre-existing was left
+changed; the tenant's duplicates are still there (two "Roof repair", one
+"Dentist", one "Portugal trip", the plain "Grocery list"). Statuses:
+appended 32, no_content 6, needs_target 2, failed 0; settle 2.4–6.7 s.
+Judged as before, with the gate's two readings added: row 30's title must
+be five words or fewer, row 13's body must not open with the title's
+words, and for row 8 a park counts (the gate forbids only a `spoken_name`
+file). Raw: `orb:~/r3/live/r6b-recheck.jsonl`.
+
+| # | Utterance | Expectation | Run 1 | Run 2 | Run 3 | Now | Earlier pass |
+|---|---|---|---|---|---|---|---|
+| 4 | Create a note with the title test123 | new 'test123', no_content | pass: no_content, → 'test123' (new) note; +'' (4.6 s) | pass: no_content, → 'test123' (new) note; +'' (2.4 s) | pass: no_content, → 'test123' (new) note; +'' (4.5 s) | **3/3** | 3/3 |
+| 13 | title this staging smoke and then the actual content of the note is that the deploy pipeline is green | new 'staging smoke' + '… deploy pipeline is green' | pass: → 'Staging smoke' (new) note; +'and then the actual content of the note is that the deploy pipeline is green.' (2.4 s) | pass: → 'staging smoke' (new) note; +'and then the actual content of the note is that the deploy pipeline is green' (2.5 s) | pass: → 'staging smoke' (new) note; +'and then the actual content of the note is that the deploy pipeline is green.' (2.4 s) | **3/3** | 0/3 (body opened 'smoke…' ×3) |
+| 9 | Create a new note and add it to Pebble Ring Test | Pebble Ring Test, nothing appended | pass: no_content, → 'Pebble Ring Test' note; +'' (4.5 s) | pass: no_content, → 'Pebble Ring Test' note; +'' (4.6 s) | pass: no_content, → 'Pebble Ring Test' note; +'' (2.4 s) | **3/3** | 1/3 |
+| 14 | okay so this goes in the roof repair note we need to check the flashing around the chimney | Roof repair + '… flashing around the chimney' | pass: → 'Roof repair' note; +'we need to check the flashing around the chimney' (2.4 s) | pass: → 'Roof repair' note; +'We need to check the flashing around the chimney.' (4.6 s) | pass: → 'Roof repair' note; +'Okay, so we need to check the flashing around the chimney.' (6.6 s) | **3/3** | 1/3 |
+| 8 | I was thinking about the roof today and how the Portugal trip went over budget | new note, whole sentence | pass: needs_target, suggested Portugal trip (pre-existing) (2.5 s) | pass: needs_target, suggested Portugal trip (2.5 s) | **FAIL**: → 'Portugal trip' note; +'I was thinking about the roof today and how the Portugal trip went over budget.' (4.5 s) | **2/3** | 2/3 (park allowed) |
+| 30 | The dog is having his dinner | new note, title not the whole sentence, whole sentence | pass: → 'Dog dinner' (new) note; +'The dog is having his dinner.' (2.4 s) | pass: → 'Dog dinner' (new) note; +'The dog is having his dinner.' (2.4 s) | pass: → 'Dog dinner' (new) note; +'The dog is having his dinner.' (2.4 s) | **3/3** | 1/3 |
+| 25 | Things to talk with Milos appreciation for the team | new 'Things to talk with Milos' + 'appreciation for the team' | pass: → 'Things to talk with Milos' (new) note; +'Appreciation for the team.' (4.5 s) | pass: → 'Things to talk with Milos' (new) note; +'Things to talk with Milos: appreciation for the team' (2.4 s) | pass: → 'Things to talk with Milos' (new) note; +'appreciation for the team' (2.5 s) | **3/3** | 3/3 |
+| 32 | Groceries list milk eggs and protein powder | new checklist, title without 'milk', items Milk, Eggs, Protein powder | **FAIL**: → 'Grocery list' (pre-existing) note; +'milk eggs and protein powder' (4.5 s) | pass: → 'Groceries list' (new) checklist; +'- [ ] Milk / - [ ] Eggs / - [ ] Protein powder' (4.5 s) | **FAIL**: → 'Grocery list' (pre-existing) note; +'milk eggs and protein powder' (4.5 s) | **1/3** | 3/3 |
+| 22 | packing list for the weekend passport charger sunscreen and the travel adapter | new checklist, items Passport, Charger, Sunscreen, Travel adapter | pass: → 'Packing list for the weekend' (new) checklist; +'- [ ] Passport / - [ ] Charger / - [ ] Sunscreen / - [ ] Travel adapter' (6.7 s) | pass: → 'Packing list' (new) checklist; +'- [ ] Passport / - [ ] Charger / - [ ] Sunscreen / - [ ] Travel adapter' (6.6 s) | pass: → 'Weekend packing list' (new) checklist; +'- [ ] Passport / - [ ] Charger / - [ ] Sunscreen / - [ ] Travel adapter' (2.4 s) | **3/3** | 3/3 |
+| 12 | പുതിയ കുറിപ്പ് പേര് ദന്തഡോക്ടർ നാളെ വിളിക്കണം | new note, Malayalam title and text | pass: → 'ദന്തഡോക്ടർ' (new) note; +'നാളെ വിളിക്കണം.' (4.5 s) | pass: → 'ദന്തഡോക്ടർ' (new) note; +'ദന്തഡോക്ടർ നാളെ വിളിക്കണം' (4.5 s) | pass: → 'ദന്തഡോക്ടർ നാളെ വിളിക്കണം' (new) note; +'ദന്തഡോക്ടർ നാളെ വിളിക്കണം.' (6.6 s) | **3/3** | 3/3 |
+| 27 | Create a new note from customer visits and add the fact that the about screen is long | new 'Customer visits' + 'the about screen is long' (not 'visits and add…') | pass: → 'Customer visits' (new) note; +'and add the fact that the about screen is long' (2.4 s) | pass: → 'Customer visits' (new) note; +'and add the fact that the about screen is long' (4.5 s) | pass: → 'Customer visits' (new) note; +'and add the fact that the about screen is long' (4.5 s) | **3/3** | 3/3 |
+| 7 | remind me to book the dentist on tuesday | new note, title not 'remind me…', whole sentence | pass: → 'Dentist appointment' (new) note; +'remind me to book the dentist on Tuesday' (4.5 s) | pass: → 'Dentist appointment' (new) note; +'remind me to book the dentist on Tuesday' (2.5 s) | pass: → 'Dentist appointment' (new) note; +'Remind me to book the dentist on Tuesday.' (2.4 s) | **3/3** | 2/3 |
+| 23 | App feedback checklist move seems to be good where I can drag items up and down | App feedback + '… drag items up and down' | pass: → 'App feedback' note; +'move seems to be good where I can drag items up and down.' (4.5 s) | — | — | **1/1** | 3/3 |
+| 24 | Business ideas by Priyanka seated pool for dogs | Business ideas + '… seated pool for dogs' | pass: → 'Business ideas' note; +'by Priyanka seated pool for dogs' (4.5 s) | — | — | **1/1** | 3/3 |
+| 26 | Add to the app feedback note and the push to talk icon does not look good | App feedback + 'the push to talk icon does not look good' | pass: → 'App feedback' note; +'and the push-to-talk icon does not look good.' (4.6 s) | — | — | **1/1** | 3/3 |
+| 29 | these are things that we need to include in our daily report the memory controller is alive at eight gigabits | Daily report + whole sentence | pass: → 'Daily report' note; +'The memory controller is alive at eight gigabits.' (2.4 s) | — | — | **1/1** | 3/3 |
+
+### The gates
+
+| Gate | Verdict |
+|---|---|
+| Row 4 → body empty (naming-only stays empty under the bounded DB6-4 fallback) | **met** — `no_content`, new "test123", body `''`, three of three |
+| Row 13's body no longer opens with "smoke" | **met** — "and then the actual content of the note is that the deploy pipeline is green" three of three (title "Staging smoke" once, "staging smoke" twice); the leading "and then" is the fixture's own wording |
+| Row 9 → 3/3, `no_content` into Pebble Ring Test, never the text "Pebble Ring Test" appended | **met** — `no_content` into the set-up Pebble Ring Test three of three, body unchanged (was 1/3, once a self-append) |
+| Row 14 → 3/3 into the set-up Roof repair | **met** — three of three into the set-up note (was 1/3, two parks); run 3 kept "Okay, so" in front of the content; no park, so no twin to report |
+| Row 8 never files by `spoken_name` (a park or a new note is fine) | **met as far as the API shows** — runs 1 and 2 parked (run 1 suggested the tenant's pre-existing "Portugal trip", a twin; run 2 the set-up one); run 3 appended the whole sentence into the set-up Portugal trip. `matched_by` is not readable from here; the sentence has no "note"/"list" after the name and no filing cue, so `spokenAsName`/`NamedAfterCue` cannot fire on it and the append is the model's own above-bar choice (the topic-mention shape of the first pass). Capture `c_18d9ccc2e9e003d2_e844a18dc482165f` for the decision-line query. 2/3 on the fixture, as before |
+| Row 30 → 3/3, title of five words or fewer, whole sentence as body | **met** — new "Dog dinner", body "The dog is having his dinner." three of three (was 1/3) |
+| Rows 25, 32, 22, 12, 27, 7 unchanged at 3/3 (prompt rows) | **not met on row 32** — 1/3: runs 1 and 3 appended "milk eggs and protein powder" as prose into the tenant's pre-existing plain note "Grocery list"; run 2 the new checklist "Groceries list" with Milk, Eggs, Protein powder. Rows 25 (title "Things to talk with Milos", body "appreciation for the team"), 22 (four items), 12 (Malayalam title and body), 27 ("Customer visits", "and add the fact that the about screen is long") unchanged at 3/3; row 7 3/3 ("Dentist appointment", whole sentence), up from 2/3 |
+| Rows 23, 24, 26, 29 still pass | **met** — one of one each, same shapes ("checklist move seems to be good…", "by Priyanka seated pool for dogs", "and the push to talk icon does not look good", "the memory controller is alive at eight gigabits") |
+
+### The one regression, and what it is
+
+**Row 32** ("Groceries list milk eggs and protein powder"): three of three
+new checklists "Groceries list" in the first pass on this same tenant with
+the same "Grocery list" present; now two of three into "Grocery list" as
+prose, the sentence minus its first two words. What it is not: neither
+#170 rescue can produce it — the exact-title rescue compares in
+`NormalizeSpeech` form, which lowercases and drops punctuation and does
+not fold "groceries" to "grocery", and `spoken_name` needs the suggested
+note's name as whole words. So the model itself named the listed "Grocery
+list" (an above-bar `append`, or a `new` titled "Grocery list" that the
+exact-title rescue then took), and the one prompt change between the two
+passes is `75c7b1d` — the "a name is a short noun phrase of one to five
+words" sentence and example 9, which give a near-name at word 0 more
+weight. Two caveats before reverting it alone: the fixture's precondition
+("no Groceries note beforehand") does not hold on this tenant, so on the
+owner's tenant the row would make the checklist either way; and the same
+build's twin probe of the first pass is not repeated here. The cheap
+check is row 32 three times on a tenant with no "Grocery list" (or after
+the owner's do-now 1 purge of the colliding notes); if it still files into
+a near-name, revert `75c7b1d` alone and keep the rest of #170, whose gates
+all hold. Both captures into "Grocery list" were undone (capture delete,
+body verified equal to its snapshot).
+
+### Clean-up
+
+Key "R6B battery" revoked (204). The eleven set-up notes permanently
+deleted (`DELETE /v1/notes/{id}/permanent`, 204 × 11) and the 25 notes the
+router created were each deleted and purged in their own step (204 × 25,
+404 on the teardown's second pass). The tenant lists 57 active notes, the
+pre-existing set, and no device key.
