@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Toast, dismissToast } from '@/components/Toast.tsx';
 
-import { ChecklistEditor, doneStorageKey, parseMotionMs } from './ChecklistEditor.tsx';
+import { doneStorageKey } from './ChecklistDone.tsx';
+import { ChecklistEditor, parseMotionMs } from './ChecklistEditor.tsx';
 import { initialEditor, type NoteDraft } from './autosave.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 

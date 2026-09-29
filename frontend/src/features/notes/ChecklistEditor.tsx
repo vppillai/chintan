@@ -1,20 +1,13 @@
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-  type Ref,
-  type TextareaHTMLAttributes,
-} from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
-import { ICON_STROKE_WIDTH, Icon, PATHS } from '@/components/Icon.tsx';
-import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
+import { Check } from '@/components/CheckMark.tsx';
+import { Icon } from '@/components/Icon.tsx';
+import type { OverflowMenuItem } from '@/components/OverflowMenu.tsx';
 import { showToast } from '@/components/Toast.tsx';
-import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
 import { useDragReorder } from '@/hooks/useDragReorder.ts';
 
+import { ChecklistDone, DeleteItem } from './ChecklistDone.tsx';
+import { ChecklistRow, ItemField, rowClass } from './ChecklistRow.tsx';
 import {
   blockOf,
   canNest,
@@ -32,16 +25,21 @@ import {
 } from './checklist.ts';
 import type { NoteEditor } from './useNoteEditor.ts';
 
+// The drawn box lives in components/ now; NoteActions and NoteRow still take
+// it from here until the round-6 wave-2 cleanup points them at it (S8).
+export { CheckMark } from '@/components/CheckMark.tsx';
+
 /**
  * The Items tab: a checklist note's body as rows to tick off.
  *
  * Open items first, in body order, each a grip, a real checkbox and a text
- * field that wraps and grows with its words; an "Add an item" row under
- * them; then the done items under a Done heading, greyed and struck through,
- * each with its checkbox to reopen it and a × to delete it. Ticking an item
- * moves it down to Done, as Google Keep does — the body keeps its order and
- * only the item's own line changes (`toggleItem`), so a recording the worker
- * appends meanwhile lands where it would have anyway.
+ * field that wraps and grows with its words (`ChecklistRow`); an "Add an
+ * item" row under them; then the done items under a Done heading, greyed
+ * and struck through, each with its checkbox to reopen it and a × to delete
+ * it (`ChecklistDone`). Ticking an item moves it down to Done, as Google
+ * Keep does — the body keeps its order and only the item's own line changes
+ * (`toggleItem`), so a recording the worker appends meanwhile lands where it
+ * would have anyway.
  *
  * The grip is the one control for the order (2026-09-26, CL-3). A drag on
  * it lifts the row and the list re-sorts under the pointer (`useDragReorder`,
@@ -96,13 +94,10 @@ import type { NoteEditor } from './useNoteEditor.ts';
 export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId: string }) {
   const body = editor.model.draft.body;
   const items = useMemo(() => parseChecklist(body), [body]);
-  const doneId = useId();
-  const doneListId = useId();
   const hintId = useId();
   const fieldHintId = useId();
   const [announcement, setAnnouncement] = useState('');
   const [adding, setAdding] = useState('');
-  const [doneOpen, setDoneOpen] = useState(() => readDoneOpen(noteId));
 
   /*
    * The row just ticked stays where it is for one beat, so the tick draws
@@ -311,35 +306,6 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
       })
     : open;
 
-  const onItemKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number, position: number): void => {
-    if (event.key === 'Tab') {
-      // Keep's keys: Tab nests, Shift+Tab un-nests. When neither can change
-      // anything the key keeps its meaning and focus moves on.
-      if (nest(position, event.shiftKey ? -1 : 1, 'field')) event.preventDefault();
-      return;
-    }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      // The new item sits right under this one, in the body and on screen.
-      write(insertItemAfter(body, index), index + 1);
-      return;
-    }
-    if (event.key === 'Backspace' && event.currentTarget.value === '') {
-      event.preventDefault();
-      // Back to the open item above, which keeps its index; or the add row
-      // when this was the last open item.
-      const position = open.findIndex((entry) => entry.index === index);
-      const previous = open[position - 1];
-      remove(index, previous ? previous.index : ADD_ROW);
-    }
-  };
-
-  const onGripKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number, position: number): void => {
-    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
-    event.preventDefault();
-    moveOpen(index, position + (event.key === 'ArrowUp' ? -1 : 1), true);
-  };
-
   /** The grip's menu: the no-drag path to every place a row can go, its level, then the row's delete. */
   const gripMenu = (index: number, position: number, item: ChecklistItem): OverflowMenuItem[] => {
     const first = position === 0;
@@ -375,12 +341,6 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
         },
       },
     ];
-  };
-
-  const toggleDone = (): void => {
-    const next = !doneOpen;
-    setDoneOpen(next);
-    rememberDoneOpen(noteId, next);
   };
 
   const reopenAll = (): void => {
@@ -430,66 +390,51 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
         data-dragging={dragging || undefined}
         {...drag.listHandlers}
       >
-        {shownOpen.map(({ item, index }, position) => {
-          const id = String(index);
-          return (
-            <li
-              key={index}
-              className={rowClass(item)}
-              data-depth={item.depth || undefined}
-              data-drag-id={id}
-              data-dragging={drag.draggingId === id || undefined}
-            >
-              <OverflowMenu
-                label={`Move ${item.text || 'item'}`}
-                describedBy={hintId}
-                items={gripMenu(index, position, item)}
-                trigger={(props) => (
-                  <button
-                    {...props}
-                    ref={(element) => {
-                      if (element) grips.current.set(position, element);
-                      else grips.current.delete(position);
-                    }}
-                    className="checklist__grip"
-                    onPointerDown={(event) => {
-                      if (event.button === 0) drag.start(event.pointerId, id);
-                    }}
-                    onKeyDown={(event) => {
-                      onGripKeyDown(event, index, position);
-                    }}
-                  >
-                    <Icon name="grip" size={18} />
-                  </button>
-                )}
-              />
-              <Check
-                checked={item.done}
-                name={item.text || `Item ${String(position + 1)}`}
-                onChange={() => {
-                  toggle(index, item);
-                }}
-              />
-              <ItemField
-                ref={(element) => {
-                  if (element) inputs.current.set(index, element);
-                  else inputs.current.delete(index);
-                }}
-                value={item.text}
-                aria-label={`${item.depth > 0 ? 'Sub-item' : 'Item'} ${String(position + 1)}`}
-                aria-describedby={fieldHintId}
-                enterKeyHint="next"
-                onChange={(event) => {
-                  write(setItemText(body, index, event.target.value));
-                }}
-                onKeyDown={(event) => {
-                  onItemKeyDown(event, index, position);
-                }}
-                onBlur={save}
-              />
-            </li>
-          );
-        })}
+        {shownOpen.map(({ item, index }, position) => (
+          <ChecklistRow
+            key={index}
+            item={item}
+            index={index}
+            position={position}
+            dragging={drag.draggingId === String(index)}
+            hintId={hintId}
+            fieldHintId={fieldHintId}
+            menu={gripMenu(index, position, item)}
+            gripRef={(element) => {
+              if (element) grips.current.set(position, element);
+              else grips.current.delete(position);
+            }}
+            fieldRef={(element) => {
+              if (element) inputs.current.set(index, element);
+              else inputs.current.delete(index);
+            }}
+            onLift={(event) => {
+              if (event.button === 0) drag.start(event.pointerId, String(index));
+            }}
+            onStep={(by) => {
+              moveOpen(index, position + by, true);
+            }}
+            onToggle={() => {
+              toggle(index, item);
+            }}
+            onText={(text) => {
+              write(setItemText(body, index, text));
+            }}
+            onNest={(by, focus) => nest(position, by, focus)}
+            onEnter={() => {
+              // The new item sits right under this one, in the body and on screen.
+              write(insertItemAfter(body, index), index + 1);
+            }}
+            onBackspaceEmpty={() => {
+              // Back to the open item above, which keeps its index; or the add row
+              // when this was the last open item.
+              const at = open.findIndex((entry) => entry.index === index);
+              const previous = open[at - 1];
+              remove(index, previous ? previous.index : ADD_ROW);
+            }}
+            onBlur={save}
+          />
+        ))}
         <li className="checklist__row checklist__row--add">
           <span className="checklist__grip-space" aria-hidden="true" />
           <span className="checklist__check checklist__add-mark" aria-hidden="true">
@@ -518,54 +463,16 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
       </ul>
 
       {done.length > 0 && (
-        <section className="checklist__done" aria-labelledby={doneId}>
-          <div className="checklist__done-head">
-            <h2 id={doneId} className="checklist__done-title">
-              <button
-                type="button"
-                className="checklist__disclosure"
-                aria-expanded={doneOpen}
-                aria-controls={doneListId}
-                onClick={toggleDone}
-              >
-                <Icon name="chevron-down" size={16} className="checklist__chevron" />
-                <span className="eyebrow">
-                  Done <span className="numeric">({done.length})</span>
-                </span>
-              </button>
-            </h2>
-            <div className="checklist__done-actions">
-              <button type="button" className="checklist__done-action" onClick={reopenAll}>
-                Uncheck all
-              </button>
-              <span aria-hidden="true">·</span>
-              <button type="button" className="checklist__done-action" onClick={deleteDone}>
-                Delete done
-              </button>
-            </div>
-          </div>
-          <ul id={doneListId} className="checklist" role="list" hidden={!doneOpen}>
-            {done.map(({ item, index }) => (
-              <li key={index} className={rowClass(item)} data-depth={item.depth || undefined}>
-                <span className="checklist__grip-space" aria-hidden="true" />
-                <Check
-                  checked={item.done}
-                  name={item.text || 'Item'}
-                  onChange={() => {
-                    toggle(index, item);
-                  }}
-                />
-                <span className="checklist__text">{item.text}</span>
-                <DeleteItem
-                  text={item.text}
-                  onClick={() => {
-                    remove(index);
-                  }}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
+        <ChecklistDone
+          noteId={noteId}
+          done={done}
+          onToggle={toggle}
+          onRemove={(index) => {
+            remove(index);
+          }}
+          onReopenAll={reopenAll}
+          onDeleteDone={deleteDone}
+        />
       )}
 
       {/*
@@ -580,34 +487,8 @@ export function ChecklistEditor({ editor, noteId }: { editor: NoteEditor; noteId
   );
 }
 
-/** Where a note's Done section remembers whether it is open, for the session. */
-export function doneStorageKey(noteId: string): string {
-  return `chintan.checklist-done.${noteId}`;
-}
-
-function readDoneOpen(noteId: string): boolean {
-  try {
-    return sessionStorage.getItem(doneStorageKey(noteId)) !== 'collapsed';
-  } catch {
-    // Storage denied: the section simply opens, as it does the first time.
-    return true;
-  }
-}
-
-function rememberDoneOpen(noteId: string, open: boolean): void {
-  try {
-    sessionStorage.setItem(doneStorageKey(noteId), open ? 'open' : 'collapsed');
-  } catch {
-    /* Storage denied. */
-  }
-}
-
 /** The add row, as a focus target. Never an item index. */
 const ADD_ROW = -1;
-
-function rowClass(item: ChecklistItem): string {
-  return item.done ? 'checklist__row checklist__row--done' : 'checklist__row';
-}
 
 /**
  * `--motion-duration-base` in milliseconds, read from the sheet so the hold
@@ -632,124 +513,6 @@ export function parseMotionMs(raw: string): number {
   if (value.endsWith('ms')) return n;
   if (value.endsWith('s')) return n * 1000;
   return n;
-}
-
-/**
- * The box: a real checkbox, kept for what only it gives — the role, the
- * name, the keyboard, the state — and stretched invisibly over its 44 px
- * label, so the tap lands on the control itself; beside it the box a finger
- * sees, drawn here in the icon set's own pen (`ICON_STROKE_WIDTH`, not
- * scaling, round caps) so it reads as the same hand as every glyph. The tick
- * is `PATHS.check` with a `pathLength` of 1, which lets the stylesheet hide
- * it with one dash and draw it as a stroke when the box is ticked. No
- * browser's native box appears anywhere in the app.
- */
-function Check({
-  checked,
-  name,
-  disabled = false,
-  onChange,
-}: {
-  checked: boolean;
-  name: string;
-  disabled?: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className="checklist__check">
-      <input
-        type="checkbox"
-        className="checklist__box"
-        checked={checked}
-        disabled={disabled}
-        onChange={onChange}
-      />
-      <CheckMark />
-      <span className="visually-hidden">{name}</span>
-    </label>
-  );
-}
-
-/**
- * The box a finger sees, on its own: the `.checklist__box` input before it
- * in the same label is what the stylesheet reads the state from, so any
- * label built that way — the Items rows, the Split up rows, the switches in
- * the Cleaned tab and Details — shows the one drawn box.
- */
-export function CheckMark() {
-  return (
-    <span className="checklist__mark" aria-hidden="true">
-      <svg
-        width={22}
-        height={22}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={ICON_STROKE_WIDTH}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        focusable="false"
-      >
-        <rect x={1} y={1} width={22} height={22} rx={5.5} vectorEffect="non-scaling-stroke" />
-        <path d={PATHS.check} pathLength={1} vectorEffect="non-scaling-stroke" />
-      </svg>
-    </span>
-  );
-}
-
-/** The × on a done row: gone for good, not reopened. */
-function DeleteItem({
-  text,
-  disabled = false,
-  onClick,
-}: {
-  text: string;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="checklist__delete"
-      aria-label={`Delete ${text || 'item'}`}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      <Icon name="close" size={16} />
-    </button>
-  );
-}
-
-/**
- * An item's words: a textarea that wraps and grows with them. A recording
- * becomes one item, so a whole dictated sentence is the normal case, and a
- * single-line input clipped it on a phone (smoke 2026-09-21, finding 2). It
- * is still one line of the body — the caller takes Enter for "new item", and
- * `setItemText`/`insertItemAfter` turn a pasted line break into a space — so
- * the field only ever wraps, never holds a newline. `field-sizing: content`
- * sizes it where understood; `useAutoGrow` measures elsewhere.
- */
-function ItemField({
-  ref,
-  value,
-  ...rest
-}: { ref: Ref<HTMLTextAreaElement>; value: string } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  const own = useRef<HTMLTextAreaElement | null>(null);
-  useAutoGrow(own, value);
-  return (
-    <textarea
-      ref={(element) => {
-        own.current = element;
-        if (typeof ref === 'function') ref(element);
-        else if (ref) ref.current = element;
-      }}
-      rows={1}
-      className="checklist__text"
-      value={value}
-      autoComplete="off"
-      {...rest}
-    />
-  );
 }
 
 /**

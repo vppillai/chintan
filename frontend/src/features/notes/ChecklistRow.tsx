@@ -1,0 +1,175 @@
+import {
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type Ref,
+  type TextareaHTMLAttributes,
+} from 'react';
+
+import { Check } from '@/components/CheckMark.tsx';
+import { Icon } from '@/components/Icon.tsx';
+import { OverflowMenu, type OverflowMenuItem } from '@/components/OverflowMenu.tsx';
+import { useAutoGrow } from '@/hooks/useAutoGrow.ts';
+
+import type { ChecklistItem } from './checklist.ts';
+
+/**
+ * One open row of the Items tab: the grip, the box and the item's field.
+ *
+ * The grip is the one control for the order (2026-09-26, CL-3). A press on
+ * it lifts the row (`onLift`, the editor's drag hook); the arrow keys on it
+ * move the row one slot (`onStep`); a tap on it — a lift that never moved —
+ * opens the row's menu, which the editor builds (`menu`): the path that needs
+ * no drag at all (WCAG 2.5.7), and a menu on the grip rather than a ⋮ per
+ * row because a phone's width has no room for both beside a dictated
+ * sentence.
+ *
+ * The field carries Keep's keys: Tab nests the row under the one above it
+ * and Shift+Tab brings it up a level (`onNest`, which says whether anything
+ * changed — when nothing can, the key keeps its meaning and focus moves on,
+ * so the list is never a keyboard trap); Enter starts a new item under this
+ * one (`onEnter`); Backspace in an emptied item removes it (`onBackspaceEmpty`).
+ * What each of those writes to the body is the editor's, which owns the
+ * body; the row knows only the keys.
+ */
+export function ChecklistRow({
+  item,
+  index,
+  position,
+  dragging,
+  hintId,
+  fieldHintId,
+  menu,
+  gripRef,
+  fieldRef,
+  onLift,
+  onStep,
+  onToggle,
+  onText,
+  onNest,
+  onEnter,
+  onBackspaceEmpty,
+  onBlur,
+}: {
+  item: ChecklistItem;
+  /** The item's index in the body: the drag id and the field's key. */
+  index: number;
+  /** The row's place among the open rows shown, for its name and the grip map. */
+  position: number;
+  dragging: boolean;
+  hintId: string;
+  fieldHintId: string;
+  menu: OverflowMenuItem[];
+  gripRef: (element: HTMLButtonElement | null) => void;
+  fieldRef: (element: HTMLTextAreaElement | null) => void;
+  onLift: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onStep: (by: -1 | 1) => void;
+  onToggle: () => void;
+  onText: (text: string) => void;
+  /** Nests (1) or un-nests (-1) the row, keeping focus where it is; false when nothing could change. */
+  onNest: (by: 1 | -1, focus: 'field' | 'grip') => boolean;
+  onEnter: () => void;
+  onBackspaceEmpty: () => void;
+  onBlur: () => void;
+}) {
+  const id = String(index);
+
+  const onFieldKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    if (event.key === 'Tab') {
+      // Keep's keys: Tab nests, Shift+Tab un-nests. When neither can change
+      // anything the key keeps its meaning and focus moves on.
+      if (onNest(event.shiftKey ? -1 : 1, 'field')) event.preventDefault();
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      onEnter();
+      return;
+    }
+    if (event.key === 'Backspace' && event.currentTarget.value === '') {
+      event.preventDefault();
+      onBackspaceEmpty();
+    }
+  };
+
+  const onGripKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+    event.preventDefault();
+    onStep(event.key === 'ArrowUp' ? -1 : 1);
+  };
+
+  return (
+    <li
+      className={rowClass(item)}
+      data-depth={item.depth || undefined}
+      data-drag-id={id}
+      data-dragging={dragging || undefined}
+    >
+      <OverflowMenu
+        label={`Move ${item.text || 'item'}`}
+        describedBy={hintId}
+        items={menu}
+        trigger={(props) => (
+          <button
+            {...props}
+            ref={gripRef}
+            className="checklist__grip"
+            onPointerDown={onLift}
+            onKeyDown={onGripKeyDown}
+          >
+            <Icon name="grip" size={18} />
+          </button>
+        )}
+      />
+      <Check checked={item.done} name={item.text || `Item ${String(position + 1)}`} onChange={onToggle} />
+      <ItemField
+        ref={fieldRef}
+        value={item.text}
+        aria-label={`${item.depth > 0 ? 'Sub-item' : 'Item'} ${String(position + 1)}`}
+        aria-describedby={fieldHintId}
+        enterKeyHint="next"
+        onChange={(event) => {
+          onText(event.target.value);
+        }}
+        onKeyDown={onFieldKeyDown}
+        onBlur={onBlur}
+      />
+    </li>
+  );
+}
+
+export function rowClass(item: ChecklistItem): string {
+  return item.done ? 'checklist__row checklist__row--done' : 'checklist__row';
+}
+
+/**
+ * An item's words: a textarea that wraps and grows with them. A recording
+ * becomes one item, so a whole dictated sentence is the normal case, and a
+ * single-line input clipped it on a phone (smoke 2026-09-21, finding 2). It
+ * is still one line of the body — the caller takes Enter for "new item", and
+ * `setItemText`/`insertItemAfter` turn a pasted line break into a space — so
+ * the field only ever wraps, never holds a newline. `field-sizing: content`
+ * sizes it where understood; `useAutoGrow` measures elsewhere.
+ */
+export function ItemField({
+  ref,
+  value,
+  ...rest
+}: { ref: Ref<HTMLTextAreaElement>; value: string } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const own = useRef<HTMLTextAreaElement | null>(null);
+  useAutoGrow(own, value);
+  return (
+    <textarea
+      ref={(element) => {
+        own.current = element;
+        if (typeof ref === 'function') ref(element);
+        else if (ref) ref.current = element;
+      }}
+      rows={1}
+      className="checklist__text"
+      value={value}
+      autoComplete="off"
+      {...rest}
+    />
+  );
+}

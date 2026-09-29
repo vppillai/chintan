@@ -5,8 +5,9 @@ import { useApi } from '@/api/ApiProvider.tsx';
 import { ApiError } from '@/api/problem.ts';
 import { queryKeys } from '@/api/queries.ts';
 import type { CleanedMode, CleanedWire, NoteDetailWire } from '@/api/schema.ts';
+import { CheckMark } from '@/components/CheckMark.tsx';
 
-import { CheckMark, ChecklistPreview } from './ChecklistEditor.tsx';
+import { ChecklistPreview } from './ChecklistEditor.tsx';
 import { removeItem, toggleItem } from './checklist.ts';
 import {
   CLEAN_POLL_MS,
