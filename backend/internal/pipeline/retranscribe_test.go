@@ -130,6 +130,53 @@ func TestRetranscribingAChecklistRecordingKeepsItsItemsTicked(t *testing.T) {
 	}
 }
 
+// A verbatim list's recording has no artefact, and after a save from the
+// Items tab its marker stands bare at the end of the list — the tab carries
+// every marker to the end. Transcribed again with other words, the retry
+// check must not take the bare marker as this attempt's, and the append
+// must put the new words under it. Keyed on the bare marker alone, the
+// by-words replace found none of the new words, wrote nothing, and the
+// capture was marked appended with the new words nowhere (review of #169,
+// DB6-1).
+func TestRetranscribingAVerbatimListRecordingAfterAnItemsTabSavePutsTheNewWordsUnderItsBareMarker(t *testing.T) {
+	h := newHarness(t, harnessOpts{stt: &fake.STT{Response: "milk eggs and butter"}})
+	ctx := context.Background()
+	note, err := h.store.PutNote(ctx, "user1", model.NoteIndex{
+		ID: "list1", Title: "Shopping list", Kind: model.NoteKindChecklist, Verbatim: true, Language: "en", UpdatedAt: model.Now(),
+		S3MarkdownKey: "tenants/user1/notes/list1/note.md",
+		S3MetaKey:     "tenants/user1/notes/list1/meta.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedAppendedInto(t, h, note, "c_1", "- [ ] milk and eggs")
+	// The Items tab's save: a typed line, and the marker carried to the end.
+	body := "- [ ] milk and eggs\n- [ ] typed\n" + service.CaptureMarker("c_1")
+	if err := h.objects.Put(ctx, note.S3MarkdownKey, []byte(body), "text/markdown"); err != nil {
+		t.Fatal(err)
+	}
+	const text = "- [ ] milk eggs and butter"
+	if written, err := h.pipeline.paragraphInNote(ctx, note.S3MarkdownKey, "c_1", text, nil, cleanup.ItemsFromLines("milk eggs and butter")); err != nil || written {
+		t.Errorf("paragraphInNote before the write = %v, %v; want not written: a bare marker with none of the words is not this attempt's", written, err)
+	}
+
+	svc := service.NewCaptureService(h.store, h.objects).WithInvoker(directInvoker{h.pipeline})
+	if _, err := svc.RetranscribeCapture(ctx, "user1", "c_1", ""); err != nil {
+		t.Fatalf("RetranscribeCapture: %v", err)
+	}
+	capture, err := h.store.GetCapture(ctx, "user1", "c_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capture.Status != model.StatusAppended {
+		t.Fatalf("status = %s (%s), want appended", capture.Status, capture.Error)
+	}
+	got, _ := h.objects.Get(ctx, note.S3MarkdownKey)
+	if want := "- [ ] milk and eggs\n- [ ] typed\n\n" + service.CaptureMarker("c_1") + "\n" + text; string(got) != want {
+		t.Fatalf("body after retranscription:\n%s\nwant the new words under the marker:\n%s", got, want)
+	}
+}
+
 // A worker that took the append claim for the second transcription and died
 // before writing. The earlier paragraph is still in the note under the
 // capture's marker, so the marker proves nothing about this attempt: a retry

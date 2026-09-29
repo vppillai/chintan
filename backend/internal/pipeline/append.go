@@ -295,7 +295,7 @@ func (p *Pipeline) paragraphInNote(ctx context.Context, noteKey, captureID, text
 		return false, nil
 	}
 	if items != nil && previousItems == nil {
-		if previousItems = ownItems(old, items); previousItems == nil {
+		if previousItems = ownItems(old, rest, items); previousItems == nil {
 			_, left, _ := mergeChecklistItems(rest, items)
 			text = checklistItems(cleanup.RenderItems(left))
 		}
@@ -736,20 +736,26 @@ func mergeParent(lines []string, it cleanup.Item, counts *mergeCounts) ([]string
 // ownItems is the lines of a recording's items as its clean artefact holds
 // them (cleanup.RenderItems), for a first append that has no earlier copy
 // of that artefact to stand in as the previous items (replaceChecklistItems)
-// — when the paragraph under the marker is that append's own: bare, every
-// item having joined a line the list had, or holding a line with one of
-// the items' words. Nil when it is not: the paragraph of a recording that
-// never had an artefact (the list was verbatim when it was appended;
+// — when the paragraph under the marker is that append's own: holding a
+// line with one of the items' words, or bare with one of those words in
+// the rest of the list (every item joined a line the list had). A bare
+// marker alone proves nothing: the Items tab carries every marker to the
+// end on each save, so on any edited list every marker stands bare. Nil
+// when the paragraph is not the append's own: the paragraph of a recording
+// that never had an artefact (the list was verbatim when it was appended;
 // extractItems keeps none for a verbatim list), transcribed again with
-// words no line under its marker has, which is cut and replaced whole as
-// before. The ceiling is a paragraph the person emptied of the recording's
-// lines and typed a line into that shares a new item's words, read as the
-// recording's own; a paragraph typed into with other words is cut with
-// them, as before this rule (review 2026-09-29, DB6-1).
-func ownItems(paragraph string, items []cleanup.Item) []string {
+// words no line under its marker — or, for a bare marker, in the list —
+// has, which is cut and replaced whole as before. The ceiling is a
+// paragraph the person emptied of the recording's lines and typed a line
+// into that shares a new item's words, read as the recording's own; a
+// paragraph typed into with other words is cut with them, as before this
+// rule (review 2026-09-29, DB6-1; the bare clause is from the review of
+// #169, which found the bare branch marking a retranscription appended
+// with nothing written).
+func ownItems(paragraph, rest string, items []cleanup.Item) []string {
 	lines := strings.Split(cleanup.RenderItems(items), "\n")
 	if paragraph == "" {
-		return lines
+		paragraph = rest
 	}
 	words := map[string]bool{}
 	for _, line := range lines {
@@ -803,8 +809,12 @@ func parentOf(lines []string, i int) int {
 // under one of them, which cutting it whole dropped (review 2026-09-29,
 // DB6-1); a tick the person made meanwhile follows its words. Only a
 // recording with no artefact at all, transcribed again — the list was
-// verbatim when it was appended — has its paragraph cut and replaced whole
-// (ownItems).
+// verbatim when it was appended — whose new words stand nowhere under its
+// marker, or nowhere in the list when its marker is bare, has its
+// paragraph cut and replaced whole (ownItems). The by-words path does not
+// run the merge, so ChecklistItemsMerged is not emitted for a takeover
+// that joins a parent; the counts below are the cut and first-append
+// paths'.
 func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text string, previousItems []string, items []cleanup.Item) error {
 	// counts are the last run's: the write's closure runs again on an ETag
 	// conflict, and only the run whose body landed is counted, below.
@@ -828,8 +838,8 @@ func (p *Pipeline) appendToNote(ctx context.Context, noteKey, captureID, text st
 			obs.Count(ctx, "AppendReplacedParagraph", map[string]string{"Stage": string(service.StatusAppending)})
 			previous := previousItems
 			if previous == nil && items != nil {
-				_, old, _ := service.CutCaptureParagraph(existing, captureID)
-				previous = ownItems(old, items)
+				rest, old, _ := service.CutCaptureParagraph(existing, captureID)
+				previous = ownItems(old, rest, items)
 			}
 			if previous != nil {
 				next := replaceChecklistItems(existing, captureID, previous, text)

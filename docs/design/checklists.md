@@ -224,9 +224,12 @@ finishes the attempt without a write and the takeover after it keeps the
 child a later recording merged under its parent (`ownItems`; review
 2026-09-29, DB6-1). Only a recording that never had an artefact — appended
 while the list was verbatim — and now brings words no line under its
-marker has is replaced by the paragraph cut. The match is exact folded words: "Costco" and "Costco
-wholesale" are two parents (a `ponytail:` ceiling in `append.go`;
-parent-name synonyms are the upgrade if a real list asks).
+marker has, or whose marker stands bare with none of its words in the
+list, is replaced by the paragraph cut; a bare marker alone proves
+nothing, since the Items tab carries every marker to the end on each save.
+The match is exact folded words: "Costco" and "Costco wholesale" are two
+parents (a `ponytail:` ceiling in `append.go`; parent-name synonyms are
+the upgrade if a real list asks).
 
 The capture marker keeps its place on the line before the first item
 (`<marker>\n- [ ] A\n- [ ] B`, after `\n\n` when the body has content). A
