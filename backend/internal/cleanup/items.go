@@ -45,13 +45,28 @@ type Item struct {
 
 // UnmarshalJSON accepts an item as an object or as a bare string, so a model
 // that answers the pre-2026-09-29 shape `{"items":["Milk","Eggs"]}` degrades
-// to flat items, never to an unusable reply.
+// to flat items, never to an unusable reply. "done" is read leniently for
+// the same reason: a mistyped `"done":"yes"` on one item would otherwise
+// refuse the whole reply and lose a good split. true, "true" and "yes" are
+// done; anything else is not.
 func (it *Item) UnmarshalJSON(b []byte) error {
 	if len(b) > 0 && b[0] == '"' {
 		return json.Unmarshal(b, &it.Text)
 	}
-	type plain Item
-	return json.Unmarshal(b, (*plain)(it))
+	var raw struct {
+		Text     string `json:"text"`
+		Done     any    `json:"done"`
+		Children []Item `json:"children"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	done, _ := raw.Done.(bool)
+	if s, ok := raw.Done.(string); ok {
+		done = strings.EqualFold(s, "true") || strings.EqualFold(s, "yes")
+	}
+	*it = Item{Text: raw.Text, Done: done, Children: raw.Children}
+	return nil
 }
 
 // checklistItemRules is what an item is, worded once for the two prompts that
@@ -211,13 +226,39 @@ func flatten(items []Item) []Item {
 }
 
 // itemText is an item's text as it is stored: whitespace runs collapsed,
-// cut at MaxChecklistItemRunes, "" for no words.
+// cut at MaxChecklistItemRunes, "" for no words. Text with no letter or
+// digit ("—", "...") is no words: it would pass every check by words
+// vacuously (llm.VerifySubsequence) and, done, block every Split up as a
+// tick nothing can account for.
 func itemText(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if runes := []rune(s); len(runes) > MaxChecklistItemRunes {
 		s = strings.TrimSpace(string(runes[:MaxChecklistItemRunes]))
 	}
+	if llm.FoldWords(s) == "" {
+		return ""
+	}
 	return s
+}
+
+// RenderTaskList writes items as checklist body lines — `- [ ] ` open,
+// `- [x] ` done, a child indented two spaces — the shape SplitOutput stores
+// and the append writes where a recording's items go back into a list.
+func RenderTaskList(items []Item) string {
+	var lines []string
+	line := func(it Item, indent string) string {
+		if it.Done {
+			return indent + "- [x] " + it.Text
+		}
+		return indent + "- [ ] " + it.Text
+	}
+	for _, it := range items {
+		lines = append(lines, line(it, ""))
+		for _, c := range it.Children {
+			lines = append(lines, line(c, "  "))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // RenderItems writes items as the clean artefact holds them: one line per

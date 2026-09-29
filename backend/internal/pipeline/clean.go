@@ -238,7 +238,7 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 // earlier items, for an append resumed after the extraction has already
 // overwritten the artefact at CleanKey. Nil when there is none: the
 // recording's first append. The lines keep their indent; every reader folds
-// it away with the whitespace (foldWords).
+// it away with the whitespace and the punctuation (llm.FoldWords).
 func (p *Pipeline) previousItems(ctx context.Context, tenantID, captureID string) ([]string, error) {
 	key, err := keys.CaptureCleanPrevious(tenantID, captureID)
 	if err != nil {

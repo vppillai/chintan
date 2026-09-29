@@ -3,7 +3,6 @@ package cleanup
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/vppillai/chintan/backend/internal/llm"
 	"github.com/vppillai/chintan/backend/internal/model"
@@ -201,10 +200,17 @@ var ErrNotATaskList = fmt.Errorf("cleanup: the model did not return a task list"
 //     the previous view;
 //   - an open answer item with a done body line's words is refused too,
 //     unless the body also had an open line with those words — two lines
-//     naming one thing merge, and open wins;
+//     naming one thing merge, and open wins. A childless open answer item
+//     whose words are a sub-sequence of a done line's and of no open line's
+//     is the same thing: "- [x] Milk and eggs" split into an open Milk and a
+//     done Eggs lost Milk's tick. A parent is exempt, because a group's name
+//     over done lines ("Walmart" over "- [x] Eggs from Walmart") is not a
+//     tick, and the prompt never asks for a parent's done;
 //   - a done answer item with no done body line's words (equal, or the item
 //     a sub-sequence of the line) is refused: the tick is the person's, and
-//     a model that adds one hides an open item under Done.
+//     a model that adds one hides an open item under Done. So is a done
+//     answer item with an open body line's words when no open answer item
+//     has them: the model closed the open one of a pair, and open wins.
 //
 // The pre-2026-09-29 rule that done lines come back verbatim and in order is
 // gone: it is what forced "Add milk to the shopping list" to survive a
@@ -245,12 +251,18 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 	bodyDone, bodyOpen := map[string]bool{}, map[string]bool{}
 	for _, it := range flatten(ItemsFromLines(body)) {
 		if it.Done {
-			bodyDone[foldWords(it.Text)] = true
+			bodyDone[llm.FoldWords(it.Text)] = true
 		} else {
-			bodyOpen[foldWords(it.Text)] = true
+			bodyOpen[llm.FoldWords(it.Text)] = true
 		}
 	}
 	answer := flatten(kept)
+	answerOpen := map[string]bool{}
+	for _, it := range answer {
+		if !it.Done {
+			answerOpen[llm.FoldWords(it.Text)] = true
+		}
+	}
 	for line := range bodyDone {
 		if bodyOpen[line] {
 			// Two lines naming one thing, one of them open: they merge and
@@ -259,7 +271,7 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 		}
 		accounted := false
 		for _, it := range answer {
-			if it.Done && (foldWords(it.Text) == line || llm.VerifySubsequence(it.Text, line)) {
+			if it.Done && (llm.FoldWords(it.Text) == line || llm.VerifySubsequence(it.Text, line)) {
 				accounted = true
 				break
 			}
@@ -268,27 +280,33 @@ func SplitOutput(raw, body string) (text string, dropped int, err error) {
 			return "", dropped, fmt.Errorf("%w: a done item was lost", ErrNotATaskList)
 		}
 	}
-	for _, it := range answer {
-		w := foldWords(it.Text)
-		if !it.Done && bodyDone[w] && !bodyOpen[w] {
-			return "", dropped, fmt.Errorf("%w: a done item was reopened", ErrNotATaskList)
+	check := func(it Item, parent bool) error {
+		w := llm.FoldWords(it.Text)
+		switch {
+		case !it.Done && bodyDone[w] && !bodyOpen[w],
+			!it.Done && !parent && subsequenceOfAny(it.Text, bodyDone) && !subsequenceOfAny(it.Text, bodyOpen):
+			return fmt.Errorf("%w: a done item was reopened", ErrNotATaskList)
+		case it.Done && bodyOpen[w] && !answerOpen[w]:
+			return fmt.Errorf("%w: an open item was closed", ErrNotATaskList)
+		case it.Done && !bodyDone[w] && !subsequenceOfAny(it.Text, bodyDone):
+			return fmt.Errorf("%w: a done item was invented", ErrNotATaskList)
 		}
-		if it.Done && !bodyDone[w] && !subsequenceOfAny(it.Text, bodyDone) {
-			return "", dropped, fmt.Errorf("%w: a done item was invented", ErrNotATaskList)
+		return nil
+	}
+	for _, it := range kept {
+		if err := check(it, len(it.Children) > 0); err != nil {
+			return "", dropped, err
+		}
+		for _, c := range it.Children {
+			if err := check(c, false); err != nil {
+				return "", dropped, err
+			}
 		}
 	}
 	if len(kept) == 0 {
 		return "", dropped, ErrEmptyNoteOutput
 	}
-
-	var lines []string
-	for _, it := range kept {
-		lines = append(lines, taskLine(it, ""))
-		for _, c := range it.Children {
-			lines = append(lines, taskLine(c, "  "))
-		}
-	}
-	return strings.Join(lines, "\n"), dropped, nil
+	return RenderTaskList(kept), dropped, nil
 }
 
 // subsequenceOfAny reports whether text's words are, in order, among one of
@@ -300,23 +318,6 @@ func subsequenceOfAny(text string, lines map[string]bool) bool {
 		}
 	}
 	return false
-}
-
-// taskLine is one item as a checklist body line.
-func taskLine(it Item, indent string) string {
-	if it.Done {
-		return indent + "- [x] " + it.Text
-	}
-	return indent + "- [ ] " + it.Text
-}
-
-// foldWords is an item's words as the tick checks compare them: case folded
-// and punctuation aside, the way llm.VerifySubsequence reads words, so
-// "passport." and "Passport" are one item.
-func foldWords(s string) string {
-	return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	}), " ")
 }
 
 // TasksMaxTokens bounds the completion for TasksPrompt: the items are the

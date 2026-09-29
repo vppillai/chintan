@@ -97,8 +97,10 @@ func TestSplitOutputDropsInventedItemsAndLiftsADroppedParentsChildren(t *testing
 
 // Tick safety: every done body line is accounted for by a done answer item
 // with its words (or a tidied sub-sequence of them); an open answer item
-// with a done line's words is refused unless the body also had it open; a
-// done answer item with no done line's words is a tick the model added.
+// with a done line's words — or, childless, a part of them and of no open
+// line's — is refused unless the body also had it open; a done answer item
+// with no done line's words is a tick the model added, and one with an open
+// line's words that no open answer item has closed that line.
 func TestSplitOutputRefusesALostReopenedOrInventedTick(t *testing.T) {
 	const body = "- [ ] call the roofer and buy sealant\n- [x] passport.\n- [x] pay the electricity bill"
 	for name, reply := range map[string]string{
@@ -108,6 +110,7 @@ func TestSplitOutputRefusesALostReopenedOrInventedTick(t *testing.T) {
 		"a done item invented":   `{"items":[{"text":"Call the roofer","done":true},"Buy sealant",{"text":"passport","done":true},{"text":"pay the electricity bill","done":true}]}`,
 		"not a list":             "Call the roofer, then buy sealant.",
 		"a done sub-item opened": `{"items":["Call the roofer","Buy sealant",{"text":"Errands","children":[{"text":"passport"},{"text":"pay the electricity bill","done":true}]}]}`,
+		"a done line split into an open part and a done part": `{"items":["Call the roofer","Buy sealant",{"text":"passport","done":true},"Electricity",{"text":"pay the bill","done":true}]}`,
 	} {
 		if got, _, err := cleanup.SplitOutput(reply, body); !errors.Is(err, cleanup.ErrNotATaskList) {
 			t.Errorf("%s: SplitOutput = %q, %v; want ErrNotATaskList", name, got, err)
@@ -121,10 +124,29 @@ func TestSplitOutputRefusesALostReopenedOrInventedTick(t *testing.T) {
 		t.Errorf("a tidied done item was refused: %q, %d, %v", got, dropped, err)
 	}
 	// Duplicates merge and open wins: an open Milk over "- [x] milk" is fine
-	// when the body also has an open Milk.
+	// when the body also has an open Milk; one done Milk for the pair closed
+	// the open one.
 	got, _, err = cleanup.SplitOutput(`{"items":["Milk","Eggs"]}`, "- [ ] Milk\n- [x] milk\n- [ ] Eggs")
 	if err != nil || got != "- [ ] Milk\n- [ ] Eggs" {
 		t.Errorf("open did not win over a done duplicate: %q, %v", got, err)
+	}
+	if got, _, err := cleanup.SplitOutput(`{"items":[{"text":"Milk","done":true},"Eggs"]}`, "- [ ] Milk\n- [x] milk\n- [ ] Eggs"); !errors.Is(err, cleanup.ErrNotATaskList) {
+		t.Errorf("closing the open one of a pair = %q, %v; want ErrNotATaskList", got, err)
+	}
+	// A part of a done line is a reopened tick only when no open line has it
+	// too, and a group's name over done lines is a group, not a tick.
+	got, _, err = cleanup.SplitOutput(`{"items":[{"text":"Milk","done":true},"Eggs"]}`, "- [x] Milk and eggs\n- [ ] eggs")
+	if err != nil || got != "- [x] Milk\n- [ ] Eggs" {
+		t.Errorf("a part shared with an open line was refused: %q, %v", got, err)
+	}
+	got, _, err = cleanup.SplitOutput(`{"items":[{"text":"Walmart","children":[{"text":"Eggs","done":true},{"text":"Milk","done":true}]}]}`, "- [x] eggs from Walmart\n- [x] milk from Walmart")
+	if err != nil || got != "- [ ] Walmart\n  - [x] Eggs\n  - [x] Milk" {
+		t.Errorf("a group over done lines was refused: %q, %v", got, err)
+	}
+	// A done body line with no letter or digit is no item, so it cannot be a
+	// tick the answer lost.
+	if got, _, err := cleanup.SplitOutput(`{"items":["Milk","Eggs"]}`, "- [x] —\n- [ ] milk and eggs"); err != nil || got != "- [ ] Milk\n- [ ] Eggs" {
+		t.Errorf("a punctuation-only done line blocked the split: %q, %v", got, err)
 	}
 	// A "[x]" inside an item's text is text.
 	if got, _, err := cleanup.SplitOutput(`{"items":["a [x] inside the text is fine"]}`, "- [ ] a [x] inside the text is fine"); err != nil || got != "- [ ] a [x] inside the text is fine" {

@@ -71,6 +71,14 @@ func ExtractJSONObject(raw string) (string, error) {
 	return raw[start : end+1], nil
 }
 
+// FoldWords is text as the checks compare it: its comparable words joined by
+// single spaces, so "passport." and "Passport" are one item to every reader
+// — the tick checks, the append's merge and the regeneration's search by
+// words. Empty when the text has no letter or digit.
+func FoldWords(s string) string {
+	return strings.Join(comparableWords(s), " ")
+}
+
 // comparableWords reduces text to lowercase alphanumeric words, so that
 // punctuation and casing differences do not count as rewriting.
 func comparableWords(s string) []string {

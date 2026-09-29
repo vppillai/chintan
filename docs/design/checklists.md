@@ -286,9 +286,15 @@ up, or Use this list) writes it over the body:
   item whose words are the line's or a sub-sequence of them (a done line
   tidied) is a lost tick; an open answer item with a done body line's words
   is a reopened one, unless the body also had an open line with those words
-  (they merge, open wins); a done answer item with no done body line's
-  words is an invented one. A view that changed a tick is worse than the
-  view it would replace.
+  (they merge, open wins) — and so is a childless open answer item whose
+  words are part of a done line's and of no open line's (`- [x] Milk and
+  eggs` split into an open Milk and a done Eggs), a parent exempt because a
+  group's name over done lines is a group; a done answer item with no done
+  body line's words is an invented one, and one with an open body line's
+  words that no open answer item has closed the open one of a pair. A view
+  that changed a tick is worse than the view it would replace. A line with
+  no letter or digit is no item to any of this (`itemText`), so a typed
+  `- [x] —` blocks nothing.
 
 The stored view is task-list lines, a sub-item indented two spaces, in
 `cleaned_body` as before; `stale` and `auto_clean` are unchanged. The owner

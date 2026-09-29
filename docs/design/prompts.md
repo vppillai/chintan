@@ -288,8 +288,9 @@ list." was the model inventing an antecedent (owner feedback 2026-09-26);
 tick safety, the whole answer refused: a `- [x]` body line with no done
 answer item whose words equal it or are a sub-sequence of it, an open
 answer item equal to a done body line unless the body also had it open
-(duplicates merge, open wins), a done answer item equal to no done body
-line. The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
+(duplicates merge, open wins) or, childless, a sub-sequence of a done line
+and of no open one, a done answer item equal to no done body line, a done
+answer item equal to an open body line when no open answer item is. The pre-2026-09-29 prompt ("granular, actionable tasks", the person's
 words, done lines verbatim and in order) is what split the owner's `Add
 milk, eggs and protein powder to the shopping list` into "Add milk to…",
 "Add eggs to…", "Add protein powder…"; PR-D4 had proposed dropping the mode
