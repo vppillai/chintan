@@ -24,9 +24,11 @@ const (
 	// maxSpokenTitleWords is the longest title that still reads as a name rather than a
 	// sentence the router mistook for one.
 	maxSpokenTitleWords = 8
-	// maxNameWords is the prompt's own bound on a name: its Titles rule says "a
-	// name is a short noun phrase of one to five words, never a whole sentence"
-	// (R6-RT-8). A title within it is a name the speaker may have said in full,
+	// maxNameWords is the prompt's own bound on a name: its Titles rule invents
+	// "a short descriptive title (one to five words)", and the fixture for a
+	// sentence taken as a title pins the shape (R6-RT-8's sentence was tried
+	// and reverted; the bound stands on the older rule). A title within it is a
+	// name the speaker may have said in full,
 	// so a span grown over it removes instruction; a title past it is the
 	// dictation the model mistook for a name, and growing over it removes the
 	// note.

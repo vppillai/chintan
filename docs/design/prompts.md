@@ -62,10 +62,9 @@ target note as the only candidate, for a capture recorded into a note whose
 transcript contains a filing or naming cue (`routing.MentionsInstruction`,
 `routing/spans.go`; no cue, no call).
 
-**Sent.** The system prompt (about 1,350 tokens at four characters a token
-after the sentence-is-not-a-name rule and example of 2026-09-29; about
-1,250 after the name-first rules earlier that day; 987 measured before the
-kind rule of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
+**Sent.** The system prompt (about 1,250 tokens at four characters a token
+after the name-first rules of 2026-09-29; 987 measured before the kind rule
+of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
 (filing, naming), the reply
 shape, then four sections — *Destination* (append only when a listed note
 was clearly asked for by its title or one of its other names; a spoken title
@@ -80,20 +79,14 @@ span in doubt, the name/content boundary, and that a filing or naming span
 ends after the note's name — "Create a new note from app feedback and add
 the fact" is `{0,7}`, never 6), *Titles* (as spoken, however
 short; invented only when none was spoken; a recording that opens with an
-unlisted name is a new note titled with the name only; a name is a short
-noun phrase of one to five words and never a whole sentence — "The dog is
-having his dinner" has no name in front, so the title is invented and every
-word is content, R6-RT-8, the owner's ring shape the battery of 2026-09-29
-returned titled with the sentence two of three; the speaker's script)
+unlisted name is a new note titled with the name only; the speaker's script)
 and *Kind*,
 for `new` only (`checklist` when the speaker names a list — shopping list,
 groceries, to-do, packing list, "add X to the Y list" — or dictates things
-to tick off one by one; otherwise, and in doubt, `note`) — and nine worked
+to tick off one by one; otherwise, and in doubt, `note`) — and eight worked
 examples: the sixth "add milk to my groceries list" with no Groceries note
 listed, the seventh and eighth the two name-first shapes (a listed "App
-feedback", an unlisted "Things to talk with Milos"), the ninth the sentence
-with no name in front ("The dog is having his dinner" → new "Dog dinner",
-no span). The user prompt: the language line when the
+feedback", an unlisted "Things to talk with Milos"). The user prompt: the language line when the
 capture's language is known (`cleanupLanguage`); `Existing notes:` — one
 numbered line per candidate, `3 | Roof repair | also: gutters, roof, house`,
 the aliases and then the tags after `also:` (either spoken is a request for
