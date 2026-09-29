@@ -71,7 +71,7 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	if reply.Spans != nil {
 		decision.Spans = len(*reply.Spans)
 	}
-	decision.Content = routedContent(ctx, transcript, decision.Title, reply)
+	decision.Content = routedContent(ctx, transcript, decision.Title, decision.Action, reply)
 	return decision, nil
 }
 
@@ -89,7 +89,12 @@ type routeReply struct {
 // stopped short of (routing.ExtendSpans). Every failure keeps the whole
 // transcript; nothing here can lose a word the speaker said. Logs carry counts
 // only: note text does not belong in logs.
-func routedContent(ctx context.Context, transcript, title string, reply routeReply) string {
+//
+// action says whose title is being grown over. On a new note it is the
+// model's, and a model that titles a short recording with the sentence
+// itself hands ExtendSpans a title that IS the dictation; on an append it is
+// the destination's name, the last words of the instruction.
+func routedContent(ctx context.Context, transcript, title string, action RouteAction, reply routeReply) string {
 	discard := func(reason, msg string, attrs ...any) string {
 		obs.Log(ctx).Warn(msg, attrs...)
 		obs.Count(ctx, "RouterSpansDiscarded", map[string]string{"Reason": reason})
@@ -110,6 +115,21 @@ func routedContent(ctx context.Context, transcript, title string, reply routeRep
 	case err != nil:
 		return discard("malformed", "router spans do not fit the transcript; keeping the dictation",
 			slog.Int("dictated_words", dictated), slog.Int("spans", len(*reply.Spans)))
+	}
+
+	if strings.TrimSpace(content) == "" && action == RouteNew {
+		// "make a note the dog is having his dinner", titled by the model "The
+		// dog is having his dinner" (the owner's ring, 2026-09-27): the span
+		// {0,3} grown over that title covers every word, and the note was
+		// created empty (DB6-4, review 2026-09-29). The growth is a
+		// convenience and must never be what empties the body, so when the
+		// model's own spans leave content, that is the content, title
+		// duplicated or not. An append's title is the destination's name
+		// spoken as the instruction's last words, so there a recording that is
+		// nothing but the instruction may legitimately end empty.
+		if own, err := routing.RemoveSpans(transcript, *reply.Spans); err == nil && strings.TrimSpace(own) != "" {
+			content = own
+		}
 	}
 
 	if strings.TrimSpace(content) == "" {

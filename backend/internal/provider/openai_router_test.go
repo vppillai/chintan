@@ -541,3 +541,35 @@ func TestRouteGrowsASpanOverTheSpokenTitleAndATrailingNote(t *testing.T) {
 		t.Errorf("content = %q, want no trailing note", decision.Content)
 	}
 }
+
+// A model that titles a short recording with the sentence itself ("make a
+// note the dog is having his dinner" → "The dog is having his dinner", the
+// owner's ring on 2026-09-27) hands ExtendSpans a title that is the
+// dictation: grown over it, the span covers every word and the note was
+// created empty (DB6-4, review 2026-09-29). The growth must never be what
+// empties the body; the model's own spans leave the sentence, so that is the
+// content, title duplicated or not.
+func TestRouteKeepsTheDictationWhenGrowingOverTheTitleWouldEmptyIt(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := routerServer(t, `{"action":"new","title":"The dog is having his dinner","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":3}]}`)
+	decision, err := newRouter(t, srv).Route(context.Background(), "make a note the dog is having his dinner", nil, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "the dog is having his dinner" {
+		t.Errorf("content = %q, want the sentence the model's own span left", decision.Content)
+	}
+
+	// An append's title is the destination's name, spoken as the instruction's
+	// last words: there a recording that is nothing but the instruction may
+	// legitimately end empty.
+	srv, _ = routerServer(t, `{"action":"append","note":1,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":4}]}`)
+	decision, err = newRouter(t, srv).Route(context.Background(), "add this to roof note", []routing.Candidate{{NoteID: "n1", Title: "Roof"}}, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "" {
+		t.Errorf("content = %q, want empty for an instruction-only append", decision.Content)
+	}
+}
