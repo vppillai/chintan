@@ -38,7 +38,11 @@ export function useKeyboardInset(): void {
     const root = document.documentElement;
     let last = -1;
     const update = (): void => {
-      // ponytail: zoom + keyboard together reads 0, revisit if seen
+      // ponytail: zoom + keyboard together reads 0, revisit if seen. iOS's
+      // own focus zoom on any control under 16 px is the zoom that hits this
+      // guard, and it outlives the field — so every text input takes
+      // `--font-size-md` (DB6-5), and the next sub-16 px input is what to
+      // catch in review; `maximum-scale=1` is not the answer, it kills pinch.
       const zoomed = Math.abs(viewport.scale - 1) > 0.01;
       const inset = zoomed
         ? 0

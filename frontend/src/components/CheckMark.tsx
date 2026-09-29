@@ -8,7 +8,9 @@ import { ICON_STROKE_WIDTH, PATHS } from '@/components/Icon.tsx';
  * scaling, round caps) so it reads as the same hand as every glyph. The tick
  * is `PATHS.check` with a `pathLength` of 1, which lets the stylesheet hide
  * it with one dash and draw it as a stroke when the box is ticked. No
- * browser's native box appears anywhere in the app.
+ * browser's native box appears where `Check` is used; the recordings'
+ * selection box is still the native one (`recordings.css`
+ * `.recording__checkbox`).
  */
 export function Check({ checked, name, onChange }: { checked: boolean; name: string; onChange: () => void }) {
   return (

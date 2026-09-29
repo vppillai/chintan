@@ -172,7 +172,8 @@
   border: 1px solid var(--color-line-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-inset);
-  font-size: var(--font-size-sm);
+  /* 16 px: under that iOS zooms the page on focus (see `.tag-editor__input`). */
+  font-size: var(--font-size-md);
   color: var(--color-ink);
 }
 
