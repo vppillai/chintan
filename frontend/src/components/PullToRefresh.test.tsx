@@ -141,6 +141,57 @@ describe('pull to refresh', () => {
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
+  describe('a scroller of its own between the finger and the page', () => {
+    /*
+     * The Details sheet, a transcript: `overflow-y: auto` with more content
+     * than height. jsdom lays nothing out, so the room to scroll is declared.
+     */
+    function mountWithSheet(onRefresh: () => Promise<unknown>) {
+      const view = render(
+        <main className="app__main">
+          <div className="screen">
+            <PullToRefresh onRefresh={onRefresh} />
+            <p>a list</p>
+            <div className="sheet" style={{ overflowY: 'auto' }}>
+              <p>inside the sheet</p>
+            </div>
+          </div>
+        </main>,
+      );
+      const sheet = view.container.querySelector('.sheet') as HTMLElement;
+      Object.defineProperty(sheet, 'scrollHeight', { value: 500, configurable: true });
+      Object.defineProperty(sheet, 'clientHeight', { value: 100, configurable: true });
+      const indicator = () => view.container.querySelector('.pull-refresh') as HTMLElement;
+      const dragOn = (target: Element, from: number, to: number) => {
+        const move = touch('touchmove', to);
+        act(() => {
+          target.dispatchEvent(touch('touchstart', from));
+          target.dispatchEvent(move);
+          target.dispatchEvent(touch('touchend', to));
+        });
+        return move;
+      };
+      return { indicator, dragOn };
+    }
+
+    it('never arms for a drag that starts inside it, and leaves its scroll alone', () => {
+      const onRefresh = vi.fn(async () => {});
+      const { indicator, dragOn } = mountWithSheet(onRefresh);
+      const move = dragOn(screen.getByText('inside the sheet'), 100, 250);
+      expect(indicator().dataset['phase']).toBe('idle');
+      expect(move.defaultPrevented).toBe(false);
+      expect(onRefresh).not.toHaveBeenCalled();
+    });
+
+    it('still arms for a drag that starts beside it', () => {
+      const onRefresh = vi.fn(async () => {});
+      const { dragOn } = mountWithSheet(onRefresh);
+      const move = dragOn(screen.getByText('a list'), 100, 250);
+      expect(move.defaultPrevented).toBe(true);
+      expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('does not refresh twice while one refresh is still running', () => {
     let release: () => void = () => {};
     const onRefresh = vi.fn(

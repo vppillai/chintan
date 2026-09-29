@@ -11,8 +11,15 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
  * the only way to read one that the scroller is not going to act on.
  *
  * The gesture is armed only when the scroll container is at `scrollTop === 0`
- * when the finger lands. Anywhere else the touch is an ordinary scroll and
- * this never sees it. Once pulling, the default is prevented so the browser's
+ * when the finger lands, and never when the finger lands inside a scroller of
+ * its own — the Details sheet, a transcript — that has something to scroll:
+ * a downward drag there is that scroller's, whatever the page's position, and
+ * the first prevented `touchmove` here used to cancel the sheet's native
+ * scroll and pull the note down under it instead ("sometimes the note
+ * scrolls, sometimes the details", R6-NAV-3). `overscroll-behavior: contain`
+ * on those scrollers keeps a drag past their end from reaching the page, so
+ * the sheet needs no lock and no scrim. Anywhere else the touch is an
+ * ordinary scroll and this never sees it. Once pulling, the default is prevented so the browser's
  * own rubber-band or native pull-to-refresh does not fire underneath
  * (`overscroll-behavior: contain` on `.app__main` is the belt to this brace).
  * A move whose default something nearer the finger has already prevented is
@@ -61,6 +68,24 @@ function clientYOf(event: TouchEvent): number | null {
 }
 
 /**
+ * Whether something between the finger and the container scrolls on its own
+ * and has room to: a drag that starts there belongs to it, not to the page.
+ * A scroller with nothing to scroll is passed over, so a short Share sheet
+ * still lets the note beneath it be pulled.
+ */
+function insideNestedScroller(target: EventTarget | null, container: HTMLElement): boolean {
+  let element = target instanceof Element ? target : null;
+  while (element && element !== container) {
+    const overflowY = getComputedStyle(element).overflowY;
+    if ((overflowY === 'auto' || overflowY === 'scroll') && element.scrollHeight > element.clientHeight) {
+      return true;
+    }
+    element = element.parentElement;
+  }
+  return false;
+}
+
+/**
  * Attach `ref` to the indicator element, placed inside the scroll container.
  * The hook finds the container from it, listens there, and writes
  * `--pull-offset` on the indicator as the finger moves.
@@ -100,6 +125,7 @@ export function usePullToRefresh(
 
     const onTouchStart = (event: TouchEvent): void => {
       if (busy || event.touches.length !== 1 || container.scrollTop > 0) return;
+      if (insideNestedScroller(event.target, container)) return;
       startY = clientYOf(event);
     };
 
