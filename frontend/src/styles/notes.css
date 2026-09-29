@@ -353,11 +353,16 @@
   margin-block: var(--space-1) var(--space-2);
 }
 
-/* The tab panel carries the screen's bottom breathing room now that no bar
-   stands between it and the tab bar; the recordings' selection bar, which
-   must rest on the tab bar, hands it back. */
+/* A column that grows to fill the note, so the recordings' selection bar —
+   rendered inside the panel — reaches the foot of a short note. The panel
+   carries the screen's bottom breathing room now that no bar stands between
+   it and the tab bar; the selection bar, which must rest on the tab bar,
+   takes the slack above it and hands the padding back. */
 .note-tabpanel {
-  padding-block-end: var(--space-6);
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  padding-block: var(--space-3) var(--space-6);
   /* The snap back after a swipe that did not step, and the new panel's
      settle after one that did (`useHorizontalSwipe`); reduced motion
      collapses it through the token. */
@@ -365,6 +370,7 @@
 }
 
 .note-tabpanel > .selection-bar {
+  margin-block-start: auto;
   margin-block-end: calc(-1 * var(--space-6));
 }
 
@@ -377,7 +383,7 @@
  * so the strip, which bleeds into them by its negative margins, still bleeds
  * into padding rather than past the box: without this the layout sweep read
  * the region as a container that scrolls sideways by one gutter. And it is
- * the column the panel used to grow in (`cleaned.css` `.note-tabpanel`), so
+ * the column the panel used to grow in (`.note-tabpanel`), so
  * the recordings' selection bar still reaches the foot of a short note.
  */
 .note-views {
@@ -487,6 +493,11 @@
   border-start-start-radius: var(--radius-lg);
   border-start-end-radius: var(--radius-lg);
   box-shadow: var(--shadow-sheet);
+}
+
+/* The editors carry a top padding for the inline layout they came from. */
+.note-panel .tag-editor {
+  padding-block-start: 0;
 }
 
 /* The note's id in Details: monospace, breakable anywhere (an id has no
