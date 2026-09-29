@@ -216,7 +216,7 @@ test.describe('on a phone', () => {
       expect(await selected(page)).toBe('Text');
     });
 
-    test('on Recordings a left drag on a head is its tray; a right drag on the head goes to Cleaned', async ({
+    test('on Recordings a left drag on a head is its tray; a right drag on the open head closes it; a right drag on the closed head goes to Cleaned', async ({
       page,
       api,
     }) => {
@@ -226,16 +226,22 @@ test.describe('on a phone', () => {
       const cdp = await page.context().newCDPSession(page);
       const head = page.locator('.recording__swipe').first();
       await expect(head).toBeVisible();
-      let box = (await head.boundingBox())!;
-      await drag(cdp, box.x + box.width * 0.6, box.y + box.height / 2, -200, 0);
+      const box = (await head.boundingBox())!;
+      const y = box.y + box.height / 2;
+      await drag(cdp, box.x + box.width * 0.6, y, -200, 0);
       await expect(head).toHaveAttribute('data-open');
       expect(await selected(page)).toContain('Recordings');
-      // A tap elsewhere closes the tray; trays open leftwards only, so a
-      // right drag on the same head is the swipe's.
-      await page.mouse.click(200, 150);
+      // An open row owns both directions: a right drag on it is its own close
+      // gesture. The swipe took it (review 2026-09-29): its capture fired the
+      // row's `lostpointercapture`, the tray stayed open and the tab flipped.
+      // x = 200 is on the row however far its tray has shifted it.
+      await drag(cdp, 200, y, 200, 0);
       await expect(head).not.toHaveAttribute('data-open');
-      box = (await head.boundingBox())!;
-      await drag(cdp, box.x + 60, box.y + box.height / 2, 200, 0);
+      await page.waitForTimeout(300);
+      expect(await selected(page)).toContain('Recordings');
+      // Closed again, and trays open leftwards only: a right drag on the head
+      // is the swipe's.
+      await drag(cdp, 200, y, 200, 0);
       await expect.poll(() => selected(page)).toBe('Cleaned');
     });
 

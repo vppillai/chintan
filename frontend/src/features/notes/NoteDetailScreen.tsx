@@ -7,7 +7,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from 'react';
@@ -453,11 +452,12 @@ function NoteViews({
         same Retry — two of them a hundred pixels apart said nothing twice.
       */}
       {tab !== 'recordings' && <FilingBanner note={note} localUpload={localUpload} />}
+      {/* The hook writes `--tab-swipe-x` on this element itself; only
+          `dragging` comes through React, so a move re-renders nothing. */}
       <div
         ref={viewsRef}
         className="note-views"
         data-swiping={swipe.dragging || undefined}
-        style={{ '--tab-swipe-x': `${String(swipe.offset)}px` } as CSSProperties}
         {...swipe.handlers}
       >
         <div className="note-strip">

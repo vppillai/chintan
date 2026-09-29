@@ -93,8 +93,12 @@ drags. What yields to what:
   mechanism that keeps a sideways grip drag (the sub-item gesture,
   `checklists.md`) from being a tab switch; the checklist adds no attribute
   of its own;
-- a LEFT drag that begins on a `.swipe` row (a recording's head) is the row's
-  tray, which opens leftwards only; a RIGHT drag on it is the swipe's;
+- a LEFT drag that begins on a closed `.swipe` row (a recording's head) is
+  the row's tray, which opens leftwards only, and a RIGHT drag on a closed
+  row is the swipe's; an open row (`.swipe[data-open]`) owns both
+  directions, because a right drag on it is its own close gesture — taking
+  it stole the row's pointer capture, left the tray open and flipped the tab
+  (review 2026-09-29);
 - the axis is decided at 12 px of travel, and |dy| ≥ |dx| is a scroll.
 
 Once committed the region takes pointer capture and prevents the default of
@@ -103,25 +107,36 @@ pull-to-refresh stands down (the `defaultPrevented` protocol below). The
 panel follows the finger to 40 % of the region's width, at a quarter of the
 distance where there is no neighbour; letting go at 30 % of the width, or a
 0.4 px/ms flick in the same direction, steps; otherwise the panel snaps back
-on `--motion-duration-base` (1 ms under reduced motion). The click that
-follows a committed drag is swallowed once, so lifting over the new panel
-neither focuses the textarea nor toggles a recording. A step goes through the
+on `--motion-duration-base` (1 ms under reduced motion). The follow is
+written straight to the region's `--tab-swipe-x`, as pull-to-refresh writes
+`--pull-offset`, not through state: the textarea or a forty-row checklist
+sits under the region, and a move at input rate re-renders none of it; only
+`dragging` is state, and the attribute's removal is the snap back. The click
+that follows a committed drag is swallowed once, so lifting over the new
+panel neither focuses the textarea nor toggles a recording; Chromium fires no
+click after a touch that moved, so the flag can outlive the gesture, and a
+keyboard activation's click (`detail` 0) is let through — Enter on a tab
+after a swipe did nothing (review 2026-09-29) — while a cancelled pointer
+sets no flag. A step goes through the
 same `setTab` as a tap — `?tab=`, the session memory and Find behave
 identically — and moves no focus and announces nothing: `useRouteFocus` keys
 on the pathname, and the tab buttons remain the keyboard and screen-reader
 path. `transform` is applied only while a swipe is in progress; at rest the
 panel has none, so a row's menu is not trapped in a stacking context and the
-layout sweep sees no sideways scroller. Known trade: the Find field, a
+layout sweep sees no sideways scroller. Known trades: the Find field, a
 single-line input inside the region, loses the horizontal drag-scroll of an
-overflowing value. Where else the gesture applies is R6-NAV-D1 — nowhere
+overflowing value; and a pen is a finger here, so a sideways S Pen drag
+across the body — Android's pen text-selection gesture — steps the tab
+rather than selecting (the owner's pen-device check decides whether that
+holds). Where else the gesture applies is R6-NAV-D1 — nowhere
 yet: Home's rows own the horizontal axis (trays, the pinned hold-and-drag)
 and its chip row scrolls sideways.
 
 ## The drawer
 
 Details (language, tags, "also called", the verbatim and checklist switches,
-and the note's id with a copy button — R6-ID-1, for `X-Chintan-Note-Id`) or
-Share (copy, download). A sheet at the foot of the scroll region: `position:
+and — once R6-ID-1 lands from stream S5 — the note's id with a copy button,
+for `X-Chintan-Note-Id`) or Share (copy, download). A sheet at the foot of the scroll region: `position:
 sticky; inset-block-end: 0` inside `.app__main`, not fixed to the viewport —
 the tab bar owns the viewport's bottom row, and a sticky element is clipped by
 the region, so the sheet can cover nothing outside the note. Capped at
@@ -177,7 +192,10 @@ the last of forty checklist items focuses the new field well above (E2).
 
 The drawer needs no inset of its own: a sticky foot rests on the scroll
 container's content edge, above the padding, so the sheet rises with the
-region (measured: its bottom at 422, the keyboard's top). Its cap becomes
+region (measured: its bottom at 422 — the region's edge, a tab bar's height
+above the keyboard's top at 515, because the inset is the window's and the
+bar is not on every screen, so it is not subtracted; the caret likewise
+rests a bar's height above the keyboard). Its cap becomes
 what fits above the keyboard — `min(60dvh, 100dvh − inset − the tab bar − 2 ×
 a touch target − the safe insets)`, 335 of the 359 px available at 412×915;
 a taller sheet cannot leave its containing block and was pinned to the
@@ -187,8 +205,10 @@ viewport would put the tab bar with its 92 px record disc on top of the
 keyboard, a fifth of what is left. CDP cannot raise a keyboard
 (`visualViewport` ignores the emulated metrics), so the e2e cases set the
 property directly; a Pixel 7 Chrome and an iPhone PWA check is the manual
-step, and if an iPhone still hides the caret the next step is a small
-`useCaretInView` on input.
+step — type at the end, Items Enter at the end, Details → add a tag, and the
+scroll position stable while panning with the keyboard up, since the
+property is rewritten on every visual-viewport scroll — and if an iPhone
+still hides the caret the next step is a small `useCaretInView` on input.
 
 ## Find
 
@@ -212,15 +232,17 @@ so. Enter is next, Shift+Enter previous, Escape closes.
   while Details scrolls; and the Pixel 7 describe — the Details-sheet drag
   (R6-NAV-3), the five swipe cases (R6-NAV-1: left → Cleaned with the URL
   and no focus move, right → Text, right on Text and a short drag stay, a
-  vertical drag scrolls, a left drag on a recording head opens its tray and
-  a right one goes to Cleaned, a drag from the edge does nothing, a left
+  vertical drag scrolls, a left drag on a recording head opens its tray, a
+  right one on the open head closes it and one on the closed head goes to
+  Cleaned, a drag from the edge does nothing, a left
   drag on a grip on Items switches nothing), and the keyboard cases
   (R6-NAV-2: typing at the end of a long note, Enter in the last checklist
   item, the Details sheet's bottom at the keyboard's top).
 - `PullToRefresh.test.tsx`: the arming rule beside the hook's other cases;
   `useHorizontalSwipe.test.tsx`: commit at 30 %, a flick under it, the
-  damped follow with no neighbour, mouse, edge, the `.swipe` row, cancel,
-  the swallowed click; `useKeyboardInset.test.tsx`: the arithmetic, the
+  damped follow with no neighbour, mouse, edge, the `.swipe` row closed and
+  open, cancel with no click swallowed, the swallowed tap and the keyboard
+  click let through; `useKeyboardInset.test.tsx`: the arithmetic, the
   zoom, unmount, no `visualViewport`.
 - `NoteDetailScreen.test.tsx` (the composition and the tab precedence),
   `FindBar.test.tsx` and `find.test.ts` (the bar and the matching);

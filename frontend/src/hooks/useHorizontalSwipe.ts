@@ -22,9 +22,12 @@ import {
  *   checklist grip, a slider, the waveform scrubber, an open menu) is never a
  *   swipe — the grip's exclusion is the one thing that keeps a sideways grip
  *   drag from being a tab switch, so the checklist adds no attribute of its own;
- * - a LEFT drag that begins on a `.swipe` row (a recording's head) is the
- *   row's tray, which opens leftwards only (`rubberBand` pins the other way at
- *   zero); a RIGHT drag on it is ours;
+ * - a LEFT drag that begins on a closed `.swipe` row (a recording's head) is
+ *   the row's tray, which opens leftwards only (`rubberBand` pins the other
+ *   way at zero), and a RIGHT drag on a closed row is ours; an open row
+ *   (`.swipe[data-open]`) owns both directions, because a right drag on it
+ *   is its own close gesture — taking it stole the row's capture, left the
+ *   tray open and flipped the tab (review 2026-09-29);
  * - the axis is decided at 12 px of travel, and |dy| ≥ |dx| is a scroll.
  *
  * Once committed the region takes pointer capture and prevents the default of
@@ -33,12 +36,25 @@ import {
  * follows the finger up to 40 % of the region's width, at a quarter of the
  * distance where there is no neighbour to go to; release steps at 30 % of the
  * width or a 0.4 px/ms flick in the same direction, otherwise the panel snaps
- * back. The click that follows a committed drag is swallowed once, so lifting
- * over the new panel neither focuses the textarea nor toggles a recording.
+ * back. The follow is written straight to the region's `--tab-swipe-x`, as
+ * `usePullToRefresh` writes `--pull-offset`, not through state: a textarea
+ * and a forty-row checklist sit under this region, and a move at input rate
+ * must re-render none of it; only `dragging` is state. The property applies
+ * only under `data-swiping` (`notes.css`), so it is left where the finger
+ * let go and the attribute's removal is the snap back.
  *
- * Known trade: a single-line input inside the region — the Find field — loses
- * the horizontal drag-scroll of an overflowing value; its caret keys still
- * reach it.
+ * The click that follows a committed drag is swallowed once, so lifting over
+ * the new panel neither focuses the textarea nor toggles a recording.
+ * Chromium synthesises no click after a touch that moved, so the flag can
+ * outlive the gesture until the next pointer; a keyboard activation's click
+ * carries `detail` 0 and is let through — Enter on a tab after a swipe did
+ * nothing (review 2026-09-29) — and a cancelled pointer sets no flag.
+ *
+ * Known trades: a single-line input inside the region — the Find field —
+ * loses the horizontal drag-scroll of an overflowing value (its caret keys
+ * still reach it); and a pen is a finger here, so a sideways S Pen drag
+ * across the body — Android's pen text-selection gesture — steps the tab
+ * rather than selecting.
  */
 
 /** Travel before the axis is decided. */
@@ -56,6 +72,8 @@ export const SWIPE_RUBBER = 0.25;
 /** Controls whose own gesture is horizontal: the swipe never starts on them. */
 const OWN_GESTURE =
   '.checklist__grip, [role="slider"], .scrubber__track, .overflow-menu, select, input[type="range"]';
+/** The region's own property the panel follows while swiping (`notes.css`). */
+const OFFSET_PROPERTY = '--tab-swipe-x';
 
 export type SwipeDirection = 'left' | 'right';
 
@@ -70,6 +88,8 @@ interface Gesture {
   y0: number;
   axis: 'undecided' | 'x' | 'y';
   onSwipeRow: boolean;
+  /** The row was open when the finger landed: a drag either way is its own. */
+  onOpenRow: boolean;
   lastX: number;
   lastT: number;
   /** Velocity over the last two moves, px per ms, signed. */
@@ -87,8 +107,6 @@ export function useHorizontalSwipe({
   canGo: (direction: SwipeDirection) => boolean;
   onSwipe: (direction: SwipeDirection) => void;
 }): {
-  /** How far the panel has followed the finger, in px, signed. */
-  offset: number;
   /** A swipe is committed and the finger is down. */
   dragging: boolean;
   handlers: {
@@ -100,7 +118,6 @@ export function useHorizontalSwipe({
     onClickCapture: (event: ReactMouseEvent<HTMLElement>) => void;
   };
 } {
-  const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const gesture = useRef<Gesture | null>(null);
   const swallowClick = useRef(false);
@@ -123,6 +140,7 @@ export function useHorizontalSwipe({
       y0: event.clientY,
       axis: 'undecided',
       onSwipeRow: Boolean(target.closest('.swipe')),
+      onOpenRow: Boolean(target.closest('.swipe[data-open]')),
       lastX: event.clientX,
       lastT: event.timeStamp,
       vx: 0,
@@ -136,10 +154,12 @@ export function useHorizontalSwipe({
       if (!g || g.pointerId !== event.pointerId) return;
       const dx = event.clientX - g.x0;
       const dy = event.clientY - g.y0;
+      const region = ref.current;
       if (g.axis === 'undecided') {
         if (Math.hypot(dx, dy) < SWIPE_SLOP_PX) return;
-        if (Math.abs(dy) >= Math.abs(dx) || (g.onSwipeRow && dx < 0)) {
-          // A scroll, or the row's tray: not ours for the rest of this touch.
+        if (Math.abs(dy) >= Math.abs(dx) || (g.onSwipeRow && dx < 0) || g.onOpenRow) {
+          // A scroll, or the row's own gesture (its tray opening, or an open
+          // row closing): not ours for the rest of this touch.
           g.axis = 'y';
           return;
         }
@@ -147,7 +167,6 @@ export function useHorizontalSwipe({
         // Re-anchored where the swipe was recognised, so the panel starts
         // under the finger rather than jumping the slop.
         g.x0 = event.clientX;
-        const region = ref.current;
         if (region && typeof region.setPointerCapture === 'function') {
           try {
             region.setPointerCapture(event.pointerId);
@@ -165,8 +184,8 @@ export function useHorizontalSwipe({
       g.dx = event.clientX - g.x0;
       const direction: SwipeDirection = g.dx < 0 ? 'left' : 'right';
       const raw = latest.current.canGo(direction) ? g.dx : g.dx * SWIPE_RUBBER;
-      const max = widthOf(ref.current) * FOLLOW_MAX_FRACTION;
-      setOffset(Math.max(-max, Math.min(max, raw)));
+      const max = widthOf(region) * FOLLOW_MAX_FRACTION;
+      region?.style.setProperty(OFFSET_PROPERTY, `${String(Math.max(-max, Math.min(max, raw)))}px`);
     },
     [ref],
   );
@@ -178,9 +197,10 @@ export function useHorizontalSwipe({
       gesture.current = null;
       if (g.axis !== 'x') return;
       setDragging(false);
-      setOffset(0);
-      swallowClick.current = true;
+      // No click follows a cancelled pointer; a flag set here would wait for
+      // the next one (as `useSwipeActions.end`).
       if (cancelled) return;
+      swallowClick.current = true;
       const direction: SwipeDirection = g.dx < 0 ? 'left' : 'right';
       const far = Math.abs(g.dx) >= widthOf(ref.current) * SWIPE_COMMIT_FRACTION;
       const flick =
@@ -205,7 +225,6 @@ export function useHorizontalSwipe({
   }, [ref]);
 
   return {
-    offset,
     dragging,
     handlers: {
       onPointerDown,
@@ -221,7 +240,8 @@ export function useHorizontalSwipe({
         if (event.target === event.currentTarget) end(event, true);
       },
       onClickCapture: (event) => {
-        if (!swallowClick.current) return;
+        // A keyboard or script activation carries `detail` 0; a tap's carries 1.
+        if (!swallowClick.current || event.detail === 0) return;
         swallowClick.current = false;
         event.preventDefault();
         event.stopPropagation();

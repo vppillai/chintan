@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { useRef, type CSSProperties } from 'react';
+import { useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -16,7 +16,8 @@ import {
  * `SwipeRow.test.tsx` does. jsdom measures nothing, so the region is as wide
  * as the window (1024 px): a step is 30 % of that. Velocity comes from the
  * events' timestamps, which jsdom takes from the clock, so the clock is fake
- * and each move is a deliberate number of milliseconds after the last.
+ * and each move is a deliberate number of milliseconds after the last. The
+ * hook writes `--tab-swipe-x` on the region itself; `offsetOf` reads it back.
  */
 
 const WIDTH = 1024;
@@ -26,22 +27,19 @@ function Region({
   canGo = () => true,
   onSwipe,
   onTap = vi.fn(),
+  rowOpen = false,
 }: {
   canGo?: (direction: SwipeDirection) => boolean;
   onSwipe: (direction: SwipeDirection) => void;
   onTap?: () => void;
+  /** The `.swipe` row starts open, its tray uncovered by an earlier drag. */
+  rowOpen?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const swipe = useHorizontalSwipe({ ref, canGo, onSwipe });
   return (
-    <div
-      ref={ref}
-      data-testid="region"
-      data-swiping={swipe.dragging || undefined}
-      style={{ '--tab-swipe-x': `${String(swipe.offset)}px` } as CSSProperties}
-      {...swipe.handlers}
-    >
-      <div className="swipe">
+    <div ref={ref} data-testid="region" data-swiping={swipe.dragging || undefined} {...swipe.handlers}>
+      <div className="swipe" data-open={rowOpen || undefined}>
         <button type="button" onClick={onTap}>
           row
         </button>
@@ -98,7 +96,6 @@ describe('useHorizontalSwipe', () => {
     expect(onSwipe).toHaveBeenCalledWith('left');
     expect(capture).toHaveBeenCalledWith(1);
     expect(region()).not.toHaveAttribute('data-swiping');
-    expect(offsetOf()).toBe('0px');
   });
 
   it('steps on a flick short of 30 %', () => {
@@ -116,7 +113,9 @@ describe('useHorizontalSwipe', () => {
     // 60 px in 400 ms: well under the flick.
     drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -60], { ms: 400 });
     expect(onSwipe).not.toHaveBeenCalled();
-    expect(offsetOf()).toBe('0px');
+    // The snap back is the attribute's removal; the property is left where
+    // the finger let go and applies only under it.
+    expect(region()).not.toHaveAttribute('data-swiping');
   });
 
   it('follows at a quarter of the distance where there is no neighbour, and never steps there', () => {
@@ -144,7 +143,7 @@ describe('useHorizontalSwipe', () => {
     expect(onSwipe).not.toHaveBeenCalled();
   });
 
-  it('leaves a left drag on a swipe row to its tray, and takes a right one', () => {
+  it('leaves a left drag on a closed swipe row to its tray, and takes a right one', () => {
     const onSwipe = vi.fn();
     render(<Region onSwipe={onSwipe} />);
     drag(screen.getByText('row'), [-SWIPE_SLOP_PX - 8, -COMMIT_PX]);
@@ -153,15 +152,32 @@ describe('useHorizontalSwipe', () => {
     expect(onSwipe).toHaveBeenCalledWith('right');
   });
 
-  it('snaps back without stepping when the pointer is cancelled mid-swipe', () => {
+  it('leaves both directions on an open swipe row to its close gesture', () => {
     const onSwipe = vi.fn();
-    render(<Region onSwipe={onSwipe} />);
-    drag(screen.getByText('panel'), [-SWIPE_SLOP_PX - 8, -COMMIT_PX], { lift: false });
+    const capture = vi.fn();
+    HTMLElement.prototype.setPointerCapture = capture;
+    render(<Region rowOpen onSwipe={onSwipe} />);
+    drag(screen.getByText('row'), [SWIPE_SLOP_PX + 8, COMMIT_PX]);
+    drag(screen.getByText('row'), [-SWIPE_SLOP_PX - 8, -COMMIT_PX]);
+    expect(onSwipe).not.toHaveBeenCalled();
+    // Never taking the pointer either: doing so fired the row's own
+    // `lostpointercapture`, which settled its tray back open.
+    expect(capture).not.toHaveBeenCalled();
+    expect(region()).not.toHaveAttribute('data-swiping');
+  });
+
+  it('snaps back without stepping when the pointer is cancelled mid-swipe, and swallows no click', () => {
+    const onSwipe = vi.fn();
+    const onTap = vi.fn();
+    render(<Region onSwipe={onSwipe} onTap={onTap} />);
+    const panel = screen.getByText('panel');
+    drag(panel, [-SWIPE_SLOP_PX - 8, -COMMIT_PX], { lift: false });
     expect(region()).toHaveAttribute('data-swiping');
     fireEvent.pointerCancel(region(), { ...touch });
     expect(onSwipe).not.toHaveBeenCalled();
     expect(region()).not.toHaveAttribute('data-swiping');
-    expect(offsetOf()).toBe('0px');
+    fireEvent.click(panel, { detail: 1 });
+    expect(onTap).toHaveBeenCalledTimes(1);
   });
 
   it('swallows the click that follows a swipe, once', () => {
@@ -169,9 +185,22 @@ describe('useHorizontalSwipe', () => {
     render(<Region onSwipe={vi.fn()} onTap={onTap} />);
     const panel = screen.getByText('panel');
     drag(panel, [-SWIPE_SLOP_PX - 8, -COMMIT_PX]);
-    fireEvent.click(panel);
+    // A tap's click carries `detail` 1; jsdom's default is 0, a keyboard's.
+    fireEvent.click(panel, { detail: 1 });
     expect(onTap).not.toHaveBeenCalled();
-    fireEvent.click(panel);
+    fireEvent.click(panel, { detail: 1 });
+    expect(onTap).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a keyboard activation through after a swipe', () => {
+    const onTap = vi.fn();
+    render(<Region onSwipe={vi.fn()} onTap={onTap} />);
+    const panel = screen.getByText('panel');
+    drag(panel, [-SWIPE_SLOP_PX - 8, -COMMIT_PX]);
+    // Enter on a focused button: a click with no pointer before it and
+    // `detail` 0. Chromium fires no click after a moved touch, so without
+    // this the flag ate the next activation.
+    fireEvent.click(panel, { detail: 0 });
     expect(onTap).toHaveBeenCalledTimes(1);
   });
 });
