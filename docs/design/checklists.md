@@ -216,9 +216,20 @@ joined again through the same merge, and the rest goes where the first
 removed line stood — so a child extracted again is not doubled, keeps its
 tick and its place, and the other recording's child is not lost, whether
 the recording comes back with the same words, other words or none
-(`regenerate.md`). The match is exact folded words: "Costco" and "Costco
-wholesale" are two parents (a `ponytail:` ceiling in `append.go`;
-parent-name synonyms are the upgrade if a real list asks).
+(`regenerate.md`). A first append that was written and never marked — the
+worker died between the body write and the capture's completion — is
+retried the same way: its own items stand in for the artefact copy it does
+not have yet and are found by their words, so the retry inside the lease
+finishes the attempt without a write and the takeover after it keeps the
+child a later recording merged under its parent (`ownItems`; review
+2026-09-29, DB6-1). Only a recording that never had an artefact — appended
+while the list was verbatim — and now brings words no line under its
+marker has, or whose marker stands bare with none of its words in the
+list, is replaced by the paragraph cut; a bare marker alone proves
+nothing, since the Items tab carries every marker to the end on each save.
+The match is exact folded words: "Costco" and "Costco wholesale" are two
+parents (a `ponytail:` ceiling in `append.go`; parent-name synonyms are
+the upgrade if a real list asks).
 
 The capture marker keeps its place on the line before the first item
 (`<marker>\n- [ ] A\n- [ ] B`, after `\n\n` when the body has content). A

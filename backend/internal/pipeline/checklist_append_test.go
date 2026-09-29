@@ -4,11 +4,14 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/vppillai/chintan/backend/internal/cleanup"
+	"github.com/vppillai/chintan/backend/internal/keys"
 	"github.com/vppillai/chintan/backend/internal/model"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
@@ -462,5 +465,67 @@ func TestARecordingPartlyMergedPutsTheRestUnderItsMarker(t *testing.T) {
 	_, body := runChecklistCapture(t, h)
 	if want := "- [ ] Milk\n- [ ] Typed\n\n" + service.CaptureMarker("c_1") + "\n- [ ] Bread"; body != want {
 		t.Fatalf("body = %q, want %q", body, want)
+	}
+}
+
+// A checklist recording's first append was written and the worker died
+// before it could mark the capture appended, and a later recording has since
+// merged a child under this recording's parent (Meat under c_1's Costco, by
+// c_2 — the ring's same-second batches are exactly this shape). Lambda's
+// retry inside the lease finds the words in the note and finishes the
+// attempt without a write; the owner's Retry after the lease takes the claim
+// over and re-appends by words, not by cutting the paragraph, which runs to
+// the next marker and took Meat with it (review 2026-09-29, DB6-1). Either
+// way the body is the same body.
+func TestARetryOfAnInterruptedFirstChecklistAppendKeepsASiblingsMergedChild(t *testing.T) {
+	h := newHarness(t, harnessOpts{llm: &fake.LLM{ItemsResponse: []cleanup.Item{item("Costco", "Chicken")}}})
+	seedChecklistCapture(t, h, "list1", nil)
+	ctx := context.Background()
+	const noteKey = "tenants/user1/notes/list1/note.md"
+	body := service.CaptureMarker("c_1") + "\n- [ ] Costco\n  - [ ] Chicken\n  - [ ] Meat\n" + service.CaptureMarker("c_2")
+	if err := h.objects.Put(ctx, noteKey, []byte(body), "text/markdown"); err != nil {
+		t.Fatal(err)
+	}
+	// The dead attempt's state: transcript and items stored, the claim taken
+	// d ago, the capture not marked appended.
+	cleanKey, err := keys.CaptureClean("user1", "c_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rawKey = "tenants/user1/captures/c_1/raw.txt"
+	for key, text := range map[string]string{rawKey: "chicken from costco", cleanKey: "Costco\n  Chicken"} {
+		if err := h.objects.Put(ctx, key, []byte(text), "text/plain"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claimedAgo := func(d time.Duration) {
+		c, err := h.store.GetCapture(ctx, "user1", "c_1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.Status, c.Language, c.RawKey, c.CleanKey = model.StatusAppending, "en", rawKey, cleanKey
+		c.AppendToken, c.AppendClaimedAt, c.AppendedAt = appendToken("c_1", cleanKey), time.Now().Add(-d).Unix(), 0
+		if _, err := h.store.PutCapture(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		ago  time.Duration
+	}{
+		{"the retry inside the lease finishes the attempt", 0},
+		{"the retry after the lease takes the claim over", repository.AppendClaimLease + time.Minute},
+	} {
+		claimedAgo(tc.ago)
+		capture, err := h.pipeline.Run(ctx, "user1", "c_1")
+		if err != nil || capture.Status != model.StatusAppended {
+			t.Fatalf("%s: Run = %v, status %s (%s); want appended", tc.name, err, capture.Status, capture.Error)
+		}
+		if got, _ := h.objects.Get(ctx, noteKey); string(got) != body {
+			t.Fatalf("%s: body\n%s\nwant it unchanged, Meat kept:\n%s", tc.name, got, body)
+		}
+	}
+	if n := len(h.llm.ItemsCalls()); n != 0 {
+		t.Errorf("extraction calls = %d, want none: the items were stored", n)
 	}
 }
