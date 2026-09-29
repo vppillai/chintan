@@ -216,15 +216,17 @@ round-5 proposal to drop it (PR-D4) was reversed before it merged.
 ## Editing the list
 
 Body order is display order for the open items, and a reorder is one body
-write. The grip at a row's left edge is the one control for the order: a
-drag lifts the row and the list re-sorts under the pointer
+write. The grip at a row's left edge is the one control for the order and
+the level (`ChecklistRow.tsx`; the list, the drag wiring and every body
+write are `ChecklistEditor.tsx`, the Done disclosure `ChecklistDone.tsx`):
+a drag up or down lifts the row and the list re-sorts under the pointer
 (`useDragReorder`, the pinned group's gesture, shared), nothing is written
 while it is in the air, and on release `moveItem` rewrites the body once and
 the editor saves at once, as it does for a tick — a discrete act, not typing.
-The arrow keys on a focused grip move the row one slot. A tap on the grip —
-a lift that never moved — opens the row's menu: Move up, Move down, Move to
-top, Move to bottom, Make a sub-item, Move up a level, Delete. That is the
-single-pointer path WCAG 2.5.7 asks
+The up and down arrow keys on a focused grip move the row one slot. A tap on
+the grip — a lift that never moved — opens the row's menu: Move up, Move
+down, Move to top, Move to bottom, Make a sub-item, Move up a level, Delete.
+That is the single-pointer path WCAG 2.5.7 asks
 for, and it hangs on the grip rather than on a ⋮ of its own because a phone's
 width has no room for a grip, a box, a dictated sentence and a ⋮ in one row.
 The hook reports the tap before it swallows the browser's click: once the
@@ -235,6 +237,26 @@ row, since the slots it was moving between are gone. The touch-driven
 pull-to-refresh stands down for a `touchmove` whose default the lifted row
 has already prevented, or a downward drag at the top of a list pulled the
 page along under the row.
+
+A drag on the grip sideways changes the row's level instead (owner,
+2026-09-29; R6-CL-2). The first 10 px of travel decide the axis — more
+across than along and the drag is sideways, else it is the reorder above —
+and the axis is locked from then on, so a vertical drag that drifts never
+changes a level and a sideways one never re-sorts. Sideways, the row keeps
+its slot and every 24 px (`--space-6`, the indent step) to the right is one
+level in, to the left one level out, clamped to the one level there is; the
+lifted row previews what release would do — set in or out by the step, with
+a 3 px bar in the accent at its start (`data-nest-preview`) — and shows
+nothing when the move is one `nest` would refuse: the first open row (it
+has nothing to go under), a row already a sub-item, a done neighbour. On
+release the write is the same `nestUnder` / `unnest` Tab and the menu make,
+saved at once and said ("Made a sub-item" / "Moved up a level"); a pointer
+that came back under a step writes nothing. A drag past the slop on either
+axis is no longer a tap, so a wobble on the handle does not open its menu.
+The right and left arrow keys on a focused grip do the same as the drag,
+beside the up and down that move it, and the grip's description says so;
+Tab and Shift+Tab in the field are unchanged. The pinned group passes no
+`onShift` and its drag has one axis, as before.
 
 ### Sub-items
 
@@ -265,7 +287,9 @@ makes a sibling under the same parent. Up a level (`unnest`) is in place,
 and the sub-items that followed under the same parent become the row's own,
 as an outliner does. A parent made a sub-item takes its children along as
 its siblings, the one level being the limit; the same clamp applies when a
-parent is dropped on a sub-item's slot.
+parent is dropped on a sub-item's slot. The sideways drag on the grip and
+→/← on it ("Editing the list" above) go through the same two functions, so
+every path nests the same way and refuses the same rows.
 
 Ticking a parent ticks its sub-items — the parent is the whole job, and a
 finished job has no open parts — and the whole block is held for the tick's
@@ -343,9 +367,37 @@ depth (CL-D1, 2026-09-27) — one level is what a spoken list needs and what
 Keep offers, deeper lists want an outline UI (collapse, guide lines per
 level) and make the 500-rune snippet count and the `tasks` view harder to
 reason about, and a third level is one constant plus CSS if a real list ever
-asks; a drag-right gesture to nest — Tab and the menu cover keyboard and
-finger, and a horizontal threshold on a vertical drag is a second gesture to
-learn and to get wrong.
+asks. The drag-right gesture to nest was on this list in round 5 (Tab and
+the menu cover keyboard and finger; a horizontal threshold on a vertical
+drag is a second gesture to learn) and came off it on 2026-09-29 at the
+owner's asking: a spoken list is nested with a thumb, on a phone, where Tab
+does not exist and the menu is two taps away — so the handle that already
+moves a row moves it sideways too, with the axis decided in the first 10 px
+and a preview before anything is written ("Editing the list" above).
+
+### Split up
+
+The Split up tab shows the worker's `tasks` proposal in the Items editor
+itself — the same rows, grips, boxes, fields, add row and Done (decision
+R6-CL-D1, option a, 2026-09-29) — so the proposal can be read as it would be
+lived with, and taken with whatever act comes first. The first act there — a
+tick, a drag, a Tab, a keystroke — replaces the body with the proposal and
+applies that act in the same save; the caption above the rows says so
+("Ticking, moving or editing here replaces your list with the split
+version."), Use this list takes it outright, and either way the shell's
+toast offers Undo for six seconds (the OF-DEL pattern: no question first for
+what can be undone), which writes the body as it stood back, saves, and
+shows the proposal again. From then on the tab shows the body — the split
+list with the changes made since (`adoptedSplits`, per proposal) — and an
+act there is an ordinary edit, saved as the Items tab saves it. A proposal
+older than the note, and one a regeneration is about to replace, is drawn
+`inert` (one attribute on the wrapper, not a prop through every control)
+with the stale notice above it, until Regenerate or Use this list; a stale
+proposal taken by an act would put a list that predates the note's later
+changes over the body in one save. The editor is `{ noteId, body, onChange,
+onSave }` and knows nothing of whose body it is: the Items tab hands it the
+note editor, Split up hands it `adopt`. The find bar still counts nothing in
+this tab.
 
 ## Why the body stays the single source of truth
 
