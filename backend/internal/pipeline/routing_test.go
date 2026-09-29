@@ -1,13 +1,18 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/provider/fake"
 	"github.com/vppillai/chintan/backend/internal/repository"
@@ -485,6 +490,7 @@ func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 	for name, title := range map[string]string{
 		"the title, in another case and spacing": "  ROOF   Repair ",
 		"an alias":                               "Roof",
+		"a title that opens with the title":      "Roof repair checklist",
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newRoutingFixture(t, "more about the roof",
@@ -516,6 +522,218 @@ func TestANewNoteTitledLikeAnExistingNoteIsAppendedToItInstead(t *testing.T) {
 	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Roof repairs" {
 		t.Errorf("created titles = %v, want the new title as given (\"Roof repairs\" is not \"Roof repair\")", titles)
 	}
+}
+
+// The owner's ring speaks name-first — "App feedback checklist move seems to
+// be good", "Business ideas by Priyanka seated pool for dogs" — and the model
+// twice made a new note of the whole thing (2026-09-27 18:23:02, 18:48:17;
+// both moved by hand). A recording whose transcript, or whose new title,
+// opens with a listed name as whole words is filed into that note, whether
+// the model said "new" or an unsure "append"; the content is kept as the
+// model derived it. A name of one short word never files anything this way.
+func TestARecordingThatOpensWithANoteNameIsFiledIntoIt(t *testing.T) {
+	const spoken = "Roof repair the flashing is loose"
+	for name, decision := range map[string]provider.RouteDecision{
+		"a new title that opens with the name":               {Action: provider.RouteNew, Title: "Roof repair the flashing", Confidence: 1},
+		"a new title that does not, but the transcript does": {Action: provider.RouteNew, Title: "Flashing", Confidence: 0.5},
+		"an unsure append":                                   {Action: provider.RouteAppend, NoteID: "n1", Confidence: 0.4},
+	} {
+		t.Run(name, func(t *testing.T) {
+			decision.Content = spoken
+			f := newRoutingFixture(t, spoken, decision, false)
+			ctx := context.Background()
+			capture, err := f.run(ctx, "c_1")
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if capture.NoteID != "n1" || capture.Status != model.StatusAppended {
+				t.Fatalf("capture = %s in %q, want appended into n1", capture.Status, capture.NoteID)
+			}
+			if titles := f.h.creator.createdTitles(); len(titles) != 0 {
+				t.Fatalf("created titles = %v, want none", titles)
+			}
+			body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
+			if !strings.Contains(strings.ToLower(string(body)), "roof repair the flashing is loose") {
+				t.Errorf("n1 body = %q, want the dictation as the model left it", body)
+			}
+		})
+	}
+
+	// "Roof" is an alias of n1 and one short word: it opens too many
+	// sentences that are not about the roof.
+	f := newRoutingFixture(t, "roof is fine",
+		provider.RouteDecision{Action: provider.RouteNew, Title: "Fine", Confidence: 0.5, Content: "roof is fine"}, false)
+	if _, err := f.run(context.Background(), "c_1"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Fine" {
+		t.Errorf("created titles = %v, want [Fine]; a one-word alias must not file by prefix", titles)
+	}
+}
+
+// staleDrain hands decideTarget a candidate list from before a sibling
+// capture created its note, for the next `remaining` drains, and passes every
+// other call through. It is the window between reading the list and the
+// model answering, in which the ring's same-second batch lands.
+type staleDrain struct {
+	repository.Store
+	mu        sync.Mutex
+	stale     []model.NoteIndex
+	remaining int
+}
+
+func (s *staleDrain) DrainNotes(ctx context.Context, tenantID string, opts repository.DrainOptions) ([]model.NoteIndex, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.remaining > 0 {
+		s.remaining--
+		return append([]model.NoteIndex(nil), s.stale...), false, nil
+	}
+	return s.Store.DrainNotes(ctx, tenantID, opts)
+}
+
+// The ring posts several recordings in the same second, and the candidate
+// list is read before the model call, so two captures naming a list nobody
+// has yet were each told "new". The path that is about to create a note reads
+// the list once more; the second capture finds its sibling's note and appends.
+func TestASiblingCaptureCreatingTheSameNoteIsAppendedToNotDuplicated(t *testing.T) {
+	var metrics bytes.Buffer
+	defer obs.SetMetricOutput(&metrics)()
+	f := newRoutingFixture(t, "add milk to the shopping list",
+		provider.RouteDecision{Action: provider.RouteNew, Title: "Shopping list", Confidence: 1}, false)
+	ctx := context.Background()
+	before, _, err := f.store.DrainNotes(ctx, f.userID, repository.DrainOptions{})
+	if err != nil {
+		t.Fatalf("DrainNotes: %v", err)
+	}
+	stale := &staleDrain{Store: f.store, stale: before}
+	p, err := New(Config{
+		Store: stale, Objects: f.objects, STT: f.h.stt, LLM: f.h.llm, Router: f.router, Notes: f.h.creator,
+		Breaker: newBreaker(0), STTProvider: "groq", STTModel: "whisper-large-v3-turbo",
+		LLMProvider: "openai", LLMModel: "test-model", Now: f.h.clock.Now,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	first, err := p.Run(ctx, f.userID, "c_1")
+	if err != nil || first.Status != model.StatusAppended {
+		t.Fatalf("first run = %s, %v", first.Status, err)
+	}
+
+	// The second capture was already at the model when the first created the
+	// note: its candidate list predates it.
+	if err := f.objects.Put(ctx, "tenants/user1/captures/c_2/raw.txt", []byte("add eggs to the shopping list"), "text/plain"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.PutCapture(ctx, model.CaptureIndex{
+		ID: "c_2", UserID: f.userID, Status: model.StatusTranscribed, CreatedAt: model.Now(),
+		RawKey: "tenants/user1/captures/c_2/raw.txt", Source: model.DeviceSource("dev_1"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale.mu.Lock()
+	stale.remaining = 1
+	stale.mu.Unlock()
+	second, err := p.Run(ctx, f.userID, "c_2")
+	if err != nil || second.Status != model.StatusAppended {
+		t.Fatalf("second run = %s, %v", second.Status, err)
+	}
+
+	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Shopping list" {
+		t.Fatalf("created titles = %v, want one Shopping list", titles)
+	}
+	if second.NoteID != first.NoteID || second.RouteConfidence != 1 {
+		t.Fatalf("second capture in %q at %.2f, want %q at 1", second.NoteID, second.RouteConfidence, first.NoteID)
+	}
+	body, _ := f.objects.Get(ctx, mustGetNote(t, f.store, f.userID, first.NoteID).S3MarkdownKey)
+	for _, want := range []string{"milk", "eggs"} {
+		if !strings.Contains(strings.ToLower(string(body)), want) {
+			t.Errorf("note body = %q, want %q in it", body, want)
+		}
+	}
+	if !strings.Contains(metrics.String(), `"RouterCreateDeduped"`) {
+		t.Error("RouterCreateDeduped was not counted")
+	}
+}
+
+// One "routing decided" line per decision, counts and enumerations only, so
+// the log alone says what routing did — until now that took the DynamoDB row,
+// the S3 transcript and the log together, and a route whose note was purged
+// could not be judged at all. No title and no transcript word reaches it.
+func TestRoutingDecisionIsLoggedAsCountsOnly(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(prev)
+
+	decided := func(t *testing.T, id string) map[string]any {
+		t.Helper()
+		for _, line := range strings.Split(logs.String(), "\n") {
+			if !strings.Contains(line, `"routing decided"`) || !strings.Contains(line, `"correlation_id":"`+id+`"`) {
+				continue
+			}
+			for _, leak := range []string{"roof", "gutter", "leaking", "checklist move"} {
+				if strings.Contains(strings.ToLower(line), leak) {
+					t.Errorf("the decision line carries %q: %s", leak, line)
+				}
+			}
+			var rec map[string]any
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("log line is not JSON: %v", err)
+			}
+			return rec
+		}
+		t.Fatalf("no routing decided line for %s:\n%s", id, logs.String())
+		return nil
+	}
+	want := func(t *testing.T, rec map[string]any, fields map[string]any) {
+		t.Helper()
+		for k, v := range fields {
+			if rec[k] != v {
+				t.Errorf("%s = %v, want %v", k, rec[k], v)
+			}
+		}
+	}
+
+	t.Run("an append the model chose", func(t *testing.T) {
+		f := newRoutingFixture(t, "add this to my roof repair note the gutter is also leaking",
+			provider.RouteDecision{Action: provider.RouteAppend, NoteID: "n1", Confidence: 0.95}, false)
+		f.router.Spans = []routing.Span{{StartWord: 0, EndWord: 7}}
+		ctx := obs.WithCorrelationID(context.Background(), "corr-append")
+		if _, err := f.run(ctx, "c_1"); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		want(t, decided(t, "corr-append"), map[string]any{
+			"action": "append", "confidence": 0.95, "matched_by": "model", "candidates": 1.0,
+			"transcript_words": 12.0, "title_words": 0.0, "spans": 1.0, "removed_words": 7.0,
+			"checklist": false, "source": "app",
+		})
+	})
+
+	t.Run("a new note the code filed by its opening words", func(t *testing.T) {
+		f := newRoutingFixture(t, "Roof repair checklist move seems to be good",
+			provider.RouteDecision{Action: provider.RouteNew, Title: "Roof repair checklist move", Confidence: 0.5, Checklist: true}, false)
+		ctx := obs.WithCorrelationID(context.Background(), "corr-prefix")
+		if _, err := f.run(ctx, "c_1"); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		want(t, decided(t, "corr-prefix"), map[string]any{
+			"action": "append", "confidence": 1.0, "matched_by": "prefix_title", "candidates": 1.0,
+			"transcript_words": 8.0, "title_words": 0.0, "spans": 0.0, "removed_words": 0.0,
+			"checklist": true, "source": "app",
+		})
+	})
+
+	t.Run("a new note nothing matched", func(t *testing.T) {
+		f := newRoutingFixture(t, "remind me to book the dentist",
+			provider.RouteDecision{Action: provider.RouteNew, Title: "Dentist appointment", Confidence: 0.5}, false)
+		ctx := obs.WithCorrelationID(context.Background(), "corr-new")
+		if _, err := f.run(ctx, "c_1"); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		want(t, decided(t, "corr-new"), map[string]any{"action": "new", "matched_by": "none", "title_words": 2.0})
+	})
 }
 
 // A note the router could not title is named from what was said: six words
