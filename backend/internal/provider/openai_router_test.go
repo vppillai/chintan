@@ -573,3 +573,36 @@ func TestRouteKeepsTheDictationWhenGrowingOverTheTitleWouldEmptyIt(t *testing.T)
 		t.Errorf("content = %q, want empty for an instruction-only append", decision.Content)
 	}
 }
+
+// On an append the reply has no title, so until 2026-09-29 ExtendSpans had
+// nothing to grow over and "Create a new note and add it to Pebble Ring
+// Test" with the span stopping at "to" appended the note's own name to it
+// (battery row 9, run 3). The destination's title is looked up for the
+// growth; the recording is then nothing but instruction and the body stays
+// empty. Row 13's span, which stopped inside "staging smoke", grows to the
+// title's end so "smoke" no longer opens the body.
+func TestRouteGrowsASpanOverTheDestinationsNameAndToTheEndOfATitleItStoppedInside(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := routerServer(t, `{"action":"append","note":2,"confidence":1,"instruction_spans":[{"start_word":0,"end_word":8}]}`)
+	decision, err := newRouter(t, srv).Route(context.Background(), "Create a new note and add it to Pebble Ring Test",
+		[]routing.Candidate{{NoteID: "n1", Title: "Roof repair"}, {NoteID: "n2", Title: "Pebble Ring Test"}}, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.NoteID != "n2" || decision.Title != "" {
+		t.Fatalf("decision = %+v, want an untitled append to n2", decision)
+	}
+	if decision.Content != "" {
+		t.Errorf("content = %q, want empty: the note's own name is the instruction's last words", decision.Content)
+	}
+
+	srv, _ = routerServer(t, `{"action":"new","title":"staging smoke","kind":"note","confidence":1,"instruction_spans":[{"start_word":0,"end_word":3}]}`)
+	decision, err = newRouter(t, srv).Route(context.Background(), "title this staging smoke and then the actual content of the note is that the deploy pipeline is green", nil, "")
+	if err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+	if decision.Content != "and then the actual content of the note is that the deploy pipeline is green" {
+		t.Errorf("content = %q, want the title's last word outside it", decision.Content)
+	}
+}

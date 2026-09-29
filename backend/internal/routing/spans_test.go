@@ -149,10 +149,59 @@ func TestExtendSpansClosesTheGapBeforeTheTitleAndTheTrailingNote(t *testing.T) {
 			want: []Span{{0, 7}},
 		},
 		{
+			// Row 13's actual shape, three of three: the span took the title's
+			// first word and left "smoke" to open the body.
+			name:       "a naming span stopping inside the title grows to its end",
+			transcript: "title this staging smoke and then the actual content of the note is that the deploy pipeline is green",
+			spans:      []Span{{0, 3}}, title: "staging smoke",
+			want: []Span{{0, 4}},
+		},
+		{
+			// Row 9 run 3: on an append the title is the destination's, and the
+			// span that stopped before it grows over it, so nothing is left to
+			// append.
+			name:       "a filing span stopping before the destination's name grows over it",
+			transcript: "Create a new note and add it to Pebble Ring Test",
+			spans:      []Span{{0, 8}}, title: "Pebble Ring Test",
+			want: []Span{{0, 11}},
+		},
+		{
+			name:       "a filing span stopping inside the destination's name grows to its end",
+			transcript: "Create a new note and add it to Pebble Ring Test",
+			spans:      []Span{{0, 9}}, title: "Pebble Ring Test",
+			want: []Span{{0, 11}},
+		},
+		{
+			name:       "the overlap never reaches back before the span",
+			transcript: "staging smoke is the title",
+			spans:      []Span{{1, 2}}, title: "staging smoke",
+			want: []Span{{1, 2}},
+		},
+		{
 			name:       "the next word is neither",
 			transcript: "add this to my roof repair note the gutter leaks",
 			spans:      []Span{{0, 7}}, title: "",
 			want: []Span{{0, 7}},
+		},
+		{
+			// Rows 23, 24 and 26 of the same battery: the span already covers
+			// the name, or the name does not abut it, and nothing grows.
+			name:       "a name-first append whose span covers the name is left alone",
+			transcript: "App feedback checklist move seems to be good where I can drag items up and down",
+			spans:      []Span{{0, 2}}, title: "App feedback",
+			want: []Span{{0, 2}},
+		},
+		{
+			name:       "a name-first append with words after the name is left alone",
+			transcript: "Business ideas by Priyanka seated pool for dogs",
+			spans:      []Span{{0, 2}}, title: "Business ideas",
+			want: []Span{{0, 2}},
+		},
+		{
+			name:       "a filing phrase whose span ends after note is left alone",
+			transcript: "Add to the app feedback note and the push to talk icon does not look good",
+			spans:      []Span{{0, 6}}, title: "App feedback",
+			want: []Span{{0, 6}},
 		},
 		{
 			name:       "the title elsewhere than right after the span does not count",

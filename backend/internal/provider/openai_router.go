@@ -71,7 +71,21 @@ func (c *OpenAICleanup) Route(ctx context.Context, transcript string, candidates
 	if reply.Spans != nil {
 		decision.Spans = len(*reply.Spans)
 	}
-	decision.Content = routedContent(ctx, transcript, decision.Title, decision.Action, reply)
+	// An append's reply carries no title, and the words a span stopped short
+	// of or inside are then the destination's own name ("Create a new note
+	// and add it to" + "Pebble Ring Test", battery 2026-09-29 row 9, appended
+	// as text once in three), so ExtendSpans is given that note's title. The
+	// decision's Title stays empty: an append has none.
+	title := decision.Title
+	if decision.Action == RouteAppend {
+		for _, c := range candidates {
+			if c.NoteID == decision.NoteID {
+				title = c.Title
+				break
+			}
+		}
+	}
+	decision.Content = routedContent(ctx, transcript, title, decision.Action, reply)
 	return decision, nil
 }
 
