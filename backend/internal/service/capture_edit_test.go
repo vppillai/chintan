@@ -676,9 +676,8 @@ func TestMoveCaptureIsScopedToTheTenant(t *testing.T) {
 	}
 }
 
-// The target write fails after the source was cut. The paragraph goes back
-// exactly where it was, the row still points at the source, and the error
-// says the request can be repeated.
+// The target write fails. The source was never cut, the row still points at
+// it, and the error says the request can be repeated.
 func TestMoveCaptureRestoresTheSourceWhenTheTargetWriteFails(t *testing.T) {
 	h := newEditHarness(t)
 	sourceBody := "typed\n\n" + CaptureMarker("c_1") + "\nFirst.\n\n" + CaptureMarker("c_2") + "\nSecond."
@@ -714,7 +713,8 @@ func TestMoveCaptureRestoresTheSourceWhenTheTargetWriteFails(t *testing.T) {
 	}
 }
 
-// The first write failing is also a rollback, trivially: nothing was written.
+// The cut failing after the copy landed undoes the copy, so both bodies are
+// as they were.
 func TestMoveCaptureThatCannotCutChangesNothing(t *testing.T) {
 	h := newEditHarness(t)
 	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.")
@@ -728,6 +728,105 @@ func TestMoveCaptureThatCannotCutChangesNothing(t *testing.T) {
 	if h.body(source) != CaptureMarker("c_1")+"\nFirst." || h.body(target) != "" {
 		t.Fatal("a move whose first write failed changed a body")
 	}
+}
+
+// A process killed between the two body writes (R7-1). The target is written
+// first, so the crash leaves the paragraph in both notes rather than in
+// neither; the repeat of the request finds it in the source, replaces the
+// target's copy, and finishes the cut, so the text ends up exactly once, in
+// the target.
+func TestMoveCaptureKilledBetweenTheWritesLosesNothing(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.\n\n"+CaptureMarker("c_2")+"\nSecond.")
+	target := h.note("u1", "Target", CaptureMarker("t_1")+"\nTheirs.")
+	h.appended("u1", source.ID, "c_1", t1000)
+	h.appended("u1", source.ID, "c_2", t1200)
+	h.appended("u1", target.ID, "t_1", t1100)
+
+	killed := NewCaptureService(h.store, killedAfterOneWrite{Objects: h.objects, writes: new(int)})
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the move never reached the source write")
+			}
+		}()
+		_, _, _ = killed.MoveCapture(h.ctx, "u1", "c_1", target.ID)
+	}()
+	if !strings.Contains(h.body(source), "First.") {
+		t.Fatalf("the source lost the paragraph to a crash: %q", h.body(source))
+	}
+
+	if _, moved, err := h.captures.MoveCapture(h.ctx, "u1", "c_1", target.ID); err != nil || !moved {
+		t.Fatalf("retry = (%v, %v)", moved, err)
+	}
+	if got, want := h.body(target), CaptureMarker("c_1")+"\nFirst.\n\n"+CaptureMarker("t_1")+"\nTheirs."; got != want {
+		t.Errorf("target after retry = %q, want %q", got, want)
+	}
+	if got, want := h.body(source), CaptureMarker("c_2")+"\nSecond."; got != want {
+		t.Errorf("source after retry = %q, want %q", got, want)
+	}
+	if n := strings.Count(h.body(source)+h.body(target), "First."); n != 1 {
+		t.Errorf("the paragraph is in the notes %d times, want once", n)
+	}
+	if c, _ := h.store.GetCapture(h.ctx, "u1", "c_1"); c.NoteID != target.ID {
+		t.Errorf("capture points at %q, want the target", c.NoteID)
+	}
+}
+
+// An edit to the paragraph that lands between the copy and the cut must not
+// be cut away: the move is undone and the edited words stay in the source.
+func TestMoveCaptureUndoesTheCopyWhenTheParagraphIsEditedMidMove(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.")
+	target := h.note("u1", "Target", "")
+	h.appended("u1", source.ID, "c_1", t1000)
+	edited := CaptureMarker("c_1") + "\nFirst, edited."
+
+	racing := NewCaptureService(h.store, editAfterPutIfMatch{
+		Objects: h.objects, key: target.S3MarkdownKey,
+		edit: func() { _ = h.objects.Put(h.ctx, source.S3MarkdownKey, []byte(edited), "text/markdown") },
+	})
+	if _, _, err := racing.MoveCapture(h.ctx, "u1", "c_1", target.ID); !errors.Is(err, ErrMoveIncomplete) {
+		t.Fatalf("MoveCapture = %v, want ErrMoveIncomplete", err)
+	}
+	if got := h.body(source); got != edited {
+		t.Errorf("source = %q, want the edit %q", got, edited)
+	}
+	if got := h.body(target); got != "" {
+		t.Errorf("target kept the stale copy: %q", got)
+	}
+}
+
+// killedAfterOneWrite lets the first conditional body write land and panics
+// on the next, which is how a test stands in for a Lambda killed between the
+// move's two writes, whichever note is written first: nothing after it runs,
+// compensation included.
+type killedAfterOneWrite struct {
+	repository.Objects
+	writes *int
+}
+
+func (k killedAfterOneWrite) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	if *k.writes == 1 {
+		panic("killed")
+	}
+	*k.writes++
+	return k.Objects.PutIfMatch(ctx, key, body, contentType, etag)
+}
+
+// editAfterPutIfMatch runs edit once, right after the write to key lands.
+type editAfterPutIfMatch struct {
+	repository.Objects
+	key  string
+	edit func()
+}
+
+func (e editAfterPutIfMatch) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	err := e.Objects.PutIfMatch(ctx, key, body, contentType, etag)
+	if err == nil && key == e.key && e.edit != nil {
+		e.edit()
+	}
+	return err
 }
 
 // failingPutIfMatch fails the conditional write for one key.

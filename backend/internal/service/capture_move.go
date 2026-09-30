@@ -16,15 +16,13 @@ var (
 	// a first destination is SetCaptureTarget's job, and it also resumes the
 	// pipeline; a move only relocates text that is already written.
 	ErrCaptureUnfiled = errors.New("capture has no note to move from")
-	// ErrMoveIncomplete means the move failed and was rolled back: the source
-	// note holds the paragraph where it was, the capture still points at it,
-	// and the request can simply be repeated.
+	// ErrMoveIncomplete means the move failed before it finished: the source
+	// note still holds the paragraph, the capture still points at it, and the
+	// request can simply be repeated. The paragraph is inserted into the
+	// target before it is cut from the source, so no failure takes it out of
+	// both; the copy a failed move may leave in the target is removed where
+	// the target can still be written, and a repeat replaces it otherwise.
 	ErrMoveIncomplete = errors.New("capture move did not complete; nothing changed")
-	// ErrMoveUnrecovered means the move failed after the paragraph was cut
-	// from the source and the source could not be restored. The clean
-	// transcript object still exists, and the failure is logged with the ids
-	// an operator needs, but this is the one outcome a retry cannot fix.
-	ErrMoveUnrecovered = errors.New("capture move failed and could not be undone")
 )
 
 // MoveCapture relocates one recording to another note: its paragraph is cut
@@ -38,13 +36,17 @@ var (
 // the no-op the API answers 204.
 //
 // The two bodies are written one after the other, each under its ETag. There
-// is no transaction across them, so the order and the rollback are what stand
-// in for one: the source is cut first, and if the target write then fails the
-// paragraph is put back where it was and ErrMoveIncomplete says the request
-// can be repeated. Everything after the target write — the index refreshes,
-// the row — is idempotent, so a failure there leaves a state a retry finishes:
-// the cut finds nothing to cut, the insert finds its marker already there, and
-// the rest runs again.
+// is no transaction across them, so the order is what stands in for one: the
+// paragraph is copied into the target first and only then cut from the
+// source. A process killed between the two writes — a Lambda timeout, say —
+// leaves the text in both notes, never in neither, and the source is still
+// the one the capture points at. A repeat then finds the paragraph in the
+// source, replaces the target's copy with it, and finishes the cut. A write
+// that fails in-process is compensated instead: the target's copy is removed
+// and ErrMoveIncomplete says the request can be repeated. Everything after the
+// cut — the index refreshes, the row — is idempotent, so a failure there
+// leaves a state a retry finishes: the source has nothing to copy, the target
+// already holds the paragraph, and the rest runs again.
 func (s *CaptureService) MoveCapture(ctx context.Context, userID, captureID, targetNoteID string) (capture *model.CaptureIndex, moved bool, err error) {
 	current, err := s.movableCapture(ctx, userID, captureID)
 	if err != nil {
@@ -102,13 +104,13 @@ func (s *CaptureService) MoveCaptureToNewNote(ctx context.Context, userID, captu
 // discardUnusedNote is the compensation for a move into a note made for it
 // that failed. The note's body decides, read back rather than inferred from
 // where the move stopped, since a write that reported a fault may still have
-// landed. Empty — true of every ErrMoveIncomplete, whose failures come before
-// the insert or undo it — means nothing reached the note, so it is removed
-// and "nothing changed" is true again. Non-empty means the paragraph is in it
-// and out of the source, so the note is the only copy of the text and stays;
-// it is logged by id (ids are not user content) for the operator, because a
-// repeat of the request cannot find it and moves the capture into a second,
-// empty note.
+// landed. Empty — true of every ErrMoveIncomplete whose compensation could
+// write the note — means nothing reached it, so it is removed and "nothing
+// changed" is true again. Non-empty means the paragraph is in it, and after
+// the cut the note is the only copy of the text, so it stays either way; it
+// is logged by id (ids are not user content) for the operator, because a
+// repeat of the request cannot find it and moves the capture into a second
+// note.
 func (s *CaptureService) discardUnusedNote(ctx context.Context, userID, captureID string, note model.NoteIndex, cause error) {
 	log := obs.Log(ctx).With(
 		slog.String("capture_id", captureID),
@@ -168,34 +170,51 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
 	}
 
-	// 1. Cut the paragraph out of the source.
+	// 1. Read the paragraph from the source without changing it.
 	var text string
-	cut := false
+	found := false
 	if sourceKey != "" {
-		cut, err = RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
-			rest, t, found := CutCaptureParagraph(body, captureID)
-			text = t
-			return rest, found
-		})
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrMoveIncomplete, err)
+		body, err := s.objects.Get(ctx, sourceKey)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("%w: failed to read the source body: %w", ErrMoveIncomplete, err)
 		}
+		_, text, found = CutCaptureParagraph(string(body), captureID)
 	}
 
-	// 2. Put it into the target, or put it back where it was.
-	if cut {
+	if found {
+		// 2. Copy it into the target. A copy already there is left by a move
+		// that stopped between the writes; the source's text replaces it,
+		// since the source is the note the user has been editing since.
 		_, err = RewriteNoteBody(ctx, s.objects, target.S3MarkdownKey, func(body string) (string, bool) {
-			if HasCaptureMarker(body, captureID) {
+			rest, _, _ := CutCaptureParagraph(body, captureID)
+			next := InsertCaptureParagraph(rest, captureID, text, before)
+			return next, next != body
+		})
+		if err != nil {
+			return nil, s.undoInsert(ctx, target.S3MarkdownKey, sourceID, current, err)
+		}
+
+		// 3. Cut it from the source. The paragraph must still read as what
+		// was copied: an edit that landed in between would otherwise be cut
+		// away with the only copy of the new words in the source.
+		edited := false
+		_, err = RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
+			rest, now, ok := CutCaptureParagraph(body, captureID)
+			if ok && now != text {
+				edited = true
 				return body, false
 			}
-			return InsertCaptureParagraph(body, captureID, text, before), true
+			return rest, ok
 		})
+		if err == nil && edited {
+			err = errors.New("the paragraph was edited during the move")
+		}
 		if err != nil {
-			return nil, s.undoCut(ctx, userID, sourceKey, sourceID, targetNoteID, current, text, err)
+			return nil, s.undoInsert(ctx, target.S3MarkdownKey, sourceID, current, err)
 		}
 	}
 
-	// 3. Both indexes follow their bodies, then the row follows the paragraph.
+	// 4. Both indexes follow their bodies, then the row follows the paragraph.
 	// The row is last so a capture never claims a note its paragraph is not
 	// in yet; a retry after a failure here re-runs exactly these steps.
 	var touched []model.NoteIndex
@@ -227,7 +246,7 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 		slog.String("capture_id", captureID),
 		slog.String("from_note_id", sourceID),
 		slog.String("to_note_id", targetNoteID),
-		slog.Bool("paragraph_moved", cut))
+		slog.Bool("paragraph_moved", found))
 	obs.Count(ctx, "CapturesMoved", map[string]string{"Stage": string(current.Status)})
 	return &updated, nil
 }
@@ -254,38 +273,27 @@ func (s *CaptureService) olderCapturesIn(ctx context.Context, userID, noteID, cr
 	}, nil
 }
 
-// undoCut is the compensation for a target write that failed after the source
-// was cut: the paragraph goes back into the source at its chronological place,
-// and the caller reports a move that changed nothing. If even that fails the
-// text is out of both notes, which is logged with every id an operator needs
-// and reported as ErrMoveUnrecovered rather than dressed up as retryable.
-func (s *CaptureService) undoCut(ctx context.Context, userID, sourceKey, sourceID, targetID string, c model.CaptureIndex, text string, cause error) error {
-	before, err := s.olderCapturesIn(ctx, userID, sourceID, c.CreatedAt)
-	if err != nil {
-		// Losing the position is better than losing the text.
-		before = func(string) bool { return false }
-	}
-	_, rerr := RewriteNoteBody(ctx, s.objects, sourceKey, func(body string) (string, bool) {
-		if HasCaptureMarker(body, c.ID) {
-			return body, false
-		}
-		return InsertCaptureParagraph(body, c.ID, text, before), true
-	})
-	if rerr != nil {
-		obs.Log(ctx).Error("capture move failed and the source note could not be restored",
-			slog.String("capture_id", c.ID),
-			slog.String("from_note_id", sourceID),
-			slog.String("to_note_id", targetID),
-			slog.String("error", cause.Error()),
-			slog.String("restore_error", rerr.Error()))
-		obs.Count(ctx, "CaptureMoveUnrecovered", map[string]string{"Stage": string(c.Status)})
-		return fmt.Errorf("%w: %w", ErrMoveUnrecovered, cause)
-	}
-	obs.Log(ctx).Warn("capture move failed after the cut; the source note was restored",
+// undoInsert is the compensation for a move that failed after it may have
+// written the target: the target's copy of the paragraph is removed, so the
+// source is once more its only home and the caller reports a move that
+// changed nothing. If the target cannot be written either, the copy stays —
+// a duplicate, not a loss, since the source was never cut — and a repeat of
+// the request replaces it.
+func (s *CaptureService) undoInsert(ctx context.Context, targetKey, sourceID string, c model.CaptureIndex, cause error) error {
+	log := obs.Log(ctx).With(
 		slog.String("capture_id", c.ID),
 		slog.String("from_note_id", sourceID),
-		slog.String("to_note_id", targetID),
 		slog.String("error", cause.Error()))
+	_, rerr := RewriteNoteBody(ctx, s.objects, targetKey, func(body string) (string, bool) {
+		rest, _, found := CutCaptureParagraph(body, c.ID)
+		return rest, found
+	})
+	if rerr != nil {
+		log.Warn("capture move failed and the target's copy could not be removed; a retry replaces it",
+			slog.String("restore_error", rerr.Error()))
+	} else {
+		log.Warn("capture move failed; the source note still holds the paragraph")
+	}
 	obs.Count(ctx, "CaptureMoveRolledBack", map[string]string{"Stage": string(c.Status)})
 	return fmt.Errorf("%w: %w", ErrMoveIncomplete, cause)
 }
