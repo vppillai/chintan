@@ -377,6 +377,20 @@ pieces or more a run of the prompt's words, ends as `no_content` with the
 transcript kept (`echoesHints`, `CaptureHintEcho`). A store fault reading
 the notes is logged and the recording is transcribed without hints.
 
+**The silence gate.** Before routing, `provider.Transcription.NoSpeech`
+ends a capture as `no_content`, transcript kept (`CaptureNoSpeech`), when
+the transcript has no letter or digit (R7-10c), when every segment is one
+Whisper would itself skip (`no_speech_prob` over 0.6 and `avg_logprob` at
+or under −1), or when every sentence of it is a stock silence phrase —
+"Thank you.", "Thanks for watching!", "you", "bye", a subtitle credit
+(`silenceHallucinations`) — and every segment's `no_speech_prob` is over
+0.3 (R7-10d). The last is for the fluent "Thank you." Whisper gives three
+seconds of silence with a confident logprob, which passed the first two.
+A short dictation that is not a stock phrase, even a quiet one, is kept,
+and so is a "thank you" clearly said (`no_speech_prob` near zero). The
+worker's "transcribed capture" line logs the least silent segment's
+`no_speech_prob_min` and `avg_logprob_max`.
+
 ## Measured sizes
 
 From the prod worker log, 2026-09-20..26, 439 provider-usage rows across two
