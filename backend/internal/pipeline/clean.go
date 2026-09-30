@@ -50,6 +50,11 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 		return fmt.Errorf("pipeline: get source text: %w", err)
 	}
 	source := string(sourceBytes)
+	// The routed text, with any spoken "add this to my roof note" taken out,
+	// is what every path below appends when it does not clean: the verbatim
+	// bypass here, and any later one. The model's answer overwrites it.
+	// Transcribe's excerpt was cut from the raw transcript, command and all.
+	capture.Excerpt = model.CaptureExcerpt(source)
 
 	if strings.TrimSpace(source) == "" {
 		// The speaker only told the app what to do, so the note they asked for

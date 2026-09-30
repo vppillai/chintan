@@ -956,3 +956,38 @@ func TestThePrefixRuleKeepsIndicVowelSigns(t *testing.T) {
 		}
 	}
 }
+
+// A verbatim note skips cleanup, so its excerpt used to stay the one cut from
+// the raw transcript — the spoken "add this to my roof repair note" and all —
+// while the note got the routed words (review of #182). The excerpt is what
+// was appended.
+func TestAVerbatimNotesExcerptIsTheRoutedTextNotTheSpokenCommand(t *testing.T) {
+	f := newRoutingFixture(t,
+		"add this to my roof repair note the gutter is also leaking",
+		provider.RouteDecision{
+			Action:     provider.RouteAppend,
+			NoteID:     "n1",
+			Confidence: 0.95,
+			Content:    "the gutter is also leaking",
+		}, false)
+	ctx := context.Background()
+	note, err := f.store.GetNote(ctx, f.userID, "n1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note.Verbatim = true
+	if _, err := f.store.PutNote(ctx, f.userID, note); err != nil {
+		t.Fatal(err)
+	}
+
+	capture, err := f.run(ctx, "c_1")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if capture.Status != model.StatusAppended {
+		t.Fatalf("status = %s, want appended", capture.Status)
+	}
+	if capture.Excerpt != "the gutter is also leaking" {
+		t.Errorf("excerpt = %q, want the routed text without the spoken command", capture.Excerpt)
+	}
+}
