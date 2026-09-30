@@ -482,11 +482,16 @@ done line, and a done parent's sub-items with it (`removeDone`), and offers
 Undo in the shell's toast for six seconds — no typed word and no dialog
 (OF-DEL): Undo writes the previous body back and saves, unless the list
 changed since (see Split up). A tick, which moves the row out of sight
-into Done, offers the same Undo for four seconds as "<item> done" (R7-13):
-Undo writes the body from before the tick back, so the row returns to its
-place, under the same guard; reopening a done row offers none, and the
-status line still says "Marked done". The toast is the one the next act
-replaces, so a tick after Delete done takes that Undo's place. Done rows have no grip, because their order
+into Done, offers an Undo for four seconds as "<item> done" (R7-13), the
+item's words cut at forty characters: Undo writes the body from before the
+tick back, so the row returns to its place, and only while the body is
+still exactly the tick's — after any later act, the person's own included,
+it says "The list changed since — nothing undone." rather than undo that
+act too. So only the last tick is undoable. Reopening a done row offers
+none, and the status line still says "Marked done". The tick's toast is
+weak (`ToastNotice.weak`): it never takes the place of a standing Delete
+done or adoption Undo, so a tick right after Delete done leaves that Undo
+standing, and the tick is said by the status line alone. Done rows have no grip, because their order
 is the body's and nothing shows it; a drag among them would move lines
 whose places are invisible.
 
@@ -549,8 +554,8 @@ user has the stale notice for why, and Use this list and Regenerate as the
 two controls left. Delete done as the first act adopts like any other: the
 editor shows its own "N done items deleted" toast before it writes, so the
 adoption's toast lands last and is the one standing, and its Undo restores
-the list as it stood (DB6-2). Every Undo — the adoption's, and Delete
-done's and a tick's in the editor — refuses when the note's body is no longer what that
+the list as it stood (DB6-2). Either Undo — the adoption's, and Delete
+done's in the editor — refuses when the note's body is no longer what that
 Undo's act wrote, saying "The list changed since — nothing undone." rather
 than writing a captured body over a recording that filed in by refetch
 inside the six seconds. The body it compares is read from the note editor's

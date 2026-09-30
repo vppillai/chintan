@@ -215,20 +215,25 @@ export function ChecklistEditor({
     const flipped = items.flatMap((was, i) => (was.done === after[i]?.done ? [] : [i]));
     /*
      * A tick moves the row out of sight into Done, so a mistaken one gets an
-     * Undo, as Delete done does and with the same guard (R7-13). Shorter
-     * than that toast: a tick is small, and the next tick replaces it. The
-     * toast goes before the write for the same reason as Delete done's: in
-     * Split up the write is the adoption, whose own toast must land last.
-     * Undo writes the whole body back, so the row returns to its place.
+     * Undo (R7-13). Shorter than Delete done's toast: a tick is small, and
+     * the next tick replaces it, so only the last tick is undoable. Weak: it
+     * never takes the place of a standing Delete done or adoption Undo,
+     * which would leave those items with no way back. The toast goes before
+     * the write for the same reason as Delete done's: in Split up the write
+     * is the adoption, whose own toast must land last. Undo writes the whole
+     * body back, so the row returns to its place — and only while the body
+     * is still exactly the tick's: after any later act, the person's own
+     * included, it refuses rather than undo that act too.
      */
     if (!item.done) {
       showToast({
-        message: `${item.text.trim() || 'Item'} done`,
+        message: `${shortName(item.text)} done`,
         ms: TICK_TOAST_MS,
+        weak: true,
         action: {
           label: 'Undo',
           onSelect: () => {
-            if (currentBody() !== lastWritten.current) {
+            if (currentBody() !== next) {
               showToast({ message: UNDO_STALE });
               return;
             }
@@ -610,6 +615,19 @@ const ADD_ROW = -1;
 
 /** How long a tick's Undo stands: long enough to read a short line and reach the button. */
 const TICK_TOAST_MS = 4000;
+
+/** The most of an item's words a toast line carries. */
+const TOAST_NAME_MAX = 40;
+
+/** An item's words for a one-line toast: cut at a word with an ellipsis when long. */
+export function shortName(text: string): string {
+  const words = text.trim().replace(/\s+/g, ' ');
+  if (words === '') return 'Item';
+  if (words.length <= TOAST_NAME_MAX) return words;
+  const cut = words.slice(0, TOAST_NAME_MAX);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > TOAST_NAME_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
 
 /** What an Undo says instead of writing over a list that changed under it. */
 export const UNDO_STALE = 'The list changed since — nothing undone.';

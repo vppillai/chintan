@@ -35,6 +35,14 @@ export interface ToastNotice {
   action?: { label: string; onSelect: () => void };
   /** How long it stands, when not `TOAST_MS`. */
   ms?: number;
+  /**
+   * A convenience that must not cost anything: a weak notice never replaces
+   * a standing one that is not weak and carries an action. A tick's Undo is
+   * weak, because a tick right after Delete done must not take away the one
+   * Undo that brings those items back; the tick is said by its own live
+   * region either way.
+   */
+  weak?: boolean;
 }
 
 let current: ToastNotice | null = null;
@@ -44,8 +52,9 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-/** Shows this notice, replacing whatever was showing. */
+/** Shows this notice, replacing whatever was showing — unless it is weak (see `weak`). */
 export function showToast(notice: ToastNotice): void {
+  if (notice.weak && current?.action && !current.weak) return;
   current = notice;
   emit();
 }

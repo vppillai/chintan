@@ -822,12 +822,31 @@ describe('the Done section', () => {
     const user = userEvent.setup();
     const { log, body } = mount('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     await user.click(screen.getByRole('button', { name: 'Delete done' }));
-    // Not a tick: a tick offers its own Undo, which replaces this one.
-    await user.type(screen.getByRole('textbox', { name: 'Add an item' }), 'Jam{Enter}');
-    expect(body()).toBe('- [ ] Bread\n- [ ] Jam');
+    // A tick's own Undo is weak: it does not take Delete done's place.
+    await user.click(screen.getByRole('checkbox', { name: 'Bread' }));
+    expect(body()).toBe('- [x] Bread');
+    expect(screen.getByText('2 done items deleted', { selector: '.toast__text' })).toBeInTheDocument();
+    expect(screen.getByText('Marked done', { selector: '[aria-live]' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(body()).toBe('- [x] Milk\n- [x] Eggs\n- [ ] Bread');
     expect(log.saves).toBe(3);
+  });
+
+  it('a tick\'s Undo refuses after the person\'s own later edit, rather than undo it too', async () => {
+    const user = userEvent.setup();
+    const { log } = mount('- [ ] Milk\n- [ ] Bread');
+    await user.click(screen.getByRole('checkbox', { name: 'Milk' }));
+    await user.type(screen.getByRole('textbox', { name: 'Add an item' }), 'Jam{Enter}');
+    await user.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(log.bodies.at(-1)).toBe('- [x] Milk\n- [ ] Bread\n- [ ] Jam');
+    expect(screen.getByText('The list changed since — nothing undone.', { selector: '.toast__text' })).toBeInTheDocument();
+  });
+
+  it('a long item is cut short in the toast', async () => {
+    const user = userEvent.setup();
+    mount('- [ ] Call the plumber about the leaking tap under the kitchen sink before Friday');
+    await user.click(screen.getByRole('checkbox', { name: /^Call the plumber/ }));
+    expect(screen.getByText('Call the plumber about the leaking tap… done', { selector: '.toast__text' })).toBeInTheDocument();
   });
 
   it('a tick says "<item> done" with Undo, and Undo puts the row back where it was', async () => {
