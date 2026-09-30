@@ -267,7 +267,9 @@ describe('every in-app URL stays inside the deploy scope', () => {
     const router = mountScoped();
     await screen.findByRole('button', { name: /roof repair/i });
 
-    await user.click(screen.getByRole('button', { name: /^Archived/ }));
+    // The archive's count is asked for once the launch is idle, which jsdom
+    // (no requestIdleCallback) stands in for with a two-second delay.
+    await user.click(await screen.findByRole('button', { name: /^Archived/ }, { timeout: 4_000 }));
     expect(address(router)).toBe('/chintan/dev/?view=archived');
 
     await user.click(screen.getByRole('button', { name: 'All' }));

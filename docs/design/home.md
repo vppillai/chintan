@@ -156,6 +156,17 @@ the tier rather than against it: `?tag=` and `?kind=checklist` filter on the
 server, so the Pinned group shows the pinned notes that match and the days the
 rest. The archive never has a Pinned group, because archiving clears the pin.
 
+The Checklists count is read from the device's copy of the active notes too,
+not from a list request of its own (round 7, R7-17c), so it is only as fresh
+as that copy. A checklist deleted, archived or turned into a plain note on
+another device stays counted here until this device's copy refreshes: the
+next search-corpus fetch (at most every five minutes, and after a recording
+files) or the next list page that no longer carries it. A checklist made on
+another device is missing from the count for the same while. The filter
+itself asks the server, so pressing the chip always shows the true list. The
+Archived count comes from the archive's own list, asked for once the launch
+has gone idle rather than with the first paint.
+
 Reorder is offered only when the whole Pinned group is on screen: under a
 tag or kind filter the rows have no grip and no Move items, because a drag
 over the visible subset would rank it from zero and interleave the pins the

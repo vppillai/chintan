@@ -30,21 +30,67 @@ import { SEARCH_CORPUS_KEY, invalidateNoteLists, queryKeys } from './keys.ts';
  * or a blocked-storage policy must degrade to "no offline copy", not to "your
  * notes would not load".
  */
-function remember(write: () => Promise<void>, queryClient?: QueryClient): void {
+export function remember(write: () => Promise<void>, queryClient?: QueryClient): void {
   void write()
     .then(() => {
-      /*
-       * Tell any screen already reading the device that it has more to read.
-       *
-       * Scoped to `['notes', 'offline']` and never to `['notes']`: invalidating
-       * the wider prefix from inside a notes query's own success handler would
-       * refetch the query that just wrote, forever.
-       */
-      void queryClient?.invalidateQueries({ queryKey: ['notes', 'offline'] });
+      if (queryClient) tellDeviceReaders(queryClient);
     })
     .catch(() => {
       /* No offline copy this time. The screen is unaffected. */
     });
+}
+
+const deviceReadersPending = new WeakSet<QueryClient>();
+
+/**
+ * Tell any screen already reading the device that it has more to read — once
+ * per tick, however many writes landed in it.
+ *
+ * Every invalidation re-reads the whole store (`cachedNotes`), and one Home
+ * launch writes a page per list plus a page per two hundred notes of the
+ * corpus. Scoped to `['notes', 'offline']` and never to `['notes']`:
+ * invalidating the wider prefix from inside a notes query's own success
+ * handler would refetch the query that just wrote, forever.
+ */
+function tellDeviceReaders(queryClient: QueryClient): void {
+  if (deviceReadersPending.has(queryClient)) return;
+  deviceReadersPending.add(queryClient);
+  setTimeout(() => {
+    deviceReadersPending.delete(queryClient);
+    void queryClient.invalidateQueries({ queryKey: ['notes', 'offline'] });
+  }, 0);
+}
+
+/** Past this far down the library, a refetch keeps every page the reader has loaded. */
+const NEAR_TOP_PX = 400;
+
+function nearTop(): boolean {
+  if (typeof document === 'undefined') return true;
+  const main = document.querySelector('.app__main');
+  return (main ? main.scrollTop : window.scrollY) < NEAR_TOP_PX;
+}
+
+/** An infinite list cut back to its first page, so the next refetch asks for one. */
+function firstPageOnly<T>(data: InfiniteData<T> | undefined): InfiniteData<T> | undefined {
+  if (!data || data.pages.length <= 1) return data;
+  return { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) };
+}
+
+/**
+ * Pull-to-refresh on the library: every list and the device's copy asked
+ * again, each list for its first page only.
+ *
+ * TanStack refetches an infinite query page by page, one after another, for
+ * every page loaded — ten deep, ten sequential GETs to answer "is this
+ * current?". The gesture only exists at the top of the list, so nothing the
+ * reader can see is lost; scrolling down loads the rest again.
+ */
+export function refreshNoteLists(queryClient: QueryClient): Promise<void> {
+  queryClient.setQueriesData<InfiniteData<Page<NoteWire>>>(
+    { queryKey: ['notes'], predicate: (query) => isNoteListKey(query.queryKey) },
+    firstPageOnly,
+  );
+  return queryClient.invalidateQueries({ queryKey: ['notes'] });
 }
 
 /**
@@ -71,6 +117,23 @@ export function useNotes(query: NoteListQuery = {}, { enabled = true }: { enable
     // An absent or empty cursor means the collection is exhausted. Returning
     // `undefined` is what stops TanStack asking for another page forever.
     getNextPageParam: (last: Page<unknown>) => last.cursor || undefined,
+    /*
+     * Coming back to the app near the top of the list asks for the first
+     * page only (see `refreshNoteLists`). Deep in it, every loaded page is
+     * refetched as before: cutting the list back would pull the rows out
+     * from under the reader.
+     */
+    refetchOnWindowFocus: (focused) => {
+      if (!focused.isStale()) return false;
+      if (nearTop()) {
+        const held = focused.state.data;
+        const trimmed = firstPageOnly(held);
+        if (trimmed && trimmed !== held) {
+          focused.setData(trimmed as NonNullable<typeof held>, { updatedAt: focused.state.dataUpdatedAt, manual: true });
+        }
+      }
+      return 'always';
+    },
   });
 }
 
@@ -190,8 +253,9 @@ export function usePollNote(noteId: string, every: (() => number | false) | null
  * So the saved note replaces the detail query, its row is rewritten in every
  * cached list (the offline keys under the same prefix hold arrays, not pages,
  * and are refreshed through the device cache instead), the device's copy is
- * updated, and the lists are marked stale so the next visit re-sorts them —
- * the row's `updated_at` moved, and only the server knows the true order.
+ * updated, and the lists are marked stale — without a refetch — so the next
+ * visit re-sorts them: the row's `updated_at` moved, and only the server
+ * knows the true order.
  */
 export function recordSavedNote(queryClient: QueryClient, saved: NoteDetailWire): void {
   queryClient.setQueryData<NoteDetailWire>(queryKeys.note(saved.id), (current) =>
@@ -203,7 +267,17 @@ export function recordSavedNote(queryClient: QueryClient, saved: NoteDetailWire)
   );
   patchNoteLists(queryClient, (item) => (item.id === saved.id ? rowOf(item, saved) : item));
   remember(() => cacheNoteDetail(saved), queryClient);
-  void queryClient.invalidateQueries({ queryKey: ['notes'] });
+  /*
+   * Marked stale, not refetched. Autosave runs this every few seconds of
+   * typing, and invalidating the whole prefix refetched every loaded page of
+   * every mounted list each time. The rows are patched above; the order is
+   * the server's to decide and is asked for on the next visit.
+   */
+  void queryClient.invalidateQueries({
+    queryKey: ['notes'],
+    predicate: (query) => isNoteListKey(query.queryKey),
+    refetchType: 'none',
+  });
   // A tag added or removed changes the chips as well as the row.
   void queryClient.invalidateQueries({ queryKey: queryKeys.tags() });
 }
