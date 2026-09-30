@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/model"
+	"github.com/vppillai/chintan/backend/internal/repository"
 	"github.com/vppillai/chintan/backend/internal/repository/dynamofake"
 	"github.com/vppillai/chintan/backend/internal/repository/memory"
 	"github.com/vppillai/chintan/backend/internal/upload"
@@ -587,4 +588,60 @@ func TestSetCaptureTargetRefusesAnInFlightCapture(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An upload interrupted by the app closing leaves its row at `uploaded` with
+// no object behind it. Past the stuck threshold a Retry of it is refused with
+// a sentence of its own, and writes nothing: before R7-11 it stamped the row,
+// which made it "in flight" — Delete answered 409 — for fifteen more minutes,
+// and handed the worker audio that did not exist. Once the object is there,
+// the same row retries as any stuck one does, and either way it can go.
+func TestRetryCaptureRefusesAnUploadThatNeverLanded(t *testing.T) {
+	now := time.Date(2026, 9, 30, 9, 0, 0, 0, time.UTC)
+	const audioKey = "tenants/user1/captures/c_1/audio.webm"
+	seed := func(t *testing.T) (*CaptureService, *repository.DynamoStore, *memory.Objects, *stubInvoker) {
+		t.Helper()
+		store, objects, worker := dynamofake.NewStore(), memory.NewObjects(), &stubInvoker{}
+		svc := NewCaptureService(store, objects).WithInvoker(worker).WithClock(func() time.Time { return now })
+		if _, err := store.PutCapture(context.Background(), model.CaptureIndex{
+			ID: "c_1", UserID: "user1", Status: model.StatusUploaded, AudioKey: audioKey,
+			CreatedAt: model.FormatTime(now.Add(-CaptureStuckAfter)),
+		}); err != nil {
+			t.Fatalf("PutCapture: %v", err)
+		}
+		return svc, store, objects, worker
+	}
+
+	t.Run("no object: refused, nothing written, still deletable", func(t *testing.T) {
+		svc, store, _, worker := seed(t)
+		if _, err := svc.RetryCapture(context.Background(), "user1", "c_1"); !errors.Is(err, ErrCaptureNeverUploaded) {
+			t.Fatalf("err = %v, want ErrCaptureNeverUploaded", err)
+		}
+		if len(worker.calls) != 0 {
+			t.Fatalf("the worker was handed audio that does not exist: %v", worker.calls)
+		}
+		row, err := store.GetCapture(context.Background(), "user1", "c_1")
+		if err != nil {
+			t.Fatalf("GetCapture: %v", err)
+		}
+		if row.LastProgressAt != "" || row.Status != model.StatusUploaded {
+			t.Fatalf("a refused retry wrote the row: %+v", row)
+		}
+		if err := svc.DeleteCapture(context.Background(), "user1", "c_1"); err != nil {
+			t.Fatalf("DeleteCapture after the refused retry: %v", err)
+		}
+	})
+
+	t.Run("object landed: retried as any stuck capture", func(t *testing.T) {
+		svc, _, objects, worker := seed(t)
+		if err := objects.Put(context.Background(), audioKey, []byte("audio"), "audio/webm"); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if _, err := svc.RetryCapture(context.Background(), "user1", "c_1"); err != nil {
+			t.Fatalf("RetryCapture: %v", err)
+		}
+		if len(worker.calls) != 1 {
+			t.Fatalf("worker calls = %v, want one retry", worker.calls)
+		}
+	})
 }

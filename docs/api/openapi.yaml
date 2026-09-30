@@ -1075,7 +1075,10 @@ paths:
             The capture has finished (`appended`, `no_content`) or is waiting
             on a person (`needs_target`), or it is still in flight and a worker
             may still be working on it — see the description for when a
-            stalled capture becomes retryable. `detail` says which.
+            stalled capture becomes retryable — or it is a stalled `uploaded`
+            capture whose audio never reached the server (the app was closed
+            mid-upload), which only the device that recorded it can send, and
+            which DELETE removes. `detail` says which.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
