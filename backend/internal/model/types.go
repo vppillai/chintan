@@ -403,7 +403,8 @@ const (
 	// note is uncertain, so the user has to confirm before anything is written.
 	StatusNeedsTarget CaptureStatus = "needs_target"
 	// StatusNoContent means the recording was nothing but an instruction to the app,
-	// such as "create a note called test123", so there was no dictation to write.
+	// such as "create a note called test123", or held no speech at all
+	// (provider.Transcription.NoSpeech), so there was no dictation to write.
 	StatusNoContent CaptureStatus = "no_content"
 
 	// The five below arrived with the asynchronous pipeline and lived in

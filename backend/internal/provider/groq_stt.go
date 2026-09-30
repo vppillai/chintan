@@ -19,6 +19,12 @@ const (
 	// transcript with word timestamps, which is proportional to speech, not to
 	// the audio file — the audio itself never lands in memory.
 	maxTranscriptResponseBytes = 64 << 20
+
+	// maxPromptTokens is the budget for Whisper's spelling prompt. Whisper
+	// reads at most 224 prompt tokens; this leaves 24 of margin beyond the
+	// high estimate in promptTokens, which approximates Whisper's tokenizer
+	// rather than running it.
+	maxPromptTokens = 200
 )
 
 // GroqSTT implements STT via Groq's OpenAI-compatible Whisper API.
@@ -78,7 +84,7 @@ func (g *GroqSTT) Transcribe(ctx context.Context, in Audio) (Transcription, erro
 	contentType := mw.FormDataContentType()
 
 	go func() {
-		pw.CloseWithError(g.writeMultipart(mw, source, in.ContentType, in.Language))
+		pw.CloseWithError(g.writeMultipart(mw, source, in.ContentType, in.Language, spellingPrompt(in.Hints)))
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL+"/audio/transcriptions", pr)
@@ -134,7 +140,7 @@ func (g *GroqSTT) openSource(ctx context.Context, in Audio) (io.Reader, func(), 
 // writeMultipart builds the request body incrementally on the writer side of the
 // pipe. verbose_json with both granularities is what produces segments.json and
 // the duration the spend estimate is priced from.
-func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, contentType, language string) error {
+func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, contentType, language, prompt string) error {
 	fields := [][2]string{
 		{"model", g.model},
 		{"response_format", "verbose_json"},
@@ -145,6 +151,9 @@ func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, content
 	// value is "detect", and the field is omitted rather than sent empty.
 	if language != "" {
 		fields = append(fields, [2]string{"language", language})
+	}
+	if prompt != "" {
+		fields = append(fields, [2]string{"prompt", prompt})
 	}
 	for _, f := range fields {
 		if err := mw.WriteField(f[0], f[1]); err != nil {
@@ -164,6 +173,52 @@ func (g *GroqSTT) writeMultipart(mw *multipart.Writer, source io.Reader, content
 	return nil
 }
 
+// spellingPrompt joins the hints into the comma list Whisper's prompt biases
+// spelling with, keeping whole names in order until the next one would pass
+// maxPromptTokens. The likeliest names lead, so the ones dropped are the
+// least likely to be spoken. Each hint is folded to one line first, since a
+// title is the speaker's text.
+func spellingPrompt(hints []string) string {
+	var b strings.Builder
+	used := 0
+	for _, h := range hints {
+		h = strings.Join(strings.Fields(h), " ")
+		if h == "" {
+			continue
+		}
+		piece := h
+		if b.Len() > 0 {
+			piece = ", " + h
+		}
+		cost := promptTokens(piece)
+		if used+cost > maxPromptTokens {
+			break
+		}
+		b.WriteString(piece)
+		used += cost
+	}
+	return b.String()
+}
+
+// promptTokens is a deliberately high estimate of what s costs in Whisper's
+// byte-level BPE tokenizer. A token is never shorter than one byte, so a
+// non-ASCII byte (a Malayalam or Tamil title is about that), a digit and a
+// punctuation mark are counted as a whole token each; ASCII letters and
+// spaces, whose English words average about four characters a token, are
+// counted at two a token.
+func promptTokens(s string) int {
+	half, whole := 0, 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == ' ' || (c|0x20 >= 'a' && c|0x20 <= 'z') {
+			half++
+		} else {
+			whole++
+		}
+	}
+	return (half+1)/2 + whole
+}
+
 // groqTranscription is the verbose_json shape. The plain-json shape is the same
 // document with only `text`, so one decoder covers both and an instance
 // configured for the older format still works.
@@ -172,9 +227,11 @@ type groqTranscription struct {
 	Language string  `json:"language"`
 	Duration float64 `json:"duration"`
 	Segments []struct {
-		Start float64 `json:"start"`
-		End   float64 `json:"end"`
-		Text  string  `json:"text"`
+		Start        float64 `json:"start"`
+		End          float64 `json:"end"`
+		Text         string  `json:"text"`
+		NoSpeechProb float64 `json:"no_speech_prob"`
+		AvgLogprob   float64 `json:"avg_logprob"`
 	} `json:"segments"`
 	Words []struct {
 		Word  string  `json:"word"`
@@ -195,7 +252,10 @@ func decodeTranscription(r io.Reader) (Transcription, error) {
 		Duration: parsed.Duration,
 	}
 	for _, s := range parsed.Segments {
-		out.Segments = append(out.Segments, Segment{Start: s.Start, End: s.End, Text: s.Text})
+		out.Segments = append(out.Segments, Segment{
+			Start: s.Start, End: s.End, Text: s.Text,
+			NoSpeechProb: s.NoSpeechProb, AvgLogprob: s.AvgLogprob,
+		})
 	}
 	for _, w := range parsed.Words {
 		out.Words = append(out.Words, Word{Start: w.Start, End: w.End, Word: w.Word})

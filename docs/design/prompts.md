@@ -62,8 +62,9 @@ target note as the only candidate, for a capture recorded into a note whose
 transcript contains a filing or naming cue (`routing.MentionsInstruction`,
 `routing/spans.go`; no cue, no call).
 
-**Sent.** The system prompt (about 1,250 tokens at four characters a token
-after the name-first rules of 2026-09-29; 987 measured before the kind rule
+**Sent.** The system prompt (about 1,300 tokens at four characters a token
+after the checklist-marker rule of 2026-09-30; about 1,250 after the
+name-first rules of 2026-09-29; 987 measured before the kind rule
 of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
 (filing, naming), the reply
 shape, then four sections — *Destination* (append only when a listed note
@@ -80,8 +81,11 @@ ends after the note's name — "Create a new note from app feedback and add
 the fact" is `{0,7}`, never 6), *Titles* (as spoken, however
 short; invented only when none was spoken; a recording that opens with an
 unlisted name is a new note titled with the name only; the speaker's script)
-and *Kind*,
-for `new` only (`checklist` when the speaker names a list — shopping list,
+and *Kind*
+(a listed note marked `[checklist]` is a checklist, and an item for a list
+goes to a listed checklist, not to a plain note with a similar name — R7-10a,
+after "Groceries list milk eggs" was twice filed as prose into a plain
+"Grocery list"; then, for `new` only, `checklist` when the speaker names a list — shopping list,
 groceries, to-do, packing list, "add X to the Y list" — or dictates things
 to tick off one by one; otherwise, and in doubt, `note`) — and eight worked
 examples: the sixth "add milk to my groceries list" with no Groceries note
@@ -89,6 +93,7 @@ listed, the seventh and eighth the two name-first shapes (a listed "App
 feedback", an unlisted "Things to talk with Milos"). The user prompt: the language line when the
 capture's language is known (`cleanupLanguage`); `Existing notes:` — one
 numbered line per candidate, `3 | Roof repair | also: gutters, roof, house`,
+with `[checklist]` after the title of a checklist (`4 | Groceries [checklist]`),
 the aliases and then the tags after `also:` (either spoken is a request for
 that note; About had promised tags since it was written and the code sent
 none until 2026-09-27, PR-D1), each field sanitised to one line of at most 120
@@ -348,6 +353,24 @@ note (`ask.Sources`), sets `grounded` false when none remain, replaces any
 id the answer leaked with the note's title (`ask.NameNotesInProse`), and
 refuses an answer over 8,000 runes (`ask.MaxAnswerRunes`). **Metrics:**
 `AskOutcome{Outcome}`, `AskRetried{Reason}`, `AskTimedOut{Attempt}`.
+
+## Whisper's spelling prompt
+
+Not one of the six: transcription is not an LLM call, but Whisper takes a
+`prompt` field that biases how it spells (R7-10b). `pipeline.spellingHints`
+supplies names — the destination note's title and aliases for a capture
+recorded into a note, else the titles and aliases of the 50 most recently
+touched notes, likeliest first — and `provider.spellingPrompt` joins them
+into a comma list, keeping whole names until an over-estimate of Whisper's
+tokens (`promptTokens`: an ASCII letter or space is half a token, any other
+byte a whole one) would pass 200 of the 224 Whisper reads. A recording of
+1.5 s or less, or of unknown length, gets no prompt (`minHintAudioMS`): on
+near-silence Whisper can answer with its prompt as the transcript. Longer
+silence can still be answered that way, with confident log-probs that pass
+the silence gate, so a transcript that is only hint names, or with two
+pieces or more a run of the prompt's words, ends as `no_content` with the
+transcript kept (`echoesHints`, `CaptureHintEcho`). A store fault reading
+the notes is logged and the recording is transcribed without hints.
 
 ## Measured sizes
 

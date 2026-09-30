@@ -16,6 +16,7 @@ import (
 	"github.com/vppillai/chintan/backend/internal/obs"
 	"github.com/vppillai/chintan/backend/internal/provider"
 	"github.com/vppillai/chintan/backend/internal/repository"
+	"github.com/vppillai/chintan/backend/internal/routing"
 	"github.com/vppillai/chintan/backend/internal/service"
 )
 
@@ -54,6 +55,8 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		sent = ""
 	}
 
+	hints := p.spellingHints(ctx, tenantID, capture)
+
 	var result provider.Transcription
 	_, err = p.cfg.Breaker.Do(ctx, breaker.Estimate{
 		Provider: p.cfg.STTProvider,
@@ -71,6 +74,7 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 			URL:         audioURL,
 			ContentType: contentTypeForAudioKey(capture.AudioKey),
 			Language:    sent,
+			Hints:       hints,
 		})
 		if err != nil {
 			return breaker.Result{}, err
@@ -88,6 +92,19 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	}
 	if err := p.cfg.Objects.Put(ctx, rawKey, []byte(result.Text), "text/plain"); err != nil {
 		return fmt.Errorf("pipeline: store raw text: %w", err)
+	}
+	if echoesHints(result.Text, hints) {
+		// Whisper can answer silence by reading its prompt back, with
+		// confident log-probs, so neither the silence gate nor a letter test
+		// catches it; filed, the person's note titles would become the
+		// dictation. The transcript is kept, nothing is routed.
+		obs.Count(ctx, "CaptureHintEcho", nil)
+		capture.RawKey = rawKey
+		capture.Language = language
+		capture.LanguageDetected = result.Language
+		capture.Status = model.StatusNoContent
+		capture.Error = ""
+		return p.persist(ctx, capture)
 	}
 
 	segmentsKey := ""
@@ -132,6 +149,13 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 		capture.DurationMS = ms
 	}
 	capture.Status = model.StatusTranscribed
+	if result.NoSpeech() {
+		// Nothing was said, so there is nothing to route or file; left to go
+		// on, a tone became a new note called "Dictation" whose body was "."
+		// (R7-10c). The transcript and segments stay stored beside the audio.
+		obs.Count(ctx, "CaptureNoSpeech", nil)
+		capture.Status = model.StatusNoContent
+	}
 	capture.Error = ""
 	return p.persist(ctx, capture)
 }
@@ -177,6 +201,94 @@ func (p *Pipeline) transcriptionLanguage(ctx context.Context, tenantID string, c
 		language = model.DefaultLanguage
 	}
 	return language, nil
+}
+
+// minHintAudioMS is the shortest recording that gets a spelling prompt.
+// Whisper can answer near-silence by echoing its prompt back as the
+// transcript, and a 1.5 s clip is mostly the ring's start and stop; below it
+// a list of the person's note titles would become the "dictation".
+const minHintAudioMS = 1500
+
+// maxHintNotes bounds the notes read for an untargeted capture's hints. The
+// adapter keeps only what fits Whisper's 224-token prompt, which is fewer
+// names than this, so the extra rows only cost read bytes.
+const maxHintNotes = 50
+
+// spellingHints is the names Whisper is asked to spell as written (R7-10b):
+// the destination note's title and aliases for a capture recorded into a
+// note, else the titles and aliases of the most recently touched notes,
+// which is the order the router reads them in. It is a convenience like
+// routing: a store fault is logged and the recording is transcribed without
+// hints rather than failed. An unknown or short duration gets none, see
+// minHintAudioMS.
+func (p *Pipeline) spellingHints(ctx context.Context, tenantID string, capture *model.CaptureIndex) []string {
+	if capture.DurationMS <= minHintAudioMS {
+		return nil
+	}
+	var notes []model.NoteIndex
+	if capture.NoteID != "" {
+		note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+		if err != nil {
+			if !errors.Is(err, repository.ErrNotFound) {
+				obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
+					slog.String("capture_id", capture.ID), slog.String("error", err.Error()))
+			}
+			return nil
+		}
+		notes = []model.NoteIndex{note}
+	} else {
+		// ponytail: routing drains the notes again in its own stage, one extra
+		// partition read per routed capture; hand this list over if reads
+		// ever show in the bill. Not threaded through now because a retry
+		// resumes at routing in a later invocation, where this list is gone.
+		active, _, err := p.cfg.Store.DrainNotes(ctx, tenantID, repository.DrainOptions{MaxItems: maxHintNotes})
+		if err != nil {
+			obs.Log(ctx).Warn("spelling hints unavailable; transcribing without them",
+				slog.String("capture_id", capture.ID), slog.String("error", err.Error()))
+			return nil
+		}
+		notes = active
+	}
+	var hints []string
+	for _, n := range notes {
+		hints = append(hints, n.Title)
+		hints = append(hints, n.Aliases...)
+	}
+	return hints
+}
+
+// echoesHints reports that a transcript is the spelling prompt read back
+// rather than speech: every comma- or full-stop-separated piece of it is a
+// whole hint name, or, with two pieces or more, it is a run of the prompt's
+// words (an echo cut off mid-name at either end). One piece that is not a
+// whole name is speech, so "Roof" said alone beside a note "Roof repair" is
+// kept. Compared in routing.NormalizeSpeech form, since Whisper punctuates
+// and capitalises the echo as it likes.
+func echoesHints(text string, hints []string) bool {
+	if len(hints) == 0 {
+		return false
+	}
+	names := make(map[string]bool, len(hints))
+	for _, h := range hints {
+		names[routing.NormalizeSpeech(h)] = true
+	}
+	pieces, whole := 0, true
+	for _, piece := range strings.FieldsFunc(text, func(r rune) bool { return r == ',' || r == '.' || r == ';' || r == '\n' }) {
+		norm := routing.NormalizeSpeech(piece)
+		if norm == "" {
+			continue
+		}
+		pieces++
+		whole = whole && names[norm]
+	}
+	if pieces == 0 {
+		return false
+	}
+	if whole {
+		return true
+	}
+	prompt := " " + routing.NormalizeSpeech(strings.Join(hints, ", ")) + " "
+	return pieces >= 2 && strings.Contains(prompt, " "+routing.NormalizeSpeech(text)+" ")
 }
 
 // languageOutcome is the Outcome dimension of TranscribedLanguage: whether the
