@@ -57,6 +57,27 @@ func CaptureStuck(c model.CaptureIndex, now time.Time) bool {
 	return now.Sub(at) >= CaptureStuckAfter
 }
 
+// uploadLandMargin is how long past its presigned PUT's expiry an upload is
+// still given to land: a PUT that starts a second before the link expires is
+// still accepted, and a long recording on a slow phone takes minutes to send.
+const uploadLandMargin = 5 * time.Minute
+
+// uploadMayStillLand reports whether an `uploaded` capture is young enough
+// that the PUT issued with it could still arrive: its link is good for
+// uploadTTL from the row's creation. Until then an absent object is an upload
+// in progress, not one that never finished, and the row must neither be
+// deleted — the device's PUT would land, the device would prune its copy, and
+// the worker would remove the object as an orphan, losing the recording
+// without a word — nor declared never uploaded. A row with no readable
+// creation time is treated as old, as CaptureStuck does.
+func uploadMayStillLand(c model.CaptureIndex, now time.Time) bool {
+	created, err := model.ParseTime(c.CreatedAt)
+	if err != nil {
+		return false
+	}
+	return now.Sub(created) < uploadTTL+uploadLandMargin
+}
+
 // CaptureIsPending reports whether a capture is still moving through the
 // pipeline. It backs GET /v1/captures?status=pending, which is what lets the
 // progress card survive a reload.

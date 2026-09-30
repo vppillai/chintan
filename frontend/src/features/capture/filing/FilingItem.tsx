@@ -3,6 +3,7 @@ import { Icon } from '@/components/Icon.tsx';
 import { describeAgo, formatDurationShort } from '@/features/notes/groups.ts';
 
 import { TargetPrompt } from './TargetPrompt.tsx';
+import { useRecordedHere } from './useLocalUpload.ts';
 import {
   STAGES,
   describe,
@@ -49,6 +50,7 @@ export type FilingItemProps =
  * landing — what a person waiting on Home is listening for — goes unspoken.
  */
 export function FilingItem(props: FilingItemProps) {
+  const recordedHere = useRecordedHere('receipt' in props ? null : props.capture.id);
   if ('receipt' in props) {
     /*
      * A receipt is one control. The row itself opens the note — with a
@@ -107,6 +109,9 @@ export function FilingItem(props: FilingItemProps) {
   const actionable = failed || stuck;
   const retryable = failed || retryAccepted(capture);
   const needsTarget = capture.status === 'needs_target';
+  // Another device's upload that has not landed: its title says so, and the
+  // strip's "Upload" is not appended to it.
+  const waiting = capture.status === 'uploaded' && !recordedHere;
   const stage = STAGES[stageIndex(capture.status)];
   const duration =
     typeof capture.duration_ms === 'number' && capture.duration_ms > 0
@@ -125,8 +130,8 @@ export function FilingItem(props: FilingItemProps) {
     <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
       <div className="filing-row__head">
         <p className="filing-row__title" role="status" aria-live="polite">
-          {describe(capture, stuck)}
-          {running && stage && !stuck && (
+          {describe(capture, stuck, recordedHere)}
+          {running && stage && !stuck && !waiting && (
             <span className="visually-hidden">{` — ${stage.label}`}</span>
           )}
         </p>

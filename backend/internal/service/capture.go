@@ -87,6 +87,11 @@ var (
 	// left of it, and the provider would only answer with a fault the user
 	// cannot act on.
 	ErrCaptureAudioExpired = errors.New("the recording's audio has expired")
+	// ErrCaptureNeverUploaded refuses to retry a capture still at `uploaded`
+	// whose audio never reached the bucket — the app was closed mid-upload.
+	// The worker would only hand the provider a link to nothing; the bytes
+	// are on the device that recorded them, or nowhere.
+	ErrCaptureNeverUploaded = errors.New("the recording never finished uploading")
 )
 
 // NoteCreator creates the destination note for a capture that has none, and
@@ -454,6 +459,7 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 		return nil, fmt.Errorf("failed to get capture: %w", err)
 	}
 	now := s.now()
+	neverMoved := capture.Status == model.StatusUploaded && capture.Error == ""
 
 	switch {
 	case capture.Status == model.StatusFailed || capture.Status == StatusSpendCapped || capture.Error != "":
@@ -465,6 +471,29 @@ func (s *CaptureService) RetryCapture(ctx context.Context, userID, captureID str
 		return &capture, ErrCaptureTerminal
 	case !CaptureStuck(capture, now):
 		return &capture, ErrCaptureInFlight
+	}
+
+	// A stuck `uploaded` row with no object is an upload the app was closed
+	// in the middle of (R7-11). Before, the retry stamped the row — which
+	// made it "in flight", and so undeletable, for another fifteen minutes —
+	// and handed the provider a link to nothing. It is refused now, with
+	// nothing written, rather than marked failed: the only bytes are on the
+	// device that recorded it, whose resend lands on this row while its link
+	// is live and arrives as a new capture after, so there is nothing a
+	// failed status would let anyone do that delete does not. While the link
+	// could still be used (uploadMayStillLand) it is refused as in flight,
+	// since the upload may yet arrive.
+	if neverMoved && capture.AudioKey != "" {
+		present, err := s.objects.Exists(ctx, capture.AudioKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check the recording's audio: %w", err)
+		}
+		if !present {
+			if uploadMayStillLand(capture, now) {
+				return &capture, ErrCaptureInFlight
+			}
+			return &capture, ErrCaptureNeverUploaded
+		}
 	}
 
 	capture.LastProgressAt = model.FormatTime(now)

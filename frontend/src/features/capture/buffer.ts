@@ -84,6 +84,16 @@ async function listCaptureRecords(): Promise<StoredCapture[]> {
 }
 
 /**
+ * The server ids of every recording made on this device, sent or not. A
+ * record is kept after its upload is confirmed (only Discard deletes one), so
+ * this is what tells the device that recorded a capture from every other.
+ */
+export async function recordedHereIds(): Promise<Set<string>> {
+  const records = await listCaptureRecords();
+  return new Set(records.flatMap((record) => (record.serverCaptureId ? [record.serverCaptureId] : [])));
+}
+
+/**
  * Recordings still on this device that the server has not confirmed.
  *
  * Read on startup: a tab killed mid-upload leaves audio here, and this is what

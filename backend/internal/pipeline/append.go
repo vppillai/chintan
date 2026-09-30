@@ -326,9 +326,17 @@ func (p *Pipeline) releaseAppendClaim(ctx context.Context, capture *model.Captur
 	released := *capture
 	released.AppendToken = ""
 	released.AppendClaimedAt = 0
-	if updated, err := p.cfg.Store.PutCapture(ctx, released); err == nil {
-		*capture = updated
+	updated, err := p.cfg.Store.PutCapture(ctx, released)
+	if err != nil {
+		// Said aloud for the same reason as the stamp above: a release that
+		// fails silently looks, from the logs, like one that worked, and the
+		// next attempt then waits out the lease with nothing to say why.
+		obs.Log(ctx).Warn("could not release the capture's append claim; the next attempt waits for the lease to run out",
+			slog.String("capture_id", capture.ID),
+			slog.String("error", err.Error()))
+		return
 	}
+	*capture = updated
 }
 
 // replaceCaptureParagraph puts text where captureID's paragraph stands in
