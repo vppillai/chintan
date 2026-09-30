@@ -7,6 +7,7 @@ import { queryKeys } from '@/api/queries.ts';
 import { ROUTES } from '@/app/routes.ts';
 import { useBackGuard } from '@/app/useBackGuard.ts';
 import { useRouteFocus } from '@/app/useRouteFocus.ts';
+import { useScrollRestore } from '@/app/useScrollRestore.ts';
 import { SignedOutScreen } from '@/features/auth/SignedOutScreen.tsx';
 import { useAuthGate } from '@/features/auth/useAuth.ts';
 import { usePasskeyReturn } from '@/features/auth/usePasskeyReturn.ts';
@@ -73,6 +74,8 @@ export function AppShell() {
   useKeyboardInset();
   usePasskeyReturn();
   useRouteFocus(mainRef);
+  // Back returns to the place in the list (or the note) the user left.
+  useScrollRestore(mainRef);
   // A recording sent while offline goes out when the connection returns,
   // whichever screen the user is on by then.
   useResendOnReconnect();
