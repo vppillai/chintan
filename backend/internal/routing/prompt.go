@@ -19,6 +19,11 @@ type Candidate struct {
 	Title   string
 	Aliases []string
 	Tags    []string
+	// Checklist marks a checklist note, rendered as "[checklist]" after the
+	// title. Without it the router could not tell a listed checklist from a
+	// plain note with a similar name, and "Groceries list milk eggs" was
+	// filed twice as prose into a plain note called "Grocery list" (R7-10a).
+	Checklist bool
 }
 
 // maxFieldLen bounds a rendered candidate field.
@@ -80,6 +85,7 @@ Titles
 - Keep the speaker's language and script; never translate or transliterate.
 
 Kind, for "new" only
+- A listed note marked [checklist] is a checklist. An item for a list goes to a listed checklist, not to a plain note with a similar name.
 - "checklist" when the speaker names a list — shopping list, groceries, to-do, packing list, "add X to the Y list" — or dictates things to tick off one by one. Otherwise "note". In doubt, "note".
 
 Examples, transcript then reply:
@@ -109,8 +115,9 @@ func SystemPrompt() string {
 // router. language is the ISO-639-1 code the transcript is known to be in, or
 // "" when nothing knows; naming it first is what keeps an invented title in
 // the speaker's script. Candidates are one line each, 1-based in the order
-// given — `3 | Roof repair | also: gutters, roof` — and the reply's `note` is
-// that number; the caller maps it back to the id.
+// given — `3 | Roof repair | also: gutters, roof`, or `4 | Groceries [checklist]`
+// for a checklist — and the reply's `note` is that number; the caller maps it
+// back to the id.
 func UserPrompt(transcript string, candidates []Candidate, language string) (string, error) {
 	words := Words(transcript)
 	if len(words) == 0 {
@@ -127,6 +134,9 @@ func UserPrompt(transcript string, candidates []Candidate, language string) (str
 	}
 	for i, c := range candidates {
 		fmt.Fprintf(&b, "%d | %s", i+1, sanitizeField(c.Title))
+		if c.Checklist {
+			b.WriteString(" [checklist]")
+		}
 		if names := otherNames(c); len(names) > 0 {
 			fmt.Fprintf(&b, " | also: %s", strings.Join(names, ", "))
 		}

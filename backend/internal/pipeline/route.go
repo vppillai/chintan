@@ -357,9 +357,10 @@ func logRoutingDecision(ctx context.Context, decision provider.RouteDecision, ma
 }
 
 // routeCandidate is the note as the router sees it: title, aliases and tags,
-// each a name the speaker may file by.
+// each a name the speaker may file by, and whether it is a checklist.
 func routeCandidate(n model.NoteIndex) routing.Candidate {
-	return routing.Candidate{NoteID: n.ID, Title: n.Title, Aliases: n.Aliases, Tags: n.Tags}
+	return routing.Candidate{NoteID: n.ID, Title: n.Title, Aliases: n.Aliases, Tags: n.Tags,
+		Checklist: n.Kind == model.NoteKindChecklist}
 }
 
 // withinRouteBudget cuts the ordered list where its rendered lines would pass
@@ -685,6 +686,9 @@ func candidateTokens(c routing.Candidate) float64 {
 	}
 	for _, t := range c.Tags {
 		chars += len(t)
+	}
+	if c.Checklist {
+		chars += len(" [checklist]")
 	}
 	return float64(chars)/4 + 3
 }

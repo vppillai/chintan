@@ -62,8 +62,9 @@ target note as the only candidate, for a capture recorded into a note whose
 transcript contains a filing or naming cue (`routing.MentionsInstruction`,
 `routing/spans.go`; no cue, no call).
 
-**Sent.** The system prompt (about 1,250 tokens at four characters a token
-after the name-first rules of 2026-09-29; 987 measured before the kind rule
+**Sent.** The system prompt (about 1,300 tokens at four characters a token
+after the checklist-marker rule of 2026-09-30; about 1,250 after the
+name-first rules of 2026-09-29; 987 measured before the kind rule
 of 2026-09-27; 1,433 until 2026-09-27): the two kinds of app instruction
 (filing, naming), the reply
 shape, then four sections — *Destination* (append only when a listed note
@@ -80,8 +81,11 @@ ends after the note's name — "Create a new note from app feedback and add
 the fact" is `{0,7}`, never 6), *Titles* (as spoken, however
 short; invented only when none was spoken; a recording that opens with an
 unlisted name is a new note titled with the name only; the speaker's script)
-and *Kind*,
-for `new` only (`checklist` when the speaker names a list — shopping list,
+and *Kind*
+(a listed note marked `[checklist]` is a checklist, and an item for a list
+goes to a listed checklist, not to a plain note with a similar name — R7-10a,
+after "Groceries list milk eggs" was twice filed as prose into a plain
+"Grocery list"; then, for `new` only, `checklist` when the speaker names a list — shopping list,
 groceries, to-do, packing list, "add X to the Y list" — or dictates things
 to tick off one by one; otherwise, and in doubt, `note`) — and eight worked
 examples: the sixth "add milk to my groceries list" with no Groceries note
@@ -89,6 +93,7 @@ listed, the seventh and eighth the two name-first shapes (a listed "App
 feedback", an unlisted "Things to talk with Milos"). The user prompt: the language line when the
 capture's language is known (`cleanupLanguage`); `Existing notes:` — one
 numbered line per candidate, `3 | Roof repair | also: gutters, roof, house`,
+with `[checklist]` after the title of a checklist (`4 | Groceries [checklist]`),
 the aliases and then the tags after `also:` (either spoken is a request for
 that note; About had promised tags since it was written and the code sent
 none until 2026-09-27, PR-D1), each field sanitised to one line of at most 120
