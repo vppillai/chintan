@@ -30,8 +30,8 @@ test('is one giant button, and the manifest offers it as a shortcut', async ({ p
   // At least two fifths of the viewport's height, and round.
   expect(box.height).toBeGreaterThanOrEqual(viewport.height * 0.4);
   expect(Math.abs(box.width - box.height)).toBeLessThan(2);
-  // The target pill sits above it.
-  await expect(page.getByRole('button', { name: /^into /i })).toBeVisible();
+  // The target pill sits above it; with no note chosen, Chintan decides (R7-14).
+  await expect(page.getByRole('button', { name: 'Chintan decides' })).toBeVisible();
 
   const manifestHref = (await page.locator('link[rel="manifest"]').getAttribute('href'))!;
   const manifest = (await (await request.get(manifestHref)).json()) as {
