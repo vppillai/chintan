@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -32,7 +33,7 @@ type Invocation struct {
 	// {"task":"regenerate-note"} (TaskRegenerateNote). cmd/worker dispatches
 	// on it: the sweep never reaches this package, the clean-note, ask and
 	// regenerate-note tasks are handled by Worker.Handle, and any other task
-	// that reaches the capture path is refused rather than misread.
+	// is refused with ErrUnknownTask.
 	Task string `json:"task,omitempty"`
 	// NoteID and Mode address a clean-note task: the note whose cleaned view
 	// is regenerated and the mode to write it in. RequestedAt is the stamp
@@ -56,6 +57,10 @@ type Invocation struct {
 	// log lines join the API's into one trace.
 	CorrelationID string `json:"correlation_id,omitempty"`
 }
+
+// ErrUnknownTask is Worker.Handle's answer to a payload naming a task it has
+// no handler for.
+var ErrUnknownTask = errors.New("pipeline: unknown task")
 
 // Worker runs the pipeline for one asynchronous invocation.
 type Worker struct {
@@ -84,8 +89,13 @@ func (w *Worker) Handle(ctx context.Context, raw json.RawMessage) error {
 		case TaskRegenerateNote:
 			return w.handleRegenerateNote(ctx, task)
 		}
-		// Any other task falls through to the capture path, which refuses
-		// it by name.
+		// A task this worker does not know is refused with an error, not
+		// discarded: it is a deploy out of step with its sender, and the
+		// retries and the dead-letter queue are what put that in front of a
+		// person. cmd/worker used to keep its own list of these names and
+		// drop any it did not recognise, so a task added here alone was lost
+		// without a retry (R7-18).
+		return fmt.Errorf("%w: %q", ErrUnknownTask, task.Task)
 	}
 
 	refs, correlationID, err := parseInvocation(raw)

@@ -66,7 +66,6 @@ import (
 )
 
 var (
-	worker    *pipeline.Worker
 	sweeper   *purge.Sweeper
 	costs     *awscost.Collector
 	snapshots *storagesnap.Snapshotter
@@ -215,7 +214,7 @@ func setup() {
 		log.Fatalf("failed to build capture pipeline: %v", err)
 	}
 
-	worker = pipeline.NewWorker(p)
+	handleWork = pipeline.NewWorker(p).Handle
 
 	// The expiry sweep runs the same cascade a permanent delete runs, over the
 	// same store and bucket. Building it here rather than lazily keeps the
@@ -373,6 +372,36 @@ func sniff(raw json.RawMessage) (invocation, error) {
 	return inv, nil
 }
 
+// scheduled are the tasks this binary runs itself: the EventBridge rules'
+// constant inputs, whose handlers need nothing from the pipeline. Every other
+// task goes to the pipeline worker, which owns the list of the tasks it
+// serves and refuses any other with an error. Until R7-18 this switch named
+// the pipeline's tasks too and dropped any task it did not know, so one added
+// to Worker.Handle alone was logged and lost — no retry, no dead letter.
+//
+// A variable, not a switch, so the dispatch test can stand in for handlers
+// whose real dependencies are AWS clients.
+var scheduled = map[string]func(context.Context) error{
+	purge.Task: func(ctx context.Context) error {
+		_, err := sweeper.Sweep(ctx)
+		return err
+	},
+	// The daily budget reading behind the AWS line on GET /v1/usage.
+	awscost.Task: func(ctx context.Context) error {
+		_, err := costs.Run(ctx)
+		return err
+	},
+	// The daily storage reading behind storage.byte_days on GET /v1/usage.
+	storagesnap.Task: func(ctx context.Context) error {
+		_, err := snapshots.Run(ctx)
+		return err
+	},
+}
+
+// handleWork is the pipeline worker's Handle, set by setup; a variable for the
+// same reason as scheduled.
+var handleWork func(context.Context, json.RawMessage) error
+
 // Handler is the entry point for every asynchronous invocation.
 //
 // The return value is the whole protocol: nil for done, an error for "retry
@@ -385,49 +414,16 @@ func Handler(ctx context.Context, raw json.RawMessage) error {
 	}
 
 	switch {
-	case inv.task == purge.Task:
-		_, err := sweeper.Sweep(ctx)
-		return err
-
-	case inv.task == awscost.Task:
-		// The daily budget reading behind the AWS line on GET /v1/usage.
-		_, err := costs.Run(ctx)
-		return err
-
-	case inv.task == storagesnap.Task:
-		// The daily storage reading behind storage.byte_days on GET /v1/usage.
-		_, err := snapshots.Run(ctx)
-		return err
-
-	case inv.task == pipeline.TaskCleanNote:
-		// The whole-note cleaned view. Sent by the API for POST
-		// /v1/notes/{id}/clean and for a recording moved or deleted from a
-		// note with auto_clean, and by this function to itself after an
-		// append to one.
-		return worker.Handle(ctx, raw)
-
-	case inv.task == pipeline.TaskAsk:
-		// A question over the tenant's notes, sent by the API for POST
-		// /v1/ask. Retrieval and the one model call run here; the API only
-		// wrote the row.
-		return worker.Handle(ctx, raw)
-
-	case inv.task == pipeline.TaskRegenerateNote:
-		// A note's recordings cleaned again with the current prompts, sent
-		// by the API for POST /v1/notes/{id}/regenerate and by chintanctl
-		// regenerate. One cleanup call per recording, then the cleaned view.
-		return worker.Handle(ctx, raw)
-
 	case inv.task != "":
-		// Retrying cannot make this recognisable, so it is logged and dropped
-		// rather than retried until it dead-letters.
-		obs.Log(ctx).Error("ignoring an unrecognised task",
-			slog.String("task", inv.task))
-		return nil
+		if run, ok := scheduled[inv.task]; ok {
+			return run(ctx)
+		}
+		// clean-note, ask, regenerate-note, and any task nobody knows.
+		return handleWork(ctx, raw)
 
 	case inv.source == sourceS3, inv.source == "":
 		// A recording landing in the bucket, or the API naming a capture.
-		return worker.Handle(ctx, raw)
+		return handleWork(ctx, raw)
 
 	default:
 		obs.Log(ctx).Error("ignoring an event from an unrecognised source",
