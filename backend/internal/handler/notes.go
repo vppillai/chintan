@@ -206,15 +206,9 @@ func (rt *router) getNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: []Capture{}, Cleaned: cleanedOf(detail.NoteIndex)}
-	if rt.Captures != nil {
-		captures, err := rt.Captures.ListCapturesForNote(r.Context(), userID, noteID, repository.ListOptions{})
-		if err != nil {
-			fail(w, r, err)
-			return
-		}
-		out.Captures = capturesOf(captures.Items)
-	}
+	// The captures come with the detail, in the same tenant-keyed reads as
+	// the note itself (service.GetNoteDetail).
+	out := NoteDetail{Note: noteOf(detail.NoteIndex), Body: detail.Body, Captures: capturesOf(detail.Captures.Items), Cleaned: cleanedOf(detail.NoteIndex)}
 	writeJSON(w, http.StatusOK, out)
 }
 
