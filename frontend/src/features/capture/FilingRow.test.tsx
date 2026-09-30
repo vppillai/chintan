@@ -21,7 +21,7 @@ import { cacheNoteList } from '@/offline/notesCache.ts';
 import { capture, json, mount } from '@/test/filing.tsx';
 import { TestProviders, testApiContext, testQueryClient } from '@/test/providers.tsx';
 
-import { FILED_ROWS_MAX, FilingRow } from './FilingRow.tsx';
+import { FilingRow } from './FilingRow.tsx';
 import { DISMISSED_KEY, DISMISSED_LIMIT, dismissCapture, loadDismissed } from './dismissed.ts';
 import { INITIAL_CAPTURE, type CaptureModel } from './machine.ts';
 import { useCaptureStore } from './store.ts';
@@ -409,7 +409,8 @@ describe('how often the one poll asks', () => {
     await waitFor(() => {
       expect(polls()).toBe(2);
     });
-    expect(await screen.findAllByRole('button', { name: /open the note/i })).toHaveLength(2);
+    // Two receipts now: they fold into one row that counts both.
+    expect(await screen.findByRole('button', { name: '2 filed into 2 notes' })).toBeInTheDocument();
   });
 });
 
@@ -715,15 +716,20 @@ describe('receipts are one row per note, behind the rows that still need somethi
     expect(receipt).toHaveAccessibleName(/open the note/i);
     expect(document.querySelectorAll('.filing-row--receipt')).toHaveLength(1);
     expect(screen.getByRole('status')).toHaveTextContent('3 filed into “Roof repair”');
-    expect(screen.getByText('just now')).toBeInTheDocument();
+    expect(document.querySelector('.filing-row__duration')).toHaveTextContent('· now');
 
     await user.click(receipt);
     expect(await screen.findByText('note screen: roof-repair')).toBeInTheDocument();
     expect(Array.from(loadDismissed()).sort()).toEqual(['a', 'b', 'c']);
   });
 
-  it('groups are newest-landing first and beyond the third sit behind "and N more filed into M notes"', async () => {
+  it('two or more receipts fold into one row, "5 filed into 5 notes", that expands in place newest-landing first', async () => {
+    /*
+     * At 390 px three receipt cards and the old "and 2 more" line pushed
+     * Home's notes down to about one (R7-7a). The fold is one row.
+     */
     await cacheNoteList([1, 2, 3, 4, 5].map((n) => note(`n${n}`, `Note ${n}`)));
+    const user = userEvent.setup();
     // Served oldest first, so the order on screen is the landing's, not the server's.
     mount(
       [5, 4, 3, 2, 1].map((n) =>
@@ -731,24 +737,66 @@ describe('receipts are one row per note, behind the rows that still need somethi
       ),
     );
 
-    // The titles arrive from the device's cache a beat after the rows do.
+    const toggle = await screen.findByRole('button', { name: '5 filed into 5 notes' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('.filing-row--receipt')).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     await screen.findByText(/Note 3/);
-    const visible = document.querySelectorAll('.filing > .filing-row--receipt');
-    expect(visible).toHaveLength(FILED_ROWS_MAX);
-    expect(Array.from(visible, (row) => row.textContent)).toEqual([
+    const rows = document.querySelectorAll('.filing-fold__rows .filing-row--receipt');
+    expect(Array.from(rows, (row) => row.textContent)).toEqual([
       expect.stringContaining('Note 1'),
       expect.stringContaining('Note 2'),
       expect.stringContaining('Note 3'),
+      expect.stringContaining('Note 4'),
+      expect.stringContaining('Note 5'),
+    ]);
+  });
+
+  it('"Clear all" puts every folded receipt away at once, and nothing that still needs you', async () => {
+    const user = userEvent.setup();
+    mount([
+      capture({ id: 'a', status: 'appended', note_id: 'n1', appended_at: now() }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2', appended_at: now() }),
+      capture({ id: 'broke', status: 'failed', error: 'Timed out' }),
     ]);
 
-    const more = document.querySelector('details.filing__more');
-    expect(more).not.toBeNull();
-    expect(more?.querySelector('summary')).toHaveTextContent('and 2 more filed into 2 notes');
-    // The summary is flex, which drops the native disclosure triangle; the chevron is the cue in its place.
-    expect(more?.querySelector('summary > .filing__more-chevron')).not.toBeNull();
-    expect(more?.querySelectorAll('.filing-row--receipt')).toHaveLength(2);
-    // A native disclosure: the folded rows are on the page, reachable at zero state.
-    expect(within(more as HTMLElement).getAllByRole('button', { name: /open the note/i })).toHaveLength(2);
+    await user.click(await screen.findByRole('button', { name: 'Clear all' }));
+    await waitFor(() => {
+      expect(document.querySelector('.filing-fold')).toBeNull();
+    });
+    expect(Array.from(loadDismissed()).sort()).toEqual(['a', 'b']);
+    expect(screen.getByText('Timed out')).toBeInTheDocument();
+  });
+
+  it('says "Started" for a note the recording made, and shows what was said under a receipt', async () => {
+    // A misroute into a brand-new note read "Filed into" like an append (R7-7c).
+    await cacheNoteList([note('fresh', 'Plumber')]);
+    mount([
+      capture({
+        status: 'appended',
+        note_id: 'fresh',
+        appended_at: now(),
+        created_note: true,
+        excerpt: 'Call the plumber about the sink',
+      }),
+    ]);
+
+    expect(await screen.findByRole('button', { name: /started “plumber”/i })).toBeInTheDocument();
+    expect(screen.queryByText(/filed into/i)).toBeNull();
+    expect(screen.getByText('Call the plumber about the sink')).toBeInTheDocument();
+  });
+
+  it('shows what was said on the "which note?" row and on a failure', async () => {
+    // A ring capture from hours ago could not be placed by its length alone (R7-7b).
+    mount([
+      capture({ id: 'ask', status: 'needs_target', excerpt: 'Tiles for the backsplash' }),
+      capture({ id: 'broke', status: 'failed', error: 'Timed out', excerpt: 'Gutter is leaking' }),
+    ]);
+
+    expect(await screen.findByText('Tiles for the backsplash')).toBeInTheDocument();
+    expect(screen.getByText('Gutter is leaking')).toBeInTheDocument();
   });
 
   it('rows are drawn moving → needs you → filed regardless of server order', async () => {
@@ -773,6 +821,8 @@ describe('receipts are one row per note, behind the rows that still need somethi
       capture({ id: 'r1', status: 'appended', note_id: 'roof-repair', appended_at: minutesAgo(2) }),
     ]);
 
+    // Two notes fold; open the fold to reach one of them.
+    await user.click(await screen.findByRole('button', { name: /filed into 2 notes/ }));
     const kitchen = await screen.findByRole('button', { name: /filed into “kitchen rebuild”/i });
     await user.click(within(kitchen.closest('article') as HTMLElement).getByRole('button', { name: 'Dismiss' }));
 
@@ -791,7 +841,7 @@ describe('receipts are one row per note, behind the rows that still need somethi
 
     expect(await screen.findAllByText(/which note should this go in/i)).toHaveLength(4);
     expect(document.querySelectorAll('.filing-row')).toHaveLength(5);
-    expect(document.querySelector('details')).toBeNull();
+    expect(document.querySelector('.filing-fold')).toBeNull();
     expect(document.querySelector('.filing-row--receipt')).toBeNull();
   });
 });

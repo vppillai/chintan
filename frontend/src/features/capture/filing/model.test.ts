@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CAPTURE_STATUSES, isTerminalStatus } from '@/api/schema.ts';
 import { capture } from '@/test/filing.tsx';
 
-import { STAGES, groupReceipts, stageIndex } from './model.ts';
+import { STAGES, describeAgoShort, groupReceipts, stageIndex } from './model.ts';
 
 describe('stageIndex', () => {
   it('lights a segment for every status the pipeline can leave a capture in', () => {
@@ -81,5 +81,31 @@ describe('groupReceipts', () => {
         capture({ id: 'nowhere', status: 'appended' }),
       ]),
     ).toEqual([]);
+  });
+
+  it('marks a group Started when one of its captures made the note, and carries the newest excerpt', () => {
+    const [group] = groupReceipts([
+      capture({ id: 'b', status: 'appended', note_id: 'n', appended_at: at('10:05'), excerpt: 'second' }),
+      capture({ id: 'a', status: 'appended', note_id: 'n', appended_at: at('10:00'), created_note: true, excerpt: 'first' }),
+    ]);
+    expect(group?.createdNote).toBe(true);
+    expect(group?.excerpt).toBe('second');
+    expect(groupReceipts([capture({ status: 'appended', note_id: 'n' })])[0]).toMatchObject({
+      createdNote: false,
+      excerpt: null,
+    });
+  });
+});
+
+describe('describeAgoShort', () => {
+  const now = Date.parse('2026-09-30T12:00:00.000Z');
+  const ago = (ms: number) => describeAgoShort(new Date(now - ms).toISOString(), now);
+
+  it('fits beside a one-line receipt', () => {
+    expect(ago(20_000)).toBe('now');
+    expect(ago(2 * 60_000)).toBe('2 min');
+    expect(ago(3 * 3_600_000)).toBe('3 h');
+    expect(ago(4 * 86_400_000)).toBe('4 d');
+    expect(describeAgoShort('not a date', now)).toBe('');
   });
 });

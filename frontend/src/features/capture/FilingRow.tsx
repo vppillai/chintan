@@ -15,7 +15,6 @@ import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, dismissCaptures, loadDismissed } from './dismissed.ts';
 import { FilingItem } from './filing/FilingItem.tsx';
 import {
-  FILED_ROWS_MAX,
   groupReceipts,
   isStuck,
   retryMessage,
@@ -31,7 +30,7 @@ import { awaitsConnection } from './useResendOnReconnect.ts';
 // row on their own — a note's Recordings tab, `/talk`, the note screen — keep
 // importing them from here.
 export { FilingStages } from './filing/FilingItem.tsx';
-export { FILED_ROWS_MAX, retryMessage } from './filing/model.ts';
+export { retryMessage } from './filing/model.ts';
 export { TargetPrompt } from './filing/TargetPrompt.tsx';
 export { useLocalUpload } from './filing/useLocalUpload.ts';
 
@@ -48,10 +47,11 @@ export { useLocalUpload } from './filing/useLocalUpload.ts';
  * Four tiers, in this order: this device's own upload, rows still moving,
  * rows that need the person (failed, capped, asking for a note, stuck — never
  * grouped, never folded), then one receipt per note the rest landed in,
- * newest landing first, the fourth note onward folded behind a summary. A
- * ring's day of thirteen recordings into one note is one line, and the
- * busiest note is never the hidden one — with one card per capture and a
- * three-card cap it was exactly that.
+ * newest landing first. One receipt is a row; two or more fold into one
+ * summary row, "3 filed into 2 notes", that expands in place and carries
+ * "Clear all" (R7-7a): at 390 px three receipt cards and a fold line left
+ * room for about one note below them. A ring's day of thirteen recordings
+ * into one note is still one line.
  *
  * What a row says, and the four stage segments, are `filing/model.ts`; one
  * row is `filing/FilingItem.tsx`; this device's own upload is
@@ -135,9 +135,16 @@ export function FilingRow() {
       (isTerminalStatus(capture.status) && capture.status !== 'appended') || isStuck(capture),
   );
   const groups = groupReceipts(captures);
-  const shown = groups.slice(0, FILED_ROWS_MAX);
-  const folded = groups.slice(FILED_ROWS_MAX);
+  // One receipt is shown as itself; two or more are the fold's.
+  const shown = groups.length === 1 ? groups : [];
+  const folded = groups.length > 1 ? groups : [];
   const foldedCaptures = folded.reduce((sum, group) => sum + group.captureIds.length, 0);
+  const [expanded, setExpanded] = useState(false);
+  const clearAll = (): void => {
+    focusPastDismissed();
+    setDismissed(dismissCaptures(folded.flatMap((group) => group.captureIds), dismissed));
+    setExpanded(false);
+  };
 
   // The receipts say how long ago the last recording landed. A minute is the
   // grain `describeAgo` speaks in, and the tick runs only while there is a
@@ -197,23 +204,40 @@ export function FilingRow() {
         ),
       )}
       {folded.length > 0 && (
-        <details className="filing__more">
-          {/*
-            The summary's `display: flex` drops the native disclosure triangle,
-            and on a touch screen `cursor: pointer` shows nothing, so the
-            chevron is the cue that this line opens — the same one the You
-            screen's recipe uses. One span holds the sentence so flex layout
-            does not trim the word spaces between its text and its figures.
-          */}
-          <summary>
-            <Icon name="chevron-right" size={18} className="filing__more-chevron" />
-            <span>
-              and <span className="numeric">{foldedCaptures}</span> more filed into{' '}
-              <span className="numeric">{folded.length}</span> {folded.length === 1 ? 'note' : 'notes'}
-            </span>
-          </summary>
-          {folded.map(receipt)}
-        </details>
+        <div className="filing-fold" data-expanded={expanded || undefined}>
+          <div className="filing-row filing-row--fold">
+            {/*
+              A button with aria-expanded rather than a <details>, because
+              "Clear all" sits on the same line and a control inside a
+              <summary> is not one a screen reader can reach on its own.
+              The sentence is the live region: when another recording lands
+              it is what changes, and so what is announced.
+            */}
+            <button
+              type="button"
+              className="filing-fold__toggle"
+              aria-expanded={expanded}
+              aria-controls="filing-fold-rows"
+              onClick={() => {
+                setExpanded((open) => !open);
+              }}
+            >
+              <span className="filing-row__title" role="status" aria-live="polite">
+                <span className="numeric">{foldedCaptures}</span> filed into{' '}
+                <span className="numeric">{folded.length}</span> notes
+              </span>
+              <Icon name="chevron-right" size={18} className="filing-fold__chevron" />
+            </button>
+            <button type="button" className="filing-row__action filing-fold__clear" onClick={clearAll}>
+              <span>Clear all</span>
+            </button>
+          </div>
+          {expanded && (
+            <div id="filing-fold-rows" className="filing-fold__rows">
+              {folded.map(receipt)}
+            </div>
+          )}
+        </div>
       )}
     </section>
   );
@@ -234,12 +258,18 @@ export function FilingRow() {
  * reader who dismissed a receipt mid-list back to the top of Home.
  */
 function focusPastDismissed(): void {
-  const row = document.activeElement?.closest<HTMLElement>('.filing-row');
+  const active = document.activeElement;
+  // The row's unit among its siblings: the swipe wrapper around a row, or
+  // the fold as a whole when its own "Clear all" was pressed.
+  const row =
+    active?.closest<HTMLElement>('.filing-fold__clear') ? active.closest<HTMLElement>('.filing-fold')
+    : (active?.closest<HTMLElement>('.filing-swipe') ?? active?.closest<HTMLElement>('.filing-row'));
   if (!row) return;
   const neighbour = row.nextElementSibling ?? row.previousElementSibling;
   const target =
-    neighbour?.querySelector<HTMLElement>('.filing-row__dismiss, .filing-row__action, summary') ??
-    document.querySelector<HTMLElement>('.library-heading');
+    neighbour?.querySelector<HTMLElement>(
+      '.filing-row__dismiss, .filing-row__action, .filing-fold__toggle',
+    ) ?? document.querySelector<HTMLElement>('.library-heading');
   target?.focus();
 }
 

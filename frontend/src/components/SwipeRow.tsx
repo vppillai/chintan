@@ -69,54 +69,55 @@ export function SwipeRow({
   );
   const swipe = useSwipeActions({ enabled, measureWidth, containerRef: rootRef });
 
-  if (!enabled) {
-    return (
-      <div ref={rootRef} className={join('swipe', className)}>
-        <div className={join('swipe__content', contentClassName)}>{children}</div>
-      </div>
-    );
-  }
-
+  /*
+   * One tree whether or not the swipe is on, with the tray's slot left empty
+   * when it is off: a row that turns swipeable while mounted — a filing row
+   * that lands and becomes a receipt — keeps its content's DOM node, and with
+   * it the live region that announces the landing (FilingItem.tsx). Two
+   * returns put the content at a different child index and React remounted it.
+   */
   return (
     <div
       ref={rootRef}
       className={join('swipe', className)}
-      data-open={swipe.open || undefined}
-      data-dragging={swipe.dragging || undefined}
-      data-shifted={swipe.offset !== 0 || undefined}
-      style={{ '--swipe-x': `${String(swipe.offset)}px` } as CSSProperties}
-      {...swipe.handlers}
+      data-open={(enabled && swipe.open) || undefined}
+      data-dragging={(enabled && swipe.dragging) || undefined}
+      data-shifted={(enabled && swipe.offset !== 0) || undefined}
+      style={enabled ? ({ '--swipe-x': `${String(swipe.offset)}px` } as CSSProperties) : undefined}
+      {...(enabled ? swipe.handlers : {})}
     >
-      <div
-        className="swipe__tray"
-        role="group"
-        aria-label={label}
-        aria-hidden={!swipe.open}
-        inert={!swipe.open}
-      >
-        <div ref={actionsRef} className="swipe__actions">
-          {actions.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              className="swipe__action"
-              data-destructive={action.destructive || undefined}
-              onClick={() => {
-                // Closed first: the action may open a dialog, and a row that is
-                // still uncovered behind a dialog is a row with two states.
-                swipe.close();
-                action.onSelect();
-              }}
-            >
-              <Icon name={action.icon} size={20} />
-              <span className="swipe__action-label">{action.label}</span>
-            </button>
-          ))}
+      {enabled && (
+        <div
+          className="swipe__tray"
+          role="group"
+          aria-label={label}
+          aria-hidden={!swipe.open}
+          inert={!swipe.open}
+        >
+          <div ref={actionsRef} className="swipe__actions">
+            {actions.map((action) => (
+              <button
+                key={action.id}
+                type="button"
+                className="swipe__action"
+                data-destructive={action.destructive || undefined}
+                onClick={() => {
+                  // Closed first: the action may open a dialog, and a row that is
+                  // still uncovered behind a dialog is a row with two states.
+                  swipe.close();
+                  action.onSelect();
+                }}
+              >
+                <Icon name={action.icon} size={20} />
+                <span className="swipe__action-label">{action.label}</span>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
       <div
         className={join('swipe__content', contentClassName)}
-        onClickCapture={swipe.onContentClickCapture}
+        onClickCapture={enabled ? swipe.onContentClickCapture : undefined}
       >
         {children}
       </div>

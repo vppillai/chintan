@@ -1,12 +1,14 @@
 import { isTerminalStatus, type CaptureWire } from '@/api/schema.ts';
 import { Icon } from '@/components/Icon.tsx';
-import { describeAgo, formatDurationShort } from '@/features/notes/groups.ts';
+import { SwipeRow } from '@/components/SwipeRow.tsx';
+import { formatDurationShort } from '@/features/notes/groups.ts';
 
 import { TargetPrompt } from './TargetPrompt.tsx';
 import { useRecordedHere } from './useLocalUpload.ts';
 import {
   STAGES,
   describe,
+  describeAgoShort,
   isStuck,
   retryAccepted,
   stageIndex,
@@ -51,55 +53,118 @@ export type FilingItemProps =
  */
 export function FilingItem(props: FilingItemProps) {
   const recordedHere = useRecordedHere('receipt' in props ? null : props.capture.id);
+  /*
+   * Both branches sit in a SwipeRow, so the root is the same element whether
+   * the row is moving or a receipt and the live region below survives the
+   * flip. The bodies are called as functions, not rendered as components of
+   * their own, for the same reason: two component types at one place would
+   * be a remount. Only a receipt offers the tray; a moving or stopped row's
+   * controls are on its face.
+   */
   if ('receipt' in props) {
-    /*
-     * A receipt is one control. The row itself opens the note — with a
-     * chevron, as every row that leads somewhere has — and the × dismisses
-     * it. The title stays where every row keeps it — first in the head,
-     * outside the button — so the live region a moving row rendered is the
-     * node the receipt updates. The button is the chevron, named by the title
-     * and its own hidden words, and its ::after stretches over the row
-     * (capture.css). The slot a moving row gives to the recording's length
-     * says how long ago the last one landed: the note's Recordings tab has
-     * the lengths.
-     */
     const { receipt, noteTitle, now, onOpen, onDismiss } = props;
-    const count = receipt.captureIds.length;
-    const titleId = `filing-title-${receipt.newestId}`;
     return (
-      <article className="filing-row filing-row--receipt" data-status="appended">
-        <div className="filing-row__head">
-          <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
-            {count > 1 && <span className="numeric">{count}</span>}
-            {count > 1 ? ' filed' : 'Filed'}
-            {noteTitle ? ` into “${noteTitle}”` : ''}
-          </p>
-          <span className="filing-row__duration numeric">{describeAgo(receipt.latestAt, now)}</span>
-        </div>
-        <button
-          type="button"
-          className="filing-row__receipt"
-          aria-labelledby={`${titleId} ${titleId}-open`}
-          onClick={onOpen}
-        >
-          <Icon name="chevron-right" size={18} />
-          <span id={`${titleId}-open`} className="visually-hidden">
-            Open the note
-          </span>
-        </button>
-        <button
-          type="button"
-          className="filing-row__dismiss"
-          aria-label="Dismiss"
-          onClick={onDismiss}
-        >
-          <Icon name="close" size={18} />
-        </button>
-      </article>
+      <SwipeRow
+        className="filing-swipe"
+        label="Receipt actions"
+        actions={[{ id: 'dismiss', label: 'Dismiss', icon: 'close', onSelect: onDismiss }]}
+      >
+        {receiptBody({ receipt, noteTitle, now, onOpen, onDismiss })}
+      </SwipeRow>
     );
   }
+  return (
+    <SwipeRow className="filing-swipe" label="Filing actions" actions={[]}>
+      {captureBody({ ...props, recordedHere })}
+    </SwipeRow>
+  );
+}
 
-  const { capture, onRetry, retrying, retryError, onDismiss } = props;
+/** What a receipt says: "Filed into “Roof”", "3 filed into “Roof”", or "Started “Roof”" for a note made for it. */
+export function receiptTitle(receipt: ReceiptGroup, noteTitle: string | undefined): string {
+  const count = receipt.captureIds.length;
+  const into = noteTitle ? ` “${noteTitle}”` : '';
+  if (receipt.createdNote) {
+    const started = noteTitle ? `Started${into}` : 'Started a note';
+    return count > 1 ? `${started} · ${String(count)} recordings` : started;
+  }
+  const filed = noteTitle ? ` into${into}` : '';
+  return count > 1 ? `${String(count)} filed${filed}` : `Filed${filed}`;
+}
+
+/*
+ * A receipt is one control and one line (R7-7a): the title, cut with an
+ * ellipsis, then "· 2 min", then the chevron. The row itself opens the
+ * note — the chevron's ::after stretches over it (capture.css) — and the
+ * title stays first in the head, outside the button, so the live region a
+ * moving row rendered is the node the receipt updates. The × is shown only
+ * on the hovered or focused row; on a phone the swipe tray and "Clear all"
+ * are the ways to put a receipt away, and the × stays a real 44 px button
+ * a keyboard or screen reader reaches, revealed when it has focus.
+ */
+function receiptBody({
+  receipt,
+  noteTitle,
+  now,
+  onOpen,
+  onDismiss,
+}: {
+  receipt: ReceiptGroup;
+  noteTitle: string | undefined;
+  now: number;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  const titleId = `filing-title-${receipt.newestId}`;
+  const ago = describeAgoShort(receipt.latestAt, now);
+  return (
+    <article
+      className="filing-row filing-row--receipt"
+      data-status="appended"
+      data-started={receipt.createdNote || undefined}
+    >
+      <div className="filing-row__head">
+        <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
+          {receipt.createdNote && (
+            <Icon name="plus" size={16} className="filing-row__started-icon" />
+          )}
+          {receiptTitle(receipt, noteTitle)}
+        </p>
+        {ago && (
+          <span className="filing-row__duration numeric">
+            <span aria-hidden="true">· </span>
+            {ago}
+            {ago !== 'now' && <span className="visually-hidden"> ago</span>}
+          </span>
+        )}
+      </div>
+      {receipt.excerpt && <p className="filing-row__excerpt">{receipt.excerpt}</p>}
+      <button
+        type="button"
+        className="filing-row__receipt"
+        aria-labelledby={`${titleId} ${titleId}-open`}
+        onClick={onOpen}
+      >
+        <Icon name="chevron-right" size={18} />
+        <span id={`${titleId}-open`} className="visually-hidden">
+          Open the note
+        </span>
+      </button>
+      <button type="button" className="filing-row__dismiss" aria-label="Dismiss" onClick={onDismiss}>
+        <Icon name="close" size={18} />
+      </button>
+    </article>
+  );
+}
+
+function captureBody({
+  capture,
+  onRetry,
+  retrying,
+  retryError,
+  onDismiss,
+  recordedHere,
+}: Extract<FilingItemProps, { capture: CaptureWire }> & { recordedHere: boolean }) {
   const failed = capture.status === 'failed' || capture.status === 'spend_capped';
   const stuck = isStuck(capture);
   // A stuck capture gets the same way out a failed one does: retrying is safe
@@ -125,6 +190,10 @@ export function FilingItem(props: FilingItemProps) {
    * capture had in fact stopped and was waiting for the user.
    */
   const running = !isTerminalStatus(capture.status);
+  // What was said, on the rows that need the person: "which note?" and a
+  // failure are answered from memory of the recording, and its length alone
+  // did not bring back a ring capture from hours ago (R7-7b).
+  const excerpt = (needsTarget || actionable) && capture.excerpt ? capture.excerpt : null;
 
   return (
     <article className="filing-row" data-status={capture.status} data-stuck={stuck || undefined}>
@@ -137,6 +206,8 @@ export function FilingItem(props: FilingItemProps) {
         </p>
         {duration && <span className="filing-row__duration numeric">{duration}</span>}
       </div>
+
+      {excerpt && <p className="filing-row__excerpt">{excerpt}</p>}
 
       {running && <FilingStages capture={capture} />}
 
