@@ -453,7 +453,10 @@ nothing. `pipeline.TestRoutingEvalReplay` replays every route case in
 outcome — `append` means filed without asking, `title_names` means the named
 note is where the recording went — and skips, printing the command above,
 while the directory is empty. Record with the default `LLM_MODEL`, which the
-replay also uses.
+replay also uses, and with `-count=1`: a key is one file, so under `-count=N`
+each run overwrites the last and only the final reply per case is kept.
+Both variables are read only in a test binary (`testing.Testing`), so a
+worker with either set still calls the model.
 
 **A prompt change needs a re-record.** The key is the prompt's text, so after
 any change to `routing.SystemPrompt`, `routing.UserPrompt`, the model or a

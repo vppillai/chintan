@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/ask"
@@ -33,8 +34,8 @@ type OpenAICleanup struct {
 	model      string
 	httpClient *http.Client
 	// recordDir and replayDir are the eval's LLM_RECORD and LLM_REPLAY
-	// (docs/design/prompts.md, "Record and replay"). The worker never sets
-	// either; both empty is a plain call.
+	// (docs/design/prompts.md, "Record and replay"), read only in a test
+	// binary (recordReplayAllowed); both empty is a plain call.
 	recordDir string
 	replayDir string
 }
@@ -56,14 +57,16 @@ func NewOpenAICleanup(apiKey, baseURL, model string, httpClient *http.Client) (*
 		// an error the pipeline can record rather than as a killed invocation.
 		httpClient = &http.Client{Timeout: 840 * time.Second}
 	}
-	return &OpenAICleanup{
+	c := &OpenAICleanup{
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		model:      model,
 		httpClient: httpClient,
-		recordDir:  os.Getenv("LLM_RECORD"),
-		replayDir:  os.Getenv("LLM_REPLAY"),
-	}, nil
+	}
+	if recordReplayAllowed() {
+		c.recordDir, c.replayDir = os.Getenv("LLM_RECORD"), os.Getenv("LLM_REPLAY")
+	}
+	return c, nil
 }
 
 // Model reports the model this client completes with, so a caller can price the
@@ -253,6 +256,12 @@ func (c *OpenAICleanup) call(ctx context.Context, systemPrompt, userPrompt strin
 	}
 	return parsed.Choices[0].Message.Content, usage, nil
 }
+
+// recordReplayAllowed gates LLM_RECORD and LLM_REPLAY to test binaries: a
+// worker that replayed files would answer every capture from disk, and one
+// that recorded would write transcripts to its filesystem. A variable so a
+// test can show a normal build ignores both.
+var recordReplayAllowed = testing.Testing
 
 // recording is one recorded completion on disk, <dir>/<RecordingKey>.json.
 type recording struct {

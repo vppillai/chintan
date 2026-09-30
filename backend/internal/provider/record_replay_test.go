@@ -72,3 +72,21 @@ func TestWilsonInterval(t *testing.T) {
 		}
 	}
 }
+
+// A normal build ignores both variables: set in a worker's environment they
+// must neither serve captures from disk nor write transcripts to it.
+func TestANonTestBuildIgnoresRecordAndReplay(t *testing.T) {
+	t.Setenv("LLM_RECORD", t.TempDir())
+	t.Setenv("LLM_REPLAY", t.TempDir())
+	allowed := recordReplayAllowed
+	recordReplayAllowed = func() bool { return false }
+	t.Cleanup(func() { recordReplayAllowed = allowed })
+
+	c, err := NewOpenAICleanup("k", "", "m", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.recordDir != "" || c.replayDir != "" {
+		t.Errorf("record %q replay %q, want both ignored outside a test binary", c.recordDir, c.replayDir)
+	}
+}
