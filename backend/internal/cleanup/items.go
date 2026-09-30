@@ -288,24 +288,59 @@ func RenderItems(items []Item) string {
 	return strings.Join(lines, "\n")
 }
 
+// ParseLine reads one checklist body line as a task-list item, the one rule
+// the Go readers and the editor (frontend checklist.ts ITEM) share, pinned by
+// testdata/checklist-lines.json and stated in docs/design/checklists.md: an
+// indent of spaces and tabs (a tab counts as two spaces), "- [", a box of " ",
+// "x" or "X", "]", at most one space, then the text as written. depth is 1
+// for an indent of two columns or more and 0 otherwise — one level
+// (CL-D1). ok is false for any other line: a marker, a blank or prose. A
+// trailing "\r" is not part of the text.
+func ParseLine(line string) (text string, done bool, depth int, ok bool) {
+	line = strings.TrimSuffix(line, "\r")
+	width := 0
+	rest := strings.TrimLeftFunc(line, func(r rune) bool {
+		switch r {
+		case ' ':
+			width++
+		case '\t':
+			width += 2
+		default:
+			return false
+		}
+		return true
+	})
+	if len(rest) < len("- [ ]") || !strings.HasPrefix(rest, "- [") || rest[4] != ']' {
+		return "", false, 0, false
+	}
+	switch rest[3] {
+	case ' ':
+	case 'x', 'X':
+		done = true
+	default:
+		return "", false, 0, false
+	}
+	if width >= 2 {
+		depth = 1
+	}
+	return strings.TrimPrefix(rest[len("- [ ]"):], " "), done, depth, true
+}
+
 // ItemsFromLines is the inverse of RenderItems: a line that starts with two
 // spaces is a child of the last top-level line, blank lines are skipped, a
 // child with no parent yet is top level. It reads a checklist body's lines
-// too — the task-list box after the indent is read as Done and left out of
-// the text — so the append and the Split up's checks see the body as items.
+// too — a task-list line (ParseLine) gives its box as Done, its depth, and
+// its text without the box — so the append and the Split up's checks see
+// the body as items.
 func ItemsFromLines(text string) []Item {
 	var items []Item
 	for _, line := range strings.Split(text, "\n") {
-		child := strings.HasPrefix(line, "  ")
-		trimmed := strings.TrimLeft(line, " \t")
-		done := false
-		switch {
-		case strings.HasPrefix(trimmed, "- [ ] "):
-			trimmed = trimmed[len("- [ ] "):]
-		case strings.HasPrefix(trimmed, "- [x] "), strings.HasPrefix(trimmed, "- [X] "):
-			trimmed, done = trimmed[len("- [x] "):], true
+		t, done, depth, ok := ParseLine(line)
+		child := depth == 1
+		if !ok {
+			t, child = strings.TrimLeft(line, " \t"), strings.HasPrefix(line, "  ")
 		}
-		t := itemText(trimmed)
+		t = itemText(t)
 		if t == "" {
 			continue
 		}

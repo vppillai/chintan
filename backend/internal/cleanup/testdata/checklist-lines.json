@@ -1,0 +1,207 @@
+{
+  "_comment": "One checklist body line rule for the Go readers (cleanup.ParseLine, cleanup.ItemsFromLines) and the editor (frontend/src/features/notes/checklist.ts parseChecklist). Both test suites read this file; the rule is stated in docs/design/checklists.md. Texts here have no extra whitespace, because the editor keeps an item's text as written while the Go readers collapse it.",
+  "cases": [
+    {
+      "name": "open, done, and a capital X is done",
+      "body": "- [ ] Milk\n- [x] Eggs\n- [X] Bread",
+      "items": [
+        {
+          "text": "Milk",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Eggs",
+          "done": true,
+          "depth": 0
+        },
+        {
+          "text": "Bread",
+          "done": true,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "no space after the box is still an item",
+      "body": "- [ ]Milk\n- [x]Eggs",
+      "items": [
+        {
+          "text": "Milk",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Eggs",
+          "done": true,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "two spaces of indent is a sub-item",
+      "body": "- [ ] Party\n  - [ ] Plates\n  - [x] Candles",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "Candles",
+          "done": true,
+          "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "a tab counts as two spaces of indent",
+      "body": "- [ ] Party\n\t- [x] Candles",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Candles",
+          "done": true,
+          "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "one space is not an indent",
+      "body": "- [ ] Party\n - [ ] Plates",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "a deeper indent is one level",
+      "body": "- [ ] Party\n  - [ ] Plates\n    - [ ] Paper ones",
+      "items": [
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 1
+        },
+        {
+          "text": "Paper ones",
+          "done": false,
+          "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "a sub-item with no parent is top level",
+      "body": "  - [ ] Plates\n- [ ] Party",
+      "items": [
+        {
+          "text": "Plates",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Party",
+          "done": false,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "blank lines are skipped",
+      "body": "- [ ] Milk\n\n\n- [ ] Eggs\n",
+      "items": [
+        {
+          "text": "Milk",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Eggs",
+          "done": false,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "CRLF line ends",
+      "body": "- [ ] Milk\r\n  - [x] Oat\r\n",
+      "items": [
+        {
+          "text": "Milk",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Oat",
+          "done": true,
+          "depth": 1
+        }
+      ]
+    },
+    {
+      "name": "an unindented prose line is an open top-level item",
+      "body": "Buy milk\n- [x] Eggs",
+      "items": [
+        {
+          "text": "Buy milk",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "Eggs",
+          "done": true,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "a box other than space, x or X is prose",
+      "body": "- [-] Maybe",
+      "items": [
+        {
+          "text": "- [-] Maybe",
+          "done": false,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "Indic text is kept whole",
+      "body": "- [ ] പാൽ\n  - [x] दाल",
+      "items": [
+        {
+          "text": "പാൽ",
+          "done": false,
+          "depth": 0
+        },
+        {
+          "text": "दाल",
+          "done": true,
+          "depth": 1
+        }
+      ]
+    }
+  ]
+}
