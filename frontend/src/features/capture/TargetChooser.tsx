@@ -12,9 +12,9 @@ import { useCachedNote, useCachedNotes } from '@/offline/useNotesCache.ts';
 /**
  * Where this recording will be filed, shown and changeable before you speak.
  *
- * "Into · New note" by default, or the note's title when the screen was opened
+ * "Chintan decides" by default, or "Into ⟨title⟩" when the screen was opened
  * from one ("Record into this") or with `?note=`. Tapping it unfolds a short
- * list — New note first, then the most recent notes — and choosing sets the
+ * list — Chintan decides first, then the most recent notes — and choosing sets the
  * capture's target before Send. The backend has always accepted `note_id` on
  * `POST /v1/captures`; nothing in the UI offered it, so the only ways to file
  * into a particular note were to say its name and hope the router agreed, or
@@ -50,6 +50,9 @@ export interface TargetChooserProps {
    */
   fetchList?: boolean;
 }
+
+/** The pill and the first option when no note is chosen: the router decides where it goes. */
+const DEFAULT_TARGET_LABEL = 'Chintan decides';
 
 export function TargetChooser({
   noteId,
@@ -110,7 +113,14 @@ export function TargetChooser({
   const recent = notes.slice(0, RECENT_LIMIT);
 
   const chosen = noteId ? (notes.find((note) => note.id === noteId) ?? opened.data) : undefined;
-  const title = noteId === null ? 'New note' : (chosen?.title ?? 'This note');
+  /*
+   * No target means the router chooses, and it may well file into a note
+   * that already exists — "add this to my roof note" is the hint under the
+   * pill. The default read "Into New note", which promised the opposite
+   * (R7-14). A forced new note is not offered: the owner's call, in the
+   * backlog.
+   */
+  const title = noteId === null ? DEFAULT_TARGET_LABEL : (chosen?.title ?? 'This note');
   const language = transcriptionLanguage(noteId, chosen, settings.data);
 
   const choose = (id: string | null): void => {
@@ -133,7 +143,11 @@ export function TargetChooser({
       >
         {/* Real spaces between the spans: an accessible name is the text
             nodes run together, and "IntoNew note" is not a name. */}
-        <span className="target-chooser__into">Into</span>{' '}
+        {noteId !== null && (
+          <>
+            <span className="target-chooser__into">Into</span>{' '}
+          </>
+        )}
         <span className="target-chooser__title">{title}</span>{' '}
         <span className="target-chooser__caret" aria-hidden="true">
           ▾
@@ -157,7 +171,7 @@ export function TargetChooser({
                   choose(null);
                 }}
               >
-                New note
+                {DEFAULT_TARGET_LABEL}
               </button>
             </li>
             {recent.map((note) => (
