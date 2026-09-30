@@ -222,28 +222,15 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		return finish(outcomeDeduped)
 	}
 
-	note, err := p.cfg.Notes.CreateNote(ctx, tenantID, title, nil)
-	if err != nil {
-		return fmt.Errorf("pipeline: create note for capture: %w", err)
-	}
-	touched := false
-	// One count per new note says how often the model answers "checklist"
-	// in production, which the eval battery only samples.
-	kind := "note"
-	if decision.Checklist {
-		kind = model.NoteKindChecklist
-	}
-	obs.Count(ctx, "RouterNewNoteKind", map[string]string{"Kind": kind})
+	spec := model.NoteIndex{ID: routedNoteID(capture.ID), Title: title}
 	if decision.Checklist {
 		// The router heard a list — "add milk to the shopping list" with no
 		// such note — so the note is a checklist before the capture points
 		// at it, and run() takes the extractItems branch for this same
 		// recording instead of cleaning the sentence into a plain note,
 		// which left the owner's first item reading "Add milk to the
-		// shopping list." (owner feedback 2026-09-27). Written on the row as
-		// the language is; nothing reads the meta mirror back.
-		note.Kind = model.NoteKindChecklist
-		touched = true
+		// shopping list." (owner feedback 2026-09-27).
+		spec.Kind = model.NoteKindChecklist
 	}
 	if capture.Language != "" && capture.Language != model.LanguageAuto {
 		// The note starts in the language its first recording was
@@ -251,18 +238,39 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		// silently change what "Record into this" sends for it. Auto is not
 		// written: the note then follows the default, as a note a person
 		// creates does.
-		note.Language = capture.Language
-		touched = true
+		spec.Language = capture.Language
 	}
-	if touched {
-		if _, err := p.cfg.Store.PutNote(ctx, tenantID, note); err != nil {
-			return fmt.Errorf("pipeline: set kind and language on the new note: %w", err)
-		}
+	// Kind and language ride on the create, one row write, and the id is the
+	// capture's, so the create is create-if-absent (R7-21). Until 2026-09-30
+	// a crash between CreateNote and persist left an empty note the retry
+	// did not know was its own, and a failed follow-up PutNote left a plain
+	// note titled like a list that the retry then filed items into as prose.
+	//
+	// ponytail: a retry after the owner archived the half-made note files
+	// into that archived note; add a fresh-id fallback if that is ever seen.
+	note, err := p.cfg.Notes.CreateNoteOnce(ctx, tenantID, spec)
+	if err != nil {
+		return fmt.Errorf("pipeline: create note for capture: %w", err)
 	}
+	// One count per new note says how often the model answers "checklist"
+	// in production, which the eval battery only samples.
+	kind := "note"
+	if note.Kind == model.NoteKindChecklist {
+		kind = model.NoteKindChecklist
+	}
+	obs.Count(ctx, "RouterNewNoteKind", map[string]string{"Kind": kind})
 	capture.NoteID = note.ID
 	capture.TargetSource = model.TargetSourceRouter
 	capture.Status = model.StatusTranscribed
 	return finish(outcome)
+}
+
+// routedNoteID is the id of the note routing creates for a capture: the
+// capture's own id under the note prefix, so a retry of the same capture
+// names the same note, and, like any note id, it sorts by when the capture
+// was made.
+func routedNoteID(captureID string) string {
+	return "note_" + strings.TrimPrefix(captureID, "c_")
 }
 
 // errRouteCandidates marks a routing failure that happened before the router

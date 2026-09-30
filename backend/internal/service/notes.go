@@ -168,8 +168,9 @@ func (s *NotesService) WithClock(now func() time.Time) *NotesService {
 
 // CreateNote creates a new note.
 //
-// The signature is what the worker's NoteCreator expects; CreateNoteWithTags is
-// the fuller form the API uses.
+// The signature is what the capture service's NoteCreator expects;
+// CreateNoteWithTags is the fuller form the API uses, and CreateNoteOnce the
+// worker's.
 func (s *NotesService) CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error) {
 	return s.CreateNoteWithTags(ctx, userID, title, aliases, nil)
 }
@@ -192,6 +193,43 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 	// surfaces to the user as an unexplained 409 on a note they just made.
 	noteID := fmt.Sprintf("note_%016x_%s",
 		uint64(time.Now().UTC().UnixNano()), hex.EncodeToString(noteIDBytes))
+	return s.createNote(ctx, userID, model.NoteIndex{ID: noteID, Title: title, Aliases: aliases, Tags: normalizeTags(tags)})
+}
+
+// CreateNoteOnce creates spec — its ID, Title, Kind and Language — unless a
+// note with that id already exists, and then returns that note as it is. It
+// is the worker's create for a routed capture, whose id is derived from the
+// capture's (pipeline.routedNoteID): a retry after a crash finds the note the
+// first attempt made instead of making a second, and kind and language are
+// on the row from its one write. The existing note's body is never
+// rewritten, since another recording may already be in it.
+func (s *NotesService) CreateNoteOnce(ctx context.Context, userID string, spec model.NoteIndex) (model.NoteIndex, error) {
+	existing, err := s.store.GetNote(ctx, userID, spec.ID)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, repository.ErrNotFound) {
+		return model.NoteIndex{}, fmt.Errorf("failed to read note: %w", err)
+	}
+	spec.Title = sanitizeNoteTitle(spec.Title)
+	if spec.Title == "" {
+		return model.NoteIndex{}, ErrEmptyNoteTitle
+	}
+	note, err := s.createNote(ctx, userID, model.NoteIndex{ID: spec.ID, Title: spec.Title, Tags: normalizeTags(nil), Kind: spec.Kind, Language: spec.Language})
+	if errors.Is(err, repository.ErrVersionConflict) {
+		// Two deliveries of one capture raced past the read; the row is
+		// written with version 0 expected, so exactly one of them made it.
+		return s.store.GetNote(ctx, userID, spec.ID)
+	}
+	return note, err
+}
+
+// createNote writes the empty body, the meta mirror and the row for note,
+// whose ID and Title are set. The row is a version-0 PutNote, which fails
+// with ErrVersionConflict when the id is taken.
+func (s *NotesService) createNote(ctx context.Context, userID string, note model.NoteIndex) (model.NoteIndex, error) {
+	noteID, title := note.ID, note.Title
+	aliases := note.Aliases
 
 	// Generate S3 keys
 	markdownKey, err := keys.NoteMarkdown(userID, noteID)
@@ -209,18 +247,11 @@ func (s *NotesService) CreateNoteWithTags(ctx context.Context, userID, title str
 	}
 
 	now := model.FormatTime(s.now())
-	note := model.NoteIndex{
-		ID:            noteID,
-		Title:         title,
-		Aliases:       aliases,
-		Tags:          normalizeTags(tags),
-		Snippet:       "", // No content initially
-		SearchText:    "",
-		CreatedAt:     now,
-		UpdatedAt:     now,
-		S3MarkdownKey: markdownKey,
-		S3MetaKey:     metaKey,
-	}
+	note.Aliases = aliases
+	note.CreatedAt = now
+	note.UpdatedAt = now
+	note.S3MarkdownKey = markdownKey
+	note.S3MetaKey = metaKey
 
 	// Create initial empty markdown file
 	err = s.objects.Put(ctx, markdownKey, []byte(""), "text/markdown")
