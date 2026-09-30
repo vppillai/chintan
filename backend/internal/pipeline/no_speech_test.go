@@ -26,6 +26,16 @@ func TestARecordingWithNoSpeechEndsAsNoContent(t *testing.T) {
 			Text: "Thank you.", Duration: 2,
 			Segments: []provider.Segment{{End: 2, Text: "Thank you.", NoSpeechProb: 0.9, AvgLogprob: -1.4}},
 		}, model.StatusNoContent},
+		// R7-10d: the QA repro, 3 s of digital silence, with the confident
+		// logprob that let it through the 0.6 / -1 pair.
+		{"silence answered with a confident thank you", provider.Transcription{
+			Text: " Thank you.", Duration: 3,
+			Segments: []provider.Segment{{End: 3, Text: " Thank you.", NoSpeechProb: 0.7, AvgLogprob: -0.2}},
+		}, model.StatusNoContent},
+		{"a thank you really said", provider.Transcription{
+			Text: "Thank you.", Duration: 1.2,
+			Segments: []provider.Segment{{End: 1.2, Text: "Thank you.", NoSpeechProb: 0.05, AvgLogprob: -0.2}},
+		}, model.StatusAppended},
 		{"a short dictation", provider.Transcription{
 			Text: "Buy milk", Duration: 1.2,
 			Segments: []provider.Segment{{End: 1.2, Text: "Buy milk", NoSpeechProb: 0.05, AvgLogprob: -0.3}},

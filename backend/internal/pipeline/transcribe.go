@@ -146,13 +146,25 @@ func (p *Pipeline) transcribe(ctx context.Context, tenantID string, capture *mod
 	// the name Whisper answered with. Sixteen days of prod logs could not say
 	// whether Malayalam was being transcribed as Tamil until these two fields
 	// existed (review 2026-09-21, T10).
-	obs.Log(ctx).Info("transcribed capture",
+	attrs := []any{
 		slog.String("capture_id", capture.ID),
 		slog.Int64("duration_ms", result.DurationMS()),
 		slog.Int("segments", len(result.Segments)),
 		slog.String("language_sent", language),
 		slog.String("language_detected", result.Language),
-		slog.Any("raw", rawShape))
+		slog.Any("raw", rawShape),
+	}
+	if len(result.Segments) > 0 {
+		// The silence gate's inputs, as numbers: when three seconds of
+		// silence filed "Thank you." the log could not say which test it
+		// passed (R7-10d). The least silent segment decides the gate.
+		noSpeechMin, logprobMax := result.Segments[0].NoSpeechProb, result.Segments[0].AvgLogprob
+		for _, s := range result.Segments[1:] {
+			noSpeechMin, logprobMax = min(noSpeechMin, s.NoSpeechProb), max(logprobMax, s.AvgLogprob)
+		}
+		attrs = append(attrs, slog.Float64("no_speech_prob_min", noSpeechMin), slog.Float64("avg_logprob_max", logprobMax))
+	}
+	obs.Log(ctx).Info("transcribed capture", attrs...)
 	obs.Count(ctx, "TranscribedLanguage", map[string]string{"Outcome": languageOutcome(sent, result.Language)})
 
 	capture.RawKey = rawKey

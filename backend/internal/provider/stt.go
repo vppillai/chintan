@@ -93,8 +93,9 @@ const (
 // NoSpeech reports that the recording held no dictation (R7-10c): the
 // transcript has no letter or digit in it (a 1.5 s tone came back as "."
 // and became a note called "Dictation"), or every segment is one Whisper
-// itself would have skipped as silence. A transcript without segments is
-// judged by its text alone.
+// itself would have skipped as silence, or it is one of Whisper's stock
+// answers to silence (see silenceHallucination). A transcript without
+// segments is judged by its text alone.
 func (t Transcription) NoSpeech() bool {
 	if strings.IndexFunc(t.Text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) }) < 0 {
 		return true
@@ -102,12 +103,69 @@ func (t Transcription) NoSpeech() bool {
 	if len(t.Segments) == 0 {
 		return false
 	}
+	skipped, doubtful := true, true
 	for _, s := range t.Segments {
-		if s.NoSpeechProb <= noSpeechThreshold || s.AvgLogprob > logprobThreshold {
+		skipped = skipped && s.NoSpeechProb > noSpeechThreshold && s.AvgLogprob <= logprobThreshold
+		doubtful = doubtful && s.NoSpeechProb > hallucinationNoSpeech
+	}
+	return skipped || (doubtful && silenceHallucination(t.Text))
+}
+
+// hallucinationNoSpeech is the no_speech_prob over which a stock silence
+// phrase is taken for silence (R7-10d). Whisper answers silence with a
+// fluent "Thank you." at a confident avg_logprob, so the -1 logprob test
+// above lets it through (three seconds of digital silence filed "Thank you."
+// 3 of 3 in QA), but the model still rates the window as likely silence.
+// Clearly spoken words sit near zero, so a "thank you" someone really said
+// is kept. Any segment under it counts as speech.
+const hallucinationNoSpeech = 0.3
+
+// silenceHallucinations are the transcripts Whisper is known to produce for
+// silence or room tone, learned from subtitled video, in normalizePhrase
+// form. Exact phrases only: "Thank you, Anu" or "bye to the old car" is
+// speech. ponytail: English only; add a language's stock phrases when a
+// silent capture in it is seen filing one.
+var silenceHallucinations = map[string]bool{
+	"thank you":                            true,
+	"thank you so much":                    true,
+	"thank you very much":                  true,
+	"thank you for watching":               true,
+	"thanks for watching":                  true,
+	"you":                                  true,
+	"bye":                                  true,
+	"bye bye":                              true,
+	"subtitles by the amara org community": true,
+}
+
+// silenceHallucination reports that every sentence of text is a stock
+// silence phrase, so "Thank you. Thank you." counts and "Thank you. Buy
+// milk." does not. The whole text is tried first, since a credit like
+// "Amara.org" has a full stop inside it.
+func silenceHallucination(text string) bool {
+	if silenceHallucinations[normalizePhrase(text)] {
+		return true
+	}
+	pieces := 0
+	for _, piece := range strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune(".!?\n", r) }) {
+		norm := normalizePhrase(piece)
+		if norm == "" {
+			continue
+		}
+		if !silenceHallucinations[norm] {
 			return false
 		}
+		pieces++
 	}
-	return true
+	return pieces > 0
+}
+
+// normalizePhrase lower-cases s and keeps only its words, single-spaced, so
+// Whisper's punctuation and capitals do not matter ("Amara.org" is "amara
+// org").
+func normalizePhrase(s string) string {
+	return strings.Join(strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	}), " ")
 }
 
 // STT transcribes speech.

@@ -44,3 +44,42 @@ func TestNoSpeechUsesWhispersSegmentMeasures(t *testing.T) {
 		}
 	}
 }
+
+// R7-10d: three seconds of digital silence came back as "Thank you." with a
+// confident logprob and filed a note 3 of 3. A stock silence phrase over
+// hallucinationNoSpeech is no speech whatever the logprob; the same words
+// clearly spoken, and any other short dictation, are kept.
+func TestNoSpeechCatchesWhispersSilenceHallucinations(t *testing.T) {
+	t.Parallel()
+
+	seg := func(text string, noSpeech, logprob float64) Segment {
+		return Segment{Start: 0, End: 3, Text: text, NoSpeechProb: noSpeech, AvgLogprob: logprob}
+	}
+	one := func(text string, noSpeech, logprob float64) Transcription {
+		return Transcription{Text: text, Duration: 3, Segments: []Segment{seg(text, noSpeech, logprob)}}
+	}
+	cases := []struct {
+		name string
+		t    Transcription
+		want bool
+	}{
+		{"silence heard as thank you", one(" Thank you.", 0.7, -0.2), true},
+		{"just over the line", one("Thank you.", 0.31, -0.1), true},
+		{"thanks for watching", one("Thanks for watching!", 0.45, -0.3), true},
+		{"lone you", one(" you", 0.5, -0.6), true},
+		{"subtitle credit", one("Subtitles by the Amara.org community", 0.4, -0.3), true},
+		{"repeated", Transcription{Text: "Thank you. Thank you.", Segments: []Segment{seg("Thank you.", 0.6, -0.2), seg("Thank you.", 0.5, -0.2)}}, true},
+		{"a thank you really said", one("Thank you.", 0.05, -0.2), false},
+		{"one segment spoken", Transcription{Text: "Thank you. Thank you.", Segments: []Segment{seg("Thank you.", 0.6, -0.2), seg("Thank you.", 0.1, -0.2)}}, false},
+		{"buy milk", one("Buy milk", 0.05, -0.3), false},
+		{"quiet buy milk", one("Buy milk", 0.7, -0.2), false},
+		{"thank you to someone", one("Thank you, Anu.", 0.7, -0.2), false},
+		{"thanks then a task", one("Thank you. Buy milk.", 0.7, -0.2), false},
+		{"no segments", Transcription{Text: "Thank you."}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.t.NoSpeech(); got != tc.want {
+			t.Errorf("%s: NoSpeech() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
