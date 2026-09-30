@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 
 import { useApi } from '@/api/ApiProvider.tsx';
@@ -13,7 +13,7 @@ import { useCachedNotes } from '@/offline/useNotesCache.ts';
 
 import { UNSENT_CAPTURES_KEY } from './ResumePrompt.tsx';
 import { dismissCapture, dismissCaptures, loadDismissed } from './dismissed.ts';
-import { FilingItem } from './filing/FilingItem.tsx';
+import { FilingItem, receiptTitle } from './filing/FilingItem.tsx';
 import {
   groupReceipts,
   isStuck,
@@ -87,6 +87,13 @@ export function FilingRow() {
   };
   /** Every capture of the group, in one state update, so one render removes the row. */
   const dismissGroup = (group: ReceiptGroup): void => {
+    // One of two receipts in the open fold: the fold goes, the survivor is
+    // drawn as a lone row in another parent, and the neighbour focus was
+    // handed to unmounts with the fold. The effect below puts focus on the
+    // survivor's × once it is drawn.
+    if (groups.length === 2 && document.activeElement?.closest('.filing-fold__rows')) {
+      refocusSurvivor.current = true;
+    }
     focusPastDismissed();
     setDismissed(dismissCaptures(group.captureIds, dismissed));
   };
@@ -140,6 +147,40 @@ export function FilingRow() {
   const folded = groups.length > 1 ? groups : [];
   const foldedCaptures = folded.reduce((sum, group) => sum + group.captureIds.length, 0);
   const [expanded, setExpanded] = useState(false);
+  const sectionRef = useRef<HTMLElement>(null);
+  const refocusSurvivor = useRef(false);
+  useEffect(() => {
+    if (!refocusSurvivor.current) return;
+    refocusSurvivor.current = false;
+    sectionRef.current?.querySelector<HTMLElement>('.filing-row--receipt .filing-row__dismiss')?.focus();
+  });
+
+  /*
+   * What a screen reader hears when a recording lands into the fold. A
+   * receipt on its own announces through its row's status (FilingItem), but
+   * a landing that makes or grows the fold goes into rows that are not drawn
+   * until it is opened, so the section says it here, in a region that is
+   * always mounted — a live region announces a change, never the text it
+   * mounted with. Only a growing count is a landing: a dismissal, or the
+   * receipts already there when Home opens, say nothing.
+   */
+  const foldSentence = folded.length
+    ? `${String(foldedCaptures)} filed into ${String(folded.length)} notes`
+    : '';
+  const newestFolded = folded[0];
+  const landing = newestFolded
+    ? `${receiptTitle(newestFolded, titles.get(newestFolded.noteId))}. ${foldSentence}`
+    : '';
+  const [announcement, setAnnouncement] = useState('');
+  const seenFolded = useRef<number | null>(null);
+  const answered = data !== undefined;
+  useEffect(() => {
+    if (!answered) return;
+    const previous = seenFolded.current;
+    seenFolded.current = foldedCaptures;
+    if (previous !== null && foldedCaptures > previous && landing) setAnnouncement(landing);
+  }, [answered, foldedCaptures, landing]);
+
   const clearAll = (): void => {
     focusPastDismissed();
     setDismissed(dismissCaptures(folded.flatMap((group) => group.captureIds), dismissed));
@@ -162,12 +203,18 @@ export function FilingRow() {
   // The tiers decide, not the raw list: an appended capture the server did
   // not name a note for is in no tier, and alone it must not leave an empty
   // labelled section on the page.
-  if (moving.length + needsYou.length + groups.length === 0 && !local) return null;
+  const live = (
+    <p className="visually-hidden" aria-live="polite" aria-atomic="true">
+      {announcement}
+    </p>
+  );
+  if (moving.length + needsYou.length + groups.length === 0 && !local) return live;
 
-  const receipt = (group: ReceiptGroup) => (
+  const receipt = (group: ReceiptGroup, inFold = false) => (
     <FilingItem
       key={group.newestId}
       receipt={group}
+      live={!inFold}
       noteTitle={titles.get(group.noteId)}
       now={now}
       onOpen={() => {
@@ -180,7 +227,9 @@ export function FilingRow() {
   );
 
   return (
-    <section className="filing" aria-label="Recordings being filed">
+    <>
+    {live}
+    <section ref={sectionRef} className="filing" aria-label="Recordings being filed">
       {local && <LocalUploadItem model={local} />}
       {/*
         One array, so a capture keeps its key — and its DOM node, and the live
@@ -210,19 +259,19 @@ export function FilingRow() {
               A button with aria-expanded rather than a <details>, because
               "Clear all" sits on the same line and a control inside a
               <summary> is not one a screen reader can reach on its own.
-              The sentence is the live region: when another recording lands
-              it is what changes, and so what is announced.
+              A landing into the fold is announced by the section's own
+              region above, not by this sentence.
             */}
             <button
               type="button"
               className="filing-fold__toggle"
               aria-expanded={expanded}
-              aria-controls="filing-fold-rows"
+              aria-controls={expanded ? 'filing-fold-rows' : undefined}
               onClick={() => {
                 setExpanded((open) => !open);
               }}
             >
-              <span className="filing-row__title" role="status" aria-live="polite">
+              <span className="filing-row__title">
                 <span className="numeric">{foldedCaptures}</span> filed into{' '}
                 <span className="numeric">{folded.length}</span> notes
               </span>
@@ -234,12 +283,13 @@ export function FilingRow() {
           </div>
           {expanded && (
             <div id="filing-fold-rows" className="filing-fold__rows">
-              {folded.map(receipt)}
+              {folded.map((group) => receipt(group, true))}
             </div>
           )}
         </div>
       )}
     </section>
+    </>
   );
 }
 

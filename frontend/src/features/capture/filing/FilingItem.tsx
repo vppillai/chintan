@@ -35,6 +35,12 @@ export type FilingItemProps =
       /** Open the note. */
       onOpen: () => void;
       onDismiss: () => void;
+      /**
+       * False for a receipt inside the fold: the section's own live region
+       * speaks for the fold, and a status per folded row would speak each
+       * one again whenever the fold opened.
+       */
+      live?: boolean;
     };
 
 /**
@@ -62,14 +68,14 @@ export function FilingItem(props: FilingItemProps) {
    * controls are on its face.
    */
   if ('receipt' in props) {
-    const { receipt, noteTitle, now, onOpen, onDismiss } = props;
+    const { receipt, noteTitle, now, onOpen, onDismiss, live = true } = props;
     return (
       <SwipeRow
         className="filing-swipe"
         label="Receipt actions"
         actions={[{ id: 'dismiss', label: 'Dismiss', icon: 'close', onSelect: onDismiss }]}
       >
-        {receiptBody({ receipt, noteTitle, now, onOpen, onDismiss })}
+        {receiptBody({ receipt, noteTitle, now, onOpen, onDismiss, live })}
       </SwipeRow>
     );
   }
@@ -108,12 +114,14 @@ function receiptBody({
   now,
   onOpen,
   onDismiss,
+  live,
 }: {
   receipt: ReceiptGroup;
   noteTitle: string | undefined;
   now: number;
   onOpen: () => void;
   onDismiss: () => void;
+  live: boolean;
 }) {
   const titleId = `filing-title-${receipt.newestId}`;
   const ago = describeAgoShort(receipt.latestAt, now);
@@ -124,7 +132,12 @@ function receiptBody({
       data-started={receipt.createdNote || undefined}
     >
       <div className="filing-row__head">
-        <p id={titleId} className="filing-row__title" role="status" aria-live="polite">
+        <p
+          id={titleId}
+          className="filing-row__title"
+          role={live ? 'status' : undefined}
+          aria-live={live ? 'polite' : undefined}
+        >
           {receipt.createdNote && (
             <Icon name="plus" size={16} className="filing-row__started-icon" />
           )}

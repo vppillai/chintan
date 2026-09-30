@@ -833,6 +833,26 @@ describe('receipts are one row per note, behind the rows that still need somethi
     expect(Array.from(loadDismissed()).sort()).toEqual(['k1', 'k2']);
   });
 
+  it('keeps focus on the survivor when one of two receipts is dismissed from the open fold', async () => {
+    // The fold goes and the survivor is redrawn as a lone row; the neighbour
+    // focus had been handed to went with the fold, leaving it on <body>.
+    const user = userEvent.setup();
+    mount([
+      capture({ id: 'a', status: 'appended', note_id: 'n1', appended_at: now() }),
+      capture({ id: 'b', status: 'appended', note_id: 'n2', appended_at: minutesAgo(1) }),
+    ]);
+
+    await user.click(await screen.findByRole('button', { name: '2 filed into 2 notes' }));
+    const [first] = screen.getAllByRole('button', { name: 'Dismiss' });
+    await user.click(first as HTMLElement);
+
+    await waitFor(() => {
+      expect(document.querySelector('.filing-fold')).toBeNull();
+    });
+    expect(document.activeElement).toHaveAccessibleName('Dismiss');
+    expect(document.activeElement?.closest('.filing-row--receipt')).not.toBeNull();
+  });
+
   it('needs_target and failed rows are never grouped or hidden', async () => {
     mount([
       ...[1, 2, 3, 4].map((n) => capture({ id: `ask-${n}`, status: 'needs_target' })),
@@ -938,6 +958,33 @@ describe('a capture that has just been filed refreshes its note', () => {
     });
     expect(screen.getByRole('status')).toBe(live);
     expect(screen.getByRole('button', { name: /open the note/i })).toHaveAccessibleName(/^Filed/);
+  });
+
+  it('announces a landing that makes the fold, from a region that was already there', async () => {
+    /*
+     * With one receipt showing, the next landing folds both into rows that
+     * are not drawn until the fold opens, so the landing row's own status
+     * went with it and nothing was said (review of #182).
+     */
+    const other = capture({
+      id: 'srv-o',
+      status: 'appended',
+      note_id: 'kitchen',
+      appended_at: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const { refetchCaptures } = mountWithPolls([[filing, other], [filed, other]]);
+    await screen.findByText('Filing your recording');
+    const region = document.querySelector('p.visually-hidden[aria-live="polite"]');
+    expect(region).not.toBeNull();
+    expect(region).toHaveTextContent('');
+
+    await refetchCaptures();
+
+    await waitFor(() => {
+      expect(region).toHaveTextContent('2 filed into 2 notes');
+    });
+    expect(region).toHaveTextContent(/filed into/i);
+    expect(document.querySelector('p.visually-hidden[aria-live="polite"]')).toBe(region);
   });
 
   it('does not refetch for a capture that was already appended last time', async () => {
