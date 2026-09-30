@@ -3,12 +3,17 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/vppillai/chintan/backend/internal/ask"
@@ -28,6 +33,11 @@ type OpenAICleanup struct {
 	baseURL    string
 	model      string
 	httpClient *http.Client
+	// recordDir and replayDir are the eval's LLM_RECORD and LLM_REPLAY
+	// (docs/design/prompts.md, "Record and replay"), read only in a test
+	// binary (recordReplayAllowed); both empty is a plain call.
+	recordDir string
+	replayDir string
 }
 
 // NewOpenAICleanup builds a cleanup client. Empty baseURL/model use MiniMax defaults.
@@ -47,12 +57,16 @@ func NewOpenAICleanup(apiKey, baseURL, model string, httpClient *http.Client) (*
 		// an error the pipeline can record rather than as a killed invocation.
 		httpClient = &http.Client{Timeout: 840 * time.Second}
 	}
-	return &OpenAICleanup{
+	c := &OpenAICleanup{
 		apiKey:     apiKey,
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		model:      model,
 		httpClient: httpClient,
-	}, nil
+	}
+	if recordReplayAllowed() {
+		c.recordDir, c.replayDir = os.Getenv("LLM_RECORD"), os.Getenv("LLM_REPLAY")
+	}
+	return c, nil
 }
 
 // Model reports the model this client completes with, so a caller can price the
@@ -150,6 +164,31 @@ func (c *OpenAICleanup) Ask(ctx context.Context, q ask.Prompt) (Answer, error) {
 // zero leaves the provider's default, which cleanup needs because its output is
 // as long as the recording.
 func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, TokenUsage, error) {
+	var content string
+	var usage TokenUsage
+	var err error
+	if c.replayDir != "" {
+		content, usage, err = readRecording(c.replayDir, RecordingKey(c.model, systemPrompt, userPrompt))
+	} else {
+		content, usage, err = c.call(ctx, systemPrompt, userPrompt, maxTokens)
+		if err == nil && c.recordDir != "" {
+			err = writeRecording(c.recordDir, RecordingKey(c.model, systemPrompt, userPrompt), recording{Model: c.model, Reply: content, Usage: usage})
+		}
+	}
+	if err != nil {
+		return "", TokenUsage{}, err
+	}
+	out := strings.TrimSpace(content)
+	if out == "" {
+		return "", TokenUsage{}, errEmptyContent
+	}
+	return out, usage, nil
+}
+
+// call is one HTTP chat completion: the message content as the provider sent
+// it, untrimmed, so a recording holds the raw reply and a replay goes through
+// the same trimming as a live call.
+func (c *OpenAICleanup) call(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (string, TokenUsage, error) {
 	payload := map[string]any{
 		"model": c.model,
 		"messages": []map[string]string{
@@ -211,13 +250,68 @@ func (c *OpenAICleanup) complete(ctx context.Context, systemPrompt, userPrompt s
 	if len(parsed.Choices) == 0 {
 		return "", TokenUsage{}, fmt.Errorf("provider: llm returned no choices")
 	}
-	out := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	if out == "" {
-		return "", TokenUsage{}, errEmptyContent
-	}
 	usage := TokenUsage{
 		InputTokens:  parsed.Usage.PromptTokens,
 		OutputTokens: parsed.Usage.CompletionTokens,
 	}
-	return out, usage, nil
+	return parsed.Choices[0].Message.Content, usage, nil
+}
+
+// recordReplayAllowed gates LLM_RECORD and LLM_REPLAY to test binaries: a
+// worker that replayed files would answer every capture from disk, and one
+// that recorded would write transcripts to its filesystem. A variable so a
+// test can show a normal build ignores both.
+var recordReplayAllowed = testing.Testing
+
+// recording is one recorded completion on disk, <dir>/<RecordingKey>.json.
+type recording struct {
+	Model string     `json:"model"`
+	Reply string     `json:"reply"`
+	Usage TokenUsage `json:"usage"`
+}
+
+// RecordingKey names the recording of one completion: the sha256 of the
+// model and both prompts. Any change to a prompt's wording, the candidate
+// list or the fixture text is a new key, so a stale recording is a miss and
+// never a silent pass over a reply to a prompt that no longer exists.
+func RecordingKey(model, systemPrompt, userPrompt string) string {
+	h := sha256.New()
+	for _, part := range []string{model, systemPrompt, userPrompt} {
+		// The length prefix keeps ("ab","c") and ("a","bc") apart.
+		_, _ = fmt.Fprintf(h, "%d:%s", len(part), part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func writeRecording(dir, key string, r recording) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("provider: record llm reply: %w", err)
+	}
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return fmt.Errorf("provider: record llm reply: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, key+".json"), append(b, '\n'), 0o644); err != nil {
+		return fmt.Errorf("provider: record llm reply: %w", err)
+	}
+	return nil
+}
+
+// errNoRecording is a replay miss: the prompt this call sent was never
+// recorded, which after a prompt change is the expected state.
+var errNoRecording = errors.New("provider: no recording for this prompt; the prompt, model or fixture changed since it was recorded — re-record with LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -count=1 (docs/design/prompts.md)")
+
+func readRecording(dir, key string) (string, TokenUsage, error) {
+	b, err := os.ReadFile(filepath.Join(dir, key+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", TokenUsage{}, fmt.Errorf("%w (%s in %s)", errNoRecording, key, dir)
+	}
+	if err != nil {
+		return "", TokenUsage{}, fmt.Errorf("provider: read recording: %w", err)
+	}
+	var r recording
+	if err := json.Unmarshal(b, &r); err != nil {
+		return "", TokenUsage{}, fmt.Errorf("provider: decode recording %s: %w", key, err)
+	}
+	return r.Reply, r.Usage, nil
 }

@@ -119,8 +119,11 @@ const (
 )
 
 // NoteCreator creates the destination note for a capture that has none.
+// CreateNoteOnce creates spec (its ID, Title, Kind and Language) unless a note
+// with that id exists, and then returns that note unchanged
+// (service.NotesService.CreateNoteOnce).
 type NoteCreator interface {
-	CreateNote(ctx context.Context, userID, title string, aliases []string) (model.NoteIndex, error)
+	CreateNoteOnce(ctx context.Context, userID string, spec model.NoteIndex) (model.NoteIndex, error)
 }
 
 // NoteCleanInvoker is the slice of service.Invoker the pipeline needs to queue

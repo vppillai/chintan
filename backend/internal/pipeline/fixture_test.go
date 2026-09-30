@@ -103,6 +103,22 @@ func (f *noteCreator) CreateNote(ctx context.Context, userID, title string, alia
 	return stored, nil
 }
 
+// CreateNoteOnce is service.NotesService.CreateNoteOnce over the fake's
+// store: the note with spec's id if there is one, else a new row with spec's
+// title, kind and language, recorded in titles.
+func (f *noteCreator) CreateNoteOnce(ctx context.Context, userID string, spec model.NoteIndex) (model.NoteIndex, error) {
+	if existing, err := f.store.GetNote(ctx, userID, spec.ID); err == nil {
+		return existing, nil
+	}
+	f.mu.Lock()
+	f.titles = append(f.titles, spec.Title)
+	f.mu.Unlock()
+	spec.UpdatedAt = model.Now()
+	spec.S3MarkdownKey = fmt.Sprintf("tenants/%s/notes/%s/note.md", userID, spec.ID)
+	spec.S3MetaKey = fmt.Sprintf("tenants/%s/notes/%s/meta.json", userID, spec.ID)
+	return f.store.PutNote(ctx, userID, spec)
+}
+
 // DiscardNote is the compensation the capture service runs after a failed
 // move into a new note; the worker never takes that path, so the row simply
 // goes.

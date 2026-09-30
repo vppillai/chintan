@@ -1,0 +1,6 @@
+{
+  "_comment": "Hand-written, not eval data: one routing reply in the LLM_RECORD format, which TestRouteReplayRunsTheRecordedReplyThroughDecide files under the key of today's prompt to prove the replay path end to end.",
+  "model": "MiniMax-M3",
+  "reply": "{\"action\":\"new\",\"title\":\"Roof repair\",\"kind\":\"note\",\"confidence\":0.6,\"instruction_spans\":[{\"start_word\":0,\"end_word\":2}]}",
+  "usage": {"InputTokens": 900, "OutputTokens": 40}
+}

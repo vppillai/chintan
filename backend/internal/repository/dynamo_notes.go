@@ -382,6 +382,11 @@ func (s *DynamoStore) GetNote(ctx context.Context, tenantID, noteID string) (mod
 			"pk": strAttr(userPK(tenantID)),
 			"sk": strAttr(noteSK(noteID)),
 		},
+		// Strongly consistent: NotesService.CreateNoteOnce decides on this
+		// read whether to write a note's empty body, and a stale "not found"
+		// for a note the crashed attempt just made would blank a body another
+		// recording may already be in (R7-21).
+		ConsistentRead: aws.Bool(true),
 	})
 	if err != nil {
 		return model.NoteIndex{}, fmt.Errorf("dynamo get note: %w", err)
