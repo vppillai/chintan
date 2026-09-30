@@ -3,6 +3,18 @@ import { useEffect, useRef, useState } from 'react';
 import { config } from '@/config/env.ts';
 
 /**
+ * How often a foregrounded app asks whether a new build is out.
+ *
+ * The browser re-checks `sw.js` only on a real navigation. An installed app
+ * is resumed from the background, not navigated to, so one left open for
+ * days kept serving the build it was opened with and never saw a deploy. A
+ * return to the foreground now asks, at most this often — the check is one
+ * conditional GET, but a phone flicked in and out of view a dozen times a
+ * minute should not make a dozen.
+ */
+export const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+
+/**
  * The single update strategy.
  *
  * A new worker installs and *waits*. This prompt is the only thing that lets it
@@ -40,8 +52,23 @@ export function UpdatePrompt() {
     container.addEventListener('controllerchange', onControllerChange);
 
     let disposed = false;
+    let removeVisibility = (): void => {};
     void container.ready.then((registration) => {
       if (disposed) return;
+
+      // The load itself was a check, so the clock starts now.
+      let lastCheck = Date.now();
+      const onVisibility = (): void => {
+        if (document.visibilityState !== 'visible') return;
+        if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS) return;
+        lastCheck = Date.now();
+        // Offline, or the server between deploys: the next return asks again.
+        registration.update().catch(() => {});
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      removeVisibility = () => {
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
       if (registration.waiting) setWaiting(registration.waiting);
 
       const watch = (installing: ServiceWorker): void => {
@@ -69,6 +96,7 @@ export function UpdatePrompt() {
 
     return () => {
       disposed = true;
+      removeVisibility();
       container.removeEventListener('controllerchange', onControllerChange);
     };
   }, []);

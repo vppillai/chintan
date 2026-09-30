@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { UpdatePrompt } from './UpdatePrompt.tsx';
+import { UPDATE_CHECK_INTERVAL_MS, UpdatePrompt } from './UpdatePrompt.tsx';
 
 /*
  * jsdom has no service worker. Enough of the registration for the prompt's
@@ -19,6 +19,7 @@ class FakeWorker extends EventTarget {
 class FakeRegistration extends EventTarget {
   waiting: FakeWorker | null = null;
   installing: FakeWorker | null = null;
+  update = vi.fn(() => Promise.resolve());
 }
 
 function withServiceWorker(registration: FakeRegistration): void {
@@ -32,7 +33,17 @@ function withServiceWorker(registration: FakeRegistration): void {
 
 afterEach(() => {
   Reflect.deleteProperty(navigator, 'serviceWorker');
+  Reflect.deleteProperty(document, 'visibilityState');
+  vi.useRealTimers();
 });
+
+function becomeVisible(visible = true): void {
+  Object.defineProperty(document, 'visibilityState', {
+    value: visible ? 'visible' : 'hidden',
+    configurable: true,
+  });
+  document.dispatchEvent(new Event('visibilitychange'));
+}
 
 /** Lets `navigator.serviceWorker.ready` resolve inside the effect. */
 const settled = () =>
@@ -92,5 +103,52 @@ describe('the update prompt', () => {
       installing.installed();
     });
     expect(screen.getByRole('status')).toHaveTextContent(/is ready/i);
+  });
+
+  it('asks for a new build when the app comes back to the foreground, at most every half hour', async () => {
+    /*
+     * An installed app resumed from the background makes no navigation, so
+     * the browser never re-checks the worker on its own: a PWA left open
+     * kept the old build through every deploy.
+     */
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const registration = new FakeRegistration();
+    withServiceWorker(registration);
+
+    render(<UpdatePrompt />);
+    await settled();
+
+    // Straight after the load, which was itself a check: nothing to ask.
+    becomeVisible();
+    expect(registration.update).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(UPDATE_CHECK_INTERVAL_MS);
+    becomeVisible(false);
+    expect(registration.update).not.toHaveBeenCalled();
+    becomeVisible();
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    // Flicked away and back within the half hour: still one.
+    becomeVisible(false);
+    becomeVisible();
+    expect(registration.update).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(UPDATE_CHECK_INTERVAL_MS);
+    becomeVisible();
+    expect(registration.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops listening once unmounted', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const registration = new FakeRegistration();
+    withServiceWorker(registration);
+
+    const { unmount } = render(<UpdatePrompt />);
+    await settled();
+    unmount();
+
+    vi.advanceTimersByTime(UPDATE_CHECK_INTERVAL_MS);
+    becomeVisible();
+    expect(registration.update).not.toHaveBeenCalled();
   });
 });
