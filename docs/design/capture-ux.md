@@ -161,7 +161,8 @@ asking "which note?", stuck past ten minutes — never grouped, never folded
 and always above the fold; then the receipts, one per note the rest landed
 in, newest landing first.
 
-A receipt is one line (R7-7a, owner 2026-09-30): the title cut with an
+A receipt is one line, plus an excerpt line when there is one (R7-7a,
+owner 2026-09-30): the title cut with an
 ellipsis — "Filed into “Roof repair”", "3 filed into “Kitchen rebuild”", or
 "Started “Plumber”" with the plus glyph when the capture's `created_note`
 says the note was made for it (R7-7c), so a misroute into a fresh note is
@@ -175,8 +176,12 @@ It stays a real 44 px button that a keyboard or screen reader reaches, and
 appears once it has focus. One receipt is a row. Two or more fold into one
 summary row, "3 filed into 2 notes ›" — a button with `aria-expanded` that
 opens the receipts in place — beside a "Clear all" that dismisses every one
-of them; the sentence is the live region, so a landing that joins the fold
-is still announced. Grouping is `groupReceipts` in `filing/model.ts`, which
+of them. Rows inside the fold carry no live region of their own; a landing
+that makes or grows the fold is spoken by one visually hidden polite region
+`FilingRow` keeps mounted whatever it shows ("Filed into “Kitchen”. 2 filed
+into 2 notes"), and only a growing count speaks, so a dismissal or the
+receipts already there when Home opens are silent. Dismissing one of two
+receipts from the open fold puts focus on the survivor's ×. Grouping is `groupReceipts` in `filing/model.ts`, which
 also carries the group's `createdNote` and its newest capture's excerpt. The
 receipt is a branch of `FilingItem` rather than a component of its own,
 both branches sit in one `SwipeRow` (which keeps one tree whether or not its

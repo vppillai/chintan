@@ -42,7 +42,8 @@ Between the field and the first day sits the filing section
 (`features/capture/FilingRow.tsx`), whose rules are `capture-ux.md`,
 "Receipts on Home". On a phone it is kept short (R7-7a): rows that need the
 person — "which note?", a failure — stay open, each with the recording's
-excerpt as a muted second line; a single receipt is one line, "Filed into
+excerpt as a muted second line; a single receipt is one line, plus an
+excerpt line when there is one, "Filed into
 “Roof repair” · 2 min ›" or "Started “Plumber”" for a note the recording
 made; two or more receipts are one summary row, "3 filed into 2 notes ›",
 that opens in place beside "Clear all". A receipt's × shows on the hovered
@@ -179,8 +180,10 @@ hand, since the cache knows neither, and tiers it through the same
 `splitPinned` and `groupByDay`. The first page's bodies are fetched in idle
 time so a row opened offline is a note and not "Not on this device", and
 "Saved on this device" is said only once it is clear the server will not
-answer. When the server did answer, with a 5xx, while the device is online,
-the caption says so instead — "Chintan's server didn't answer — showing
+answer. When the list failed while the device is online for a reason a
+connection would not fix — a 5xx, a timeout, a 429 or another refusal, any
+`ApiError` but a network failure, a cancel or a 401 — the caption says so
+instead — "Chintan's server didn't answer — showing
 notes saved on this device" — with a Retry that refetches, since the list
 may be missing what another device added and a connection is not what is
 missing (R7-12, `serverFailed` in `screens/library/LibraryList.tsx`; tested
