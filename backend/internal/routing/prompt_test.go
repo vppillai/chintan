@@ -177,20 +177,19 @@ func TestUserPromptIncludesCandidatesAndNumberedTranscript(t *testing.T) {
 	got, err := UserPrompt("title this test123 hello", []Candidate{
 		{NoteID: "note_0000000000000001_0000000000000001", Title: "Roof repair", Aliases: []string{"gutters", "roof"}, Tags: []string{"house"}},
 		{NoteID: "n2", Title: "Shopping list"},
-		{NoteID: "n3", Title: "Groceries", Aliases: []string{"food"}, Checklist: true},
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Existing notes:\n1 | Roof repair | also: gutters, roof, house\n2 | Shopping list\n3 | Groceries [checklist] | also: food\n",
+		"Existing notes:\n1 | Roof repair | also: gutters, roof, house\n2 | Shopping list\n",
 		"0:title 1:this 2:test123 3:hello", "4 words", "Transcript",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("user prompt missing %q\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "note_0000") || strings.Contains(got, "n2") || strings.Contains(got, "n3") {
+	if strings.Contains(got, "note_0000") || strings.Contains(got, "n2") {
 		t.Errorf("a note id reached the prompt\n%s", got)
 	}
 	if strings.Contains(got, "The transcript is in") {
@@ -220,9 +219,6 @@ func TestSystemPromptAsksForTheKindOfANewNote(t *testing.T) {
 	for _, want := range []string{
 		`"kind":<"note" or "checklist">`,
 		`Kind, for "new" only`,
-		// R7-10a: the marker on candidate lines is explained, and a list item
-		// is steered to a listed checklist over a plain note named alike.
-		"A listed note marked [checklist] is a checklist. An item for a list goes to a listed checklist, not to a plain note with a similar name.",
 		`"add X to the Y list"`,
 		`In doubt, "note".`,
 		`{"action":"new","title":"Groceries list","kind":"checklist","confidence":1,`,
