@@ -263,6 +263,8 @@ func TestBothAlarmMetricsCarryADimensionlessRollup(t *testing.T) {
 // credential.
 func TestTheCleanupProviderIsNamedOnItsOwnFailures(t *testing.T) {
 	h := newHarness(t, harnessOpts{})
+	// Long enough to reach the cleanup model rather than the tidy.
+	h.stt.Response = "the gutter over the back door is leaking again after the storm last night"
 	h.llm.Err = &provider.StatusError{Op: "llm request failed", StatusCode: 403}
 
 	ctx := context.Background()

@@ -23,7 +23,8 @@ func TestPipelineKeepsATimingRecordAndEmitsItsTwoMetrics(t *testing.T) {
 	t.Run("audio from a device", func(t *testing.T) {
 		var metrics bytes.Buffer
 		defer obs.SetMetricOutput(&metrics)()
-		stt := &fake.STT{Response: "the gutter is leaking", Duration: 12}
+		// Long enough for the cleanup model, whose call the clock counts.
+		stt := &fake.STT{Response: "the gutter over the back door is leaking again after the storm last night", Duration: 12}
 		llm := &fake.LLM{Response: "The gutter is leaking."}
 		h := newHarness(t, harnessOpts{stt: stt, llm: llm})
 		stt.OnCall = func() { h.clock.Advance(4 * time.Second) }

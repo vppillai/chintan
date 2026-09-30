@@ -31,6 +31,20 @@ func (p *Pipeline) setStatus(ctx context.Context, capture *model.CaptureIndex, s
 	return nil
 }
 
+// deferPersist records that capture has entered its status without writing
+// the row, for a stage whose next stage's setStatus is the very next call:
+// that write carries this stage's artefact keys, and the timing record keeps
+// this stage's entry. It saves one conditional write per stage (R7-16a) and
+// changes no resume path. A retry resumes by which keys the row holds
+// (run, resumeStatusFor), not by the status, and a crash between the two
+// writes loses what a crash just before this stage's own write would have:
+// the artefact is in S3 and the stage runs again. A delivery that has lost
+// the row learns it one write later, at that setStatus, and concedes there.
+func (p *Pipeline) deferPersist(capture *model.CaptureIndex) error {
+	capture.StageEntered(capture.Status, model.FormatTime(p.now()))
+	return nil
+}
+
 // persist writes the capture row under its optimistic-concurrency version.
 //
 // Losing that write is not a fault. The conditional write is load-bearing — it

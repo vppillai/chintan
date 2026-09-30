@@ -74,9 +74,9 @@ func TestRegenerateRecleansEachParagraphInPlaceWithoutTranscribing(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedTranscribedInto(t, h, note, "c_1", "um the gutter leaks", "", "Um, the gutter leaks.")
-	seedTranscribedInto(t, h, note, "c_2", "add this to roof call the roofer", "call the roofer", "Call the roofer.")
-	seedTranscribedInto(t, h, note, "c_3", "the ridge tiles", "", "The ridge tiles.")
+	seedTranscribedInto(t, h, note, "c_1", "um the gutter leaks and on past the twelve words that a tidy would take", "", "Um, the gutter leaks.")
+	seedTranscribedInto(t, h, note, "c_2", "add this to roof call the roofer and on past the twelve words that a tidy would take", "call the roofer and on past the twelve words that a tidy would take", "Call the roofer.")
+	seedTranscribedInto(t, h, note, "c_3", "the ridge tiles and on past the twelve words that a tidy would take", "", "The ridge tiles.")
 	// The person rewrote c_3's paragraph into their own words at the top of
 	// the note: the editor carried its marker to the end with nothing under
 	// it. (A recording's paragraph runs to the next marker, so words typed
@@ -221,8 +221,8 @@ func TestRegenerateTaskSkipsWhatIsDoneAndChoosesForItselfWhenGivenNoIds(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedTranscribedInto(t, h, note, "c_1", "one", "", "One.")
-	seedTranscribedInto(t, h, note, "c_2", "two", "", "Two.")
+	seedTranscribedInto(t, h, note, "c_1", "one and on past the twelve words that a tidy would take", "", "One.")
+	seedTranscribedInto(t, h, note, "c_2", "two and on past the twelve words that a tidy would take", "", "Two.")
 
 	// The API reset only c_2; c_1 is appended and must be left alone even
 	// though the payload names it.
@@ -420,9 +420,9 @@ func TestRegenerateTaskRetryFinishesTheRecordingsLeftMidWay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedTranscribedInto(t, h, note, "c_1", "one", "", "One.")
-	seedTranscribedInto(t, h, note, "c_2", "two", "", "Two.")
-	seedTranscribedInto(t, h, note, "c_3", "three", "", "Three.")
+	seedTranscribedInto(t, h, note, "c_1", "one and on past the twelve words that a tidy would take", "", "One.")
+	seedTranscribedInto(t, h, note, "c_2", "two and on past the twelve words that a tidy would take", "", "Two.")
+	seedTranscribedInto(t, h, note, "c_3", "three and on past the twelve words that a tidy would take", "", "Three.")
 	for _, id := range []string{"c_1", "c_2", "c_3"} {
 		c, _ := h.store.GetCapture(ctx, "user1", id)
 		service.ResetForRegenerate(&c, h.clock.Now())

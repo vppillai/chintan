@@ -69,7 +69,8 @@ func TestATranscriptionTimeoutLeavesTheCaptureRetryable(t *testing.T) {
 // transcript is in S3 must not have the recording transcribed — and billed —
 // again: the second run goes straight to cleanup.
 func TestACleanupTimeoutDoesNotRedoTheTranscription(t *testing.T) {
-	stt := &fake.STT{Response: "call the roofer on the fourteenth"}
+	// Long enough to be cleaned by the model rather than tidied.
+	stt := &fake.STT{Response: "call the roofer on the fourteenth about the gutter over the back door"}
 	llm := &fake.LLM{HangCalls: 1}
 	h := newHarness(t, harnessOpts{stt: stt, llm: llm, stageTimeout: 20 * time.Millisecond})
 	capture := seedUploadedCapture(t, h, "n_clean_stall")

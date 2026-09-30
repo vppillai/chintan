@@ -92,8 +92,10 @@ func TestARoutedRecordingThatNamesAnUnlistedListStartsAChecklistWithTheItem(t *t
 			if want := service.CaptureMarker("c_1") + "\n" + tc.wantBody; string(body) != want {
 				t.Errorf("body = %q, want %q", body, want)
 			}
-			if items, cleans := len(h.llm.ItemsCalls()), h.llm.Calls(); items != tc.wantItems || cleans != 1-tc.wantItems {
-				t.Errorf("calls: items=%d cleanup=%d; want items=%d cleanup=%d", items, cleans, tc.wantItems, 1-tc.wantItems)
+			// Six words is a short dictation, so the plain note's sentence is
+			// the tidy and no cleanup call is made (R7-15).
+			if items, cleans := len(h.llm.ItemsCalls()), h.llm.Calls(); items != tc.wantItems || cleans != 0 {
+				t.Errorf("calls: items=%d cleanup=%d; want items=%d cleanup=0", items, cleans, tc.wantItems)
 			}
 		})
 	}

@@ -158,7 +158,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		// all week — silently, unretried, and with the two halves of the thought
 		// now in different notes. The invocation is worth retrying; a duplicate
 		// note is not worth creating.
-		note, err := p.cfg.Store.GetNote(ctx, tenantID, decision.NoteID)
+		note, err := p.getNote(ctx, tenantID, decision.NoteID)
 		switch {
 		case err == nil && service.NoteIsActive(note):
 			if outcome == outcomeAppend {
@@ -249,6 +249,8 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	if err != nil {
 		return fmt.Errorf("pipeline: create note for capture: %w", err)
 	}
+	// The row as stored, so run() does not read it back (R7-16a).
+	p.rememberNote(note)
 	if !service.NoteIsActive(note) {
 		// The note is this capture's own, from an attempt that crashed, and
 		// the owner archived it before the retry. Filing into it would fail

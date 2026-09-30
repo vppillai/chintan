@@ -343,25 +343,47 @@ func (s *NotesService) GetNote(ctx context.Context, userID, noteID string) (mode
 	return s.store.GetNote(ctx, userID, noteID)
 }
 
-// NoteDetail is a note index plus markdown body for the editor.
+// NoteDetail is a note index plus markdown body for the editor, and the first
+// page of the note's captures.
 type NoteDetail struct {
 	model.NoteIndex
-	Body string `json:"body"`
+	Body     string                              `json:"body"`
+	Captures repository.Page[model.CaptureIndex] `json:"-"`
 }
 
-// GetNoteDetail retrieves a note and its markdown body from object storage.
+// GetNoteDetail retrieves a note, its markdown body from object storage and
+// the first page of its captures.
+//
+// GET /v1/notes/{id} is the busiest route. It used to read the note, then the
+// body, then call ListCapturesForNote, which read the note a second time to
+// check it exists before querying (R7-16b). The row read here is that check:
+// it is keyed by the caller's tenant, so a note of another tenant is
+// ErrNotFound before anything else is read, and the captures query is keyed
+// by the same tenant. The body and the captures depend only on the row, so
+// they are fetched side by side.
 func (s *NotesService) GetNoteDetail(ctx context.Context, userID, noteID string) (NoteDetail, error) {
 	note, err := s.store.GetNote(ctx, userID, noteID)
 	if err != nil {
 		return NoteDetail{}, err
 	}
-	bodyBytes, err := s.objects.Get(ctx, note.S3MarkdownKey)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return NoteDetail{}, fmt.Errorf("failed to load note body: %w", err)
+	var bodyBytes []byte
+	var bodyErr error
+	bodyDone := make(chan struct{})
+	go func() {
+		defer close(bodyDone)
+		bodyBytes, bodyErr = s.objects.Get(ctx, note.S3MarkdownKey)
+	}()
+	captures, capturesErr := s.store.ListCapturesByNote(ctx, userID, noteID, repository.ListOptions{})
+	<-bodyDone
+	if bodyErr != nil && !errors.Is(bodyErr, repository.ErrNotFound) {
+		return NoteDetail{}, fmt.Errorf("failed to load note body: %w", bodyErr)
+	}
+	if capturesErr != nil {
+		return NoteDetail{}, capturesErr
 	}
 	// The worker's append markers stay in the object and out of the editor;
 	// UpdateNote puts them back. See note_markers.go.
-	return NoteDetail{NoteIndex: note, Body: StripCaptureMarkers(string(bodyBytes))}, nil
+	return NoteDetail{NoteIndex: note, Body: StripCaptureMarkers(string(bodyBytes)), Captures: captures}, nil
 }
 
 // MatchNotes finds matching notes for a query (only searches active notes)

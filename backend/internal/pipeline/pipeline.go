@@ -22,9 +22,12 @@
 //   - Every provider call goes through breaker.Do. There is no path to a
 //     provider that skips the reservation against the instance's daily spend
 //     counter, and none that skips the usage log line the breaker writes.
-//   - Every stage persists its status and its artifact before the next begins,
-//     so a failure resumes from the last good stage instead of re-transcribing
-//     twenty minutes of audio.
+//   - Every stage's artifact is in S3 and its key on the capture row before
+//     the next stage calls anything, so a failure resumes from the last good
+//     stage instead of re-transcribing twenty minutes of audio. Where the
+//     next stage's own status write follows at once, that write records the
+//     key (deferPersist); within one run the texts are handed on in memory
+//     and read from S3 only by a run that resumes (forCapture).
 package pipeline
 
 import (
@@ -188,6 +191,9 @@ type Config struct {
 type Pipeline struct {
 	cfg Config
 	now func() time.Time
+	// seen is set only on the copy forCapture makes for one capture's run;
+	// nil on the shared pipeline, which remembers nothing between calls.
+	seen *seenNote
 }
 
 // New validates the configuration and builds a pipeline.
@@ -339,7 +345,7 @@ func (p *Pipeline) runCapture(ctx context.Context, ref CaptureRef) (model.Captur
 		queue = started.Sub(created)
 		obs.Duration(ctx, "CaptureQueueDelay", queue, source)
 	}
-	final, err := p.run(ctx, &capture)
+	final, err := p.forCapture(tenantID, captureID).run(ctx, &capture)
 	elapsed := p.now().Sub(started)
 
 	// This carries the count as well as the timing: CloudWatch's SampleCount on
@@ -485,7 +491,7 @@ func (p *Pipeline) run(ctx context.Context, capture *model.CaptureIndex) (model.
 		}
 	}
 
-	note, err := p.cfg.Store.GetNote(ctx, tenantID, capture.NoteID)
+	note, err := p.destination(ctx, tenantID, capture.NoteID)
 	if errors.Is(err, repository.ErrNotFound) {
 		// The destination was purged between the recording and this run — a
 		// "delete forever" while the capture was transcribing. Retrying cannot
