@@ -231,7 +231,7 @@ export function LibraryList({
       {!searching && (
         <LoadMore
           hasMore={list.hasNextPage}
-          loading={list.isFetchingNextPage}
+          loading={list.isFetching}
           onLoad={loadMore}
         />
       )}

@@ -96,11 +96,13 @@ function usePrefetchBodies(rows: readonly NoteWire[] | undefined): void {
 }
 
 /** Safari has no `requestIdleCallback`; a short delay is the next best "later". */
-function whenIdle(work: () => void): () => void {
+export function whenIdle(work: () => void): () => void {
   if (typeof requestIdleCallback === 'function') {
     const handle = requestIdleCallback(work, { timeout: 10_000 });
+    // Held from now: the cleanup can run after a test has put the global back.
+    const cancel = cancelIdleCallback;
     return () => {
-      cancelIdleCallback(handle);
+      cancel(handle);
     };
   }
   const handle = setTimeout(work, 2_000);
@@ -112,8 +114,8 @@ function whenIdle(work: () => void): () => void {
 /**
  * Runs passes until one ends with no rows having landed during it.
  *
- * Home fires four list GETs at mount — active, archived, the Checklists
- * chip's `kind=checklist`, the search corpus — and each one's write
+ * Home fires several list GETs at launch — active, the search corpus, the
+ * archive once idle (a `kind=checklist` one, until round 7) — and each one's write
  * re-triggers the hook. A trigger that found a pass running used to be
  * dropped, and when the one-row checklist page landed first that pass fetched
  * one body while the other three pages landed during its GET: five cold loads

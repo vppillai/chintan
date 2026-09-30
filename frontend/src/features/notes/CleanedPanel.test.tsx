@@ -257,6 +257,49 @@ describe('the Cleaned tab', () => {
     expect(api.gets).toBe(gets);
   });
 
+  it('asks on a ladder, never while the app is hidden, and stops at the cap', async () => {
+    /*
+     * A worker that never answers. The panel used to ask every two seconds
+     * for the whole minute — thirty full-note GETs per tap — and kept asking
+     * into a pocketed phone.
+     */
+    const user = userEvent.setup();
+    const api = server({ ...NOTE, cleaned: VIEW });
+    api.worker = () => VIEW;
+    await screen.findByText(/generated 3 minutes ago/i);
+    const setVisible = (visible: boolean): void => {
+      Object.defineProperty(document, 'visibilityState', {
+        value: visible ? 'visible' : 'hidden',
+        configurable: true,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+
+    await user.click(screen.getByRole('button', { name: 'Regenerate' }));
+    const queuedAt = api.gets;
+    // The first ten seconds: every two.
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    const fast = api.gets - queuedAt;
+    expect(fast).toBeGreaterThanOrEqual(4);
+    expect(fast).toBeLessThanOrEqual(5);
+
+    // In the background: nothing at all.
+    setVisible(false);
+    await act(() => vi.advanceTimersByTimeAsync(15_000));
+    expect(api.gets - queuedAt).toBe(fast);
+
+    // Back, and slower: every five until the minute is up.
+    setVisible(true);
+    await act(() => vi.advanceTimersByTimeAsync(40_000));
+    expect(api.gets - queuedAt - fast).toBeLessThanOrEqual(8);
+    expect(await panel().findByRole('alert')).toHaveTextContent(/taking longer than usual/i);
+
+    const atCap = api.gets;
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(api.gets).toBe(atCap);
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
   it('offers the view in Share only when there is one', async () => {
     const user = userEvent.setup();
     server({ ...NOTE, cleaned: VIEW });

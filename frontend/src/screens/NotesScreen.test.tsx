@@ -74,11 +74,38 @@ function goOffline(): void {
   window.dispatchEvent(new Event('offline'));
 }
 
+/** A finger on the screen, for the pull-to-refresh gesture. */
+function touch(type: string, clientY: number): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'touches', {
+    value: type === 'touchend' ? [] : [{ clientY }],
+  });
+  Object.defineProperty(event, 'changedTouches', { value: [{ clientY }] });
+  return event;
+}
+
+/*
+ * jsdom has no requestIdleCallback, and the archive's count waits for one
+ * (two seconds without it). A browser idles within a frame of the list
+ * landing; the tests that read the count idle at once.
+ */
+function idleAtOnce(): void {
+  vi.stubGlobal('requestIdleCallback', (work: IdleRequestCallback) =>
+    setTimeout(() => {
+      work({ didTimeout: false, timeRemaining: () => 50 });
+    }, 0),
+  );
+  vi.stubGlobal('cancelIdleCallback', (handle: ReturnType<typeof setTimeout>) => {
+    clearTimeout(handle);
+  });
+}
+
 afterEach(() => {
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
   onlineManager.setOnline(true);
   dismissToast();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 /**
@@ -390,6 +417,7 @@ describe('search narrows the list as you type, from what is already on the devic
 
 describe('the chips filter the list', () => {
   it('offers All, one chip per tag, and Archived with its count', async () => {
+    idleAtOnce();
     const fetchImpl = library();
     mount(fetchImpl);
     expect(await screen.findByRole('button', { name: 'house' })).toBeInTheDocument();
@@ -401,6 +429,34 @@ describe('the chips filter the list', () => {
     // The chip names come from the notes on the device, not a fifth GET (round-3 T46).
     const urls = vi.mocked(fetchImpl).mock.calls.map((call) => new URL(String(call[0])).pathname);
     expect(urls.some((url) => url.endsWith('/v1/tags'))).toBe(false);
+  });
+
+  it('asks for the archive only once the launch has gone quiet', async () => {
+    // The chip sits at the far end of the row; the list is what was opened.
+    let idle: (() => void) | undefined;
+    vi.stubGlobal('requestIdleCallback', (work: IdleRequestCallback) => {
+      idle = () => {
+        work({ didTimeout: false, timeRemaining: () => 50 });
+      };
+      return 1;
+    });
+    vi.stubGlobal('cancelIdleCallback', () => {});
+    const fetchImpl = library();
+    mount(fetchImpl);
+    await screen.findByRole('button', { name: /roof repair/i });
+    const archiveAsked = () =>
+      vi
+        .mocked(fetchImpl)
+        .mock.calls.some((call) => new URL(String(call[0])).searchParams.get('state') === 'archived');
+    expect(archiveAsked()).toBe(false);
+
+    act(() => {
+      idle?.();
+    });
+    expect(
+      await screen.findByRole('button', { name: `Archived · ${String(ARCHIVED_NOTES.length)}` }),
+    ).toBeInTheDocument();
+    expect(archiveAsked()).toBe(true);
   });
 
   it('hides the Archived chip while nothing is archived, and offers the archive as a row at the end', async () => {
@@ -438,6 +494,7 @@ describe('the chips filter the list', () => {
   });
 
   it('shows the archive, with each row saying when it is purged', async () => {
+    idleAtOnce();
     const user = userEvent.setup();
     mount(library());
     await screen.findByRole('button', { name: /roof repair/i });
@@ -495,6 +552,7 @@ describe('the chips filter the list', () => {
 
 describe('deleting from the library', () => {
   it('drops the chip of a tag whose last note was deleted', async () => {
+    idleAtOnce();
     /*
      * QA D16: two notes tagged `bulkmobile`, both deleted. The notes went,
      * the chip stayed, and pressing it said "No notes are tagged bulkmobile"
@@ -587,9 +645,11 @@ describe('the next page arrives as the list is scrolled', () => {
       callback: IntersectionObserverCallback;
       options?: IntersectionObserverInit | undefined;
       observed: Element[];
+      disconnected: boolean;
     }[] = [];
     class FakeObserver {
       observed: Element[] = [];
+      disconnected = false;
       constructor(
         public callback: IntersectionObserverCallback,
         public options?: IntersectionObserverInit,
@@ -599,7 +659,9 @@ describe('the next page arrives as the list is scrolled', () => {
       observe(element: Element) {
         this.observed.push(element);
       }
-      disconnect() {}
+      disconnect() {
+        this.disconnected = true;
+      }
       unobserve() {}
       takeRecords() {
         return [];
@@ -608,9 +670,11 @@ describe('the next page arrives as the list is scrolled', () => {
     vi.stubGlobal('IntersectionObserver', FakeObserver);
     return {
       instances,
+      /** The sentinel comes near; an observer already disconnected hears nothing, as in a browser. */
       near: () => {
         const live = instances.at(-1);
         if (!live) throw new Error('nothing is observing');
+        if (live.disconnected) return;
         act(() => {
           live.callback(
             [{ isIntersecting: true } as IntersectionObserverEntry],
@@ -653,6 +717,81 @@ describe('the next page arrives as the list is scrolled', () => {
     // The last page: nothing left to load, so nothing left to press.
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    });
+  });
+
+  it('holds the next page back while a pull is refetching the first', async () => {
+    /*
+     * A next page asked for mid-refetch cancels the refetch (TanStack's
+     * `cancelRefetch`). The pull cuts the list to its first page, so the
+     * sentinel is back in view at once, and the page the pull asked for was
+     * left stale.
+     */
+    const observer = stubObserver();
+    const cursors: (string | null)[] = [];
+    let firstPages = 0;
+    let release: () => void = () => {};
+    const base = library({ active: PAGE_ONE });
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (
+        url.pathname.endsWith('/v1/notes') &&
+        (url.searchParams.get('state') ?? 'active') === 'active' &&
+        !url.searchParams.has('include')
+      ) {
+        const cursor = url.searchParams.get('cursor');
+        cursors.push(cursor);
+        if (cursor === 'page-2') return json({ items: PAGE_TWO });
+        firstPages += 1;
+        if (firstPages === 1) return json({ items: PAGE_ONE, cursor: 'page-2' });
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const fresh = { ...PAGE_ONE[0]!, id: 'fresh', title: 'Fresh first page note' };
+        return json({ items: [fresh, ...PAGE_ONE], cursor: 'page-2' });
+      }
+      return base(input, init);
+    });
+    render(
+      <TestProviders api={testApiContext(fetchImpl)}>
+        <MemoryRouter initialEntries={['/']}>
+          <main className="app__main">
+            <NotesScreen />
+          </main>
+        </MemoryRouter>
+      </TestProviders>,
+    );
+    await screen.findByRole('button', { name: /roof repair/i });
+    await waitFor(() => {
+      expect(observer.instances.at(-1)?.observed.length).toBe(1);
+    });
+    observer.near();
+    await screen.findByRole('button', { name: /older page note/i });
+
+    const main = document.querySelector('.app__main') as HTMLElement;
+    act(() => {
+      main.dispatchEvent(touch('touchstart', 0));
+      main.dispatchEvent(touch('touchmove', 200));
+      main.dispatchEvent(touch('touchend', 200));
+    });
+    await waitFor(() => {
+      expect(firstPages).toBe(2);
+    });
+    // The sentinel comes into view while the first page is still being asked.
+    observer.near();
+    expect(cursors.filter((cursor) => cursor === 'page-2')).toHaveLength(1);
+
+    act(() => {
+      release();
+    });
+    expect(await screen.findByRole('button', { name: /fresh first page note/i })).toBeInTheDocument();
+    // Once the refetch is in, the observer is armed again and the next page follows.
+    await waitFor(() => {
+      expect(observer.instances.at(-1)?.disconnected).toBe(false);
+    });
+    observer.near();
+    await waitFor(() => {
+      expect(cursors.filter((cursor) => cursor === 'page-2')).toHaveLength(2);
     });
   });
 
@@ -717,15 +856,6 @@ describe('the search corpus', () => {
 
 describe('pull to refresh', () => {
   /** A finger on the shell's scroll container, which the test wraps the screen in. */
-  function touch(type: string, clientY: number): Event {
-    const event = new Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperty(event, 'touches', {
-      value: type === 'touchend' ? [] : [{ clientY }],
-    });
-    Object.defineProperty(event, 'changedTouches', { value: [{ clientY }] });
-    return event;
-  }
-
   it('asks for the notes and captures again when pulled down at the top', async () => {
     const fetchImpl = library();
     render(

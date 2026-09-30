@@ -7,7 +7,7 @@ is now its design note, and the section below is the proposal as it was
 written. Code today: `usePendingCaptures` and `capturePollInterval`
 (`frontend/src/api/queries/captures.ts`), the library's receipts (`FilingRow.tsx`,
 `docs/design/capture-ux.md` "Receipts on Home"), the note screen's own poll
-(`useNote`, the same function).
+(`useInFlightCaptures`, the same function).
 
 A recording is appended by the worker, not by the client that is watching.
 The app that made it has a row to watch; the app that did not — a phone in a
@@ -44,11 +44,17 @@ the owner saw the notes move to the top of Today and no receipt until a pull.
 TanStack pauses the interval while the document is hidden, so the background
 costs nothing.
 
-Two other readers. The note screen polls its own `GET /v1/notes/{id}` on the
-same ladder while any of its captures is non-terminal, so a note opened while
-its recording was still at "Uploaded" does not sit on the pre-recording body.
-Pull-to-refresh on Home refetches everything at once; it is the gesture the
-focus refetch makes unnecessary for this case, not a replacement for it.
+Two other readers. The note screen polls `GET /v1/captures/{id}` for each of
+its non-terminal captures on the same ladder (`useInFlightCaptures`, since
+round 7; it used to repeat the whole `GET /v1/notes/{id}`), writes each
+moving stage into the cached note so the banner's segments move, and reads
+the note once when one settles, so the terminal status and the body it
+changed arrive together. A 404 stops that capture's poll and rereads the
+note. So a note opened while its recording was still at
+"Uploaded" does not sit on the pre-recording body. Pull-to-refresh on Home
+refetches everything at once, each list for its first page only; it is the
+gesture the focus refetch makes unnecessary for this case, not a replacement
+for it.
 
 ## The baseline, measured (prod, seven days to 2026-09-26)
 

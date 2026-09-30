@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { onlineManager } from '@tanstack/react-query';
 
-import { CAPTURE_POLL_FAST_MS, queryKeys } from '@/api/queries.ts';
+import { CAPTURE_POLL_FAST_MS, CAPTURE_POLL_INTERVAL_MS, queryKeys } from '@/api/queries.ts';
 import type { CaptureWire, NoteDetailWire } from '@/api/schema.ts';
 import { settings } from '@/api/__fixtures__/responses.ts';
 import { routes } from '@/app/router.tsx';
@@ -53,6 +53,7 @@ function server(initial: StoredNote[]) {
   const patches: { version: number; status: number; body: Record<string, unknown> }[] = [];
   const calls: string[] = [];
   let gets = 0;
+  let captureGets = 0;
 
   const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
     const url = new URL(String(input));
@@ -132,6 +133,15 @@ function server(initial: StoredNote[]) {
       const { body: _body, captures: _captures, ...row } = next;
       return json(row);
     }
+    // The open note's filing poll asks after each moving capture on its own.
+    const capture = /\/v1\/captures\/([^/]+)$/.exec(url.pathname);
+    if (capture && method === 'GET') {
+      captureGets += 1;
+      const held = [...notes.values()]
+        .flatMap((note) => note.captures ?? [])
+        .find((item) => item.id === capture[1]);
+      return held ? json(held) : json({ type: 'about:blank', title: 'Not found', status: 404 }, 404);
+    }
     if (url.pathname.endsWith('/v1/notes')) {
       const state = url.searchParams.get('state') ?? 'active';
       const items = [...notes.values()]
@@ -147,6 +157,9 @@ function server(initial: StoredNote[]) {
     patches,
     calls,
     notes,
+    get captureGets() {
+      return captureGets;
+    },
     get gets() {
       return gets;
     },
@@ -349,12 +362,116 @@ describe('a note whose recording is still filing keeps asking', () => {
         'Only paragraph.\n\nThe gutter is leaking again.',
       );
     });
-    expect(api.gets).toBeGreaterThan(1);
+    // The capture was asked after; the note itself once more, for the body.
+    expect(api.captureGets).toBeGreaterThan(0);
+    expect(api.gets).toBe(2);
     // Settled: nothing left to ask about, so the polling stops.
     await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 200);
-    const after = api.gets;
+    const after = api.gets + api.captureGets;
     await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS + 200);
-    expect(api.gets).toBe(after);
+    expect(api.gets + api.captureGets).toBe(after);
+  });
+
+  it('moves the banner through each stage from the capture alone, and reads the note only when it lands', async () => {
+    /*
+     * The detail GET — body and every capture — used to be the poll, every
+     * 1.5 s and then every 4 s for as long as anything filed. The stages
+     * now come from GET /v1/captures/{id}.
+     */
+    const moving: CaptureWire = {
+      id: 'cap-new',
+      status: 'uploaded',
+      created_at: new Date().toISOString(),
+      version: 1,
+      note_id: 'roof-repair',
+      duration_ms: 5_000,
+    };
+    const api = server([{ ...ROOF, body: 'Only paragraph.', captures: [moving] }]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await screen.findByRole('textbox', { name: 'Note body' });
+    const readsAtOpen = api.gets;
+    const banner = () => screen.getByRole('region', { name: 'Filing a recording' }).textContent;
+    const atUpload = banner();
+
+    const setStatus = (status: CaptureWire['status']): void => {
+      const note = api.notes.get('roof-repair') as StoredNote;
+      note.captures = [{ ...moving, status }];
+    };
+    for (const status of ['transcribing', 'transcribed', 'routing'] as const) {
+      setStatus(status);
+      await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    }
+    expect(api.captureGets).toBeGreaterThanOrEqual(3);
+    expect(api.gets).toBe(readsAtOpen);
+    // The banner followed the capture, not the note.
+    await waitFor(() => {
+      expect(screen.getByText('Filing in progress')).toBeInTheDocument();
+    });
+    // The stages still reach the banner: the capture's answer is written into the note.
+    await waitFor(() => {
+      expect(banner()).not.toBe(atUpload);
+    });
+
+    setStatus('appended');
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    await waitFor(() => {
+      expect(api.gets).toBe(readsAtOpen + 1);
+    });
+  });
+
+  it('reads the note once when a capture stops short, shows Retry and Dismiss, and stops asking', async () => {
+    const moving: CaptureWire = {
+      id: 'cap-new',
+      status: 'routing',
+      created_at: new Date().toISOString(),
+      version: 1,
+      note_id: 'roof-repair',
+      duration_ms: 5_000,
+    };
+    const api = server([{ ...ROOF, body: 'Only paragraph.', captures: [moving] }]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await screen.findByRole('textbox', { name: 'Note body' });
+    const readsAtOpen = api.gets;
+
+    (api.notes.get('roof-repair') as StoredNote).captures = [
+      { ...moving, status: 'failed', error: 'The provider refused the request.' },
+    ];
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    const banner = await screen.findByRole('region', { name: 'Filing a recording' });
+    await waitFor(() => {
+      expect(within(banner).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+    expect(within(banner).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(api.gets).toBe(readsAtOpen + 1);
+
+    const asked = api.gets + api.captureGets;
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_INTERVAL_MS * 3);
+    expect(api.gets + api.captureGets).toBe(asked);
+  });
+
+  it('stops asking after a capture the server no longer has, and reads the note again', async () => {
+    const moving: CaptureWire = {
+      id: 'cap-new',
+      status: 'transcribing',
+      created_at: new Date().toISOString(),
+      version: 1,
+      note_id: 'roof-repair',
+      duration_ms: 5_000,
+    };
+    const api = server([{ ...ROOF, body: 'Only paragraph.', captures: [moving] }]);
+    mount(api.fetchImpl, '/notes/roof-repair');
+    await screen.findByRole('textbox', { name: 'Note body' });
+    const readsAtOpen = api.gets;
+
+    // Deleted on another device: gone from the server and from the note.
+    (api.notes.get('roof-repair') as StoredNote).captures = [];
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_FAST_MS);
+    await waitFor(() => {
+      expect(api.gets).toBe(readsAtOpen + 1);
+    });
+    const asked = api.gets + api.captureGets;
+    await vi.advanceTimersByTimeAsync(CAPTURE_POLL_INTERVAL_MS * 3);
+    expect(api.gets + api.captureGets).toBe(asked);
   });
 });
 

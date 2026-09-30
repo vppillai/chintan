@@ -1,7 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Suspense, lazy, useCallback, useId, useMemo } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useId, useMemo, useState } from 'react';
 
-import { SERVER_SEARCH_DEBOUNCE_MS, useNotes, useSearch, useSearchCorpus } from '@/api/queries.ts';
+import {
+  SERVER_SEARCH_DEBOUNCE_MS,
+  refreshNoteLists,
+  useNotes,
+  useSearch,
+  useSearchCorpus,
+} from '@/api/queries.ts';
 import type { NoteWire } from '@/api/schema.ts';
 import { PullToRefresh } from '@/components/PullToRefresh.tsx';
 import { Wordmark } from '@/components/Wordmark.tsx';
@@ -13,7 +19,7 @@ import { groupByDay, splitPinned } from '@/features/notes/groups.ts';
 import { mergeResults, rankLocal } from '@/features/search/localSearch.ts';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue.ts';
 import { useOnline } from '@/hooks/useOnline.ts';
-import { useCachedNotes } from '@/offline/useNotesCache.ts';
+import { useCachedNotes, whenIdle } from '@/offline/useNotesCache.ts';
 
 import { LibraryField } from './library/LibraryField.tsx';
 import { LibraryList } from './library/LibraryList.tsx';
@@ -72,13 +78,14 @@ export function NotesScreen() {
    * Pull down at the top to ask again. Everything the library shows is
    * invalidated — the lists (the tag chips are read from them), the filing
    * rows — because the gesture means "is this current?", not "reload one
-   * query". The promise settles when the refetches do, which is when the
-   * indicator lets go.
+   * query"; each list asks for its first page only (`refreshNoteLists`). The
+   * promise settles when the refetches do, which is when the indicator lets
+   * go.
    */
   const refresh = useCallback(
     () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['notes'] }),
+        refreshNoteLists(queryClient),
         queryClient.invalidateQueries({ queryKey: ['captures'] }),
       ]),
     [queryClient],
@@ -86,18 +93,25 @@ export function NotesScreen() {
 
   const list = useNotes({ state: view, ...(tag ? { tag } : {}), ...(kind ? { kind } : {}) });
   const cached = useCachedNotes(view, { prefetchBodies: true });
-  const { fetchNextPage, hasNextPage, isFetchingNextPage } = list;
-  const loadMore = useCallback(() => {
-    if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+  const { fetchNextPage, hasNextPage, isFetching } = list;
   /*
-   * The archive, fetched alongside the active list so the Archived chip can
-   * carry its count. In the archived view this is the same query as `list`
-   * and costs nothing extra.
+   * Not while any fetch of the list is running. A next page asked for during
+   * a refetch cancels it (TanStack's `cancelRefetch`), and a pull, which cuts
+   * the list back to its first page, was left holding that page stale.
+   * `LoadMore` is told the same, so its observer re-arms once the fetch ends.
    */
-  const archived = useNotes({ state: 'archived' });
-  // The checklists, for their chip's count, on the same terms as the archive.
-  const checklists = useNotes({ state: 'active', kind: 'checklist' });
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetching) void fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetching]);
+  /*
+   * The archive, for the Archived chip's count: asked for once the launch
+   * has gone quiet, since the chip sits at the far end of the row and the
+   * list is what the user opened the app for. In the archived view this is
+   * the same query as `list` and costs nothing extra.
+   */
+  const [idle, setIdle] = useState(false);
+  useEffect(() => whenIdle(() => setIdle(true)), []);
+  const archived = useNotes({ state: 'archived' }, { enabled: idle || view === 'archived' });
   /*
    * The tag chips are the tags on the active notes the device holds
    * (round-3 T46): every page the user has seen plus the search corpus,
@@ -200,9 +214,11 @@ export function NotesScreen() {
   const groups = useMemo(() => groupByDay(rest), [rest]);
 
   const archivedCount = archived.data?.pages.reduce((sum, page) => sum + page.items.length, 0);
-  const checklistCount = checklists.data?.pages.reduce(
-    (sum, page) => sum + page.items.length,
-    0,
+  // Counted from the device's corpus, which holds every active note with its
+  // kind; a `kind=checklist` list GET on every launch was for this number alone.
+  const checklistCount = useMemo(
+    () => activeCache.data?.filter((note) => note.kind === 'checklist').length,
+    [activeCache.data],
   );
   const tagNames = useMemo(() => {
     // The server's unfiltered page joins the device's copy, so the chips are
@@ -268,7 +284,7 @@ export function NotesScreen() {
         askPanelId={askPanelId}
         listId={listId}
         tagNames={tagNames}
-        checklists={{ count: checklistCount, more: checklists.hasNextPage }}
+        checklists={{ count: checklistCount, more: false }}
         archived={{ count: archivedCount, more: archived.hasNextPage }}
       />
 

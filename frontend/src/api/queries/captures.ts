@@ -5,6 +5,8 @@
 
 import {
   useMutation,
+  useQueries,
+  type Query,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -12,6 +14,7 @@ import {
 } from '@tanstack/react-query';
 
 import { useApi } from '../ApiProvider.tsx';
+import { ApiError } from '../problem.ts';
 import type { ChintanApi } from '../endpoints.ts';
 import { STUCK_AFTER_MS, isTerminalStatus } from '../schema.ts';
 import type { CaptureMoveWire, CaptureWire, NoteDetailWire } from '../schema.ts';
@@ -218,6 +221,89 @@ export function refreshAppendedNote(queryClient: QueryClient, noteId: string): v
   // The body just grew by a transcript; the corpus on the device should know
   // the words in it before the user goes looking for them.
   void queryClient.invalidateQueries({ queryKey: SEARCH_CORPUS_KEY });
+}
+
+/**
+ * The open note's recordings that are still moving, each asked after on its
+ * own — `GET /v1/captures/{id}`, a few hundred bytes — instead of the whole
+ * note, body and every capture, over and over.
+ *
+ * The note's detail query used to carry the filing cadence itself, which
+ * meant the full note every 1.5 s, then every 4 s, for as long as anything
+ * filed. A moving stage is written into the cached note, so the banner's
+ * segments move exactly as they did. A capture that stops moving is not: the
+ * note is read again instead, so the status and the body it changed arrive
+ * together — an `appended` shown over the old body would announce a paragraph
+ * that is not there yet. An append also refreshes the lists and the corpus,
+ * decided the way the library's poll decides it (`newlyAppendedNoteIds`).
+ * A capture the server no longer has (404) stops being asked after and the
+ * note is read again, which drops its row.
+ *
+ * Called by the note screen alone. `useNote` has other readers — the tab bar
+ * asks whether the open note is archived — and a second caller would mean a
+ * second set of pollers.
+ *
+ * The cadence is read from the note's copy, not the capture query's own data:
+ * a regeneration sends an `appended` capture back to `transcribed`, and a
+ * capture query left holding `appended` from an earlier visit would otherwise
+ * never ask again. `noteReadAt` is when that copy was read; a capture answer
+ * newer than it that already says terminal waits for the note's refetch.
+ */
+export function useInFlightCaptures(
+  noteId: string | undefined,
+  captures: readonly CaptureWire[] | undefined,
+  noteReadAt: number,
+): void {
+  const api = useApi();
+  const queryClient = useQueryClient();
+  const moving =
+    noteId === undefined ? [] : (captures ?? []).filter((capture) => !isTerminalStatus(capture.status));
+  useQueries({
+    queries: moving.map((capture) => ({
+      queryKey: queryKeys.capture(capture.id),
+      queryFn: async () => {
+        const noteKey = queryKeys.note(noteId as string);
+        let fresh: CaptureWire;
+        try {
+          fresh = await api.getCapture(capture.id);
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 404) {
+            void queryClient.invalidateQueries({ queryKey: noteKey });
+          }
+          throw error;
+        }
+        if (!isTerminalStatus(fresh.status)) {
+          queryClient.setQueryData<NoteDetailWire>(noteKey, (current) =>
+            current?.captures
+              ? {
+                  ...current,
+                  captures: current.captures.map((held) =>
+                    held.id === fresh.id ? { ...held, ...fresh } : held,
+                  ),
+                }
+              : current,
+          );
+          return fresh;
+        }
+        const appendedTo = newlyAppendedNoteIds([capture], [fresh]);
+        for (const id of appendedTo) refreshAppendedNote(queryClient, id);
+        // Once: a second invalidation would cancel the first read and start another.
+        if (!appendedTo.includes(noteId as string)) {
+          void queryClient.invalidateQueries({ queryKey: noteKey });
+        }
+        return fresh;
+      },
+      // The note that listed it was just read, so the first ask waits a tick.
+      initialData: capture,
+      initialDataUpdatedAt: noteReadAt,
+      refetchInterval: (query: Query<CaptureWire>) => {
+        const { data, dataUpdatedAt, error } = query.state;
+        if (error instanceof ApiError && error.status === 404) return false;
+        if (data && isTerminalStatus(data.status) && dataUpdatedAt > noteReadAt) return false;
+        return capturePollInterval([capture]);
+      },
+    })),
+  });
 }
 
 /* ---------------------------------------------------------------------------
