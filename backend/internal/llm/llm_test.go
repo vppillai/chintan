@@ -119,10 +119,16 @@ func TestExtractJSONObject(t *testing.T) {
 func TestFoldWordsKeepsIndicWordsWhole(t *testing.T) {
 	t.Parallel()
 	for in, want := range map[string]string{
-		"പാൽ":       "പാൽ",
-		"പുൽ":       "പുൽ",
-		"दाल, दिल!": "दाल दिल",
-		"Milk. പാൽ": "milk പാൽ",
+		"പാൽ":        "പാൽ",
+		"പുൽ":        "പുൽ",
+		"दाल, दिल!":  "दाल दिल",
+		"Milk. പാൽ":  "milk പാൽ",
+		"Café":       "café",
+		"cafe\u0301": "cafe\u0301",
+		"✈️ Travel":  "travel",
+		"Milk❤️":     "milk",
+		"✈️":         "",
+		"1️⃣ Eggs":   "1 eggs",
 	} {
 		if got := FoldWords(in); got != want {
 			t.Errorf("FoldWords(%q) = %q, want %q", in, got, want)

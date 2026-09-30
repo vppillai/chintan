@@ -987,8 +987,16 @@ paths:
         The two note bodies are written one after the other, each under an
         ETag condition: the paragraph goes into the target first and only
         then out of the source, so a failure between them can leave a copy
-        in both notes but never takes it out of both. If either write fails
-        the target's copy is removed and the answer is a 503 whose `type` is
+        in both notes but never takes it out of both. A source write that
+        reports a fault is read back: if the paragraph is gone from the
+        source the move finishes, and if the source cannot be read the
+        target keeps its copy and the answer is a 500 a repeat finishes. A
+        process killed between the writes leaves the copy in the target;
+        repeating the same move replaces it, but moving the recording to a
+        third note instead leaves that copy behind as an ordinary paragraph
+        to delete by hand. If either write fails while the source still
+        holds the paragraph, the target's copy is removed and the answer is
+        a 503 whose `type` is
         `https://github.com/vppillai/chintan/blob/main/docs/api/openapi.yaml#retryable`:
         nothing changed, repeat the request.
       parameters:

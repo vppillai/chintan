@@ -188,6 +188,28 @@
       ]
     },
     {
+      "name": "a blockquoted task line is prose",
+      "body": "> - [ ] Milk",
+      "items": [
+        {
+          "text": "> - [ ] Milk",
+          "done": false,
+          "depth": 0
+        }
+      ]
+    },
+    {
+      "name": "an ordered-list box is prose",
+      "body": "1. [ ] Milk",
+      "items": [
+        {
+          "text": "1. [ ] Milk",
+          "done": false,
+          "depth": 0
+        }
+      ]
+    },
+    {
       "name": "Indic text is kept whole",
       "body": "- [ ] പാൽ\n  - [x] दाल",
       "items": [

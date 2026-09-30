@@ -397,13 +397,18 @@ func reopen(line string) string { return withBox(line, "- [ ] ") }
 
 // withBox rewrites a task-list line with box, its indent and text kept, in
 // the normal form ("- [ ] " with its one space) whatever form it was typed
-// in. A line that is not an item is returned as it is.
+// in. A trailing "\r" is kept, so a CRLF body keeps one line ending
+// throughout. A line that is not an item is returned as it is.
 func withBox(line, box string) string {
 	text, _, _, ok := cleanup.ParseLine(line)
 	if !ok {
 		return line
 	}
-	return line[:len(line)-len(strings.TrimLeft(line, " \t"))] + box + text
+	cr := ""
+	if strings.HasSuffix(line, "\r") {
+		cr = "\r"
+	}
+	return line[:len(line)-len(strings.TrimLeft(line, " \t"))] + box + text + cr
 }
 
 // checklistLineText is the words of a task-list line, indent and box aside,

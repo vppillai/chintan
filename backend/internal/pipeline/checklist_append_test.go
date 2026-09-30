@@ -244,6 +244,7 @@ func TestKeepTickCarriesTicksLineForLine(t *testing.T) {
 		{"count differs, other words", "- [x] a\n- [x] b", "- [ ] x\n- [ ] y\n- [ ] z", "- [ ] x\n- [ ] y\n- [ ] z"},
 		{"plain paragraph", "First take.", "Second take.", "Second take."},
 		{"nothing before", "", "- [ ] A", "- [ ] A"},
+		{"CRLF keeps its line ends", "- [x] milk\r\n- [ ] eggs\r", "- [ ]Milk\r\n- [ ] eggs\r", "- [x] Milk\r\n- [ ] eggs\r"},
 		{"Malayalam: a changed vowel is other words", "- [x] പാൽ\n- [x] ചായ", "- [ ] പുൽ\n- [ ] ചായ\n- [ ] x", "- [ ] പുൽ\n- [x] ചായ\n- [ ] x"},
 		{"Hindi: a changed vowel is other words", "- [x] दाल\n- [x] चाय", "- [ ] दिल\n- [ ] चाय\n- [ ] x", "- [ ] दिल\n- [x] चाय\n- [ ] x"},
 	} {

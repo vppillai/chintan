@@ -42,8 +42,10 @@ var (
 // leaves the text in both notes, never in neither, and the source is still
 // the one the capture points at. A repeat then finds the paragraph in the
 // source, replaces the target's copy with it, and finishes the cut. A write
-// that fails in-process is compensated instead: the target's copy is removed
-// and ErrMoveIncomplete says the request can be repeated. Everything after the
+// that fails in-process is compensated instead: while the source still holds
+// the paragraph (read back, since a write that reported a fault may have
+// landed) the target's copy is removed and ErrMoveIncomplete says the
+// request can be repeated. Everything after the
 // cut — the index refreshes, the row — is idempotent, so a failure there
 // leaves a state a retry finishes: the source has nothing to copy, the target
 // already holds the paragraph, and the rest runs again.
@@ -210,7 +212,28 @@ func (s *CaptureService) moveInto(ctx context.Context, userID string, current mo
 			err = errors.New("the paragraph was edited during the move")
 		}
 		if err != nil {
-			return nil, s.undoInsert(ctx, target.S3MarkdownKey, sourceID, current, err)
+			// A write that reported a fault may still have landed, and then
+			// the target's copy is the only one: the source is read back, and
+			// the copy is removed only while the source still holds the
+			// paragraph. A source that no longer does means the cut went
+			// through, so the move carries on; one that cannot be read keeps
+			// the copy, since a duplicate is recoverable and a loss is not,
+			// and a repeat finds the source empty and finishes the move.
+			switch holds, rerr := s.sourceHolds(ctx, sourceKey, captureID); {
+			case rerr != nil:
+				obs.Log(ctx).Error("capture move failed at the source cut and the source could not be read back; the target keeps its copy",
+					slog.String("capture_id", captureID),
+					slog.String("from_note_id", sourceID),
+					slog.String("to_note_id", targetNoteID),
+					slog.String("error", err.Error()),
+					slog.String("read_error", rerr.Error()))
+				return nil, fmt.Errorf("failed to cut the paragraph from the source: %w", err)
+			case holds:
+				return nil, s.undoInsert(ctx, target.S3MarkdownKey, sourceID, current, err)
+			}
+			obs.Log(ctx).Warn("the source cut reported a fault but landed; finishing the move",
+				slog.String("capture_id", captureID),
+				slog.String("error", err.Error()))
 		}
 	}
 
@@ -271,6 +294,19 @@ func (s *CaptureService) olderCapturesIn(ctx context.Context, userID, noteID, cr
 		at, ok := created[id]
 		return ok && at > createdAt
 	}, nil
+}
+
+// sourceHolds reports whether the source body still carries captureID's
+// marker, read back after a cut whose outcome is unknown.
+func (s *CaptureService) sourceHolds(ctx context.Context, sourceKey, captureID string) (bool, error) {
+	body, err := s.objects.Get(ctx, sourceKey)
+	if errors.Is(err, repository.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return HasCaptureMarker(string(body), captureID), nil
 }
 
 // undoInsert is the compensation for a move that failed after it may have

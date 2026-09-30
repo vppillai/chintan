@@ -797,6 +797,47 @@ func TestMoveCaptureUndoesTheCopyWhenTheParagraphIsEditedMidMove(t *testing.T) {
 	}
 }
 
+// A source cut that stores the body and then reports a fault (a timeout on
+// the response, say). Removing the target's copy then would leave the text
+// in neither note, so the source is read back: it no longer holds the
+// paragraph, and the move finishes with the text exactly once, in the target.
+func TestMoveCaptureWhoseCutLandedDespiteAnErrorKeepsTheText(t *testing.T) {
+	h := newEditHarness(t)
+	source := h.note("u1", "Source", CaptureMarker("c_1")+"\nFirst.\n\n"+CaptureMarker("c_2")+"\nSecond.")
+	target := h.note("u1", "Target", "")
+	h.appended("u1", source.ID, "c_1", t1000)
+	h.appended("u1", source.ID, "c_2", t1200)
+
+	flaky := NewCaptureService(h.store, landsThenFails{Objects: h.objects, key: source.S3MarkdownKey})
+	if _, moved, err := flaky.MoveCapture(h.ctx, "u1", "c_1", target.ID); err != nil || !moved {
+		t.Fatalf("MoveCapture = (%v, %v), want the move finished", moved, err)
+	}
+	if got, want := h.body(target), CaptureMarker("c_1")+"\nFirst."; got != want {
+		t.Errorf("target = %q, want %q", got, want)
+	}
+	if got, want := h.body(source), CaptureMarker("c_2")+"\nSecond."; got != want {
+		t.Errorf("source = %q, want %q", got, want)
+	}
+	if c, _ := h.store.GetCapture(h.ctx, "u1", "c_1"); c.NoteID != target.ID {
+		t.Errorf("capture points at %q, want the target", c.NoteID)
+	}
+}
+
+// landsThenFails stores the conditional write for one key and then reports
+// a fault, as a write whose response was lost does.
+type landsThenFails struct {
+	repository.Objects
+	key string
+}
+
+func (l landsThenFails) PutIfMatch(ctx context.Context, key string, body []byte, contentType, etag string) error {
+	err := l.Objects.PutIfMatch(ctx, key, body, contentType, etag)
+	if err == nil && key == l.key {
+		return errors.New("s3: request timed out after the write")
+	}
+	return err
+}
+
 // killedAfterOneWrite lets the first conditional body write land and panics
 // on the next, which is how a test stands in for a Lambda killed between the
 // move's two writes, whichever note is written first: nothing after it runs,
