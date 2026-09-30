@@ -127,6 +127,10 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	// inferable from other lines (DB6-13). None when the router did not
 	// answer: the Warn above is that capture's line.
 	decided := err == nil
+	outcome := r.outcome
+	if !decided {
+		outcome = outcomeNew
+	}
 	finish := func(outcome string) error {
 		if decided {
 			logRoutingDecision(ctx, decision, matchedBy, outcome, r.candidates, transcript, sourceDim(capture.Source))
@@ -146,8 +150,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	capture.RoutedKey = routedKey
 	capture.RouteConfidence = decision.Confidence
 
-	outcome := "new"
-	if decision.Action == provider.RouteAppend && decision.NoteID != "" {
+	if outcome == outcomeAppend || outcome == outcomeNeedsTarget {
 		// Falling through to "make a new note" is only correct for an answer, not
 		// for a failure to get one. A throttle or a 5xx on this read used to be
 		// indistinguishable from ErrNotFound, so a transient DynamoDB fault
@@ -158,26 +161,26 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		note, err := p.cfg.Store.GetNote(ctx, tenantID, decision.NoteID)
 		switch {
 		case err == nil && service.NoteIsActive(note):
-			if decision.Confidence >= routeConfidenceThreshold {
+			if outcome == outcomeAppend {
 				capture.NoteID = decision.NoteID
 				capture.TargetSource = model.TargetSourceRouter
 				capture.Status = model.StatusTranscribed
-				return finish("append")
+				return finish(outcomeAppend)
 			}
 			// Plausible but unsure: ask before writing into an existing note.
 			capture.SuggestedNoteID = decision.NoteID
 			capture.Status = model.StatusNeedsTarget
-			return finish("needs_target")
+			return finish(outcomeNeedsTarget)
 		case err == nil:
 			obs.Log(ctx).Info("routed note is archived; keeping the dictation in a new note",
 				slog.String("capture_id", capture.ID),
 				slog.String("note_id", decision.NoteID))
-			outcome = "new_after_missing"
+			outcome = outcomeNewAfterMissing
 		case errors.Is(err, repository.ErrNotFound):
 			obs.Log(ctx).Info("routed note no longer exists; keeping the dictation in a new note",
 				slog.String("capture_id", capture.ID),
 				slog.String("note_id", decision.NoteID))
-			outcome = "new_after_missing"
+			outcome = outcomeNewAfterMissing
 		default:
 			return fmt.Errorf("pipeline: get routed note %s: %w", decision.NoteID, err)
 		}
@@ -190,7 +193,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 	if p.cfg.Notes == nil {
 		capture.SuggestedTitle = title
 		capture.Status = model.StatusNeedsTarget
-		return finish("needs_target")
+		return finish(outcomeNeedsTarget)
 	}
 
 	// The candidate list was read before the model call, and the ring posts
@@ -216,7 +219,7 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 		capture.RouteConfidence = decision.Confidence
 		capture.TargetSource = model.TargetSourceRouter
 		capture.Status = model.StatusTranscribed
-		return finish("deduped")
+		return finish(outcomeDeduped)
 	}
 
 	note, err := p.cfg.Notes.CreateNote(ctx, tenantID, title, nil)
@@ -268,12 +271,13 @@ func (p *Pipeline) route(ctx context.Context, tenantID string, capture *model.Ca
 var errRouteCandidates = errors.New("pipeline: list routing candidates")
 
 // routed is decideTarget's answer: the decision after preferExistingTitle,
-// how it matched ("" when the model's own answer stood) and how many notes
-// the router saw, the last two for the decision line route() logs once its
-// branch is final.
+// how it matched ("" when the model's own answer stood), what decide() says
+// to do with it, and how many notes the router saw, the last for the
+// decision line route() logs once its branch is final.
 type routed struct {
 	decision   provider.RouteDecision
 	matchedBy  string
+	outcome    string
 	candidates int
 }
 
@@ -315,7 +319,47 @@ func (p *Pipeline) decideTarget(ctx context.Context, tenantID, captureID, transc
 		return routed{}, err
 	}
 	decision, matchedBy := preferExistingTitle(ctx, decision, transcript, active)
-	return routed{decision: decision, matchedBy: matchedBy, candidates: len(candidates)}, nil
+	return routed{decision: decision, matchedBy: matchedBy, outcome: outcomeOf(decision), candidates: len(candidates)}, nil
+}
+
+// The outcomes route() logs. decide() yields the first three from the reply
+// alone; the last two need the store (route()).
+const (
+	outcomeAppend          = "append"
+	outcomeNeedsTarget     = "needs_target"
+	outcomeNew             = "new"
+	outcomeDeduped         = "deduped"
+	outcomeNewAfterMissing = "new_after_missing"
+)
+
+// decide is the deterministic half of routing: the router's reply and the
+// transcript, over the notes the router saw, to what route() does with them
+// before the store is asked again. The spoken-name rules (existingNoteNamed)
+// may turn the reply into an append; an append at routeConfidenceThreshold
+// or above is filed (outcomeAppend), one below it asks (outcomeNeedsTarget),
+// and anything else starts a note (outcomeNew). It reads nothing and logs
+// nothing, so the worker and the replayed routing eval
+// (TestRoutingEvalReplay) run the same rules on the same reply. route() can
+// still turn an append into outcomeNewAfterMissing (the note is gone) and a
+// new note into outcomeDeduped (a sibling capture made it meanwhile).
+func decide(decision provider.RouteDecision, transcript string, active []model.NoteIndex) (provider.RouteDecision, string, string) {
+	noteID, matchedBy := existingNoteNamed(decision, transcript, active)
+	if noteID != "" {
+		decision = filedInto(decision, noteID)
+	}
+	return decision, matchedBy, outcomeOf(decision)
+}
+
+// outcomeOf is decide()'s last step on a decision the rules have already seen.
+func outcomeOf(decision provider.RouteDecision) string {
+	switch {
+	case decision.Action != provider.RouteAppend || decision.NoteID == "":
+		return outcomeNew
+	case decision.Confidence >= routeConfidenceThreshold:
+		return outcomeAppend
+	default:
+		return outcomeNeedsTarget
+	}
 }
 
 // logRoutingDecision is the one INFO line `routing decided` per routed
@@ -402,15 +446,15 @@ func withinRouteBudget(active []model.NoteIndex) []model.NoteIndex {
 // derived content is kept as the model left it; a name that stays in the
 // body is one word to delete, dictation stripped by a guess is gone.
 func preferExistingTitle(ctx context.Context, decision provider.RouteDecision, transcript string, active []model.NoteIndex) (provider.RouteDecision, string) {
-	noteID, matchedBy := existingNoteNamed(decision, transcript, active)
-	if noteID == "" {
+	decision, matchedBy, _ := decide(decision, transcript, active)
+	if matchedBy == "" {
 		return decision, ""
 	}
 	obs.Log(ctx).Info("the recording names an existing note; appending to it instead of the router's answer",
-		slog.String("note_id", noteID),
+		slog.String("note_id", decision.NoteID),
 		slog.String("matched_by", matchedBy))
 	obs.Count(ctx, "RouterTitleMatchedExistingNote", map[string]string{})
-	return filedInto(decision, noteID), matchedBy
+	return decision, matchedBy
 }
 
 // filedInto is decision turned into an append to noteID by a rule of the

@@ -2,10 +2,15 @@ package provider
 
 import (
 	"context"
+	"flag"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode"
@@ -24,7 +29,10 @@ import (
 //	LIVE_LLM=1 LLM_API_KEY=… go test ./internal/provider -run 'TestLiveEval/route' -v
 //
 // and -count=3 because a prompt that passes once is not yet a prompt that
-// passes. LLM_BASE_URL and LLM_MODEL default to the worker's. The key is read
+// passes. After the last of the -count runs it logs each case's pass rate
+// with a 95% Wilson interval, so -count=10 says how often, not only whether.
+// LLM_RECORD=<dir> also writes every reply for the CI replay
+// (pipeline.TestRoutingEvalReplay, docs/design/prompts.md). LLM_BASE_URL and LLM_MODEL default to the worker's. The key is read
 // from the environment and never printed; the output is the fixture text and
 // the model's reply to it, one line per case, and nothing else. Adding a case
 // is appending an object to the fixtures file; TestEvalFixturesParse, which
@@ -43,11 +51,13 @@ func TestLiveEval(t *testing.T) {
 	}
 	fx := loadEvalFixtures(t)
 	ctx := context.Background()
+	t.Cleanup(func() { reportPassRates(t) })
 
 	t.Run("route", func(t *testing.T) {
 		candidates, idOf := fx.candidates()
 		for i, tc := range fx.Route.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
+				tally(t)
 				d, err := c.Route(ctx, tc.Transcript, candidates, tc.Language)
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
@@ -60,6 +70,7 @@ func TestLiveEval(t *testing.T) {
 	t.Run("cleanup", func(t *testing.T) {
 		for i, tc := range fx.Cleanup.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
+				tally(t)
 				out, err := c.Cleanup(ctx, tc.Raw, tc.Language)
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Raw, err)
@@ -79,6 +90,7 @@ func TestLiveEval(t *testing.T) {
 	t.Run("items", func(t *testing.T) {
 		for i, tc := range fx.Items.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
+				tally(t)
 				out, err := c.Items(ctx, tc.Transcript, fx.Items.ListTitle, tc.Language)
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Transcript, err)
@@ -109,6 +121,7 @@ func TestLiveEval(t *testing.T) {
 	t.Run("tasks", func(t *testing.T) {
 		for i, tc := range fx.Tasks.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
+				tally(t)
 				title := fx.Tasks.ListTitle
 				if tc.ListTitle != "" {
 					title = tc.ListTitle
@@ -139,6 +152,7 @@ func TestLiveEval(t *testing.T) {
 		notes, idOf := fx.packedNotes()
 		for i, tc := range fx.Ask.Cases {
 			t.Run(caseName(i), func(t *testing.T) {
+				tally(t)
 				a, err := c.Ask(ctx, ask.Prompt{Today: time.Now().UTC().Format("2006-01-02"), Notes: notes, Question: tc.Question})
 				if err != nil {
 					t.Fatalf("%s | ERROR %v", tc.Question, err)
@@ -159,6 +173,69 @@ func TestLiveEval(t *testing.T) {
 }
 
 func caseName(i int) string { return fmt.Sprintf("%02d", i+1) }
+
+// passes counts, per case name, the runs that passed and the runs made,
+// across the -count repetitions of TestLiveEval in one process.
+var (
+	passesMu sync.Mutex
+	passes   = map[string][2]int{}
+	evalRuns int
+)
+
+// tally counts this case's run once it has finished, failed or not.
+func tally(t *testing.T) {
+	t.Cleanup(func() {
+		passesMu.Lock()
+		defer passesMu.Unlock()
+		p := passes[t.Name()]
+		if !t.Failed() {
+			p[0]++
+		}
+		p[1]++
+		passes[t.Name()] = p
+	})
+}
+
+// reportPassRates logs the table after the last -count run: one line per
+// case, passes over runs and the 95% Wilson interval, which unlike p±2σ
+// stays inside [0,1] and is honest at ten runs and a rate of 10/10.
+func reportPassRates(t *testing.T) {
+	passesMu.Lock()
+	defer passesMu.Unlock()
+	evalRuns++
+	count := 1
+	if f := flag.Lookup("test.count"); f != nil {
+		if n, err := strconv.Atoi(f.Value.String()); err == nil && n > 0 {
+			count = n
+		}
+	}
+	if evalRuns < count {
+		return
+	}
+	names := make([]string, 0, len(passes))
+	for name := range passes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		p := passes[name]
+		lo, hi := wilson(p[0], p[1])
+		t.Logf("pass rate %-28s %2d/%-2d  95%% CI [%.2f, %.2f]", name, p[0], p[1], lo, hi)
+	}
+}
+
+// wilson is the 95% Wilson score interval for k successes in n trials.
+func wilson(k, n int) (float64, float64) {
+	if n == 0 {
+		return 0, 1
+	}
+	const z = 1.96
+	p, nf := float64(k)/float64(n), float64(n)
+	denom := 1 + z*z/nf
+	center := (p + z*z/(2*nf)) / denom
+	half := z * math.Sqrt(p*(1-p)/nf+z*z/(4*nf*nf)) / denom
+	return math.Max(0, center-half), math.Min(1, center+half)
+}
 
 func checkRoute(t *testing.T, tc routeCase, d RouteDecision, idOf map[string]string) {
 	t.Helper()

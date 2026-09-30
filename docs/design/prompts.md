@@ -425,6 +425,43 @@ destination or source title that is not in the file, or a script name Unicode
 does not know, so a typo fails CI without a key. Adding a case is appending
 an object to the fixtures file.
 
+After the last of the `-count` runs the eval logs one line per case, its
+passes over its runs and a 95% Wilson interval (`pass rate route/03  9/10
+95% CI [0.60, 0.98]`), so `-count=10` says how often a case passes, not only
+whether it did.
+
+### Record and replay
+
+The live eval tests the model's reply; the worker's outcome is that reply
+through code — the span growth in `provider.Route`, then
+`pipeline.decide`: `preferExistingTitle`'s title, prefix and `spoken_name`
+rules and the 0.75 bar that parks an unsure append at `needs_target` (the
+pre-create re-check runs the same `existingNoteNamed`). Record and replay
+test the two together in CI without the key:
+
+```bash
+cd backend && LIVE_LLM=1 LLM_API_KEY=… LLM_RECORD=testdata/eval/recordings go test ./internal/provider -run 'TestLiveEval/route' -v -count=1
+```
+
+`LLM_RECORD=<dir>` makes every completion also write
+`<dir>/<sha256 of model, system prompt, user prompt>.json` (the raw reply and
+its token usage); the path is relative to the package, so the command above
+fills `backend/internal/provider/testdata/eval/recordings/`, which is
+committed. `LLM_REPLAY=<dir>` serves completions from those files and calls
+nothing. `pipeline.TestRoutingEvalReplay` replays every route case in
+`fixtures.json` through `decide()` and asserts the case's expectations on the
+outcome — `append` means filed without asking, `title_names` means the named
+note is where the recording went — and skips, printing the command above,
+while the directory is empty. Record with the default `LLM_MODEL`, which the
+replay also uses.
+
+**A prompt change needs a re-record.** The key is the prompt's text, so after
+any change to `routing.SystemPrompt`, `routing.UserPrompt`, the model or a
+fixture's transcript or candidates, the replay misses and fails with the
+re-record command; re-record in the same PR as the change. A change to the
+rules alone (`decide`, span growth) needs no re-record: that is what the
+replay measures.
+
 The procedure for a prompt change: run the eval on the current prompt for a
 baseline; change the prompt; run it again with `-count=3`; record the pass in
 the PR. The fixtures deliberately include phrasings outside
