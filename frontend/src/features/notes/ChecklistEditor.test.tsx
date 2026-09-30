@@ -875,6 +875,24 @@ describe('the Done section', () => {
   });
 });
 
+describe('the rows a recording added', () => {
+  it('are marked while the banner\'s Show points at them', () => {
+    render(
+      <ChecklistEditor
+        noteId="shopping"
+        body={'- [ ] Milk\n- [ ] Bread'}
+        currentBody={() => ''}
+        flash={new Set(['Bread'])}
+        onChange={() => {}}
+        onSave={() => {}}
+      />,
+    );
+    const rows = within(items()).getAllByRole('listitem');
+    expect(rows[0]).not.toHaveAttribute('data-flash');
+    expect(rows[1]).toHaveAttribute('data-flash');
+  });
+});
+
 describe('parseMotionMs', () => {
   it('reads the token in milliseconds or seconds, as the built sheet minifies it', () => {
     expect(parseMotionMs('220ms')).toBe(220);

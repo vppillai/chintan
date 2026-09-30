@@ -25,6 +25,18 @@ function write(key: string, top: number): void {
 }
 
 /**
+ * Navigation state asking for the offset the path was last left at, for a
+ * return that is a new history entry rather than a Back: the capture screen
+ * replaces its own entry with the note it recorded into, so the note comes
+ * back under a key it has never had (R7-6b).
+ */
+export const RESTORE_SCROLL = { restoreScroll: true } as const;
+
+function asksToRestore(state: unknown): boolean {
+  return typeof state === 'object' && state !== null && 'restoreScroll' in state;
+}
+
+/**
  * Puts the scroll region back where it was when the user comes Back to a
  * screen.
  *
@@ -62,8 +74,10 @@ export function useScrollRestore(main: RefObject<HTMLElement | null>): void {
 
   useLayoutEffect(() => {
     const key = location.key;
+    const path = `path:${location.pathname}`;
     let frame = 0;
-    const target = navigationType === 'POP' ? read(key) : 0;
+    const target =
+      navigationType === 'POP' ? read(key) : asksToRestore(location.state) ? read(path) : 0;
     position.current = main.current?.scrollTop ?? 0;
 
     const restore = (attempt: number) => {
@@ -82,6 +96,9 @@ export function useScrollRestore(main: RefObject<HTMLElement | null>): void {
     return () => {
       cancelAnimationFrame(frame);
       write(key, position.current);
+      write(path, position.current);
     };
+    // `location.state` belongs to the entry `location.key` names.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.key, navigationType, main]);
 }

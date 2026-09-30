@@ -40,6 +40,7 @@ export function ChecklistRow({
   position,
   dragging,
   nestPreview,
+  flash = false,
   hintId,
   fieldHintId,
   menu,
@@ -62,6 +63,8 @@ export function ChecklistRow({
   dragging: boolean;
   /** The level a sideways drag would give the lifted row on release, drawn while it is in the air. */
   nestPreview: 1 | -1 | undefined;
+  /** Just added by a recording: marked for a moment after the banner's Show. */
+  flash?: boolean;
   hintId: string;
   fieldHintId: string;
   menu: OverflowMenuItem[];
@@ -118,6 +121,7 @@ export function ChecklistRow({
       data-drag-id={id}
       data-dragging={dragging || undefined}
       data-nest-preview={nestPreview}
+      data-flash={flash ? '' : undefined}
     >
       <OverflowMenu
         label={`Move ${item.text || 'item'}`}

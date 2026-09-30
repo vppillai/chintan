@@ -243,6 +243,8 @@ test('Send returns to the note, where the filing banner follows the recording in
   api.captures[0]!.duration_ms = 1_100;
   api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
   api.notes['roof-repair']!.version += 1;
+  // For a few seconds it says where the paragraph went (R7-6b), then goes.
+  await expect(banner).toContainText('Added at the end', { timeout: 10_000 });
   await expect(banner).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
     /The gutter is leaking again\.$/,
@@ -257,6 +259,62 @@ test('Send returns to the note, where the filing banner follows the recording in
 
   await page.goBack();
   await expect(page).not.toHaveURL(/\/capture/);
+});
+
+/**
+ * Recording into a long note from far down it (R7-6b): the note comes back
+ * where it was left, the banner says the paragraph went at the end, and Show
+ * scrolls to it and marks it.
+ */
+test('a recording into a long note returns to the place, and Show points at what it added', async ({
+  page,
+  api,
+}) => {
+  api.notes['roof-repair']!.body = Array.from(
+    { length: 40 },
+    (_, index) => `Paragraph ${String(index + 1)}. The flashing around the chimney needs replacing.`,
+  ).join('\n\n');
+  await page.setViewportSize({ width: 412, height: 915 });
+  await page.goto('/notes/roof-repair');
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toBeVisible();
+  const main = page.locator('.app__main');
+  // Where the body sits on screen. The offset is restored as it was left,
+  // but the filing banner now stands above the text, so the text is lower by
+  // about the banner's height (scroll anchoring absorbs some of its growth):
+  // the paragraph being read is still on screen, which a return to 0 is not.
+  const bodyTop = (): Promise<number> =>
+    page.getByRole('textbox', { name: 'Note body' }).evaluate((element) => element.getBoundingClientRect().top);
+  await main.evaluate((element) => {
+    element.scrollTop = 800;
+    element.dispatchEvent(new Event('scroll'));
+  });
+  const left = await bodyTop();
+  expect(left).toBeLessThan(-500);
+
+  await page.getByRole('button', { name: 'Record into this note', exact: true }).click();
+  await expect(page.locator('.capture__timer')).toHaveText('00:01');
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  await expect(page).toHaveURL(/\/notes\/roof-repair$/);
+  await expect.poll(async () => Math.abs((await bodyTop()) - left)).toBeLessThanOrEqual(150);
+
+  await expect.poll(() => api.captures.length).toBe(1);
+  api.captures[0]!.status = 'appended';
+  api.notes['roof-repair']!.body += '\n\nThe gutter is leaking again.';
+  api.notes['roof-repair']!.version += 1;
+  const banner = page.getByRole('region', { name: 'Filing a recording' });
+  await expect(banner).toContainText('Added at the end', { timeout: 10_000 });
+
+  await banner.getByRole('button', { name: 'Show' }).click();
+  const mark = page.locator('mark.note-flash');
+  await expect(mark).toHaveText('The gutter is leaking again.');
+  await expect(mark).toBeInViewport();
+  // Then it gives the textarea back, with the text intact.
+  await expect(mark).toHaveCount(0, { timeout: 5_000 });
+  await expect(page.getByRole('textbox', { name: 'Note body' })).toHaveValue(
+    /The gutter is leaking again\.$/,
+  );
 });
 
 /**

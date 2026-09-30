@@ -108,6 +108,7 @@ export function ChecklistEditor({
   noteId,
   body,
   currentBody,
+  flash = null,
   onChange,
   onSave,
 }: {
@@ -119,6 +120,8 @@ export function ChecklistEditor({
    * that may fire after this component has gone, when `body` is stale.
    */
   currentBody: () => string;
+  /** The words of rows a recording just added, marked for a moment (R7-6b). */
+  flash?: ReadonlySet<string> | null;
   onChange: (body: string) => void;
   /** A discrete act — a tick, a move, a delete, leaving a field — is done; save now. */
   onSave: () => void;
@@ -509,6 +512,7 @@ export function ChecklistEditor({
             position={position}
             dragging={drag.draggingId === String(index)}
             nestPreview={nestPreview(position)}
+            flash={flash?.has(item.text.trim()) ?? false}
             hintId={hintId}
             fieldHintId={fieldHintId}
             menu={gripMenu(index, position, item)}
