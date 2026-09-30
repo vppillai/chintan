@@ -545,6 +545,47 @@ type CaptureIndex struct {
 	// CaptureEndToEnd metrics and `chintanctl latency` are what read them.
 	RecordedAt string            `json:"recorded_at,omitempty"`
 	StageAt    map[string]string `json:"stage_at,omitempty"`
+
+	// Excerpt is the opening of what was said — the cleaned text once there
+	// is one, the transcript until then, CaptureExcerpt's length — so a
+	// filing row can show a recording made hours ago by its words and not
+	// only by its length (R7-7b). It is written in the same persist as the
+	// text it is cut from and cleared with the transcript on a
+	// retranscribe; empty until the capture has been transcribed. User
+	// content: it goes on the wire and nowhere else, never into a log.
+	Excerpt string `json:"excerpt,omitempty"`
+	// CreatedNote is true when this capture's destination note was made for
+	// it — the router answered "new", or a person typed a new title for a
+	// needs_target capture — and false when it was appended to a note that
+	// already existed. The receipt says "Started" rather than "Filed into"
+	// on it, so a misroute into a fresh note is visible (R7-7c). False on
+	// captures from before 2026-09-30, which read as appends.
+	CreatedNote bool `json:"created_note,omitempty"`
+}
+
+// ExcerptRunes is how much of a capture's text CaptureExcerpt keeps: about
+// one line and a half of a phone's filing row, which is enough to recognise
+// a thought and short enough that the list endpoint stays small.
+const ExcerptRunes = 90
+
+// CaptureExcerpt is the first ExcerptRunes characters of text with its
+// whitespace collapsed, cut back to a word boundary when one is near and
+// marked with an ellipsis when anything was cut.
+func CaptureExcerpt(text string) string {
+	flat := []rune(strings.Join(strings.Fields(text), " "))
+	if len(flat) <= ExcerptRunes {
+		return string(flat)
+	}
+	cut := flat[:ExcerptRunes]
+	// Back to the last space when it is in the final third, so the excerpt
+	// does not end mid-word; a single long word is cut where it stands.
+	for i := len(cut) - 1; i >= ExcerptRunes*2/3; i-- {
+		if cut[i] == ' ' {
+			cut = cut[:i]
+			break
+		}
+	}
+	return strings.TrimRight(string(cut), " ,.;:") + "…"
 }
 
 // StageEntered records at as the moment status was first written, and

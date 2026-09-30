@@ -389,6 +389,18 @@ export interface CaptureWire {
    */
   source?: string;
   has_audio?: boolean;
+  /**
+   * The opening of what was said, about ninety characters of the cleaned
+   * text or of the transcript before the clean; null until transcribed. The
+   * filing rows show it as a muted second line (R7-7b).
+   */
+  excerpt?: string | null;
+  /**
+   * True when the note was created for this capture, so the receipt says
+   * "Started “X”" rather than "Filed into “X”" (R7-7c). Optional like
+   * `source`, so existing literals keep compiling; the backend always sends it.
+   */
+  created_note?: boolean;
   version: number;
 }
 

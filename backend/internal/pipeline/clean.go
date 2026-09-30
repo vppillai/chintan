@@ -121,6 +121,7 @@ func (p *Pipeline) clean(ctx context.Context, tenantID string, capture *model.Ca
 	}
 
 	capture.CleanKey = cleanKey
+	capture.Excerpt = model.CaptureExcerpt(cleaned.Text)
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return p.deferPersist(capture)
@@ -338,6 +339,7 @@ func (p *Pipeline) extractItems(ctx context.Context, tenantID string, capture *m
 		return previous, fmt.Errorf("pipeline: store clean text: %w", err)
 	}
 	capture.CleanKey = cleanKey
+	capture.Excerpt = model.CaptureExcerpt(itemsExcerpt(items))
 	capture.Status = model.StatusCleaned
 	capture.Error = ""
 	return previous, p.persist(ctx, capture)
@@ -396,4 +398,15 @@ func estimateTokens(s string) float64 {
 		return 0
 	}
 	return float64(len(s))/4 + 1
+}
+
+// itemsExcerpt is a checklist capture's items as one line, top-level items
+// only, for the filing row's excerpt: "Milk · Eggs · Bread" says what was
+// added where the rendered "- [ ] Milk" list would spend the row on markup.
+func itemsExcerpt(items []cleanup.Item) string {
+	texts := make([]string, 0, len(items))
+	for _, it := range items {
+		texts = append(texts, it.Text)
+	}
+	return strings.Join(texts, " · ")
 }

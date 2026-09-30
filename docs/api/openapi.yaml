@@ -2007,7 +2007,7 @@ components:
 
     Capture:
       type: object
-      required: [id, status, created_at, version, targeted, source, has_audio]
+      required: [id, status, created_at, version, targeted, source, has_audio, created_note]
       properties:
         id: { type: string }
         source:
@@ -2089,6 +2089,26 @@ components:
             filing rows show only non-targeted captures; a targeted one is
             already visible in its note's Recordings tab. Captures recorded
             before this field existed read false.
+        excerpt:
+          type: string
+          nullable: true
+          maxLength: 91
+          description: >
+            The opening of what was said: about ninety characters of the
+            cleaned text, or of the transcript until the capture is cleaned
+            (a checklist capture's items joined by " · "), whitespace
+            collapsed and ending in "…" when cut. Null until the capture has
+            been transcribed, and cleared by `/retranscribe` until the new
+            transcript is in. The filing rows show it so a recording made
+            hours ago can be placed by its words.
+        created_note:
+          type: boolean
+          description: >
+            True when the note this capture is in was created for it — the
+            router found no existing destination, or a person answered a
+            `needs_target` capture with a new title — so the receipt can say
+            "Started" rather than "Filed into". False for an append, after a
+            move, and on captures from before 2026-09-30.
 
     CapturePage:
       type: object

@@ -198,8 +198,10 @@ export const noteDetail: NoteDetailWire = {
     {
       "appended_at": "2026-01-01T00:00:00.000000000Z",
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": false,
       "duration_ms": 18400,
       "error": null,
+      "excerpt": null,
       "has_audio": true,
       "has_peaks": true,
       "has_segments": true,
@@ -455,8 +457,10 @@ export const capturesPage: Page<CaptureWire> = {
     {
       "appended_at": "2026-01-01T00:00:00.000000000Z",
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": false,
       "duration_ms": null,
       "error": null,
+      "excerpt": null,
       "has_audio": false,
       "has_peaks": false,
       "has_segments": false,
@@ -473,10 +477,34 @@ export const capturesPage: Page<CaptureWire> = {
       "version": 1
     },
     {
+      "appended_at": "2026-01-01T00:00:00.000000000Z",
+      "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": true,
+      "duration_ms": null,
+      "error": null,
+      "excerpt": "Call the plumber about the kitchen sink before Friday.",
+      "has_audio": true,
+      "has_peaks": false,
+      "has_segments": false,
+      "id": "fixture-id",
+      "language": null,
+      "language_detected": null,
+      "last_progress_at": null,
+      "note_id": "fixture-note-id",
+      "source": "app",
+      "status": "appended",
+      "suggested_note_id": null,
+      "suggested_title": null,
+      "targeted": false,
+      "version": 1
+    },
+    {
       "appended_at": null,
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": false,
       "duration_ms": null,
       "error": "the speech provider returned 503",
+      "excerpt": null,
       "has_audio": true,
       "has_peaks": false,
       "has_segments": false,
@@ -495,8 +523,10 @@ export const capturesPage: Page<CaptureWire> = {
     {
       "appended_at": null,
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": false,
       "duration_ms": null,
       "error": null,
+      "excerpt": "The tiles for the backsplash should match the counter, so bring a sample to the store.",
       "has_audio": true,
       "has_peaks": false,
       "has_segments": false,
@@ -515,8 +545,10 @@ export const capturesPage: Page<CaptureWire> = {
     {
       "appended_at": null,
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": false,
       "duration_ms": null,
       "error": null,
+      "excerpt": null,
       "has_audio": true,
       "has_peaks": false,
       "has_segments": false,
@@ -535,8 +567,10 @@ export const capturesPage: Page<CaptureWire> = {
     {
       "appended_at": "2026-01-01T00:00:00.000000000Z",
       "created_at": "2026-01-01T00:00:00.000000000Z",
+      "created_note": false,
       "duration_ms": 9100,
       "error": null,
+      "excerpt": null,
       "has_audio": true,
       "has_peaks": true,
       "has_segments": true,
@@ -559,8 +593,10 @@ export const capturesPage: Page<CaptureWire> = {
 export const captureSuggestedNote: CaptureWire = {
   "appended_at": null,
   "created_at": "2026-01-01T00:00:00.000000000Z",
+  "created_note": false,
   "duration_ms": null,
   "error": null,
+  "excerpt": "The tiles for the backsplash should match the counter, so bring a sample to the store.",
   "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
@@ -581,8 +617,10 @@ export const captureSuggestedNote: CaptureWire = {
 export const captureFailed: CaptureWire = {
   "appended_at": null,
   "created_at": "2026-01-01T00:00:00.000000000Z",
+  "created_note": false,
   "duration_ms": null,
   "error": "the speech provider returned 503",
+  "excerpt": null,
   "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
@@ -599,6 +637,30 @@ export const captureFailed: CaptureWire = {
   "version": 1
 };
 
+/** GET /v1/captures/{captureId} → 200 for a capture whose note was created for it: `created_note` is true, so the receipt says "Started", and `excerpt` is the opening of what was said. */
+export const captureStarted: CaptureWire = {
+  "appended_at": "2026-01-01T00:00:00.000000000Z",
+  "created_at": "2026-01-01T00:00:00.000000000Z",
+  "created_note": true,
+  "duration_ms": null,
+  "error": null,
+  "excerpt": "Call the plumber about the kitchen sink before Friday.",
+  "has_audio": true,
+  "has_peaks": false,
+  "has_segments": false,
+  "id": "fixture-id",
+  "language": null,
+  "language_detected": null,
+  "last_progress_at": null,
+  "note_id": "fixture-note-id",
+  "source": "app",
+  "status": "appended",
+  "suggested_note_id": null,
+  "suggested_title": null,
+  "targeted": false,
+  "version": 1
+};
+
 /** GET /v1/captures/{captureId}/download?kind=audio → 200 */
 export const captureDownload: PresignedDownloadWire = {
   "expires_at": "2026-01-01T00:00:00.000000000Z",
@@ -609,8 +671,10 @@ export const captureDownload: PresignedDownloadWire = {
 export const captureFromDevice: CaptureWire = {
   "appended_at": "2026-01-01T00:00:00.000000000Z",
   "created_at": "2026-01-01T00:00:00.000000000Z",
+  "created_note": false,
   "duration_ms": null,
   "error": null,
+  "excerpt": null,
   "has_audio": false,
   "has_peaks": false,
   "has_segments": false,
@@ -632,8 +696,10 @@ export const captureCreated: CaptureCreatedWire = {
   "capture": {
     "appended_at": null,
     "created_at": "2026-01-01T00:00:00.000000000Z",
+    "created_note": false,
     "duration_ms": 12000,
     "error": null,
+    "excerpt": null,
     "has_audio": true,
     "has_peaks": true,
     "has_segments": false,
@@ -672,8 +738,10 @@ export const captureCreated: CaptureCreatedWire = {
 export const captureMoved: CaptureWire = {
   "appended_at": "2026-01-01T00:00:00.000000000Z",
   "created_at": "2026-01-01T00:00:00.000000000Z",
+  "created_note": false,
   "duration_ms": null,
   "error": null,
+  "excerpt": null,
   "has_audio": true,
   "has_peaks": false,
   "has_segments": false,
@@ -718,8 +786,10 @@ export const recordingUrls: RecordingUrlsWire = {
 export const captureRetranscribing: CaptureWire = {
   "appended_at": null,
   "created_at": "2026-01-01T00:00:00.000000000Z",
+  "created_note": false,
   "duration_ms": null,
   "error": null,
+  "excerpt": null,
   "has_audio": true,
   "has_peaks": false,
   "has_segments": false,

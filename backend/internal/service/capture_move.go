@@ -347,6 +347,11 @@ func (s *CaptureService) repointCapture(ctx context.Context, userID, captureID, 
 			return c, nil
 		}
 		c.NoteID = noteID
+		// CreatedNote reports what the router or the needs_target answer did,
+		// which a person's move supersedes: a recording routed into a new note
+		// and then moved must not still say "Started" of its new home. A move
+		// into a new note reads as filed too, which is the harmless side.
+		c.CreatedNote = false
 		updated, err := s.store.PutCapture(ctx, c)
 		if err == nil {
 			return updated, nil

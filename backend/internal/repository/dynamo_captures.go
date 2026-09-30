@@ -53,6 +53,11 @@ func captureItemAttrs(c model.CaptureIndex) (map[string]types.AttributeValue, er
 		"segments_key":     strAttr(c.SegmentsKey),
 		"peaks_key":        strAttr(c.PeaksKey),
 		"data":             strAttr(string(blob)),
+
+		// excerpt and created_note are what a filing row says of a recording
+		// (R7-7b, R7-7c); a note's banner reads them through the same overlay.
+		"excerpt":      strAttr(c.Excerpt),
+		"created_note": boolAttr(c.CreatedNote),
 	}
 	// Indexed even when NoteID is empty. A capture awaiting disambiguation has
 	// no destination note, and leaving it out of the index entirely is what made
@@ -99,6 +104,12 @@ func captureFromItem(m map[string]types.AttributeValue) (model.CaptureIndex, err
 	}
 	if _, ok := m["error"]; ok {
 		c.Error = readString(m, "error")
+	}
+	if _, ok := m["excerpt"]; ok {
+		c.Excerpt = readString(m, "excerpt")
+	}
+	if _, ok := m["created_note"]; ok {
+		c.CreatedNote = readBool(m, "created_note")
 	}
 	return c, nil
 }
@@ -245,9 +256,10 @@ func (s *DynamoStore) ListCapturesByNote(ctx context.Context, tenantID, noteID s
 
 // hydrateUnprojectedCaptureFields overlays the fields gsi1 does not project
 // but a note's page needs: source, so the page can say which device sent a
-// recording, and last_progress_at, so the app's poll cadence and stuck rule
+// recording, last_progress_at, so the app's poll cadence and stuck rule
 // follow the pipeline rather than created_at (the capture read on its own
-// always had both). One BatchGetItem per page, keyed off the projected ids; a
+// always had both), and excerpt and created_note, which the note's filing
+// banner says as the library's filing row does. One BatchGetItem per page, keyed off the projected ids; a
 // row from before an attribute was promoted has nothing to say for it and
 // keeps what the index gave.
 //
@@ -273,7 +285,7 @@ func (s *DynamoStore) hydrateUnprojectedCaptureFields(ctx context.Context, tenan
 		})
 	}
 	// SOURCE is a DynamoDB reserved word, hence the placeholder.
-	items, err := s.batchGet(ctx, keys, "sk, #source, last_progress_at", map[string]string{"#source": "source"})
+	items, err := s.batchGet(ctx, keys, "sk, #source, last_progress_at, excerpt, created_note", map[string]string{"#source": "source"})
 	if err != nil {
 		return fmt.Errorf("dynamo hydrate capture fields: %w", err)
 	}
@@ -287,6 +299,12 @@ func (s *DynamoStore) hydrateUnprojectedCaptureFields(ctx context.Context, tenan
 		}
 		if _, has := item["last_progress_at"]; has {
 			captures[i].LastProgressAt = readString(item, "last_progress_at")
+		}
+		if _, has := item["excerpt"]; has {
+			captures[i].Excerpt = readString(item, "excerpt")
+		}
+		if _, has := item["created_note"]; has {
+			captures[i].CreatedNote = readBool(item, "created_note")
 		}
 	}
 	return nil

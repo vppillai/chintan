@@ -419,6 +419,7 @@ func (s *CaptureService) IngestText(ctx context.Context, userID string, req Capt
 		return model.CaptureIndex{}, fmt.Errorf("failed to generate raw key: %w", err)
 	}
 	capture.RawKey = rawKey
+	capture.Excerpt = model.CaptureExcerpt(text)
 	capture.Status = model.StatusTranscribed
 	capture.LastProgressAt = model.FormatTime(s.now())
 	// The row first, as IngestAudio orders them: nothing reads it until the
@@ -568,6 +569,9 @@ func (s *CaptureService) RetranscribeCapture(ctx context.Context, userID, captur
 	capture.RequestedLanguage = language
 	capture.RawKey, capture.SegmentsKey, capture.RoutedKey, capture.CleanKey = "", "", "", ""
 	capture.Language, capture.LanguageDetected = "", ""
+	// The excerpt was cut from the transcript being replaced, so it goes
+	// with it, and the new one is written when the new transcript is.
+	capture.Excerpt = ""
 	// The claim is what stops a second append; this one is meant to write
 	// the body again, so the earlier claim and completion are released and
 	// the worker takes a fresh claim, finds the marker, and replaces.
@@ -631,6 +635,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 			return nil, ErrNoteArchived
 		}
 		capture.NoteID = noteID
+		capture.CreatedNote = false
 	case newNoteTitle != "":
 		if s.notes == nil {
 			return nil, ErrNoteCreationUnavailable
@@ -640,6 +645,7 @@ func (s *CaptureService) SetCaptureTarget(ctx context.Context, userID, captureID
 			return nil, fmt.Errorf("failed to create note: %w", err)
 		}
 		capture.NoteID = note.ID
+		capture.CreatedNote = true
 	default:
 		return nil, ErrCaptureTargetRequired
 	}

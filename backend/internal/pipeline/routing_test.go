@@ -144,6 +144,14 @@ func TestCompleteCaptureAppendsToSpokenNote(t *testing.T) {
 	if titles := f.h.creator.createdTitles(); len(titles) != 0 {
 		t.Fatalf("created notes %v, want none", titles)
 	}
+	// An append into a note that already existed is "Filed into" (R7-7c),
+	// and the excerpt is the cleaned text, not the spoken instruction.
+	if capture.CreatedNote {
+		t.Error("created_note = true for an append into an existing note")
+	}
+	if capture.Excerpt == "" || strings.Contains(capture.Excerpt, "add this to") {
+		t.Errorf("excerpt = %q, want the cleaned dictation", capture.Excerpt)
+	}
 
 	body, err := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
 	if err != nil {
@@ -218,6 +226,11 @@ func TestCompleteCaptureAsksWhenRoutingIsUncertain(t *testing.T) {
 	if capture.SuggestedNoteID != "n1" {
 		t.Errorf("suggested_note_id = %q, want n1", capture.SuggestedNoteID)
 	}
+	// The "which note?" row shows what was said, and there is no cleaned
+	// text yet, so it is the transcript's opening (R7-7b).
+	if capture.Excerpt != "the gutter is also leaking" {
+		t.Errorf("excerpt = %q, want the transcript", capture.Excerpt)
+	}
 
 	body, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
 	if string(body) != "existing line" {
@@ -285,6 +298,9 @@ func TestSetCaptureTargetCanCreateNoteInstead(t *testing.T) {
 	if titles := f.h.creator.createdTitles(); len(titles) != 1 || titles[0] != "Gutter leak" {
 		t.Fatalf("created titles = %v, want [Gutter leak]", titles)
 	}
+	if !capture.CreatedNote {
+		t.Error("created_note = false for a needs_target answered with a new title")
+	}
 
 	untouched, _ := f.objects.Get(ctx, "tenants/user1/notes/n1/note.md")
 	if string(untouched) != "existing line" {
@@ -333,6 +349,10 @@ func TestCompleteCaptureCreatesNoteWithSpokenTitle(t *testing.T) {
 	}
 	if capture.NoteID == "" {
 		t.Error("capture has no note_id after creating a note")
+	}
+	// The receipt says "Started" of a note the router made (R7-7c).
+	if !capture.CreatedNote {
+		t.Error("created_note = false for a capture the router made a note for")
 	}
 }
 
